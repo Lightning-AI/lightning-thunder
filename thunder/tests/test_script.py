@@ -15,7 +15,7 @@ import thunder.core.script.passes
 import thunder.core.script.python_ir
 
 from . import nanogpt_model
-from .framework import Executor, executors, NOTHING, nvFuser, requiresCUDA
+from .framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, NOTHING
 
 
 def sample_add_fn(x, y):
@@ -416,7 +416,8 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 # TODO: once this test works, also test acquiring the function from a collection
 # @executors(dtypes=(thunder.float32,))
 # def test_fn_input(executor, device, dtype):
-#     make = partial(make_tensor, device=device, dtype=dtype)
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(fn, *args):
 #         return fn(*args)
@@ -436,7 +437,8 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 # TODO: FIXME
 # @executors(dtypes=(thunder.float32,))
 # def test_local_translation(executor, device, dtype):
-#     make = partial(make_tensor, device=device, dtype=dtype)
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
 
@@ -453,14 +455,15 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 #     a = make(shape)
 #     b = make(shape)
 
-#     thunder_result = thunder_fn(fn, a, b)
-#     torch_result = foo(fn, a, b)
+#     thunder_result = thunder_fn(a, b)
+#     torch_result = foo(a, b)
 
 #     assert_close(thunder_result, torch_result)
 
 # @executors(dtypes=(thunder.float32,))
 # def test_local_wrapped_translation(executor, device, dtype):
-#     make = partial(make_tensor, device=device, dtype=dtype)
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
 
@@ -478,15 +481,59 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 #     a = make(shape)
 #     b = make(shape)
 
-#     thunder_result = thunder_fn(fn, a, b)
-#     torch_result = foo(fn, a, b)
+#     thunder_result = thunder_fn(a, b)
+#     torch_result = foo(a, b)
 
 #     assert_close(thunder_result, torch_result)
 
 
+@executors(dtypes=(thunder.float32,))
+def test_local_aliased_translation(executor, device, dtype):
+    tdtype = ttorch.torch_dtype(dtype)
+    make = partial(make_tensor, device=device, dtype=tdtype)
+
+    def foo(a, b):
+
+        fn = torch.nn.functional.linear
+        return fn(a, b)
+
+    thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+
+    shape = (2, 2)
+    a = make(shape)
+    b = make(shape)
+
+    thunder_result = thunder_fn(a, b)
+    torch_result = foo(a, b)
+
+    assert_close(thunder_result, torch_result)
+
+
+# @executors(dtypes=(thunder.float32,))
+# def test_local_acquired_translation(executor, device, dtype):
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = partial(make_tensor, device=device, dtype=tdtype)
+
+#     def foo(a, b):
+
+#         fn = getattr(torch.nn.functional, "linear")
+#         return fn(a, b)
+
+#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+
+#     shape = (2, 2)
+#     a = make(shape)
+#     b = make(shape)
+
+#     thunder_result = thunder_fn(a, b)
+#     torch_result = foo(a, b)
+
+#     assert_close(thunder_result, torch_result)
+
 # @executors(dtypes=(thunder.float32,))
 # def test_lambda_translation(executor, device, dtype):
-#     make = partial(make_tensor, device=device, dtype=dtype)
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
 #         return map(lambda a: torch.add(a, 1), (a, b))
@@ -497,8 +544,8 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 #     a = make(shape)
 #     b = make(shape)
 
-#     thunder_result = thunder_fn(fn, a, b)
-#     torch_result = foo(fn, a, b)
+#     thunder_result = thunder_fn(a, b)
+#     torch_result = foo(a, b)
 
 #     assert_close(thunder_result, torch_result)
 
