@@ -13,3 +13,54 @@ exclude = "(.eggs|.git|.hg|.mypy_cache|.venv|_build|buck-out|build|dist)"
 testpaths = [
     "thunder/tests",
 ]
+
+
+[tool.mypy]
+files = [
+    "thunder",
+]
+install_types = true
+non_interactive = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+allow_redefinition = true
+# disable this rule as the Trainer attributes are defined in the connectors, not in its __init__
+disable_error_code = "attr-defined"
+# style choices
+warn_no_return = false
+
+# Ignore mypy errors for these files
+# TODO: the goal is for this to be empty
+[[tool.mypy.overrides]]
+module = [
+    "thunder",
+    "thunder.core.dtypes",
+    "thunder.langs.torch",
+    "thunder.core.lang",
+    "thunder.core.prims",
+    "thunder.core.proxies",
+    "thunder.core.script.frontend",
+    "thunder.core.script.graph",
+    "thunder.core.script.passes",
+    "thunder.core.script.python_ir_data",
+    "thunder.core.script.python_ir",
+    "thunder.core.trace",
+    "thunder.core.transforms",
+    "thunder.core.utils",
+    "thunder.executors.nvfuser",
+    "thunder.executors.torch",
+    "thunder.tests.framework",
+    "thunder.tests.nanogpt_model",
+    "thunder.tests.opinfos",
+    "thunder.tests.test_core",
+    "thunder.tests.test_elementwise",
+    "thunder.tests.test_networks",
+    "thunder.tests.test_ops",
+    "thunder.tests.test_reductions",
+    "thunder.tests.test_script",
+]
+ignore_errors = "True"

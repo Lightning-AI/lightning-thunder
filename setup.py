@@ -1,12 +1,14 @@
 #!/usr/bin/env python
-
+import glob
 import os
 from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
 from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
 
 _PATH_ROOT = os.path.dirname(__file__)
+_PATH_REQUIRES = os.path.join(_PATH_ROOT, "requirements")
 
 
 def _load_py_module(fname, pkg="thunder"):
@@ -19,6 +21,23 @@ def _load_py_module(fname, pkg="thunder"):
 def _load_requirements(path_dir: str, file_name: str = "requirements.txt") -> list:
     reqs = parse_requirements(open(os.path.join(path_dir, file_name)).readlines())
     return list(map(str, reqs))
+
+
+def _prepare_extras(requirements_dir: str = _PATH_REQUIRES, skip_files: tuple = ("devel.txt", "docs.txt")) -> dict:
+    # https://setuptools.readthedocs.io/en/latest/setuptools.html#declaring-extras
+    # Define package extras. These are only installed if you specify them.
+    # From remote, use like `pip install pytorch-lightning[dev, docs]`
+    # From local copy of repo, use like `pip install ".[dev, docs]"`
+    req_files = [Path(p) for p in glob.glob(os.path.join(requirements_dir, "*.txt"))]
+    extras = {
+        p.stem: _load_requirements(file_name=p.name, path_dir=str(p.parent))
+        for p in req_files
+        if p.name not in skip_files
+    }
+    # todo: eventual some custom aggregations
+    extras = {name: sorted(set(reqs)) for name, reqs in extras.items()}
+    print("The extras are: ", extras)
+    return extras
 
 
 about = _load_py_module("__about__.py")
@@ -46,6 +65,7 @@ setup(
     python_requires=">=3.8",
     setup_requires=["wheel"],
     install_requires=_load_requirements(_PATH_ROOT),
+    extras_require=_prepare_extras(),
     project_urls={
         "Bug Tracker": "https://github.com/Lightning-AI/lightning-thunder/issues",
         "Documentation": "https://lightning-thunder.rtfd.io/en/latest/",

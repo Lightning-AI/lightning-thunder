@@ -12,7 +12,7 @@ test: clean
 	python -m coverage report
 
 docs: clean
-	pip install --quiet -r docs/requirements.txt
+	pip install --quiet -r requirements/docs.txt
 	python -m sphinx -b html -W --keep-going docs/source docs/build
 
 clean:

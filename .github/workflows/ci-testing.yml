@@ -2,7 +2,8 @@ name: CI testing
 
 # see: https://help.github.com/en/actions/reference/events-that-trigger-workflows
 on:  # Trigger the workflow on push or pull request, but only for the main branch
-  push: {}
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -70,7 +71,7 @@ jobs:
     - name: Install package & dependencies
       run: |
         pip --version
-        pip install -e . -U -q -r requirements/test.txt --find-links https://download.pytorch.org/whl/cpu/torch_stable.html
+        pip install -e '.[test]' -U -q --find-links https://download.pytorch.org/whl/cpu/torch_stable.html
         pip list
       shell: bash
 
