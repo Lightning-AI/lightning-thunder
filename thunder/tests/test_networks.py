@@ -144,7 +144,7 @@ def thunder_NanoGPTCausalSelfAttention_forward_functional(
     att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
     # TODO: convert ttorch.eq to ==
-    att = att.masked_fill(ttorch.eq(bias[:, :, :T, :T], 0), float("-inf"))
+    att = att.masked_fill(bias[:, :, :T, :T] == 0, float("-inf"))
     att = ttorch.softmax(att, dim=-1)
 
     y = att @ v

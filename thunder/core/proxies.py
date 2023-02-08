@@ -40,7 +40,7 @@ class Proxy:
     #   would hash to the same key, preventing them from being
     #   stored in a dict together.
     def __hash__(self):
-        return self.name.__hash__()
+        return object.__hash__(self)
 
 
 class NumberProxy(Proxy):
@@ -234,6 +234,15 @@ class TensorProxy(Proxy):
     def __radd__(self, other):
         ctx = get_language_context()
         return ctx.add(other, self)
+
+    # ==
+    def __eq__(self, other):
+        ctx = get_language_context()
+        if ctx is not None:
+            return ctx.eq(other, self)
+
+        # TODO: consider this out of context behavior
+        return super().__eq__(other)
 
     # <
     def __lt__(self, other):
