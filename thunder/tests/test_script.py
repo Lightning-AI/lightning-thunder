@@ -1,5 +1,5 @@
 import sys
-from functools import partial
+from functools import partial, wraps
 import math
 import types
 
@@ -410,6 +410,97 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 
     thunder_fn = thunder.make_traced(nanogpt_mlp_functional, executor=executor, _preprocess=True)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional)
+
+
+# TODO: enable me by converting torch inputs to Thunder inputs when proxying
+# TODO: once this test works, also test acquiring the function from a collection
+# @executors(dtypes=(thunder.float32,))
+# def test_fn_input(executor, device, dtype):
+#     make = partial(make_tensor, device=device, dtype=dtype)
+
+#     def foo(fn, *args):
+#         return fn(*args)
+
+#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+
+#     fn = torch.add
+#     shape = (2, 2)
+#     a = make(shape)
+#     b = make(shape)
+
+#     thunder_result = thunder_fn(fn, a, b)
+#     torch_result = foo(fn, a, b)
+
+#     assert_close(thunder_result, torch_result)
+
+# TODO: FIXME
+# @executors(dtypes=(thunder.float32,))
+# def test_local_translation(executor, device, dtype):
+#     make = partial(make_tensor, device=device, dtype=dtype)
+
+#     def foo(a, b):
+
+#         def _convert(x):
+#             return torch.add(x, 1)
+
+#         a, b = tuple(_convert(x) for x in (a, b))
+
+#         return a, b
+
+#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+
+#     shape = (2, 2)
+#     a = make(shape)
+#     b = make(shape)
+
+#     thunder_result = thunder_fn(fn, a, b)
+#     torch_result = foo(fn, a, b)
+
+#     assert_close(thunder_result, torch_result)
+
+# @executors(dtypes=(thunder.float32,))
+# def test_local_wrapped_translation(executor, device, dtype):
+#     make = partial(make_tensor, device=device, dtype=dtype)
+
+#     def foo(a, b):
+
+#         @wraps(torch.add)
+#         def _convert(x):
+#             return torch.add(x, 1)
+
+#         a, b = tuple(_convert(x) for x in (a, b))
+
+#         return a, b
+
+#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+
+#     shape = (2, 2)
+#     a = make(shape)
+#     b = make(shape)
+
+#     thunder_result = thunder_fn(fn, a, b)
+#     torch_result = foo(fn, a, b)
+
+#     assert_close(thunder_result, torch_result)
+
+
+# @executors(dtypes=(thunder.float32,))
+# def test_lambda_translation(executor, device, dtype):
+#     make = partial(make_tensor, device=device, dtype=dtype)
+
+#     def foo(a, b):
+#         return map(lambda a: torch.add(a, 1), (a, b))
+
+#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+
+#     shape = (2, 2)
+#     a = make(shape)
+#     b = make(shape)
+
+#     thunder_result = thunder_fn(fn, a, b)
+#     torch_result = foo(fn, a, b)
+
+#     assert_close(thunder_result, torch_result)
 
 
 # @executors(dtypes=(thunder.float32,))
