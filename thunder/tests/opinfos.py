@@ -744,7 +744,7 @@ elementwise_unary_ops.append(log10_opinfo)
 
 log1p_opinfo = OpInfo(
     tlang.log1p,
-    domain=(0, math.inf),
+    domain=(-1, math.inf),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=torch.log1p,
     test_directives=(
