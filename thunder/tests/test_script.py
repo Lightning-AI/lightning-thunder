@@ -285,6 +285,20 @@ def test_nanogpt_functionalization():
     assert_close(o[0], o2[0])
 
 
+def test_nanogpt_tom():
+    m = nanogpt_model.GPT(nanogpt_model.GPTConfig(dropout=0.0))
+    tom = thunder.make_traced(m, executor="torch", _preprocess=True)
+    x = torch.randint(0, 255, (5, 5))
+
+    torch.manual_seed(5)
+    o = tom(x, None)
+    torch.manual_seed(5)
+
+    o2 = m.forward(x)
+
+    assert_close(o[0], o2[0])
+
+
 def bar(a, b):
     return torch.nn.functional.linear(a, b)
 

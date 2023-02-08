@@ -91,6 +91,9 @@ def undo_ssa(gr):
                 name = v.name
             if name is None:
                 name = f"_tmp_{idx}"
+            else:
+                name = name.replace(".", "_").replace("[", "").replace("]", "")
+
             fullname = name
             suffix = 0
             while fullname in lv_names:

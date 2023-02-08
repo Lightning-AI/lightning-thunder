@@ -10,6 +10,9 @@ import thunder.core.proxies as proxies
 import thunder.langs as langs
 from thunder.__about__ import *
 from thunder.core.pytree import tree_flatten, tree_unflatten
+import thunder.core.script.frontend
+import thunder.core.script.passes
+import thunder.core.script.python_ir
 import thunder.core.script as script
 
 from .core.trace import (
@@ -223,21 +226,42 @@ def make_trace(fn: Callable, executor: Optional[str] = None, language_ctx=langs.
 
 # Preprocesses function
 # Currently tries to map torch.foo lookups to thunder.torch.foo lookups
-def preprocess(fn):
-
-    gr = script.frontend.acquire_method(fn, verbose=False)
+def preprocess(fn, is_module):
+    gr = script.frontend.acquire_method(fn.forward if is_module else fn, verbose=False)
 
     script.frontend.make_ssa(gr)
     script.frontend.make_single_return(gr)
-
-    script.passes.inline_submodule_calls(gr)
-    script.passes.merge_blocks_where_possible(gr)
+    thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
+    if is_module:
+        additional_param_names = thunder.core.script.passes.module_to_function(gr)
     script.passes.strongly_inline_functions(gr)
     script.passes.torch_to_thunder(gr)
 
     thunder_fn = script.python_ir.generate_function(gr)
-
+    if is_module:
+        thunder_fn._additional_param_names = additional_param_names
     return thunder_fn
+
+
+import torch  # oops
+
+
+class ThunderOptimizedModule(torch.nn.Module):  # TOM
+    # todo: subclass nn.Module or forward things like .state_dict() to the
+    #       model
+    def __init__(self, model, fn, additional_param_names):
+        super().__init__()
+        self._model = model
+        self._forward_fn = fn
+        self._additional_param_names = additional_param_names
+
+    def __call__(self, *args, **kwargs):
+        if kwargs:
+            raise NotImplementedError("keyword args not yet supported")
+        sd = self._model.state_dict()
+        args_params = (*args, *(sd[n.replace("[", "").replace("]", "")] for n in self._additional_param_names))
+        res = self._forward_fn(*args_params)
+        return res
 
 
 def make_traced(
@@ -264,14 +288,17 @@ def make_traced(
     """
 
     ex = _get_executor(executor)
+    langctx = language_ctx.ctx()
 
     if _preprocess:
-        fn = preprocess(fn)
+        tfn = preprocess(fn, is_module=isinstance(fn, langctx.module_cls))
+    else:
+        tfn = fn
 
     @wraps(fn)
     def _fn(*args, **kwargs):
         acquisition_start = time.time_ns()
-        trace = make_trace(fn, executor, language_ctx)(*args, **kwargs)
+        trace = make_trace(tfn, executor, language_ctx)(*args, **kwargs)
         acquisition_end = time.time_ns()
 
         translation_start = time.time_ns()
@@ -297,5 +324,8 @@ def make_traced(
         if _return_fusion:
             return result, fusion
         return result
+
+    if isinstance(fn, langctx.module_cls):
+        _fn = ThunderOptimizedModule(fn, _fn, tfn._additional_param_names)
 
     return _fn

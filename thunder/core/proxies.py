@@ -186,7 +186,7 @@ class TensorProxy(Proxy):
         if tensor is not None:
             # Pulls metadata from the tensor, but explicit kwargs take precedence
             assert isinstance(tensor, TensorProxy)
-            self.shape = tensor.shape if shape is None else shape
+            self.shape = tuple(tensor.shape if shape is None else shape)
             self._dtype = tensor.dtype if dtype is None else dtype
             self.device = tensor.device if device is None else device
             self.strides = tensor.strides if strides is None else strides
@@ -197,7 +197,7 @@ class TensorProxy(Proxy):
             assert dtype is not None
 
             # Shape is a tuple of integer proxies
-            self.shape = shape
+            self.shape = tuple(shape)
             self.device = device
             self._dtype = dtype
             self.strides = strides

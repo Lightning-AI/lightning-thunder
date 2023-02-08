@@ -163,6 +163,7 @@ class TorchLangCtx:
     def __init__(self):
         self.dtype_cls = torch.dtype
         self.tensor_cls = torch.Tensor
+        self.module_cls = torch.nn.Module
 
     def __repr__(self):
         return f"[TorchLangCtx]"
@@ -706,10 +707,12 @@ def add(a, b, *, alpha=None):
     return a + b
 
 
+@torch_function(torch.eq)
 def eq(a, b):
     return tlang.eq(a, b)
 
 
+@torch_function(torch.lt)
 def lt(a, b):
     return tlang.lt(a, b)
 
@@ -724,10 +727,12 @@ def pow(a, b):
     return tlang.pow(a, b)
 
 
+@torch_function(torch.sub)
 def sub(a, b):
     return tlang.sub(a, b)
 
 
+@torch_function(torch.true_divide)
 def true_divide(a, b):
     return tlang.true_divide(a, b)
 
@@ -1021,7 +1026,9 @@ def _dropout_helper(self, val):
 
 # full torch signature is: a, p, training, inplace
 @torch_function(torch.nn.functional.dropout)
-def dropout(a, p=0.5):
+def dropout(a, p=0.5, training=True, inplace=False):
+    if not training or inplace:
+        raise NotImplementedError("only training=True, inplace=False is supported in dropout")
     utils.check(
         p <= 1 and p >= 0,
         lambda: f"dropout probability has to be between 0 and 1, but got, {p}",
@@ -1039,6 +1046,7 @@ def dropout(a, p=0.5):
     return a * dropout_mask * scale
 
 
+@torch_function(torch.nn.functional.embedding)
 def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
     padding_idx = padding_idx if padding_idx is not None else -1
     return prims.embedding(
@@ -1053,6 +1061,7 @@ def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_g
 
 
 # CompositeImplicitAutograd - don't register decomp
+@torch_function(torch.nn.functional.softmax)
 def softmax(a, dim, dtype=None):
     result_dtype = dtype or a.dtype
     computation_dtype = utils.get_computation_dtype(result_dtype)
@@ -1136,6 +1145,7 @@ def native_layer_norm(a, normalized_shape, weight, bias, eps):
     return out, mean, rstd
 
 
+@torch_function(torch.nn.functional.layer_norm)
 def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
     return native_layer_norm(input, normalized_shape, weight, bias, eps)[0]
 

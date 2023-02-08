@@ -3,6 +3,7 @@
 # i.e. without branches
 import copy
 import inspect
+from typing import List
 
 from .python_ir_data import jump_instructions, stack_effect_detail, unconditional_jump_names
 
@@ -478,7 +479,7 @@ def make_dot(gr, format="png", add_names=False):
     return dot
 
 
-def clone_blocks(blocks_to_clone: list[Block], translation_dict=None):
+def clone_blocks(blocks_to_clone: List[Block], translation_dict=None):
     assert all(bl.is_ssa for bl in blocks_to_clone)
     if translation_dict is None:
         translation_dict = {}
