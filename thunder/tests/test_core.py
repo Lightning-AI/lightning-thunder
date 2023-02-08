@@ -1,6 +1,7 @@
 import operator
 from functools import partial, reduce
 from itertools import product
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -734,7 +735,7 @@ def test_hybrid_execution(executor, device, dtype):
 
 @executors(dtypes=NOTHING)
 def test_dtype_conversion(executor: Executor, device, _):
-    if isinstance(executor, nvFuser):
+    if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0":
         pytest.xfail("https://github.com/csarofeen/pytorch/issues/2370")
 
     make = partial(make_tensor, (2, 2), device=device)
@@ -748,9 +749,6 @@ def test_dtype_conversion(executor: Executor, device, _):
     supported_dtypes = set(datatypes.resolve_dtypes(executor.supported_dtypes))
     dtypes = strong_dtypes.intersection(supported_dtypes)
     for a, b in product(dtypes, dtypes):
-        # if not utils.can_safe_cast_to(cast_from=a, cast_to=b):
-        #     continue
-
         a = ttorch.torch_dtype(a)
         b = ttorch.torch_dtype(b)
         t = make(dtype=a)

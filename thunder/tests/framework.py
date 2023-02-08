@@ -88,6 +88,17 @@ class nvFuser(Executor):
     def make_callable(self, fn, **kwargs):
         return make_traced(fn, executor="nvfuser", **kwargs)
 
+    # TODO: refactor this so can query the nvFuserCtx for the version
+    def version(self):
+        try:
+            import nvfuser
+
+            if hasattr(nvfuser, "version"):
+                return nvfuser.version()
+            return -1
+        except:
+            return -1
+
 
 class TorchEx(Executor):
     name = "TorchEx"
@@ -107,6 +118,9 @@ class TorchEx(Executor):
     def make_callable(self, fn, **kwargs):
         return make_traced(fn, executor="torch", **kwargs)
 
+    def version(self):
+        return torch.__version__
+
 
 def _all_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
@@ -120,6 +134,8 @@ def _all_executors():
         pass
 
     try:
+        # TODO: refactor this so can query the nvFuserCTX for nvfuser
+        #   (this requires making the ctx importable without nvFuser)
         import torch
 
         try:
