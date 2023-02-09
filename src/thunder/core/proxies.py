@@ -39,6 +39,10 @@ class Proxy:
     def __hash__(self):
         return object.__hash__(self)
 
+    def replace_name(self, name):
+        """Returns a copy of this proxy with a new name."""
+        return self.__class__(name=name)
+
 
 class NumberProxy(Proxy):
     def __init__(self, *, name, value, python_type):
@@ -73,6 +77,10 @@ class NumberProxy(Proxy):
     def __ne__(self, other):
         other_value = other.value if isinstance(other, NumberProxy) else other
         return self.value != other_value
+
+    def replace_name(self, name):
+        """Returns a copy of this proxy with a new name."""
+        return self.__class__(name=name, value=self.value, python_type=self.python_type)
 
 
 # NOTE: Why no bool proxy? Because bool cannot be subclassed. There are no bool
@@ -218,6 +226,16 @@ class TensorProxy(Proxy):
         To acquire the actual dtype use "true_dtype"
         """
         return dtypes.to_strong_dtype(self._dtype)
+
+    def replace_name(self, name):
+        """Returns a copy of this proxy with a new name."""
+        return self.__class__(
+            name=name,
+            shape=self.shape,
+            device=self.device,
+            dtype=self.dtype,
+            strides=self.strides,
+        )
 
     def numel(self):
         return reduce(operator.mul, self.shape, 1)

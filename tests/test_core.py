@@ -115,6 +115,24 @@ def test_nested_make_trace(executor, device, _):
 
 
 @executors(dtypes=NOTHING)
+def test_nested_make_trace_no_name_collision(executor, device, _):
+    def foo(a, b):
+        return tlang.add(a, b)
+
+    def bar(*args):
+        foo_trace = thunder.make_trace(foo, executor=executor)(*args)
+        # The name of the output of the add symbol should not be the same as
+        # the name of the first argument to the bar function.
+        assert foo_trace.symbols[0].outputs[0].name != foo_trace.args[0].name
+        return foo(*args)
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+    thunder.make_trace(bar, executor=executor)(a, b)
+
+
+@executors(dtypes=NOTHING)
 def test_eval_trace(executor, device, _):
     # This test ensures that eval_trace() can be called from within a traced
     # region and all the symbols in the trace are properly evaluated.

@@ -11,6 +11,7 @@ import thunder.core.script.passes
 import thunder.core.script.python_ir
 import thunder.langs as langs
 from thunder.__about__ import *
+from thunder.core.proxies import Proxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 
 from .core.trace import (
@@ -113,6 +114,7 @@ def _make_proxies(fn, trace, langctx, *args, **kwargs):
 
     1. All number and tensor inputs are proxied, including if they're in a container.
     2. All other inputs are passed unmodified.
+    3. If a proxy is passed in as an input, its name is regenerated to avoid name collisions.
     """
 
     sig = inspect.signature(fn)
@@ -130,6 +132,12 @@ def _make_proxies(fn, trace, langctx, *args, **kwargs):
             # Converts dtypes
             thunder_dtype = langctx.thunder_dtype(x)
             return thunder_dtype
+
+        if isinstance(x, Proxy):
+            # Regenerates proxy names to avoid name collisions
+            name = trace.make_proxy_name()
+            p = x.replace_name(name)
+            return p
 
         return x
 
