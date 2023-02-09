@@ -1,14 +1,13 @@
+import math
 from functools import reduce
 from numbers import Number
 from typing import Sequence
-import copy
-import math
 
 import thunder.core.dtypes as dtypes
 
 # TODO: remove prims import
 from . import prims, utils
-from .proxies import NumberProxy, TensorProxy
+from .proxies import TensorProxy
 
 # This file defines Thunder's "core" language.
 #

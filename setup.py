@@ -8,11 +8,12 @@ from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
 
 _PATH_ROOT = os.path.dirname(__file__)
+_PATH_SOURCE = os.path.join(_PATH_ROOT, "src")
 _PATH_REQUIRES = os.path.join(_PATH_ROOT, "requirements")
 
 
 def _load_py_module(fname, pkg="thunder"):
-    spec = spec_from_file_location(os.path.join(pkg, fname), os.path.join(_PATH_ROOT, pkg, fname))
+    spec = spec_from_file_location(os.path.join(pkg, fname), os.path.join(_PATH_SOURCE, pkg, fname))
     py = module_from_spec(spec)
     spec.loader.exec_module(py)
     return py
@@ -56,7 +57,8 @@ setup(
     url=about.__homepage__,
     download_url="https://github.com/Lightning-AI/lightning-thunder",
     license=about.__license__,
-    packages=find_packages(exclude=["thunder/tests", "docs"]),
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     long_description=about.__long_doc__,
     long_description_content_type="text/markdown",
     include_package_data=True,

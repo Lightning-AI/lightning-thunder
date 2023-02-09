@@ -4,14 +4,13 @@ from functools import partial, reduce
 from numbers import Number
 from typing import Callable, Optional, Sequence, Tuple
 
-import torch
-
 import thunder.core.dtypes as dtypes
 import thunder.core.lang as tlang
 import thunder.core.prims as prims
 import thunder.core.proxies as proxies
 import thunder.core.trace as trace
 import thunder.core.utils as utils
+import torch
 from thunder.core.proxies import TensorProxy
 from thunder.core.utils import langctx
 

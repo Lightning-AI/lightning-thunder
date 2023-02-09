@@ -11,13 +11,13 @@ exclude = "(.eggs|.git|.hg|.mypy_cache|.venv|_build|buck-out|build|dist)"
 
 [tool.pytest.ini_options]
 testpaths = [
-    "thunder/tests",
+    "tests",
 ]
 
 
 [tool.mypy]
 files = [
-    "thunder",
+    "src",
 ]
 install_types = true
 non_interactive = true
@@ -53,14 +53,5 @@ module = [
     "thunder.core.utils",
     "thunder.executors.nvfuser",
     "thunder.executors.torch",
-    "thunder.tests.framework",
-    "thunder.tests.nanogpt_model",
-    "thunder.tests.opinfos",
-    "thunder.tests.test_core",
-    "thunder.tests.test_elementwise",
-    "thunder.tests.test_networks",
-    "thunder.tests.test_ops",
-    "thunder.tests.test_reductions",
-    "thunder.tests.test_script",
 ]
 ignore_errors = "True"

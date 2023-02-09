@@ -1,15 +1,14 @@
 import operator
-from typing import Sequence
 from numbers import Number
 
-import torch
-
 import thunder.core.dtypes as dtypes
+import thunder.langs.torch as ttorch
+import torch
 from thunder.core import prims
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
+from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Trace
-import thunder.langs.torch as ttorch
+
 from thunder.executors.executor_prims import nvOps
 
 __all__ = [
