@@ -650,11 +650,12 @@ def test_fusion_reuse(executor, device, dtype):
     args = (a,)
     kwargs = {"b": b, "flag": True}
 
-    thunder_result, fusion = traced_foo(*args, **kwargs)
-    torch_result = foo(*args, **kwargs)
-    assert_close(thunder_result, torch_result)
+    thunder_result = traced_foo(*args, **kwargs)
 
-    fusion_result = fusion(*args, **kwargs)
+    torch_result = foo(*args, **kwargs)
+    assert_close(thunder_result["result"], torch_result)
+
+    fusion_result = thunder_result["fusion"](*args, **kwargs)
     assert_close(fusion_result, torch_result)
 
     # Calls the fusion with new tensor data (but preserves the flag arg)
@@ -664,7 +665,7 @@ def test_fusion_reuse(executor, device, dtype):
     args = (a,)
     kwargs = {"b": b, "flag": True}
 
-    fusion_result = fusion(*args, **kwargs)
+    fusion_result = thunder_result["fusion"](*args, **kwargs)
     torch_result = foo(*args, **kwargs)
     assert_close(fusion_result, torch_result)
 
@@ -675,7 +676,7 @@ def test_fusion_reuse(executor, device, dtype):
     args = (a,)
     kwargs = {"b": b, "flag": False}
 
-    fusion_result = fusion(*args, **kwargs)
+    fusion_result = thunder_result["fusion"](*args, **kwargs)
     torch_result = foo(*args, b=b, flag=True)
     assert_close(fusion_result, torch_result)
 
@@ -689,11 +690,11 @@ def test_fusion_reuse(executor, device, dtype):
     a = make_tensor((4, 16), device=device, dtype=tdtype)
     b = make_tensor((16, 8), device=device, dtype=tdtype)
 
-    thunder_result, fusion = traced_bar(a, b)
+    thunder_result = traced_bar(a, b)
     torch_result = bar(a, b)
-    assert_close(torch_result, thunder_result)
+    assert_close(torch_result, thunder_result["result"])
 
-    fusion_result = fusion(a, b)
+    fusion_result = thunder_result["fusion"](a, b)
     assert_close(torch_result, fusion_result)
 
 

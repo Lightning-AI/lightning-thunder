@@ -271,6 +271,7 @@ def make_traced(
     _info=False,
     _return_fusion=False,
     _preprocess=False,
+    _profile_info=False,
 ) -> Callable:
     """Converts a callable in a callable that will be traced and then executed.
 
@@ -302,7 +303,14 @@ def make_traced(
         acquisition_end = time.time_ns()
 
         translation_start = time.time_ns()
-        fusion = ex.fuse(trace)
+        # TODO: probably refactor this to not be such an ugly variadic return
+        #   (maybe by returning a dict)
+        profile_info = None
+        fusion = None
+        if _profile_info:
+            fusion, profile_info = ex.fuse(trace, profile_info=_profile_info)
+        else:
+            fusion = ex.fuse(trace)
         translation_end = time.time_ns()
 
         invocation_start = time.time_ns()
@@ -317,12 +325,14 @@ def make_traced(
                 "translation_time": translation_end - translation_start,
             }
 
-        if _info and _return_fusion:
-            return result, meta, fusion
-        if _info:
-            return result, meta
-        if _return_fusion:
-            return result, fusion
+        if _info or _return_fusion or _profile_info:
+            return {
+                "result": result,
+                "meta": meta,
+                "fusion": fusion,
+                "profile_info": profile_info,
+            }
+
         return result
 
     if isinstance(fn, langctx.module_cls):

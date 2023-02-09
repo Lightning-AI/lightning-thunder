@@ -15,6 +15,9 @@ from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.executors.torch import _fuse_region as _fuse_torch_region
 
+# TODO: consider further refactoring this
+from thunder.executors.executor_prims import nvOps
+
 # Imports nvFuser
 # NOTE: nvFuser API changed after PyTorch 1.13
 nvfuser_version = LooseVersion("0.0.0")
@@ -46,10 +49,6 @@ except Exception:
 __all__ = [
     "nvFuserCtx",
 ]
-
-
-class nvOps(Enum):
-    VAR_MEAN = auto()
 
 
 _torch_dtype_to_nvfuser_dtype_map = {
@@ -402,7 +401,7 @@ def var_mean(a, dim=None, unbiased=None, keepdim=False, *, correction=None):
     # the real and imaginary parts
     # TODO: Creating a complex tensor from real and imaginary parts is not supported
     utils.check(
-        not utils.is_complex_dtype(a),
+        not utils.is_complex_dtype(a.dtype),
         lambda: "Complex tensors are not supported!",
     )
 
@@ -629,7 +628,11 @@ def _fuse_region(inputs, outputs, symbols):
 # NOTE: the function can be reused, but it should be called with tensors that have the
 #   same metadata, numbers of the same type, all conditionals on the number evaluated
 #   the same as previous number inputs, and all other values constant.
-def _fuse(trace):
+def _fuse(
+    trace,
+    *,
+    profile_info=False,
+):
     # Separates the trace into parts to execute with nvFuser, and parts to execute with PyTorch
     # TODO: consider where this pass should live in the future
     # TODO: consider reordering operations cleverly
@@ -763,7 +766,7 @@ def _fuse(trace):
         elif region.is_supported:
             region.fusion = _fuse_region(region.inputs, region.outputs, region.symbols)
         else:
-            # CASE: not region.is_supported (currently used PyTorch to run)
+            # CASE: not region.is_supported (currently using PyTorch to run)
             region.fusion = _fuse_torch_region(region.inputs, region.outputs, region.symbols)
 
     #
@@ -822,6 +825,9 @@ def _fuse(trace):
     exec(code, ctx)
     fusion = ctx["fusion"]
 
+    if profile_info:
+        return fusion, regions
+
     return fusion
 
 
@@ -838,5 +844,10 @@ class nvFuserCtx:
 
         return None
 
-    def fuse(self, trace):
-        return _fuse(trace)
+    def fuse(
+        self,
+        trace,
+        *,
+        profile_info=False,
+    ):
+        return _fuse(trace, profile_info=profile_info)

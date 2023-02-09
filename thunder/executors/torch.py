@@ -10,6 +10,7 @@ from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Trace
 import thunder.langs.torch as ttorch
+from thunder.executors.executor_prims import nvOps
 
 __all__ = [
     "torchCtx",
@@ -97,6 +98,10 @@ def squeeze_helper(a, dim):
     return a
 
 
+def view_helper(a, shape):
+    return a.view(shape)
+
+
 def is_tensor(a):
     return isinstance(a, torch.Tensor)
 
@@ -153,6 +158,7 @@ ops_to_torch_ops_map = {
     prims.Ops.SQUEEZE: squeeze_helper,
     # NOTE: PyTorch's transpose is not equivalent to the transpose prim
     prims.Ops.TRANSPOSE: "torch.permute",
+    prims.Ops.VIEW: view_helper,
     # Elementwise unary prims
     prims.Ops.ABS: abs_helper,
     prims.Ops.ACOS: "torch.acos",
@@ -193,6 +199,8 @@ ops_to_torch_ops_map = {
     prims.Ops.AMAX: "torch.amax",
     prims.Ops.SUM: "torch.sum",
     prims.Ops.VAR: "torch.var",
+    # NOTE: VAR_MEAN is here to execute nvFuser traces with PyTorch
+    nvOps.VAR_MEAN: "torch.var_mean",
     # Matmul prims
     prims.Ops.LINEAR: "torch.nn.functional.linear",
     prims.Ops.MATMUL: "torch.matmul",
@@ -238,9 +246,8 @@ def _extract_name(x):
     return str(x)
 
 
-# TODO: probably want to call operations in a no grad context?
 # TODO: refactor _fuse_region to be called by a common executor utility to generate fusions
-def _fuse_region(inputs, outputs, symbols):
+def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=True):
     # Defines utilities
     tab = "  "
 
@@ -251,8 +258,9 @@ def _fuse_region(inputs, outputs, symbols):
     }
 
     # Creates signature
+    # NOTE: PyTorch fusions are run in a no grad context
     arg_str = ", ".join(tuple(_extract_name(inp) for inp in inputs))
-    cstr = f"def fusion({arg_str}):"
+    cstr = f"@torch.no_grad()\ndef fusion({arg_str}):"
 
     # Calls PyTorch and Python operations
     cstr += f"\n{tab}# Executes the trace"
@@ -262,10 +270,11 @@ def _fuse_region(inputs, outputs, symbols):
         torch_op = _get_torch_op(sym.op)
         result = sym.outputs[0]
 
-        if not isinstance(result, Proxy):
-            raise NotImplementedError
+        # TODO: relax requirement that prim outputs are proxies?
+        for out in sym.outputs:
+            if not isinstance(out, Proxy):
+                raise NotImplementedError
 
-        # NOTE: currently assumes result is always a proxy
         op_str = None
         if isinstance(torch_op, str):
             op_str = torch_op
@@ -273,18 +282,22 @@ def _fuse_region(inputs, outputs, symbols):
             op_str = torch_op.__name__
             ctx[op_str] = torch_op
 
+        result_str = ", ".join(out.name for out in sym.outputs)
         arg_str = ", ".join(f"{a}" for a in torch_args)
         kwarg_str = ", ".join(f"{k}={v}" for k, v in torch_kwargs.items())
         segue_str = ", " if (len(arg_str) > 0 and len(kwarg_str) > 0) else ""
 
-        cstr += f"\n{tab}{result.name} = {op_str}({arg_str}{segue_str}{kwarg_str})"
+        cstr += f"\n{tab}{result_str} = {op_str}({arg_str}{segue_str}{kwarg_str})"
 
     # Constructs outputs
     output_strs = []
     for out in outputs:
         if isinstance(out, TensorProxy):
-            # TODO: FIXME: currently makes all outputs contiguous to simplify stride analysis
-            output_strs.append(f"{_extract_name(out)}.contiguous()")
+            if _contiguous:
+                # TODO: FIXME: currently makes all outputs contiguous to simplify stride analysis
+                output_strs.append(f"{_extract_name(out)}.contiguous()")
+            else:
+                output_strs.append(f"{_extract_name(out)}")
         else:
             output_strs.append(_extract_name(out))
     out_str = ", ".join(output_strs)
@@ -293,6 +306,9 @@ def _fuse_region(inputs, outputs, symbols):
     code = compile(cstr, "torch.gen", mode="exec")
     exec(code, ctx)
     fusion = ctx["fusion"]
+
+    if _return_code:
+        return fusion, cstr
 
     return fusion
 
@@ -317,8 +333,9 @@ def _fuse(trace):
     #
 
     # Writes the signatures
+    # NOTE: PyTorch fusions are run in a no grad context
     tab = "  "
-    cstr = f"def fusion(*args, **kwargs):"
+    cstr = f"@torch.no_grad()\ndef fusion(*args, **kwargs):"
     # TODO: maybe consider the possibility of name conflicts?
     ctx = {
         "torch": torch,
@@ -395,5 +412,8 @@ class torchCtx:
     def intercept(self, op):
         return None
 
-    def fuse(self, trace):
+    # TODO: maybe return some actual profiling information
+    def fuse(self, trace, *, profile_info=False):
+        if profile_info:
+            return _fuse(trace), None
         return _fuse(trace)

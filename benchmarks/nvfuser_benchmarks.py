@@ -17,6 +17,8 @@ import thunder
 import thunder.core.lang as tlang
 import thunder.langs.torch as ttorch
 import thunder.core.dtypes as dtypes
+import thunder.core.proxies as proxies
+from thunder.executors.torch import _fuse_region as fuse_torch_region
 
 # This file contains custom nvFuser-related benchmarks.
 
@@ -75,7 +77,7 @@ def time_ns(fn, gen, *, warmup_iters=5, iters=20):
 
 # TODO: consider refactoring this function with the above so they share more code
 def time_thunder_ns(fn, gen, *, warmup_iters=5, iters=20):
-    fn = thunder.make_traced(fn, executor="nvfuser", _info=True, _return_fusion=True)
+    fn = thunder.make_traced(fn, executor="nvfuser", _info=True, _return_fusion=True, _profile_info=True)
 
     def _helper(fn_):
         args, kwargs = gen()
@@ -88,7 +90,7 @@ def time_thunder_ns(fn, gen, *, warmup_iters=5, iters=20):
 
     # NOTE: Initial run
     initial_time, initial_result = _helper(fn)
-    result, meta, fusion = initial_result
+    fusion = initial_result["fusion"]
 
     # NOTE: Warmups (a common benchmarking technique)
     for _ in range(warmup_iters):
@@ -145,6 +147,79 @@ def ns_to_us(ns):
     return round(ns / 1000, 2)
 
 
+def prettyprint_profile(profile):
+    print(f"Prettyprinting profile of {len(profile)} fusions")
+
+    for region in profile:
+        if region.is_supported:
+            print(f"Fused region of {len(region.symbols)} operators")
+        else:
+            print(f"Unfused region of {len(region.symbols)} operators")
+
+        thunder_fusion = region.fusion
+
+        # NOTE: this can occur if the region has no outputs
+        if thunder_fusion is None:
+            print("region has no outputs, so was not profiled")
+            continue
+
+        def gen():
+            return construct_inputs_for_region(region), {}
+
+        fusion, code = get_torch_code_for_region(region, contiguous=False)
+        pt2 = torch.compile(fusion)
+
+        print("Torch code for the region:")
+        print(code)
+
+        thunder_stats = time_ns(thunder_fusion, gen)
+        pt2_stats = time_ns(pt2, gen)
+
+        print(f"thunder+nvFuser median time: {ns_to_us(thunder_stats['median'])}")
+        print(f"pt2 median time: {ns_to_us(pt2_stats['median'])}")
+
+
+def summarize_profile(profile):
+    print(f"Summarizing profile of {len(profile)} fusions")
+
+    unfused_regions = 0
+    unfused_prims = set()
+    for region in profile:
+        if not region.is_supported:
+            unfused_regions += 1
+            for sym in region.symbols:
+                unfused_prims.add(sym.name)
+
+    print(f"{unfused_regions} fusions were executed by PyTorch")
+    print(f"Unfused prims: {unfused_prims}")
+
+
+def construct_inputs_for_region(region):
+    inps = []
+    for inp in region.inputs:
+        if isinstance(inp, proxies.TensorProxy):
+            tdtype = ttorch.torch_dtype(inp.dtype)
+            a = make_tensor(inp.shape, device="cuda", dtype=tdtype)
+            inps.append(a)
+        elif isinstance(inp, proxies.NumberProxy):
+            inps.append(inp.value)
+        else:
+            inps.append(inp)
+
+    return inps
+
+
+def get_torch_code_for_region(region, *, contiguous):
+    fusion, code = fuse_torch_region(
+        region.inputs, region.outputs, region.symbols, _return_code=True, _contiguous=contiguous
+    )
+    return fusion, code
+
+
+def _prettyprint_thunder_nvfuser_profile_info(profile):
+    prettyprint_profile(profile)
+
+
 def _prettyprint_thunder_nvfuser_stats(stats):
     us = "\u03BCs"
 
@@ -153,10 +228,10 @@ def _prettyprint_thunder_nvfuser_stats(stats):
         meta = None
         if s == "initial":
             ns = stats["initial"]
-            _, meta, _ = stats["initial_result"]
+            meta = stats["initial_result"]["meta"]
         elif s == "lazy":
             ns = stats["lazy_final"]
-            _, meta, _ = stats["lazy_final_result"]
+            meta = stats["lazy_final_result"]["meta"]
 
         iter_desc = None
         if s == "initial":
@@ -242,6 +317,9 @@ def _benchmark(name, *, gen, iters, thunder_fn, other_name, other_fn):
     print(f"Benchmark: {name}")
 
     thunder_stats = time_thunder_ns(thunder_fn, gen, iters=iters)
+    profile_info = thunder_stats["lazy_final_result"]["profile_info"]
+
+    _prettyprint_thunder_nvfuser_profile_info(profile_info)
     _prettyprint_thunder_nvfuser_stats(thunder_stats)
 
     other_stats = time_ns(other_fn, gen, iters=iters)
@@ -680,8 +758,7 @@ class NanoGPTCausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
-        # TODO: re-enable me when indexing is supported
-        # att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
 
         att = F.softmax(att, dim=-1)
         att = self.attn_dropout(att)
@@ -709,7 +786,7 @@ def NanoGPTCausalSelfAttention_forward_functional(
     # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
     att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
-    # att = att.masked_fill(bias[:, :, :T, :T] == 0, float("-inf"))
+    att = att.masked_fill(bias[:, :, :T, :T] == 0, float("-inf"))
 
     att = torch.softmax(att, dim=-1)
     att = torch.nn.functional.dropout(att)
@@ -735,7 +812,7 @@ def thunder_NanoGPTCausalSelfAttention_forward_functional(
     # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
     att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
-    # att = att.masked_fill(bias[:, :, :T, :T] == 0, float("-inf"))
+    att = att.masked_fill(bias[:, :, :T, :T] == 0, float("-inf"))
 
     att = ttorch.softmax(att, dim=-1)
     att = ttorch.dropout(att)
@@ -937,7 +1014,7 @@ def _nanogpt_block_factory(n, *, dtype, iters, make_arg):
 
 # TODO: revise with real shapes
 def nanogpt_block_2x8x768_float32(iters, make_arg):
-    _nanogpt_csa_factory(8, dtype=dtypes.float32, iters=iters, make_arg=make_arg)
+    _nanogpt_block_factory(8, dtype=dtypes.float32, iters=iters, make_arg=make_arg)
 
 
 benchmarks = {

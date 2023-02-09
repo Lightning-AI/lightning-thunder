@@ -238,7 +238,7 @@ class TensorProxy(Proxy):
     # ==
     def __eq__(self, other):
         ctx = get_language_context()
-        if ctx is not None:
+        if isinstance(other, (Number, Proxy)) and ctx is not None:
             return ctx.eq(other, self)
 
         # TODO: consider this out of context behavior

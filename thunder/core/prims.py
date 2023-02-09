@@ -40,6 +40,8 @@ __all__ = [
     "slice",
     "squeeze",
     "transpose",
+    # NOTE: view is EXPERIMENTAL ONLY
+    "view",
     # Elementwise unary prims
     "abs",
     "acos",
@@ -104,6 +106,7 @@ class Ops(Enum):
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
+    VIEW = auto()
     # Elementwise unary prims
     ABS = auto()
     ACOS = auto()
@@ -1099,6 +1102,8 @@ def transpose_meta(a, permutation):
 
 
 transpose = make_prim(Ops.TRANSPOSE, "transpose", transpose_meta)
+
+view = make_prim(Ops.VIEW, "view", reshape_meta)
 
 #
 # Reduction prims
