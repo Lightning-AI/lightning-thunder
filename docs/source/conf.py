@@ -23,12 +23,12 @@ import pt_lightning_sphinx_theme
 
 _PATH_HERE = os.path.abspath(os.path.dirname(__file__))
 _PATH_ROOT = os.path.realpath(os.path.join(_PATH_HERE, "..", ".."))
-# sys.path.insert(0, os.path.abspath(_PATH_ROOT))
+sys.path.insert(0, os.path.abspath(_PATH_ROOT))
 
 SPHINX_MOCK_REQUIREMENTS = int(os.environ.get("SPHINX_MOCK_REQUIREMENTS", True))
 
 # alternative https://stackoverflow.com/a/67692/4521646
-spec = spec_from_file_location("thunder.__about__", os.path.join(_PATH_ROOT, "src", "thunder", "__about__.py"))
+spec = spec_from_file_location("thunder/__about__.py", os.path.join(_PATH_ROOT, "thunder", "__about__.py"))
 about = module_from_spec(spec)
 spec.loader.exec_module(about)
 

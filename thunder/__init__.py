@@ -1,18 +1,20 @@
 import inspect
 import os
 import time
+from collections import deque
 from functools import wraps
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import thunder.core.dtypes as dtypes
-import thunder.core.script as script
-import thunder.core.script.frontend
-import thunder.core.script.passes
-import thunder.core.script.python_ir
+import thunder.core.proxies as proxies
 import thunder.langs as langs
 from thunder.__about__ import *
 from thunder.core.proxies import Proxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
+import thunder.core.script.frontend
+import thunder.core.script.passes
+import thunder.core.script.python_ir
+import thunder.core.script as script
 
 from .core.trace import (
     get_executor_context,

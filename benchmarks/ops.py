@@ -7,7 +7,7 @@ from torch.utils.benchmark import Timer
 
 import thunder
 import thunder.core.dtypes as datatypes
-import tests as testing
+import thunder.tests as testing
 
 # Programmatically generated operator benchmarks
 

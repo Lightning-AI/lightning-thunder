@@ -1,5 +1,6 @@
 from enum import Enum
 from functools import reduce, wraps
+from itertools import product
 from numbers import Number
 from typing import Callable, Sequence, Type
 

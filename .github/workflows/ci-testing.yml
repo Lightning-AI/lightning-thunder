@@ -37,6 +37,10 @@ jobs:
       if: runner.os == 'macOS'
       run: |
         brew install libomp  # https://github.com/pytorch/pytorch/issues/20030
+
+    - name: Install graphviz
+      if: runner.os == 'macOS'
+      run: |
         brew install graphviz
 
     - name: Install graphviz
@@ -65,17 +69,23 @@ jobs:
           ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
 
     - name: Install package & dependencies
-      env:
-        TORCH_URL: "https://download.pytorch.org/whl/cpu/torch_stable.html"
       run: |
         pip --version
-        pip install -e '.[test]' -U -q --find-links ${TORCH_URL}
+        pip install -e '.[test]' -U -q --find-links https://download.pytorch.org/whl/cpu/torch_stable.html
         pip list
       shell: bash
 
     - name: Tests
       run: |
-        coverage run --source thunder -m pytest src/ tests/ -v
+        coverage run --source thunder -m pytest thunder thunder/tests -v \
+          --junitxml=junit/test-results-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}.xml
+
+    - name: Upload pytest test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: pytest-results-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}
+        path: junit/test-results-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}.xml
+      if: failure()
 
     - name: Statistics
       if: success()

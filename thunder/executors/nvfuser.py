@@ -1,12 +1,15 @@
+from enum import auto, Enum
 from functools import partial
 from numbers import Number
+from looseversion import LooseVersion
 
+from lightning_utilities import compare_version
+
+import torch
 import thunder.core.dtypes as dtypes
 
 # TODO: review language and executor dependencies
 import thunder.langs.torch as ttorch
-import torch
-from looseversion import LooseVersion
 from thunder.core import prims, utils
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten

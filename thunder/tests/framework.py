@@ -4,7 +4,7 @@ import sys
 from functools import wraps
 from itertools import product
 
-from lightning_utilities.core.imports import package_available
+from lightning_utilities.core.imports import package_available, compare_version
 
 import pytest
 

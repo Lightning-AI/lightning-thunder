@@ -5,7 +5,7 @@ recursive-exclude __pycache__  *.py[cod] *.orig
 
 # Include the README and CHANGELOG
 include *.md
-recursive-include src *.md
+recursive-include pl_sandbox *.md
 
 # Include the license file
 include LICENSE
@@ -17,6 +17,15 @@ exclude *.svg
 exclude *.yml
 exclude *.yaml
 
+# exclude tests from package
+recursive-exclude thunder/tests *
+recursive-exclude site *
+exclude thunder/tests
+
+# Exclude the documentation files
+recursive-exclude docs *
+exclude docs
+
 # Include the Requirements
 include requirements.txt
 
@@ -25,9 +34,8 @@ exclude Makefile
 
 prune .git
 prune .github
-prune docs
+prune .circleci
 prune notebook*
 prune temp*
 prune test*
 prune benchmark*
-prune site
