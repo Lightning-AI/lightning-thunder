@@ -4,12 +4,9 @@ from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
 import numpy as np
 
-import thunder
 import thunder.core.dtypes as dtypes
-import thunder.core.lang as tlang
-import thunder.langs.torch as ttorch
 
-from .framework import executors, ops, run_snippet, requiresJAX
+from .framework import ops, run_snippet, requiresJAX
 from .opinfos import opinfos
 
 # Tests for all operators

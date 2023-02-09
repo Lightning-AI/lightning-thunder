@@ -8,8 +8,7 @@ from typing import Sequence
 
 import pytest
 
-# TODO: make this import conditional on Torch being available and querying if should test
-#   with torch
+# TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
 from looseversion import LooseVersion
 from torch.testing import make_tensor
@@ -19,7 +18,7 @@ import thunder.core.lang as tlang
 import thunder.core.prims as prims
 import thunder.langs.torch as ttorch
 from thunder.langs.torch import torch_dtype
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_map
 
 from .framework import _all_device_types, JAX_AVAILABLE
 

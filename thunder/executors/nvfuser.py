@@ -1,10 +1,9 @@
-import copy
-import time
 from enum import auto, Enum
 from functools import partial
 from numbers import Number
-from typing import Sequence
 from looseversion import LooseVersion
+
+from lightning_utilities import compare_version
 
 import torch
 import thunder.core.dtypes as dtypes
@@ -41,7 +40,7 @@ except ImportError:
 use_reshape = False
 try:
     use_reshape = hasattr(FusionDefinition.Operators, "reshape")
-except:
+except Exception:
     pass
 
 __all__ = [

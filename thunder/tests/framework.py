@@ -3,13 +3,13 @@ import os
 import sys
 from functools import wraps
 from itertools import product
-from looseversion import LooseVersion
+
+from lightning_utilities.core.imports import package_available, compare_version
 
 import pytest
 
 import thunder.core.dtypes as datatypes
 from thunder import make_traced
-from thunder.core.trace import reset_executor_context, set_executor_context
 
 __all__ = [
     "available_device_types",
@@ -24,16 +24,16 @@ class NOTHING:
     pass
 
 
-def _jax_available():
-    try:
-        import jax
-    except Exception:
-        return False
+JAX_AVAILABLE = package_available("jax")
+NVFUSER_AVAILABLE = package_available("nvfuser")
+TORCH_AVAILABLE = package_available("torch")
 
-    return True
+try:
+    import torch._C._nvfuser
 
-
-JAX_AVAILABLE = _jax_available()
+    TORCH_C_NVFUSER_AVAILABLE = True
+except ImportError:
+    TORCH_C_NVFUSER_AVAILABLE = False
 
 
 # TODO: Add device type functionality to an object in this list
@@ -42,16 +42,13 @@ def _all_device_types():
 
 
 def available_device_types():
-    try:
+    if TORCH_AVAILABLE:
         import torch
 
-        # TODO: technically CUDA can be available without a CUDA device and that might
-        #   be interesting to test
+        # TODO: technically CUDA can be available without a CUDA device and that might be interesting to test
         if torch.cuda.is_available() and torch.cuda.device_count() > 0:
             return ("cpu", "cuda")
-        return ("cpu",)
-    except ModuleNotFoundError:
-        ("cpu",)
+    return ("cpu",)
 
 
 class Executor:
@@ -90,14 +87,12 @@ class nvFuser(Executor):
 
     # TODO: refactor this so can query the nvFuserCtx for the version
     def version(self):
-        try:
+        if NVFUSER_AVAILABLE:
             import nvfuser
 
             if hasattr(nvfuser, "version"):
                 return nvfuser.version()
-            return -1
-        except:
-            return -1
+        return -1
 
 
 class TorchEx(Executor):
@@ -119,6 +114,7 @@ class TorchEx(Executor):
         return make_traced(fn, executor="torch", **kwargs)
 
     def version(self):
+        # FIXME: which `torch`?
         return torch.__version__
 
 
@@ -126,31 +122,15 @@ def _all_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
     executors = []
 
-    try:
-        import torch
-
+    if TORCH_AVAILABLE:
         executors.append(TorchEx())
-    except ModuleNotFoundError:
-        pass
 
-    try:
         # TODO: refactor this so can query the nvFuserCTX for nvfuser
         #   (this requires making the ctx importable without nvFuser)
         import torch
 
-        try:
-            import nvfuser
-
+        if NVFUSER_AVAILABLE or TORCH_C_NVFUSER_AVAILABLE:
             executors.append(nvFuser())
-        except ImportError:
-            try:
-                import torch._C._nvfuser
-
-                executors.append(nvFuser())
-            except ImportError:
-                pass
-    except ModuleNotFoundError:
-        pass
 
     return executors
 
@@ -161,19 +141,8 @@ def benchmark_executors():
     These executors should define "get_callable", which returns a callable version of a given function.
     """
     executors = []
-
-    try:
-        import torch
-
-        if LooseVersion(torch.__version__) >= "2.0":
-            import nvfuser
-        else:
-            import torch._C._nvfuser
-
+    if NVFUSER_AVAILABLE or TORCH_C_NVFUSER_AVAILABLE:
         executors.append(nvFuser())
-    except ModuleNotFoundError:
-        pass
-
     return executors
 
 
@@ -356,7 +325,6 @@ def requiresJAX(fn):
     def _fn(*args, **kwargs):
         if not JAX_AVAILABLE:
             pytest.skip("Requires JAX")
-
         return fn(*args, **kwargs)
 
     return _fn
@@ -369,7 +337,6 @@ def requiresCUDA(fn):
     def _fn(*args, **kwargs):
         if not torch.cuda.is_available():
             pytest.skip("Requires CUDA")
-
         return fn(*args, **kwargs)
 
     return _fn
