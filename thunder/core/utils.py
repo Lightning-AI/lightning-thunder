@@ -1,13 +1,11 @@
 from enum import Enum
 from functools import reduce, wraps
-from itertools import product
 from numbers import Number
 from typing import Callable, Sequence, Type
 
 import thunder.core.dtypes as dtypes
 import thunder.core.trace as trace
-
-from .proxies import NumberProxy, TensorProxy
+from thunder.core.proxies import NumberProxy, TensorProxy
 
 # This file defines utilities that can be used when defining primitive operations.
 

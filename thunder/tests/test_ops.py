@@ -1,13 +1,13 @@
+import numpy as np
 import pytest
 import torch
 from looseversion import LooseVersion
-from torch.testing import assert_close, make_tensor
-import numpy as np
+from torch.testing import assert_close
 
 import thunder.core.dtypes as dtypes
+from thunder.tests.framework import ops, run_snippet, requiresJAX
+from thunder.tests.opinfos import opinfos
 
-from .framework import ops, run_snippet, requiresJAX
-from .opinfos import opinfos
 
 # Tests for all operators
 

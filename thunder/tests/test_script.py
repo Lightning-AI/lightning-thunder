@@ -1,19 +1,18 @@
+import math
 import sys
 from functools import partial
-import math
 
 import pytest
 import torch
 from torch import add as tadd
 from torch.testing import assert_close, make_tensor
 
-import thunder.langs.torch as ttorch
 import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script.python_ir
-
-from . import nanogpt_model
-from .framework import executors, requiresCUDA
+import thunder.langs.torch as ttorch
+from thunder.tests import nanogpt_model
+from thunder.tests.framework import executors, requiresCUDA
 
 
 def sample_add_fn(x, y):

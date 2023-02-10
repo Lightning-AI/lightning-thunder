@@ -1,11 +1,11 @@
+import itertools
 import math
+import operator
 from collections import namedtuple
 from functools import partial
-import numpy as np
-import itertools
-import operator
 from typing import Sequence
 
+import numpy as np
 import pytest
 
 # TODO: make this import conditional on Torch being available and querying if should test with torch
@@ -17,10 +17,9 @@ import thunder.core.dtypes as datatypes
 import thunder.core.lang as tlang
 import thunder.core.prims as prims
 import thunder.langs.torch as ttorch
-from thunder.langs.torch import torch_dtype
 from thunder.core.pytree import tree_map
-
-from .framework import _all_device_types, JAX_AVAILABLE
+from thunder.langs.torch import torch_dtype
+from thunder.tests.framework import _all_device_types, JAX_AVAILABLE
 
 
 def make_number(dtype):

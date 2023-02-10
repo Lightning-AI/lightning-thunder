@@ -2,14 +2,13 @@ import collections
 import dis
 import inspect
 import itertools
+import opcode
 import sys
 
-import opcode
-
-from .graph import Block, Graph, MROAwareObjectRef, Node, NULL, PhiValue, unify_values, Value
-from .python_ir_data import jump_instructions, stack_effect_detail, unconditional_jump_names
-
 import torch
+
+from thunder.core.script.graph import Block, Graph, MROAwareObjectRef, Node, NULL, PhiValue, Value
+from thunder.core.script.python_ir_data import jump_instructions, stack_effect_detail, unconditional_jump_names
 
 
 class Super:

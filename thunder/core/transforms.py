@@ -5,13 +5,13 @@ from functools import lru_cache, partial
 from numbers import Number
 from typing import Any, Callable, Dict, Sequence
 
-from .. import make_trace, make_traced
-from ..executors.torch import ops_to_torch_ops_map
-from . import prims
-from .lang import full_like
-from .proxies import NumberProxy, Proxy, TensorProxy
-from .trace import detached_trace, get_trace, Trace
-from .utils import safe_map, safe_zip, unzip2, check
+from thunder import make_trace, make_traced
+from thunder.core import prims
+from thunder.core.lang import full_like
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
+from thunder.core.trace import detached_trace, Trace
+from thunder.core.utils import safe_map, safe_zip, unzip2, check
+from thunder.executors.torch import ops_to_torch_ops_map
 
 
 class Transforms(Enum):

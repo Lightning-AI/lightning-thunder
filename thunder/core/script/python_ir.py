@@ -2,7 +2,7 @@ import dis
 import sys
 import types
 
-from .graph import MROAwareObjectRef, Node, insert_before, insert_after
+from thunder.core.script.graph import MROAwareObjectRef, Node, insert_before, insert_after
 
 
 def get_instruction(opname, arg):

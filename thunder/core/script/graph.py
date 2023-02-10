@@ -5,7 +5,7 @@ import copy
 import inspect
 from typing import List
 
-from .python_ir_data import jump_instructions, stack_effect_detail
+from thunder.core.script.python_ir_data import stack_effect_detail
 
 
 class NULL:

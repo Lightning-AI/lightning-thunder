@@ -1,20 +1,15 @@
-from functools import partial, reduce
-from itertools import product
 import math
 from dataclasses import dataclass
+from functools import partial
 
-import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.testing import assert_close, make_tensor
 
 import thunder
-import thunder.core.dtypes as datatypes
-import thunder.core.lang as tlang
 import thunder.langs.torch as ttorch
-
-from .framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, TorchEx
+from thunder.tests.framework import executors
 
 
 def new_gelu(x):

@@ -1,19 +1,17 @@
 import operator
 from functools import partial, reduce
 from itertools import product
-from looseversion import LooseVersion
 
 import pytest
 import torch
+from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.core.dtypes as datatypes
 import thunder.core.lang as tlang
 import thunder.langs.torch as ttorch
-import thunder.core.utils as utils
-
-from .framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, TorchEx
+from thunder.tests.framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, TorchEx
 
 
 @executors(dtypes=NOTHING)

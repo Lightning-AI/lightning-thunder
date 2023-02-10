@@ -1,16 +1,15 @@
 import dis
 import inspect
+import opcode
 import types
 
-import opcode
 import torch  # # aehem.
 
 import thunder
+from thunder.core.script.frontend import acquire_method, make_single_return, make_ssa, remove_unused_values
+from thunder.core.script.graph import Block, clone_blocks, Node, PhiValue, replace_values, Value
+from thunder.core.script.python_ir import get_instruction
 from thunder.langs.torch import _torch_to_thunder_complete_map
-
-from .frontend import acquire_method, make_single_return, make_ssa, remove_unused_values
-from .graph import Block, clone_blocks, Node, PhiValue, replace_values, Value
-from .python_ir import get_instruction
 
 
 def specify_inputs(gr, inps):

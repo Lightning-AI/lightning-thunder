@@ -6,14 +6,13 @@ from dataclasses import dataclass, field
 from enum import auto, Enum
 from functools import partial, reduce
 from numbers import Number
-from typing import Dict, Sequence, Tuple, Union
+from typing import Dict, Sequence, Tuple
 
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
-
-from .proxies import NumberProxy, Proxy, proxy, TensorProxy
-from .trace import get_trace
-from .utils import check, get_numberlike_value, same_shape
+from thunder.core.proxies import Proxy, proxy, TensorProxy
+from thunder.core.trace import get_trace
+from thunder.core.utils import check, get_numberlike_value, same_shape
 
 # This file defines Thunder's "primitive" operations. These are the
 #   "building blocks" for all of Thunder's operators.

@@ -4,9 +4,8 @@ import sys
 from functools import wraps
 from itertools import product
 
-from lightning_utilities.core.imports import package_available, compare_version
-
 import pytest
+from lightning_utilities.core.imports import package_available
 
 import thunder.core.dtypes as datatypes
 from thunder import make_traced
