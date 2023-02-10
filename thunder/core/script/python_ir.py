@@ -295,7 +295,7 @@ def generate_function(gr):
             if jump_node is not None:
                 assert len(jump_node.jump_targets) == 2
                 jarg = address_map[jump_node.jump_targets[0][1].nodes[0]]
-                instruction_size = write_extended_args((jump_node, False), jarg)
+                changed_size |= write_extended_args((jump_node, False), jarg)
                 i = get_instruction(opname="JUMP_ABSOLUTE", arg=jarg & 0xFF)
                 bc.append(i.opcode)
                 bc.append(i.arg)

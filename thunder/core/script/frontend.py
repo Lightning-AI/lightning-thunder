@@ -150,12 +150,10 @@ def make_ssa(gr, verbose=False):
     blocks_to_do = set(gr.blocks)
     while blocks_to_do:
         next_block = None
-        all_predecessors_done = False
         for bl in blocks_to_do:
             all_deps_done = not any(js.block in blocks_to_do for js in bl.jump_sources if js is not None)
             if all_deps_done:
                 next_block = bl
-                all_predecessors_done = True
                 break
         if next_block is None:
             # we need to break a cycle, so we choose one where we have variables for one branch

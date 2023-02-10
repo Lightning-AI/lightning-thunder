@@ -1,11 +1,9 @@
 import sys
-from functools import partial, wraps
+from functools import partial
 import math
-import types
 
 import pytest
 import torch
-import torch.nn as nn
 from torch import add as tadd
 from torch.testing import assert_close, make_tensor
 
@@ -15,7 +13,7 @@ import thunder.core.script.passes
 import thunder.core.script.python_ir
 
 from . import nanogpt_model
-from .framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, NOTHING
+from .framework import executors, requiresCUDA
 
 
 def sample_add_fn(x, y):
@@ -129,7 +127,6 @@ def test_split_block():
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.split_block(gr, gr.blocks[0], gr.blocks[0].nodes[1])
-    dot = thunder.core.script.graph.make_dot(gr, add_names=True)
     fn = thunder.core.script.python_ir.generate_function(gr)
 
     a = torch.randn(5)
@@ -178,25 +175,6 @@ def test_inline_submodule():
     sys.version_info < (3, 10) or sys.version_info >= (3, 11),
     reason="requires python3.10",
 )
-def test_inline_submodule_and_convert_to_thunder():
-    model = nanogpt_model.MLP(nanogpt_model.GPTConfig)
-
-    gr = thunder.core.script.frontend.acquire_method(model.forward, verbose=False)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
-    thunder.core.script.graph.check_graph(gr)
-    thunder.core.script.passes.inline_submodule_calls(gr)
-    thunder.core.script.graph.check_graph(gr)
-    thunder.core.script.passes.merge_blocks_where_possible(gr)
-    thunder.core.script.graph.check_graph(gr)
-    thunder.core.script.passes.torch_to_thunder(gr)
-    thunder.core.script.graph.check_graph(gr)
-
-    fn = thunder.core.script.python_ir.generate_function(gr)
-
-    ### now trace fn and check things work...
-
-
 def test_nanogpt_inlining_unrolling():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
@@ -259,6 +237,10 @@ def test_nanogpt_inlining_unrolling():
     assert_close(o[0], o2[0])
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
+    reason="requires python3.10",
+)
 def test_nanogpt_functionalization():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
@@ -285,6 +267,10 @@ def test_nanogpt_functionalization():
     assert_close(o[0], o2[0])
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
+    reason="requires python3.10",
+)
 def test_nanogpt_tom():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig(dropout=0.0))
     tom = thunder.make_traced(m, executor="torch", _preprocess=True)

@@ -413,7 +413,6 @@ def unroll_for_over_modules(gr, for_iter_node):
 
     (iter_v,) = get_iter_node.outputs
     (iter_phi,) = for_iter_node.inputs
-    iter_item_v = for_iter_node.outputs[1]
 
     assert isinstance(iter_phi, PhiValue)
     assert iter_v in iter_phi.values
@@ -483,7 +482,7 @@ def unroll_for_over_modules(gr, for_iter_node):
             td[for_iter_node].inputs[1] = idx
             td[for_iter_node].outputs[0].name += f"_{i}"
         else:
-            for_iter_node.outputs[0].name += f"_0"
+            for_iter_node.outputs[0].name += "_0"
 
     gr.ensure_links()
 

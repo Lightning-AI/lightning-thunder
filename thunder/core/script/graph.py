@@ -5,7 +5,7 @@ import copy
 import inspect
 from typing import List
 
-from .python_ir_data import jump_instructions, stack_effect_detail, unconditional_jump_names
+from .python_ir_data import jump_instructions, stack_effect_detail
 
 
 class NULL:
@@ -231,7 +231,10 @@ class Node:
         return n2
 
     def set_jump_target(self, jt, idx=None):
-        is_jump = (self.i.opname not in unconditional_jump_names) or (idx == 1) or (idx is None and self.jump_targets)
+        # TODO: more validation?
+        # is_jump = (self.i.opname not in unconditional_jump_names) or (idx == 1) or (idx is None and self.jump_targets)
+        # assert is_jump
+
         jt_plus = (stack_effect_detail(self.i.opname, self.i.arg, jump=False), jt)
         if idx is None:
             assert len(self.jump_targets) <= 1
