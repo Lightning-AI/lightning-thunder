@@ -7,6 +7,9 @@ import time
 import warnings
 from functools import partial, reduce
 from multiprocessing import Process
+from dataclasses import dataclass
+from enum import auto, Enum
+import sys
 
 import torch
 from torch.testing import make_tensor, assert_close
@@ -19,8 +22,40 @@ import thunder.langs.torch as ttorch
 import thunder.core.dtypes as dtypes
 import thunder.core.proxies as proxies
 from thunder.executors.torch import _fuse_region as fuse_torch_region
+from thunder.tests import nanogpt_model
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 
 # This file contains custom nvFuser-related benchmarks.
+
+
+def get_torch_executors(fn, *args):
+    executors = []
+
+    if args is None or len(args) == 0 or args == (None,):
+        return [
+            ("torch_eager", fn),
+            ("torch.compile", torch.compile(fn)),
+            ("torch.compile_nvfuser_prims", torch.compile(fn, backend="nvprims_nvfuser")),
+        ]
+
+    for arg in args:
+        if arg == "torch_eager":
+            executors.append((arg, fn))
+        elif arg == "torch.compile":
+            executors.append((arg, torch.compile(fn)))
+        elif arg == "torch.compile_nvfuser_prims":
+            executors.append((arg, torch.compile(fn, backend="nvprims_nvfuser")))
+
+    return executors
+
+
+def get_executors(torch_fn, thunder_fn, *args):
+    executors = get_torch_executors(torch_fn, *args)
+
+    if args is None or len(args) == 0 or args == (None,) or "thunder" in args:
+        executors.append(("thunder+nvFuser", thunder_fn))
+
+    return executors
 
 
 def median(l):
@@ -35,6 +70,7 @@ def median(l):
     return (s[len(s) // 2] + s[len(s) // 2 - 1]) / 2
 
 
+# TODO: make order of gen and fn consistent
 def time_ns(fn, gen, *, warmup_iters=5, iters=20):
     elapsed = []
 
@@ -943,7 +979,6 @@ def thunder_NanoGPTBlock_forward_functional(
     mlp_c_proj_weight,
     mlp_c_proj_bias,
 ):
-
     b = ttorch.layer_norm(a, ln_1_normalized_shape, ln_1_weight, ln_1_bias, ln_1_eps)
     a = a + thunder_NanoGPTCausalSelfAttention_forward_functional(
         b,
@@ -1017,6 +1052,75 @@ def nanogpt_block_2x8x768_float32(iters, make_arg):
     _nanogpt_block_factory(8, dtype=dtypes.float32, iters=iters, make_arg=make_arg)
 
 
+# Taken from nanogpt_model.py
+@dataclass
+class GPTConfig:
+    name: str = ""
+    block_size: int = 1024
+    vocab_size: int = 50257
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    dropout: float = 0.1
+
+
+def nanogpt_constructor(
+    *,
+    config="gpt2-medium",
+    dropout=0.1,
+    inshape=(5, 5),
+    device="cuda",
+    dtype=thunder.float32,
+    indices_dtype=thunder.int64,
+    **kwargs,
+):
+    # Taken from nanogpt_model.py
+    configs = {
+        "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+        "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
+        "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
+        "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
+    }
+
+    tdtype = ttorch.torch_dtype(dtype)
+    config = GPTConfig(name=config, dropout=dropout, **configs[config])
+    m = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
+    tom = thunder.make_traced(
+        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
+    )
+
+    indices_tdtype = ttorch.torch_dtype(indices_dtype)
+
+    def gen():
+        return (make_tensor(inshape, low=0, high=255, device=device, dtype=indices_tdtype),), {}
+
+    inp, _ = gen()
+
+    # TODO: in the future acquire thunder's fusion object here, too
+    thunder_info = tom(inp[0], None)
+    thunder_profile = thunder_info["profile_info"]
+
+    # TODO: wrap the fusion
+    def _thunder_wrapper(inp):
+        thunder_info = tom(inp, None)
+        return thunder_info["result"]
+
+    return f"nanogpt-{config}", gen, m, _thunder_wrapper, thunder_profile
+
+
+# NOTE: new benchmark style, in development
+def benchmark(name, gen, torch_fn, thunder_fn, thunder_profile, *, executors=None, warmup_iters=5, iters=20, **kwargs):
+    executors = get_executors(torch_fn, thunder_fn, *executors)
+
+    print(f"Benchmarking {name}")
+
+    for name, ex in executors:
+        # NOTE: "Must call `torch._dynamo.reset()` before changing backends."
+        torch._dynamo.reset()
+        stats = time_ns(ex, gen)
+        _prettyprint_stats(name, stats)
+
+
 benchmarks = {
     # Elementwise Binary benchmarks
     "add_64x64": add_64x64,
@@ -1046,6 +1150,11 @@ benchmarks = {
     "nanogpt_block_2x8x768_float32": nanogpt_block_2x8x768_float32,
 }
 
+# TODO: replace old benchmarks with this style
+new_benchmarks = {
+    "nanogpt": nanogpt_constructor,
+}
+
 
 def _run_benchmark(benchmark_fn, *args):
     p = Process(target=benchmark_fn, args=args)
@@ -1061,29 +1170,71 @@ def parse_args():
     return parser.parse_args()
 
 
+# Tries to extract a Python object from a string
+def _extract_python_obj(s):
+    try:
+        a = None
+        cstr = f"a={s}"
+        _locals = {}
+        exec(cstr, None, _locals)
+        return _locals["a"]
+    except Exception as e:
+        return s
+
+
 if __name__ == "__main__":
-    args = parse_args()
+    benchmark_name = sys.argv[1]
+
+    def _get_benchmark(benchmark_name):
+        return new_benchmarks[benchmark_name]
+
+    benchmark_constructor = _get_benchmark(benchmark_name)
+
+    additional_args = sys.argv[2:]
+    kwargs = tuple(x for x in additional_args if not x.startswith("-"))
+    directives = tuple(x for x in additional_args if x.startswith("-"))
+
+    kwargs = {k: _extract_python_obj(v) for k, v in (x.split("=") for x in kwargs)}
+
+    if len(directives) > 0:
+        raise NotImplementedError
+
+    # Resolves dtypes
+    def _resolve_dtype(x):
+        try:
+            # TODO: this should test if the dtype string is valid instead of just trying to acquire
+            #   a thunder attribute
+            dtype = getattr(thunder, x)
+        except Exception:
+            return x
+
+        return dtype
+
+    kwargs = tree_map(_resolve_dtype, kwargs)
+
+    name, gen, torch_fn, thunder_fn, thunder_profile = benchmark_constructor(**kwargs)
+    benchmark(name, gen, torch_fn, thunder_fn, thunder_profile, **kwargs)
 
     # Acquires dtype (default is float32)
-    dtype = thunder.float32
-    if args.dtype is not None:
-        dtype = getattr(thunder, args.dtype)
-        if not thunder.dtypes.is_dtype(dtype):
-            raise ValueError("Unknown dtype {args.dtype} specified!")
+    # dtype = thunder.float32
+    # if args.dtype is not None:
+    #     dtype = getattr(thunder, args.dtype)
+    #     if not thunder.dtypes.is_dtype(dtype):
+    #         raise ValueError("Unknown dtype {args.dtype} specified!")
 
-    # TODO: allow specifying a particular CUDA device
-    device = "cuda"
+    # # TODO: allow specifying a particular CUDA device
+    # device = "cuda"
 
-    iters = 20
+    # iters = 20
 
-    make_arg = partial(make_tensor, device=device, dtype=ttorch.torch_dtype(dtype))
+    # make_arg = partial(make_tensor, device=device, dtype=ttorch.torch_dtype(dtype))
 
-    multiprocessing.set_start_method("spawn")
+    # multiprocessing.set_start_method("spawn")
 
-    # Ignores warnings during benchmarks
-    # NOTE: setting this environment variable effective sets
-    #   warnings.simplewarningsfilter('ignore') in each (sub)process
-    # NOTE: pt2 will throw extraneous warnings
-    os.environ["PYTHONWARNINGS"] = "ignore"
-    for k, v in benchmarks.items():
-        _run_benchmark(v, iters, make_arg)
+    # # Ignores warnings during benchmarks
+    # # NOTE: setting this environment variable effective sets
+    # #   warnings.simplewarningsfilter('ignore') in each (sub)process
+    # # NOTE: pt2 will throw extraneous warnings
+    # os.environ["PYTHONWARNINGS"] = "ignore"
+    # for k, v in benchmarks.items():
+    #     _run_benchmark(v, iters, make_arg)
