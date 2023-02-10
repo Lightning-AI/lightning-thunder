@@ -27,12 +27,6 @@ repos:
         args: [--py37-plus]
         name: Upgrade code
 
-  # - repo: https://github.com/myint/docformatter
-  #   rev: v1.5.0
-  #   hooks:
-  #     - id: docformatter
-  #       args: [--in-place, --wrap-summaries=120, --wrap-descriptions=120]
-
   # - repo: https://github.com/PyCQA/isort
   #   rev: 5.10.1
   #   hooks:
@@ -60,7 +54,7 @@ repos:
     hooks:
       - id: yesqa
 
-#  - repo: https://github.com/PyCQA/flake8
-#    rev: 5.0.4
+#  - repo: https://github.com/charliermarsh/ruff-pre-commit
+#    rev: v0.0.240
 #    hooks:
-#      - id: flake8
+#      - id: ruff
