@@ -40,11 +40,7 @@ except ImportError:
     nvNumber = torch._C._nvfuser.Scalar
 
 # NOTE: "reshape" used to be called "view"
-use_reshape = False
-try:
-    use_reshape = hasattr(FusionDefinition.Operators, "reshape")
-except Exception:
-    pass
+use_reshape = hasattr(FusionDefinition.Operators, "reshape")
 
 __all__ = [
     "nvFuserCtx",

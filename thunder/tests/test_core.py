@@ -753,9 +753,13 @@ def test_hybrid_execution(executor, device, dtype):
 
 
 @executors(dtypes=NOTHING)
-def test_dtype_conversion(executor: Executor, device, _):
+def test_dtype_conversion(executor: Executor, device, dtype):
     if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0":
         pytest.xfail("https://github.com/csarofeen/pytorch/issues/2370")
+
+    # FIXME
+    if isinstance(executor, nvFuser) and device == "cuda" and dtype is None:
+        pytest.skip("RuntimeError: Illegal Cast value from  DataType: double to DataType: __bfloat")
 
     make = partial(make_tensor, (2, 2), device=device)
 

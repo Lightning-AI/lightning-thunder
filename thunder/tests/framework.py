@@ -92,7 +92,8 @@ class nvFuser(Executor):
 
             if hasattr(nvfuser, "version"):
                 return nvfuser.version()
-        return -1
+        # past -1 is not compatible with LooseVersion and gave me lots of pain
+        return "0"
 
 
 class TorchEx(Executor):

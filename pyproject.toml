@@ -9,11 +9,6 @@ requires = [
 line-length = 120
 exclude = "(.eggs|.git|.hg|.mypy_cache|.venv|_build|buck-out|build|dist)"
 
-[tool.pytest.ini_options]
-testpaths = [
-    "thunder/tests",
-]
-
 
 [tool.mypy]
 files = [

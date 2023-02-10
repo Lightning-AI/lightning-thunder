@@ -23,29 +23,24 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          key: pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-
 
-      - name: Install dependencies
+      - name: Install package & dependencies
+        env:
+          TORCH_URL: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
         run: |
-          pip install  --requirement requirements.txt -U -f https://download.pytorch.org/whl/cpu/torch_stable.html  --quiet
-          pip install  --requirement requirements/docs.txt
-          # install Texlive, see https://linuxconfig.org/how-to-install-latex-on-ubuntu-20-04-focal-fossa-linux
-          sudo apt-get update
-          sudo apt-get install -y texlive-latex-extra dvipng texlive-pictures
-          python --version
           pip --version
+          pip install . -U -r requirements.txt -r requirements/docs.txt --find-links ${TORCH_URL}
+          # install Texlive, see https://linuxconfig.org/how-to-install-latex-on-ubuntu-20-04-focal-fossa-linux
+          sudo apt-get update --fix-missing
+          sudo apt-get install -y texlive-latex-extra dvipng texlive-pictures
           pip list
         shell: bash
 
       - name: Make Documentation
         working-directory: ./docs
-        run: |
-          # First run the same pipeline as Read-The-Docs
-          make clean
-          make html --jobs 2
-          #touch build/html/.nojekyll
+        run: make html --jobs 2
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4.4.1
