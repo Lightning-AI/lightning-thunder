@@ -10,6 +10,7 @@ from multiprocessing import Process
 from dataclasses import dataclass
 from enum import auto, Enum
 import sys
+from typing import Any
 
 import torch
 from torch.testing import make_tensor, assert_close
@@ -27,6 +28,24 @@ from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 
 # This file contains custom nvFuser-related benchmarks.
 
+# To use this file, try running it with -v, which will list all available benchmarks, and -h, which will describe
+#   options for controlling how the benchmarks are run. Once a benchmark, like nanogpt, is selected, information
+#   on how to further modify the benchmark can be obtained by running this script with "nanogpt -i", which will
+#   describe all possible kwargs that can be specified to control the benchmark. For example, to set the dtype,
+#   run "nanogpt dtype=float16".
+
+
+@dataclass
+class BenchmarkArg:
+    """
+    Describes a benchmark argument.
+    """
+
+    name: str
+    description: str
+    default: Any
+
+
 # Helper to easily modify thunder construction
 def thunder_compile(fn):
     return thunder.make_traced(
@@ -34,35 +53,21 @@ def thunder_compile(fn):
     )
 
 
-# TODO: refactor executor acquisition
-def get_torch_executors(fn, args):
-    executors = []
-
-    if args is None or len(args) == 0 or args == (None,):
-        return [
-            ("torch_eager", fn),
-            ("torch.compile", torch.compile(fn)),
-            ("torch.compile_nvfuser_prims", torch.compile(fn, backend="nvprims_nvfuser")),
-        ]
-
-    for arg in args:
-        if arg == "torch_eager":
-            executors.append((arg, fn))
-        elif arg == "torch.compile":
-            executors.append((arg, torch.compile(fn)))
-        elif arg == "torch.compile_nvfuser_prims":
-            executors.append((arg, torch.compile(fn, backend="nvprims_nvfuser")))
-
-    return executors
-
-
 # TODO: throw error on unrecongized executor
 def get_executors(torch_fn, thunder_fn, args):
-    executors = get_torch_executors(torch_fn, args)
+    def _helper(x):
+        if x == "torch-eager":
+            return (x, torch_fn)
+        if x == "torch.compile":
+            return (x, torch.compile(torch_fn))
+        if x == "torch.compile_nvfuser_prims":
+            return (x, torch.compile(torch_fn, backend="nvprims_nvfuser"))
+        if x == "thunder+nvfuser" or x == "thunder" or x == "nvfuser":
+            return ("thunder+nvfuser", thunder_fn)
 
-    if args is None or len(args) == 0 or args == (None,) or "thunder" in args or "nvfuser" in args:
-        executors.append(("thunder+nvFuser", thunder_fn))
+        raise ValueError(f"Unknown executor {x} requested")
 
+    executors = tuple((_helper(x) for x in args))
     return executors
 
 
@@ -672,6 +677,7 @@ def simple_kwarg_conditional_constructor(shape=(64, 64), device="cuda", dtype=th
 #
 # TODO: maybe put these in their own file?
 
+
 # Taken from nanogpt_model.py
 @dataclass
 class GPTConfig:
@@ -684,14 +690,48 @@ class GPTConfig:
     dropout: float = 0.1
 
 
+nanogpt_info = (
+    BenchmarkArg(
+        name="config",
+        description="The nanogpt configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the nanogpt model for details.",
+        default="gpt2-medium",
+    ),
+    BenchmarkArg(
+        name="dropout",
+        description="The dropout probability to use. Default is .1.",
+        default=0.1,
+    ),
+    BenchmarkArg(
+        name="inshape",
+        description="The shape of the input. Default is (8, 64).",
+        default=(8, 64),
+    ),
+    BenchmarkArg(
+        name="device",
+        description="The device to run on. Default is 'cuda'.",
+        default="cuda",
+    ),
+    BenchmarkArg(
+        name="dtype",
+        description="The device of the model. Default is 'cuda'.",
+        default=thunder.float32,
+    ),
+    BenchmarkArg(
+        name="indices_dtype",
+        description="The dtype of the input. Default is int64.",
+        default=thunder.int64,
+    ),
+)
+
+
 def nanogpt_constructor(
     *,
-    config="gpt2-medium",
-    dropout=0.1,
-    inshape=(5, 5),
-    device="cuda",
-    dtype=thunder.float32,
-    indices_dtype=thunder.int64,
+    config,
+    dropout,
+    inshape,
+    device,
+    dtype,
+    indices_dtype,
 ):
     # Taken from nanogpt_model.py
     configs = {
@@ -728,17 +768,44 @@ def nanogpt_constructor(
     return f"nanogpt-{config}", gen, m, _thunder_wrapper, thunder_profile
 
 
+nanogpt_block_info = (
+    BenchmarkArg(
+        name="config",
+        description="The nanogpt configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the nanogpt model for details.",
+        default="gpt2-medium",
+    ),
+    BenchmarkArg(
+        name="dropout",
+        description="The dropout probability to use. Default is .1.",
+        default=0.1,
+    ),
+    BenchmarkArg(
+        name="batch_dims",
+        description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (8,).",
+        default=(8,),
+    ),
+    BenchmarkArg(
+        name="device",
+        description="The device of the model. Default is 'cuda'.",
+        default="cuda",
+    ),
+    BenchmarkArg(
+        name="dtype",
+        description="The dtype of the model. Default is float32.",
+        default=thunder.float32,
+    ),
+)
+
+
 # TODO: @mike -- is block_size what we want for seq len here?
 # TODO: refactor these nanogpt component benchmarks to use a common format
 def nanogpt_block_constructor(
-    config="gpt2-medium",
-    dropout=0.1,
-    batch_dims=(8,),
-    device="cuda",
-    dtype=thunder.float32,
-    **kwargs,
+    config,
+    dropout,
+    batch_dims,
+    device,
+    dtype,
 ):
-
     # Taken from nanogpt_model.py
     configs = {
         "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
@@ -780,16 +847,43 @@ def nanogpt_block_constructor(
     return f"nanogpt-{config}-block", gen, m, _thunder_wrapper, thunder_profile
 
 
+nanogpt_csa_info = (
+    BenchmarkArg(
+        name="config",
+        description="The nanogpt configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the nanogpt model for details.",
+        default="gpt2-medium",
+    ),
+    BenchmarkArg(
+        name="dropout",
+        description="The dropout probability to use. Default is .1.",
+        default=0.1,
+    ),
+    BenchmarkArg(
+        name="batch_dims",
+        description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (8,).",
+        default=(8,),
+    ),
+    BenchmarkArg(
+        name="device",
+        description="The device of the model. Default is 'cuda'.",
+        default="cuda",
+    ),
+    BenchmarkArg(
+        name="dtype",
+        description="The dtype of the model. Default is float32.",
+        default=thunder.float32,
+    ),
+)
+
+
 # TODO: @mike -- is block_size what we want for seq len here?
 def nanogpt_csa_constructor(
-    config="gpt2-medium",
-    dropout=0.1,
-    batch_dims=(8,),
-    device="cuda",
-    dtype=thunder.float32,
-    **kwargs,
+    config,
+    dropout,
+    batch_dims,
+    device,
+    dtype,
 ):
-
     # Taken from nanogpt_model.py
     configs = {
         "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
@@ -832,15 +926,43 @@ def nanogpt_csa_constructor(
     return f"nanogpt-{config}-csa", gen, m, _thunder_wrapper, thunder_profile
 
 
+nanogpt_mlp_info = (
+    BenchmarkArg(
+        name="config",
+        description="The nanogpt configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the nanogpt model for details.",
+        default="gpt2-medium",
+    ),
+    BenchmarkArg(
+        name="dropout",
+        description="The dropout probability to use. Default is .1.",
+        default=0.1,
+    ),
+    BenchmarkArg(
+        name="batch_dims",
+        description="The batch dimensions to use for the input. (The input will have an innermost dimension of length config.n_embd). Default is (8,).",
+        default=(8,),
+    ),
+    BenchmarkArg(
+        name="device",
+        description="The device of the model. Default is 'cuda'.",
+        default="cuda",
+    ),
+    BenchmarkArg(
+        name="dtype",
+        description="The dtype of the model. Default is float32.",
+        default=thunder.float32,
+    ),
+)
+
+
 # TODO: @mike -- shape? (i.e. include seq len)
 def nanogpt_mlp_constructor(
-    config="gpt2-medium",
-    dropout=0.1,
-    batch_dims=(8,),
-    device="cuda",
-    dtype=thunder.float32,
+    config,
+    dropout,
+    batch_dims,
+    device,
+    dtype,
 ):
-
     # Taken from nanogpt_model.py
     configs = {
         "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
@@ -874,7 +996,26 @@ def nanogpt_mlp_constructor(
     return f"nanogpt-{config}-mlp", gen, m, _thunder_wrapper, thunder_profile
 
 
-def nanogpt_gelu_constructor(shape=(1024, 1024), device="cuda", dtype=thunder.float32):
+nanogpt_gelu_info = (
+    BenchmarkArg(
+        name="shape",
+        description="The shape of the input. Default is (1024, 1024).",
+        default=(1024, 1024),
+    ),
+    BenchmarkArg(
+        name="device",
+        description="The device of the input. Default is 'cuda'.",
+        default="cuda",
+    ),
+    BenchmarkArg(
+        name="dtype",
+        description="The dtype of the input. Default is float32.",
+        default=thunder.float32,
+    ),
+)
+
+
+def nanogpt_gelu_constructor(shape, device, dtype):
     def new_gelu(a):
         return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))
 
@@ -934,20 +1075,20 @@ def benchmark(name, gen, torch_fn, thunder_fn, thunder_profile, *, executors=Non
 # }
 
 # TODO: replace old benchmarks with this style
+# value format: constructor fn, sequence of BenchmarkArgs, string description
 benchmarks = {
     # Reduction benchmarks
     # FIXME: _preprocess needs to support *args, **kwargs
     # "var": var_constructor,
     # Control flow benchmarks
-    "simple-number-conditional": simple_number_conditional_constructor,
-    "simple-kwarg-conditional": simple_kwarg_conditional_constructor,
+    # "simple-number-conditional": simple_number_conditional_constructor,
+    # "simple-kwarg-conditional": simple_kwarg_conditional_constructor,
     # nanogpt benchmarks
-    "nanogpt": nanogpt_constructor,
-    # FIXME: need to repair calling convention
-    "nanogpt-block": nanogpt_block_constructor,
-    "nanogpt-csa": nanogpt_csa_constructor,
-    "nanogpt-mlp": nanogpt_mlp_constructor,
-    "nanogpt-gelu": nanogpt_gelu_constructor,
+    "nanogpt": (nanogpt_constructor, nanogpt_info, "nanogpt forward"),
+    "nanogpt-block": (nanogpt_block_constructor, nanogpt_block_info, "nanogpt block module forward"),
+    "nanogpt-csa": (nanogpt_csa_constructor, nanogpt_csa_info, "nanogpt CausalSelfAttention (CSA) module forward"),
+    "nanogpt-mlp": (nanogpt_mlp_constructor, nanogpt_mlp_info, "nanogpt MLP module forward"),
+    "nanogpt-gelu": (nanogpt_gelu_constructor, nanogpt_gelu_info, "nanogpt gelu function forward"),
 }
 
 
@@ -963,15 +1104,33 @@ def _extract_python_obj(s):
         return s
 
 
+def _print_benchmarks():
+    print(f"There are {len(benchmarks)} available benchmarks:\n")
+
+    for idx, (k, (_, _, desc)) in enumerate(benchmarks.items()):
+        print(f"{idx}. {k}. {desc}")
+
+    print("\nFor more information on how to call a particular benchmark, use <benchmark_name> -info")
+
+
+def _print_info(args):
+    print(f"This benchmark accepts up to {len(args)} kwargs")
+    for arg in args:
+        print(f"{arg.name}. {arg.description}")
+
+
 # TODO: provide a programmatic way to run these benchmarks and acquire the results
 # TODO: allow a file to specify which benchmarks to run and how
 if __name__ == "__main__":
     benchmark_name = sys.argv[1]
 
-    def _get_benchmark(benchmark_name):
-        return benchmarks[benchmark_name]
+    # Handles special -view or -v command which lists all benchmarks
+    # Short-circuits if view is requested
+    if benchmark_name == "-view" or benchmark_name == "-v":
+        _print_benchmarks()
+        sys.exit(0)
 
-    benchmark_constructor = _get_benchmark(benchmark_name)
+    benchmark_constructor, benchmark_info, benchmark_desc = benchmarks[benchmark_name]
 
     # Handles kwargs, which control the benchmark itself
     #   These are specified like dtype=float16
@@ -984,14 +1143,49 @@ if __name__ == "__main__":
     # Handles directives, which describe how the benchmark is to be run
     #   These are specified like -x "('thunder', 'torch.compile')"
     parser = argparse.ArgumentParser()
-    parser.add_argument("-executors", "-x")
-    parser.add_argument("-iters")
-    parser.add_argument("-warmup_iters")
+
+    parser.add_argument(
+        "-info",
+        "-i",
+        default=None,
+        action="store_true",
+        help="Displays information on how to call the specified benchmark.",
+    )
+    parser.add_argument("-view", "-v", default=None, action="store_true", help="Lists all available benchmarks")
+    parser.add_argument(
+        "-executors",
+        "-x",
+        default="('torch-eager', 'torch.compile', 'torch.compile_nvfuser_prims', 'thunder+nvfuser')",
+        help="Specifies the executors to collect statistics for. Default is all executors, -x \"('torch-eager', 'torch.compile', 'torch.compile_nvfuser_prims', 'thunder+nvfuser')\"",
+    )
+    parser.add_argument(
+        "-iters",
+        default=20,
+        help="Specifies the number of post-warmup iterations to use to collect statistics for each executor. Default is -iters 20",
+    )
+    parser.add_argument(
+        "-warmup_iters",
+        default=5,
+        help="The number of warmup iterations to run for each executor before collecting statistics. Default is -warmup_iters 5",
+    )
+
     parsed_directives = parser.parse_args(directives)
 
+    view_requested = parsed_directives.view is not None
+    info_requested = parsed_directives.info is not None
     executors = _extract_python_obj(parsed_directives.executors)
     iters = parsed_directives.iters
     warmup_iters = parsed_directives.warmup_iters
+
+    # Short-circuits if view is requested
+    if view_requested:
+        _print_benchmarks()
+        sys.exit(0)
+
+    # Short-circuits if info is requested
+    if info_requested:
+        _print_info(benchmark_info)
+        sys.exit(0)
 
     # Resolves dtypes
     def _resolve_dtype(x):
@@ -1004,11 +1198,14 @@ if __name__ == "__main__":
 
         return dtype
 
-    kwargs = tree_map(_resolve_dtype, kwargs)
+    # Constructs kwargs from benchmark info and user-supplied kwargs
+    user_kwargs = tree_map(_resolve_dtype, kwargs)
+    actual_kwargs = {x.name: x.default for x in benchmark_info}
+    actual_kwargs.update(user_kwargs)
 
     # NOTE: in the future, if running multiple benchmarks from one process, the benchmarks
     #   should probably be run in a subprocess to minimize executor caching
-    name, gen, torch_fn, thunder_fn, thunder_profile = benchmark_constructor(**kwargs)
+    name, gen, torch_fn, thunder_fn, thunder_profile = benchmark_constructor(**actual_kwargs)
     benchmark(
         name, gen, torch_fn, thunder_fn, thunder_profile, executors=executors, iters=iters, warmup_iters=warmup_iters
     )
