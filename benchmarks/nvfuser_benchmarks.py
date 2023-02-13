@@ -728,90 +728,111 @@ def nanogpt_constructor(
     return f"nanogpt-{config}", gen, m, _thunder_wrapper, thunder_profile
 
 
-# TODO: @Tom -- need to fix calling convention for this
+# TODO: @mike -- is block_size what we want for seq len here?
 # TODO: refactor these nanogpt component benchmarks to use a common format
-# def nanogpt_block_constructor(
-#     config="gpt2-medium",
-#     dropout=0.1,
-#     batch_dims=(8,),
-#     device="cuda",
-#     dtype=thunder.float32,
-#     **kwargs,
-# ):
+def nanogpt_block_constructor(
+    config="gpt2-medium",
+    dropout=0.1,
+    batch_dims=(8,),
+    device="cuda",
+    dtype=thunder.float32,
+    **kwargs,
+):
 
-#     # Taken from nanogpt_model.py
-#     configs = {
-#         "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
-#         "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
-#         "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
-#         "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
-#     }
+    # Taken from nanogpt_model.py
+    configs = {
+        "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+        "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
+        "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
+        "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
+    }
 
-#     tdtype = ttorch.torch_dtype(dtype)
-#     config = GPTConfig(name=config, dropout=dropout, **configs[config])
-#     m = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-#     tom = thunder.make_traced(
-#         m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-#     )
+    tdtype = ttorch.torch_dtype(dtype)
+    config = GPTConfig(name=config, dropout=dropout, **configs[config])
+    m = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
+    tom = thunder.make_traced(
+        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
+    )
 
-#     def gen():
-#         return (make_tensor(batch_dims + (config.n_embd,), device=device, dtype=tdtype),), {}
+    def gen():
+        return (
+            make_tensor(
+                batch_dims
+                + (
+                    config.block_size,
+                    config.n_embd,
+                ),
+                device=device,
+                dtype=tdtype,
+            ),
+        ), {}
 
-#     inp, _ = gen()
+    inp, _ = gen()
+    # TODO: in the future acquire thunder's fusion object here, too
+    thunder_info = tom(inp[0])
+    thunder_profile = thunder_info["profile_info"]
 
-#     # TODO: in the future acquire thunder's fusion object here, too
-#     thunder_info = tom(inp[0])
-#     thunder_profile = thunder_info["profile_info"]
+    # TODO: wrap the fusion
+    def _thunder_wrapper(inp):
+        thunder_info = tom(inp)
+        return thunder_info["result"]
 
-#     # TODO: wrap the fusion
-#     def _thunder_wrapper(inp):
-#         thunder_info = tom(inp)
-#         return thunder_info["result"]
+    return f"nanogpt-{config}-block", gen, m, _thunder_wrapper, thunder_profile
 
-#     return f"nanogpt-{config}-block", gen, m, _thunder_wrapper, thunder_profile
 
-# TODO: @Tom -- need to fix calling convention for this
-# def nanogpt_csa_constructor(
-#     config="gpt2-medium",
-#     dropout=0.1,
-#     batch_dims=(8,),
-#     device="cuda",
-#     dtype=thunder.float32,
-#     **kwargs,
-# ):
+# TODO: @mike -- is block_size what we want for seq len here?
+def nanogpt_csa_constructor(
+    config="gpt2-medium",
+    dropout=0.1,
+    batch_dims=(8,),
+    device="cuda",
+    dtype=thunder.float32,
+    **kwargs,
+):
 
-#     # Taken from nanogpt_model.py
-#     configs = {
-#         "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
-#         "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
-#         "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
-#         "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
-#     }
+    # Taken from nanogpt_model.py
+    configs = {
+        "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+        "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
+        "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
+        "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
+    }
 
-#     tdtype = ttorch.torch_dtype(dtype)
-#     config = GPTConfig(name=config, dropout=dropout, **configs[config])
-#     m = nanogpt_model.CausalSelfAttention(config).to(device=device, dtype=tdtype)
-#     tom = thunder.make_traced(
-#         m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-#     )
+    tdtype = ttorch.torch_dtype(dtype)
+    config = GPTConfig(name=config, dropout=dropout, **configs[config])
+    m = nanogpt_model.CausalSelfAttention(config).to(device=device, dtype=tdtype)
+    tom = thunder.make_traced(
+        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
+    )
 
-#     def gen():
-#         return (make_tensor(batch_dims + (config.n_embd,), device=device, dtype=tdtype),), {}
+    def gen():
+        return (
+            make_tensor(
+                batch_dims
+                + (
+                    config.block_size,
+                    config.n_embd,
+                ),
+                device=device,
+                dtype=tdtype,
+            ),
+        ), {}
 
-#     inp, _ = gen()
+    inp, _ = gen()
 
-#     # TODO: in the future acquire thunder's fusion object here, too
-#     thunder_info = tom(inp[0])
-#     thunder_profile = thunder_info["profile_info"]
+    # TODO: in the future acquire thunder's fusion object here, too
+    thunder_info = tom(inp[0])
+    thunder_profile = thunder_info["profile_info"]
 
-#     # TODO: wrap the fusion
-#     def _thunder_wrapper(inp):
-#         thunder_info = tom(inp)
-#         return thunder_info["result"]
+    # TODO: wrap the fusion
+    def _thunder_wrapper(inp):
+        thunder_info = tom(inp)
+        return thunder_info["result"]
 
-#     return f"nanogpt-{config}-csa", gen, m, _thunder_wrapper, thunder_profile
+    return f"nanogpt-{config}-csa", gen, m, _thunder_wrapper, thunder_profile
 
-# TODO: @Tom -- need to fix calling convention for this
+
+# TODO: @mike -- shape? (i.e. include seq len)
 def nanogpt_mlp_constructor(
     config="gpt2-medium",
     dropout=0.1,
@@ -923,8 +944,8 @@ benchmarks = {
     # nanogpt benchmarks
     "nanogpt": nanogpt_constructor,
     # FIXME: need to repair calling convention
-    # "nanogpt-block": nanogpt_block_constructor,
-    # "nanogpt-csa": nanogpt_csa_constructor,
+    "nanogpt-block": nanogpt_block_constructor,
+    "nanogpt-csa": nanogpt_csa_constructor,
     "nanogpt-mlp": nanogpt_mlp_constructor,
     "nanogpt-gelu": nanogpt_gelu_constructor,
 }
