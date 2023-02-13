@@ -1,3 +1,4 @@
+import inspect
 import math
 import sys
 from functools import partial
@@ -131,6 +132,33 @@ def test_split_block():
     a = torch.randn(5)
     b = torch.randn(5)
     assert_close(fn(a, b), foo(a, b))
+
+
+# there could be more versions of this
+def fn1(a, /, b, c=3, *args, d=5, **kwargs):
+    return f"{a=}, {b=}, {c=}, {d=}, {args=}, {kwargs=}"
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
+    reason="requires python3.10",
+)
+def test_arg_handling():
+    gr = thunder.core.script.frontend.acquire_method(fn1)
+    thunder.core.script.frontend.make_ssa(gr)
+    thunder.core.script.frontend.make_single_return(gr)
+    generated_fn = thunder.core.script.python_ir.generate_function(gr)
+
+    # structureal tests
+    assert inspect.signature(fn1) == inspect.signature(generated_fn)
+
+    # also test errors?
+    for args, kwargs in (
+        ((2, 3, 4, 5, 7), dict(abc=3)),
+        ((2, 3, 4), dict(abc=3, d=2)),
+        ((1, 2), dict()),
+    ):
+        assert fn1(*args, **kwargs) == generated_fn(*args, **kwargs)
 
 
 @pytest.mark.skipif(

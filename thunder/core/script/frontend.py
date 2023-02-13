@@ -30,12 +30,12 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     if inspect.ismethod(method):
         self_value = Value(value=module, name=method.__code__.co_varnames[0], is_function_arg=True)
         local_variables.append(self_value)
+        self_offset = 1
     else:
         self_value = NULL
-    for p in sig.parameters.values():
-        assert (
-            p.name == method.__code__.co_varnames[len(local_variables)]
-        ), f"mismatch {p.name} {method.__code__.co_varnames[len(local_variables)]}"
+        self_offset = 0
+    for n in method.__code__.co_varnames[self_offset : len(sig.parameters.values()) + self_offset]:
+        p = sig.parameters[n]
         local_variables.append(Value(typ=p.annotation, name=p.name, is_function_arg=True))
     # KWARGS?!
     for i in enumerate(method.__code__.co_varnames, start=len(local_variables)):
@@ -132,6 +132,9 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     gr.local_variables_at_start = [lv for lv in local_variables if lv is not None]
     gr.ismethod = inspect.ismethod(method)
     gr.co_argcount = 0 if not gr.ismethod else 1
+    # deal with other flags?
+    # NESTED, GENERATOR, NOFREE, COROUTINE, ITERABLE_COROUTINE, ASYNC_GENERATOR
+    gr.co_flags = inspect.CO_OPTIMIZED | inspect.CO_NEWLOCALS
     gr.co_posonlyargcount = 0
     gr.co_kwonlyargcount = 0
     gr.func_defaults = []
@@ -143,7 +146,14 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
         elif p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
             gr.co_argcount += 1
         elif p.kind == inspect.Parameter.KEYWORD_ONLY:
-            gr.co_kwonlyargcount + 1
+            gr.co_kwonlyargcount += 1
+        elif p.kind == inspect.Parameter.VAR_POSITIONAL:
+            gr.co_flags |= inspect.CO_VARARGS
+        elif p.kind == inspect.Parameter.VAR_KEYWORD:
+            gr.co_flags |= inspect.CO_VARKEYWORDS
+        else:
+            assert False, f"unknown parameter kind {p.kind}"
+
         if p.default is not inspect._empty:
             if p.kind == inspect.Parameter.KEYWORD_ONLY:
                 gr.func_kwdefaults[p.name] = p.default

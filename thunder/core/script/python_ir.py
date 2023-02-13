@@ -316,7 +316,7 @@ def generate_function(gr):
     co_kwonlyargcount = gr.co_kwonlyargcount
     co_nlocals = len(local_vars)
     co_stacksize = 10  # TODO
-    co_flags = 0
+    co_flags = gr.co_flags
     co_codestring = bc_bytes
     co_consts = tuple(consts)
     co_names = tuple(names)
