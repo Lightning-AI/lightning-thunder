@@ -177,6 +177,7 @@ ops_to_torch_ops_map = {
     prims.Ops.ISFINITE: "torch.isfinite",
     prims.Ops.RSQRT: "torch.rsqrt",
     prims.Ops.SIN: "torch.sin",
+    prims.Ops.SQRT: "torch.sqrt",
     prims.Ops.TANH: "torch.tanh",
     prims.Ops.LOG: "torch.log",
     prims.Ops.LOG10: "torch.log10",

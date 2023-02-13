@@ -60,6 +60,7 @@ __all__ = [
     "isfinite",
     "rsqrt",
     "sin",
+    "sqrt",
     "tanh",
     "log",
     "log10",
@@ -125,6 +126,7 @@ class Ops(Enum):
     ISFINITE = auto()
     RSQRT = auto()
     SIN = auto()
+    SQRT = auto()
     TANH = auto()
     LOG = auto()
     LOG10 = auto()
@@ -390,7 +392,6 @@ def _prim_type_promotion(typ, type_promotion_kind):
 # "sign",
 # "signbit",
 # "sinh",
-# "sqrt",
 # "tan",
 # "trunc",
 
@@ -403,7 +404,6 @@ def _prim_type_promotion(typ, type_promotion_kind):
 # "round",
 # "sign",
 # "sinh",
-# "sqrt",
 # "tan",
 # "trunc",
 
@@ -638,6 +638,17 @@ sin = make_prim(
         name="sin",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=math.sin,
+    ),
+)
+
+sqrt = make_prim(
+    Ops.SQRT,
+    "sqrt",
+    partial(
+        _elementwise_unary_meta,
+        name="sqrt",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=math.sqrt,
     ),
 )
 

@@ -46,6 +46,7 @@ __all__ = [
     "exp",
     "rsqrt",
     "sin",
+    "sqrt",
     "tanh",
     "log",
     "log10",
@@ -667,6 +668,11 @@ def rsqrt(a):
 @torch_function(torch.sin)
 def sin(a):
     return tlang.sin(a)
+
+
+@torch_function(torch.sqrt)
+def sqrt(a):
+    return tlang.sqrt(a)
 
 
 @torch_function(torch.tanh)
