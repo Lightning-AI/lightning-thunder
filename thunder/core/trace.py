@@ -138,6 +138,9 @@ def reset_executor_context(token):
     _executor_ctx.reset(token)
 
 
+NAME_CTR = 0
+
+
 class Trace:
     """The tracing context.
 
@@ -151,7 +154,6 @@ class Trace:
 
         self.symbols = deque()
 
-        self.name_ctr = 0
         self.names = set()
 
     def __repr__(self):
@@ -190,7 +192,7 @@ class Trace:
                 idx = ctr % (len(chars))
                 c = chars[idx]
                 s = c + s
-                ctr = ctr - (ord(c) + place * len(chars))
+                ctr = ctr - (idx + 1 + place * len(chars))
                 place += 1
 
             # NOTE: adds "__" to avoid collision with keywords
@@ -209,5 +211,6 @@ class Trace:
         return name, ctr, names
 
     def make_proxy_name(self):
-        name, self.name_ctr, self.names = self._make_proxy_name(self.name_ctr, self.names)
+        global NAME_CTR
+        name, NAME_CTR, self.names = self._make_proxy_name(NAME_CTR, self.names)
         return name

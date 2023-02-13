@@ -10,6 +10,7 @@ from torch.testing import assert_close, make_tensor
 import thunder
 import thunder.core.dtypes as datatypes
 import thunder.core.lang as tlang
+import thunder.core.proxies as proxies
 import thunder.langs.torch as ttorch
 from thunder.tests.framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, TorchEx
 
@@ -154,7 +155,7 @@ def test_eval_trace(executor, device, _):
         assert actual.shape == foo_trace.outputs.shape
         assert actual.dtype == foo_trace.outputs.dtype
         assert actual.device == foo_trace.outputs.device
-        assert actual.name == foo_trace.outputs.name
+        assert ord(actual.name[-1]) - ord(foo_trace.outputs.name[-1]) == len(foo_trace.names)
     finally:
         reset_trace(trace_token)
 
@@ -281,6 +282,80 @@ def test_transforms_jvp_eager(executor, device, _):
     expected_out_p = torch.sin(a) + b
     expected_out_t = torch.cos(a) + b
     assert_close(out_p, expected_out_p)
+    assert_close(out_t, expected_out_t)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_vmap_x(executor, device, _):
+    from thunder.core.transforms import vmap_eager
+
+    def func(a, b):
+        assert isinstance(a, proxies.TensorProxy)
+        assert isinstance(b, proxies.TensorProxy)
+        assert a.ndim == 1
+        assert a.shape == b.shape
+        c = tlang.sin(a)
+        return tlang.mul(tlang.add(c, b), 1)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+
+    args = (a, b)
+    out = vmap_eager(func, args, executor=executor)
+    expected_out_p = torch.sin(a) + b
+    assert_close(out, expected_out_p)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_jvp_vmap(executor, device, _):
+    from thunder.core.transforms import vmap, jvp, inline
+
+    def func(a, b):
+        assert isinstance(a, proxies.TensorProxy)
+        assert isinstance(b, proxies.TensorProxy)
+        assert a.ndim == 1
+        assert a.shape == b.shape
+        c = tlang.sin(a)
+        return tlang.mul(tlang.add(c, b), 1)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+
+    args = (a, b)
+    out_p, out_t = thunder.make_traced(inline(jvp(inline(vmap(func)))), executor="torch")(args, args)
+    expected_out_p = torch.sin(a) + b
+    assert_close(out_p, expected_out_p)
+    expected_out_t = torch.cos(a) + b
+    assert_close(out_t, expected_out_t)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_vmap_inline_jvp(executor, device, _):
+    from thunder.core.transforms import vmap, jvp, inline
+
+    def func(a, b):
+        assert isinstance(a, proxies.TensorProxy)
+        assert isinstance(b, proxies.TensorProxy)
+        assert a.ndim == 1
+        assert a.shape == b.shape
+        c = tlang.sin(a)
+        return tlang.mul(tlang.add(c, b), 1)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+
+    args = (a, b)
+    # vmap(inline(jvp)) works! But vmap(jvp) does not.
+    out_p, out_t = thunder.make_traced(inline(vmap(inline(jvp(func)), out_dims=(0, 0))), executor="torch")(args, args)
+    expected_out_p = torch.sin(a) + b
+    assert_close(out_p, expected_out_p)
+    expected_out_t = torch.cos(a) + b
     assert_close(out_t, expected_out_t)
 
 

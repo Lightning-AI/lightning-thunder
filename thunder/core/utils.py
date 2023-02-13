@@ -6,6 +6,7 @@ from typing import Callable, Sequence, Type
 import thunder.core.dtypes as dtypes
 import thunder.core.trace as trace
 from thunder.core.proxies import NumberProxy, TensorProxy
+from thunder.core.pytree import tree_flatten, tree_unflatten
 
 # This file defines utilities that can be used when defining primitive operations.
 
@@ -651,6 +652,15 @@ def safe_map(f, *args):
     for arg in args[1:]:
         assert len(arg) == n, f"length mismatch: {list(map(len, args))}"
     return list(map(f, *args))
+
+
+def safe_map_flat(f, *args):
+    args_flat_spec = safe_map(tree_flatten, args)
+    _, spec = args_flat_spec[0]
+    for i, (_, s) in enumerate(args_flat_spec[1:], start=1):
+        assert s == spec, f"argument layout mismatch: {args[0]} {args[i]}"
+    out_flat = list(map(f, *[a for a, _ in args_flat_spec]))
+    return tree_unflatten(out_flat, spec)
 
 
 def safe_zip(*args):

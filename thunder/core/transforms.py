@@ -3,19 +3,21 @@ from dataclasses import dataclass
 from enum import auto, Enum
 from functools import lru_cache, partial
 from numbers import Number
-from typing import Any, Callable, Dict, Sequence
+from typing import Any, Callable, Dict, Sequence, Union
 
 from thunder import make_trace, make_traced
 from thunder.core import prims
 from thunder.core.lang import full_like
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
-from thunder.core.trace import detached_trace, Trace
-from thunder.core.utils import safe_map, safe_zip, unzip2, check
+from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.trace import detached_trace, get_trace, Trace
+from thunder.core.utils import safe_map, safe_map_flat, safe_zip, unzip2, check
 from thunder.executors.torch import ops_to_torch_ops_map
 
 
 class Transforms(Enum):
     IdentityOp = auto()
+    VmapOp = auto()
     JvpOp = auto()
 
 
@@ -51,29 +53,29 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, **kwargs):
 
     def read(x: Proxy):
         if isinstance(x, Proxy):
-            return env[x]
+            return env[x.name]
         else:
             return x
 
     def write(v: Proxy, val: Any) -> None:
-        check(v not in env, lambda: f"Found v={v} in env={env}!")
-        env[v] = val
+        if not isinstance(v, Proxy):
+            return
+        check(v.name not in env, lambda: f"Found v={v} in env={env}!")
+        env[v.name] = val
 
-    safe_map(write, trace.args, args)
-    safe_map(write, trace.kwargs.values(), kwargs.values())
+    safe_map_flat(write, list(trace.args), list(args))
+    safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
     for symbol in trace.symbols:
-        args = safe_map(read, symbol.args)
+        args = safe_map_flat(read, symbol.args)
         kwargs = {k: read(v) for k, v in symbol.kwargs.items()}
         prim_func = symbol_mapper(symbol)
         result = prim_func(*args, **kwargs)
         if not isinstance(result, Sequence):
             result = (result,)
-        safe_map(write, symbol.outputs, result)
+        safe_map_flat(write, list(symbol.outputs), list(result))
 
-    if not isinstance(trace.outputs, Sequence):
-        return read(trace.outputs)
-    return safe_map(read, trace.outputs)
+    return safe_map_flat(read, trace.outputs)
 
 
 def _identity_call_metafunc(*args, trace: Trace, **kwargs):
@@ -152,6 +154,291 @@ def inline(func):
         return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
 
     return wrapper
+
+
+# VMAP transform
+# -------------
+
+
+class NotMapped:
+    pass
+
+
+@dataclass(frozen=True)
+class BatchedValue:
+    """Batched value for the vmap transform.
+
+    Attributes:
+        value: Batched value.
+        batch_dim: Batching dimension or not_mapped
+    """
+
+    value: Any
+    batch_dim: Union[int, NotMapped]
+
+    def __iter__(self):
+        yield self.value
+        yield self.batch_dim
+
+
+def pair_to_batched_value(pair):
+    """Converts a pair to a BatchedValue.
+
+    Args:
+        pair (Sequence): Pair to convert.
+
+    Returns:
+        BatchedValue: BatchedValue representation of the pair.
+    """
+    if isinstance(pair, BatchedValue):
+        return pair
+    else:
+        assert isinstance(pair, Sequence) and len(pair) == 2
+        return BatchedValue(*pair)
+
+
+def vectorized_batcher(prim, axis_size, batched_args, batch_dims, **kwargs):
+    assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
+    return prim(*batched_args, **kwargs), batch_dims[0]
+
+
+not_mapped = NotMapped()
+
+
+def movedim(x, src: int, dst: int):
+    perm = [i for i in range(x.ndim) if i != src]
+    perm.insert(dst, src)
+    return prims.transpose(x, perm)
+
+
+def move_batch_dim(axis_size, src, dst, x):
+    if src is not_mapped:
+        if isinstance(x, (int, float)):
+            return x
+        target_shape = list(x.shape)
+        target_shape.insert(dst, axis_size)
+        return prims.broadcast_in_dim(x, target_shape, [dst])
+    elif src == dst:
+        return x
+    else:
+        return movedim(x, src, dst)
+
+
+def binary_op_batching_rule(op, axis_size, vals_in, dims_in):
+    (x, y), (x_bdim, y_bdim) = vals_in, dims_in
+    if x_bdim != y_bdim:
+        if x_bdim is not_mapped:
+            x = move_batch_dim(axis_size, x_bdim, y_bdim, x)
+            x_bdim = y_bdim
+        else:
+            y = move_batch_dim(axis_size, y_bdim, x_bdim, y)
+    return op(x, y), x_bdim
+
+
+def sin_vmap(axis_size, a, batched_dim):
+    return vectorized_batcher(prims.sin, axis_size, (a,), (batched_dim,))
+
+
+def cos_vmap(axis_size, a, batched_dim):
+    return vectorized_batcher(prims.cos, axis_size, (a,), (batched_dim,))
+
+
+def mul_vmap(axis_size, a, b, a_batched_dim, b_batched_dim):
+    return binary_op_batching_rule(prims.mul, axis_size, (a, b), (a_batched_dim, b_batched_dim))
+
+
+def add_vmap(axis_size, a, b, a_batched_dim, b_batched_dim):
+    return binary_op_batching_rule(prims.add, axis_size, (a, b), (a_batched_dim, b_batched_dim))
+
+
+vmap_impls: Dict[prims.Symbol, Callable] = dict()
+
+vmap_impls[prims.Ops.SIN] = sin_vmap
+vmap_impls[prims.Ops.COS] = cos_vmap
+vmap_impls[prims.Ops.MUL] = mul_vmap
+vmap_impls[prims.Ops.ADD] = add_vmap
+
+
+def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
+    """Maps a symbol to a vmap function that evaluates it.
+
+    Args:
+        symbol (prims.Symbol): Symbol to evaluate.
+
+    Raises:
+        NotImplementedError: If the vmap for the symbol is not implemented.
+
+    Returns:
+        Callable: vmap function that evaluates the symbol.
+    """
+
+    def wrap_arg(x):
+        if isinstance(x, BatchedValue):
+            return x
+        elif isinstance(x, Number):
+            return BatchedValue(x, not_mapped)
+        else:
+            raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
+
+    if not any(isinstance(arg, Proxy) for arg in symbol.args):
+
+        def _vmap_impl_const(symbol, *args, **kwargs):
+            out = symbol_to_eval(symbol)(*args, **kwargs)
+
+            if isinstance(out, Sequence):
+                return safe_map(pair_to_batched_value, safe_zip(args, [not_mapped] * len(out)))
+
+            return BatchedValue(out, not_mapped)
+
+        return partial(_vmap_impl_const, symbol)
+
+    vmap_impl = vmap_impls.get(symbol.op)
+    if vmap_impl is None:
+        raise NotImplementedError(f"vmap for {symbol.op} is not implemented")
+
+    def _vmap_impl(*args, **kwargs):
+        assert len(kwargs) == 0, "vmap for kwargs is not implemented"
+        args = safe_map(wrap_arg, args)
+        assert all(isinstance(arg, BatchedValue) for arg in args)
+        _args, _bdims = unzip2(args)
+        out_val, out_dim = vmap_impl(axis_size, *_args, *_bdims, **kwargs)
+        if isinstance(out_val, Sequence):
+            return safe_map(pair_to_batched_value, safe_zip(out_val, out_dim))
+        return BatchedValue(out_val, out_dim)
+
+    return _vmap_impl
+
+
+def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0):
+    """Removes the batch dimension from a tensor.
+
+    Args:
+        tensor (TensorProxy): Tensor to remove the batch dimension from.
+
+    Returns:
+        TensorProxy: Tensor with the batch dimension removed.
+    """
+    trace = get_trace()
+    name = trace.make_proxy_name()
+    new_shape = tensor.shape[:batch_dim] + tensor.shape[batch_dim + 1 :]
+    return TensorProxy(name=name, shape=new_shape, dtype=tensor.dtype, device=tensor.device)
+
+
+# TODO: in JAX args, in_dims are flattened the same way
+# TODO: in JAX out_dims are flattened as well
+def _vmap_call_metafunc(args, in_dims, out_dims, trace: Trace, detached: bool, **kwargs):
+    """Metafunction for vmap call.
+
+    Args:
+        args (Tuple[Proxy]): Arguments to the function.
+        in_dims (Tuple[int]): Batch dimension for each argument.
+        out_dims (Tuple[int]): Batch dimension for return values.
+        trace (Trace): Trace to use for the function.
+        detached (bool): Whether to detach the trace.
+        kwargs: Keyword arguments.
+
+    Raises:
+        AssertionError: If the vmap for keyword arguments is not implemented.
+
+    Returns:
+        Result of the vmap transform.
+    """
+    assert len(kwargs) == 0, "vmap for kwargs is not implemented"
+
+    (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
+    in_dims = in_dims if isinstance(in_dims, Sequence) else (in_dims,)
+    out_dims = out_dims if isinstance(out_dims, Sequence) else (out_dims,)
+
+    ctx = detached_trace() if detached else nullcontext()
+    with ctx:
+        # We propagate the BatchValue through the trace, and then unwrap it at the end
+        batched_args = safe_map(pair_to_batched_value, safe_zip(args, in_dims))
+        result = eval_trace(trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size))
+        # Unwrapping the BatchedValue's
+        if isinstance(result, Sequence):
+            assert all(isinstance(x, BatchedValue) for x in result)
+            outs, bdims = unzip2(result)
+            outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
+            return outs, out_dims
+        assert isinstance(result, BatchedValue)
+        out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
+        return out, out_dims[0]
+
+
+vmap_call = prims.make_prim(Transforms.VmapOp, "vmap_call", partial(_vmap_call_metafunc, detached=True))
+inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, detached=False)
+
+
+# TODO: how should we handle out_dims here?
+# although here we are calling vmap of identity, so we should know from the call to vmap
+# This should be fine. If we have vmap(identity(func), out_dims=N) then this rule is first used
+# to get the vmapped result of identity(func) in vmap_symbol_mapper, and out_dims is handled
+# after that in the outer _vmap_call_metafunc.
+def _identity_call_vmap(*batched_args, trace: Trace, **kwargs):
+    half = len(batched_args) // 2
+    args, in_dims = batched_args[:half], batched_args[half:]
+    out_dims = 0  # Fixme
+    return _vmap_call_metafunc(args, in_dims, out_dims, trace=trace, detached=False, **kwargs)
+
+
+vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
+
+
+def vmap(func, in_dims=0, out_dims=0):
+    """Vectorizing transform for a Thunder function.
+
+    Args:
+        func (Callable): A Thunder function to be transformed.
+
+    Returns:
+        Callable: A vmapped version of the function.
+    """
+
+    # TODO: flatten
+    # In JAX flattening of in_dims is rather complicated because it can optionally be
+    # specified as a “prefix” pytree, meaning that a single leaf value can be applied
+    # to an entire sub-pytree.
+
+    def flatten_func_for_vmap(func, args, kwargs):
+        flat_args, spec = tree_flatten((args, kwargs))
+
+        def flat_func(*flat_args):
+            fn_args, fn_kwargs = tree_unflatten(flat_args, spec)
+            return func(*fn_args, **fn_kwargs)
+
+        return flat_func, flat_args, spec
+
+    def wrapper(*args, **kwargs):
+        func_flat, args_flat, args_spec = flatten_func_for_vmap(func, args, kwargs)
+        if isinstance(in_dims, int):
+            in_dims_flat = (in_dims,) * len(args_flat)
+        else:
+            in_dims_flat, in_dims_spec = tree_flatten(in_dims)
+            assert args_spec == in_dims_spec, "in_dims must have the same structure as args, kwargs"
+        unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
+        trace = make_trace(func_flat)(*unbatched_args_flat)
+        outs, bdims = vmap_call(args_flat, in_dims_flat, out_dims, trace=trace)
+        return outs
+
+    return wrapper
+
+
+def vmap_eager(func, args, in_dims=0, out_dims=0, executor="torch"):
+    """Computes the vmap of a Thunder function.
+
+    Args:
+        func (Callable): A Thunder function to be transformed.
+        args (_type_): Args of the function.
+        executor (str, optional): Executor to use. Defaults to "torch".
+
+    Returns:
+        The result of the vmapped function.
+    """
+    # TODO: fix this - not all args may be batched
+    # TODO: here we assume batch axis is 0
+    vmap_trace = make_trace(inline(vmap(func, in_dims=in_dims, out_dims=out_dims)), executor=executor)(*args)
+    vmap_traced = make_traced(partial(eval_trace, vmap_trace), executor=executor)
+    return vmap_traced(*args)
 
 
 # JVP transform
