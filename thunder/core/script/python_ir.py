@@ -311,9 +311,9 @@ def generate_function(gr):
     bc_bytes = bytes(bc)
 
     lv_at_start = [v for v in gr.local_variables_at_start if v is not None]
-    co_argcount = len(lv_at_start)
-    co_posonlyargcount = 0
-    co_kwonlyargcount = 0
+    co_argcount = gr.co_argcount
+    co_posonlyargcount = gr.co_posonlyargcount
+    co_kwonlyargcount = gr.co_kwonlyargcount
     co_nlocals = len(local_vars)
     co_stacksize = 10  # TODO
     co_flags = 0
@@ -347,4 +347,7 @@ def generate_function(gr):
         co_cellvars,  # tuple
     )
 
-    return types.FunctionType(c, {})
+    # types.FunctionType(code, globals, name=None, argdefs=None, closure=None)
+    func = types.FunctionType(c, {}, argdefs=tuple(gr.func_defaults))
+    func.__kwdefaults__ = gr.func_kwdefaults
+    return func

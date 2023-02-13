@@ -27,8 +27,8 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     if mro_klass is None and module is not None:
         mro_klass = type(module)
     local_variables = []
-    self_value = Value(value=module, name=method.__code__.co_varnames[0], is_function_arg=True)
     if inspect.ismethod(method):
+        self_value = Value(value=module, name=method.__code__.co_varnames[0], is_function_arg=True)
         local_variables.append(self_value)
     else:
         self_value = NULL
@@ -128,8 +128,27 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
                     ]
                 done = True
     gr = Graph(list(blocks.values()))
-    gr.local_variables_at_start = local_variables
+    gr.all_local_variables_at_start = local_variables[:]
+    gr.local_variables_at_start = [lv for lv in local_variables if lv is not None]
     gr.ismethod = inspect.ismethod(method)
+    gr.co_argcount = 0 if not gr.ismethod else 1
+    gr.co_posonlyargcount = 0
+    gr.co_kwonlyargcount = 0
+    gr.func_defaults = []
+    gr.func_kwdefaults = {}
+    for p in sig.parameters.values():
+        if p.kind == inspect.Parameter.POSITIONAL_ONLY:
+            gr.co_argcount += 1
+            gr.co_posonlyargcount += 1
+        elif p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+            gr.co_argcount += 1
+        elif p.kind == inspect.Parameter.KEYWORD_ONLY:
+            gr.co_kwonlyargcount + 1
+        if p.default is not inspect._empty:
+            if p.kind == inspect.Parameter.KEYWORD_ONLY:
+                gr.func_kwdefaults[p.name] = p.default
+            else:
+                gr.func_defaults.append(p.default)
     gr.method = method
     gr.module = module
     gr.mro_klass = mro_klass
@@ -143,7 +162,7 @@ def make_ssa(gr, verbose=False):
             n.block = bl
         bl.all_stacks_at_start = [None if js is not None else [] for js in bl.jump_sources]
         bl.all_local_variables_at_start = [
-            None if js is not None else gr.local_variables_at_start[:] for js in bl.jump_sources
+            None if js is not None else gr.all_local_variables_at_start[:] for js in bl.jump_sources
         ]
 
     blocks_to_do = set(gr.blocks)
@@ -206,6 +225,8 @@ def make_ssa(gr, verbose=False):
                 outputs = [local_variables[i.arg]]
             elif i.opname == "STORE_FAST":
                 outputs = []
+                if len(local_variables) <= i.arg:
+                    local_variables.extend(None for _ in range(len(local_variables), i.arg + 1))
                 (local_variables[i.arg],) = inputs  # set name?
             elif i.opname == "DELETE_FAST":
                 outputs = []
@@ -309,6 +330,7 @@ def make_ssa(gr, verbose=False):
                     v = bl.all_local_variables_at_start[idx_js][idx_i - bl.stack_depth_at_start]
                 i.add_missing_value(v, idx_js)
 
+    del gr.all_local_variables_at_start
     for bl in gr.blocks:
         del bl.all_local_variables_at_start
         del bl.all_stacks_at_start

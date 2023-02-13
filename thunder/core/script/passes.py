@@ -576,8 +576,6 @@ def unroll_for_loops_and_inline_modules(gr):
 def module_to_function(gr):
     attr_dict = {}
     attr_list = []
-    gr.local_variables_at_start = [lv for lv in gr.local_variables_at_start if lv is not None]
-    offset = len(gr.local_variables_at_start)
     for bl in gr.blocks:
         for n in bl.nodes:
             for idx_i, i in enumerate(n.inputs):
@@ -587,11 +585,14 @@ def module_to_function(gr):
 
                 if maybe_self.value is gr.module and isinstance(v, torch.Tensor):
                     attr_string = ".".join(attrs)
-                    idx = attr_dict.setdefault(attr_string, offset + len(attr_dict))
-                    if idx >= len(gr.local_variables_at_start):
+                    idx = attr_dict.setdefault(attr_string, gr.co_argcount)
+                    if idx == gr.co_argcount:
                         func_arg = Value(name=attr_string, is_function_arg=True)
-                        gr.local_variables_at_start.append(func_arg)
+                        gr.local_variables_at_start.insert(idx, func_arg)
                         attr_list.append(attr_string)
+                        gr.co_argcount += 1
+                        # we need a default argument to be able to put the things at the end (but this will have to change for *args, **kwargs anyway...
+                        gr.func_defaults.append(None)
                     else:
                         func_arg = gr.local_variables_at_start[idx]
 
@@ -619,4 +620,5 @@ def module_to_function(gr):
     if gr.local_variables_at_start[0].phi_values:
         raise RuntimeError("could not eliminate self argument")
     del gr.local_variables_at_start[0]
+    gr.co_argcount -= 1
     return attr_list

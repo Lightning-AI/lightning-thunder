@@ -255,18 +255,27 @@ import torch  # oops
 class ThunderOptimizedModule(torch.nn.Module):  # TOM
     # todo: subclass nn.Module or forward things like .state_dict() to the
     #       model
-    def __init__(self, model, fn, additional_param_names):
+    def __init__(self, model, fn, tfn, additional_param_names):
         super().__init__()
         self._model = model
         self._forward_fn = fn
+        self._tfn = tfn
         self._additional_param_names = additional_param_names
+        self._fn_param_names = [
+            n
+            for n, p in inspect.signature(self._tfn).parameters.items()
+            if p.kind in {p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD}
+        ][-len(additional_param_names) :]
 
     def __call__(self, *args, **kwargs):
         if kwargs:
             raise NotImplementedError("keyword args not yet supported")
         sd = self._model.state_dict()
-        args_params = (*args, *(sd[n.replace("[", "").replace("]", "")] for n in self._additional_param_names))
-        res = self._forward_fn(*args_params)
+        params = {
+            pn: sd[n.replace("[", "").replace("]", "")]
+            for pn, n in zip(self._fn_param_names, self._additional_param_names)
+        }
+        res = self._forward_fn(*args, **params)
         return res
 
 
@@ -342,6 +351,6 @@ def make_traced(
         return result
 
     if isinstance(fn, langctx.module_cls):
-        _fn = ThunderOptimizedModule(fn, _fn, tfn._additional_param_names)
+        _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names)
 
     return _fn

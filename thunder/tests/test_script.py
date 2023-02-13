@@ -276,7 +276,7 @@ def test_nanogpt_tom():
     x = torch.randint(0, 255, (5, 5))
 
     torch.manual_seed(5)
-    o = tom(x, None)
+    o = tom(x)
     torch.manual_seed(5)
 
     o2 = m.forward(x)
