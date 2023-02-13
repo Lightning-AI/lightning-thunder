@@ -67,7 +67,7 @@ def get_executors(torch_fn, thunder_fn, args):
 
         raise ValueError(f"Unknown executor {x} requested")
 
-    executors = tuple((_helper(x) for x in args))
+    executors = tuple(_helper(x) for x in args)
     return executors
 
 
