@@ -145,7 +145,7 @@ def _reshape_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_
     nv_t, nv_shape = nv_args
     t, _ = sym_args
 
-    original_shape = t.shape
+    original_shape = t.proxy.shape
 
     def _realize_numbers(x):
         if isinstance(x, nvNumber):
@@ -166,7 +166,7 @@ def _squeeze_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_
 
     nv_t, nv_dims = nv_args
     t, _ = sym_args
-    original_shape = t.shape
+    original_shape = t.proxy.shape
 
     def _realize_numbers(x):
         if isinstance(x, nvNumber):
