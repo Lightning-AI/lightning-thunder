@@ -3,6 +3,10 @@ import string
 from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+from .pytree import tree_map
 
 # This file defines the tracing context, methods for acquiring it, and related classes.
 # This file is the base of Thunder's file hierarchy. It is always safe to import.
@@ -138,6 +142,23 @@ def reset_executor_context(token):
     _executor_ctx.reset(token)
 
 
+@dataclass(frozen=True)
+class Variable:
+    name: str
+    proxy: Any = field(compare=False, hash=False, repr=False)
+
+
+def proxy_to_variable(maybe_proxy):
+    """Converts a proxy to a variable."""
+    # Can't import Proxy at the top of the file because of circular imports
+    from thunder.core.proxies import Proxy
+
+    if isinstance(maybe_proxy, Proxy):
+        return Variable(name=maybe_proxy.name, proxy=maybe_proxy)
+    else:
+        return maybe_proxy
+
+
 NAME_CTR = 0
 
 
@@ -168,15 +189,22 @@ class Trace:
         )
 
     def add_args(self, args):
+        args = tree_map(proxy_to_variable, args)
         self.args = args
 
     def add_kwargs(self, kwargs):
+        kwargs = tree_map(proxy_to_variable, kwargs)
         self.kwargs = kwargs
 
     def add_outputs(self, outputs):
+        outputs = tree_map(proxy_to_variable, outputs)
         self.outputs = outputs
 
     def add_symbol(self, sym):
+        args = tree_map(proxy_to_variable, sym.args)
+        kwargs = tree_map(proxy_to_variable, sym.kwargs)
+        outputs = tree_map(proxy_to_variable, sym.outputs)
+        sym = replace(sym, args=args, kwargs=kwargs, outputs=outputs)
         self.symbols.append(sym)
         return sym
 

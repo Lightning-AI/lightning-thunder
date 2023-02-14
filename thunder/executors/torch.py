@@ -9,7 +9,7 @@ import thunder.langs.torch as ttorch
 from thunder.core import prims
 from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.trace import Trace
+from thunder.core.trace import Trace, Variable
 from thunder.executors.executor_prims import nvOps
 
 __all__ = [
@@ -232,7 +232,7 @@ def _get_torch(x):
     if isinstance(x, type):
         return x.__name__
 
-    if isinstance(x, Proxy):
+    if isinstance(x, Variable):
         return ProxyName(x.name)
 
     return x
@@ -245,7 +245,7 @@ def _get_torch_op(op):
 # Acquires a proxies name or passes a constant by value
 # TODO: put this into executors utils
 def _extract_name(x):
-    if isinstance(x, Proxy):
+    if isinstance(x, (Variable, Proxy)):
         return x.name
 
     return str(x)
@@ -277,7 +277,7 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
 
         # TODO: relax requirement that prim outputs are proxies?
         for out in sym.outputs:
-            if not isinstance(out, Proxy):
+            if not isinstance(out, Variable):
                 raise NotImplementedError
 
         op_str = None
@@ -359,10 +359,10 @@ def _fuse(trace):
     cstr += f"\n{tab}flat_kwargs, _ = tree_flatten(kwargs)"
 
     for idx, pinp in enumerate(flat_positional_inputs):
-        if isinstance(pinp, Proxy):
+        if isinstance(pinp, Variable):
             cstr += f"\n{tab}{pinp.name} = flat_args[{idx}]"
     for idx, kwinp in enumerate(flat_kwarg_inputs):
-        if isinstance(kwinp, Proxy):
+        if isinstance(kwinp, Variable):
             cstr += f"\n{tab}{kwinp.name} = flat_kwargs[{idx}]"
 
     # Calls PyTorch and Python operations
@@ -373,7 +373,7 @@ def _fuse(trace):
         torch_op = _get_torch_op(sym.op)
         result = sym.outputs[0]
 
-        if not isinstance(result, Proxy):
+        if not isinstance(result, Variable):
             raise NotImplementedError
 
         # NOTE: currently assumes result is always a proxy

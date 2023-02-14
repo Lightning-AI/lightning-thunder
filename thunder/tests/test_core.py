@@ -150,12 +150,14 @@ def test_eval_trace(executor, device, _):
     foo_trace = thunder.make_trace(foo, executor=executor)(a, b, c=c)
     try:
         trace_token = new_trace()
-        actual = eval_trace(foo_trace, *foo_trace.args, **foo_trace.kwargs)
+        new_args = [arg.proxy for arg in foo_trace.args]
+        new_kwargs = {k: v.proxy for k, v in foo_trace.kwargs.items()}
+        actual = eval_trace(foo_trace, *new_args, **new_kwargs)
         assert isinstance(actual, TensorProxy)
-        assert actual.shape == foo_trace.outputs.shape
-        assert actual.dtype == foo_trace.outputs.dtype
-        assert actual.device == foo_trace.outputs.device
-        assert ord(actual.name[-1]) - ord(foo_trace.outputs.name[-1]) == len(foo_trace.names)
+        assert actual.shape == foo_trace.outputs.proxy.shape
+        assert actual.dtype == foo_trace.outputs.proxy.dtype
+        assert actual.device == foo_trace.outputs.proxy.device
+        assert ord(actual.name[-1]) - ord(foo_trace.outputs.proxy.name[-1]) == len(foo_trace.names)
     finally:
         reset_trace(trace_token)
 

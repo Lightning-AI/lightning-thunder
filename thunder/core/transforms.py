@@ -8,9 +8,9 @@ from typing import Any, Callable, Dict, Sequence, Union
 from thunder import make_trace, make_traced
 from thunder.core import prims
 from thunder.core.lang import full_like
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
+from thunder.core.proxies import NumberProxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.trace import detached_trace, get_trace, Trace
+from thunder.core.trace import detached_trace, get_trace, Trace, Variable
 from thunder.core.utils import safe_map, safe_map_flat, safe_zip, unzip2, check
 from thunder.executors.torch import ops_to_torch_ops_map
 
@@ -51,14 +51,14 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, **kwargs):
     """
     env = {}
 
-    def read(x: Proxy):
-        if isinstance(x, Proxy):
+    def read(x: Variable):
+        if isinstance(x, Variable):
             return env[x.name]
         else:
             return x
 
-    def write(v: Proxy, val: Any) -> None:
-        if not isinstance(v, Proxy):
+    def write(v: Variable, val: Any) -> None:
+        if not isinstance(v, Variable):
             return
         check(v.name not in env, lambda: f"Found v={v} in env={env}!")
         env[v.name] = val
@@ -280,7 +280,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
         else:
             raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
 
-    if not any(isinstance(arg, Proxy) for arg in symbol.args):
+    if not any(isinstance(arg, Variable) for arg in symbol.args):
 
         def _vmap_impl_const(symbol, *args, **kwargs):
             out = symbol_to_eval(symbol)(*args, **kwargs)
@@ -518,9 +518,9 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
         else:
             raise ValueError(f"JVP wrap_arg got an unsupported type {type(x)}")
 
-    # If symbol.args doesn't have subclasses of Proxy, then we need to return a zero tangent
+    # If symbol.args doesn't have subclasses of Variable, then we need to return a zero tangent
     # TODO: there may be a better way to detect constants in the trace
-    if not any(isinstance(arg, Proxy) for arg in symbol.args):
+    if not any(isinstance(arg, Variable) for arg in symbol.args):
 
         def zeros_like(x):
             if isinstance(x, TensorProxy):
