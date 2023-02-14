@@ -27,16 +27,8 @@ class Proxy:
     def __init__(self, name):
         self.name = name
 
-    # NOTE: hashing on name (or something like it) is important
-    #   The number proxies are subclasses of Python number types,
-    #   so they will inherit that __hash__ if another isn't defined.
-    #   The hash value for a Python number is its value, and Python
-    #   dicts don't distinguish the values 3 and 3.0. This means
-    #   that proxies with the same value, even with different types
-    #   would hash to the same key, preventing them from being
-    #   stored in a dict together.
     def __hash__(self):
-        return object.__hash__(self)
+        raise NotImplemented
 
     def replace_name(self, name):
         """Returns a copy of this proxy with a new name."""
@@ -49,8 +41,9 @@ class NumberProxy(Proxy):
         self.python_type = python_type
         self.value = value
 
+    # Note: Python numbers hash to themselves
     def __hash__(self):
-        return Proxy.__hash__(self)
+        return hash(self.value)
 
     # TODO: update these comparisons to support Number x Tensor
     def __eq__(self, other):
@@ -104,7 +97,7 @@ class IntegerProxy(NumberProxy, int):
         return f"[IntegerProxy name={self.name} value={self.value}]"
 
     def __hash__(self):
-        return Proxy.__hash__(self)
+        return NumberProxy.__hash__(self)
 
     # NOTE: it'd be nice to define dunders to preserve proxies
     #   across calls to int() and float(), but returning "strict subclasses" of
@@ -134,7 +127,7 @@ class FloatProxy(NumberProxy, float):
         return f"[FloatProxy name={self.name} value={self.value}]"
 
     def __hash__(self):
-        return Proxy.__hash__(self)
+        return NumberProxy.__hash__(self)
 
     # NOTE: it'd be nice to define dunders to preserve proxies
     #   across calls to int() and float(), but returning "strict subclasses" of
@@ -164,7 +157,7 @@ class ComplexProxy(NumberProxy, complex):
         return f"[ComplexProxy name={self.name} value={self.value}]"
 
     def __hash__(self):
-        return Proxy.__hash__(self)
+        return NumberProxy.__hash__(self)
 
 
 # TODO: want this to pass isinstance(p, torch.Tensor) and isinstance(p, np.array) depending on
@@ -217,7 +210,7 @@ class TensorProxy(Proxy):
         return f"[TensorProxy, name={self.name}, shape={self.shape}, dtype={self.dtype}, has_weak_dtype={dtypes.is_weak_dtype(self._dtype)}]"
 
     def __hash__(self):
-        return Proxy.__hash__(self)
+        return object.__hash__(self)
 
     # .dtype, registered using __getattr__
     def _get_dtype(self):
