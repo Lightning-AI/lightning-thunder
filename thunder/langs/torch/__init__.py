@@ -647,6 +647,9 @@ def view(a, shape):
 #
 # Elementwise Unary Ops
 #
+@torch_function(torch.abs)
+def abs(a):
+    return tlang.abs(a)
 
 
 @torch_function(torch.acos)

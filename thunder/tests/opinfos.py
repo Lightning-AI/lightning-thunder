@@ -303,7 +303,8 @@ def elementwise_unary_generator(op, device, dtype, requires_grad, *, supports_nu
         yield SampleInput(a)
 
     # Scalar case
-    if supports_numbers:
+    # FIXME: see https://github.com/Lightning-AI/lightning-thunder/issues/169
+    if supports_numbers and not datatypes.is_complex_dtype(ttorch.thunder_dtype(dtype)):
         a = make_number(dtype=dtype, low=low, high=high, **kwargs)
         yield SampleInput(a)
 
@@ -532,10 +533,9 @@ cosh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(cosh_opinfo)
 
-# TODO: refine number support to clarify that only complex numbers are not supported
 erf_opinfo = OpInfo(
     tlang.erf,
-    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.erf),
     test_directives=(
         # Torch doesn't support CPU float16 erf
@@ -555,10 +555,9 @@ erf_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(erf_opinfo)
 
-# TODO: refine number support to clarify that only complex numbers are not supported
 erfc_opinfo = OpInfo(
     tlang.erfc,
-    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.erfc),
     test_directives=(
         # Torch doesn't support CPU float16 erfc
