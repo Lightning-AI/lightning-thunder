@@ -24,6 +24,7 @@ import thunder.core.dtypes as dtypes
 import thunder.core.proxies as proxies
 from thunder.executors.torch import _fuse_region as fuse_torch_region
 from thunder.tests import nanogpt_model
+from thunder.tests import hf_bart_self_attn
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 
 # This file contains custom nvFuser-related benchmarks.
@@ -1037,6 +1038,101 @@ def nanogpt_gelu_constructor(shape, device, dtype):
     return f"nanogpt-gelu", gen, new_gelu, thunder_info["fusion"], thunder_profile
 
 
+hf_bart_self_attn_info = (
+    BenchmarkArg(
+        name="config",
+        description="The hf-Bart configuration to use. Options are bart-large. Default is bart-larg.",
+        default="bart-large",
+    ),
+    BenchmarkArg(
+        name="dropout",
+        description="The dropout probability to use. Default is .1.",
+        default=0.1,
+    ),
+    BenchmarkArg(
+        name="sequences",
+        description="The number of sequences executed by the model.",
+        default=8,
+    ),
+    BenchmarkArg(
+        name="seq_length",
+        description="The sequence length of each sequence.",
+        default=1024,
+    ),
+    BenchmarkArg(
+        name="device",
+        description="The device of the model. Default is 'cuda'.",
+        default="cuda",
+    ),
+    BenchmarkArg(
+        name="dtype",
+        description="The dtype of the model. Default is float32.",
+        default=thunder.float32,
+    ),
+)
+
+
+def hf_bart_self_attn_constructor(
+    config,
+    dropout,
+    sequences,
+    seq_length,
+    device,
+    dtype,
+):
+    # Taken from HuggingFace Bart-Large model config:
+    # https://huggingface.co/facebook/bart-large/blob/main/config.json
+    configs = {
+        "bart-large": dict(embed_dim=1024, num_heads=16),
+    }
+
+    cfg = configs[config]
+
+    tdtype = ttorch.torch_dtype(dtype)
+    bart_model = hf_bart_self_attn.BartAttention(cfg["embed_dim"], cfg["num_heads"], dropout=dropout)
+    m = bart_model.to(device=device, dtype=tdtype)
+    tom = thunder.make_traced(
+        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
+    )
+
+    def gen():
+        return (
+            make_tensor(
+                (
+                    sequences,
+                    seq_length,
+                    cfg["embed_dim"],
+                ),
+                device=device,
+                dtype=tdtype,
+            ),
+            make_tensor(
+                (
+                    sequences,
+                    1,
+                    1,
+                    seq_length,
+                ),
+                device=device,
+                dtype=tdtype,
+            ),
+        ), {}
+
+    inp, _ = gen()
+
+    # TODO: if thunder+nvFuser isn't an executor, don't run thunder here
+    # TODO: in the future acquire thunder's fusion object here, too
+    thunder_info = tom(*inp)
+    thunder_profile = thunder_info["profile_info"]
+
+    # TODO: wrap the fusion
+    def _thunder_wrapper(inp, mask):
+        thunder_info = tom(inp, mask)
+        return thunder_info["result"]
+
+    return f"hf-{config}-self-attn", gen, m, _thunder_wrapper, thunder_profile
+
+
 # NOTE: new benchmark style, in development
 def benchmark(name, gen, torch_fn, thunder_fn, thunder_profile, *, executors=None, warmup_iters=5, iters=20):
     executors = get_executors(torch_fn, thunder_fn, executors)
@@ -1089,6 +1185,7 @@ benchmarks = {
     "nanogpt-csa": (nanogpt_csa_constructor, nanogpt_csa_info, "nanogpt CausalSelfAttention (CSA) module forward"),
     "nanogpt-mlp": (nanogpt_mlp_constructor, nanogpt_mlp_info, "nanogpt MLP module forward"),
     "nanogpt-gelu": (nanogpt_gelu_constructor, nanogpt_gelu_info, "nanogpt gelu function forward"),
+    "hf-bart-self-attn": (hf_bart_self_attn_constructor, hf_bart_self_attn_info, "hf bart self-attn module forward"),
 }
 
 
