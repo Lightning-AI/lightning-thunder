@@ -31,7 +31,7 @@ def test_nanogpt(executor, device, dtype):
 
     tom = thunder.make_traced(gpt, executor=executor, _preprocess=True)
     # FIXME: want to make calling convention consistent with PyTorch
-    thunder_result = tom(idx, None)
+    thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)
 

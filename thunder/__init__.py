@@ -268,14 +268,17 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
         ][-len(additional_param_names) :]
 
     def __call__(self, *args, **kwargs):
-        if kwargs:
-            raise NotImplementedError("keyword args not yet supported")
         sd = self._model.state_dict()
         params = {
             pn: sd[n.replace("[", "").replace("]", "")]
             for pn, n in zip(self._fn_param_names, self._additional_param_names)
         }
-        res = self._forward_fn(*args, **params)
+        kwargs_params = {**params, **kwargs}
+        if len(kwargs_params) != len(params) + len(kwargs):
+            # We could allow this, but once we do, people will rely on it.
+            # As long as we don't we can still discuss.
+            raise RuntimeError("passing parameter values is not supported")
+        res = self._forward_fn(*args, **kwargs_params)
         return res
 
 

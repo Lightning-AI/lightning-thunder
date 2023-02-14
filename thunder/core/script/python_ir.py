@@ -315,7 +315,8 @@ def generate_function(gr):
     co_posonlyargcount = gr.co_posonlyargcount
     co_kwonlyargcount = gr.co_kwonlyargcount
     co_nlocals = len(local_vars)
-    co_stacksize = 10  # TODO
+    # TODO: actually track the stack size when doing codegen (for optimizations)
+    co_stacksize = max(max(len(n.inputs), len(n.outputs)) for n in gr.nodes())
     co_flags = gr.co_flags
     co_codestring = bc_bytes
     co_consts = tuple(consts)

@@ -51,6 +51,10 @@ def test_acquisition_compile():
     assert_close(model(a, True), fn(model, a, True))
     assert_close(model(a, False), fn(model, a, False))
 
+    # Test kwargs
+    assert_close(model(a, flag=False), fn(model, a, flag=False))
+    assert_close(model(x=a, flag=True), fn(model, x=a, flag=True))
+
 
 @pytest.mark.skipif(
     sys.version_info < (3, 10) or sys.version_info >= (3, 11),

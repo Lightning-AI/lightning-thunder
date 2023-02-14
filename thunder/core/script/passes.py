@@ -108,6 +108,14 @@ def find_method_through_phi_parent(fn_value):
     # lookups to find the actual function we want to inline
     while isinstance(fn_value, PhiValue) and len(fn_value.values) == 1:
         fn_value = fn_value.values[0]
+    if isinstance(fn_value, PhiValue):  # so len(fn_value.values) is not 1
+        # if all different phi-value paths resolve to the same thing, we can continue
+        parent_value, attr_lookups = find_method_through_phi_parent(fn_value.values[0])
+        for v in fn_value.values[1:]:
+            pv2, al2 = find_method_through_phi_parent(v)
+            if not (pv2 is parent_value and al2 == attr_lookups):
+                return fn_value, []
+            return parent_value, attr_lookups
     if fn_value.parent is not None and fn_value.name is not None:
         parent_value, attr_lookups = find_method_through_phi_parent(fn_value.parent)
         attr_lookups.append(fn_value.name)
@@ -243,9 +251,12 @@ def inline_submodule_calls(gr):
         for n in bl.nodes[:]:
             if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION"}:
                 fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
-                if isinstance(fn_value, torch.nn.Module):
+                if isinstance(fn_value, torch.nn.Module) or (
+                    inspect.ismethod(fn_value) and isinstance(fn_value.__self__, torch.nn.Module)
+                ):
                     inline_method_call(gr, n)
                     changed = True
+
     return changed
 
 
@@ -395,9 +406,7 @@ def unroll_for_over_modules(gr, for_iter_node):
     get_iter_node = for_iter_node.inputs[0].values[0].node
     assert get_iter_node.i.opname == "GET_ITER"
 
-    iterated_module_list_parent, attr_lookups = thunder.core.script.passes.find_method_through_phi_parent(
-        get_iter_node.inputs[0]
-    )
+    iterated_module_list_parent, attr_lookups = find_method_through_phi_parent(get_iter_node.inputs[0])
     assert iterated_module_list_parent.value is not None
     iterated_module_list = iterated_module_list_parent.value
     for al in attr_lookups:
@@ -549,7 +558,7 @@ def find_and_unroll_for_loop(gr):
                     (
                         iterated_module_list_parent,
                         attr_lookups,
-                    ) = thunder.core.script.passes.find_method_through_phi_parent(get_iter_node.inputs[0])
+                    ) = find_method_through_phi_parent(get_iter_node.inputs[0])
                     if iterated_module_list_parent.value is None:
                         continue
                     iterated_module_list = iterated_module_list_parent.value
