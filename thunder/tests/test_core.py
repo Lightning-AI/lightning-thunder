@@ -35,6 +35,28 @@ def test_detached_trace(executor, device, _):
 
 
 @executors(dtypes=(thunder.float32,))
+def test_symbol_all_constant_args(executor, device, dtype):
+    def foo():
+        return tlang.maybe_convert_to_dtype(1, dtype)
+
+    trace = thunder.make_trace(foo, executor=executor)()
+
+    assert len(trace.symbols) == 1
+    symbol = trace.symbols[0]
+    assert symbol.name == "convert_element_type"
+    assert symbol.are_all_args_constant
+
+    def bar(a, b):
+        return tlang.add(a, b)
+
+    trace = thunder.make_trace(bar, executor=executor)(1, 2)
+    assert len(trace.symbols) == 1
+    symbol = trace.symbols[0]
+    assert symbol.name == "add"
+    assert not symbol.are_all_args_constant
+
+
+@executors(dtypes=(thunder.float32,))
 def test_integer_isinstance_mimicry(executor, device, dtype):
     # isinstance() works as expected
     def foo(a, b, c):

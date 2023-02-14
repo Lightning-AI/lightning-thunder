@@ -280,7 +280,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
         else:
             raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
 
-    if not any(isinstance(arg, Variable) for arg in symbol.args):
+    if symbol.are_all_args_constant:
 
         def _vmap_impl_const(symbol, *args, **kwargs):
             out = symbol_to_eval(symbol)(*args, **kwargs)
@@ -520,7 +520,7 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
 
     # If symbol.args doesn't have subclasses of Variable, then we need to return a zero tangent
     # TODO: there may be a better way to detect constants in the trace
-    if not any(isinstance(arg, Variable) for arg in symbol.args):
+    if symbol.are_all_args_constant:
 
         def zeros_like(x):
             if isinstance(x, TensorProxy):

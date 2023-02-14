@@ -5,14 +5,14 @@ import operator
 import sys
 from dataclasses import dataclass, field
 from enum import auto, Enum
-from functools import partial, reduce
+from functools import partial, reduce, lru_cache
 from numbers import Number
 from typing import Dict, Sequence, Tuple
 
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
 from thunder.core.proxies import Proxy, proxy, TensorProxy
-from thunder.core.trace import get_trace
+from thunder.core.trace import get_trace, Variable
 from thunder.core.utils import check, get_numberlike_value, same_shape
 
 # This file defines Thunder's "primitive" operations. These are the
@@ -193,9 +193,9 @@ class Symbol:
 
     op: Enum = field(repr=False)
     name: str
-    outputs: Tuple[Proxy]
-    args: Tuple[Proxy]
-    kwargs: Dict[str, Proxy]
+    outputs: Tuple[Variable]
+    args: Tuple[Variable]
+    kwargs: Dict[str, Variable]
 
     def __repr__(self):
         result_string = ", ".join(str(output) for output in self.outputs)
@@ -213,6 +213,12 @@ class Symbol:
 
     def __eq__(self, other):
         return self is other
+
+    @property
+    @lru_cache(maxsize=None)
+    def are_all_args_constant(self):
+        """Returns True if all arguments are constant (i.e. not Variables)."""
+        return not any(isinstance(arg, Variable) for arg in self.args)
 
 
 def make_symbol(id, name, outputs, args, kwargs):
