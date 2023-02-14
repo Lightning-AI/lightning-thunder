@@ -86,6 +86,7 @@ class NumberProxy(Proxy):
 #   instances, just True and False. Further, isinstance(True, int) is True in Python!
 #   So bools get handled by IntegerProxy.
 
+
 # TODO: implement more methods
 #   See https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types
 class IntegerProxy(NumberProxy, int):

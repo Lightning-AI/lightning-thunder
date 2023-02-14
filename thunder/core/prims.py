@@ -1,5 +1,6 @@
 import builtins
 import math
+import cmath
 import operator
 import sys
 from dataclasses import dataclass, field
@@ -321,6 +322,7 @@ def _iota_meta(length, *, start, step, device, dtype):
 
 iota = make_prim(Ops.IOTA, "iota", _iota_meta)
 
+
 # TODO: should the uniform prim include minval maxval or always be [0, 1)?
 def _uniform_meta(shape, minval, maxval, *, device, dtype):
     proxy_name = get_trace().make_proxy_name()
@@ -438,6 +440,17 @@ def _elementwise_unary_meta(a, *, name, type_promotion_kind, number_handler=None
     return proxy(result, name=proxy_name)
 
 
+def _real_complex_number_handler(r, c):
+    def _fn(x):
+        if isinstance(x, complex):
+            return c(x)
+
+        return r(x)
+
+    return _fn
+
+
+# TODO: supported dtypes are only signed dtypes
 abs = make_prim(
     Ops.ABS,
     "abs",
@@ -456,7 +469,7 @@ acos = make_prim(
         _elementwise_unary_meta,
         name="acos",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.acos,
+        number_handler=_real_complex_number_handler(math.acos, cmath.acos),
     ),
 )
 
@@ -467,7 +480,7 @@ acosh = make_prim(
         _elementwise_unary_meta,
         name="acosh",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.acosh,
+        number_handler=_real_complex_number_handler(math.acosh, cmath.acosh),
     ),
 )
 
@@ -478,7 +491,7 @@ asin = make_prim(
         _elementwise_unary_meta,
         name="asin",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.asin,
+        number_handler=_real_complex_number_handler(math.asin, cmath.asin),
     ),
 )
 
@@ -489,7 +502,7 @@ atan = make_prim(
         _elementwise_unary_meta,
         name="atan",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.atan,
+        number_handler=_real_complex_number_handler(math.atan, cmath.atan),
     ),
 )
 
@@ -500,7 +513,7 @@ atanh = make_prim(
         _elementwise_unary_meta,
         name="atanh",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.atanh,
+        number_handler=_real_complex_number_handler(math.atanh, cmath.atanh),
     ),
 )
 
@@ -533,7 +546,7 @@ cos = make_prim(
         _elementwise_unary_meta,
         name="cos",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.cos,
+        number_handler=_real_complex_number_handler(math.cos, cmath.cos),
     ),
 )
 
@@ -544,7 +557,7 @@ cosh = make_prim(
         _elementwise_unary_meta,
         name="cosh",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.cosh,
+        number_handler=_real_complex_number_handler(math.cosh, cmath.cosh),
     ),
 )
 
@@ -577,7 +590,7 @@ exp = make_prim(
         _elementwise_unary_meta,
         name="exp",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.exp,
+        number_handler=_real_complex_number_handler(math.exp, cmath.exp),
     ),
 )
 
@@ -588,7 +601,7 @@ expm1 = make_prim(
         _elementwise_unary_meta,
         name="expm1",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.expm1,
+        number_handler=_real_complex_number_handler(math.expm1, lambda x: cmath.exp(x - 1)),
     ),
 )
 
@@ -610,12 +623,16 @@ isfinite = make_prim(
         _elementwise_unary_meta,
         name="isfinite",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
-        number_handler=math.isfinite,
+        number_handler=_real_complex_number_handler(math.isfinite, cmath.isfinite),
     ),
 )
 
+
 # TODO: improve this
 def _rsqrt_number(x):
+    if isinstance(x, complex):
+        return 1 / cmath.sqrt(x)
+
     return 1 / math.sqrt(x)
 
 
@@ -637,7 +654,7 @@ sin = make_prim(
         _elementwise_unary_meta,
         name="sin",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.sin,
+        number_handler=_real_complex_number_handler(math.sin, cmath.sin),
     ),
 )
 
@@ -648,7 +665,7 @@ sqrt = make_prim(
         _elementwise_unary_meta,
         name="sqrt",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.sqrt,
+        number_handler=_real_complex_number_handler(math.sqrt, cmath.sqrt),
     ),
 )
 
@@ -659,7 +676,7 @@ tanh = make_prim(
         _elementwise_unary_meta,
         name="tanh",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.tanh,
+        number_handler=_real_complex_number_handler(math.tanh, cmath.tanh),
     ),
 )
 
@@ -670,7 +687,7 @@ log = make_prim(
         _elementwise_unary_meta,
         name="log",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.log,
+        number_handler=_real_complex_number_handler(math.log, cmath.log),
     ),
 )
 
@@ -681,7 +698,7 @@ log10 = make_prim(
         _elementwise_unary_meta,
         name="log10",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.log10,
+        number_handler=_real_complex_number_handler(math.log10, cmath.log10),
     ),
 )
 
@@ -692,7 +709,7 @@ log1p = make_prim(
         _elementwise_unary_meta,
         name="log1p",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.log1p,
+        number_handler=_real_complex_number_handler(math.log1p, lambda x: cmath.log(1 + x)),
     ),
 )
 
@@ -703,13 +720,9 @@ log2 = make_prim(
         _elementwise_unary_meta,
         name="log2",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=math.log2,
+        number_handler=_real_complex_number_handler(math.log2, lambda x: cmath.log(x, 2)),
     ),
 )
-
-# "log1p",
-# "log2",
-# "log10",
 
 #
 # Elementwise binary prims
@@ -911,6 +924,7 @@ sub = make_prim(
 # Elementwise ternary prims
 #
 
+
 # TODO: add stride logic
 def where_meta(pred, a, b):
     # Checks types
@@ -1019,6 +1033,7 @@ reshape = make_prim(
     "reshape",
     reshape_meta,
 )
+
 
 # TODO: be clear about what the prim can handle and what it can't
 # NOTE: the stride parameter here refers to the stride of the slice, not the tensor's
@@ -1171,6 +1186,7 @@ var = make_prim(Ops.VAR, "var", var_meta)
 # Matmul prims
 #
 # NOTE: matmul prims are highly experimental and will almost definitely change
+
 
 # out = a @ w.transpose() + bias
 def linear_meta(a, w, bias):

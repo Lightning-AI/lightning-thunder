@@ -18,6 +18,7 @@ __all__ = [
     "JAX_AVAILABLE",
 ]
 
+
 # A marker for actually wanting NOTHING instead of specifying nothing
 class NOTHING:
     pass
@@ -194,7 +195,6 @@ def _instantiate_opinfo_test_template(template, scope, *, opinfo, executor, devi
 # TODO: don't pass the device type to the test, select an actual device
 # TODO: example uses, note this must be the LAST decorator applied
 class ops:
-
     # TODO: support other kinds of dtype specifications
     def __init__(
         self, opinfos, *, supported_executors=None, supported_device_types=None, supported_dtypes=None, scope=None
@@ -261,7 +261,6 @@ class ops:
 # TODO: don't pass the device type to the test, select an actual device
 # TODO: example uses, note this must be the LAST decorator applied
 class executors:
-
     # TODO: support other kinds of dtype specifications
     def __init__(self, *, executors=None, devicetypes=None, dtypes=None, scope=None):
         self.executors = set(executors) if executors is not None else set(_all_executors())

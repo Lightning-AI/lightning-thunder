@@ -4,6 +4,8 @@ import operator
 from collections import namedtuple
 from functools import partial
 from typing import Sequence
+from functools import wraps
+from numbers import Number
 
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ import pytest
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
 from looseversion import LooseVersion
-from torch.testing import make_tensor
+from thunder.tests.make_tensor import make_tensor
 
 import thunder.core.dtypes as datatypes
 import thunder.core.lang as tlang
@@ -21,9 +23,11 @@ from thunder.core.pytree import tree_map
 from thunder.langs.torch import torch_dtype
 from thunder.tests.framework import _all_device_types, JAX_AVAILABLE
 
+eps = 1e-5
 
-def make_number(dtype):
-    v = make_tensor((), dtype=dtype, device="cpu").item()
+
+def make_number(**kwargs):
+    v = make_tensor((), device="cpu", **kwargs).item()
     return v
 
 
@@ -119,7 +123,7 @@ class SampleInput:
     def jax(self):
         def to_jax(t):
             if isinstance(t, torch.Tensor):
-                return t.cpu().numpy()
+                return jnp.array(t.cpu().numpy())
             if isinstance(t, torch.dtype):
                 return _torch_to_jax_dtype_map[t]
 
@@ -175,6 +179,7 @@ class DecorateInfo:
 
 Domain = namedtuple("Domain", "low high")
 opinfos = []
+
 
 # TODO: require use of generic Thunder dtypes (once they exist)
 class OpInfo:
@@ -255,10 +260,11 @@ class OpInfo:
 elementwise_unary_ops = []
 
 
-# TODO: add numbers
 # TODO: add small value, large value, and extremal-valued samples
-def elementwise_unary_generator(op, device, dtype, requires_grad, **kwargs):
-    make_arg = partial(make_tensor, device=device, dtype=dtype, low=op.domain.low, high=op.domain.high)
+def elementwise_unary_generator(op, device, dtype, requires_grad, *, supports_numbers=True, **kwargs):
+    low = None if op.domain.low is None else max(-9, op.domain.low)
+    high = None if op.domain.high is None else min(9, op.domain.high)
+    make_arg = partial(make_tensor, device=device, dtype=dtype, low=low, high=high, **kwargs)
 
     shapes = (
         # TODO: restore size zero cases
@@ -294,6 +300,11 @@ def elementwise_unary_generator(op, device, dtype, requires_grad, **kwargs):
         a = make_arg(
             500,
         ).as_strided(shape, strides, offset)
+        yield SampleInput(a)
+
+    # Scalar case
+    if supports_numbers:
+        a = make_number(dtype=dtype, low=low, high=high, **kwargs)
         yield SampleInput(a)
 
 
@@ -334,22 +345,42 @@ class ElementwiseUnaryOpInfo(ElementwiseOpInfo):
         elementwise_unary_ops.append(self)
 
 
+# NOTE: many PyTorch operations don't accept numbers as inputs,
+#   so this helper wraps and unwraps numbers
+def _elementwise_unary_torch(op):
+    @wraps(op)
+    def _fn(x):
+        if isinstance(x, torch.Tensor):
+            return op(x)
+
+        return op(torch.tensor(x)).item()
+
+    return _fn
+
+
+# NOTE: slightly different from generic _elementwise_unary_torch helper
+#   because this returns the input when given an unsigned type
+@wraps(torch.abs)
+def _abs_torch(x):
+    if datatypes.is_unsigned_dtype(ttorch.to_dtype(x)):
+        return x
+
+    if isinstance(x, torch.Tensor):
+        return torch.abs(x)
+
+    return torch.abs(torch.tensor(x)).item()
+
+
 abs_opinfo = ElementwiseUnaryOpInfo(
     tlang.abs,
-    torch_reference=torch.abs,
-    test_directives=(
-        # Torch doesn't support CPU bool abs
-        DecorateInfo(
-            pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8,), devicetypes=("cpu",)
-        ),
-    ),
+    torch_reference=_abs_torch,
 )
 
 acos_opinfo = OpInfo(
     tlang.acos,
     domain=(-1, 1),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.acos,
+    torch_reference=_elementwise_unary_torch(torch.acos),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 acos
         DecorateInfo(
@@ -366,7 +397,7 @@ acosh_opinfo = OpInfo(
     tlang.acosh,
     domain=(1, math.inf),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.acosh,
+    torch_reference=_elementwise_unary_torch(torch.acosh),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 acosh
         DecorateInfo(
@@ -384,7 +415,7 @@ asin_opinfo = OpInfo(
     tlang.asin,
     domain=(-1, 1),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.asin,
+    torch_reference=_elementwise_unary_torch(torch.asin),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 asin
         DecorateInfo(
@@ -400,7 +431,7 @@ elementwise_unary_ops.append(asin_opinfo)
 atan_opinfo = OpInfo(
     tlang.atan,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.atan,
+    torch_reference=_elementwise_unary_torch(torch.atan),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 atan
         DecorateInfo(
@@ -415,9 +446,9 @@ elementwise_unary_ops.append(atan_opinfo)
 
 atanh_opinfo = OpInfo(
     tlang.atanh,
-    domain=(-1, 1),
+    domain=(-1 + eps, 1 - eps),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.atanh,
+    torch_reference=_elementwise_unary_torch(torch.atanh),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 atanh
         DecorateInfo(
@@ -434,7 +465,7 @@ bitwise_not_opinfo = OpInfo(
     tlang.bitwise_not,
     dtypes=(datatypes.exact,),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.bitwise_not,
+    torch_reference=_elementwise_unary_torch(torch.bitwise_not),
 )
 elementwise_unary_ops.append(bitwise_not_opinfo)
 
@@ -442,7 +473,7 @@ ceil_opinfo = OpInfo(
     tlang.ceil,
     dtypes=(datatypes.floating, datatypes.exact),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.ceil,
+    torch_reference=_elementwise_unary_torch(torch.ceil),
     test_directives=(
         # Torch doesn't support bool ceil
         DecorateInfo(
@@ -472,7 +503,7 @@ elementwise_unary_ops.append(ceil_opinfo)
 cos_opinfo = OpInfo(
     tlang.cos,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.cos,
+    torch_reference=_elementwise_unary_torch(torch.cos),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 cos
         DecorateInfo(
@@ -488,7 +519,7 @@ elementwise_unary_ops.append(cos_opinfo)
 cosh_opinfo = OpInfo(
     tlang.cosh,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.cosh,
+    torch_reference=_elementwise_unary_torch(torch.cosh),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 cosh
         DecorateInfo(
@@ -501,10 +532,11 @@ cosh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(cosh_opinfo)
 
+# TODO: refine number support to clarify that only complex numbers are not supported
 erf_opinfo = OpInfo(
     tlang.erf,
-    sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.erf,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.erf),
     test_directives=(
         # Torch doesn't support CPU float16 erf
         DecorateInfo(
@@ -523,10 +555,11 @@ erf_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(erf_opinfo)
 
+# TODO: refine number support to clarify that only complex numbers are not supported
 erfc_opinfo = OpInfo(
     tlang.erfc,
-    sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.erfc,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.erfc),
     test_directives=(
         # Torch doesn't support CPU float16 erfc
         DecorateInfo(
@@ -548,7 +581,7 @@ elementwise_unary_ops.append(erfc_opinfo)
 exp_opinfo = OpInfo(
     tlang.exp,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.exp,
+    torch_reference=_elementwise_unary_torch(torch.exp),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 exp
         DecorateInfo(
@@ -564,7 +597,7 @@ elementwise_unary_ops.append(exp_opinfo)
 expm1_opinfo = OpInfo(
     tlang.expm1,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.expm1,
+    torch_reference=_elementwise_unary_torch(torch.expm1),
     test_directives=(
         # Torch doesn't support CPU float16 expm1
         DecorateInfo(
@@ -587,7 +620,7 @@ floor_opinfo = OpInfo(
     tlang.floor,
     dtypes=(datatypes.floating, datatypes.exact),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.floor,
+    torch_reference=_elementwise_unary_torch(torch.floor),
     test_directives=(
         # Torch doesn't support bool floor
         DecorateInfo(
@@ -617,7 +650,7 @@ elementwise_unary_ops.append(floor_opinfo)
 isfinite_opinfo = OpInfo(
     tlang.isfinite,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.isfinite,
+    torch_reference=_elementwise_unary_torch(torch.isfinite),
     test_directives=(
         # nvFuser doesn't correctly return outputs as boolean tensors, and doesn't support full
         DecorateInfo(
@@ -636,8 +669,9 @@ elementwise_unary_ops.append(isfinite_opinfo)
 
 rsqrt_opinfo = OpInfo(
     tlang.rsqrt,
-    sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.rsqrt,
+    domain=(0, math.inf),
+    sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
+    torch_reference=_elementwise_unary_torch(torch.rsqrt),
     test_directives=(
         # NOTE: Torch doesn't support CPU float16 or complex32 tanh
         DecorateInfo(
@@ -652,6 +686,14 @@ rsqrt_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.complexfloating,),
         ),
+        # NOTE: low-precision types are too different
+        # TODO: verify that thunder is weakly more accurate or reduce precision required in these cases
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32, datatypes.bfloat16),
+            devicetypes=("cpu",),
+        ),
     ),
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
@@ -659,7 +701,7 @@ elementwise_unary_ops.append(rsqrt_opinfo)
 sin_opinfo = OpInfo(
     tlang.sin,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.sin,
+    torch_reference=_elementwise_unary_torch(torch.sin),
     test_directives=(
         # NOTE: Torch doesn't support CPU float16 or complex32 sin
         DecorateInfo(
@@ -672,10 +714,12 @@ sin_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(sin_opinfo)
 
+# TODO: refine domain vs. complex domain
 sqrt_opinfo = OpInfo(
     tlang.sqrt,
+    domain=(0, math.inf),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.sqrt,
+    torch_reference=_elementwise_unary_torch(torch.sqrt),
     test_directives=(
         # NOTE: Torch doesn't support CPU float16 or complex32 sqrt
         DecorateInfo(
@@ -691,7 +735,7 @@ elementwise_unary_ops.append(sqrt_opinfo)
 tanh_opinfo = OpInfo(
     tlang.tanh,
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.tanh,
+    torch_reference=_elementwise_unary_torch(torch.tanh),
     test_directives=(
         # See https://github.com/csarofeen/pytorch/issues/2360
         DecorateInfo(
@@ -711,8 +755,8 @@ elementwise_unary_ops.append(tanh_opinfo)
 log_opinfo = OpInfo(
     tlang.log,
     domain=(0, math.inf),
-    sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.log,
+    sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
+    torch_reference=_elementwise_unary_torch(torch.log),
     test_directives=(
         # See https://github.com/csarofeen/pytorch/issues/2360
         DecorateInfo(
@@ -732,8 +776,8 @@ elementwise_unary_ops.append(log_opinfo)
 log10_opinfo = OpInfo(
     tlang.log10,
     domain=(0, math.inf),
-    sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.log10,
+    sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
+    torch_reference=_elementwise_unary_torch(torch.log10),
     test_directives=(
         # See https://github.com/csarofeen/pytorch/issues/2360
         DecorateInfo(
@@ -756,11 +800,12 @@ log10_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(log10_opinfo)
 
+# TODO: need a way to specify that lhs of the domain is open
 log1p_opinfo = OpInfo(
     tlang.log1p,
-    domain=(-1, math.inf),
+    domain=(-1 + eps, math.inf),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.log1p,
+    torch_reference=_elementwise_unary_torch(torch.log1p),
     test_directives=(
         # See https://github.com/csarofeen/pytorch/issues/2360
         DecorateInfo(
@@ -804,8 +849,8 @@ elementwise_unary_ops.append(log1p_opinfo)
 log2_opinfo = OpInfo(
     tlang.log2,
     domain=(0, math.inf),
-    sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.log2,
+    sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
+    torch_reference=_elementwise_unary_torch(torch.log2),
     test_directives=(
         # See https://github.com/csarofeen/pytorch/issues/2360
         DecorateInfo(
@@ -935,6 +980,7 @@ opinfos.extend(elementwise_binary_ops)
 #
 elementwise_ternary_ops = []
 
+
 # TODO: add number tensors for value
 # TODO: error inputs
 def masked_fill_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -1009,6 +1055,7 @@ opinfos.extend(elementwise_ternary_ops)
 # Shape Op OpInfos
 #
 shape_ops = []
+
 
 # TODO: these samples could be improved
 def broadcast_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -1119,6 +1166,7 @@ getitem_opinfo = OpInfo(
     jax_reference=operator.getitem,
 )
 shape_ops.append(getitem_opinfo)
+
 
 # TODO: only remove these cases when the executor is nvFuser
 # FIXME: Zero-dim cases are skipped due to https://github.com/csarofeen/pytorch/issues/2383
@@ -1416,6 +1464,7 @@ opinfos.extend(shape_ops)
 #
 reduction_ops = []
 
+
 # TODO: increase reduction samples and refacort amax and sum generators
 def amax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -1556,6 +1605,7 @@ opinfos.extend(tensor_creation_ops)
 # NN Ops
 #
 nn_ops = []
+
 
 # TODO: improve sample generation, test dtype argument
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):

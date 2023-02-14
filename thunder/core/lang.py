@@ -183,11 +183,19 @@ def full(shape, fill_value, *, device, dtype=None):
     return prims.full(shape, fill_value, device=device, dtype=dtype)
 
 
-def full_like(tensor, fill_value, *, device=None, dtype=None):
-    device = device if device is not None else tensor.device
-    dtype = dtype if dtype is not None else tensor.true_dtype
+def full_like(a, fill_value, *, device=None, dtype=None):
+    if isinstance(a, Number):
+        dtype = type(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
+        utils.check(
+            device is None or device == "cpu",
+            "Numbers can only be created on the CPU, but found a request for device={device}",
+        )
+        return dtype(fill_value)
 
-    return full(tensor.shape, fill_value, device=device, dtype=dtype)
+    device = device if device is not None else a.device
+    dtype = dtype if dtype is not None else a.true_dtype
+
+    return full(a.shape, fill_value, device=device, dtype=dtype)
 
 
 def uniform(shape, minval=0.0, maxval=1.0, *, dtype, device):
@@ -197,6 +205,7 @@ def uniform(shape, minval=0.0, maxval=1.0, *, dtype, device):
 #
 # Shape operations
 #
+
 
 # Expands a to the specified shape, possibly adding new dimensions and expanding
 #   dimensions of length 1 to any length
@@ -260,7 +269,6 @@ def reshape(a, shape):
 # NOTE: this implementation derived from
 #   https://jax.readthedocs.io/en/latest/_modules/jax/_src/lax/slicing.html#slice_in_dim
 def slice_in_dim(a, start_index, limit_index, stride=1, dim=0):
-
     len_dim = a.shape[dim]
     start_index = utils.canonicalize_dim_idx(len_dim, start_index)
     limit_index = utils.canonicalize_dim_idx(len_dim, limit_index)
@@ -396,6 +404,9 @@ def _elementwise_unary_helper(prim, type_promotion_kind, a, *, supported_dtypes=
 
 
 def abs(a):
+    if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
+        return a
+
     return _elementwise_unary_helper(prims.abs, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT, a)
 
 
@@ -503,6 +514,7 @@ def log2(a):
 #
 # Elementwise binary operations
 #
+
 
 # Helper function that implements broadcasting and type promotion for elementwise binary operations
 # TODO: consider making type promotion kind an annotation on operations so it can be queried

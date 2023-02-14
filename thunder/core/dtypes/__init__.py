@@ -110,7 +110,6 @@ _abstract_classes = set()
 
 
 class dtype:
-
     # TODO: in the future might want to use ABCMeta to prevent this and the
     #   abstract classes from being instantiated
     def __new__(cls, *args, **kwargs):

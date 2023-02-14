@@ -607,7 +607,6 @@ def module_to_function(gr):
                 elif maybe_self.value is gr.module and (
                     n.i.opname not in {"BINARY_SUBSCR"} or not isinstance(v, torch.nn.Module)
                 ):
-
                     ## inline to const...
                     i.value = v
 

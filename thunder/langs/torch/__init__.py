@@ -130,6 +130,13 @@ _torch_to_thunder_dtype_map = {
 }
 
 
+def to_dtype(x):
+    if isinstance(x, torch.Tensor):
+        return thunder_dtype(x.dtype)
+
+    return dtypes.to_dtype(x)
+
+
 def thunder_dtype(torch_dtype):
     return _torch_to_thunder_dtype_map[torch_dtype]
 
@@ -154,7 +161,6 @@ def ctx():
 
 
 class TorchLangCtx:
-
     # NOTE: language context is a singleton
     def __new__(cls):
         if not hasattr(cls, "instance"):
@@ -515,7 +521,6 @@ def _split_disambiguator(*args, **kwargs):
 #   define the lengths of the split dimension, not the indices
 #   at which to split, and the values must sum to the length of the dimension.
 def split(a, size_or_sections, dim=0):
-
     # TODO: see note in tensor_split
     if isinstance(size_or_sections, TensorProxy):
         raise NotImplemented
@@ -590,7 +595,6 @@ def squeeze(a, dim=None):
 
 # See https://pytorch.org/docs/master/generated/torch.tensor_split.html
 def tensor_split(a, indices_or_sections, dim=0):
-
     # TODO: consider if we even should support this, it could introduce data-dependent control flow
     # NOTE: this will also catch number tensors
     if isinstance(indices_or_sections, TensorProxy):
@@ -1126,10 +1130,13 @@ def native_layer_norm(a, normalized_shape, weight, bias, eps):
         bias is None or bias.shape == tuple(normalized_shape),
         lambda: f"Expected bias.shape={bias.shape} to be the same as normalized_shape={normalized_shape}!",
     )
-    # TODO: review this check -- seems like it's combining too much?
     utils.check(
-        a.ndim >= normalized_ndim and a.shape[(a.ndim - normalized_ndim) :] == tuple(normalized_shape),
-        lambda: f"TODO native_layer_norm error",
+        a.ndim >= normalized_ndim,
+        lambda: f"Expected a.ndim={a.ndim} to be greater than or equal to len(normalized_shape)={normalized_ndim}",
+    )
+    utils.check(
+        a.shape[(a.ndim - normalized_ndim) :] == tuple(normalized_shape),
+        lambda: f"Expected the last {len(normalized_shape)} dimensions of a (a.shape={a.shape}) to be the same as {normalized_shape}",
     )
 
     axis = a.ndim - normalized_ndim

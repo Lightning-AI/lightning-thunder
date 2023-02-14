@@ -520,7 +520,6 @@ def test_local_aliased_translation(executor, device, dtype):
     make = partial(make_tensor, device=device, dtype=tdtype)
 
     def foo(a, b):
-
         fn = torch.nn.functional.linear
         return fn(a, b)
 

@@ -602,6 +602,7 @@ def check_no_duplicates(dims: Sequence):
 # Device-related functions
 #
 
+
 # TODO: improve device handling
 def check_same_device(*args):
     devices = tuple(x.device for x in args if isinstance(x, TensorProxy))
@@ -617,6 +618,7 @@ def check_same_device(*args):
 #
 # Context-related functions and decorators
 #
+
 
 # TODO: think about preserving the original function's signature
 class langctx:

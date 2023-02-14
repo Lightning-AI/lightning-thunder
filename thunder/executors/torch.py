@@ -1,5 +1,6 @@
 import operator
 from numbers import Number
+from functools import wraps
 
 import torch
 
@@ -116,14 +117,17 @@ def uniform_helper(shape, minval=0.0, maxval=1.0, *, device, dtype):
     return t
 
 
-# TODO: refactor into elementwise helper
-# TODO: conditional based on type aren't actually needed, so maybe find a way
-#   to remove this and speedup PyTorch fusion execution
-def abs_helper(a):
-    if is_tensor(a):
-        return torch.abs(a)
+# NOTE: many PyTorch operations don't accept numbers as inputs,
+#   so this helper wraps and unwraps numbers
+def _elementwise_unary_torch(op):
+    @wraps(op)
+    def _fn(x):
+        if isinstance(x, torch.Tensor):
+            return op(x)
 
-    return abs(a)
+        return op(torch.tensor(x)).item()
+
+    return _fn
 
 
 # Handles adding two Python numbers, which PyTorch allows but returns
@@ -159,30 +163,30 @@ ops_to_torch_ops_map = {
     prims.Ops.TRANSPOSE: "torch.permute",
     prims.Ops.VIEW: view_helper,
     # Elementwise unary prims
-    prims.Ops.ABS: abs_helper,
-    prims.Ops.ACOS: "torch.acos",
-    prims.Ops.ACOSH: "torch.acosh",
-    prims.Ops.ASIN: "torch.asin",
-    prims.Ops.ATAN: "torch.atan",
-    prims.Ops.ATANH: "torch.atanh",
-    prims.Ops.BITWISE_NOT: "torch.bitwise_not",
-    prims.Ops.CEIL: "torch.ceil",
-    prims.Ops.COS: "torch.cos",
-    prims.Ops.COSH: "torch.cosh",
-    prims.Ops.ERF: "torch.erf",
-    prims.Ops.ERFC: "torch.erfc",
-    prims.Ops.EXP: "torch.exp",
-    prims.Ops.EXPM1: "torch.expm1",
-    prims.Ops.FLOOR: "torch.floor",
-    prims.Ops.ISFINITE: "torch.isfinite",
-    prims.Ops.RSQRT: "torch.rsqrt",
-    prims.Ops.SIN: "torch.sin",
-    prims.Ops.SQRT: "torch.sqrt",
-    prims.Ops.TANH: "torch.tanh",
-    prims.Ops.LOG: "torch.log",
-    prims.Ops.LOG10: "torch.log10",
-    prims.Ops.LOG1P: "torch.log1p",
-    prims.Ops.LOG2: "torch.log2",
+    prims.Ops.ABS: _elementwise_unary_torch(torch.abs),
+    prims.Ops.ACOS: _elementwise_unary_torch(torch.acos),
+    prims.Ops.ACOSH: _elementwise_unary_torch(torch.acosh),
+    prims.Ops.ASIN: _elementwise_unary_torch(torch.asin),
+    prims.Ops.ATAN: _elementwise_unary_torch(torch.atan),
+    prims.Ops.ATANH: _elementwise_unary_torch(torch.atanh),
+    prims.Ops.BITWISE_NOT: _elementwise_unary_torch(torch.bitwise_not),
+    prims.Ops.CEIL: _elementwise_unary_torch(torch.ceil),
+    prims.Ops.COS: _elementwise_unary_torch(torch.cos),
+    prims.Ops.COSH: _elementwise_unary_torch(torch.cosh),
+    prims.Ops.ERF: _elementwise_unary_torch(torch.erf),
+    prims.Ops.ERFC: _elementwise_unary_torch(torch.erfc),
+    prims.Ops.EXP: _elementwise_unary_torch(torch.exp),
+    prims.Ops.EXPM1: _elementwise_unary_torch(torch.expm1),
+    prims.Ops.FLOOR: _elementwise_unary_torch(torch.floor),
+    prims.Ops.ISFINITE: _elementwise_unary_torch(torch.isfinite),
+    prims.Ops.RSQRT: _elementwise_unary_torch(torch.rsqrt),
+    prims.Ops.SIN: _elementwise_unary_torch(torch.sin),
+    prims.Ops.SQRT: _elementwise_unary_torch(torch.sqrt),
+    prims.Ops.TANH: _elementwise_unary_torch(torch.tanh),
+    prims.Ops.LOG: _elementwise_unary_torch(torch.log),
+    prims.Ops.LOG10: _elementwise_unary_torch(torch.log10),
+    prims.Ops.LOG1P: _elementwise_unary_torch(torch.log1p),
+    prims.Ops.LOG2: _elementwise_unary_torch(torch.log2),
     # Elementwise binary prims
     prims.Ops.ADD: add_helper,
     prims.Ops.ATAN2: "torch.atan2",
@@ -207,6 +211,7 @@ ops_to_torch_ops_map = {
     # NN prims
     prims.Ops.EMBEDDING: "torch.nn.functional.embedding",
 }
+
 
 # NOTE: this class is here to help with proper printing
 class ProxyName:

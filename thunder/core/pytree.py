@@ -244,6 +244,7 @@ FnAny = Callable[[Any], R]
 
 MapOnlyFn = Callable[[T], Callable[[Any], Any]]
 
+
 # These specializations help with type inference on the lambda passed to this
 # function
 @overload

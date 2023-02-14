@@ -98,7 +98,6 @@ _thunder_dtype_to_nvfuser_dtype_scalar_map = {
 #   2) handle constants, which nvFuser will refuse to convert
 def _convert_element_type_translation(fd):
     def _fn(a, dtype):
-
         nvfuser_dtype = dtype
 
         if dtypes.is_numbertype(dtype):
@@ -135,6 +134,7 @@ def _convert_element_type_translation(fd):
 
 
 # TODO: consider refactoring the preprocessors with a common pattern to bind or flatten/unflatten?
+
 
 # NOTE: nvFuser's reshape takes args (tensor, original_shape, new_shape)
 def _reshape_preprocessor(fd, proxy_to_nvfuser_map, sym_args, sym_kwargs, nv_args, nv_kwargs):
