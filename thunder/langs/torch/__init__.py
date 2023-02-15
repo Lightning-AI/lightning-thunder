@@ -42,6 +42,7 @@ __all__ = [
     "atan",
     "atanh",
     "bitwise_not",
+    "bmm",
     "cos",
     "exp",
     "rsqrt",
@@ -222,6 +223,11 @@ class TorchLangCtx:
     def view(self, a, *shape):
         shape = utils.extract_shape_from_varargs(shape)
         return _view_disambiguator(a, shape)
+
+    def reshape(self, a, *shape):
+        shape = utils.extract_shape_from_varargs(shape)
+        # view is in fact implemented as reshape (?)
+        return tlang.reshape(a, shape)
 
     #
     # Elementwise Unary Methods
@@ -1197,6 +1203,12 @@ def matmul(a, b):
     if not utils.same_shape(b_broadcast_shape, b.shape):
         b = tlang.expand(b, b_broadcast_shape)
 
+    return prims.matmul(a, b)
+
+
+# TODO: make a proper bmm (which is much more restricted than matmul)
+@torch_function(torch.bmm)
+def bmm(a, b):
     return prims.matmul(a, b)
 
 
