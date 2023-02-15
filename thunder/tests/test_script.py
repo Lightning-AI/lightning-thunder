@@ -1,6 +1,7 @@
 import inspect
 import math
 import sys
+import traceback
 from functools import partial
 
 import pytest
@@ -266,6 +267,29 @@ def test_nanogpt_inlining_unrolling():
     o2 = m.forward(x)
 
     assert_close(o[0], o2[0])
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
+    reason="requires python3.10",
+)
+def test_exception_source_line():
+    m = torch.nn.Sequential(
+        torch.nn.Linear(3, 5),
+        torch.nn.Linear(3, 3),  # intentionally broken
+    )
+    tom = thunder.make_traced(m, executor="torch", _preprocess=True)
+    x = torch.randn(2, 3)
+    try:
+        tom(x)
+        assert False, "expected Exception to be thrown"
+    except RuntimeError as e:
+        tb = e.__traceback__
+        while "thunder-generated" not in tb.tb_frame.f_code.co_filename:
+            tb = tb.tb_next
+
+        (tb_str,) = traceback.format_tb(tb, limit=1)
+        assert "F.linear" in tb_str
 
 
 @pytest.mark.skipif(

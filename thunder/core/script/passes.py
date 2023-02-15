@@ -195,6 +195,10 @@ def inline_method_call(gr, n):  # criterion?
     gr1 = acquire_method(fn_value, module=mod1, mro_klass=gr.mro_klass if mod1 == gr.module else None)
     make_ssa(gr1)
     make_single_return(gr1)
+    for gr1_n in gr1.nodes():
+        gr1_n.line_no = gr1_n.line_no + len(gr.source_lines) + 1
+    gr.source_lines.append("\n")
+    gr.source_lines += gr1.source_lines
 
     # there should be exactly one
     (ret_bl,) = (bl for bl in gr1.blocks if len(bl.nodes) > 0 and bl.nodes[-1].i.opname == "RETURN_VALUE")

@@ -1,4 +1,5 @@
 import dis
+import inspect
 import sys
 import types
 
@@ -93,7 +94,8 @@ def undo_ssa(gr):
                 name = f"_tmp_{idx}"
             else:
                 name = name.replace(".", "_").replace("[", "").replace("]", "")
-
+            if not name[:1].isalpha():
+                name = "_" + name
             fullname = name
             suffix = 0
             while fullname in lv_names:
@@ -222,8 +224,6 @@ def generate_function(gr):
     local_vars, lv_names, names, consts = undo_ssa(gr)
     assert len(local_vars) == len(lv_names)
 
-    linetable, linetable_update, linetable_end = linetable_writer(0)
-
     instruction_sizes = {}
 
     def build_address_map():
@@ -267,6 +267,7 @@ def generate_function(gr):
             return False
 
         changed_size = False
+        line_no = None
         for bl in gr.blocks:
             jump_node = None
             for n in bl.nodes:
@@ -274,8 +275,10 @@ def generate_function(gr):
                 if opcode is None:
                     opcode = dis.opmap[n.i.opname]
                 assert opcode is not None, f"{n} has invalid opcode"
-                # if n.line_no is not None:
-                #    linetable_update(n.line_no, address_map[n])
+                # source range instead for 3.11?
+                if n.line_no is not None and n.line_no != line_no:
+                    linetable_update(n.line_no, address_map[n] * 2)  # byte offset for Python 3.10, too...
+                    line_no = n.line_no
                 if opcode in dis.hasjabs:
                     arg = address_map[n.jump_targets[-1][1].nodes[0]]
                 elif opcode in dis.hasjrel:
@@ -303,6 +306,7 @@ def generate_function(gr):
 
     done = False
     while not done:
+        linetable, linetable_update, linetable_end = linetable_writer(gr.source_start_line)
         address_map = build_address_map()
         bc, done = make_bc()
 
@@ -322,9 +326,9 @@ def generate_function(gr):
     co_consts = tuple(consts)
     co_names = tuple(names)
     co_varnames = tuple(lv_names)
-    co_filename = "__none__"
-    co_name = "__none__"
-    co_firstlineno = 0
+    co_filename = f"<thunder-generated-{id(gr)}>"
+    co_name = f"thunder_{id(gr)}"  # nicer name?
+    co_firstlineno = gr.source_start_line
     co_linetable = linetable  # XXX
     co_freevars = ()
     co_cellvars = ()
@@ -351,4 +355,12 @@ def generate_function(gr):
     # types.FunctionType(code, globals, name=None, argdefs=None, closure=None)
     func = types.FunctionType(c, {}, argdefs=tuple(gr.func_defaults))
     func.__kwdefaults__ = gr.func_kwdefaults
+    func._gr = gr
+
+    # simple cache hack
+    mtime = None  # this signals that the cache should not be invalidated(!)
+    lines = gr.source_lines
+    size = len("".join(lines))
+    inspect.linecache.cache[co_filename] = size, mtime, lines, co_filename
+
     return func

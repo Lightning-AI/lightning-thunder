@@ -19,8 +19,9 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     if isinstance(method, torch.nn.Module):
         method = method.forward
     assert sys.version_info >= (3, 9) and sys.version_info < (3, 11)
+    source_lines, source_start_line = inspect.getsourcelines(method)
     if verbose:
-        print(inspect.getsource(method))
+        print("".join(source_lines))
     sig = inspect.signature(method)
     if module is None and hasattr(method, "__self__"):
         module = method.__self__
@@ -64,7 +65,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
         bl.jump_sources.append(jump_source)
         return bl
 
-    line_no = 0
+    line_no = 1
     while blocks_to_process:
         offset_start, bl = blocks_to_process.popitem(last=False)
         blocks[offset_start] = bl
@@ -74,7 +75,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
         while not done:
             i = bc[ic]
             if i.starts_line is not None:
-                line_no = i.starts_line
+                line_no = i.starts_line - source_start_line + 1
             n = Node(i=i, line_no=line_no)
 
             # need to handle branching instructions here
@@ -163,6 +164,8 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     gr.module = module
     gr.mro_klass = mro_klass
     gr.self_value = self_value
+    gr.source_start_line = 1  # source_start_line
+    gr.source_lines = source_lines
     return gr
 
 
