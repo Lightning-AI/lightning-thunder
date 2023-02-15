@@ -295,7 +295,7 @@ def _convert_element_type_meta(a, dtype):
 
     # a is a Tensor
     proxy_name = get_trace().make_proxy_name()
-    return TensorProxy(name=proxy_name, tensor=a, dtype=dtype)
+    return TensorProxy(name=proxy_name, tensor=a, dtype=dtype, strides=None)
 
 
 convert_element_type = make_prim(Ops.CONVERT_ELEMENT_TYPE, "convert_element_type", _convert_element_type_meta)
@@ -427,7 +427,7 @@ def _elementwise_unary_meta(a, *, name, type_promotion_kind, number_handler=None
 
     # Tensor case
     if isinstance(a, TensorProxy):
-        return TensorProxy(name=proxy_name, tensor=a, dtype=result_dtype)
+        return TensorProxy(name=proxy_name, tensor=a, dtype=result_dtype, strides=None)
 
     # Number case
     check(
@@ -799,7 +799,7 @@ def _elementwise_binary_meta(
             ),
         )
 
-        return TensorProxy(name=proxy_name, tensor=a, dtype=result_type)
+        return TensorProxy(name=proxy_name, tensor=a, dtype=result_type, strides=None)
 
     # scalar x scalar case
     if isinstance(a, Number) and isinstance(b, Number):
@@ -816,7 +816,7 @@ def _elementwise_binary_meta(
     # tensor x scalar case
     tensor = a if isinstance(a, TensorProxy) else b
 
-    return TensorProxy(name=proxy_name, tensor=tensor, dtype=result_type)
+    return TensorProxy(name=proxy_name, tensor=tensor, dtype=result_type, strides=None)
 
 
 add = make_prim(
@@ -1031,7 +1031,7 @@ def reshape_meta(a, shape):
     )
 
     proxy_name = get_trace().make_proxy_name()
-    return TensorProxy(tensor=a, name=proxy_name, shape=shape)
+    return TensorProxy(tensor=a, name=proxy_name, shape=shape, strides=None)
 
 
 reshape = make_prim(
@@ -1083,7 +1083,7 @@ def slice_meta(a, start_indices, end_indices, strides=None):
         new_shape.append(math.floor((stop - start) / stride))
 
     proxy_name = get_trace().make_proxy_name()
-    return TensorProxy(tensor=a, name=proxy_name, shape=new_shape)
+    return TensorProxy(tensor=a, name=proxy_name, shape=new_shape, strides=None)
 
 
 # NOTE: slice is named "slice_prim" and not "slice" because it conflicts with Python's "slice" builtin
@@ -1110,7 +1110,7 @@ def squeeze_meta(a, dims):
         shape.append(l)
 
     proxy_name = get_trace().make_proxy_name()
-    return TensorProxy(tensor=a, name=proxy_name, shape=shape)
+    return TensorProxy(tensor=a, name=proxy_name, shape=shape, strides=None)
 
 
 squeeze = make_prim(Ops.SQUEEZE, "squeeze", squeeze_meta)
@@ -1129,7 +1129,7 @@ def transpose_meta(a, permutation):
         new_shape[idx] = a.shape[dim]
 
     proxy_name = get_trace().make_proxy_name()
-    return TensorProxy(tensor=a, name=proxy_name, shape=new_shape)
+    return TensorProxy(tensor=a, name=proxy_name, shape=new_shape, strides=None)
 
 
 transpose = make_prim(Ops.TRANSPOSE, "transpose", transpose_meta)

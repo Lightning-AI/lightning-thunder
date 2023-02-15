@@ -199,6 +199,9 @@ class TorchLangCtx:
             return a.shape
         return a.shape[dim]
 
+    def stride(self, a):
+        return a.strides
+
     #
     # Shape Methods
     #

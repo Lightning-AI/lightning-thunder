@@ -55,6 +55,8 @@ __all__ = [
     "check_no_duplicates",
     # Device-related functions
     "check_same_device",
+    # Helpful classes
+    "OrderedSet",
     # Context-related functions and decorators
     "langctx",
 ]
@@ -613,6 +615,42 @@ def check_same_device(*args):
                 same_shape(device, otherdevice),
                 lambda: f"Devices were expected to be the same, but got devices {device} and {otherdevice}!",
             )
+
+
+#
+# Helpful classes
+#
+
+
+# Mimics a set (see https://docs.python.org/3/library/stdtypes.html#set) but is
+# ordered
+# NOTE: dicts in Python are ordered since Python 3.7
+# TODO: implement additional methods as needed
+class OrderedSet:
+    # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
+    def __init__(self, args):
+        self.d = {k: None for k in args}
+
+    def __contains__(self, x):
+        return x in self.d
+
+    def __iter__(self):
+        return iter(self.d.keys())
+
+    def __len__(self):
+        return len(self.d)
+
+    # -
+    def __sub__(self, other):
+        r = {k: None for k in self.d.keys() if k not in other}
+        return r
+
+    # NOTE: actual set signature is (self, *others)
+    def difference(self, other):
+        return self - other
+
+    def add(self, x):
+        self.d[x] = None
 
 
 #

@@ -12,6 +12,7 @@ from thunder.core import prims, utils
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Variable
+from thunder.core.utils import OrderedSet
 
 # TODO: consider further refactoring this
 from thunder.executors.executor_prims import nvOps
@@ -741,8 +742,8 @@ def _fuse(
                 consumed.extend(symbols_to_consumed_map[sym])
             if sym in symbols_to_produced_map:
                 produced.extend(symbols_to_produced_map[sym])
-        consumed = set(consumed)
-        produced = set(produced)
+        consumed = OrderedSet(consumed)
+        produced = OrderedSet(produced)
 
         # A proxy that's consumed but not produced in the region is an input
         # TODO: consider ordering inputs in some sensible way

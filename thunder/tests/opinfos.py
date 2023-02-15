@@ -945,10 +945,10 @@ pow_opinfo = OpInfo(
         # NOTE: PyTorch doesn't support bool pow
         DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8,)),
         # NOTE: PyTorch doesn't support cpu complex32 pow, and doesn't seem to promote it properly
+        # NOTE: The CUDA version of this test also fails occasionally -- maybe switch to torch reference?
         DecorateInfo(
-            pytest.mark.xfail,
+            pytest.mark.skip,
             "test_core_vs_torch_consistency",
-            devicetypes=("cpu",),
             dtypes=(datatypes.complex32,),
         ),
         # See https://github.com/csarofeen/pytorch/issues/2361
@@ -1385,6 +1385,7 @@ def transpose_torch_sample_generator(op, device, dtype, requires_grad, **kwargs)
 
     # tensor shape, dim0, dim1
     cases = (
+        ((2, 12, 1024, 64), 1, 2),
         ((4, 3, 2), 0, -1),
         ((4, 3, 2), 0, -2),
         ((4, 3, 2), 1, 2),

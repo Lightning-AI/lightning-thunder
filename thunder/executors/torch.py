@@ -297,7 +297,8 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
     # Constructs outputs
     output_strs = []
     for out in outputs:
-        if isinstance(out, TensorProxy):
+        if isinstance(out, Variable) and isinstance(out.proxy, TensorProxy):
+            out = out.proxy
             if _contiguous:
                 # TODO: FIXME: currently makes all outputs contiguous to simplify stride analysis
                 output_strs.append(f"{_extract_name(out)}.contiguous()")

@@ -187,7 +187,6 @@ class TensorProxy(Proxy):
             self.shape = tuple(tensor.shape if shape is None else shape)
             self._dtype = tensor.dtype if dtype is None else dtype
             self.device = tensor.device if device is None else device
-            self.strides = tensor.strides if strides is None else strides
         else:
             # Requires all metadata, except strides, be specified explicitly
             assert shape is not None
@@ -198,7 +197,9 @@ class TensorProxy(Proxy):
             self.shape = tuple(shape)
             self.device = device
             self._dtype = dtype
-            self.strides = strides
+
+        # TODO: review where strides should be modeled from
+        self.strides = strides
 
         self.ndim = len(self.shape)
 
