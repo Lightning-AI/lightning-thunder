@@ -26,6 +26,7 @@ from thunder.executors.torch import _fuse_region as fuse_torch_region
 from thunder.tests import nanogpt_model
 from thunder.tests import hf_bart_self_attn
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.trace import Variable
 
 # This file contains custom nvFuser-related benchmarks.
 
@@ -50,7 +51,13 @@ class BenchmarkArg:
 # Helper to easily modify thunder construction
 def thunder_compile(fn):
     return thunder.make_traced(
-        fn, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
+        fn,
+        executor="nvfuser",
+        _preprocess=True,
+        _info=True,
+        _return_fusion=True,
+        _profile_info=True,
+        _static=True,
     )
 
 
@@ -247,6 +254,10 @@ def summarize_profile(profile):
 def construct_inputs_for_region(region):
     inps = []
     for inp in region.inputs:
+        # Unwraps variables
+        if isinstance(inp, Variable):
+            inp = inp.proxy
+
         if isinstance(inp, proxies.TensorProxy):
             tdtype = ttorch.torch_dtype(inp.dtype)
             a = make_tensor(inp.shape, device="cuda", dtype=tdtype)
@@ -745,9 +756,7 @@ def nanogpt_constructor(
     tdtype = ttorch.torch_dtype(dtype)
     config = GPTConfig(name=config, dropout=dropout, **configs[config])
     m = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
-    tom = thunder.make_traced(
-        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-    )
+    tom = thunder_compile(m)
 
     indices_tdtype = ttorch.torch_dtype(indices_dtype)
 
@@ -818,9 +827,7 @@ def nanogpt_block_constructor(
     tdtype = ttorch.torch_dtype(dtype)
     config = GPTConfig(name=config, dropout=dropout, **configs[config])
     m = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-    tom = thunder.make_traced(
-        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-    )
+    tom = thunder_compile(m)
 
     def gen():
         return (
@@ -896,9 +903,7 @@ def nanogpt_csa_constructor(
     tdtype = ttorch.torch_dtype(dtype)
     config = GPTConfig(name=config, dropout=dropout, **configs[config])
     m = nanogpt_model.CausalSelfAttention(config).to(device=device, dtype=tdtype)
-    tom = thunder.make_traced(
-        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-    )
+    tom = thunder_compile(m)
 
     def gen():
         return (
@@ -975,9 +980,7 @@ def nanogpt_mlp_constructor(
     tdtype = ttorch.torch_dtype(dtype)
     config = GPTConfig(name=config, dropout=dropout, **configs[config])
     m = nanogpt_model.MLP(config).to(device=device, dtype=tdtype)
-    tom = thunder.make_traced(
-        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-    )
+    tom = thunder_compile(m)
 
     def gen():
         return (make_tensor(batch_dims + (config.n_embd,), device=device, dtype=tdtype),), {}
@@ -1021,9 +1024,7 @@ def nanogpt_gelu_constructor(shape, device, dtype):
         return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))
 
     tdtype = ttorch.torch_dtype(dtype)
-    thunder_fn = thunder.make_traced(
-        new_gelu, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-    )
+    thunder_fn = thunder_compile(new_gelu)
 
     def gen():
         return (make_tensor(shape, device=device, dtype=tdtype),), {}
@@ -1031,7 +1032,6 @@ def nanogpt_gelu_constructor(shape, device, dtype):
     inp, _ = gen()
 
     # TODO: if thunder+nvFuser isn't an executor, don't run thunder here
-    # TODO: in the future acquire thunder's fusion object here, too
     thunder_info = thunder_fn(inp[0])
     thunder_profile = thunder_info["profile_info"]
 
@@ -1091,9 +1091,7 @@ def hf_bart_self_attn_constructor(
     tdtype = ttorch.torch_dtype(dtype)
     bart_model = hf_bart_self_attn.BartAttention(cfg["embed_dim"], cfg["num_heads"], dropout=dropout)
     m = bart_model.to(device=device, dtype=tdtype)
-    tom = thunder.make_traced(
-        m, executor="nvfuser", _preprocess=True, _info=True, _return_fusion=True, _profile_info=True
-    )
+    tom = thunder_compile(m)
 
     def gen():
         return (
@@ -1221,23 +1219,8 @@ def _print_info(args):
 if __name__ == "__main__":
     benchmark_name = sys.argv[1]
 
-    # Handles special -view or -v command which lists all benchmarks
-    # Short-circuits if view is requested
-    if benchmark_name == "-view" or benchmark_name == "-v":
-        _print_benchmarks()
-        sys.exit(0)
-
-    benchmark_constructor, benchmark_info, benchmark_desc = benchmarks[benchmark_name]
-
-    # Handles kwargs, which control the benchmark itself
-    #   These are specified like dtype=float16
-    additional_args = sys.argv[2:]
-    kwargs = tuple(x for x in additional_args if "=" in x)
-    directives = tuple(x for x in additional_args if "=" not in x)
-
-    kwargs = {k: _extract_python_obj(v) for k, v in (x.split("=") for x in kwargs)}
-
-    # Handles directives, which describe how the benchmark is to be run
+    # Defines the argparser, which handles directives
+    # Directives describe how the benchmark is to be run
     #   These are specified like -x "('thunder', 'torch.compile')"
     parser = argparse.ArgumentParser()
 
@@ -1265,6 +1248,26 @@ if __name__ == "__main__":
         default=5,
         help="The number of warmup iterations to run for each executor before collecting statistics. Default is -warmup_iters 5",
     )
+
+    # Handles special -view or -v command which lists all benchmarks
+    # Short-circuits if view is requested
+    if benchmark_name == "-view" or benchmark_name == "-v":
+        _print_benchmarks()
+        sys.exit(0)
+
+    # Short-circuits if help is requested by asking the argparser to produce its help text
+    if benchmark_name == "-help" or benchmark_name == "-h":
+        parser.parse_args(("-h",))
+
+    benchmark_constructor, benchmark_info, benchmark_desc = benchmarks[benchmark_name]
+
+    # Handles kwargs, which control the benchmark itself
+    #   These are specified like dtype=float16
+    additional_args = sys.argv[2:]
+    kwargs = tuple(x for x in additional_args if "=" in x)
+    directives = tuple(x for x in additional_args if "=" not in x)
+
+    kwargs = {k: _extract_python_obj(v) for k, v in (x.split("=") for x in kwargs)}
 
     parsed_directives = parser.parse_args(directives)
 

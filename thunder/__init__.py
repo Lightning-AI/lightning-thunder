@@ -4,6 +4,7 @@ import time
 from functools import wraps
 from typing import Callable, Optional
 
+import thunder.core.cache as cache
 import thunder.core.dtypes as dtypes
 import thunder.core.proxies as proxies
 import thunder.core.script as script
@@ -14,7 +15,7 @@ import thunder.langs as langs
 from thunder.__about__ import *
 from thunder.core.proxies import Proxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from .core.trace import (
+from thunder.core.trace import (
     get_executor_context,
     get_trace,
     new_trace,
@@ -286,10 +287,12 @@ def make_traced(
     fn: Callable,
     executor: Optional[str] = None,
     language_ctx=langs.torch,
+    *,
     _info=False,
     _return_fusion=False,
     _preprocess=False,
     _profile_info=False,
+    _static=False,
 ) -> Callable:
     """Converts a callable in a callable that will be traced and then executed.
 
@@ -317,23 +320,39 @@ def make_traced(
     @wraps(fn)
     def _fn(*args, **kwargs):
         acquisition_start = time.time_ns()
-        trace = make_trace(tfn, executor, language_ctx)(*args, **kwargs)
-        acquisition_end = time.time_ns()
+        acqusition_end = None
+        result = None
+        if _fn._thunder_cache is not None:
+            cached = _fn._thunder_cache(*args, **kwargs)
+            if cached is not None:
+                result = cached(*args, **kwargs)
+                acquisition_end = time.time_ns()
 
-        translation_start = time.time_ns()
-        # TODO: probably refactor this to not be such an ugly variadic return
-        #   (maybe by returning a dict)
-        profile_info = None
+        translation_start = translation_end = 0
+        invocation_start = invocation_end = 0
         fusion = None
-        if _profile_info:
-            fusion, profile_info = ex.fuse(trace, profile_info=_profile_info)
-        else:
-            fusion = ex.fuse(trace)
-        translation_end = time.time_ns()
+        profile_info = None
+        if result is None:
+            trace = make_trace(tfn, executor, language_ctx)(*args, **kwargs)
+            acquisition_end = time.time_ns()
 
-        invocation_start = time.time_ns()
-        result = fusion(*args, **kwargs)
-        invocation_end = time.time_ns()
+            translation_start = time.time_ns()
+            # TODO: probably refactor this to not be such an ugly variadic return
+            #   (maybe by returning a dict)
+            profile_info = None
+            fusion = None
+            if _profile_info:
+                fusion, profile_info = ex.fuse(trace, profile_info=_profile_info)
+            else:
+                fusion = ex.fuse(trace)
+            translation_end = time.time_ns()
+
+            invocation_start = time.time_ns()
+            result = fusion(*args, **kwargs)
+            invocation_end = time.time_ns()
+
+            if _static:
+                _fn._thunder_cache = cache.build_cache(tfn, args, kwargs, fusion)
 
         meta = None
         if _info:
@@ -355,5 +374,7 @@ def make_traced(
 
     if isinstance(fn, langctx.module_cls):
         _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names)
+
+    setattr(_fn, "_thunder_cache", None)
 
     return _fn
