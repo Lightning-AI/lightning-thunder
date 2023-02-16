@@ -204,7 +204,7 @@ def ns_to_us(ns):
     return round(ns / 1000, 2)
 
 
-def prettyprint_profile(profile):
+def prettyprint_profile(profile, with_timings=False):
     print(f"Prettyprinting profile of {len(profile)} fusions")
 
     for region in profile:
@@ -224,16 +224,18 @@ def prettyprint_profile(profile):
             return construct_inputs_for_region(region), {}
 
         fusion, code = get_torch_code_for_region(region, contiguous=False)
-        pt2 = torch.compile(fusion)
 
         print("Torch code for the region:")
         print(code)
 
-        thunder_stats = time_ns(thunder_fusion, gen)
-        pt2_stats = time_ns(pt2, gen)
+        if with_timings:
+            pt2 = torch.compile(fusion)
 
-        print(f"thunder+nvFuser median time: {ns_to_us(thunder_stats['median'])}")
-        print(f"pt2 median time: {ns_to_us(pt2_stats['median'])}")
+            thunder_stats = time_ns(thunder_fusion, gen)
+            pt2_stats = time_ns(pt2, gen)
+
+            print(f"thunder+nvFuser median time: {ns_to_us(thunder_stats['median'])}")
+            print(f"pt2 median time: {ns_to_us(pt2_stats['median'])}")
 
 
 def summarize_profile(profile):
@@ -884,7 +886,6 @@ nanogpt_csa_info = (
 )
 
 
-# TODO: @mike -- is block_size what we want for seq len here?
 def nanogpt_csa_constructor(
     config,
     dropout,
@@ -1132,8 +1133,13 @@ def hf_bart_self_attn_constructor(
 
 
 # NOTE: new benchmark style, in development
-def benchmark(name, gen, torch_fn, thunder_fn, thunder_profile, *, executors=None, warmup_iters=5, iters=20):
+def benchmark(
+    name, gen, torch_fn, thunder_fn, thunder_profile, *, executors=None, warmup_iters=5, iters=20, print_profile=False
+):
     executors = get_executors(torch_fn, thunder_fn, executors)
+
+    if print_profile:
+        prettyprint_profile(thunder_profile)
 
     print(f"Benchmarking {name}")
 
@@ -1217,8 +1223,6 @@ def _print_info(args):
 # TODO: provide a programmatic way to run these benchmarks and acquire the results
 # TODO: allow a file to specify which benchmarks to run and how
 if __name__ == "__main__":
-    benchmark_name = sys.argv[1]
-
     # Defines the argparser, which handles directives
     # Directives describe how the benchmark is to be run
     #   These are specified like -x "('thunder', 'torch.compile')"
@@ -1248,16 +1252,29 @@ if __name__ == "__main__":
         default=5,
         help="The number of warmup iterations to run for each executor before collecting statistics. Default is -warmup_iters 5",
     )
+    parser.add_argument(
+        "-print_profile",
+        "-pp",
+        default=None,
+        action="store_true",
+        help="Displays information about lightning+nvFuser fusions",
+    )
+
+    # Short-circuits if help is requested by asking the argparser to produce its help text
+    if len(sys.argv) < 2 or sys.argv[1] == "-help" or sys.argv[1] == "-h":
+        parser.parse_args(("-h",))
 
     # Handles special -view or -v command which lists all benchmarks
     # Short-circuits if view is requested
-    if benchmark_name == "-view" or benchmark_name == "-v":
+    if sys.argv[1] == "-view" or sys.argv[1] == "-v":
         _print_benchmarks()
         sys.exit(0)
 
-    # Short-circuits if help is requested by asking the argparser to produce its help text
-    if benchmark_name == "-help" or benchmark_name == "-h":
-        parser.parse_args(("-h",))
+    benchmark_name = sys.argv[1]
+
+    if benchmark_name not in benchmarks:
+        print("Benchmark not found! To see a list of all available benchmarks, run with the -v option.")
+        sys.exit(0)
 
     benchmark_constructor, benchmark_info, benchmark_desc = benchmarks[benchmark_name]
 
@@ -1276,6 +1293,7 @@ if __name__ == "__main__":
     executors = _extract_python_obj(parsed_directives.executors)
     iters = parsed_directives.iters
     warmup_iters = parsed_directives.warmup_iters
+    print_profile = parsed_directives.print_profile
 
     # Short-circuits if view is requested
     if view_requested:
@@ -1307,5 +1325,13 @@ if __name__ == "__main__":
     #   should probably be run in a subprocess to minimize executor caching
     name, gen, torch_fn, thunder_fn, thunder_profile = benchmark_constructor(**actual_kwargs)
     benchmark(
-        name, gen, torch_fn, thunder_fn, thunder_profile, executors=executors, iters=iters, warmup_iters=warmup_iters
+        name,
+        gen,
+        torch_fn,
+        thunder_fn,
+        thunder_profile,
+        executors=executors,
+        iters=iters,
+        warmup_iters=warmup_iters,
+        print_profile=print_profile,
     )
