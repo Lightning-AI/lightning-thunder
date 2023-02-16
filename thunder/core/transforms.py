@@ -197,9 +197,12 @@ def pair_to_batched_value(pair):
         return BatchedValue(*pair)
 
 
-def vectorized_batcher(prim, axis_size, batched_args, batch_dims, **kwargs):
-    assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
-    return prim(*batched_args, **kwargs), batch_dims[0]
+def vectorized_batcher(prim, axis_size, batched_values, **kwargs):
+    batch_dim = batched_values[0].batch_dim
+    assert all(
+        batch_dim == bv.batch_dim for bv in batched_values[1:]
+    ), f"`vectorized_batcher` got different batched dimensions {[bv.batch_dim for bv in batched_values]}"
+    return BatchedValue(prim(*[bv.value for bv in batched_values], **kwargs), batch_dim)
 
 
 not_mapped = NotMapped()
@@ -224,31 +227,31 @@ def move_batch_dim(axis_size, src, dst, x):
         return movedim(x, src, dst)
 
 
-def binary_op_batching_rule(op, axis_size, vals_in, dims_in):
-    (x, y), (x_bdim, y_bdim) = vals_in, dims_in
+def binary_op_batching_rule(op: prims.Ops, axis_size: int, vals_in: BatchedValue):
+    ((x, x_bdim), (y, y_bdim)) = vals_in
     if x_bdim != y_bdim:
         if x_bdim is not_mapped:
             x = move_batch_dim(axis_size, x_bdim, y_bdim, x)
             x_bdim = y_bdim
         else:
             y = move_batch_dim(axis_size, y_bdim, x_bdim, y)
-    return op(x, y), x_bdim
+    return BatchedValue(op(x, y), x_bdim)
 
 
-def sin_vmap(axis_size, a, batched_dim):
-    return vectorized_batcher(prims.sin, axis_size, (a,), (batched_dim,))
+def sin_vmap(axis_size: int, a: BatchedValue) -> BatchedValue:
+    return vectorized_batcher(prims.sin, axis_size, (a,))
 
 
-def cos_vmap(axis_size, a, batched_dim):
-    return vectorized_batcher(prims.cos, axis_size, (a,), (batched_dim,))
+def cos_vmap(axis_size: int, a: BatchedValue) -> BatchedValue:
+    return vectorized_batcher(prims.cos, axis_size, (a,))
 
 
-def mul_vmap(axis_size, a, b, a_batched_dim, b_batched_dim):
-    return binary_op_batching_rule(prims.mul, axis_size, (a, b), (a_batched_dim, b_batched_dim))
+def mul_vmap(axis_size: int, a: BatchedValue, b: BatchedValue) -> BatchedValue:
+    return binary_op_batching_rule(prims.mul, axis_size, (a, b))
 
 
-def add_vmap(axis_size, a, b, a_batched_dim, b_batched_dim):
-    return binary_op_batching_rule(prims.add, axis_size, (a, b), (a_batched_dim, b_batched_dim))
+def add_vmap(axis_size: int, a: BatchedValue, b: BatchedValue) -> BatchedValue:
+    return binary_op_batching_rule(prims.add, axis_size, (a, b))
 
 
 vmap_impls: Dict[prims.Symbol, Callable] = dict()
@@ -300,11 +303,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
         assert len(kwargs) == 0, "vmap for kwargs is not implemented"
         args = safe_map(wrap_arg, args)
         assert all(isinstance(arg, BatchedValue) for arg in args)
-        _args, _bdims = unzip2(args)
-        out_val, out_dim = vmap_impl(axis_size, *_args, *_bdims, **kwargs)
-        if isinstance(out_val, Sequence):
-            return safe_map(pair_to_batched_value, safe_zip(out_val, out_dim))
-        return BatchedValue(out_val, out_dim)
+        return vmap_impl(axis_size, *args, **kwargs)
 
     return _vmap_impl
 
@@ -378,7 +377,10 @@ def _identity_call_vmap(*batched_args, trace: Trace, **kwargs):
     half = len(batched_args) // 2
     args, in_dims = batched_args[:half], batched_args[half:]
     out_dims = 0  # Fixme
-    return _vmap_call_metafunc(args, in_dims, out_dims, trace=trace, detached=False, **kwargs)
+    outs, out_dims = _vmap_call_metafunc(args, in_dims, out_dims, trace=trace, detached=False, **kwargs)
+    if isinstance(outs, Sequence):
+        return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
+    return BatchedValue(outs, out_dims)
 
 
 vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
@@ -445,25 +447,6 @@ def vmap_eager(func, args, in_dims=0, out_dims=0, executor="torch"):
 # -------------
 
 
-def sin_jvp(a, ȧ):
-    return prims.sin(a), prims.cos(a) * ȧ
-
-
-def mul_jvp(a, b, ȧ, ḃ):
-    return a * b, a * ḃ + b * ȧ
-
-
-def add_jvp(a, b, ȧ, ḃ):
-    return a + b, ȧ + ḃ
-
-
-jvp_impls: Dict[prims.Symbol, Callable] = dict()
-
-jvp_impls[prims.Ops.SIN] = sin_jvp
-jvp_impls[prims.Ops.MUL] = mul_jvp
-jvp_impls[prims.Ops.ADD] = add_jvp
-
-
 @dataclass(frozen=True)
 class JVPDual:
     """Dual number for the JVP transform.
@@ -495,6 +478,30 @@ def pair_to_jvp_dual(pair):
     else:
         assert isinstance(pair, Sequence) and len(pair) == 2
         return JVPDual(*pair)
+
+
+def sin_jvp(a: JVPDual):
+    x, xd = a
+    return JVPDual(prims.sin(x), prims.cos(x) * xd)
+
+
+def mul_jvp(a: JVPDual, b: JVPDual):
+    x, xd = a
+    y, yd = b
+    return JVPDual(x * y, x * yd + y * xd)
+
+
+def add_jvp(a: JVPDual, b: JVPDual):
+    x, xd = a
+    y, yd = b
+    return JVPDual(x + y, xd + yd)
+
+
+jvp_impls: Dict[prims.Symbol, Callable] = dict()
+
+jvp_impls[prims.Ops.SIN] = sin_jvp
+jvp_impls[prims.Ops.MUL] = mul_jvp
+jvp_impls[prims.Ops.ADD] = add_jvp
 
 
 def jvp_symbol_mapper(symbol: prims.Symbol):
@@ -548,11 +555,7 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
         args = safe_map(wrap_arg, args)
         # Expecting JVPDuals wrapping pairs of primals and tangents
         assert all(isinstance(arg, JVPDual) for arg in args)
-        primals, tangents = unzip2(args)
-        out_primal, out_tangent = jvp_impl(*primals, *tangents, **kwargs)
-        if isinstance(out_primal, Sequence):
-            return safe_map(pair_to_jvp_dual, safe_zip(out_primal, out_tangent))
-        return JVPDual(out_primal, out_tangent)
+        return jvp_impl(*args, **kwargs)
 
     return _jvp_impl
 
@@ -595,10 +598,12 @@ jvp_call = prims.make_prim(Transforms.JvpOp, "jvp_call", partial(_jvp_call_metaf
 inline_transforms_map[Transforms.JvpOp] = partial(_jvp_call_metafunc, detached=False)
 
 
-def _identity_call_jvp(*primals_and_tangents, trace: Trace, **kwargs):
-    half = len(primals_and_tangents) // 2
-    primals, tangents = primals_and_tangents[:half], primals_and_tangents[half:]
-    return _jvp_call_metafunc(primals, tangents, trace, detached=False, **kwargs)
+def _identity_call_jvp(*args: JVPDual, trace: Trace, **kwargs):
+    primals, tangents = unzip2(args)
+    out_primals, out_tangents = _jvp_call_metafunc(primals, tangents, trace, detached=False, **kwargs)
+    if isinstance(out_primals, Sequence):
+        return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
+    return JVPDual(out_primals, out_tangents)
 
 
 jvp_impls[Transforms.IdentityOp] = _identity_call_jvp

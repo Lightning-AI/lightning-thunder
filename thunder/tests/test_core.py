@@ -290,6 +290,21 @@ def test_transforms_inline(executor, device, _):
 @executors(
     dtypes=NOTHING,
 )
+def test_transforms_vmap_identity(executor, device, _):
+    pytest.skip("Skipped temporarily until we have a fix")
+    from thunder.core.transforms import identity, vmap
+
+    def func(a):
+        return tlang.sin(a)
+
+    a = torch.randn(2, 2)
+
+    thunder.make_trace(vmap(identity(func)), executor="torch")(a)
+
+
+@executors(
+    dtypes=NOTHING,
+)
 def test_transforms_jvp_eager(executor, device, _):
     from thunder.core.transforms import jvp_eager
 
