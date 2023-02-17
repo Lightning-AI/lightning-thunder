@@ -182,6 +182,7 @@ ops_to_torch_ops_map = {
     prims.Ops.RSQRT: _elementwise_unary_torch(torch.rsqrt),
     prims.Ops.SIN: _elementwise_unary_torch(torch.sin),
     prims.Ops.SQRT: _elementwise_unary_torch(torch.sqrt),
+    prims.Ops.TAN: _elementwise_unary_torch(torch.tan),
     prims.Ops.TANH: _elementwise_unary_torch(torch.tanh),
     prims.Ops.LOG: _elementwise_unary_torch(torch.log),
     prims.Ops.LOG10: _elementwise_unary_torch(torch.log10),

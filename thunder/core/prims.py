@@ -62,6 +62,7 @@ __all__ = [
     "rsqrt",
     "sin",
     "sqrt",
+    "tan",
     "tanh",
     "log",
     "log10",
@@ -128,6 +129,7 @@ class Ops(Enum):
     RSQRT = auto()
     SIN = auto()
     SQRT = auto()
+    TAN = auto()
     TANH = auto()
     LOG = auto()
     LOG10 = auto()
@@ -672,6 +674,17 @@ sqrt = make_prim(
         name="sqrt",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_real_complex_number_handler(math.sqrt, cmath.sqrt),
+    ),
+)
+
+tan = make_prim(
+    Ops.TAN,
+    "tan",
+    partial(
+        _elementwise_unary_meta,
+        name="tan",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=_real_complex_number_handler(math.tan, cmath.tan),
     ),
 )
 

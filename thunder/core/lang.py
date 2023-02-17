@@ -53,6 +53,7 @@ __all__ = [
     "rsqrt",
     "sin",
     "sqrt",
+    "tan",
     "tanh",
     "log",
     "log10",
@@ -489,6 +490,10 @@ def sin(a):
 
 def sqrt(a):
     return _elementwise_unary_helper(prims.sqrt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def tan(a):
+    return _elementwise_unary_helper(prims.tan, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
 
 def tanh(a):
