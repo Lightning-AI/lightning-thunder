@@ -115,6 +115,10 @@ class IntegerProxy(NumberProxy, int):
         ctx = get_language_context()
         return ctx.true_divide(self, other)
 
+    def replace_name(self, name):
+        """Returns a copy of this proxy with a new name."""
+        return self.__class__(name=name, value=self.value)
+
 
 class FloatProxy(NumberProxy, float):
     def __new__(cls, *, name, value):
@@ -145,6 +149,10 @@ class FloatProxy(NumberProxy, float):
         ctx = get_language_context()
         return ctx.true_divide(self, other)
 
+    def replace_name(self, name):
+        """Returns a copy of this proxy with a new name."""
+        return self.__class__(name=name, value=self.value)
+
 
 class ComplexProxy(NumberProxy, complex):
     def __new__(cls, *, name, value):
@@ -158,6 +166,10 @@ class ComplexProxy(NumberProxy, complex):
 
     def __hash__(self):
         return NumberProxy.__hash__(self)
+
+    def replace_name(self, name):
+        """Returns a copy of this proxy with a new name."""
+        return self.__class__(name=name, value=self.value)
 
 
 # TODO: want this to pass isinstance(p, torch.Tensor) and isinstance(p, np.array) depending on

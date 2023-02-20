@@ -310,9 +310,8 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
         raise NotImplementedError(f"vmap for {symbol.op} is not implemented")
 
     def _vmap_impl(*args, **kwargs):
-        assert len(kwargs) == 0, "vmap for kwargs is not implemented"
-        args = safe_map(wrap_arg, args)
-        assert all(isinstance(arg, BatchedValue) for arg in args)
+        args = tree_map(wrap_arg, args)
+        assert all(isinstance(arg, BatchedValue) for arg in tree_flatten(args)[0])
         return vmap_impl(axis_size, *args, **kwargs)
 
     return _vmap_impl
@@ -373,8 +372,11 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
         if isinstance(result, Sequence):
             assert all(isinstance(x, BatchedValue) for x in result)
             outs, bdims = unzip2(result)
+            # TODO: handle the case where out_dims is a single value better
+            if len(out_dims) == 1:
+                out_dims = out_dims * len(outs)
             outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
-            return outs, out_dims
+            return outs
         if isinstance(result, Number) and axis_size is not None:
             # TODO: fetch the default device from the context
             result = full(shape=(), fill_value=result, device=common_device)
@@ -383,7 +385,7 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
             result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
-        return out, out_dims[0]
+        return out
 
 
 vmap_call = prims.make_prim(Transforms.VmapOp, "vmap_call", partial(_vmap_call_metafunc, detached=True))
@@ -406,6 +408,18 @@ def _identity_call_vmap(*batched_args, trace: Trace, **kwargs):
 
 
 vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
+
+
+def _jvp_call_vmap(axis_size, batched_primals, batched_tangents, trace: Trace, **kwargs):
+    primals, primals_bdims = safe_zip(*batched_primals)
+    tangents, tangents_bdims = safe_zip(*batched_tangents)
+    jvp_func = inline(partial(jvp_call, trace=trace))
+    vmapped_jvp_func = inline(vmap(jvp_func, in_dims=(primals_bdims, tangents_bdims), axis_size=axis_size))
+    result = vmapped_jvp_func(primals, tangents, **kwargs)
+    return tree_map(lambda x: BatchedValue(x, 0), result)
+
+
+vmap_impls[Transforms.JvpOp] = _jvp_call_vmap
 
 
 def vmap(func, in_dims=0, out_dims=0, axis_size=None):
@@ -438,10 +452,10 @@ def vmap(func, in_dims=0, out_dims=0, axis_size=None):
             in_dims_flat = (in_dims,) * len(args_flat)
         else:
             in_dims_flat, in_dims_spec = tree_flatten(in_dims)
-            assert args_spec == in_dims_spec, "in_dims must have the same structure as args, kwargs"
+            assert len(in_dims_flat) == len(args_flat), "in_dims must have the same length as args, kwargs"
         unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
         trace = make_trace(func_flat)(*unbatched_args_flat)
-        outs, bdims = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, trace=trace)
+        outs = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, trace=trace)
         return outs
 
     return wrapper
@@ -576,9 +590,9 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
         raise NotImplementedError(f"JVP for {symbol.op} is not implemented")
 
     def _jvp_impl(*args, **kwargs):
-        args = safe_map(wrap_arg, args)
+        args = tree_map(wrap_arg, args)
         # Expecting JVPDuals wrapping pairs of primals and tangents
-        assert all(isinstance(arg, JVPDual) for arg in args)
+        assert all(isinstance(arg, JVPDual) for arg in tree_flatten(args)[0])
         return jvp_impl(*args, **kwargs)
 
     return _jvp_impl
@@ -631,6 +645,23 @@ def _identity_call_jvp(*args: JVPDual, trace: Trace, **kwargs):
 
 
 jvp_impls[Transforms.IdentityOp] = _identity_call_jvp
+
+
+def _vmap_call_jvp(args: JVPDual, in_dims, out_dims, axis_size, trace: Trace, **kwargs):
+    primals, tangents = safe_zip(*args)
+    in_dims, _ = safe_zip(*in_dims)
+    out_dims, _ = safe_zip(*out_dims)
+    vmapped_trace = make_trace(
+        inline(vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size))
+    )(*primals)
+    vmapped_func = partial(eval_trace, vmapped_trace)
+    out_primals, out_tangents = inline(jvp(vmapped_func))(primals, tangents, **kwargs)
+    if isinstance(out_primals, Sequence):
+        return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
+    return JVPDual(out_primals, out_tangents)
+
+
+jvp_impls[Transforms.VmapOp] = _vmap_call_jvp
 
 
 def jvp(func):
@@ -714,7 +745,9 @@ no_pullback = NoPullback()
 # instead of an empty tuple to make the pullback function more readable
 class NoResidual:
     """A dummy residual value."""
+
     pass
+
 
 no_residual = NoResidual()
 no_residuals = (no_residual,)
@@ -724,7 +757,7 @@ no_residuals = (no_residual,)
 # a triple of primal result, residuals, and pullback function.
 vjp_impls = {
     prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
-    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x ** 2)),
+    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x**2)),
     prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
 }
 

@@ -14,6 +14,7 @@ import thunder.core.utils as utils
 from thunder.core.proxies import Proxy, proxy, TensorProxy
 from thunder.core.trace import get_trace, Variable
 from thunder.core.utils import check, get_numberlike_value, same_shape
+from thunder.core.pytree import tree_flatten
 
 # This file defines Thunder's "primitive" operations. These are the
 #   "building blocks" for all of Thunder's operators.
@@ -220,7 +221,8 @@ class Symbol:
     @lru_cache(maxsize=None)
     def are_all_args_constant(self):
         """Returns True if all arguments are constant (i.e. not Variables)."""
-        return not any(isinstance(arg, Variable) for arg in self.args)
+        flat_args = tree_flatten(self.args)[0]
+        return not any(isinstance(arg, Variable) for arg in flat_args)
 
 
 def make_symbol(id, name, outputs, args, kwargs):

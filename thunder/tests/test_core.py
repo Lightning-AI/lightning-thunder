@@ -336,7 +336,7 @@ def test_transforms_inline(executor, device, _):
     executors=(
         TorchEx(),
         # TODO: nvFuser executor does not support full(shape=()) yet
-    )
+    ),
 )
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import inline, vmap
@@ -361,7 +361,7 @@ def test_transforms_vmap_identity(executor, device, _):
 
     a = torch.randn(2, 2)
 
-    thunder.make_trace(vmap(identity(func)), executor="torch")(a)
+    thunder.make_trace(vmap(identity(func)), executor=executor)(a)
 
 
 @executors(
@@ -442,6 +442,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
             b = tlang.add(0.2, a)
             c = tlang.asin(b)
             return c
+
         a, b = func(x), func(y)
         c = tlang.add(a, b)
         d = tlang.add(c, func(z))
@@ -475,6 +476,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
             b = torch.add(0.2, a)
             c = torch.asin(b)
             return c
+
         a, b = func(x), func(y)
         c = torch.add(a, b)
         d = torch.add(c, func(z))
@@ -551,7 +553,7 @@ def test_transforms_vmap_x(executor, device, _):
 @executors(
     dtypes=NOTHING,
 )
-def test_transforms_jvp_vmap(executor, device, _):
+def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     from thunder.core.transforms import vmap, jvp, inline
 
     def func(a, b):
@@ -566,7 +568,7 @@ def test_transforms_jvp_vmap(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = thunder.make_traced(inline(jvp(inline(vmap(func)))), executor="torch")(args, args)
+    out_p, out_t = thunder.make_traced(inline(jvp(inline(vmap(func)))), executor=executor)(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -576,7 +578,7 @@ def test_transforms_jvp_vmap(executor, device, _):
 @executors(
     dtypes=NOTHING,
 )
-def test_transforms_vmap_inline_jvp(executor, device, _):
+def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     from thunder.core.transforms import vmap, jvp, inline
 
     def func(a, b):
@@ -591,8 +593,57 @@ def test_transforms_vmap_inline_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    # vmap(inline(jvp)) works! But vmap(jvp) does not.
-    out_p, out_t = thunder.make_traced(inline(vmap(inline(jvp(func)), out_dims=(0, 0))), executor="torch")(args, args)
+    out_p, out_t = thunder.make_traced(inline(vmap(inline(jvp(func)), out_dims=(0, 0))), executor=executor)(args, args)
+    expected_out_p = torch.sin(a) + b
+    assert_close(out_p, expected_out_p)
+    expected_out_t = torch.cos(a) + b
+    assert_close(out_t, expected_out_t)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_vmap_jvp(executor, device, _):
+    from thunder.core.transforms import vmap, jvp
+
+    def func(a, b):
+        assert isinstance(a, proxies.TensorProxy)
+        assert isinstance(b, proxies.TensorProxy)
+        assert a.ndim == 1
+        assert a.shape == b.shape
+        c = tlang.sin(a)
+        return tlang.mul(tlang.add(c, b), 1)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+
+    args = (a, b)
+    out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
+    expected_out_p = torch.sin(a) + b
+    assert_close(out_p, expected_out_p)
+    expected_out_t = torch.cos(a) + b
+    assert_close(out_t, expected_out_t)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_jvp_vmap(executor, device, _):
+    from thunder.core.transforms import vmap, jvp
+
+    def func(a, b):
+        assert isinstance(a, proxies.TensorProxy)
+        assert isinstance(b, proxies.TensorProxy)
+        assert a.ndim == 1
+        assert a.shape == b.shape
+        c = tlang.sin(a)
+        return tlang.mul(tlang.add(c, b), 1)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+
+    args = (a, b)
+    out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -615,6 +666,28 @@ def test_transforms_jvp(executor, device, _):
     primals = (a, b)
     tangents = (a, b)
     out_p, out_t = thunder.make_traced(inline(identity(jvp(identity(func)))), executor=executor)(primals, tangents)
+    expected_out_p = torch.sin(a) + b
+    expected_out_t = torch.cos(a) + b
+    assert_close(out_p, expected_out_p)
+    assert_close(out_t, expected_out_t)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_jvp_no_inline(executor, device, _):
+    from thunder.core.transforms import jvp, inline, identity
+
+    def func(a, b):
+        c = tlang.sin(a)
+        return tlang.mul(tlang.add(c, b), 1)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+
+    primals = (a, b)
+    tangents = (a, b)
+    out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
     expected_out_p = torch.sin(a) + b
     expected_out_t = torch.cos(a) + b
     assert_close(out_p, expected_out_p)

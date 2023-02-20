@@ -123,6 +123,12 @@ def _make_proxies(fn, trace, langctx, *args, **kwargs):
     varargs_name = inspect.getfullargspec(fn).varargs
 
     def _convert(x):
+        if isinstance(x, Proxy):
+            # Regenerates proxy names to avoid name collisions
+            name = trace.make_proxy_name()
+            p = x.replace_name(name)
+            return p
+
         if isinstance(x, (int, float, complex)) or isinstance(x, langctx.tensor_cls):
             # Proxies numbers and tensors
             name = trace.make_proxy_name()
@@ -134,17 +140,11 @@ def _make_proxies(fn, trace, langctx, *args, **kwargs):
             thunder_dtype = langctx.thunder_dtype(x)
             return thunder_dtype
 
-        if isinstance(x, Proxy):
-            # Regenerates proxy names to avoid name collisions
-            name = trace.make_proxy_name()
-            p = x.replace_name(name)
-            return p
-
         return x
 
     proxyargs = []
     for name, arg in bound_args.arguments.items():
-        if isinstance(arg, (int, float)) or isinstance(arg, langctx.tensor_cls):
+        if not isinstance(arg, Proxy) and (isinstance(arg, (int, float)) or isinstance(arg, langctx.tensor_cls)):
             # NOTE: for numbers or tensors that are passed as positional args,
             #   this just gives them the name of the positional argument
             #   Numbers or tensors in a collection (like a list or dict) are
@@ -308,6 +308,7 @@ def make_traced(
 
       result = traced_foo(a, b)
     """
+    from thunder.core.transforms import inline
 
     ex = _get_executor(executor)
     langctx = language_ctx.ctx()
@@ -333,7 +334,7 @@ def make_traced(
         fusion = None
         profile_info = None
         if result is None:
-            trace = make_trace(tfn, executor, language_ctx)(*args, **kwargs)
+            trace = make_trace(inline(tfn), executor, language_ctx)(*args, **kwargs)
             acquisition_end = time.time_ns()
 
             translation_start = time.time_ns()
