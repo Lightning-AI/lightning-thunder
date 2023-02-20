@@ -697,6 +697,24 @@ def test_transforms_jvp_no_inline(executor, device, _):
 @executors(
     dtypes=NOTHING,
 )
+def test_transforms_vmap_sum(executor, device, _):
+    from thunder.core.transforms import vmap
+
+    def func(a):
+        assert isinstance(a, proxies.TensorProxy)
+        assert a.ndim == 1
+        return ttorch.sum(a)
+
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+
+    out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
+    expected_out = torch.sum(a, dim=1)
+    assert_close(out, expected_out)
+
+
+@executors(
+    dtypes=NOTHING,
+)
 def test_transforms_jvp_python_number(executor, device, _):
     from thunder.core.transforms import jvp, inline
 

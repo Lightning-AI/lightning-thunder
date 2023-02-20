@@ -130,6 +130,10 @@ def _elementwise_unary_torch(op):
     return _fn
 
 
+def _torch_sum(a, dims, **kwargs):
+    return torch.sum(a, dim=dims, **kwargs)
+
+
 # Handles adding two Python numbers, which PyTorch allows but returns
 #   as a tensor, while Thunder expects a Python number
 def add_helper(a, b, alpha=1):
@@ -202,7 +206,7 @@ ops_to_torch_ops_map = {
     prims.Ops.WHERE: "torch.where",
     # Reduction prims
     prims.Ops.AMAX: "torch.amax",
-    prims.Ops.SUM: "torch.sum",
+    prims.Ops.SUM: _torch_sum,
     prims.Ops.VAR: "torch.var",
     # NOTE: VAR_MEAN is here to execute nvFuser traces with PyTorch
     nvOps.VAR_MEAN: "torch.var_mean",

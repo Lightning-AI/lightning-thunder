@@ -264,12 +264,23 @@ def add_vmap(axis_size: int, a: BatchedValue, b: BatchedValue) -> BatchedValue:
     return binary_op_batching_rule(prims.add, axis_size, (a, b))
 
 
+def sum_vmap(axis_size: int, a: BatchedValue, dims: Sequence[int]) -> BatchedValue:
+    bdim = a.batch_dim
+    # TODO: remove this when dims becomes a mandatory kwarg
+    dims, _ = safe_zip(*dims)
+    dims_before = tuple(el for el in dims if el < bdim)
+    dims_after = tuple(el + 1 for el in dims if el >= bdim)
+    batched_dims = dims_before + dims_after
+    return vectorized_batcher(prims.sum, axis_size, (a,), dims=batched_dims)
+
+
 vmap_impls: Dict[prims.Symbol, Callable] = dict()
 
 vmap_impls[prims.Ops.SIN] = sin_vmap
 vmap_impls[prims.Ops.COS] = cos_vmap
 vmap_impls[prims.Ops.MUL] = mul_vmap
 vmap_impls[prims.Ops.ADD] = add_vmap
+vmap_impls[prims.Ops.SUM] = sum_vmap
 
 
 def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
@@ -291,7 +302,9 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
         elif isinstance(x, Number):
             return BatchedValue(x, not_mapped)
         else:
-            raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
+            # may be an argument like dim in sum(a, dim), needs passing through
+            # because treating it properly is up to the prim vmap impl
+            return x
 
     if symbol.are_all_args_constant:
 
