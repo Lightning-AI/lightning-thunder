@@ -1,26 +1,17 @@
 import argparse
 import math
-import multiprocessing
 import operator
-import os
 import time
-import warnings
 from functools import partial, reduce
-from multiprocessing import Process
 from dataclasses import dataclass
-from enum import auto, Enum
 import sys
 from typing import Any
 
 import torch
-from torch.testing import make_tensor, assert_close
-import torch.nn as nn
-import torch.nn.functional as F
+from torch.testing import make_tensor
 
 import thunder
-import thunder.core.lang as tlang
 import thunder.langs.torch as ttorch
-import thunder.core.dtypes as dtypes
 import thunder.core.proxies as proxies
 from thunder.executors.torch import _fuse_region as fuse_torch_region
 from thunder.tests import nanogpt_model

@@ -2,7 +2,6 @@ import argparse
 from itertools import product
 
 # These benchmarks currenly rely on PyTorch
-import torch
 from torch.utils.benchmark import Timer
 
 import thunder
