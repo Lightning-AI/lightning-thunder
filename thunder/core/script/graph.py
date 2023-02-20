@@ -3,7 +3,7 @@
 # i.e. without branches
 import copy
 import inspect
-from typing import List
+from typing import List, Optional, Iterable, Iterator, Union
 
 from thunder.core.script.python_ir_data import stack_effect_detail
 
@@ -25,7 +25,7 @@ class MROAwareObjectRef:  # or as they call it super
         self.obj = obj
         self.start_klass = start_klass
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str):
         print("###", self.obj, self.start_klass, name)
         ## handle non-methods...
         i = 0
@@ -62,15 +62,15 @@ class Value:
     def __init__(
         self,
         *,
-        node=None,
-        nr=None,
+        node: Optional["Node"] = None,
+        nr: Optional[int] = None,
         typ=None,
         value=None,
-        name=None,
+        name: Optional[str] = None,
         parent=None,
-        is_global=False,
-        is_const=False,
-        is_function_arg=False,
+        is_global: bool = False,
+        is_const: bool = False,
+        is_function_arg: bool = False,
     ):
         self.node = node
         self.nr = nr
@@ -207,7 +207,14 @@ def unify_values(values, jump_sources, bl, all_predecessors_done=True):
 # A node corresponds to one Python bytecode instruction given in .i
 # it has Values as .inputs and .outputs
 class Node:
-    def __init__(self, *, i=None, inputs=None, outputs=None, line_no=None):
+    def __init__(
+            self,
+            *,
+            i=None,
+            inputs: Optional[List[Value]] = None,
+            outputs: Optional[List[Value]] = None,
+            line_no: Optional[int] = None,
+    ):
         self.i = i
         self.inputs = inputs if inputs is not None else []
         self.outputs = outputs if inputs is not None else []
@@ -262,10 +269,10 @@ class Node:
 # target first and then the jumping target.
 # The jump targets are other blocks and are atributes of the jump instruction.
 class Block:
-    def __init__(self, is_ssa=True):
+    def __init__(self, is_ssa: bool = True):
         self.is_ssa = is_ssa
         self.jump_sources = []
-        self.nodes = []
+        self.nodes: List[Node] = []
         self.block_inputs = []
         self.block_outputs = set()
 
@@ -275,7 +282,7 @@ class Block:
     def __repr__(self):
         return f"{super().__repr__()[:-1]} {self}>"
 
-    def insert_node(self, n, insert_after=None, insert_before=None):
+    def insert_node(self, n: Node, insert_after: Optional[bool] = None, insert_before: Optional[bool] = None):
         assert n.block is None
         if insert_after is None and insert_before is None:
             if self.is_ssa:
@@ -310,7 +317,7 @@ class Block:
 # The first block (.blocks[0]) is the entry point. Other blocks are connected
 # through jump instructions.
 class Graph:
-    def __init__(self, blocks=None):
+    def __init__(self, blocks: List[Block] = None):
         self.blocks = [] if blocks is None else blocks
 
     def __str__(self):
@@ -319,7 +326,7 @@ class Graph:
     def __repr__(self):
         return f"{super().__repr__()[:-1]} {self}>"
 
-    def nodes(self):
+    def nodes(self) -> Iterator[Node]:
         for b in self.blocks:
             yield from b.nodes
 
@@ -358,19 +365,19 @@ class Graph:
                 )
 
 
-def insert_before(new_n, n):
+def insert_before(new_n: Node, n: Node):
     idx = n.block.nodes.index(n)
     n.block.nodes.insert(idx, new_n)
     new_n.block = n.block
 
 
-def insert_after(new_n, n):
+def insert_after(new_n: Node, n: Node):
     idx = n.block.nodes.index(n)
     n.block.nodes.insert(idx + 1, new_n)
     new_n.block = n.block
 
 
-def replace_values(gr_or_bl, value_map, follow_phi_values=False):
+def replace_values(gr_or_bl: Union[Graph, Block], value_map, follow_phi_values: bool = False):
     ### Replacing a value:
     # - as inputs/outputs of nodes
     # - value.parent for other values
@@ -416,7 +423,7 @@ def replace_values(gr_or_bl, value_map, follow_phi_values=False):
 
 
 ## TODO: our should this be a method?
-def make_dot(gr, format="png", add_names=False):
+def make_dot(gr: Graph, format: str = "png", add_names: bool = False):
     import graphviz
 
     dot = graphviz.Digraph(name="thunder_graph", format=format)
@@ -507,7 +514,7 @@ def clone_blocks(blocks_to_clone: List[Block], translation_dict=None):
     return [translation_dict[bl] for bl in blocks_to_clone], translation_dict
 
 
-def check_graph(gr):
+def check_graph(gr: Graph):
     # some sanity checks for the values
     import collections
 

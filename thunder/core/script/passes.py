@@ -7,10 +7,9 @@ import torch  # # aehem.
 
 import thunder
 from thunder.core.script.frontend import acquire_method, make_single_return, make_ssa, remove_unused_values
-from thunder.core.script.graph import Block, clone_blocks, Node, PhiValue, replace_values, Value
+from thunder.core.script.graph import Graph, Block, clone_blocks, Node, PhiValue, replace_values, Value
 from thunder.core.script.python_ir import get_instruction
 from thunder.langs.torch import _torch_to_thunder_complete_map
-
 
 def specify_inputs(gr, inps):
     inp_map = {p: v for p, v in zip(gr.local_variables_at_start, inps)}
@@ -141,7 +140,7 @@ def find_and_evaluate_method_through_phi_parent(v):
     return fn_value
 
 
-def inline_method_call(gr, n):  # criterion?
+def inline_method_call(gr: "Graph", n: "Node"):  # criterion?
     found_block = False
     for i_bl, bl in enumerate(gr.blocks):
         for i_n, n1 in enumerate(bl.nodes):
@@ -246,7 +245,7 @@ def inline_method_call(gr, n):  # criterion?
     ret_bl.block_outputs.add(rv)
 
 
-def inline_submodule_calls(gr):
+def inline_submodule_calls(gr: "Graph"):
     # inlines submodule calls
     # TODO: recursively and not from nested structures (ModuleList etc.)
     changed = False
@@ -264,7 +263,7 @@ def inline_submodule_calls(gr):
     return changed
 
 
-def strongly_inline_functions(gr):
+def strongly_inline_functions(gr: "Graph"):
     loop = True
     while loop:
         loop = False
@@ -284,7 +283,7 @@ def strongly_inline_functions(gr):
                         loop = True
 
 
-def torch_to_thunder(gr, fallback=False):
+def torch_to_thunder(gr: "Graph", fallback: bool =False):
     """replaces calls to torch.foo functions with calls into thunder's torch language."""
 
     def fill_in_value(v):
@@ -334,7 +333,7 @@ def torch_to_thunder(gr, fallback=False):
                         i.is_const = True
 
 
-def merge_two_blocks(gr, bl1):
+def merge_two_blocks(gr: "Graph", bl1: "Block"):
     jt = bl1.nodes[-1].jump_targets
     if len(jt) != 1:
         raise RuntimeError("can only fuse blocks with deterministic connection")
@@ -366,7 +365,7 @@ def merge_two_blocks(gr, bl1):
     gr.blocks.remove(bl2)
 
 
-def merge_blocks_where_possible(gr):
+def merge_blocks_where_possible(gr: "Graph"):
     i_bl = 0
     while i_bl < len(gr.blocks):
         bl1 = gr.blocks[i_bl]
@@ -381,13 +380,13 @@ def merge_blocks_where_possible(gr):
             i_bl += 1
 
 
-def find_blocks_of_for(gr, for_block):
+def find_blocks_of_for(gr: "Graph", for_block: "Block"):
     assert for_block.nodes[-1].i.opname == "FOR_ITER"
 
     blocks_of_for_loop = {for_block}
     currently_looking_at = set()
 
-    def find_blocks_of_for_rec(for_block, start_block):
+    def find_blocks_of_for_rec(for_block: "Block", start_block: "Block"):
         if for_block == start_block:
             return True
         if start_block in currently_looking_at:
@@ -405,7 +404,7 @@ def find_blocks_of_for(gr, for_block):
     return blocks_of_for_loop
 
 
-def unroll_for_over_modules(gr, for_iter_node):
+def unroll_for_over_modules(gr: "Graph", for_iter_node):
     gr.ensure_links()
     get_iter_node = for_iter_node.inputs[0].values[0].node
     assert get_iter_node.i.opname == "GET_ITER"
@@ -550,7 +549,7 @@ def unroll_for_over_modules(gr, for_iter_node):
             exit_block.block_inputs.remove(i)
 
 
-def find_and_unroll_for_loop(gr):
+def find_and_unroll_for_loop(gr: "Graph"):
     gr.ensure_links()
 
     for bl in gr.blocks[:]:
@@ -576,7 +575,7 @@ def find_and_unroll_for_loop(gr):
     return False
 
 
-def unroll_for_loops_and_inline_modules(gr):
+def unroll_for_loops_and_inline_modules(gr: "Graph"):
     iterate = True
     while iterate:
         iterate = find_and_unroll_for_loop(gr)
@@ -586,7 +585,7 @@ def unroll_for_loops_and_inline_modules(gr):
                 thunder.core.script.passes.merge_blocks_where_possible(gr)
 
 
-def module_to_function(gr):
+def module_to_function(gr: "Graph"):
     attr_dict = {}
     attr_list = []
     for bl in gr.blocks:

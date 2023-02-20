@@ -169,7 +169,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     return gr
 
 
-def make_ssa(gr, verbose=False):
+def make_ssa(gr: 'Graph', verbose: bool = False):
     for bl in gr.blocks:
         for n in bl.nodes:
             n.block = bl
@@ -195,7 +195,7 @@ def make_ssa(gr, verbose=False):
                     break
 
         assert next_block is not None
-        bl = next_block
+        bl: Block = next_block
         blocks_to_do.remove(bl)
         assert not bl.is_ssa
         bl.is_ssa = True

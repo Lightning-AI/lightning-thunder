@@ -1,4 +1,5 @@
 import dis
+from typing import Tuple
 
 # this is Python 3.10 specific for the time being.
 
@@ -122,52 +123,52 @@ fixed_stack_effects_detail = {
 }
 
 
-def stack_effect_detail(opname: str, oparg: int, *, jump: bool = False):
+def stack_effect_detail(opname: str, oparg: int, *, jump: bool = False) -> Tuple[int, int]:
     if opname in fixed_stack_effects_detail:
         return fixed_stack_effects_detail[opname]
-    elif opname == "ROT_N":
+    if opname == "ROT_N":
         return (oparg, oparg)
-    elif opname in {"BUILD_TUPLE", "BUILD_LIST", "BUILD_SET", "BUILD_STRING"}:
+    if opname in {"BUILD_TUPLE", "BUILD_LIST", "BUILD_SET", "BUILD_STRING"}:
         return (oparg, 1)
-    elif opname == "BUILD_MAP":
+    if opname == "BUILD_MAP":
         return (2 * oparg, 1)
-    elif opname == "BUILD_CONST_KEY_MAP":
+    if opname == "BUILD_CONST_KEY_MAP":
         return (oparg + 1, 1)
-    elif opname in {"JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP"}:
+    if opname in {"JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP"}:
         return (1, 1) if jump else (1, 0)
-    elif opname == "SETUP_FINALLY":
+    if opname == "SETUP_FINALLY":
         return (0, 6) if jump else (0, 0)
     # Exception handling
-    elif opname == "RAISE_VARARGS":
+    if opname == "RAISE_VARARGS":
         return (oparg, 0)
     # Functions and calls
-    elif opname == "CALL_FUNCTION":
+    if opname == "CALL_FUNCTION":
         return (oparg + 1, 1)
-    elif opname == "CALL_METHOD":
+    if opname == "CALL_METHOD":
         return (oparg + 2, 1)
-    elif opname == "CALL_FUNCTION_KW":
+    if opname == "CALL_FUNCTION_KW":
         return (oparg + 2, 1)
-    elif opname == "CALL_FUNCTION_EX":
+    if opname == "CALL_FUNCTION_EX":
         return (2 + ((oparg & 0x01) != 0), 1)
-    elif opname == "MAKE_FUNCTION":
+    if opname == "MAKE_FUNCTION":
         return (
             2 + ((oparg & 0x01) != 0) + ((oparg & 0x02) != 0) + ((oparg & 0x04) != 0) + ((oparg & 0x08) != 0),
             1,
         )
-    elif opname == "BUILD_SLICE":
+    if opname == "BUILD_SLICE":
         return (oparg, 1)
-    elif opname == "SETUP_ASYNC_WITH":
+    if opname == "SETUP_ASYNC_WITH":
         return (1, 6) if jump else (0, 0)  # ??
-    elif opname == "FORMAT_VALUE":
+    if opname == "FORMAT_VALUE":
         return (2, 1) if ((oparg & 0x04) != 0) else (1, 1)
-    elif opname == "UNPACK_SEQUENCE":
+    if opname == "UNPACK_SEQUENCE":
         return (1, oparg)
-    elif opname == "UNPACK_EX":
+    if opname == "UNPACK_EX":
         return (1, (oparg & 0xFF) + (oparg >> 8) + 1)
-    elif opname == "FOR_ITER":
+    if opname == "FOR_ITER":
         return (1, 0) if jump else (1, 2)
-    else:
-        raise ValueError(f"Invalid opname {opname}")
+
+    raise ValueError(f"Invalid opname {opname}")
 
 
 jump_instructions = set(dis.hasjabs) | set(dis.hasjrel)

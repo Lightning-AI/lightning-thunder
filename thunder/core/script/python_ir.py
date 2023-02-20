@@ -3,7 +3,7 @@ import inspect
 import sys
 import types
 
-from thunder.core.script.graph import MROAwareObjectRef, Node, insert_before, insert_after
+from thunder.core.script.graph import Graph, MROAwareObjectRef, Node, insert_before, insert_after
 
 
 def get_instruction(opname, arg):
@@ -20,7 +20,7 @@ def get_instruction(opname, arg):
     return i
 
 
-def undo_ssa(gr):
+def undo_ssa(gr: "Graph"):
     def get_value(v, n, inpidx=None):
         if n.i.opname == "CALL_METHOD" and inpidx == 1:
             return
@@ -187,7 +187,7 @@ def undo_ssa(gr):
 
 # this function is taken from PyTorch Dynamo (c) 2022 by Facebook/Meta licensed
 # as per https://github.com/pytorch/pytorch/blob/master/LICENSE
-def linetable_writer(first_lineno):
+def linetable_writer(first_lineno: int):
     """Used to create typing.CodeType.co_linetable See
     https://github.com/python/cpython/blob/main/Objects/lnotab_notes.txt This is the internal format of the line number
     table if Python >= 3.10."""
@@ -220,7 +220,7 @@ def linetable_writer(first_lineno):
     return linetable, update, end
 
 
-def generate_function(gr):
+def generate_function(gr: "Graph"):
     local_vars, lv_names, names, consts = undo_ssa(gr)
     assert len(local_vars) == len(lv_names)
 
