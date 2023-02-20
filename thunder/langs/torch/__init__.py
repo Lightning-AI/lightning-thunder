@@ -290,6 +290,10 @@ class TorchLangCtx:
     def true_divide(self, a, b):
         return tlang.true_divide(a, b)
 
+    # **
+    def pow(self, a, b):
+        return tlang.pow(a, b)
+
     #
     # Elementwise ternary methods
     #

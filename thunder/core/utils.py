@@ -1,5 +1,7 @@
+import sys
 from enum import Enum
 from functools import reduce, wraps
+from itertools import zip_longest
 from numbers import Number
 from typing import Callable, Sequence, Type
 
@@ -677,6 +679,28 @@ class langctx:
         return fn
 
 
+def flatten_func(func, args, kwargs):
+    """Returns a flattened version of func.
+
+    Flattened functions accept flattened arguments. The flattened arguments are
+    the flattened version of (args, kwargs).
+
+    Args:
+        func: function to flatten args: positional arguments to pass to func
+        kwargs: keyword arguments to pass to func
+
+    Returns:
+        tuple of (flattened function, flattened arguments, spec)
+    """
+    flat_args, spec = tree_flatten((args, kwargs))
+
+    def flat_func(*flat_args):
+        fn_args, fn_kwargs = tree_unflatten(flat_args, spec)
+        return func(*fn_args, **fn_kwargs)
+
+    return flat_func, flat_args, spec
+
+
 def safe_map(f, *args):
     """Apply f to each element of args, which must all have the same length.
 
@@ -703,6 +727,15 @@ def safe_map_flat(f, *args):
     return tree_unflatten(out_flat, spec)
 
 
+def _safe_zip_gen(*args):
+    # It has to be a separate function because it's a generator.
+    null = object()
+    for zipped in zip_longest(*args, fillvalue=null):
+        if null in zipped:
+            raise ValueError("length mismatch: {}".format(list(map(len, args))))
+        yield zipped
+
+
 def safe_zip(*args):
     """Zip args, which must all have the same length.
 
@@ -710,9 +743,14 @@ def safe_zip(*args):
         *args: arguments to zip
 
     Returns:
-        list of zipped results
+        generator of zipped results
+
+    Raises:
+        ValueError: if the lengths of the arguments do not match
     """
-    return safe_map(lambda *x: x, *args)
+    if sys.version_info >= (3, 10):
+        return zip(*args, strict=True)
+    return _safe_zip_gen(*args)
 
 
 def unzip2(pairs):

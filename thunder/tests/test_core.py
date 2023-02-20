@@ -389,6 +389,145 @@ def test_transforms_jvp_eager(executor, device, _):
 @executors(
     dtypes=NOTHING,
 )
+def test_transforms_vjp_1_2(executor, device, _):
+    from thunder.core.transforms import inline, vjp
+
+    # 1 input, 2 outputs
+    def func_1_2(x):
+        a = tlang.sin(x)
+        b = tlang.add(0.2, a)
+        c = tlang.asin(b)
+        return b, c
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    vjp_eager = thunder.make_traced(inline(vjp(func_1_2)), executor=executor)
+
+    primals = (a,)
+    cotangents = (g1, g2)
+    out_p, grads = vjp_eager(primals, cotangents)
+    expected_out_p = thunder.make_traced(func_1_2, executor=executor)(a)
+    assert_close(out_p, expected_out_p, equal_nan=True)
+
+    # Now check the gradients
+    # TODO: We will have this automatically tested with OpInfo tests
+    aa = a.clone().requires_grad_(True)
+
+    def pt_func_1_2(x):
+        a = torch.sin(x)
+        b = torch.add(0.2, a)
+        c = torch.asin(b)
+        return b, c
+
+    out = pt_func_1_2(aa)
+    expected_grads = torch.autograd.grad(out, aa, grad_outputs=(g1, g2), retain_graph=True)
+    assert_close(expected_grads, grads, equal_nan=True)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_vjp_2_2_kwarg(executor, device, _):
+    # This test ensures that combination of positional and keyword arguments
+    # is differentiable.
+    from thunder.core.transforms import inline, vjp
+
+    # 2 inputs, 1 kwarg, 2 outputs
+    def func_2_2(x, y, *, z):
+        def func(x):
+            a = tlang.sin(x)
+            b = tlang.add(0.2, a)
+            c = tlang.asin(b)
+            return c
+        a, b = func(x), func(y)
+        c = tlang.add(a, b)
+        d = tlang.add(c, func(z))
+        return c, d
+
+    x = make_tensor((2, 3), device=device, dtype=torch.float32)
+    y = make_tensor((2, 3), device=device, dtype=torch.float32)
+    z = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    vjp_eager = thunder.make_traced(inline(vjp(func_2_2)), executor=executor)
+
+    primals = (x, y)
+    primal_kwargs = {"z": z}
+    cotangents = (g1, g2)
+    out_p, grads = vjp_eager(primals, cotangents, **primal_kwargs)
+    expected_out_p = thunder.make_traced(func_2_2, executor=executor)(*primals, **primal_kwargs)
+    assert_close(out_p, expected_out_p, equal_nan=True)
+
+    # Now check the gradients
+    # TODO: We will have this automatically tested with OpInfo tests
+    xx = x.clone().requires_grad_(True)
+    yy = y.clone().requires_grad_(True)
+    zz = z.clone().requires_grad_(True)
+
+    def pt_func_2_2(x, y, *, z):
+        def func(x):
+            a = torch.sin(x)
+            b = torch.add(0.2, a)
+            c = torch.asin(b)
+            return c
+        a, b = func(x), func(y)
+        c = torch.add(a, b)
+        d = torch.add(c, func(z))
+        return c, d
+
+    out = pt_func_2_2(xx, yy, z=zz)
+    expected_grads = torch.autograd.grad(out, [xx, yy, zz], grad_outputs=(g1, g2), retain_graph=True)
+    # vjp returns a tuple of (primals, cotangents) where cotangents is a tuple of
+    # derivatives with respect to the positional arguments and a dict of derivatives
+    # with respect to the keyword arguments.
+    *gprimals, gkwargs = grads
+    assert_close(expected_grads[:2], gprimals, equal_nan=True)
+    assert_close(expected_grads[2], gkwargs["z"], equal_nan=True)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_transforms_vjp_2_1(executor, device, _):
+    from thunder.core.transforms import inline, vjp
+
+    def pt_func_2_1(x, y):
+        a = torch.sin(x + y)
+        b = torch.add(0.2, a)
+        c = torch.asin(b)
+        return c
+
+    def func_2_1(x, y):
+        a = tlang.sin(x + y)
+        b = tlang.add(0.2, a)
+        c = tlang.asin(b)
+        return c
+
+    vjp_eager = thunder.make_traced(inline(vjp(func_2_1)), executor=executor)
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+    b = make_tensor((2, 3), device=device, dtype=torch.float32)
+    g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    primals = (a, b)
+    cotangents = (g1,)
+    out_p, grads = vjp_eager(primals, cotangents)
+    expected_out_p = thunder.make_traced(func_2_1, executor=executor)(*primals)
+    assert_close(out_p, expected_out_p, equal_nan=True)
+
+    aa = a.clone().requires_grad_(True)
+    bb = b.clone().requires_grad_(True)
+    out = pt_func_2_1(aa, bb)
+    expected_grads = torch.autograd.grad(out, [aa, bb], grad_outputs=(g1,), retain_graph=True)
+    assert_close(expected_grads, grads, equal_nan=True)
+
+
+@executors(
+    dtypes=NOTHING,
+)
 def test_transforms_vmap_x(executor, device, _):
     from thunder.core.transforms import vmap_eager
 

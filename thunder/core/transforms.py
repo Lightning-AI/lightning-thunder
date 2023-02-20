@@ -3,15 +3,15 @@ from dataclasses import dataclass
 from enum import auto, Enum
 from functools import lru_cache, partial
 from numbers import Number
-from typing import Any, Callable, Dict, Sequence, Union
+from typing import Any, Callable, Dict, Sequence, Tuple, Union
 
 from thunder import make_trace, make_traced
 from thunder.core import prims
 from thunder.core.lang import full, full_like
-from thunder.core.proxies import NumberProxy, TensorProxy
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import detached_trace, get_trace, Trace, Variable
-from thunder.core.utils import check, safe_map, safe_map_flat, safe_zip, unzip2
+from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2
 from thunder.executors.torch import ops_to_torch_ops_map
 
 
@@ -19,6 +19,7 @@ class Transforms(Enum):
     IdentityOp = auto()
     VmapOp = auto()
     JvpOp = auto()
+    VjpOp = auto()
 
 
 @lru_cache(maxsize=None)
@@ -37,7 +38,7 @@ def symbol_to_eval(symbol: prims.Symbol):
     return prims.eval_meta_and_record_symbol_fn(meta_func, symbol.op, symbol.name)
 
 
-def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, **kwargs):
+def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwargs):
     """Evaluate a trace.
 
     Args:
@@ -76,6 +77,9 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, **kwargs):
         if not isinstance(result, Sequence):
             result = (result,)
         safe_map_flat(write, list(symbol.outputs), list(result))
+
+    if with_env:
+        return safe_map_flat(read, trace.outputs), env
 
     return safe_map_flat(read, trace.outputs)
 
@@ -668,3 +672,228 @@ def jvp_eager(func, primals, tangents, executor="torch"):
     jvp_trace = make_trace(jvp_func, executor=executor)(*primals, *tangents)
     jvp_traced = make_traced(partial(eval_trace, jvp_trace), executor=executor)
     return jvp_traced(*primals, *tangents)
+
+
+# VJP transform
+# =============
+@dataclass(frozen=True)
+class VJPTriple:
+    """A triple of primal, residuals, and pullback.
+
+    Args:
+        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
+        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
+            saved for the pullback.
+        pullback (Callable): Pullback function, i.e., the function that computes
+            the vector-Jacobian products given the cotangents.
+
+    Yields:
+        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal, residuals, and pullback.
+    """
+
+    primal: Union[Proxy, Number]
+    residuals: Tuple[Proxy, ...]
+    pullback: Callable
+
+    def __iter__(self):
+        yield self.primal
+        yield self.residuals
+        yield self.pullback
+
+
+class NoPullback:
+    """A dummy pullback function that raises an error when called."""
+
+    def __call__(self, *args, **kwargs):
+        raise RuntimeError("Pullback called on a non-differentiable symbol")
+
+
+no_pullback = NoPullback()
+
+# This is a dummy class that is used to represent empty residuals
+# instead of an empty tuple to make the pullback function more readable
+class NoResidual:
+    """A dummy residual value."""
+    pass
+
+no_residual = NoResidual()
+no_residuals = (no_residual,)
+
+# Mapping from symbols to VJP implementations
+# The VJP implementation is a function that takes the primal values and returns
+# a triple of primal result, residuals, and pullback function.
+vjp_impls = {
+    prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
+    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x ** 2)),
+    prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
+}
+
+
+def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
+    """Symbol mapper for the VJP transform.
+
+    Args:
+        symbol (prims.Symbol): Symbol to be mapped.
+        args (Tuple[Variable]): Arguments to the symbol.
+        kwargs (Dict[str, Variable]): Keyword arguments to the symbol.
+
+    Returns:
+        Callable: A function that computes the VJP of the symbol.
+    """
+    # Constant case
+    if symbol.are_all_args_constant:
+
+        def vjp_impl_const(symbol, *args, **kwargs):
+            primals = symbol_to_eval(symbol)(*args, **kwargs)
+            if isinstance(primals, Sequence):
+                return safe_map(lambda x: VJPTriple(x, (), no_pullback), primals)
+            return VJPTriple(primals, (), no_pullback)
+
+        return partial(vjp_impl_const, symbol)
+
+    # Normal case, we have a proxy tangent
+    vjp_impl = vjp_impls.get(symbol.op)
+    if vjp_impl is None:
+        raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
+
+    def wrap_arg(arg):
+        if isinstance(arg, Number):
+            return VJPTriple(arg, tuple(), no_pullback)
+        elif isinstance(arg, VJPTriple):
+            return arg
+        else:
+            raise TypeError(f"Unexpected type {type(arg)}")
+
+    def _vjp_impl(*args, **kwargs):
+        args = safe_map(wrap_arg, args)
+
+        # Expecting VJPTriple wrapping pairs of primals and residuals
+        assert all(isinstance(arg, VJPTriple) for arg in args)
+
+        primals, residuals, pullbacks = safe_zip(*args)
+        out_primal, out_residuals, out_pullback = vjp_impl(*primals, **kwargs)
+
+        assert not isinstance(out_primal, Sequence), "Not implemented for multiple outputs"
+        return (VJPTriple(out_primal, out_residuals, out_pullback),)
+
+    return _vjp_impl
+
+
+def augmented_primal_metafunc(*primals, trace: Trace, **kwargs):
+    primals_residuals_pullbacks = [VJPTriple(primal, tuple(), no_pullback) for primal in primals]
+    result, env = eval_trace(
+        trace,
+        *primals_residuals_pullbacks,
+        **kwargs,
+        with_env=True,
+        symbol_mapper=vjp_symbol_mapper,
+    )
+    return result, env
+
+
+def backward_pass(forward_env, trace, init_cotangents):
+    env = {}
+
+    def read(x: Variable):
+        if isinstance(x, Variable):
+            return env[x.name]
+        else:
+            return x
+
+    def write(v: Variable, val: Any) -> None:
+
+        if isinstance(v, Variable):
+            if v.name in env:
+                # Accumulate cotangents
+                env[v.name] = prims.add(env[v.name], val)
+                return
+            env[v.name] = val
+        elif isinstance(v, Number):
+            pass
+        else:
+            raise TypeError(f"Unexpected type {type(v)}")
+
+    if isinstance(trace.outputs, Sequence):
+        safe_map(write, tuple(trace.outputs), init_cotangents)
+    else:
+        write(trace.outputs, init_cotangents)
+
+    for symbol in reversed(trace.symbols):
+        cotangents = safe_map(read, symbol.outputs)
+        # Having a single cotangent is a common case, so we flatten it
+        # Otherwise, we will need to rewrite the pullback functions
+        cotangents = tree_flatten(cotangents)[0]
+        assert len(cotangents) == 1, "Not implemented for multiple outputs"
+        residuals = forward_env[symbol.outputs[0].name].residuals
+        pullback = forward_env[symbol.outputs[0].name].pullback
+        result = pullback(*residuals, *cotangents)
+        if not isinstance(result, Sequence):
+            result = (result,)
+        safe_map(write, symbol.args, result)
+
+    return tree_map(read, tuple(trace.args))
+
+
+def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
+    # Assuming primals is flat
+
+    if not isinstance(primals, Sequence):
+        primals = (primals,)
+
+    ctx = detached_trace() if detached else nullcontext()
+    with ctx:
+        primals_residuals_pullbacks = [VJPTriple(primal, tuple(), no_pullback) for primal in primals]
+        result, env = eval_trace(
+            trace, *primals_residuals_pullbacks, with_env=True, **kwargs, symbol_mapper=vjp_symbol_mapper
+        )
+        # Unwrap the VJPTriple
+        result = tree_map(lambda x: x.primal, result)
+        return result, backward_pass(env, trace, cotangents)
+
+
+vjp_call = prims.make_prim(Transforms.VjpOp, "vjp_call", partial(vjp_call_metafunc, detached=True))
+inline_transforms_map[Transforms.VjpOp] = partial(vjp_call_metafunc, detached=False)
+
+
+def vjp(func):
+    """Computes the VJP of a function.
+
+    Args:
+        func (Callable): Function to be differentiated.
+    """
+
+    def _vjp(primals, cotangents, **kwargs):
+        flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
+        trace = make_trace(flat_func)(*flat_args)
+        result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
+        gprimals, gkwargs = tree_unflatten(vjp_result, spec)
+        grads = gprimals + (gkwargs,) if len(gkwargs) != 0 else gprimals
+        return result, grads
+
+    return _vjp
+
+
+def value_and_grad(func):
+    """Computes the value and gradient of a function.
+
+    This is a convenience function that combines the functionality of
+    `vjp_call` with implicit initialization of the cotangent to 1.
+
+    Args:
+        func (Callable): Function to be differentiated.
+    """
+
+    def ones_like(x):
+        if isinstance(x, TensorProxy):
+            return full_like(x, fill_value=1)
+        elif isinstance(x, NumberProxy):
+            return type(x.value)(1)
+        else:
+            raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
+
+    def _value_and_grad(*args, **kwargs):
+        trace = make_trace(func)(*args, **kwargs)
+        cotangents = tree_map(lambda v: ones_like(v.proxy), trace.outputs)
+        return vjp(func)(args, cotangents, **kwargs)
+
+    return _value_and_grad

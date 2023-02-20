@@ -258,6 +258,11 @@ class TensorProxy(Proxy):
         ctx = get_language_context()
         return ctx.lt(self, other)
 
+    # **
+    def __pow__(self, other):
+        ctx = get_language_context()
+        return ctx.pow(self, other)
+
     # *
     def __mul__(self, other):
         ctx = get_language_context()
@@ -272,6 +277,11 @@ class TensorProxy(Proxy):
     def __sub__(self, other):
         ctx = get_language_context()
         return ctx.sub(self, other)
+
+    # -
+    def __rsub__(self, other):
+        ctx = get_language_context()
+        return ctx.sub(other, self)
 
     # /
     def __truediv__(self, other):
