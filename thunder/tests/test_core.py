@@ -207,6 +207,50 @@ def test_eval_trace(executor, device, _):
     dtypes=NOTHING,
     executors=[
         TorchEx(),
+        # TODO: nvFuser executor doesn't support duplicate outputs
+        # TODO: nvFuser executor doesn't support clashing input and output names
+    ],
+)
+def test_eval_trace_duplicate_output(executor, device, _):
+    from thunder.core.trace import new_trace, reset_trace
+
+    # This test ensures that eval_trace() can evaluate a trace with duplicate
+    # outputs.
+    from thunder.core.transforms import eval_trace, identity
+
+    def foo1(a):
+        return a, a
+
+    a = torch.ones((2, 2), device=device, dtype=torch.float32)
+
+    foo_trace = thunder.make_trace(foo1, executor=executor)(a)
+    assert len(foo_trace.symbols) == 0
+    assert len(foo_trace.outputs) == 2
+    assert foo_trace.outputs[0].name == foo_trace.outputs[1].name
+
+    actual = eval_trace(foo_trace, a)
+    assert_close(actual, (a, a))
+
+    # Identity is needed to ensure that the duplicated outputs of a symbol
+    # don't cause problems.
+    def foo2(a):
+        a = 1 * a
+        return a, a
+
+    for foo in [foo1, foo2]:
+        foo_trace = thunder.make_trace(identity(foo), executor=executor)(a)
+        assert len(foo_trace.symbols) == 1
+        assert len(foo_trace.outputs) == 2
+        assert foo_trace.outputs[0].name == foo_trace.outputs[1].name
+
+        actual = thunder.make_traced(partial(eval_trace, foo_trace), executor=executor)(a)
+        assert_close(actual, (a, a))
+
+
+@executors(
+    dtypes=NOTHING,
+    executors=[
+        TorchEx(),
     ],
 )
 def test_transforms_identity(executor, device, _):

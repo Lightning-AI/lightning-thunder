@@ -288,6 +288,12 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
             op_str = torch_op.__name__
             ctx[op_str] = torch_op
 
+        # NOTE: currently assumes that the trace is stored in the "trace" kwarg
+        if "trace" in torch_kwargs and any(isinstance(v, Trace) for v in torch_kwargs.values()):
+            key = result.name + "_" + op_str + "_trace"
+            ctx[key] = torch_kwargs["trace"]
+            torch_kwargs["trace"] = key
+
         result_str = ", ".join(out.name for out in sym.outputs)
         arg_str = ", ".join(f"{a}" for a in torch_args)
         kwarg_str = ", ".join(f"{k}={v}" for k, v in torch_kwargs.items())
@@ -392,11 +398,12 @@ def _fuse(trace):
             ctx[key] = torch_kwargs["trace"]
             torch_kwargs["trace"] = key
 
+        result_str = ", ".join(out.name for out in sym.outputs)
         arg_str = ", ".join(f"{a}" for a in torch_args)
         kwarg_str = ", ".join(f"{k}={v}" for k, v in torch_kwargs.items())
         segue_str = ", " if (len(arg_str) > 0 and len(kwarg_str) > 0) else ""
 
-        cstr += f"\n{tab}{result.name} = {op_str}({arg_str}{segue_str}{kwarg_str})"
+        cstr += f"\n{tab}{result_str} = {op_str}({arg_str}{segue_str}{kwarg_str})"
 
     # Constructs output
     # NOTE: len(flat_outputs) > 0

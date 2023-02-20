@@ -60,7 +60,9 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, **kwargs):
     def write(v: Variable, val: Any) -> None:
         if not isinstance(v, Variable):
             return
-        check(v.name not in env, lambda: f"Found v={v} in env={env}!")
+        # Duplicates are allowed but ignored
+        if v.name in env:
+            return
         env[v.name] = val
 
     safe_map_flat(write, list(trace.args), list(args))
