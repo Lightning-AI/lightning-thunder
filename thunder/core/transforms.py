@@ -7,11 +7,11 @@ from typing import Any, Callable, Dict, Sequence, Union
 
 from thunder import make_trace, make_traced
 from thunder.core import prims
-from thunder.core.lang import full_like
+from thunder.core.lang import full, full_like
 from thunder.core.proxies import NumberProxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.trace import detached_trace, get_trace, Trace, Variable
-from thunder.core.utils import safe_map, safe_map_flat, safe_zip, unzip2, check
+from thunder.core.utils import check, safe_map, safe_map_flat, safe_zip, unzip2
 from thunder.executors.torch import ops_to_torch_ops_map
 
 
@@ -161,7 +161,10 @@ def inline(func):
 
 
 class NotMapped:
-    pass
+    """Represents a non-batched dimension."""
+
+    def __repr__(self):
+        return "not_mapped"
 
 
 @dataclass(frozen=True)
@@ -216,11 +219,12 @@ def movedim(x, src: int, dst: int):
 
 def move_batch_dim(axis_size, src, dst, x):
     if src is not_mapped:
-        if isinstance(x, (int, float)):
+        if isinstance(x, Number):
             return x
         target_shape = list(x.shape)
         target_shape.insert(dst, axis_size)
-        return prims.broadcast_in_dim(x, target_shape, [dst])
+        dst = () if x.shape == () else (dst,)
+        return prims.broadcast_in_dim(x, target_shape, dst)
     elif src == dst:
         return x
     else:
@@ -325,7 +329,7 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0):
 
 # TODO: in JAX args, in_dims are flattened the same way
 # TODO: in JAX out_dims are flattened as well
-def _vmap_call_metafunc(args, in_dims, out_dims, trace: Trace, detached: bool, **kwargs):
+def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detached: bool, **kwargs):
     """Metafunction for vmap call.
 
     Args:
@@ -344,8 +348,14 @@ def _vmap_call_metafunc(args, in_dims, out_dims, trace: Trace, detached: bool, *
     """
     assert len(kwargs) == 0, "vmap for kwargs is not implemented"
 
-    (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
+    common_device = {x.device for x in args if isinstance(x, TensorProxy)}
+    assert len(common_device) <= 1, "vmap for multiple devices is not implemented"
+    (common_device,) = common_device if len(common_device) == 1 else ("cpu",)
+
+    if axis_size is None:
+        (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
     in_dims = in_dims if isinstance(in_dims, Sequence) else (in_dims,)
+    in_dims = tuple(not_mapped if isinstance(a, Number) else d for a, d in safe_zip(args, in_dims))
     out_dims = out_dims if isinstance(out_dims, Sequence) else (out_dims,)
 
     ctx = detached_trace() if detached else nullcontext()
@@ -359,6 +369,12 @@ def _vmap_call_metafunc(args, in_dims, out_dims, trace: Trace, detached: bool, *
             outs, bdims = unzip2(result)
             outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
             return outs, out_dims
+        if isinstance(result, Number) and axis_size is not None:
+            # TODO: fetch the default device from the context
+            result = full(shape=(), fill_value=result, device=common_device)
+            result = BatchedValue(result, not_mapped)
+        elif isinstance(result, BatchedValue) and isinstance(result.value, Number) and axis_size is not None:
+            result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
         return out, out_dims[0]
@@ -386,7 +402,7 @@ def _identity_call_vmap(*batched_args, trace: Trace, **kwargs):
 vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
 
 
-def vmap(func, in_dims=0, out_dims=0):
+def vmap(func, in_dims=0, out_dims=0, axis_size=None):
     """Vectorizing transform for a Thunder function.
 
     Args:
@@ -419,13 +435,13 @@ def vmap(func, in_dims=0, out_dims=0):
             assert args_spec == in_dims_spec, "in_dims must have the same structure as args, kwargs"
         unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
         trace = make_trace(func_flat)(*unbatched_args_flat)
-        outs, bdims = vmap_call(args_flat, in_dims_flat, out_dims, trace=trace)
+        outs, bdims = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, trace=trace)
         return outs
 
     return wrapper
 
 
-def vmap_eager(func, args, in_dims=0, out_dims=0, executor="torch"):
+def vmap_eager(func, args, in_dims=0, out_dims=0, axis_size=None, executor="torch"):
     """Computes the vmap of a Thunder function.
 
     Args:
@@ -438,7 +454,9 @@ def vmap_eager(func, args, in_dims=0, out_dims=0, executor="torch"):
     """
     # TODO: fix this - not all args may be batched
     # TODO: here we assume batch axis is 0
-    vmap_trace = make_trace(inline(vmap(func, in_dims=in_dims, out_dims=out_dims)), executor=executor)(*args)
+    vmap_trace = make_trace(
+        inline(vmap(func, in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), executor=executor
+    )(*args)
     vmap_traced = make_traced(partial(eval_trace, vmap_trace), executor=executor)
     return vmap_traced(*args)
 

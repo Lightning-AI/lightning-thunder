@@ -289,6 +289,24 @@ def test_transforms_inline(executor, device, _):
 
 @executors(
     dtypes=NOTHING,
+    executors=(
+        TorchEx(),
+        # TODO: nvFuser executor does not support full(shape=()) yet
+    )
+)
+def test_transforms_vmap_axis_size(executor, device, _):
+    from thunder.core.transforms import inline, vmap
+
+    actual = thunder.make_traced(inline(vmap(lambda: 2, axis_size=4)), executor=executor)()
+    expected = torch.full((4,), 2, device="cpu")
+    assert_close(actual, expected)
+
+    actual = thunder.make_traced(inline(vmap(lambda x: x, axis_size=4)), executor=executor)(2)
+    assert_close(actual, expected)
+
+
+@executors(
+    dtypes=NOTHING,
 )
 def test_transforms_vmap_identity(executor, device, _):
     pytest.skip("Skipped temporarily until we have a fix")
