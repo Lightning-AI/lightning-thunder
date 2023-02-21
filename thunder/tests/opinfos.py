@@ -729,6 +729,22 @@ sin_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(sin_opinfo)
 
+sinh_opinfo = OpInfo(
+    tlang.sinh,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.sinh),
+    test_directives=(
+        # NOTE: Torch doesn't support CPU float16 or complex32 sinh
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32),
+            devicetypes=("cpu",),
+        ),
+    ),
+)
+elementwise_unary_ops.append(sinh_opinfo)
+
 # TODO: refine domain vs. complex domain
 sqrt_opinfo = OpInfo(
     tlang.sqrt,

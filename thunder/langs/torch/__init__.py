@@ -48,6 +48,7 @@ __all__ = [
     "rsqrt",
     "sign",
     "sin",
+    "sinh",
     "sqrt",
     "tanh",
     "log",
@@ -694,6 +695,11 @@ def sign(a):
 @torch_function(torch.sin)
 def sin(a):
     return tlang.sin(a)
+
+
+@torch_function(torch.sinh)
+def sinh(a):
+    return tlang.sinh(a)
 
 
 @torch_function(torch.sqrt)

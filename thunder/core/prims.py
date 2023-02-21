@@ -63,6 +63,7 @@ __all__ = [
     "rsqrt",
     "sign",
     "sin",
+    "sinh",
     "sqrt",
     "tan",
     "tanh",
@@ -131,6 +132,7 @@ class Ops(Enum):
     RSQRT = auto()
     SIGN = auto()
     SIN = auto()
+    SINH = auto()
     SQRT = auto()
     TAN = auto()
     TANH = auto()
@@ -695,6 +697,17 @@ sin = make_prim(
         name="sin",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_real_complex_number_handler(math.sin, cmath.sin),
+    ),
+)
+
+sinh = make_prim(
+    Ops.SINH,
+    "sinh",
+    partial(
+        _elementwise_unary_meta,
+        name="sinh",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=_real_complex_number_handler(math.sinh, cmath.sinh),
     ),
 )
 
