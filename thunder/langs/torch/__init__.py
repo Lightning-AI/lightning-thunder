@@ -46,6 +46,7 @@ __all__ = [
     "cos",
     "exp",
     "rsqrt",
+    "sign",
     "sin",
     "sqrt",
     "tanh",
@@ -683,6 +684,11 @@ def exp(a):
 @torch_function(torch.rsqrt)
 def rsqrt(a):
     return tlang.rsqrt(a)
+
+
+@torch_function(torch.sin)
+def sign(a):
+    return tlang.sign(a)
 
 
 @torch_function(torch.sin)

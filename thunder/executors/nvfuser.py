@@ -298,6 +298,7 @@ ops_to_nvfuser_ops_map = {
     #   Python, NumPy, JAX, and PyTorch)
     prims.Ops.ISFINITE: "isfinite",
     prims.Ops.RSQRT: "rsqrt",
+    prims.Ops.SIGN: "sign",
     prims.Ops.SIN: "sin",
     prims.Ops.SQRT: "sqrt",
     prims.Ops.TAN: "tan",
@@ -334,6 +335,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.ABS: _elementwise_preprocessor,
     prims.Ops.ACOS: _elementwise_preprocessor,
     prims.Ops.RSQRT: _elementwise_preprocessor,
+    prims.Ops.SIGN: _elementwise_preprocessor,
     prims.Ops.SIN: _elementwise_preprocessor,
     prims.Ops.SQRT: _elementwise_preprocessor,
     prims.Ops.TAN: _elementwise_preprocessor,

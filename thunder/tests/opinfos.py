@@ -697,6 +697,22 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
+sign_opinfo = OpInfo(
+    tlang.sign,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.sgn),
+    test_directives=(
+        # TODO: need to add nvFuser specific support for complex sign
+        # https://github.com/csarofeen/pytorch/issues/2492
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.complexfloating,),
+            executors=("nvFuser",),
+        ),
+    ),
+)
+elementwise_unary_ops.append(sign_opinfo)
+
 sin_opinfo = OpInfo(
     tlang.sin,
     sample_input_generator=elementwise_unary_generator,

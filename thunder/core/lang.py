@@ -51,6 +51,7 @@ __all__ = [
     "floor",
     "isfinite",
     "rsqrt",
+    "sign",
     "sin",
     "sqrt",
     "tan",
@@ -483,6 +484,8 @@ def isfinite(a):
 def rsqrt(a):
     return _elementwise_unary_helper(prims.rsqrt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
+def sign(a):
+    return _elementwise_unary_helper(prims.sign, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
 
 def sin(a):
     return _elementwise_unary_helper(prims.sin, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)

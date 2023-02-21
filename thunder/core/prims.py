@@ -61,6 +61,7 @@ __all__ = [
     "floor",
     "isfinite",
     "rsqrt",
+    "sign",
     "sin",
     "sqrt",
     "tan",
@@ -128,6 +129,7 @@ class Ops(Enum):
     FLOOR = auto()
     ISFINITE = auto()
     RSQRT = auto()
+    SIGN = auto()
     SIN = auto()
     SQRT = auto()
     TAN = auto()
@@ -654,6 +656,34 @@ rsqrt = make_prim(
         name="rsqrt",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
         number_handler=_rsqrt_number,
+    ),
+)
+
+# Non-complex sign definition 
+def _sign_number(x):
+    if (x < type(x)(0)) or (x > type(x)(0)):
+        return type(x)(math.copysign(1, x))
+    else:
+        return x
+
+# NOTE: jax.lax.sign and torch.sgn differ from numpy.sign in complex support
+#       nump.sign: x / sqrt(x * x)
+#       jax.lax.sign/torch.sgn: x / abs(x)
+# NOTE: pytorch sign and sgn differ in that sgn includes complex support
+# jax.lax.sign: https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.sign.html
+# numpy.sign: https://numpy.org/doc/stable/reference/generated/numpy.sign.html
+# torch.sgn: https://pytorch.org/docs/stable/generated/torch.sgn.html
+# torch.sign: https://pytorch.org/docs/stable/generated/torch.sign.html
+sign = make_prim(
+    Ops.SIGN,
+    "sign",
+    partial(
+        _elementwise_unary_meta,
+        name="sign",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=_real_complex_number_handler(
+            _sign_number,
+            lambda x: 0.0 if x == 0.0 else x / abs(x)),
     ),
 )
 
