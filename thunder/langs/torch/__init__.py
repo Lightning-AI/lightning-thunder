@@ -55,6 +55,7 @@ __all__ = [
     "log10",
     "log1p",
     "log2",
+    "trunc",
     # Elementwise Binary Ops
     "add",
     "eq",
@@ -731,6 +732,9 @@ def log1p(a):
 def log2(a):
     return tlang.log2(a)
 
+@torch_function(torch.trunc)
+def trunc(a):
+    return tlang.trunc(a)
 
 #
 # Elementwise Binary Ops

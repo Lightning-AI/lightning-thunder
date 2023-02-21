@@ -194,6 +194,7 @@ ops_to_torch_ops_map = {
     prims.Ops.LOG10: _elementwise_unary_torch(torch.log10),
     prims.Ops.LOG1P: _elementwise_unary_torch(torch.log1p),
     prims.Ops.LOG2: _elementwise_unary_torch(torch.log2),
+    prims.Ops.TRUNC: _elementwise_unary_torch(torch.trunc),
     # Elementwise binary prims
     prims.Ops.ADD: add_helper,
     prims.Ops.ATAN2: "torch.atan2",

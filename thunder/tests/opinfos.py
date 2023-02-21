@@ -924,6 +924,46 @@ log2_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(log2_opinfo)
 
+trunc_opinfo = OpInfo(
+    tlang.trunc,
+    dtypes=(datatypes.floating, datatypes.exact),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.trunc),
+    test_directives=(
+        # Torch doesn't support bool trunc
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+        ),
+        # Torch doesn't support cpu float16 trunc
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # PyTorch didn't support trunc on exact types before 1.13
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.exact,),
+            devicetypes=("cpu",),
+            active_if=LooseVersion(torch.__version__) < "1.13",
+        ),
+        # TODO: nvFuser needs to return copy for integer dtypes.
+        # https://github.com/csarofeen/pytorch/issues/2499
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("nvFuser",),
+            dtypes=(datatypes.int32, datatypes.int64)
+        ),
+
+    ),
+)
+elementwise_unary_ops.append(trunc_opinfo)
+
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)

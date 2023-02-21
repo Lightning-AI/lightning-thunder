@@ -71,6 +71,7 @@ __all__ = [
     "log10",
     "log1P",
     "log2",
+    "trunc",
     # Elementwise binary prims
     "add",
     "atan2",
@@ -140,6 +141,7 @@ class Ops(Enum):
     LOG10 = auto()
     LOG1P = auto()
     LOG2 = auto()
+    TRUNC = auto()
     # Elementwise binary prims
     ADD = auto()
     ATAN2 = auto()
@@ -785,6 +787,17 @@ log2 = make_prim(
         name="log2",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_real_complex_number_handler(math.log2, lambda x: cmath.log(x, 2)),
+    ),
+)
+
+trunc = make_prim(
+    Ops.TRUNC,
+    "trunc",
+    partial(
+        _elementwise_unary_meta,
+        name="trunc",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=math.trunc,
     ),
 )
 

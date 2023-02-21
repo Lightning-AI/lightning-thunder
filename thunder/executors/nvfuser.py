@@ -308,6 +308,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.LOG10: "log10",
     prims.Ops.LOG1P: "log1p",
     prims.Ops.LOG2: "log2",
+    prims.Ops.TRUNC: "trunc",
     # Elementwise binary prims
     prims.Ops.ADD: "add",
     prims.Ops.ATAN2: "atan2",
@@ -355,6 +356,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.EXP: _elementwise_preprocessor,
     prims.Ops.EXPM1: _elementwise_preprocessor,
     prims.Ops.FLOOR: _elementwise_preprocessor,
+    prims.Ops.TRUNC: _elementwise_preprocessor,
     # Elementwise binary prims
     prims.Ops.ADD: _elementwise_preprocessor,
     prims.Ops.ATAN2: _elementwise_preprocessor,
