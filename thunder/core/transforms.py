@@ -229,8 +229,9 @@ def move_batch_dim(axis_size, src, dst, x):
             return x
         target_shape = list(x.shape)
         target_shape.insert(dst, axis_size)
-        dst = () if x.shape == () else (dst,)
-        return prims.broadcast_in_dim(x, target_shape, dst)
+        bcast_dims = list(range(len(target_shape)))
+        bcast_dims.pop(dst)
+        return prims.broadcast_in_dim(x, target_shape, bcast_dims)
     elif src == dst:
         return x
     else:
@@ -264,14 +265,37 @@ def add_vmap(axis_size: int, a: BatchedValue, b: BatchedValue) -> BatchedValue:
     return binary_op_batching_rule(prims.add, axis_size, (a, b))
 
 
-def sum_vmap(axis_size: int, a: BatchedValue, dims: Sequence[int]) -> BatchedValue:
+def sum_vmap(axis_size: int, a: BatchedValue, dims: Sequence[int], **kwargs) -> BatchedValue:
     bdim = a.batch_dim
     # TODO: remove this when dims becomes a mandatory kwarg
-    dims, _ = safe_zip(*dims)
+    if len(dims) > 0:
+        dims, _ = safe_zip(*dims)
     dims_before = tuple(el for el in dims if el < bdim)
     dims_after = tuple(el + 1 for el in dims if el >= bdim)
     batched_dims = dims_before + dims_after
-    return vectorized_batcher(prims.sum, axis_size, (a,), dims=batched_dims)
+    return vectorized_batcher(prims.sum, axis_size, (a,), dims=batched_dims, **kwargs)
+
+
+# TODO: Please test this extensively
+def broadcast_in_dim_vmap(axis_size: int, a: BatchedValue, shape: Sequence[BatchedValue], broadcast_dimensions: Sequence[BatchedValue]) -> BatchedValue:
+    bdim = a.batch_dim
+    # TODO: remove this when shape and broadcast_dimensions become mandatory kwargs
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/181
+    shape, _ = safe_zip(*shape)
+    if broadcast_dimensions != ():
+        broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
+    if bdim is not_mapped:
+        return BatchedValue(prims.broadcast_in_dim(a.value, shape, broadcast_dimensions), bdim)
+    else:
+        new_bdim = bdim + sum(1 for dim in broadcast_dimensions if dim < bdim)
+        new_shape = list(shape)
+        new_shape.insert(new_bdim, axis_size)
+        new_broadcast_dimensions = (0,) + tuple(
+            dim + 1 if dim >= bdim else dim for dim in broadcast_dimensions
+        )
+        if broadcast_dimensions == ():
+            new_broadcast_dimensions = ()
+        return BatchedValue(prims.broadcast_in_dim(a.value, new_shape, new_broadcast_dimensions), new_bdim)
 
 
 vmap_impls: Dict[prims.Symbol, Callable] = dict()
@@ -281,6 +305,7 @@ vmap_impls[prims.Ops.COS] = cos_vmap
 vmap_impls[prims.Ops.MUL] = mul_vmap
 vmap_impls[prims.Ops.ADD] = add_vmap
 vmap_impls[prims.Ops.SUM] = sum_vmap
+vmap_impls[prims.Ops.BROADCAST_IN_DIM] = broadcast_in_dim_vmap
 
 
 def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
@@ -302,9 +327,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
         elif isinstance(x, Number):
             return BatchedValue(x, not_mapped)
         else:
-            # may be an argument like dim in sum(a, dim), needs passing through
-            # because treating it properly is up to the prim vmap impl
-            return x
+            raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
 
     if symbol.are_all_args_constant:
 
@@ -383,13 +406,14 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
         result = eval_trace(trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size))
         # Unwrapping the BatchedValue's
         if isinstance(result, Sequence):
-            assert all(isinstance(x, BatchedValue) for x in result)
-            outs, bdims = unzip2(result)
+            flat_result, spec = tree_flatten(result)
+            assert all(isinstance(x, BatchedValue) for x in flat_result)
+            outs, bdims = unzip2(flat_result)
             # TODO: handle the case where out_dims is a single value better
             if len(out_dims) == 1:
                 out_dims = out_dims * len(outs)
             outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
-            return outs
+            return tree_unflatten(outs, spec)
         if isinstance(result, Number) and axis_size is not None:
             # TODO: fetch the default device from the context
             result = full(shape=(), fill_value=result, device=common_device)
@@ -775,6 +799,46 @@ vjp_impls = {
 }
 
 
+def restore_reduced_dims(x, reduced_dims, original_shape):
+    """Restores the reduced dimensions of a tensor.
+
+    Args:
+        x (Variable): Tensor to be reshaped.
+        reduced_dims (Tuple[int, ...]): Tuple of reduced dimensions.
+        original_shape (Tuple[int, ...]): Original shape of the tensor.
+
+    Returns:
+        Variable: Tensor with the reduced dimensions restored.
+    """
+    import thunder.core.lang as tlang
+    unsqueezed = tlang.unsqueeze(x, reduced_dims)
+    return tlang.expand(unsqueezed, original_shape)
+
+
+def sum_vjp(x, dims, output_dtype=None):
+    """VJP of the sum operation.
+
+    Args:
+        x (Variable): Tensor to be summed.
+        dims (Tuple[int, ...]): Dimensions to be summed.
+        output_dtype (str, optional): Output data type. Defaults to None.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.sum(x, dims, output_dtype=output_dtype)
+    residuals = (x.shape, dims,)
+
+    def pullback(x_shape, reduced_dims, g):
+        # One return per positional argument of prims.sum
+        return restore_reduced_dims(g, reduced_dims, x_shape), None
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+vjp_impls[prims.Ops.SUM] = sum_vjp
+
+
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     """Symbol mapper for the VJP transform.
 
@@ -811,12 +875,12 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             raise TypeError(f"Unexpected type {type(arg)}")
 
     def _vjp_impl(*args, **kwargs):
-        args = safe_map(wrap_arg, args)
+        args = tree_map(wrap_arg, args)
 
         # Expecting VJPTriple wrapping pairs of primals and residuals
-        assert all(isinstance(arg, VJPTriple) for arg in args)
+        assert all(isinstance(arg, VJPTriple) for arg in tree_flatten(args)[0])
 
-        primals, residuals, pullbacks = safe_zip(*args)
+        primals = tree_map(lambda x: x.primal, args)
         out_primal, out_residuals, out_pullback = vjp_impl(*primals, **kwargs)
 
         assert not isinstance(out_primal, Sequence), "Not implemented for multiple outputs"
@@ -855,6 +919,9 @@ def backward_pass(forward_env, trace, init_cotangents):
                 return
             env[v.name] = val
         elif isinstance(v, Number):
+            pass
+        elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
+            # TODO: remove when we move dims to kwargs
             pass
         else:
             raise TypeError(f"Unexpected type {type(v)}")

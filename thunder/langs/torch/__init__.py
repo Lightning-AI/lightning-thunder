@@ -845,7 +845,7 @@ def _reduction_dtypes(
 
 
 def _reduction_dims(shape, dims: Optional[Sequence]) -> Tuple[int, ...]:
-    if dims is None:
+    if dims is None or len(dims) == 0:
         return tuple(range(len(shape)))
 
     dims = tuple(utils.canonicalize_dim(len(shape), idx) for idx in dims)

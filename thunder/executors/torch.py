@@ -130,8 +130,14 @@ def _elementwise_unary_torch(op):
     return _fn
 
 
-def _torch_sum(a, dims, **kwargs):
-    return torch.sum(a, dim=dims, **kwargs)
+def sum_helper(a, dims, output_dtype=None, **kwargs):
+    output_dtype_ = _get_torch(output_dtype)
+    # NOTE: PyTorch's sum reduces all dimensions if empty list is passed
+    #   but Thunder follows NumPy's behavior of returning the original
+    #   tensor if an empty list is passed.
+    if len(dims) == 0:
+        return a.to(output_dtype_)
+    return torch.sum(a, dim=dims, dtype=output_dtype_)
 
 
 # Handles adding two Python numbers, which PyTorch allows but returns
@@ -209,7 +215,7 @@ ops_to_torch_ops_map = {
     prims.Ops.WHERE: "torch.where",
     # Reduction prims
     prims.Ops.AMAX: "torch.amax",
-    prims.Ops.SUM: _torch_sum,
+    prims.Ops.SUM: sum_helper,
     prims.Ops.VAR: "torch.var",
     # NOTE: VAR_MEAN is here to execute nvFuser traces with PyTorch
     nvOps.VAR_MEAN: "torch.var_mean",

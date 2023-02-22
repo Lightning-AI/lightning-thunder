@@ -75,6 +75,11 @@ def test_torch_mean(executor, device, dtype):
     torch_result = torch.mean(a, [1])
     assert_close(thunder_result, torch_result)
 
+    # Reduce with () dims
+    thunder_result = traced_foo(a, ())
+    torch_result = torch.mean(a, ())
+    assert_close(thunder_result, torch_result)
+
 
 @executors(dtypes=(thunder.float32,))
 def test_var_mean(executor, device, dtype):

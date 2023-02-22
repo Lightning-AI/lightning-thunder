@@ -529,6 +529,41 @@ def test_transforms_vjp_2_1(executor, device, _):
 
 @executors(
     dtypes=NOTHING,
+    executors=(
+        TorchEx(),
+        # TODO: enable nvFuser executor
+        # thunder/executors/nvfuser.py:240: AssertionError
+        # assert len(shape) > 0 in _full_preprocessor
+    )
+)
+def test_transforms_vmap_inline_value_and_grad(executor, device, _):
+    # This test checks whether it's possible to vmap a function that is
+    # traced with inline and value_and_grad.
+    # For applications see
+    # https://jax.readthedocs.io/en/latest/jax-101/04-advanced-autodiff.html#per-example-gradients
+    # https://pytorch.org/functorch/stable/notebooks/per_sample_grads.html
+    from thunder.core.transforms import inline, value_and_grad, vmap
+    from thunder.core import prims
+
+    def func(x):
+        a = prims.sin(x)
+        a = prims.sum(a, ())
+        return prims.sum(a, tuple(range(a.ndim)))
+
+    vjp_func = thunder.make_traced(value_and_grad(func), executor=executor)
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+    single_out, (single_grad,) = vjp_func(a)
+
+    aaa = torch.stack([a, a, a])
+    vmap_inline_vjp = thunder.make_traced(vmap(inline(value_and_grad(func))), executor=executor)
+    batched_out, (batched_grad,) = vmap_inline_vjp(aaa)
+    for i in range(3):
+        assert_close(single_out, batched_out[i])
+        assert_close(single_grad, batched_grad[i])
+
+
+@executors(
+    dtypes=NOTHING,
 )
 def test_transforms_vmap_x(executor, device, _):
     from thunder.core.transforms import vmap_eager

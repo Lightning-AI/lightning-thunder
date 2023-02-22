@@ -1588,6 +1588,7 @@ def sum_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape, dim, keepdim, dtype
     cases = (
         ((4, 4), None, False, None),
+        ((4, 4), (), False, None),
         ((8, 1, 6), (1,), True, None),
         ((8, 7, 5, 1), (0, 1), False, None),
     )
