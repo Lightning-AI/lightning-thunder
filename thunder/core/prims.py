@@ -12,7 +12,7 @@ from typing import Dict, Sequence, Tuple
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
 from thunder.core.proxies import Proxy, proxy, TensorProxy
-from thunder.core.trace import get_trace, Variable
+from thunder.core.trace import detached_trace, get_trace, Variable
 from thunder.core.utils import check, get_numberlike_value, same_shape
 from thunder.core.pytree import tree_flatten
 
@@ -268,9 +268,22 @@ def eval_meta_and_record_symbol_fn(meta, id, name, *args, **kwargs):
     """
 
     def _fn(*args, **kwargs):
-        result = meta(*args, **kwargs)
+        # If meta is itself a trace recording function, we need to
+        #   - detach the trace from the outer context
+        #   - update the inner trace's names with the outer context's names
+        #   - update the outer trace's names with the inner context's names
+        #   - add the symbol to the outer context
+        # This is necessary because the outer context could have recorded
+        #   symbols that are used in the meta function otherwise.
+        #
+        outer_names = get_trace().names
+        with detached_trace():
+            get_trace().names.update(outer_names)
+            result = meta(*args, **kwargs)
+            new_names = get_trace().names
         sym = make_symbol(id, name, result, args, kwargs)
         get_trace().add_symbol(sym)
+        get_trace().names.update(new_names)
         return result
 
     # TODO: update more of the signature
@@ -663,7 +676,7 @@ rsqrt = make_prim(
     ),
 )
 
-# Non-complex sign definition 
+# Non-complex sign definition
 def _sign_number(x):
     if (x < type(x)(0)) or (x > type(x)(0)):
         return type(x)(math.copysign(1, x))
