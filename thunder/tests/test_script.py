@@ -17,6 +17,16 @@ from thunder.tests import nanogpt_model
 from thunder.tests.framework import executors, requiresCUDA
 
 
+def _helper_get_func_calls(gr):
+    return {
+        thunder.core.script.passes.find_and_evaluate_method_through_phi_parent(n.inputs[0])  # for function calls
+        or n.inputs[0].name  # for Tensor methods (but we don't check that)
+        or n.inputs[0].node.i.opname  # for the oddball assertion instantiation
+        for n in gr.nodes()
+        if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION", "CALL_FUNCTION_KW"}
+    }
+
+
 def sample_add_fn(x, y):
     return tadd(x, y)
 
@@ -224,13 +234,7 @@ def test_nanogpt_inlining_unrolling():
     assert sum(len(bl.nodes) for bl in gr.blocks) == 579
 
     # has everything been inlined/unrolled?
-    funcs = {
-        thunder.core.script.passes.find_and_evaluate_method_through_phi_parent(n.inputs[0])  # for function calls
-        or n.inputs[0].name  # for Tensor methods (but we don't check that)
-        or n.inputs[0].node.i.opname  # for the oddball assertion instantiation
-        for n in gr.nodes()
-        if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION", "CALL_FUNCTION_KW"}
-    }
+    funcs = _helper_get_func_calls(gr)
     allowed_funcs = {
         float,
         math.sqrt,
@@ -255,7 +259,7 @@ def test_nanogpt_inlining_unrolling():
         ## there is an oddball (handled above) from instantiating the AssertionError
         "LOAD_ASSERTION_ERROR",
     }
-    assert not funcs - allowed_funcs
+    assert not (funcs ^ allowed_funcs)
 
     fn = thunder.core.script.python_ir.generate_function(gr)
     x = torch.randint(0, 255, (5, 5))
@@ -463,8 +467,25 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
+    def nanogpt_mlp_functional_kw(a, c_fc_weight, c_proj_weight):
+        b = torch.nn.functional.linear(a, c_fc_weight)
+        c = new_gelu(x=b)
+        d = torch.nn.functional.linear(c, c_proj_weight)
+        e = torch.nn.functional.dropout(d, p=0.0)
+        return e
+
     thunder_fn = thunder.make_traced(nanogpt_mlp_functional, executor=executor, _preprocess=True)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional)
+
+    # see if everything works and is inlined
+    allowed_funcs = {math.sqrt, ttorch.pow, ttorch.linear, ttorch.dropout, ttorch.tanh}
+    thunder_fn = thunder.make_traced(nanogpt_mlp_functional_kw, executor=executor, _preprocess=True)
+    funcs = _helper_get_func_calls(thunder_fn._tfn._gr)
+    assert not (funcs ^ allowed_funcs)
+
+    _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_kw)
+    funcs = _helper_get_func_calls(thunder_fn._tfn._gr)
+    assert not (funcs ^ allowed_funcs)
 
 
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying

@@ -96,7 +96,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
 
                 b1 = get_or_make_block(offset_start=ic_target, jump_source=n)
                 n.jump_targets.append((stack_effect_detail(i.opname, i.arg, jump=True), b1))
-            elif i.opname in {"RETURN_VALUE", "RAISE_VARARGS"}:
+            elif i.opname in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"}:
                 done = True
             else:
                 if verbose:
@@ -106,7 +106,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
             ic += 1
             if ic < len(bc) and bc[ic].is_jump_target:
                 # check if needed?
-                if i.opname not in {"RETURN_VALUE", "RAISE_VARARGS"} and i.opcode not in jump_instructions:
+                if i.opname not in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"} and i.opcode not in jump_instructions:
                     # should insert jump absolute instead...
                     jump_ins = dis.Instruction(
                         opname="JUMP_ABSOLUTE",
@@ -118,7 +118,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
                         starts_line=None,
                         is_jump_target=False,
                     )
-                    jump_node = Node(i=jump_ins, inputs=[], outputs=[])
+                    jump_node = Node(i=jump_ins, inputs=[], outputs=[], line_no=line_no)
                     bl.insert_node(jump_node)
                     b1 = get_or_make_block(offset_start=ic, jump_source=jump_node)
                     jump_node.jump_targets = [
@@ -169,7 +169,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     return gr
 
 
-def make_ssa(gr: 'Graph', verbose: bool = False):
+def make_ssa(gr: "Graph", verbose: bool = False):
     for bl in gr.blocks:
         for n in bl.nodes:
             n.block = bl
@@ -201,7 +201,6 @@ def make_ssa(gr: 'Graph', verbose: bool = False):
         bl.is_ssa = True
 
         jump_sources = bl.jump_sources
-
         all_stacks_at_start = bl.all_stacks_at_start
         all_local_variables_at_start = bl.all_local_variables_at_start
         bl.jump_source_idxes_to_postprocess = [i for i, s in enumerate(all_stacks_at_start) if s is None]
@@ -313,9 +312,14 @@ def make_ssa(gr: 'Graph', verbose: bool = False):
                     idx_jt = jt.jump_sources.index(n)
                     j_stack = stack[:]
                     if j_pop > 0:
-                        j_stack = j_stack[:-pop]
+                        j_stack = j_stack[:-j_pop]
                     if j_push > 0:
-                        j_stack.extend(outputs[:j_push])
+                        # TODO: change to use output_jump / output_nojump or somesuch
+                        if len(outputs) < j_push:
+                            j_stack.extend([Value(node=n, nr=k) for k in range(j_push)])
+                        else:
+                            j_stack.extend(outputs[:j_push])
+                    assert len(j_stack) == len(stack) + j_push - j_pop
                     jt.all_stacks_at_start[idx_jt] = j_stack
                     jt.all_local_variables_at_start[idx_jt] = local_variables[:]
                     all_block_outputs.update(j_stack)
@@ -326,8 +330,8 @@ def make_ssa(gr: 'Graph', verbose: bool = False):
                 stack = stack[:-pop]
             stack.extend(outputs)
             assert (i.opname == "JUMP_ABSOLUTE" and i.arg is None and len(stack) == ol) or (
-                len(stack) - ol == opcode.stack_effect(i.opcode, i.arg)
-            )
+                len(stack) - ol == opcode.stack_effect(i.opcode, i.arg, jump=False)
+            ), f"stack effect funnyness at {i}: {len(stack)} {ol} {opcode.stack_effect(i.opcode, i.arg, jump=False)}"
         bl.nodes = new_nodes
 
     for bl in gr.blocks:
@@ -355,6 +359,23 @@ def make_ssa(gr: 'Graph', verbose: bool = False):
 
 def remove_unused_values(gr):
     gr.ensure_links()
+
+    def remove_value(v):
+        for pv in v.phi_values:
+            bl = pv.block
+            pv.remove_value(v)
+            if not pv.values:
+                remove_value(pv)
+                bl.block_inputs.remove(pv)
+                if pv in bl.block_outputs:
+                    bl.block_outputs.remove(pv)
+
+    for i in gr.blocks[0].block_inputs:
+        if len(i.values) == 1 and i.values[0] is None:
+            remove_value(i)
+
+    gr.blocks[0].block_inputs = [i for i in gr.blocks[0].block_inputs if len(i.values) != 1 or i.values[0] is not None]
+
     values_used = set()
 
     INDEX_OPS = {"BINARY_SUBSCR"}
@@ -370,6 +391,8 @@ def remove_unused_values(gr):
             mark_used(v.parent)
         if isinstance(v, PhiValue):
             for w in v.values:
+                if w is None:
+                    print("#####", bl)
                 mark_used(w)
 
     for bl in gr.blocks:
@@ -425,7 +448,7 @@ def make_single_return(gr):
             is_jump_target=False,
         )
         ret_input = PhiValue([], [], ret_bl)
-        ret_node = Node(i=ret_ins, inputs=[ret_input], outputs=[])
+        ret_node = Node(i=ret_ins, inputs=[ret_input], outputs=[], line_no=bls[-1].nodes[-1].line_no)
         ret_bl.nodes = [ret_node]
         ret_bl.jump_sources = []
         ret_node.inputs = [ret_input]
@@ -447,7 +470,7 @@ def make_single_return(gr):
                 starts_line=None,
                 is_jump_target=last_node_i.is_jump_target,
             )
-            jump_node = Node(i=jump_ins, inputs=[], outputs=[])
+            jump_node = Node(i=jump_ins, inputs=[], outputs=[], line_no=b.nodes[-1].line_no)
             jump_node.jump_targets = [((0, 0), ret_bl)]
             ret_bl.jump_sources.append(jump_node)
             # TODO: this should really be a method of PhiValue!

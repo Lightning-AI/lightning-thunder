@@ -245,6 +245,7 @@ def preprocess(fn, is_module):
     script.passes.torch_to_thunder(gr)
 
     thunder_fn = script.python_ir.generate_function(gr)
+    thunder_fn._gr = gr
     if is_module:
         thunder_fn._additional_param_names = additional_param_names
     return thunder_fn
@@ -376,6 +377,7 @@ def make_traced(
     if isinstance(fn, langctx.module_cls):
         _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names)
 
+    _fn._tfn = tfn
     setattr(_fn, "_thunder_cache", None)
 
     return _fn

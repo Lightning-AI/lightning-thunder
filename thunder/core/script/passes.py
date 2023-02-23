@@ -11,10 +11,6 @@ from thunder.core.script.graph import Graph, Block, clone_blocks, Node, PhiValue
 from thunder.core.script.python_ir import get_instruction
 from thunder.langs.torch import _torch_to_thunder_complete_map
 
-def specify_inputs(gr, inps):
-    inp_map = {p: v for p, v in zip(gr.local_variables_at_start, inps)}
-    replace_values(gr, inp_map)
-
 
 def split_block(gr, bl, n):
     # The admin involved:
@@ -140,7 +136,11 @@ def find_and_evaluate_method_through_phi_parent(v):
     return fn_value
 
 
-def inline_method_call(gr: "Graph", n: "Node"):  # criterion?
+class SkipInlineError(NotImplementedError):
+    pass
+
+
+def inline_method_call(gr: "Graph", n: "Node"):
     found_block = False
     for i_bl, bl in enumerate(gr.blocks):
         for i_n, n1 in enumerate(bl.nodes):
@@ -170,7 +170,7 @@ def inline_method_call(gr: "Graph", n: "Node"):  # criterion?
 
         if inspect.isbuiltin(fn_value):
             raise NotImplementedError("cannot inline built-in (C-implemented) function")
-    elif n.i.opname == "CALL_FUNCTION":
+    elif n.i.opname in {"CALL_FUNCTION", "CALL_FUNCTION_KW"}:
         fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
         if fn_value is None:
             raise NotImplementedError("cannot inline non-explicit function")
@@ -187,9 +187,8 @@ def inline_method_call(gr: "Graph", n: "Node"):  # criterion?
     else:
         raise NotImplementedError(f"inlining {n}")
 
+    # splitting must be done before replacing values, but this is changed even if we don't inline...
     nbl = split_block(gr, bl, bl.nodes[i_n + 1])
-    n1 = bl.nodes.pop(i_n)
-    assert n1 is n
 
     gr1 = acquire_method(fn_value, module=mod1, mro_klass=gr.mro_klass if mod1 == gr.module else None)
     make_ssa(gr1)
@@ -198,6 +197,52 @@ def inline_method_call(gr: "Graph", n: "Node"):  # criterion?
         gr1_n.line_no = gr1_n.line_no + len(gr.source_lines) + 1
     gr.source_lines.append("\n")
     gr.source_lines += gr1.source_lines
+
+    if gr1.ismethod:
+        sig1 = inspect.signature(gr1.method.__func__)
+    else:
+        sig1 = inspect.signature(gr1.method)
+    # transform defaults
+    sig1 = sig1.replace(
+        parameters=[
+            p
+            if p.default is inspect._empty
+            else p.replace(default=Value(name=p.name, typ=type(p.default), value=p.default, is_const=True))
+            for p in sig1.parameters.values()
+        ]
+    )
+
+    if gr1.ismethod:
+        call_args = [value_for_self1]
+    else:
+        call_args = []
+
+    if n.i.opname == "CALL_METHOD":
+        call_args += n.inputs[2:]
+        call_kwargs = {}
+    elif n.i.opname == "CALL_FUNCTION":
+        call_args += n.inputs[1:]
+        call_kwargs = {}
+    elif n.i.opname == "CALL_FUNCTION_KW":
+        assert n.inputs[-1].is_const
+        num_kwargs = len(n.inputs[-1].value)
+        call_kwargs = {k: v for k, v in zip(n.inputs[-1].value, n.inputs[-1 - num_kwargs : -1])}
+        call_args += n.inputs[1 : -1 - num_kwargs]
+    else:
+        raise NotImplementedError()
+
+    # TODO: catch and translate error messages, check types(?)
+    bound_args = sig1.bind(*call_args, **call_kwargs)
+    bound_args.apply_defaults()
+
+    gr1_varargs = [n for n, p in sig1.parameters.items() if p.kind == p.kind.VAR_POSITIONAL]
+    gr1_varkwargs = [n for n, p in sig1.parameters.items() if p.kind == p.kind.VAR_KEYWORD]
+    ## TODO: TRANSLATE args (=tuple of Values) and kwargs (=dict str->Value) to a Value to something Value of ... (probably needs at least BUILD_TUPLE etc)
+    if gr1_varargs or gr1_varkwargs:
+        raise SkipInlineError("varargs and kwargs are currently not implemented")
+
+    n1 = bl.nodes.pop(i_n)
+    assert n1 is n
 
     # there should be exactly one
     (ret_bl,) = (bl for bl in gr1.blocks if len(bl.nodes) > 0 and bl.nodes[-1].i.opname == "RETURN_VALUE")
@@ -220,24 +265,13 @@ def inline_method_call(gr: "Graph", n: "Node"):  # criterion?
 
     gr.blocks[i_bl + 1 : i_bl + 1] = gr1.blocks
 
-    # TODO Error checking parameters
-    if gr1.ismethod and n.i.opname == "CALL_METHOD":
-        call_args = [value_for_self1, *n.inputs[2:]]
-    elif gr1.ismethod and n.i.opname == "CALL_FUNCTION":
-        call_args = [value_for_self1, *n.inputs[1:]]
-    elif n.i.opname == "CALL_METHOD":
-        call_args = n.inputs[2:]
-    elif n.i.opname == "CALL_FUNCTION":
-        call_args = n.inputs[1:]
-    else:
-        raise NotImplementedError()
-
     assert len(n.outputs) == 1
+    inp_map = {p: bound_args.arguments[p.name] for p in gr1.local_variables_at_start if p.name in bound_args.arguments}
     bl.block_outputs.remove(n.outputs[0])  # TODO: what with inplace!!
-    bl.block_outputs.update(call_args)
-    specify_inputs(gr1, call_args)
+    bl.block_outputs.update(inp_map.values())  # Note: This includes default args
+    replace_values(gr1, inp_map)
 
-    # output values...
+    # output value
     rv = ret_node.inputs.pop()
     assert not ret_node.inputs
     (orv,) = n.outputs
@@ -252,7 +286,7 @@ def inline_submodule_calls(gr: "Graph"):
     gr.ensure_links()
     for bl in gr.blocks[:]:
         for n in bl.nodes[:]:
-            if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION"}:
+            if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION", "CALL_FUNCTION_KW"}:
                 fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
                 if isinstance(fn_value, torch.nn.Module) or (
                     inspect.ismethod(fn_value) and isinstance(fn_value.__self__, torch.nn.Module)
@@ -270,7 +304,7 @@ def strongly_inline_functions(gr: "Graph"):
         gr.ensure_links()
         for bl in gr.blocks[:]:
             for n in bl.nodes[:]:
-                if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION"}:
+                if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION", "CALL_FUNCTION_KW"}:
                     fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
                     if (
                         fn_value is not None
@@ -279,11 +313,14 @@ def strongly_inline_functions(gr: "Graph"):
                         and fn_value not in _torch_to_thunder_complete_map
                     ):
                         ## handle methods or nn.Modules / other classes?
-                        inline_method_call(gr, n)
-                        loop = True
+                        try:
+                            inline_method_call(gr, n)
+                            loop = True
+                        except SkipInlineError:
+                            pass
 
 
-def torch_to_thunder(gr: "Graph", fallback: bool =False):
+def torch_to_thunder(gr: "Graph", fallback: bool = False):
     """replaces calls to torch.foo functions with calls into thunder's torch language."""
 
     def fill_in_value(v):

@@ -158,7 +158,9 @@ def stack_effect_detail(opname: str, oparg: int, *, jump: bool = False) -> Tuple
     if opname == "BUILD_SLICE":
         return (oparg, 1)
     if opname == "SETUP_ASYNC_WITH":
-        return (1, 6) if jump else (0, 0)  # ??
+        return (1, 6) if jump else (1, 1)  # ??
+    if opname == "SETUP_WITH":
+        return (1, 7) if jump else (1, 2)
     if opname == "FORMAT_VALUE":
         return (2, 1) if ((oparg & 0x04) != 0) else (1, 1)
     if opname == "UNPACK_SEQUENCE":

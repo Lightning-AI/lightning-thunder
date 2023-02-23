@@ -208,12 +208,12 @@ def unify_values(values, jump_sources, bl, all_predecessors_done=True):
 # it has Values as .inputs and .outputs
 class Node:
     def __init__(
-            self,
-            *,
-            i=None,
-            inputs: Optional[List[Value]] = None,
-            outputs: Optional[List[Value]] = None,
-            line_no: Optional[int] = None,
+        self,
+        *,
+        i=None,
+        inputs: Optional[List[Value]] = None,
+        outputs: Optional[List[Value]] = None,
+        line_no: Optional[int] = None,
     ):
         self.i = i
         self.inputs = inputs if inputs is not None else []
