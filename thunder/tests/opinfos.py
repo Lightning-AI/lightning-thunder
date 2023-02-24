@@ -1523,6 +1523,42 @@ transpose_opinfo = OpInfo(
 shape_ops.append(transpose_opinfo)
 
 
+def index_select_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make_index = partial(make_tensor, device=device, dtype=torch.int, requires_grad=False)
+
+    # a.shape, dims, b.shape
+    cases = (
+        ((4, 2, 3), 0, (8)),
+        ((4, 2, 3), 1, (7)),
+        ((4, 2, 3), 2, (2)),
+        ((4,), 0, (8)),
+        ((4,), 0, (1)),
+        ((4, 1), 0, (3)),
+        ((4, 1), 1, (5)),
+        ((4, 2, 3), 0, (0)),
+        ((4, 2, 3), 1, (0)),
+        ((4, 2, 3), 2, (0)),
+        ((4, 2, 3), 0, ()),
+        ((4, 2, 3), 1, ()),
+        ((4, 2, 3), 2, ()),
+    )
+
+    for shape_a, dim, shape_b in cases:
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        yield SampleInput(a, dim, b)
+
+
+# TODO: mapping jax.lax.gather for testing
+index_select_opinfo = OpInfo(
+    tlang.index_select,
+    sample_input_generator=index_select_sample_generator,
+    torch_reference=torch.index_select,
+)
+shape_ops.append(index_select_opinfo)
+
+
 def unsqueeze_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

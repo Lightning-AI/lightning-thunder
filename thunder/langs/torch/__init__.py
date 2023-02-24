@@ -33,6 +33,7 @@ __all__ = [
     "tensor_split",
     "transpose",
     "unsqueeze",
+    "index_select",
     "view",
     # Elementwise Unary Ops
     "abs",
@@ -649,6 +650,11 @@ def _unsqueeze_disambiguator(*args, **kwargs):
 
 def unsqueeze(a, dim):
     return tlang.unsqueeze(a, (dim,))
+
+
+@torch_function(torch.index_select)
+def index_select(a, dim, index):
+    return tlang.index_select(a, dim, index)
 
 
 def _view_disambiguator(*args, **kwargs):

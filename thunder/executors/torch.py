@@ -171,6 +171,7 @@ ops_to_torch_ops_map = {
     prims.Ops.SQUEEZE: squeeze_helper,
     # NOTE: PyTorch's transpose is not equivalent to the transpose prim
     prims.Ops.TRANSPOSE: "torch.permute",
+    prims.Ops.INDEX_SELECT: "torch.index_select",
     prims.Ops.VIEW: view_helper,
     # Elementwise unary prims
     prims.Ops.ABS: _elementwise_unary_torch(torch.abs),

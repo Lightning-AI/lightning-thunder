@@ -32,6 +32,7 @@ __all__ = [
     "slice_in_dim",
     "squeeze",
     "transpose",
+    "index_select",
     "unsqueeze",
     # Elemenwise unary operations
     "abs",
@@ -311,6 +312,11 @@ def transpose(a, permutation):
     return prims.transpose(a, permutation)
 
 
+def index_select(a, dim, index):
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.index_select(a, dim, index)
+
+
 # Unsqueezes a, adding zero or more dimensions of length 1
 # Added dimensions are specified by their position in the final tensor
 # Based on https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.expand_dims.html
@@ -486,8 +492,10 @@ def isfinite(a):
 def rsqrt(a):
     return _elementwise_unary_helper(prims.rsqrt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
+
 def sign(a):
     return _elementwise_unary_helper(prims.sign, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+
 
 def sin(a):
     return _elementwise_unary_helper(prims.sin, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)

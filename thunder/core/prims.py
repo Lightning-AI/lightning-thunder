@@ -41,6 +41,7 @@ __all__ = [
     "slice",
     "squeeze",
     "transpose",
+    "index_select",
     # NOTE: view is EXPERIMENTAL ONLY
     "view",
     # Elementwise unary prims
@@ -112,6 +113,7 @@ class Ops(Enum):
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
+    INDEX_SELECT = auto()
     VIEW = auto()
     # Elementwise unary prims
     ABS = auto()
@@ -683,6 +685,7 @@ def _sign_number(x):
     else:
         return x
 
+
 # NOTE: jax.lax.sign and torch.sgn differ from numpy.sign in complex support
 #       nump.sign: x / sqrt(x * x)
 #       jax.lax.sign/torch.sgn: x / abs(x)
@@ -698,9 +701,7 @@ sign = make_prim(
         _elementwise_unary_meta,
         name="sign",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
-        number_handler=_real_complex_number_handler(
-            _sign_number,
-            lambda x: 0.0 if x == 0.0 else x / abs(x)),
+        number_handler=_real_complex_number_handler(_sign_number, lambda x: 0.0 if x == 0.0 else x / abs(x)),
     ),
 )
 
@@ -1217,6 +1218,30 @@ def transpose_meta(a, permutation):
 
 
 transpose = make_prim(Ops.TRANSPOSE, "transpose", transpose_meta)
+
+
+def index_select_meta(a, dim, index):
+    utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
+    utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
+    utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or scalar TensorProxy!")
+    utils.validate_idx(a.ndim, dim)
+
+    new_shape = []
+    for idx, l in enumerate(a.shape):
+        # Checks that squeezed dims have length one
+        if idx == dim:
+            if index.ndim == 1:
+                new_shape.append(index.shape[0])
+            else:
+                new_shape.append(1)
+        else:
+            new_shape.append(l)
+
+    proxy_name = get_trace().make_proxy_name()
+    return TensorProxy(name=proxy_name, shape=new_shape, device=a.device, dtype=a.dtype)
+
+
+index_select = make_prim(Ops.INDEX_SELECT, "index_select", index_select_meta)
 
 view = make_prim(Ops.VIEW, "view", reshape_meta)
 
