@@ -107,6 +107,59 @@ def test_integer_isinstance_mimicry(executor, device, dtype):
 
 
 @executors(dtypes=NOTHING)
+def test_torch_call_recording(executor, device, _):
+    # This test ensures that calls to torch functions are recorded in the trace
+    from thunder import _get_executor
+
+    def func(a):
+        return ttorch.dropout(a)
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    torch_trace = thunder.make_trace(func, executor=executor)(a)
+    assert len(torch_trace.symbols) == 1
+    assert torch_trace.symbols[0].name == "torch.nn.functional.dropout"
+
+    # Ensure that the trace can be fused and executed
+    ex = _get_executor(executor)
+    fusion = ex.fuse(torch_trace)
+    actual = fusion(a)
+    assert actual.shape == (2, 3)
+
+
+@executors(dtypes=NOTHING)
+@requiresCUDA
+def test_torch_call_lowering_for_nvfuser(executor, device, _):
+    # This test ensures that calls to torch functions are lowered to the
+    # nvFuser supported primitives
+    from thunder import _get_executor
+    from thunder.executors.nvfuser import lower_for_nvfuser
+
+    def func(a):
+        cos = tlang.cos(a)
+        return ttorch.softmax(cos, 1) + a
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+
+    trace = thunder.make_trace(func, executor=executor)(a)
+    assert len(trace.symbols) == 3
+    assert trace.symbols[0].name == "cos"
+    assert trace.symbols[1].name == "torch.nn.functional.softmax"
+    assert trace.symbols[2].name == "add"
+
+    nvfuser_trace = thunder.make_trace(lower_for_nvfuser(func), executor=executor)(a)
+    assert len(nvfuser_trace.symbols) == 11
+    assert not any(s.name == "torch.nn.functional.softmax" for s in nvfuser_trace.symbols)
+
+    # Ensure that the trace can be fused and executed
+    ex = _get_executor(executor)
+    fusion = ex.fuse(nvfuser_trace)
+    actual = fusion(a)
+    expected = thunder.make_traced(func, executor=executor)(a)
+    assert_close(actual, expected)
+
+
+@executors(dtypes=NOTHING)
 def test_nested_make_trace(executor, device, _):
     # This test ensures that make_trace() can be called from within a traced
     # function without leaking the trace context.
@@ -179,7 +232,6 @@ def test_eval_trace(executor, device, _):
         assert actual.shape == foo_trace.outputs.proxy.shape
         assert actual.dtype == foo_trace.outputs.proxy.dtype
         assert actual.device == foo_trace.outputs.proxy.device
-        assert ord(actual.name[-1]) - ord(foo_trace.outputs.proxy.name[-1]) == len(foo_trace.names)
     finally:
         reset_trace(trace_token)
 

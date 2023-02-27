@@ -1,6 +1,6 @@
 import operator
 from enum import Enum
-from functools import partial, reduce
+from functools import partial, reduce, wraps
 from numbers import Number
 from typing import Callable, Optional, Sequence, Tuple
 
@@ -154,9 +154,20 @@ _torch_to_thunder_function_map = {}
 
 
 def torch_function(torch_fn):
-    def _torch_function_map_set(fn):
-        _torch_to_thunder_function_map[torch_fn] = fn
-        return fn
+    def _torch_function_map_set(thunder_impl):
+        # `make_prim` is a helper function that creates a function that is
+        # recorded as a single symbol in the trace. Also it adds the
+        # `thunder_impl` function to the `ops_to_meta_functions_map` registry
+        name = torch_fn.__module__ + "." + torch_fn.__name__
+        trace_recording_fn = prims.make_prim(torch_fn, name, thunder_impl)
+
+        @wraps(thunder_impl)
+        def wrapper(*args, **kwargs):
+            return trace_recording_fn(*args, **kwargs)
+
+        _torch_to_thunder_function_map[torch_fn] = wrapper
+
+        return wrapper
 
     return _torch_function_map_set
 
@@ -738,9 +749,11 @@ def log1p(a):
 def log2(a):
     return tlang.log2(a)
 
+
 @torch_function(torch.trunc)
 def trunc(a):
     return tlang.trunc(a)
+
 
 #
 # Elementwise Binary Ops

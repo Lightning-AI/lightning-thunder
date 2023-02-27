@@ -1767,6 +1767,16 @@ softmax_opinfo = OpInfo(
     sample_input_generator=softmax_sample_generator,
     torch_reference=None if LooseVersion(torch.__version__) < "1.13" else torch._refs.softmax,
     dtypes=(datatypes.floating,),
+    test_directives=(
+        # torch.softmax doesn't support float16 on CPU
+        # RuntimeError: "softmax_lastdim_kernel_impl" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+    ),
 )
 nn_ops.append(softmax_opinfo)
 

@@ -1,6 +1,6 @@
 import operator
-from numbers import Number
 from functools import wraps
+from numbers import Number
 
 import torch
 
@@ -254,6 +254,8 @@ def _get_torch(x):
 
 
 def _get_torch_op(op):
+    if op in ttorch._torch_to_thunder_function_map:
+        return op
     return ops_to_torch_ops_map[op]
 
 

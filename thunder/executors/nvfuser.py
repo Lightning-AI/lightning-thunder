@@ -8,10 +8,12 @@ import thunder.core.dtypes as dtypes
 
 # TODO: review language and executor dependencies
 import thunder.langs.torch as ttorch
+from thunder import make_trace
 from thunder.core import prims, utils
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Variable
+from thunder.core.transforms import eval_trace
 from thunder.core.utils import OrderedSet
 
 # TODO: consider further refactoring this
@@ -638,6 +640,65 @@ def _fuse_region(inputs, outputs, symbols):
     return fusion
 
 
+def lower_for_nvfuser_mapper(symbol: prims.Symbol):
+    """For a given symbol, returns the nvFuser-compatible function that
+    implements the symbol if possible. Otherwise, returns the original
+    function.
+
+    Args:
+        symbol (prims.Symbol): The symbol to lower.
+
+    Returns:
+        Callable: The nvFuser-compatible function that implements the symbol
+    """
+
+    # If the symbol is a core primitive, then we don't need to do anything
+    prim_func = getattr(prims, symbol.name, None)
+    if prim_func is not None:
+        return prim_func
+
+    # If the symbol is a nvFuser primitive, then we don't need to do anything
+    if symbol.op == nvOps.VAR_MEAN:
+        return var_mean
+
+    # SLICE primitive doesn't use `symbol.name`
+    if symbol.op == prims.Ops.SLICE:
+        return prims.slice_prim
+
+    assert symbol.op in ttorch._torch_to_thunder_function_map, f"Unknown op {symbol.name}, {symbol.op}!"
+
+    # All other symbols are treated as composite functions
+    # We decompose them into primitives if the decomposition is fully supported
+    # by nvFuser. Otherwise, we keep them as is.
+    # TODO: shall we store the meta function in the symbol?
+    decomposed_fn = prims.ops_to_meta_functions_map[symbol.op]
+    proxy_args = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, symbol.args)
+    proxy_kwargs = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, symbol.kwargs)
+    trace = make_trace(lower_for_nvfuser(decomposed_fn))(*proxy_args, **proxy_kwargs)
+    all_supported = all(s.op in ops_to_nvfuser_ops_map for s in trace.symbols)
+    if all_supported:
+        return lower_for_nvfuser(decomposed_fn)
+
+    # When the decomposition is not supported, we use the original function
+    # TODO: shall we store the original function in the symbol?
+    original_fn = ttorch._torch_to_thunder_function_map[symbol.op]
+    return original_fn
+
+
+def lower_for_nvfuser(func):
+    """Converts PyTorch functions to core Thunder primitives if they are supported by nvFuser.
+
+    Args:
+        func (Callable): A Thunder function to be transformed.
+    """
+
+    def wrapper(*args, **kwargs):
+        trace = make_trace(func)(*args, **kwargs)
+        return eval_trace(trace, *args, **kwargs, symbol_mapper=lower_for_nvfuser_mapper)
+
+    return wrapper
+
+
 # TODO: support NumPy arrays
 # TODO: possibly support caching on the object that fusion returns
 # fuse returns a function that, when called with actual PyTorch tensors and Python numbers
@@ -726,6 +787,12 @@ def _fuse(
         region.symbols.append(sym)
         symbols_to_region_map[sym] = region
         return region
+
+    # Retrace for nvFuser if possible
+    proxy_args = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, trace.args)
+    proxy_kwargs = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, trace.kwargs)
+    func = partial(eval_trace, trace)
+    trace = make_trace(lower_for_nvfuser(func), executor="nvfuser")(*proxy_args, **proxy_kwargs)
 
     # Processes input proxies
     # TODO: is input its own region?
