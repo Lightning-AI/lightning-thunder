@@ -21,7 +21,7 @@ import thunder.core.prims as prims
 import thunder.langs.torch as ttorch
 from thunder.core.pytree import tree_map
 from thunder.langs.torch import torch_dtype
-from thunder.tests.framework import _all_device_types, JAX_AVAILABLE
+from thunder.tests.framework import _all_device_types, JAX_AVAILABLE, nvFuser
 
 eps = 1e-5
 
@@ -1555,6 +1555,12 @@ index_select_opinfo = OpInfo(
     tlang.index_select,
     sample_input_generator=index_select_sample_generator,
     torch_reference=torch.index_select,
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",),
+    ),
 )
 shape_ops.append(index_select_opinfo)
 
