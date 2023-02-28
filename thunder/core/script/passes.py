@@ -2,6 +2,7 @@ import dis
 import inspect
 import opcode
 import types
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import torch  # # aehem.
 
@@ -10,9 +11,10 @@ from thunder.core.script.frontend import acquire_method, make_single_return, mak
 from thunder.core.script.graph import Graph, Block, clone_blocks, Node, PhiValue, replace_values, Value
 from thunder.core.script.python_ir import get_instruction
 from thunder.langs.torch import _torch_to_thunder_complete_map
+from thunder.core.utils import OrderedSet
 
 
-def split_block(gr, bl, n):
+def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     # The admin involved:
     # - create a new "bottom block", the input block is the "top block"
     # - split the .nodes
@@ -45,8 +47,8 @@ def split_block(gr, bl, n):
         opcode=opcode.opmap["JUMP_ABSOLUTE"],
         arg=None,
         argval=None,
-        argrepr=None,
-        offset=None,  # last_node_i.offset,
+        argrepr="None",
+        offset=-999,  # last_node_i.offset,
         starts_line=None,
         is_jump_target=False,
     )
@@ -62,9 +64,9 @@ def split_block(gr, bl, n):
             potential_bl_outputs.add(o)
     for i in bl.block_inputs:
         potential_bl_outputs.add(i)
-    value_map = {}
+    value_map: Dict[Value, Value] = {}
 
-    def get_or_create_phi(v):
+    def get_or_create_phi(v: Value) -> Value:
         if v in value_map:
             return value_map[v]
         if v.is_const or v.is_global:
@@ -98,7 +100,7 @@ def split_block(gr, bl, n):
     return nbl
 
 
-def find_method_through_phi_parent(fn_value):
+def find_method_through_phi_parent(fn_value: Value) -> Tuple[Value, List[str]]:
     # for inlining, we need to (reverse) traverse PhiValues and attribute
     # lookups to find the actual function we want to inline
     while isinstance(fn_value, PhiValue) and len(fn_value.values) == 1:
@@ -123,7 +125,7 @@ def find_method_through_phi_parent(fn_value):
     return fn_value, []
 
 
-def find_and_evaluate_method_through_phi_parent(v):
+def find_and_evaluate_method_through_phi_parent(v: Value) -> Union[object, Callable]:
     fn_parent_value, attr_lookups = find_method_through_phi_parent(v)
     if fn_parent_value.value is None:
         return None
@@ -140,7 +142,7 @@ class SkipInlineError(NotImplementedError):
     pass
 
 
-def inline_method_call(gr: "Graph", n: "Node"):
+def inline_method_call(gr: "Graph", n: "Node") -> None:
     found_block = False
     for i_bl, bl in enumerate(gr.blocks):
         for i_n, n1 in enumerate(bl.nodes):
@@ -158,7 +160,7 @@ def inline_method_call(gr: "Graph", n: "Node"):
         ## TODO: value for self arg in Method calls?
         ### in general: What is with callables here?
         if isinstance(fn_value, torch.nn.Module):
-            mod1 = fn_value
+            mod1: object = fn_value
             value_for_self1 = n.inputs[0]
             fn_value = fn_value.forward
         elif inspect.ismethod(fn_value):
@@ -219,7 +221,7 @@ def inline_method_call(gr: "Graph", n: "Node"):
 
     if n.i.opname == "CALL_METHOD":
         call_args += n.inputs[2:]
-        call_kwargs = {}
+        call_kwargs: Dict[str, Any] = {}
     elif n.i.opname == "CALL_FUNCTION":
         call_args += n.inputs[1:]
         call_kwargs = {}
@@ -253,7 +255,7 @@ def inline_method_call(gr: "Graph", n: "Node"):
         opcode=opcode.opmap["JUMP_ABSOLUTE"],
         arg=None,
         argval=None,
-        argrepr=None,
+        argrepr="None",
         offset=ret_node.i.offset,
         starts_line=ret_node.i.starts_line,
         is_jump_target=ret_node.i.is_jump_target,
@@ -279,8 +281,9 @@ def inline_method_call(gr: "Graph", n: "Node"):
     ret_bl.block_outputs.add(rv)
 
 
-def inline_submodule_calls(gr: "Graph"):
+def inline_submodule_calls(gr: "Graph") -> bool:
     # inlines submodule calls
+    # returns whether something has changed
     # TODO: recursively and not from nested structures (ModuleList etc.)
     changed = False
     gr.ensure_links()
@@ -297,7 +300,7 @@ def inline_submodule_calls(gr: "Graph"):
     return changed
 
 
-def strongly_inline_functions(gr: "Graph"):
+def strongly_inline_functions(gr: "Graph") -> None:
     loop = True
     while loop:
         loop = False
@@ -320,10 +323,10 @@ def strongly_inline_functions(gr: "Graph"):
                             pass
 
 
-def torch_to_thunder(gr: "Graph", fallback: bool = False):
+def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
     """replaces calls to torch.foo functions with calls into thunder's torch language."""
 
-    def fill_in_value(v):
+    def fill_in_value(v: Value) -> None:
         # PhiValues ?
         if v.value is None and v.parent is not None:
             fill_in_value(v.parent)
@@ -357,20 +360,21 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False):
                         i.value = thunder.langs.torch
                     if i.parent is not None and i.parent.value == torch:
                         i.parent.value = thunder.langs.torch
+                        assert i.name is not None
                         i.value = getattr(thunder.langs.torch, i.name)
 
                     # replace other things by checking against torch module (make dict at startup?)
-                    n = getattr(i.value, "__name__", None)
+                    name = getattr(i.value, "__name__", None)
                     tf = None
-                    if n is not None:
-                        tf = getattr(torch, n, None)
+                    if name is not None:
+                        tf = getattr(torch, name, None)
                     if tf is not None and i.value == tf:
-                        i.value = getattr(thunder.langs.torch, n)
+                        i.value = getattr(thunder.langs.torch, name)
                         i.is_global = False
                         i.is_const = True
 
 
-def merge_two_blocks(gr: "Graph", bl1: "Block"):
+def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
     jt = bl1.nodes[-1].jump_targets
     if len(jt) != 1:
         raise RuntimeError("can only fuse blocks with deterministic connection")
@@ -402,7 +406,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block"):
     gr.blocks.remove(bl2)
 
 
-def merge_blocks_where_possible(gr: "Graph"):
+def merge_blocks_where_possible(gr: "Graph") -> None:
     i_bl = 0
     while i_bl < len(gr.blocks):
         bl1 = gr.blocks[i_bl]
@@ -417,13 +421,13 @@ def merge_blocks_where_possible(gr: "Graph"):
             i_bl += 1
 
 
-def find_blocks_of_for(gr: "Graph", for_block: "Block"):
+def find_blocks_of_for(gr: "Graph", for_block: "Block") -> List[Block]:
     assert for_block.nodes[-1].i.opname == "FOR_ITER"
 
-    blocks_of_for_loop = {for_block}
+    blocks_of_for_loop = OrderedSet({for_block})
     currently_looking_at = set()
 
-    def find_blocks_of_for_rec(for_block: "Block", start_block: "Block"):
+    def find_blocks_of_for_rec(for_block: "Block", start_block: "Block") -> bool:
         if for_block == start_block:
             return True
         if start_block in currently_looking_at:
@@ -438,10 +442,10 @@ def find_blocks_of_for(gr: "Graph", for_block: "Block"):
         return found
 
     find_blocks_of_for_rec(for_block, for_block.nodes[-1].jump_targets[0][1])
-    return blocks_of_for_loop
+    return list(blocks_of_for_loop)
 
 
-def unroll_for_over_modules(gr: "Graph", for_iter_node):
+def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     gr.ensure_links()
     get_iter_node = for_iter_node.inputs[0].values[0].node
     assert get_iter_node.i.opname == "GET_ITER"
@@ -457,6 +461,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node):
 
     for_loop_len = len(iterated_module_list)
     for_iter_block = for_iter_node.block
+    assert for_iter_block is not None
     get_iter_block = get_iter_node.block
 
     (iter_v,) = get_iter_node.outputs
@@ -480,7 +485,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node):
 
     seen = set()
 
-    def delete_value_and_sources(v):
+    def delete_value_and_sources(v: Value) -> None:
         # check that it is possible?
         if v in seen:
             return
@@ -530,6 +535,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node):
             td[for_iter_node].inputs[1] = idx
             td[for_iter_node].outputs[0].name += f"_{i}"
         else:
+            assert for_iter_node.outputs[0].name is not None
             for_iter_node.outputs[0].name += "_0"
 
     gr.ensure_links()
@@ -586,7 +592,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node):
             exit_block.block_inputs.remove(i)
 
 
-def find_and_unroll_for_loop(gr: "Graph"):
+def find_and_unroll_for_loop(gr: "Graph") -> bool:
     gr.ensure_links()
 
     for bl in gr.blocks[:]:
@@ -612,7 +618,7 @@ def find_and_unroll_for_loop(gr: "Graph"):
     return False
 
 
-def unroll_for_loops_and_inline_modules(gr: "Graph"):
+def unroll_for_loops_and_inline_modules(gr: "Graph") -> None:
     iterate = True
     while iterate:
         iterate = find_and_unroll_for_loop(gr)
@@ -622,8 +628,8 @@ def unroll_for_loops_and_inline_modules(gr: "Graph"):
                 thunder.core.script.passes.merge_blocks_where_possible(gr)
 
 
-def module_to_function(gr: "Graph"):
-    attr_dict = {}
+def module_to_function(gr: "Graph") -> List[str]:
+    attr_dict: Dict[str, int] = {}
     attr_list = []
     for bl in gr.blocks:
         for n in bl.nodes:

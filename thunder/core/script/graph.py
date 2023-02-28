@@ -216,11 +216,11 @@ class Node:
         line_no: Optional[int] = None,
     ):
         self.i = i
-        self.inputs = inputs if inputs is not None else []
-        self.outputs = outputs if inputs is not None else []
+        self.inputs: List[Value] = inputs if inputs is not None else []
+        self.outputs: List[Value] = outputs if inputs is not None else []
         self.jump_targets = []
         self.line_no = line_no
-        self.block = None
+        self.block: Optional[Block] = None
 
     def clone(self, translation_dict=None):
         """.block of the clone will be None if block is not in translation dict."""
