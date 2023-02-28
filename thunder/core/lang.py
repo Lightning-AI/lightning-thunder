@@ -39,6 +39,7 @@ __all__ = [
     "acos",
     "acosh",
     "asin",
+    "asinh",
     "atan",
     "atanh",
     "bitwise_not",
@@ -47,10 +48,21 @@ __all__ = [
     "cosh",
     "erf",
     "erfc",
+    "erfcinv",
+    "erfinv",
     "exp",
+    "exp2",
     "expm1",
     "floor",
     "isfinite",
+    "lgamma",
+    "log",
+    "log10",
+    "log1p",
+    "log2",
+    "ndtri",
+    "reciprocal",
+    "round",
     "rsqrt",
     "sign",
     "sin",
@@ -58,10 +70,6 @@ __all__ = [
     "sqrt",
     "tan",
     "tanh",
-    "log",
-    "log10",
-    "log1p",
-    "log2",
     "trunc",
     # Elementwise binary operations
     "add",
@@ -432,6 +440,10 @@ def asin(a):
     return _elementwise_unary_helper(prims.asin, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
 
+def asinh(a):
+    return _elementwise_unary_helper(prims.asinh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
 def atan(a):
     return _elementwise_unary_helper(prims.atan, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
@@ -467,8 +479,20 @@ def erfc(a):
     return _elementwise_unary_helper(prims.erfc, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
 
+def erfcinv(a):
+    return _elementwise_unary_helper(prims.erfcinv, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def erfinv(a):
+    return _elementwise_unary_helper(prims.erfinv, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
 def exp(a):
     return _elementwise_unary_helper(prims.exp, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def exp2(a):
+    return _elementwise_unary_helper(prims.exp2, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
 
 def expm1(a):
@@ -515,6 +539,10 @@ def tanh(a):
     return _elementwise_unary_helper(prims.tanh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
 
+def lgamma(a):
+    return _elementwise_unary_helper(prims.lgamma, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
 def log(a):
     return _elementwise_unary_helper(prims.log, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
 
@@ -529,6 +557,26 @@ def log1p(a):
 
 def log2(a):
     return _elementwise_unary_helper(prims.log2, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def ndtri(a):
+    return _elementwise_unary_helper(prims.ndtri, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def ndtri(a):
+    return _elementwise_unary_helper(prims.ndtri, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def reciprocal(a):
+    return _elementwise_unary_helper(prims.reciprocal, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def round(a):
+    if utils.is_exact_dtype(utils.to_dtype(a)):
+        return a
+
+    return _elementwise_unary_helper(prims.round, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+
 
 def trunc(a):
     return _elementwise_unary_helper(prims.trunc, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)

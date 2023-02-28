@@ -2,10 +2,9 @@ import itertools
 import math
 import operator
 from collections import namedtuple
-from functools import partial
-from typing import Sequence
-from functools import wraps
+from functools import partial, wraps
 from numbers import Number
+from typing import Sequence
 
 import numpy as np
 import pytest
@@ -13,7 +12,6 @@ import pytest
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
 from looseversion import LooseVersion
-from thunder.tests.make_tensor import make_tensor
 
 import thunder.core.dtypes as datatypes
 import thunder.core.lang as tlang
@@ -22,6 +20,7 @@ import thunder.langs.torch as ttorch
 from thunder.core.pytree import tree_map
 from thunder.langs.torch import torch_dtype
 from thunder.tests.framework import _all_device_types, JAX_AVAILABLE, nvFuser
+from thunder.tests.make_tensor import make_tensor
 
 eps = 1e-5
 
@@ -407,7 +406,11 @@ acosh_opinfo = OpInfo(
             dtypes=(datatypes.float16, datatypes.complex32),
             devicetypes=("cpu",),
         ),
-        DecorateInfo(pytest.mark.xfail, executors=("nvFuser",)),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
     ),
 )
 elementwise_unary_ops.append(acosh_opinfo)
@@ -428,6 +431,27 @@ asin_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(asin_opinfo)
+
+asinh_opinfo = OpInfo(
+    tlang.asinh,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.asinh),
+    test_directives=(
+        # Torch doesn't support CPU float16 or complex32 asinh
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32),
+            devicetypes=("cpu",),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
+    ),
+)
+elementwise_unary_ops.append(asinh_opinfo)
 
 atan_opinfo = OpInfo(
     tlang.atan,
@@ -577,6 +601,90 @@ erfc_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(erfc_opinfo)
 
+erfcinv_opinfo = OpInfo(
+    tlang.erfcinv,
+    dtypes=(datatypes.floating,),
+    # erfcinv is only defined for x in [0, 2]
+    # We use [0.3, 0.7] to avoid the stability issues because we're using
+    # erfinv(1 - x) as the reference that is less accurate and less stable than
+    # erfcinv
+    # TODO: use a better reference (SciPy or pyerf)
+    domain=(0.3, 0.7),
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(lambda x: torch.erfinv(1 - x)),
+    test_directives=(
+        # Torch doesn't support CUDA bfloat16 erfinv
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=("cuda",),
+        ),
+        # Torch doesn't support CPU float16 erfinv
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # Torch is not accurate enough with native bfloat16
+        # torch.erfinv(1 - bfloat16) is far from torch.erfinv(1 - bfloat16.float())
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=("cpu",),
+        ),
+        # Torch doesn't support complex erfinv
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
+    ),
+)
+elementwise_unary_ops.append(erfcinv_opinfo)
+
+erfinv_opinfo = OpInfo(
+    tlang.erfinv,
+    domain=(-1, 1),
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.erfinv),
+    test_directives=(
+        # Torch doesn't support CUDA bfloat16 erfinv
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=("cuda",),
+        ),
+        # Torch doesn't support CPU float16 erfinv
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # Torch doesn't support complex erfinv
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
+    ),
+)
+elementwise_unary_ops.append(erfinv_opinfo)
+
 exp_opinfo = OpInfo(
     tlang.exp,
     sample_input_generator=elementwise_unary_generator,
@@ -592,6 +700,26 @@ exp_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(exp_opinfo)
+
+exp2_opinfo = OpInfo(
+    tlang.exp2,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.exp2),
+    test_directives=(
+        # Torch doesn't support complex exp2
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
+    ),
+)
+elementwise_unary_ops.append(exp2_opinfo)
 
 expm1_opinfo = OpInfo(
     tlang.expm1,
@@ -803,6 +931,36 @@ tanh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(tanh_opinfo)
 
+lgamma_opinfo = OpInfo(
+    tlang.lgamma,
+    domain=(-1.0 + eps, math.inf),
+    sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
+    torch_reference=_elementwise_unary_torch(torch.lgamma),
+    test_directives=(
+        # NOTE: Torch doesn't support CPU float16 lgamma
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # Torch doesn't support CUDA bfloat16 lgamma
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=("cuda",),
+        ),
+        # Torch doesn't support complex lgamma
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(lgamma_opinfo)
+
 log_opinfo = OpInfo(
     tlang.log,
     domain=(0, math.inf),
@@ -924,6 +1082,67 @@ log2_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(log2_opinfo)
 
+ndtri_opinfo = OpInfo(
+    tlang.ndtri,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.special.ndtri),
+    test_directives=(
+        # Torch doesn't support bfloat16 and float16 ndtri
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+        ),
+        # Torch doesn't support complex ndtri
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(ndtri_opinfo)
+
+reciprocal_opinfo = OpInfo(
+    tlang.reciprocal,
+    domain=(0 + eps, math.inf),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.reciprocal),
+    test_directives=(
+        # Torch doesn't support complex32 reciprocal
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(reciprocal_opinfo)
+
+round_opinfo = OpInfo(
+    tlang.round,
+    dtypes=(datatypes.floating, datatypes.exact),
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.round),
+    test_directives=(
+        # Torch doesn't support CPU float16 and bool round
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bool8),
+            devicetypes=("cpu",),
+        ),
+        # Torch doesn't support CUDA bool round
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=("cuda",),
+        ),
+    ),
+)
+elementwise_unary_ops.append(round_opinfo)
+
 trunc_opinfo = OpInfo(
     tlang.trunc,
     dtypes=(datatypes.floating, datatypes.exact),
@@ -957,9 +1176,8 @@ trunc_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvFuser",),
-            dtypes=(datatypes.int32, datatypes.int64)
+            dtypes=(datatypes.int32, datatypes.int64),
         ),
-
     ),
 )
 elementwise_unary_ops.append(trunc_opinfo)
@@ -1045,7 +1263,7 @@ pow_opinfo = OpInfo(
         ),
         # See https://github.com/csarofeen/pytorch/issues/2361
         DecorateInfo(
-            pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvFuser,"), dtypes=(datatypes.complex64,)
+            pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvFuser,"), dtypes=(datatypes.complex64, datatypes.complex128)
         ),
     ),
 )

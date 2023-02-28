@@ -80,6 +80,11 @@ def broadcast_in_dim(a, shape, broadcast_dims):
     return v.expand(shape)
 
 
+def erfcinv_helper(a):
+    erfinv = _elementwise_unary_torch(torch.erfinv)
+    return erfinv(1 - a)
+
+
 def slice_helper(a, start_indices, end_indices, strides=None):
     _strides = strides if strides is not None else [1] * len(start_indices)
 
@@ -178,6 +183,7 @@ ops_to_torch_ops_map = {
     prims.Ops.ACOS: _elementwise_unary_torch(torch.acos),
     prims.Ops.ACOSH: _elementwise_unary_torch(torch.acosh),
     prims.Ops.ASIN: _elementwise_unary_torch(torch.asin),
+    prims.Ops.ASINH: _elementwise_unary_torch(torch.asinh),
     prims.Ops.ATAN: _elementwise_unary_torch(torch.atan),
     prims.Ops.ATANH: _elementwise_unary_torch(torch.atanh),
     prims.Ops.BITWISE_NOT: _elementwise_unary_torch(torch.bitwise_not),
@@ -186,7 +192,10 @@ ops_to_torch_ops_map = {
     prims.Ops.COSH: _elementwise_unary_torch(torch.cosh),
     prims.Ops.ERF: _elementwise_unary_torch(torch.erf),
     prims.Ops.ERFC: _elementwise_unary_torch(torch.erfc),
+    prims.Ops.ERFCINV: erfcinv_helper,
+    prims.Ops.ERFINV: _elementwise_unary_torch(torch.erfinv),
     prims.Ops.EXP: _elementwise_unary_torch(torch.exp),
+    prims.Ops.EXP2: _elementwise_unary_torch(torch.exp2),
     prims.Ops.EXPM1: _elementwise_unary_torch(torch.expm1),
     prims.Ops.FLOOR: _elementwise_unary_torch(torch.floor),
     prims.Ops.ISFINITE: _elementwise_unary_torch(torch.isfinite),
@@ -197,10 +206,14 @@ ops_to_torch_ops_map = {
     prims.Ops.SQRT: _elementwise_unary_torch(torch.sqrt),
     prims.Ops.TAN: _elementwise_unary_torch(torch.tan),
     prims.Ops.TANH: _elementwise_unary_torch(torch.tanh),
+    prims.Ops.LGAMMA: _elementwise_unary_torch(torch.lgamma),
     prims.Ops.LOG: _elementwise_unary_torch(torch.log),
     prims.Ops.LOG10: _elementwise_unary_torch(torch.log10),
     prims.Ops.LOG1P: _elementwise_unary_torch(torch.log1p),
     prims.Ops.LOG2: _elementwise_unary_torch(torch.log2),
+    prims.Ops.NDTRI: _elementwise_unary_torch(torch.special.ndtri),
+    prims.Ops.RECIPROCAL: _elementwise_unary_torch(torch.reciprocal),
+    prims.Ops.ROUND: _elementwise_unary_torch(torch.round),
     prims.Ops.TRUNC: _elementwise_unary_torch(torch.trunc),
     # Elementwise binary prims
     prims.Ops.ADD: add_helper,

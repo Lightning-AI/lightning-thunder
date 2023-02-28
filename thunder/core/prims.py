@@ -49,6 +49,7 @@ __all__ = [
     "acos",
     "acosh",
     "asin",
+    "asinh",
     "atan",
     "atanh",
     "bitwise_not",
@@ -57,10 +58,21 @@ __all__ = [
     "cosh",
     "erf",
     "erfc",
+    "erfcinv",
+    "erfinv",
     "exp",
+    "exp2",
     "expm1",
     "floor",
     "isfinite",
+    "lgamma",
+    "log",
+    "log10",
+    "log1P",
+    "log2",
+    "ndtri",
+    "reciprocal",
+    "round",
     "rsqrt",
     "sign",
     "sin",
@@ -68,10 +80,6 @@ __all__ = [
     "sqrt",
     "tan",
     "tanh",
-    "log",
-    "log10",
-    "log1P",
-    "log2",
     "trunc",
     # Elementwise binary prims
     "add",
@@ -120,6 +128,7 @@ class Ops(Enum):
     ACOS = auto()
     ACOSH = auto()
     ASIN = auto()
+    ASINH = auto()
     ATAN = auto()
     ATANH = auto()
     BITWISE_NOT = auto()
@@ -128,10 +137,21 @@ class Ops(Enum):
     COSH = auto()
     ERF = auto()
     ERFC = auto()
+    ERFCINV = auto()
+    ERFINV = auto()
     EXP = auto()
+    EXP2 = auto()
     EXPM1 = auto()
     FLOOR = auto()
     ISFINITE = auto()
+    LGAMMA = auto()
+    LOG = auto()
+    LOG10 = auto()
+    LOG1P = auto()
+    LOG2 = auto()
+    NDTRI = auto()
+    RECIPROCAL = auto()
+    ROUND = auto()
     RSQRT = auto()
     SIGN = auto()
     SIN = auto()
@@ -139,10 +159,6 @@ class Ops(Enum):
     SQRT = auto()
     TAN = auto()
     TANH = auto()
-    LOG = auto()
-    LOG10 = auto()
-    LOG1P = auto()
-    LOG2 = auto()
     TRUNC = auto()
     # Elementwise binary prims
     ADD = auto()
@@ -408,33 +424,22 @@ def _prim_type_promotion(typ, type_promotion_kind):
 #
 
 # Elementwise unary prims to implement:
-# "asinh",
 # "cbrt",
 # "digamma",
-# "erf_inv",
 # "erfcx",
-# "exp2",
 # "fill",
 # "imag",
-# "lgamma",
-# "ndtri",
 # "neg",
 # "real",
-# "reciprocal",
-# "round",
 # "sign",
 # "signbit",
 # "sinh",
-# "tan",
 # "trunc",
 
 # nvFuser unary ops (from https://github.com/pytorch/pytorch/blob/master/torch/_prims/nvfuser_prims.py)
 # "imag",
-# "lgamma",
-# "reciprocal",
 # "neg",
 # "real",
-# "round",
 # "sign",
 # "sinh",
 # "tan",
@@ -526,6 +531,17 @@ asin = make_prim(
     ),
 )
 
+asinh = make_prim(
+    Ops.ASINH,
+    "asinh",
+    partial(
+        _elementwise_unary_meta,
+        name="asinh",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=_real_complex_number_handler(math.asinh, cmath.asinh),
+    ),
+)
+
 atan = make_prim(
     Ops.ATAN,
     "atan",
@@ -614,6 +630,28 @@ erfc = make_prim(
     ),
 )
 
+erfcinv = make_prim(
+    Ops.ERFCINV,
+    "erfcinv",
+    partial(
+        _elementwise_unary_meta,
+        name="erfcinv",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=None,  # Built-in function not available
+    ),
+)
+
+erfinv = make_prim(
+    Ops.ERFINV,
+    "erfinv",
+    partial(
+        _elementwise_unary_meta,
+        name="erfinv",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=None,  # Built-in function not available
+    ),
+)
+
 exp = make_prim(
     Ops.EXP,
     "exp",
@@ -622,6 +660,17 @@ exp = make_prim(
         name="exp",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_real_complex_number_handler(math.exp, cmath.exp),
+    ),
+)
+
+exp2 = make_prim(
+    Ops.EXP2,
+    "exp2",
+    partial(
+        _elementwise_unary_meta,
+        name="exp2",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=None,  # math.exp2 is available only in Python 3.11+, no cmath equivalent
     ),
 )
 
@@ -760,6 +809,17 @@ tanh = make_prim(
     ),
 )
 
+lgamma = make_prim(
+    Ops.LGAMMA,
+    "lgamma",
+    partial(
+        _elementwise_unary_meta,
+        name="lgamma",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=math.lgamma,  # No built-in complex lgamma
+    ),
+)
+
 log = make_prim(
     Ops.LOG,
     "log",
@@ -801,6 +861,39 @@ log2 = make_prim(
         name="log2",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_real_complex_number_handler(math.log2, lambda x: cmath.log(x, 2)),
+    ),
+)
+
+ndtri = make_prim(
+    Ops.NDTRI,
+    "ndtri",
+    partial(
+        _elementwise_unary_meta,
+        name="ndtri",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=None,  # Built-in function not available
+    ),
+)
+
+reciprocal = make_prim(
+    Ops.RECIPROCAL,
+    "reciprocal",
+    partial(
+        _elementwise_unary_meta,
+        name="reciprocal",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=lambda x: 1.0 / x,
+    ),
+)
+
+round = make_prim(
+    Ops.ROUND,
+    "round",
+    partial(
+        _elementwise_unary_meta,
+        name="round",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=None,  # Built-in function not available
     ),
 )
 
