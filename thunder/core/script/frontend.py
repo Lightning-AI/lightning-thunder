@@ -4,18 +4,32 @@ import inspect
 import itertools
 import opcode
 import sys
+from typing import Callable, Dict, List, Optional
 
 import torch
 
-from thunder.core.script.graph import Block, Graph, MROAwareObjectRef, Node, NULL, PhiValue, Value
+from thunder.core.script.graph import (
+    assert_value,
+    assert_node,
+    assert_block,
+    Block,
+    Graph,
+    MROAwareObjectRef,
+    Node,
+    PhiValue,
+    Value,
+)
 from thunder.core.script.python_ir_data import jump_instructions, stack_effect_detail, unconditional_jump_names
+from thunder.core.utils import OrderedSet
 
 
 class Super:
     pass
 
 
-def acquire_method(method, module=None, mro_klass=None, verbose=False):
+def acquire_method(
+    method: Callable, module: Optional[object] = None, mro_klass: Optional[type] = None, verbose: bool = False
+) -> Graph:
     if isinstance(method, torch.nn.Module):
         method = method.forward
     assert sys.version_info >= (3, 9) and sys.version_info < (3, 11)
@@ -27,32 +41,32 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
         module = method.__self__
     if mro_klass is None and module is not None:
         mro_klass = type(module)
-    local_variables = []
+    local_variables: List[Optional[Value]] = []
     if inspect.ismethod(method):
         self_value = Value(value=module, name=method.__code__.co_varnames[0], is_function_arg=True)
         local_variables.append(self_value)
         self_offset = 1
     else:
-        self_value = NULL
+        self_value = None
         self_offset = 0
-    for n in method.__code__.co_varnames[self_offset : len(sig.parameters.values()) + self_offset]:
-        p = sig.parameters[n]
+    for vname in method.__code__.co_varnames[self_offset : len(sig.parameters.values()) + self_offset]:
+        p = sig.parameters[vname]
         local_variables.append(Value(typ=p.annotation, name=p.name, is_function_arg=True))
     # KWARGS?!
-    for i in enumerate(method.__code__.co_varnames, start=len(local_variables)):
+    for _ in enumerate(method.__code__.co_varnames, start=len(local_variables)):
         local_variables.append(None)
 
     # bound_args = [module.forward.__self__]
     bc = list(dis.get_instructions(method))
     if verbose:
-        print(dis.dis(method))
+        dis.dis(method)
     # Map offset_start -> Block
     block_0 = Block(is_ssa=False)
     block_0.jump_sources.append(None)
     blocks_to_process = collections.OrderedDict({0: block_0})
-    blocks = {}
+    blocks: Dict[int, Block] = {}
 
-    def get_or_make_block(offset_start, jump_source):
+    def get_or_make_block(offset_start: int, jump_source: Node) -> Block:
         for other_offset_start, other_bl in itertools.chain(blocks_to_process.items(), blocks.items()):
             if other_offset_start == offset_start:
                 # take anything?
@@ -73,48 +87,54 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
         ic = offset_start
         done = False
         while not done:
-            i = bc[ic]
-            if i.starts_line is not None:
-                line_no = i.starts_line - source_start_line + 1
-            n = Node(i=i, line_no=line_no)
+            cur_ins = bc[ic]
+            if cur_ins.starts_line is not None:
+                line_no = cur_ins.starts_line - source_start_line + 1
+            n = Node(i=cur_ins, line_no=line_no)
 
             # need to handle branching instructions here
-            if i.opcode in jump_instructions:
+            if cur_ins.opcode in jump_instructions:
                 done = True
-                if i.opcode in dis.hasjabs:
-                    ic_target = i.arg
-                elif "BACKWARD" in i.opname:
-                    ic_target = ic + 1 - i.arg  # ?
+                if cur_ins.opcode in dis.hasjabs:
+                    ic_target = cur_ins.arg
+                elif "BACKWARD" in cur_ins.opname:
+                    assert cur_ins.arg is not None
+                    ic_target = ic + 1 - cur_ins.arg  # ?
                 else:
-                    ic_target = ic + 1 + i.arg
+                    assert cur_ins.arg is not None
+                    ic_target = ic + 1 + cur_ins.arg
 
-                if i.opname in unconditional_jump_names:
+                if cur_ins.opname in unconditional_jump_names:
                     n.jump_targets = []
                 else:
                     b1 = get_or_make_block(offset_start=ic + 1, jump_source=n)
-                    n.jump_targets = [(stack_effect_detail(i.opname, i.arg, jump=False), b1)]
+                    n.jump_targets = [(stack_effect_detail(cur_ins.opname, cur_ins.arg, jump=False), b1)]
 
+                assert ic_target is not None
                 b1 = get_or_make_block(offset_start=ic_target, jump_source=n)
-                n.jump_targets.append((stack_effect_detail(i.opname, i.arg, jump=True), b1))
-            elif i.opname in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"}:
+                n.jump_targets.append((stack_effect_detail(cur_ins.opname, cur_ins.arg, jump=True), b1))
+            elif cur_ins.opname in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"}:
                 done = True
             else:
                 if verbose:
-                    print(i)
+                    print(cur_ins)
 
             bl.insert_node(n)
             ic += 1
             if ic < len(bc) and bc[ic].is_jump_target:
                 # check if needed?
-                if i.opname not in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"} and i.opcode not in jump_instructions:
+                if (
+                    cur_ins.opname not in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"}
+                    and cur_ins.opcode not in jump_instructions
+                ):
                     # should insert jump absolute instead...
                     jump_ins = dis.Instruction(
                         opname="JUMP_ABSOLUTE",
-                        opcode=None,  # the JUMP_ABSOLUTE is not in Python 3.11
+                        opcode=-1,  # the JUMP_ABSOLUTE is not in Python 3.11
                         arg=None,
                         argval=None,
-                        argrepr=None,
-                        offset=None,
+                        argrepr="None",
+                        offset=-999,
                         starts_line=None,
                         is_jump_target=False,
                     )
@@ -169,7 +189,7 @@ def acquire_method(method, module=None, mro_klass=None, verbose=False):
     return gr
 
 
-def make_ssa(gr: "Graph", verbose: bool = False):
+def make_ssa(gr: "Graph", verbose: bool = False) -> None:
     for bl in gr.blocks:
         for n in bl.nodes:
             n.block = bl
@@ -189,13 +209,13 @@ def make_ssa(gr: "Graph", verbose: bool = False):
         if next_block is None:
             # we need to break a cycle, so we choose one where we have variables for one branch
             for bl in blocks_to_do:
-                any_deps_done = any(js.block not in blocks_to_do for js in bl.jump_sources)
+                any_deps_done = any(assert_block(assert_node(js).block) not in blocks_to_do for js in bl.jump_sources)
                 if any_deps_done:
                     next_block = bl
                     break
 
         assert next_block is not None
-        bl: Block = next_block
+        bl = next_block
         blocks_to_do.remove(bl)
         assert not bl.is_ssa
         bl.is_ssa = True
@@ -220,36 +240,41 @@ def make_ssa(gr: "Graph", verbose: bool = False):
                 for lv in bl.all_local_variables_at_start
             ]
 
-        stack = [PhiValue(v, jump_sources, bl) for v in zip(*all_stacks_at_start)]
-        local_variables = [PhiValue(v, jump_sources, bl) for v in zip(*all_local_variables_at_start)]
+        stack: List[Value] = [PhiValue(v, jump_sources, bl) for v in zip(*all_stacks_at_start)]
+        local_variables: List[Optional[Value]] = [
+            PhiValue(v, jump_sources, bl) for v in zip(*all_local_variables_at_start)
+        ]
 
-        bl.block_inputs = stack + local_variables
+        bl.block_inputs = stack + [assert_value(v) for v in local_variables]
         bl.stack_depth_at_start = len(stack)
 
         new_nodes = []
         for n_idx, n in enumerate(bl.nodes):
-            i = n.i
-            pop, push = stack_effect_detail(i.opname, i.arg)  # jump?
+            cur_ins = n.i
+            pop, push = stack_effect_detail(cur_ins.opname, cur_ins.arg)  # jump?
             inputs = stack[-pop:] if pop > 0 else []
             n.inputs = inputs[:]
-            assert len(inputs) == pop, f"stack to shallow {len(inputs)=} {pop=} {i=}"
-            if i.opname == "LOAD_FAST":
-                outputs = [local_variables[i.arg]]
-            elif i.opname == "STORE_FAST":
+            assert len(inputs) == pop, f"stack to shallow {len(inputs)=} {pop=} {cur_ins=}"
+            if cur_ins.opname == "LOAD_FAST":
+                assert cur_ins.arg is not None
+                outputs: List[Value] = [assert_value(local_variables[cur_ins.arg])]
+            elif cur_ins.opname == "STORE_FAST":
                 outputs = []
-                if len(local_variables) <= i.arg:
-                    local_variables.extend(None for _ in range(len(local_variables), i.arg + 1))
-                (local_variables[i.arg],) = inputs  # set name?
-            elif i.opname == "DELETE_FAST":
+                assert cur_ins.arg is not None
+                if len(local_variables) <= cur_ins.arg:
+                    local_variables.extend(None for _ in range(len(local_variables), cur_ins.arg + 1))
+                (local_variables[cur_ins.arg],) = inputs  # set name?
+            elif cur_ins.opname == "DELETE_FAST":
                 outputs = []
-                local_variables[i.arg] = None
-            elif i.opname == "LOAD_GLOBAL":
-                if gr.method.__code__.co_names[i.arg] != "super":
+                assert isinstance(cur_ins.arg, int)
+                local_variables[cur_ins.arg] = None
+            elif cur_ins.opname == "LOAD_GLOBAL":
+                if gr.method.__code__.co_names[cur_ins.arg] != "super":
                     if inspect.ismethod(gr.method):
                         func = gr.method.__func__
                     else:
                         func = gr.method
-                    gn = gr.method.__code__.co_names[i.arg]
+                    gn = gr.method.__code__.co_names[cur_ins.arg]
                     NOT = object()
                     gv = func.__globals__.get(gn, NOT)
                     if gv is NOT:
@@ -257,16 +282,16 @@ def make_ssa(gr: "Graph", verbose: bool = False):
                     outputs = [Value(name=gn, value=gv, is_global=True)]
                 else:
                     outputs = [Value(name="super", value=Super())]
-            elif i.opname == "LOAD_ATTR":
-                an = gr.method.__code__.co_names[i.arg]
+            elif cur_ins.opname == "LOAD_ATTR":
+                an = gr.method.__code__.co_names[cur_ins.arg]
                 ap = inputs[0]
                 outputs = [Value(name=an, parent=ap)]
-            elif i.opname == "CALL_FUNCTION" and i.arg == 0 and isinstance(inputs[0].value, Super):
+            elif cur_ins.opname == "CALL_FUNCTION" and cur_ins.arg == 0 and isinstance(inputs[0].value, Super):
                 outputs = [Value(value=MROAwareObjectRef(gr.self_value, start_klass=gr.mro_klass))]
                 print("##super#", outputs)
-            elif i.opname == "LOAD_METHOD":  # also used for modules (callables)
+            elif cur_ins.opname == "LOAD_METHOD":  # also used for modules (callables)
                 (obj,) = inputs
-                mn = gr.method.__code__.co_names[i.arg]
+                mn = gr.method.__code__.co_names[cur_ins.arg]
                 m = Value(parent=obj, name=mn)
                 if obj.value is not None:
                     m.value = getattr(obj.value, mn)
@@ -278,16 +303,16 @@ def make_ssa(gr: "Graph", verbose: bool = False):
                     # print("...###", obj.value.start_klass)
                 #    obj = obj.obj
                 outputs = [m, obj]
-            elif i.opname == "LOAD_CONST":
-                outputs = [Value(value=gr.method.__code__.co_consts[i.arg], is_const=True)]
-            elif i.opname == "CALL_METHOD":
+            elif cur_ins.opname == "LOAD_CONST":
+                outputs = [Value(value=gr.method.__code__.co_consts[cur_ins.arg], is_const=True)]
+            elif cur_ins.opname == "CALL_METHOD":
                 outputs = [Value(node=n, nr=k) for k in range(push)]
                 new_nodes.append(n)
-            elif i.opname == "FOR_ITER":
+            elif cur_ins.opname == "FOR_ITER":
                 # JUMP TARGETS
                 outputs = [inputs[0], Value(node=n, name=".for_iter_item")]
                 new_nodes.append(n)
-            elif i.opname in {
+            elif cur_ins.opname in {
                 "POP_JUMP_IF_FALSE",
                 "POP_JUMP_IF_TRUE",
                 "JUMP_FORWARD",
@@ -295,19 +320,19 @@ def make_ssa(gr: "Graph", verbose: bool = False):
             }:
                 new_nodes.append(n)
                 outputs = []
-            # elif i.opname == "JUMP_FORWARD":
-            # elif i.opname == "JUMP_ABSOLUTE":
-            elif i.opname == "RETURN_VALUE":
+            # elif cur_ins.opname == "JUMP_FORWARD":
+            # elif cur_ins.opname == "JUMP_ABSOLUTE":
+            elif cur_ins.opname == "RETURN_VALUE":
                 assert len(stack) == 1
                 new_nodes.append(n)
                 outputs = []
             else:
                 if verbose:
-                    print("unhandled", i)
+                    print("unhandled", cur_ins)
                 outputs = [Value(node=n, nr=k) for k in range(push)]
                 new_nodes.append(n)
             if n.jump_targets is not None:
-                all_block_outputs = set(local_variables)
+                all_block_outputs = OrderedSet(local_variables)
                 for (j_pop, j_push), jt in n.jump_targets:
                     idx_jt = jt.jump_sources.index(n)
                     j_stack = stack[:]
@@ -329,9 +354,9 @@ def make_ssa(gr: "Graph", verbose: bool = False):
             if pop > 0:
                 stack = stack[:-pop]
             stack.extend(outputs)
-            assert (i.opname == "JUMP_ABSOLUTE" and i.arg is None and len(stack) == ol) or (
-                len(stack) - ol == opcode.stack_effect(i.opcode, i.arg, jump=False)
-            ), f"stack effect funnyness at {i}: {len(stack)} {ol} {opcode.stack_effect(i.opcode, i.arg, jump=False)}"
+            assert (cur_ins.opname == "JUMP_ABSOLUTE" and cur_ins.arg is None and len(stack) == ol) or (
+                len(stack) - ol == opcode.stack_effect(cur_ins.opcode, cur_ins.arg, jump=False)
+            ), f"stack effect funnyness at {cur_ins}: {len(stack)} {ol} {opcode.stack_effect(cur_ins.opcode, cur_ins.arg, jump=False)}"
         bl.nodes = new_nodes
 
     for bl in gr.blocks:
@@ -357,10 +382,10 @@ def make_ssa(gr: "Graph", verbose: bool = False):
     remove_unused_values(gr)
 
 
-def remove_unused_values(gr):
+def remove_unused_values(gr: Graph) -> None:
     gr.ensure_links()
 
-    def remove_value(v):
+    def remove_value(v: Value) -> None:
         for pv in v.phi_values:
             bl = pv.block
             pv.remove_value(v)
@@ -380,7 +405,7 @@ def remove_unused_values(gr):
 
     INDEX_OPS = {"BINARY_SUBSCR"}
 
-    def mark_used(v):
+    def mark_used(v: Value) -> None:
         if v in values_used:
             return
         values_used.add(v)
@@ -391,8 +416,6 @@ def remove_unused_values(gr):
             mark_used(v.parent)
         if isinstance(v, PhiValue):
             for w in v.values:
-                if w is None:
-                    print("#####", bl)
                 mark_used(w)
 
     for bl in gr.blocks:
@@ -408,7 +431,7 @@ def remove_unused_values(gr):
                     if v is not None:
                         i.remove_value(v)
                 bl.block_inputs.remove(i)
-        bl.block_outputs = {o for o in bl.block_outputs if o in values_used}
+        bl.block_outputs = OrderedSet(o for o in bl.block_outputs if o in values_used)
         for n in bl.nodes[:]:
             if n.i.opname in INDEX_OPS and not any((o in values_used) for o in n.outputs):
                 bl.nodes.remove(n)
@@ -430,10 +453,10 @@ def remove_unused_values(gr):
             for v in i.values:
                 outputs_used.add(v)
     for bl in gr.blocks:
-        bl.block_outputs = {o for o in bl.block_outputs if o in outputs_used}
+        bl.block_outputs = OrderedSet(o for o in bl.block_outputs if o in outputs_used)
 
 
-def make_single_return(gr):
+def make_single_return(gr: Graph) -> None:
     bls = [b for b in gr.blocks if b.nodes[-1].i.opname == "RETURN_VALUE"]
     if len(bls) > 1:
         ret_bl = Block(is_ssa=True)
@@ -442,8 +465,8 @@ def make_single_return(gr):
             opcode=opcode.opmap["RETURN_VALUE"],
             arg=None,
             argval=None,
-            argrepr=None,
-            offset=None,
+            argrepr="None",
+            offset=-999,
             starts_line=None,
             is_jump_target=False,
         )
@@ -453,7 +476,7 @@ def make_single_return(gr):
         ret_bl.jump_sources = []
         ret_node.inputs = [ret_input]
         gr.blocks.append(ret_bl)
-        ret_bl.block_outputs = {}
+        ret_bl.block_outputs = OrderedSet([])
         ret_bl.block_inputs = [ret_input]
 
         for b in bls:
@@ -465,7 +488,7 @@ def make_single_return(gr):
                 opcode=opcode.opmap["JUMP_ABSOLUTE"],
                 arg=None,
                 argval=None,
-                argrepr=None,
+                argrepr="None",
                 offset=last_node_i.offset,
                 starts_line=None,
                 is_jump_target=last_node_i.is_jump_target,
@@ -477,7 +500,6 @@ def make_single_return(gr):
             ret_input.add_missing_value(b.nodes[-1].inputs[0], jump_source=jump_node)
             assert len(b.nodes[-1].inputs) == 1
             assert len(b.block_outputs) == 0
-            b.block_outputs = {b.nodes[-1].inputs[0]}
+            b.block_outputs = OrderedSet([b.nodes[-1].inputs[0]])
             del b.nodes[-1]
             b.nodes.append(jump_node)
-    return gr

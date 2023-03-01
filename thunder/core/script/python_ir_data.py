@@ -1,5 +1,5 @@
 import dis
-from typing import Tuple
+from typing import Tuple, Optional
 
 # this is Python 3.10 specific for the time being.
 
@@ -123,16 +123,20 @@ fixed_stack_effects_detail = {
 }
 
 
-def stack_effect_detail(opname: str, oparg: int, *, jump: bool = False) -> Tuple[int, int]:
+def stack_effect_detail(opname: str, oparg: Optional[int], *, jump: bool = False) -> Tuple[int, int]:
     if opname in fixed_stack_effects_detail:
         return fixed_stack_effects_detail[opname]
     if opname == "ROT_N":
+        assert oparg is not None
         return (oparg, oparg)
     if opname in {"BUILD_TUPLE", "BUILD_LIST", "BUILD_SET", "BUILD_STRING"}:
+        assert oparg is not None
         return (oparg, 1)
     if opname == "BUILD_MAP":
+        assert oparg is not None
         return (2 * oparg, 1)
     if opname == "BUILD_CONST_KEY_MAP":
+        assert oparg is not None
         return (oparg + 1, 1)
     if opname in {"JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP"}:
         return (1, 1) if jump else (1, 0)
@@ -140,32 +144,42 @@ def stack_effect_detail(opname: str, oparg: int, *, jump: bool = False) -> Tuple
         return (0, 6) if jump else (0, 0)
     # Exception handling
     if opname == "RAISE_VARARGS":
+        assert oparg is not None
         return (oparg, 0)
     # Functions and calls
     if opname == "CALL_FUNCTION":
+        assert oparg is not None
         return (oparg + 1, 1)
     if opname == "CALL_METHOD":
+        assert oparg is not None
         return (oparg + 2, 1)
     if opname == "CALL_FUNCTION_KW":
+        assert oparg is not None
         return (oparg + 2, 1)
     if opname == "CALL_FUNCTION_EX":
+        assert oparg is not None
         return (2 + ((oparg & 0x01) != 0), 1)
     if opname == "MAKE_FUNCTION":
+        assert oparg is not None
         return (
             2 + ((oparg & 0x01) != 0) + ((oparg & 0x02) != 0) + ((oparg & 0x04) != 0) + ((oparg & 0x08) != 0),
             1,
         )
     if opname == "BUILD_SLICE":
+        assert oparg is not None
         return (oparg, 1)
     if opname == "SETUP_ASYNC_WITH":
         return (1, 6) if jump else (1, 1)  # ??
     if opname == "SETUP_WITH":
         return (1, 7) if jump else (1, 2)
     if opname == "FORMAT_VALUE":
+        assert oparg is not None
         return (2, 1) if ((oparg & 0x04) != 0) else (1, 1)
     if opname == "UNPACK_SEQUENCE":
+        assert oparg is not None
         return (1, oparg)
     if opname == "UNPACK_EX":
+        assert oparg is not None
         return (1, (oparg & 0xFF) + (oparg >> 8) + 1)
     if opname == "FOR_ITER":
         return (1, 0) if jump else (1, 2)

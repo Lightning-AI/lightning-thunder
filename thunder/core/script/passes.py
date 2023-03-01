@@ -8,7 +8,19 @@ import torch  # # aehem.
 
 import thunder
 from thunder.core.script.frontend import acquire_method, make_single_return, make_ssa, remove_unused_values
-from thunder.core.script.graph import Graph, Block, clone_blocks, Node, PhiValue, replace_values, Value
+from thunder.core.script.graph import (
+    assert_block,
+    assert_node,
+    assert_value,
+    Graph,
+    Block,
+    clone_blocks,
+    GraphObject,
+    Node,
+    PhiValue,
+    replace_values,
+    Value,
+)
 from thunder.core.script.python_ir import get_instruction
 from thunder.langs.torch import _torch_to_thunder_complete_map
 from thunder.core.utils import OrderedSet
@@ -39,7 +51,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     nbl.nodes = bl.nodes[j:]
     del bl.nodes[j:]
     nbl.block_outputs = bl.block_outputs
-    bl.block_outputs = set()
+    bl.block_outputs = OrderedSet()
     nbl.block_inputs = []
 
     jump_ins = dis.Instruction(
@@ -64,11 +76,11 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
             potential_bl_outputs.add(o)
     for i in bl.block_inputs:
         potential_bl_outputs.add(i)
-    value_map: Dict[Value, Value] = {}
+    value_map: Dict[GraphObject, GraphObject] = {}
 
     def get_or_create_phi(v: Value) -> Value:
         if v in value_map:
-            return value_map[v]
+            return assert_value(value_map[v])
         if v.is_const or v.is_global:
             return v
         if v in potential_bl_outputs:  # priority follow parent vs. phi_value?
@@ -95,7 +107,9 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
                 bl.block_outputs.add(o)
 
     bl.block_outputs.update(nbl.block_outputs & potential_bl_outputs)
-    nbl.block_outputs = {(get_or_create_phi(o) if o in potential_bl_outputs else o) for o in nbl.block_outputs}
+    nbl.block_outputs = OrderedSet(
+        (get_or_create_phi(o) if o in potential_bl_outputs else o) for o in nbl.block_outputs
+    )
 
     return nbl
 
@@ -153,7 +167,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
             break
     assert found_block
     if n.i.opname == "CALL_METHOD":
-        fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
+        fn_value: Callable = find_and_evaluate_method_through_phi_parent(n.inputs[0])  # type: ignore
         if fn_value is None:
             raise NotImplementedError("cannot inline non-explicit function")
 
@@ -173,7 +187,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
         if inspect.isbuiltin(fn_value):
             raise NotImplementedError("cannot inline built-in (C-implemented) function")
     elif n.i.opname in {"CALL_FUNCTION", "CALL_FUNCTION_KW"}:
-        fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
+        fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])  # type: ignore
         if fn_value is None:
             raise NotImplementedError("cannot inline non-explicit function")
 
@@ -196,6 +210,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     make_ssa(gr1)
     make_single_return(gr1)
     for gr1_n in gr1.nodes():
+        assert isinstance(gr1_n.line_no, int)
         gr1_n.line_no = gr1_n.line_no + len(gr.source_lines) + 1
     gr.source_lines.append("\n")
     gr.source_lines += gr1.source_lines
@@ -382,7 +397,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
     if len(bl2.jump_sources) != 1 or bl2.jump_sources[0] != bl1.nodes[-1]:
         raise RuntimeError("second block to be fused must only have first block as jump source")
 
-    replacements = {}
+    replacements: Dict[Value, Value] = {}
     for i in bl2.block_inputs:
         assert isinstance(i, PhiValue) and len(i.values) == 1
         (iv,) = i.values
@@ -399,7 +414,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
         for pv in o.phi_values:
             if pv in replacements:
                 pv.remove_value(o)
-    bl1.block_outputs = {o for o in bl1.block_outputs if o.phi_values}
+    bl1.block_outputs = OrderedSet(o for o in bl1.block_outputs if o.phi_values)
     bl1.block_outputs.update(bl2.block_outputs)
 
     bl1.nodes[-1:] = bl2.nodes
@@ -493,6 +508,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
         if isinstance(v, PhiValue):
             for vv, js in zip(v.values, v.jump_sources):
                 delete_value_and_sources(vv)
+                assert js is not None and js.block is not None
                 js.block.block_outputs.remove(vv)
             v.block.block_inputs.remove(v)
 
@@ -527,13 +543,16 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     for i in for_iter_block.block_inputs:
         exit_block.block_inputs.append(PhiValue([], [], exit_block))
 
-    unroll_blocks = [(list(bls), {})] + [clone_blocks(bls) for _ in range(1, for_loop_len)]
-    for i, (nbls, td) in enumerate(unroll_blocks):
-        if i > 0:
+    unroll_blocks: List[Tuple[List[Block], Dict[GraphObject, GraphObject]]] = [(list(bls), {})]
+    unroll_blocks += [clone_blocks(bls) for _ in range(1, for_loop_len)]
+    for idx, (nbls, td) in enumerate(unroll_blocks):
+        if idx > 0:
             gr.blocks += nbls
-            idx = Value(value=i, is_const=True)
-            td[for_iter_node].inputs[1] = idx
-            td[for_iter_node].outputs[0].name += f"_{i}"
+            v_idx = Value(value=idx, is_const=True)
+            assert_node(td[for_iter_node]).inputs[1] = v_idx
+            fin_o = assert_node(td[for_iter_node]).outputs[0]
+            assert fin_o.name is not None
+            fin_o.name += f"_{idx}"
         else:
             assert for_iter_node.outputs[0].name is not None
             for_iter_node.outputs[0].name += "_0"
@@ -546,11 +565,11 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
             fib_i = for_iter_block
             jump_sources_to_fix = [js for js in for_iter_block.jump_sources if js is not get_iter_block.nodes[-1]]
         else:
-            fib_i = td[for_iter_block]
-            jump_sources_to_fix = td[for_iter_block].jump_sources[:]
+            fib_i = assert_block(td[for_iter_block])
+            jump_sources_to_fix = fib_i.jump_sources[:]
         if idx + 1 < len(unroll_blocks):
             _, td_next = unroll_blocks[idx + 1]
-            fib_next = td_next[for_iter_block]
+            fib_next = assert_block(td_next[for_iter_block])
         else:
             fib_next = exit_block
 
@@ -558,6 +577,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
 
     for idx_it, (fib_i, jump_sources_to_fix, fib_next, nbls) in enumerate(fixup_data):
         for js in jump_sources_to_fix:
+            assert js is not None
             for idx, (_, jt) in enumerate(js.jump_targets):
                 if jt == fib_i:
                     js.set_jump_target(fib_next, idx=idx)
@@ -568,7 +588,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
                 ##  - instead of looping back, point the update to the phi value of the next block (or the exit block)
                 ##  - if idx > 0: remove external (before the loop) value
                 for v, js in zip(i.values[:], i.jump_sources[:]):
-                    assert js.block is not None
+                    assert js is not None and js.block is not None
                     if js.block not in nbls and idx_it > 0:
                         i.remove_value(v)
 
@@ -576,9 +596,9 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
         for idx_i, i in enumerate(fib_i.block_inputs):
             if any((js.block in nbls) for js in i.jump_sources):
                 for v, js in zip(i.values[:], i.jump_sources[:]):
-                    if js.block in nbls:
+                    if assert_block(assert_node(js).block) in nbls:
                         i.remove_value(v)
-                        fib_next.block_inputs[idx_i].add_missing_value(v, jump_source=js)
+                        assert_block(fib_next).block_inputs[idx_i].add_missing_value(v, jump_source=js)
                 if idx_it == 0:
                     for pv in i.phi_values[:]:
                         if pv.block is target_after_iter:

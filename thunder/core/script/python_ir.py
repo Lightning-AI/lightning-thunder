@@ -2,26 +2,30 @@ import dis
 import inspect
 import sys
 import types
+from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 
-from thunder.core.script.graph import Graph, MROAwareObjectRef, Node, insert_before, insert_after
+from thunder.core.script.graph import Graph, MROAwareObjectRef, Node, Value, insert_before, insert_after
 
 
-def get_instruction(opname, arg):
+def get_instruction(opname: str, arg: Optional[int]) -> dis.Instruction:
     i = dis.Instruction(
         opname=opname,
-        opcode=dis.opmap[opname],
+        opcode=dis.opmap.get(opname, -1),
         arg=arg,
         argval=None,
-        argrepr=None,
-        offset=None,
+        argrepr="None",
+        offset=-999,
         starts_line=None,
-        is_jump_target=None,
+        is_jump_target=False,
     )
     return i
 
 
-def undo_ssa(gr: "Graph"):
-    def get_value(v, n, inpidx=None):
+def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]:
+    consts: List[Any] = []
+    names: List[str] = []
+
+    def get_value(v: Value, n: Node, inpidx: Optional[int] = None) -> None:
         if n.i.opname == "CALL_METHOD" and inpidx == 1:
             return
         if v.is_const:
@@ -33,6 +37,7 @@ def undo_ssa(gr: "Graph"):
             # this works for attribs, but for methods? maybe have a pass eliminating/making explicit the super...
             get_value(v.value.obj, n)
         elif v.parent is not None:
+            assert v.name is not None
             get_value(v.parent, n)
             if n.i.opname == "CALL_METHOD" and inpidx == 0:
                 # print("###inputs", n.inputs, v, v in n.inputs)
@@ -51,6 +56,7 @@ def undo_ssa(gr: "Graph"):
                 # print("###load attr", n.outputs, n.i.argval)
                 pass
             else:
+                assert v.name is not None
                 try:
                     idx = names.index(v.name)
                 except ValueError:
@@ -78,10 +84,10 @@ def undo_ssa(gr: "Graph"):
         for n in bl.nodes:
             n.block = bl
 
-    local_vars = []
+    local_vars: List[Value] = []
     lv_names = []
 
-    def get_or_add_lv(v, name=None):
+    def get_or_add_lv(v: Value, name: Optional[str] = None) -> int:
         try:
             idx = local_vars.index(v)
         except ValueError:
@@ -106,17 +112,15 @@ def undo_ssa(gr: "Graph"):
                 v.name = fullname
         return idx
 
-    consts = []
-    names = []
-
     nodes_to_skip = set()
 
-    def store_phi_values(o, o_idx, last_n):
+    def store_phi_values(o: Value, o_idx: int, last_n: Optional[Node]) -> Node:
         phi_values_in_processing = set()
 
-        def store_phi_values_inner(o, o_idx, last_n):
+        def store_phi_values_inner(o: Value, o_idx: int, last_n: Optional[Node]) -> Node:
             if o in phi_values_in_processing:
                 # avoid loops
+                assert last_n is not None
                 return last_n
             phi_values_in_processing.add(o)
             for v in o.phi_values:
@@ -133,6 +137,7 @@ def undo_ssa(gr: "Graph"):
                 nodes_to_skip.add(new_n)
                 insert_after(new_n, last_n)
                 last_n = new_n
+            assert last_n is not None
             return last_n
 
         return store_phi_values_inner(o, o_idx, last_n)
@@ -187,17 +192,17 @@ def undo_ssa(gr: "Graph"):
 
 # this function is taken from PyTorch Dynamo (c) 2022 by Facebook/Meta licensed
 # as per https://github.com/pytorch/pytorch/blob/master/LICENSE
-def linetable_writer(first_lineno: int):
+def linetable_writer(first_lineno: int) -> Tuple[List[int], Callable, Callable]:
     """Used to create typing.CodeType.co_linetable See
     https://github.com/python/cpython/blob/main/Objects/lnotab_notes.txt This is the internal format of the line number
     table if Python >= 3.10."""
     assert sys.version_info >= (3, 9)
-    linetable = []
+    linetable: List[int] = []
     lineno = first_lineno
     lineno_delta = 0
     byteno = 0
 
-    def _update(byteno_delta, lineno_delta):
+    def _update(byteno_delta: int, lineno_delta: int) -> None:
         while byteno_delta != 0 or lineno_delta != 0:
             byte_offset = max(0, min(byteno_delta, 254))
             line_offset = max(-127, min(lineno_delta, 127))
@@ -206,7 +211,7 @@ def linetable_writer(first_lineno: int):
             lineno_delta -= line_offset
             linetable.extend((byte_offset, line_offset & 0xFF))
 
-    def update(lineno_new, byteno_new):
+    def update(lineno_new: int, byteno_new: int) -> None:
         nonlocal lineno, lineno_delta, byteno
         byteno_delta = byteno_new - byteno
         byteno = byteno_new
@@ -214,22 +219,23 @@ def linetable_writer(first_lineno: int):
         lineno_delta = lineno_new - lineno
         lineno = lineno_new
 
-    def end(total_bytes):
+    def end(total_bytes: int) -> None:
         _update(total_bytes - byteno, lineno_delta)
 
     return linetable, update, end
 
 
-def generate_function(gr: "Graph"):
+def generate_function(gr: "Graph") -> Callable:
     local_vars, lv_names, names, consts = undo_ssa(gr)
     assert len(local_vars) == len(lv_names)
 
-    instruction_sizes = {}
+    NodeKey = Union[Node, Tuple[Node, bool]]
+    instruction_sizes: Dict[NodeKey, int] = {}
 
-    def build_address_map():
+    def build_address_map() -> Dict[NodeKey, int]:
         # Key either <Node> (for jump nodes and jump=True)
         #     or (<Node>, False) for non-jump in conditional jump
-        address_map = {}
+        address_map: Dict[NodeKey, int] = {}
         ctr = 0
         for bl in gr.blocks:
             # assumes first block is function start
@@ -240,10 +246,10 @@ def generate_function(gr: "Graph"):
                     ctr += instruction_sizes.get((n, False), 1)
         return address_map
 
-    def make_bc():
+    def make_bc() -> Tuple[List[int], bool]:
         bc = []
 
-        def write_extended_args(node_key, arg):
+        def write_extended_args(node_key: NodeKey, arg: int) -> bool:
             # returns if instruction size has changed
             instruction_size = instruction_sizes.get(node_key, 1)
             if arg > 0x_FF_FF_FF or instruction_size == 4:
@@ -272,7 +278,7 @@ def generate_function(gr: "Graph"):
             jump_node = None
             for n in bl.nodes:
                 opcode = n.i.opcode
-                if opcode is None:
+                if opcode is None or opcode == -1:  # Todo: opcode is typed int in dis.Instruction, remove None here?
                     opcode = dis.opmap[n.i.opname]
                 assert opcode is not None, f"{n} has invalid opcode"
                 # source range instead for 3.11?
@@ -285,9 +291,8 @@ def generate_function(gr: "Graph"):
                     # TODO forward, backward
                     arg = address_map[n.jump_targets[-1][1].nodes[0]] - address_map[n] - 1
                 else:
-                    arg = n.i.arg
-                    if arg is None:
-                        arg = 0
+                    arg_ = n.i.arg
+                    arg = 0 if arg_ is None else arg_
 
                 changed_size |= write_extended_args(n, arg)
 
@@ -301,6 +306,7 @@ def generate_function(gr: "Graph"):
                 changed_size |= write_extended_args((jump_node, False), jarg)
                 i = get_instruction(opname="JUMP_ABSOLUTE", arg=jarg & 0xFF)
                 bc.append(i.opcode)
+                assert i.arg is not None
                 bc.append(i.arg)
         return bc, not changed_size
 
@@ -311,7 +317,7 @@ def generate_function(gr: "Graph"):
         bc, done = make_bc()
 
     linetable_end(len(bc))
-    linetable = bytes(linetable)
+    linetable_bytes = bytes(linetable)
     bc_bytes = bytes(bc)
 
     lv_at_start = [v for v in gr.local_variables_at_start if v is not None]
@@ -329,7 +335,7 @@ def generate_function(gr: "Graph"):
     co_filename = f"<thunder-generated-{id(gr)}>"
     co_name = f"thunder_{id(gr)}"  # nicer name?
     co_firstlineno = gr.source_start_line
-    co_linetable = linetable  # XXX
+    co_linetable = linetable_bytes  # XXX
     co_freevars = ()
     co_cellvars = ()
 

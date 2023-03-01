@@ -630,7 +630,9 @@ def check_same_device(*args):
 # TODO: implement additional methods as needed
 class OrderedSet:
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
-    def __init__(self, args):
+    def __init__(self, args=None):
+        if args is None:
+            args = []
         self.d = {k: None for k in args}
 
     def __contains__(self, x):
@@ -644,8 +646,10 @@ class OrderedSet:
 
     # -
     def __sub__(self, other):
-        r = {k: None for k in self.d.keys() if k not in other}
-        return r
+        return OrderedSet(k for k in self if k not in other)
+
+    def __and__(self, other):
+        return OrderedSet(k for k in self if k in other)
 
     # NOTE: actual set signature is (self, *others)
     def difference(self, other):
@@ -653,6 +657,13 @@ class OrderedSet:
 
     def add(self, x):
         self.d[x] = None
+
+    def update(self, x):
+        for i in x:
+            self.d.setdefault(i, None)
+
+    def remove(self, x):
+        del self.d[x]
 
 
 #
