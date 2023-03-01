@@ -74,6 +74,7 @@ __all__ = [
     "_reduction_dims",
     "amax",
     "mean",
+    "prod",
     "sum",
     "var",
     "var_mean",
@@ -1003,8 +1004,28 @@ def mean(a, dim=None, keepdim: bool = False, *, dtype=None):
     return result
 
 
+def prod(a, dim=None, keepdim=False, *, dtype=None):
+    # Promotes all exact dtypes to int64
+    if dtype is None:
+        if utils.is_exact_dtype(a.dtype):
+            dtype = dtypes.int64
+        else:
+            dtype = a.dtype
+
+    result = _reduction(
+        a,
+        prims.prod,
+        dims=dim,
+        keepdims=keepdim,
+        dtype=dtype,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+    )
+
+    return result
+
+
 def sum(a, dim=None, keepdim=False, *, dtype=None):
-    # Promotes low precision exact dtypes to int64
+    # Promotes all exact dtypes to int64
     if dtype is None:
         if utils.is_exact_dtype(a.dtype):
             dtype = dtypes.int64

@@ -1869,24 +1869,74 @@ amax_opinfo = OpInfo(
 reduction_ops.append(amax_opinfo)
 
 
-def sum_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+def reduction_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(
+        make_tensor,
+        device=device,
+        dtype=dtype,
+        requires_grad=requires_grad,
+        # We set low (inclusive) and high (exclusive) here to avoid values
+        # whose products can otherwise become extremely large
+        low=-2,
+        high=3,
+    )
 
     # shape, dim, keepdim, dtype
     cases = (
         ((4, 4), None, False, None),
-        ((4, 4), (), False, None),
-        ((8, 1, 6), (1,), True, None),
-        ((8, 7, 5, 1), (0, 1), False, None),
+        ((5,), None, True, None),
+        ((5,), 0, False, None),
+        ((8, 1, 6), 1, True, None),
+        ((8, 7, 5, 1), (0, 1), True, None),
+        ((8, 7, 5, 1), (1, 3), False, None),
+        # torch.prod() behaves differently when passing `dim=None` compared to
+        # simply omitting the argument, due to pybind11's overload resolution
+        # mechanism. Passing `None` in those cases instead leads to an error.
+        # We test this behavior explicitly in order to try and catch such edge
+        # cases.
+        ((4, 4), None),
     )
 
-    for shape, dim, keepdim, dtype in cases:
-        yield (SampleInput(make(shape), dim, keepdim, dtype=dtype))
+    for c in cases:
+        if len(c) == 2:
+            shape, dim = c
+            yield (SampleInput(make(shape), dtype=dtype))
+        else:
+            shape, dim, keepdim, dtype = c
+            yield (SampleInput(make(shape), dim, keepdim, dtype=dtype))
+
+
+prod_opinfo = OpInfo(
+    ttorch.prod,
+    sample_input_generator=reduction_sample_generator,
+    torch_reference=torch._refs.prod,
+    test_directives=(
+        # Torch doesn't support cpu real (float16) or complex half prod
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32, datatypes.float16),
+            devicetypes=("cpu",),
+        ),
+        # See https://github.com/csarofeen/pytorch/issues/2369
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.complexfloating,),
+            executors=("nvFuser",),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.4",
+        ),
+    ),
+)
+reduction_ops.append(prod_opinfo)
 
 
 sum_opinfo = OpInfo(
     ttorch.sum,
-    sample_input_generator=sum_sample_generator,
+    sample_input_generator=reduction_sample_generator,
     torch_reference=torch.sum,
     test_directives=(
         # Torch doesn't support cpu complex half sum
@@ -2020,6 +2070,12 @@ softmax_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=("cpu",),
+        ),
+        # Tolerances are currently too conservative for this test with half precision
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
         ),
     ),
 )

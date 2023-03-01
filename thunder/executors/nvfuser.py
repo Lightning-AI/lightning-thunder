@@ -344,6 +344,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.WHERE: "where",
     # Reduction prims
     prims.Ops.AMAX: "max",
+    prims.Ops.PROD: "prod",
     prims.Ops.SUM: "sum",
     prims.Ops.VAR: "var",
     nvOps.VAR_MEAN: "var_mean",
@@ -403,6 +404,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.BROADCAST_IN_DIM: _nvScalars_to_Numbers_preprocessor,
     # Reduction prims
     prims.Ops.AMAX: _nvScalars_to_Numbers_preprocessor,
+    prims.Ops.PROD: _nvScalars_to_Numbers_preprocessor,
     prims.Ops.SUM: _nvScalars_to_Numbers_preprocessor,
     prims.Ops.VAR: _nvScalars_to_Numbers_preprocessor,
     nvOps.VAR_MEAN: _nvScalars_to_Numbers_preprocessor,
