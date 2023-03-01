@@ -89,6 +89,7 @@ __all__ = [
     "eq",
     "lt",
     "mul",
+    "nextafter",
     "pow",
     "sub",
     # Elementwise ternary prims
@@ -168,6 +169,7 @@ class Ops(Enum):
     EQ = auto()
     LT = auto()
     MUL = auto()
+    NEXTAFTER = auto()
     POW = auto()
     SUB = auto()
     # Elementwise ternary prims
@@ -1080,6 +1082,17 @@ mul = make_prim(
         name="mul",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=operator.mul,
+    ),
+)
+
+nextafter = make_prim(
+    Ops.NEXTAFTER,
+    "nextafter",
+    partial(
+        _elementwise_binary_meta,
+        name="nextafter",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=None,
     ),
 )
 

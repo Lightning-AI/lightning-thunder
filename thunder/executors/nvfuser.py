@@ -337,6 +337,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.EQ: "eq",
     prims.Ops.LT: "lt",
     prims.Ops.MUL: "mul",
+    prims.Ops.NEXTAFTER: "nextafter",
     prims.Ops.POW: "pow",
     prims.Ops.SUB: "sub",
     # Elementwise ternary prims
@@ -393,6 +394,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.EQ: _elementwise_preprocessor,
     prims.Ops.LT: _elementwise_preprocessor,
     prims.Ops.MUL: _elementwise_preprocessor,
+    prims.Ops.NEXTAFTER: _elementwise_preprocessor,
     prims.Ops.POW: _elementwise_preprocessor,
     prims.Ops.SUB: _elementwise_preprocessor,
     # Elementwise ternary prims

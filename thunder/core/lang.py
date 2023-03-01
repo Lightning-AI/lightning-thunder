@@ -78,6 +78,7 @@ __all__ = [
     "eq",
     "lt",
     "mul",
+    "nextafter",
     "pow",
     "sub",
     "true_divide",
@@ -639,6 +640,10 @@ def lt(a, b):
 
 def mul(a, b):
     return _elementwise_binary_helper(prims.mul, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+
+
+def nextafter(a, b):
+    return _elementwise_binary_helper(prims.nextafter, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE, a, b)
 
 
 def pow(a, b):

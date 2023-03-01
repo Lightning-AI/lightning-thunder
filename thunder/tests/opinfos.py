@@ -1247,6 +1247,29 @@ mul_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(mul_opinfo)
 
+nextafter_opinfo = OpInfo(
+    tlang.nextafter,
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.nextafter,
+    # NOTE: nextafter is supported by PyTorch only for bfloat16, float32,
+    # and float64 arguments (after normal promotion rules) and by NVFuser
+    # only for float32, and float64 arguments (after normal promotion rules).
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.4",
+        ),
+    ),
+)
+elementwise_binary_ops.append(nextafter_opinfo)
+
 pow_opinfo = OpInfo(
     tlang.pow,
     sample_input_generator=elementwise_binary_generator,

@@ -62,6 +62,7 @@ __all__ = [
     "eq",
     "lt",
     "mul",
+    "nextafter",
     "pow",
     "sub",
     "true_divide",
@@ -296,6 +297,10 @@ class TorchLangCtx:
     # *
     def mul(self, a, b):
         return tlang.mul(a, b)
+
+    # next floating point value from a in the direction of b
+    def nextafter(self, a, b):
+        return tlang.nextafter(a, b)
 
     # -
     def sub(self, a, b):
@@ -781,6 +786,11 @@ def lt(a, b):
 @torch_function(torch.mul)
 def mul(a, b):
     return tlang.mul(a, b)
+
+
+@torch_function(torch.nextafter)
+def nextafter(a, b):
+    return tlang.nextafter(a, b)
 
 
 @torch_function(torch.pow)

@@ -223,6 +223,7 @@ ops_to_torch_ops_map = {
     prims.Ops.EQ: eq_helper,
     prims.Ops.LT: "torch.lt",
     prims.Ops.MUL: "torch.mul",
+    prims.Ops.NEXTAFTER: "torch.nextafter",
     prims.Ops.POW: "torch.pow",
     prims.Ops.SUB: "torch.sub",
     # Elementwise ternary prims
