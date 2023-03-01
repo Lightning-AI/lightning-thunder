@@ -727,6 +727,7 @@ rsqrt = make_prim(
     ),
 )
 
+
 # Non-complex sign definition
 def _sign_number(x):
     if (x < type(x)(0)) or (x > type(x)(0)):

@@ -12,6 +12,7 @@ import thunder.core.dtypes as datatypes
 import thunder.core.lang as tlang
 import thunder.core.proxies as proxies
 import thunder.langs.torch as ttorch
+import thunder.core.codeutils as codeutils
 from thunder.tests.framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, TorchEx
 
 
@@ -586,7 +587,7 @@ def test_transforms_vjp_2_1(executor, device, _):
         # TODO: enable nvFuser executor
         # thunder/executors/nvfuser.py:240: AssertionError
         # assert len(shape) > 0 in _full_preprocessor
-    )
+    ),
 )
 def test_transforms_vmap_inline_value_and_grad(executor, device, _):
     # This test checks whether it's possible to vmap a function that is
@@ -1269,3 +1270,34 @@ def test_dtype_conversion(executor: Executor, device, dtype):
         thunder_result = thunder_fn(t, b)
         torch_result = t.to(b)
         assert_close(thunder_result, torch_result)
+
+
+def test_codeutils_unpack_pack():
+    o = object()
+    cases = (
+        [1, 2, 3],
+        [1, "a", object()],
+        (1, 2, 3),
+        (1, "a", object()),
+        {"a": 1, 2: 3, "x": object()},
+        [1, 2, [3, 4, o, [], 6, [[], [], (o, 5)], ((), ()), {}]],
+        {"x": (1, 2), (3, 4): ["a", o, ("c", {"d": o, 5: 3, 7: [1, 2, ((),)]})]},
+    )
+
+    for c in cases:
+        leaves, keys, packinfo = codeutils.unpack(c)
+        packed = codeutils.pack(leaves, packinfo)
+        assert c == packed
+
+
+def test_codeutils_siginfo():
+    def foo(a, b, *argles, c, d=2, e="hello", **vargles):
+        pass
+
+    o = object()
+    siginfo = codeutils.get_siginfo(foo, (3, 4, 7, "a", (1, 2)), {"c": 2, "e": 9, "f": 1, "g": o})
+
+    assert siginfo.args == (("a", 3), ("b", 4))
+    assert siginfo.varargs == ("argles", (7, "a", (1, 2)))
+    assert siginfo.kwargs == {"c": 2, "d": 2, "e": 9}
+    assert siginfo.varkwargs == ("vargles", {"f": 1, "g": o})

@@ -364,7 +364,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.SQRT: _elementwise_preprocessor,
     prims.Ops.TAN: _elementwise_preprocessor,
     prims.Ops.TANH: _elementwise_preprocessor,
-    prims.Ops.ACOSH:_elementwise_preprocessor,
+    prims.Ops.ACOSH: _elementwise_preprocessor,
     prims.Ops.ASIN: _elementwise_preprocessor,
     prims.Ops.ASINH: _elementwise_preprocessor,
     prims.Ops.ATAN: _elementwise_preprocessor,

@@ -1263,7 +1263,10 @@ pow_opinfo = OpInfo(
         ),
         # See https://github.com/csarofeen/pytorch/issues/2361
         DecorateInfo(
-            pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvFuser,"), dtypes=(datatypes.complex64, datatypes.complex128)
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("nvFuser,"),
+            dtypes=(datatypes.complex64, datatypes.complex128),
         ),
     ),
 )
@@ -1777,7 +1780,8 @@ index_select_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
     ),
 )
 shape_ops.append(index_select_opinfo)
