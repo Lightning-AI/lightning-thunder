@@ -87,6 +87,7 @@ __all__ = [
     "bitwise_and",
     "div",
     "eq",
+    "ge",
     "lt",
     "mul",
     "nextafter",
@@ -168,6 +169,7 @@ class Ops(Enum):
     BITWISE_AND = auto()
     DIV = auto()
     EQ = auto()
+    GE = auto()
     LT = auto()
     MUL = auto()
     NEXTAFTER = auto()
@@ -1062,6 +1064,17 @@ eq = make_prim(
         name="eq",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
         number_handler=operator.eq,
+    ),
+)
+
+ge = make_prim(
+    Ops.GE,
+    "ge",
+    partial(
+        _elementwise_binary_meta,
+        name="ge",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
+        number_handler=operator.ge,
     ),
 )
 

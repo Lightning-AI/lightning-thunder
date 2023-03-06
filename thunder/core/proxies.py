@@ -265,6 +265,11 @@ class TensorProxy(Proxy):
         # TODO: consider this out of context behavior
         return super().__eq__(other)
 
+    # >=
+    def __ge__(self, other):
+        ctx = get_language_context()
+        return ctx.ge(self, other)
+
     # <
     def __lt__(self, other):
         ctx = get_language_context()

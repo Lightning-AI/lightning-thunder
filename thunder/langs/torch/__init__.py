@@ -60,6 +60,7 @@ __all__ = [
     # Elementwise Binary Ops
     "add",
     "eq",
+    "ge",
     "lt",
     "mul",
     "nextafter",
@@ -290,6 +291,10 @@ class TorchLangCtx:
     # ==
     def eq(self, a, b):
         return tlang.eq(a, b)
+
+    # >=
+    def ge(self, a, b):
+        return tlang.ge(a, b)
 
     # <
     def lt(self, a, b):
@@ -777,6 +782,11 @@ def add(a, b, *, alpha=None):
 @torch_function(torch.eq)
 def eq(a, b):
     return tlang.eq(a, b)
+
+
+@torch_function(torch.ge)
+def ge(a, b):
+    return tlang.ge(a, b)
 
 
 @torch_function(torch.lt)

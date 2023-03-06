@@ -76,6 +76,7 @@ __all__ = [
     "atan2",
     "bitwise_and",
     "eq",
+    "ge",
     "lt",
     "mul",
     "nextafter",
@@ -632,6 +633,10 @@ def bitwise_and(a, b):
 
 def eq(a, b):
     return _elementwise_binary_helper(prims.eq, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
+
+
+def ge(a, b):
+    return _elementwise_binary_helper(prims.ge, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
 
 
 def lt(a, b):

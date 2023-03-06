@@ -1231,9 +1231,18 @@ eq_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(eq_opinfo)
 
+ge_opinfo = OpInfo(
+    tlang.ge,
+    # NOTE: comparison is only defined for real numbers
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.ge,
+)
+elementwise_binary_ops.append(ge_opinfo)
+
 lt_opinfo = OpInfo(
     tlang.lt,
-    # NOTE: less than is only defined for real numbers
+    # NOTE: comparison is only defined for real numbers
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.lt,
