@@ -338,7 +338,7 @@ class Block:
 # through jump instructions.
 class Graph:
     def __init__(self, blocks: Optional[List[Block]] = None):
-        self.blocks = [] if blocks is None else blocks
+        self.blocks = [] if blocks is None else blocks[:]
 
     def __str__(self) -> str:
         return "\n".join(["Graph of"] + [str(b) for b in self.blocks])
@@ -362,6 +362,27 @@ class Graph:
                         o.node = n
             for i in bl.block_inputs:
                 i.block = bl
+
+    def clone(self) -> Tuple["Graph", Dict[GraphObject, GraphObject]]:
+        bls2, translation_dict = clone_blocks(self.blocks)
+        g2 = Graph(blocks=bls2)
+        g2.local_variables_at_start = [v.clone() for v in self.local_variables_at_start]
+        replace_values(g2, {k: v for k, v in zip(self.local_variables_at_start, g2.local_variables_at_start)})
+        g2.ismethod = self.ismethod
+        g2.co_argcount = self.co_argcount
+        g2.co_flags = self.co_flags
+        g2.co_posonlyargcount = self.co_posonlyargcount
+        g2.co_kwonlyargcount = self.co_kwonlyargcount
+        g2.func_defaults = self.func_defaults[:]
+        g2.func_kwdefaults = self.func_kwdefaults.copy()
+        g2.method = self.method
+        g2.module = self.module
+        g2.mro_klass = self.mro_klass
+        g2.self_value = self.self_value
+        g2.source_start_line = self.source_start_line
+        g2.source_lines = self.source_lines[:]
+
+        return g2, translation_dict
 
     def print(self) -> None:
         value_counter = 1

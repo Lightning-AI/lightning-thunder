@@ -364,7 +364,6 @@ def foo(a, c_fc_weight, c_proj_weight):
 @requiresCUDA
 def test_inlining_function_and_convert_to_thunder():
     def convert_to_thunder(fn):
-        global gr
         gr = thunder.core.script.frontend.acquire_method(fn, verbose=False)
 
         thunder.core.script.frontend.make_ssa(gr)
@@ -486,6 +485,34 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_kw)
     funcs = _helper_get_func_calls(thunder_fn._tfn._gr)
     assert not (funcs ^ allowed_funcs)
+
+
+def test_clone_graph():
+    gr = thunder.core.script.frontend.acquire_method(new_gelu, verbose=False)
+
+    thunder.core.script.frontend.make_ssa(gr)
+    thunder.core.script.frontend.make_single_return(gr)
+
+    thunder.core.script.passes.inline_submodule_calls(gr)
+    thunder.core.script.passes.merge_blocks_where_possible(gr)
+    thunder.core.script.graph.check_graph(gr)
+    thunder.core.script.passes.torch_to_thunder(gr)
+    thunder.core.script.graph.check_graph(gr)
+
+    gr2, _ = gr.clone()
+
+    s2 = str(gr2)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+
+    assert s2 == str(gr2)  # working with gr does not change gr2
+
+    thunder_fn2 = thunder.core.script.python_ir.generate_function(gr2)
+
+    import dis
+
+    s = "\n".join([i._disassemble() for i in dis.get_instructions(thunder_fn)])
+    s2 = "\n".join([i._disassemble() for i in dis.get_instructions(thunder_fn2)])
+    assert s == s2
 
 
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying
