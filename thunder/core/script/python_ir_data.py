@@ -189,4 +189,37 @@ def stack_effect_detail(opname: str, oparg: Optional[int], *, jump: bool = False
 
 jump_instructions = set(dis.hasjabs) | set(dis.hasjrel)
 
+def make_jump_absolute(arg: int):
+    return dis.Instruction(
+        opname="JUMP_ABSOLUTE",
+        opcode=dis.opmap.get("JUMP_ABSOLUTE", -1),
+        arg=arg,
+        argval=None,
+        argrepr=f"{arg}",
+        offset=-999,
+        starts_line=None,
+        is_jump_target=False,
+    )
+
+def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:
+    if instruction.opcode in dis.hasjabs:
+        assert instruction.arg is not None
+        return instruction.arg
+
+    elif instruction.opname in ("JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT"):
+        assert instruction.arg is not None
+        return position + 1 - instruction.arg
+
+    elif "BACKWARD" in instruction.opname:
+        # TODO: POP_JUMP_BACKWARD_IF_... variants
+        raise NotImplementedError(instruction.opname)
+
+    elif instruction.opcode in dis.hasjrel:
+        assert instruction.arg is not None
+        return position + 1 + instruction.arg
+
+    return None
+
+
+return_instructions = {dis.opmap[name] for name in ("RETURN_VALUE", "RAISE_VARARGS", "RERAISE") if name in dis.opmap}
 unconditional_jump_names = {"JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT"}

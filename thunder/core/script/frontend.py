@@ -1,10 +1,10 @@
 import collections
 import dis
 import inspect
-import itertools
+import itertools as it
 import opcode
 import sys
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 
@@ -19,12 +19,81 @@ from thunder.core.script.graph import (
     PhiValue,
     Value,
 )
-from thunder.core.script.python_ir_data import jump_instructions, stack_effect_detail, unconditional_jump_names
+from thunder.core.script.python_ir_data import compute_jump, jump_instructions, make_jump_absolute, return_instructions, stack_effect_detail, unconditional_jump_names
 from thunder.core.utils import OrderedSet
 
 
 class Super:
     pass
+
+
+def parse_bytecode(method: Callable) -> Graph:
+    """Given a method, disassemble it to a sequence of simple blocks."""
+    source_lines, source_start_line = inspect.getsourcelines(method)
+    bytecode: Tuple[dis.Instruction, ...] = tuple(dis.get_instructions(method))
+
+    # Determine the boundaries for the simple blocks.
+    split_after_opcodes = jump_instructions | return_instructions
+    follows_jump = it.chain([0], (int(i.opcode in split_after_opcodes) for i in bytecode))
+    new_block = (int(i or j.is_jump_target) for i, j in zip(follows_jump, bytecode))
+
+    # Split the bytecode (and instruction number) into groups
+    group_indices = tuple(it.accumulate(new_block))
+    groups = it.groupby(enumerate(bytecode), key=lambda args: group_indices[args[0]])
+
+    # Drop the group index, copy from the groupby iter, and unzip `enumerate`.
+    groups = (zip(*tuple(i)) for _, i in groups)
+
+    blocks = {
+        start: (instructions, Block(is_ssa=False))
+        for (start, *_), instructions in groups
+    }
+
+    # The first block is special because it must be initialized with a `None`
+    # jump source. (Effectively indicating "start of function".)
+    _, start_block = blocks[0]
+    start_block.jump_sources.append(None)
+
+    line_no = 1
+    for start, (block_bytecode, block) in blocks.items():
+        assert block_bytecode, "Block is empty"
+        end = start + len(block_bytecode) - 1
+
+        # Populate Nodes in the Block
+        for instruction in block_bytecode:
+            if instruction.starts_line is not None:
+                line_no = instruction.starts_line - source_start_line + 1
+            node = Node(i=instruction, line_no=line_no)
+            block.insert_node(node)
+
+        # If the last instruction is not a jump or return (which means we split
+        # because the next instruction was a jump target) then we need to tell
+        # the current block how to advance.
+        if node.i.opcode not in split_after_opcodes:
+            assert bytecode[end + 1].is_jump_target
+            node = Node(i=make_jump_absolute(end + 1), line_no=line_no)
+            block.insert_node(node)
+
+        # If the last instruction is a jump we need to compute the jump target(s)
+        # and update the block connectivity.
+        def maybe_add_jump(offset: Optional[int], jump: bool) -> None:
+            if offset is not None:
+                _, destination_block = blocks[offset]
+                stack_effect = stack_effect_detail(node.i.opname, node.i.arg, jump=jump)
+
+                # TODO(robieta, t-vi): Add Node.add_jump_target for more safety?
+                destination_block.jump_sources.append(node)
+                node.jump_targets.append((stack_effect, destination_block))
+
+        if node.i.opcode in jump_instructions:
+            is_conditional_jump = (node.i.opname not in unconditional_jump_names)
+            maybe_add_jump(end + 1 if is_conditional_jump else None, False)
+            maybe_add_jump(compute_jump(node.i, end), True)
+
+    graph = Graph([block for _, block in blocks.values()])
+    graph.source_start_line = 1  # source_start_line
+    graph.source_lines = source_lines
+    return graph
 
 
 def acquire_method(
@@ -33,9 +102,6 @@ def acquire_method(
     if isinstance(method, torch.nn.Module):
         method = method.forward
     assert sys.version_info >= (3, 9) and sys.version_info < (3, 11)
-    source_lines, source_start_line = inspect.getsourcelines(method)
-    if verbose:
-        print("".join(source_lines))
     sig = inspect.signature(method)
     if module is None and hasattr(method, "__self__"):
         module = method.__self__
@@ -57,98 +123,7 @@ def acquire_method(
         local_variables.append(None)
 
     # bound_args = [module.forward.__self__]
-    bc = list(dis.get_instructions(method))
-    if verbose:
-        dis.dis(method)
-    # Map offset_start -> Block
-    block_0 = Block(is_ssa=False)
-    block_0.jump_sources.append(None)
-    blocks_to_process = collections.OrderedDict({0: block_0})
-    blocks: Dict[int, Block] = {}
-
-    def get_or_make_block(offset_start: int, jump_source: Node) -> Block:
-        for other_offset_start, other_bl in itertools.chain(blocks_to_process.items(), blocks.items()):
-            if other_offset_start == offset_start:
-                # take anything?
-                # print("#oldbl##", offset_start, jump_source, other_bl.jump_sources)
-                other_bl.jump_sources.append(jump_source)
-                return other_bl
-        # print("#newbl##", offset_start, jump_source, other_bl.jump_sources)
-        bl = Block(is_ssa=False)
-        blocks_to_process[offset_start] = bl
-        bl.jump_sources.append(jump_source)
-        return bl
-
-    line_no = 1
-    while blocks_to_process:
-        offset_start, bl = blocks_to_process.popitem(last=False)
-        blocks[offset_start] = bl
-
-        ic = offset_start
-        done = False
-        while not done:
-            cur_ins = bc[ic]
-            if cur_ins.starts_line is not None:
-                line_no = cur_ins.starts_line - source_start_line + 1
-            n = Node(i=cur_ins, line_no=line_no)
-
-            # need to handle branching instructions here
-            if cur_ins.opcode in jump_instructions:
-                done = True
-                if cur_ins.opcode in dis.hasjabs:
-                    ic_target = cur_ins.arg
-                elif "BACKWARD" in cur_ins.opname:
-                    assert cur_ins.arg is not None
-                    ic_target = ic + 1 - cur_ins.arg  # ?
-                else:
-                    assert cur_ins.arg is not None
-                    ic_target = ic + 1 + cur_ins.arg
-
-                if cur_ins.opname in unconditional_jump_names:
-                    n.jump_targets = []
-                else:
-                    b1 = get_or_make_block(offset_start=ic + 1, jump_source=n)
-                    n.jump_targets = [(stack_effect_detail(cur_ins.opname, cur_ins.arg, jump=False), b1)]
-
-                assert ic_target is not None
-                b1 = get_or_make_block(offset_start=ic_target, jump_source=n)
-                n.jump_targets.append((stack_effect_detail(cur_ins.opname, cur_ins.arg, jump=True), b1))
-            elif cur_ins.opname in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"}:
-                done = True
-            else:
-                if verbose:
-                    print(cur_ins)
-
-            bl.insert_node(n)
-            ic += 1
-            if ic < len(bc) and bc[ic].is_jump_target:
-                # check if needed?
-                if (
-                    cur_ins.opname not in {"RETURN_VALUE", "RAISE_VARARGS", "RERAISE"}
-                    and cur_ins.opcode not in jump_instructions
-                ):
-                    # should insert jump absolute instead...
-                    jump_ins = dis.Instruction(
-                        opname="JUMP_ABSOLUTE",
-                        opcode=-1,  # the JUMP_ABSOLUTE is not in Python 3.11
-                        arg=None,
-                        argval=None,
-                        argrepr="None",
-                        offset=-999,
-                        starts_line=None,
-                        is_jump_target=False,
-                    )
-                    jump_node = Node(i=jump_ins, inputs=[], outputs=[], line_no=line_no)
-                    bl.insert_node(jump_node)
-                    b1 = get_or_make_block(offset_start=ic, jump_source=jump_node)
-                    jump_node.jump_targets = [
-                        (
-                            stack_effect_detail(jump_ins.opname, jump_ins.arg, jump=True),
-                            b1,
-                        )
-                    ]
-                done = True
-    gr = Graph(list(blocks.values()))
+    gr = parse_bytecode(method=method)
     gr.all_local_variables_at_start = local_variables[:]
     gr.local_variables_at_start = [lv for lv in local_variables if lv is not None]
     gr.ismethod = inspect.ismethod(method)
@@ -184,8 +159,6 @@ def acquire_method(
     gr.module = module
     gr.mro_klass = mro_klass
     gr.self_value = self_value
-    gr.source_start_line = 1  # source_start_line
-    gr.source_lines = source_lines
     return gr
 
 
