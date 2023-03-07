@@ -601,7 +601,7 @@ def _elementwise_binary_helper(prim, type_promotion_kind, a, b, *, supported_dty
 
     if supported_dtypes is not None:
         utils.check(
-            computation_dtype in dtypes.resolve_dtypes(supported_dtypes),
+            dtypes.to_strong_dtype(computation_dtype) in dtypes.resolve_dtypes(supported_dtypes),
             lambda: f"Unsupported dtype {computation_dtype}!",
         )
 

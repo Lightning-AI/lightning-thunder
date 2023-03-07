@@ -263,7 +263,9 @@ elementwise_unary_ops = []
 def elementwise_unary_generator(op, device, dtype, requires_grad, *, supports_numbers=True, **kwargs):
     low = None if op.domain.low is None else max(-9, op.domain.low)
     high = None if op.domain.high is None else min(9, op.domain.high)
-    make_arg = partial(make_tensor, device=device, dtype=dtype, low=low, high=high, requires_grad=requires_grad, **kwargs)
+    make_arg = partial(
+        make_tensor, device=device, dtype=dtype, low=low, high=high, requires_grad=requires_grad, **kwargs
+    )
 
     shapes = (
         # TODO: restore size zero cases
