@@ -124,3 +124,6 @@ lightning_logs
 *.swp
 *.swm
 *~
+
+# Build artifacts
+scripts/build
