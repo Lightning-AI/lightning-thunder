@@ -185,3 +185,16 @@ def make_tensor(
         result.requires_grad = requires_grad
 
     return result
+
+
+def make_tensor_like(a):
+    # type: (torch.Tensor) -> torch.Tensor
+    """Returns a tensor with the same properties as the given tensor.
+
+    Args:
+        a (torch.Tensor): The tensor to copy properties from.
+
+    Returns:
+        torch.Tensor: A tensor with the same properties as :attr:`a`.
+    """
+    return make_tensor(a.shape, device=a.device, dtype=a.dtype, requires_grad=a.requires_grad)

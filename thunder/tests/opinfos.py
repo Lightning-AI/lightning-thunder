@@ -263,7 +263,7 @@ elementwise_unary_ops = []
 def elementwise_unary_generator(op, device, dtype, requires_grad, *, supports_numbers=True, **kwargs):
     low = None if op.domain.low is None else max(-9, op.domain.low)
     high = None if op.domain.high is None else min(9, op.domain.high)
-    make_arg = partial(make_tensor, device=device, dtype=dtype, low=low, high=high, **kwargs)
+    make_arg = partial(make_tensor, device=device, dtype=dtype, low=low, high=high, requires_grad=requires_grad, **kwargs)
 
     shapes = (
         # TODO: restore size zero cases
@@ -427,6 +427,12 @@ asin_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16, datatypes.complex32),
             devicetypes=("cpu",),
+        ),
+        # TODO: RuntimeError: Unexpected operator type sqrt in d4 = sqrt(double(0.33680657142871817));
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
         ),
     ),
 )
@@ -1339,7 +1345,7 @@ def masked_fill_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for pred_shape, a_shape, value in cases:
-        pred, a = make(pred_shape, dtype=torch.bool), make(a_shape)
+        pred, a = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape)
         yield SampleInput(a, pred, value)
 
 
@@ -1372,7 +1378,7 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # NOTE: pred must have a boolean dtype
     for pred_shape, a_shape, b_shape in cases:
-        pred, a, b = make(pred_shape, dtype=torch.bool), make(a_shape), make(b_shape)
+        pred, a, b = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape), make(b_shape)
         yield SampleInput(pred, a, b)
 
 
@@ -1970,6 +1976,17 @@ sum_opinfo = OpInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             active_if=LooseVersion(torch.__version__) < "1.13",
+        ),
+        # TypeError: sum(): incompatible function arguments.
+        DecorateInfo(
+            pytest.mark.skip,  # xfail doesn't work here
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+        # NotImplementedError: VJP for Ops.BROADCAST_IN_DIM is not implemented
+        DecorateInfo(
+            pytest.mark.xfail(strict=True, raises=NotImplementedError),
+            "test_vjp_correctness",
         ),
     ),
 )
