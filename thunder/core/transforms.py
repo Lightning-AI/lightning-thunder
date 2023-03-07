@@ -277,7 +277,9 @@ def sum_vmap(axis_size: int, a: BatchedValue, dims: Sequence[int], **kwargs) -> 
 
 
 # TODO: Please test this extensively
-def broadcast_in_dim_vmap(axis_size: int, a: BatchedValue, shape: Sequence[BatchedValue], broadcast_dimensions: Sequence[BatchedValue]) -> BatchedValue:
+def broadcast_in_dim_vmap(
+    axis_size: int, a: BatchedValue, shape: Sequence[BatchedValue], broadcast_dimensions: Sequence[BatchedValue]
+) -> BatchedValue:
     bdim = a.batch_dim
     # TODO: remove this when shape and broadcast_dimensions become mandatory kwargs
     # See https://github.com/Lightning-AI/lightning-thunder/issues/181
@@ -290,9 +292,7 @@ def broadcast_in_dim_vmap(axis_size: int, a: BatchedValue, shape: Sequence[Batch
         new_bdim = bdim + sum(1 for dim in broadcast_dimensions if dim < bdim)
         new_shape = list(shape)
         new_shape.insert(new_bdim, axis_size)
-        new_broadcast_dimensions = (0,) + tuple(
-            dim + 1 if dim >= bdim else dim for dim in broadcast_dimensions
-        )
+        new_broadcast_dimensions = (0,) + tuple(dim + 1 if dim >= bdim else dim for dim in broadcast_dimensions)
         if broadcast_dimensions == ():
             new_broadcast_dimensions = ()
         return BatchedValue(prims.broadcast_in_dim(a.value, new_shape, new_broadcast_dimensions), new_bdim)
@@ -778,6 +778,7 @@ class NoPullback:
 
 no_pullback = NoPullback()
 
+
 # This is a dummy class that is used to represent empty residuals
 # instead of an empty tuple to make the pullback function more readable
 class NoResidual:
@@ -811,6 +812,7 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
         Variable: Tensor with the reduced dimensions restored.
     """
     import thunder.core.lang as tlang
+
     unsqueezed = tlang.unsqueeze(x, reduced_dims)
     return tlang.expand(unsqueezed, original_shape)
 
@@ -827,7 +829,10 @@ def sum_vjp(x, dims, output_dtype=None):
         VJPTriple: Primal, residuals, and pullback.
     """
     primal = prims.sum(x, dims, output_dtype=output_dtype)
-    residuals = (x.shape, dims,)
+    residuals = (
+        x.shape,
+        dims,
+    )
 
     def pullback(x_shape, reduced_dims, g):
         # One return per positional argument of prims.sum
@@ -911,7 +916,6 @@ def backward_pass(forward_env, trace, init_cotangents):
             return x
 
     def write(v: Variable, val: Any) -> None:
-
         if isinstance(v, Variable):
             if v.name in env:
                 # Accumulate cotangents

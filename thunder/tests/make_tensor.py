@@ -7,8 +7,8 @@ import torch
 # adapted from https://github.com/pytorch/pytorch/blob/master/torch/testing/_creation.py
 # Changes:
 #   bool generation respects low and high
-#   when low and high would be a floating point type, and the requested type is integral, the actual low
-#       high now take the ceil and floor instead of the floor and ceil (tightening the range)
+#   when low and high would be a floating point type, and the requested type is integral, the
+#       ceil of both low and high is taken, instead of the floor and ceil (this ensures a valid range)
 # NOTE: these changes may not be reflected in the documentation
 
 # Used by make_tensor for generating complex tensor.
@@ -108,7 +108,7 @@ def make_tensor(
         high = clamp(high, lowest, highest)
 
         if dtype in [torch.bool, torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64]:
-            return math.ceil(low), math.floor(high)
+            return math.ceil(low), math.ceil(high)
 
         return low, high
 
