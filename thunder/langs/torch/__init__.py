@@ -21,6 +21,8 @@ __all__ = [
     "TorchLangCtx",
     # Tensor creation operations
     "arange",
+    "empty",
+    "empty_like",
     "full",
     "full_like",
     "uniform",
@@ -351,6 +353,15 @@ class TorchLangCtx:
 @torch_function(torch.arange)
 def arange(start, end, step=1, *, device="cpu", dtype=None):
     return tlang.arange(start=start, step=step, stop=end, device=device, dtype=dtype)
+
+
+# TODO: switch to zeros for readability (after zeros is implemented)
+def empty(shape, *, device, dtype=None):
+    return full(shape, 0.0, device=device, dtype=dtype)
+
+
+def empty_like(tensor, *, device=None, dtype=None):
+    return zeros_like(tensor, device=device, dtype=dtype)
 
 
 # TODO: check these signatures

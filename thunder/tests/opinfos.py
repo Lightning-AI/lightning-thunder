@@ -2060,6 +2060,29 @@ full_opinfo = OpInfo(
 )
 tensor_creation_ops.append(full_opinfo)
 
+
+def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    cases = (
+        # (),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
+        (1, ),
+        (4, 4),
+        # (2, 0, 3),  # FIXME: nvFuser does not yet support shapes with 0-sized dimensions
+        (8, 1, 6),
+        (8, 7, 5, 1),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+empty_opinfo = OpInfo(
+    ttorch.empty,
+    sample_input_generator=empty_sample_generator,
+    torch_reference=torch.zeros,
+)
+tensor_creation_ops.append(empty_opinfo)
+
+
 opinfos.extend(tensor_creation_ops)
 
 #
