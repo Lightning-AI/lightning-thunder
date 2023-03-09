@@ -85,6 +85,11 @@ def erfcinv_helper(a):
     return erfinv(1 - a)
 
 
+# A composite implementation of c++ std::remainder and Python math.remainder.
+def remainder_helper(a, b):
+    return a - torch.round(a.div(b)) * b
+
+
 def slice_helper(a, start_indices, end_indices, strides=None):
     _strides = strides if strides is not None else [1] * len(start_indices)
 
@@ -221,12 +226,14 @@ ops_to_torch_ops_map = {
     prims.Ops.ATAN2: "torch.atan2",
     prims.Ops.BITWISE_AND: "torch.bitwise_and",
     prims.Ops.DIV: "torch.div",
+    prims.Ops.FMOD: "torch.fmod",
     prims.Ops.EQ: eq_helper,
     prims.Ops.GE: "torch.ge",
     prims.Ops.LT: "torch.lt",
     prims.Ops.MUL: "torch.mul",
     prims.Ops.NEXTAFTER: "torch.nextafter",
     prims.Ops.POW: "torch.pow",
+    prims.Ops.REMAINDER: remainder_helper,
     prims.Ops.SUB: "torch.sub",
     # Elementwise ternary prims
     prims.Ops.WHERE: "torch.where",

@@ -1213,13 +1213,13 @@ elementwise_binary_ops = []
 
 # TODO: extend this generator
 def elementwise_binary_generator(op, device, dtype, requires_grad, **kwargs):
-    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad)
-    b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad)
+    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
 
     yield SampleInput(a, b)
 
     # Tests broadcasting
-    c = make_tensor((4, 1), device=device, dtype=dtype, requires_grad=requires_grad)
+    c = make_tensor((4, 1), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
     yield SampleInput(a, c)
 
 
@@ -1259,6 +1259,20 @@ eq_opinfo = OpInfo(
     torch_reference=torch.eq,
 )
 elementwise_binary_ops.append(eq_opinfo)
+
+fmod_opinfo = OpInfo(
+    tlang.fmod,
+    sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
+    torch_reference=torch.fmod,
+    test_directives=(
+        # torch doesn't support bool or complex fmod
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8, datatypes.complexfloating)),
+    ),
+)
+elementwise_binary_ops.append(fmod_opinfo)
 
 ge_opinfo = OpInfo(
     tlang.ge,
@@ -1346,6 +1360,45 @@ pow_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(pow_opinfo)
 
+# A test for the prim remainder which corresponds with python's math.remainder and c++ std::remainder
+remainder_core_opinfo = OpInfo(
+    tlang.remainder,
+    name="remainder_prim",
+    sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
+    torch_reference=lambda a, b: a - torch.round(a.div(b)) * b,
+    test_directives=(
+        # torch doesn't support bool or complex remainder.
+        # torch_reference is inaccurate since it computes in the lower precision dtype.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8, datatypes.float16, datatypes.bfloat16, datatypes.complexfloating)),
+    ),
+)
+elementwise_binary_ops.append(remainder_core_opinfo)
+
+remainder_torch_opinfo = OpInfo(
+    ttorch.remainder,
+    sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
+    torch_reference=torch.remainder,
+    test_directives=(
+        # torch doesn't support bool or complex remainder.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8, datatypes.complexfloating)),
+        # Upstream nvfuser triggers this error:
+        # AssertionError: The values for attribute 'dtype' do not match: torch.float32 != torch.float16.
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/238
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("nvFuser,"),
+            dtypes=(datatypes.float16, datatypes.bfloat16)),
+    ),
+)
+elementwise_binary_ops.append(remainder_torch_opinfo)
+
 sub_opinfo = OpInfo(
     tlang.sub,
     sample_input_generator=elementwise_binary_generator,
@@ -1362,7 +1415,7 @@ true_divide_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.true_divide,
     test_directives=(
-        # Torch doesn't support complex half
+        # torch cpu doesn't support complex32 div
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",

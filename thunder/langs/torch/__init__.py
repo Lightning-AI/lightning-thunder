@@ -62,11 +62,13 @@ __all__ = [
     # Elementwise Binary Ops
     "add",
     "eq",
+    "fmod",
     "ge",
     "lt",
     "mul",
     "nextafter",
     "pow",
+    "remainder",
     "sub",
     "true_divide",
     # Elementwise Ternary Ops
@@ -290,10 +292,15 @@ class TorchLangCtx:
     def add(self, a, b):
         return tlang.add(a, b)
 
+
     # ==
     def eq(self, a, b):
         return tlang.eq(a, b)
 
+    # fmod
+    def fmod(self, a, b):
+        return tlang.fmod(a, b)
+    
     # >=
     def ge(self, a, b):
         return tlang.ge(a, b)
@@ -314,6 +321,10 @@ class TorchLangCtx:
     def nextafter(self, a, b):
         return tlang.nextafter(a, b)
 
+    # **
+    def pow(self, a, b):
+        return tlang.pow(a, b)
+
     # -
     def sub(self, a, b):
         return tlang.sub(a, b)
@@ -321,10 +332,6 @@ class TorchLangCtx:
     # /
     def true_divide(self, a, b):
         return tlang.true_divide(a, b)
-
-    # **
-    def pow(self, a, b):
-        return tlang.pow(a, b)
 
     #
     # Elementwise ternary methods
@@ -799,6 +806,11 @@ def eq(a, b):
     return tlang.eq(a, b)
 
 
+@torch_function(torch.fmod)
+def fmod(a, b):
+    return tlang.fmod(a, b)
+
+
 @torch_function(torch.ge)
 def ge(a, b):
     return tlang.ge(a, b)
@@ -827,6 +839,17 @@ def nextafter(a, b):
 @torch_function(torch.pow)
 def pow(a, b):
     return tlang.pow(a, b)
+
+
+# A composite operation that matches PyTorch, Jax, and Numpy remainder
+# torch.remainder(a, b) == a - a.div(b, rounding_mode="floor") * b
+@torch_function(torch.remainder)
+def remainder(a, b):
+    mod = tlang.fmod(a, b)
+    lhs = tlang.bitwise_not(mod == 0)
+    rhs = tlang.bitwise_not((b < 0) == (mod < 0))
+    mask = tlang.bitwise_and(lhs, rhs)
+    return tlang.where(mask, add(mod, b), mod)
 
 
 @torch_function(torch.sub)

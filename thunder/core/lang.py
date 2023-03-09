@@ -77,11 +77,13 @@ __all__ = [
     "atan2",
     "bitwise_and",
     "eq",
+    "fmod",
     "ge",
     "lt",
     "mul",
     "nextafter",
     "pow",
+    "remainder",
     "sub",
     "true_divide",
     # Elementwise ternary operations
@@ -640,6 +642,10 @@ def eq(a, b):
     return _elementwise_binary_helper(prims.eq, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
 
 
+def fmod(a, b):
+    return _elementwise_binary_helper(prims.fmod, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+
+
 def ge(a, b):
     return _elementwise_binary_helper(prims.ge, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
 
@@ -658,6 +664,10 @@ def nextafter(a, b):
 
 def pow(a, b):
     return _elementwise_binary_helper(prims.pow, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG, a, b)
+
+
+def remainder(a, b):
+    return _elementwise_binary_helper(prims.remainder, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
 
 
 def sub(a, b):

@@ -88,11 +88,13 @@ __all__ = [
     "bitwise_and",
     "div",
     "eq",
+    "fmod",
     "ge",
     "lt",
     "mul",
     "nextafter",
     "pow",
+    "remainder",
     "sub",
     # Elementwise ternary prims
     "where",
@@ -171,11 +173,13 @@ class Ops(Enum):
     BITWISE_AND = auto()
     DIV = auto()
     EQ = auto()
+    FMOD = auto()
     GE = auto()
     LT = auto()
     MUL = auto()
     NEXTAFTER = auto()
     POW = auto()
+    REMAINDER = auto()
     SUB = auto()
     # Elementwise ternary prims
     WHERE = auto()
@@ -935,7 +939,6 @@ trunc = make_prim(
 # "eq",
 # "fmax",
 # "fmin",
-# "fmod",
 # "gcd",
 # "ge",
 # "gt",
@@ -957,7 +960,6 @@ trunc = make_prim(
 # "bitwise_or",
 # "bitwise_xor",
 # "eq",
-# "fmod",
 # "ge",
 # "gt",
 # "le",
@@ -1078,6 +1080,22 @@ eq = make_prim(
     ),
 )
 
+# Equivalent to C++'s std::fmod and Python's math.fmod
+#
+# Computes x - n*y, where n is trunc(x/y).
+#
+# The computed value has the same sign as x and is less than y in magnitude.
+fmod = make_prim(
+    Ops.FMOD,
+    "fmod",
+    partial(
+        _elementwise_binary_meta,
+        name="fmod",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=math.fmod,
+    ),
+)
+
 ge = make_prim(
     Ops.GE,
     "ge",
@@ -1130,6 +1148,22 @@ pow = make_prim(
         name="pow",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=operator.pow,
+    ),
+)
+
+# Equivalent to C++'s std::remainder and Python's math.remainder.
+#
+# Computes x - n*y, where n is round_to_nearest_even(x/y).
+#
+# Note that the sign of the result and x may be different.
+remainder = make_prim(
+    Ops.REMAINDER,
+    "remainder",
+    partial(
+        _elementwise_binary_meta,
+        name="remainder",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=math.remainder,
     ),
 )
 

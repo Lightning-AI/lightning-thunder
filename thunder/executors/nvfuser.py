@@ -137,6 +137,20 @@ def _convert_element_type_translation(fd):
     return _fn
 
 
+# A composite implementation of c++ std::remainder and Python math.remainder.
+#
+# It is distinct from nvfuser's internal remainder definition that uses floor
+# rounding mode to match PyTorch, Jax, and Numpy remainder.
+def _remainder_wrapper(fd):
+    def _fn(a, b):
+        c = fd.ops.div(a, b)
+        d = fd.ops.round(c)
+        e = fd.ops.mul(d, b)
+        return fd.ops.sub(a, e)
+
+    return _fn
+
+
 # NOTE: this function is needed because currently nvfuser has a different signature from torch op
 #       more context: https://github.com/csarofeen/pytorch/pull/2449#issuecomment-1427491532
 def _index_select_wrapper(fd):
@@ -336,11 +350,13 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.BITWISE_AND: "bitwise_and",
     prims.Ops.DIV: "div",
     prims.Ops.EQ: "eq",
+    prims.Ops.FMOD: "fmod",
     prims.Ops.GE: "ge",
     prims.Ops.LT: "lt",
     prims.Ops.MUL: "mul",
     prims.Ops.NEXTAFTER: "nextafter",
     prims.Ops.POW: "pow",
+    prims.Ops.REMAINDER: _remainder_wrapper,
     prims.Ops.SUB: "sub",
     # Elementwise ternary prims
     prims.Ops.WHERE: "where",
@@ -396,11 +412,13 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.BITWISE_AND: _elementwise_preprocessor,
     prims.Ops.DIV: _elementwise_preprocessor,
     prims.Ops.EQ: _elementwise_preprocessor,
+    prims.Ops.FMOD: _elementwise_preprocessor,
     prims.Ops.GE: _elementwise_preprocessor,
     prims.Ops.LT: _elementwise_preprocessor,
     prims.Ops.MUL: _elementwise_preprocessor,
     prims.Ops.NEXTAFTER: _elementwise_preprocessor,
     prims.Ops.POW: _elementwise_preprocessor,
+    prims.Ops.REMAINDER: _elementwise_preprocessor,
     prims.Ops.SUB: _elementwise_preprocessor,
     # Elementwise ternary prims
     prims.Ops.WHERE: _elementwise_preprocessor,
