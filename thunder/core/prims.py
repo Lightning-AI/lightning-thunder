@@ -71,6 +71,7 @@ __all__ = [
     "log1P",
     "log2",
     "ndtri",
+    "neg",
     "reciprocal",
     "round",
     "rsqrt",
@@ -152,6 +153,7 @@ class Ops(Enum):
     LOG10 = auto()
     LOG1P = auto()
     LOG2 = auto()
+    NEG = auto()
     NDTRI = auto()
     RECIPROCAL = auto()
     ROUND = auto()
@@ -435,7 +437,6 @@ def _prim_type_promotion(typ, type_promotion_kind):
 # "erfcx",
 # "fill",
 # "imag",
-# "neg",
 # "real",
 # "sign",
 # "signbit",
@@ -444,7 +445,6 @@ def _prim_type_promotion(typ, type_promotion_kind):
 
 # nvFuser unary ops (from https://github.com/pytorch/pytorch/blob/master/torch/_prims/nvfuser_prims.py)
 # "imag",
-# "neg",
 # "real",
 # "sign",
 # "sinh",
@@ -868,6 +868,17 @@ log2 = make_prim(
         name="log2",
         type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_real_complex_number_handler(math.log2, lambda x: cmath.log(x, 2)),
+    ),
+)
+
+neg = make_prim(
+    Ops.NEG,
+    "neg",
+    partial(
+        _elementwise_unary_meta,
+        name="neg",
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
+        number_handler=lambda x: -x,
     ),
 )
 

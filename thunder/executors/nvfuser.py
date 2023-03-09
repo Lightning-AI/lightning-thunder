@@ -325,6 +325,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.LOG10: "log10",
     prims.Ops.LOG1P: "log1p",
     prims.Ops.LOG2: "log2",
+    prims.Ops.NEG: "neg",
     # prims.Ops.NDTRI: "ndtri",  # TODO: add ndtri (normcdfinv) to nvFuser
     prims.Ops.RECIPROCAL: "reciprocal",
     prims.Ops.ROUND: "round",
@@ -388,6 +389,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.TRUNC: _elementwise_preprocessor,
     prims.Ops.RECIPROCAL: _elementwise_preprocessor,
     prims.Ops.ROUND: _elementwise_preprocessor,
+    prims.Ops.NEG: _elementwise_preprocessor,
     # Elementwise binary prims
     prims.Ops.ADD: _elementwise_preprocessor,
     prims.Ops.ATAN2: _elementwise_preprocessor,

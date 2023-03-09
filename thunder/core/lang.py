@@ -60,6 +60,7 @@ __all__ = [
     "log10",
     "log1p",
     "log2",
+    "neg",
     "ndtri",
     "reciprocal",
     "round",
@@ -561,6 +562,10 @@ def log1p(a):
 
 def log2(a):
     return _elementwise_unary_helper(prims.log2, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def neg(a):
+    return _elementwise_unary_helper(prims.neg, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
 
 
 def ndtri(a):

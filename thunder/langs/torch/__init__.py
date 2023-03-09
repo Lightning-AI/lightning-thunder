@@ -306,6 +306,10 @@ class TorchLangCtx:
     def mul(self, a, b):
         return tlang.mul(a, b)
 
+    # negation
+    def neg(self, a):
+        return tlang.neg(a)
+
     # next floating point value from a in the direction of b
     def nextafter(self, a, b):
         return tlang.nextafter(a, b)
@@ -808,6 +812,11 @@ def lt(a, b):
 @torch_function(torch.mul)
 def mul(a, b):
     return tlang.mul(a, b)
+
+
+@torch_function(torch.neg)
+def neg(a):
+    return tlang.neg(a)
 
 
 @torch_function(torch.nextafter)

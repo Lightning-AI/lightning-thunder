@@ -211,6 +211,7 @@ ops_to_torch_ops_map = {
     prims.Ops.LOG10: _elementwise_unary_torch(torch.log10),
     prims.Ops.LOG1P: _elementwise_unary_torch(torch.log1p),
     prims.Ops.LOG2: _elementwise_unary_torch(torch.log2),
+    prims.Ops.NEG: _elementwise_unary_torch(torch.neg),
     prims.Ops.NDTRI: _elementwise_unary_torch(torch.special.ndtri),
     prims.Ops.RECIPROCAL: _elementwise_unary_torch(torch.reciprocal),
     prims.Ops.ROUND: _elementwise_unary_torch(torch.round),

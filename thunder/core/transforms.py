@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Sequence, Tuple, Union
 
 from thunder import make_trace, make_traced
 from thunder.core import prims
-from thunder.core.lang import full, full_like
+from thunder.core.lang import full, full_like, unsqueeze
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import detached_trace, get_trace, Trace, Variable
@@ -572,11 +572,26 @@ def add_jvp(a: JVPDual, b: JVPDual):
     return JVPDual(x + y, xd + yd)
 
 
+def broadcast_in_dim_jvp(a: JVPDual, shape: Tuple[JVPDual, ...], broadcast_dimensions: Tuple[JVPDual, ...]) -> JVPDual:
+    x, xd = a
+    # TODO: shape and broadcast_dimensions should be tuples of ints
+    # but for now it's a tuple of JVPDuals
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/181
+    if len(shape) > 0 and isinstance(shape[0], JVPDual):
+        shape, _ = safe_zip(*shape)
+    if len(broadcast_dimensions) > 0 and isinstance(broadcast_dimensions[0], JVPDual):
+        broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
+    return JVPDual(
+        prims.broadcast_in_dim(x, shape, broadcast_dimensions), prims.broadcast_in_dim(xd, shape, broadcast_dimensions)
+    )
+
+
 jvp_impls: Dict[prims.Symbol, Callable] = dict()
 
 jvp_impls[prims.Ops.SIN] = sin_jvp
 jvp_impls[prims.Ops.MUL] = mul_jvp
 jvp_impls[prims.Ops.ADD] = add_jvp
+jvp_impls[prims.Ops.BROADCAST_IN_DIM] = broadcast_in_dim_jvp
 
 
 def jvp_symbol_mapper(symbol: prims.Symbol):
@@ -797,7 +812,25 @@ vjp_impls = {
     prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
     prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x**2)),
     prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
+    prims.Ops.DIV: lambda x, y: (prims.div(x, y), (x, y,), lambda x, y, g: (g / y, -g * x / (y**2))),
 }
+
+
+def register_vjp(op):
+    """Decorator to register a VJP implementation for a symbol.
+
+    Args:
+        op (Ops): Symbol for which to register the VJP implementation.
+
+    Returns:
+        Callable: Decorator function.
+    """
+
+    def decorator(func):
+        vjp_impls[op] = func
+        return func
+
+    return decorator
 
 
 def restore_reduced_dims(x, reduced_dims, original_shape):
@@ -817,6 +850,7 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
     return tlang.expand(unsqueezed, original_shape)
 
 
+@register_vjp(prims.Ops.SUM)
 def sum_vjp(x, dims, output_dtype=None):
     """VJP of the sum operation.
 
@@ -841,7 +875,40 @@ def sum_vjp(x, dims, output_dtype=None):
     return VJPTriple(primal, residuals, pullback)
 
 
-vjp_impls[prims.Ops.SUM] = sum_vjp
+@register_vjp(prims.Ops.EXP)
+def exp_vjp(x):
+    """VJP of the exp operation.
+
+    Args:
+        x (Variable): Tensor to be exponentiated.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.exp(x)
+    residuals = (primal,)
+
+    def pullback(result, g):
+        return g * result
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+@register_vjp(prims.Ops.BROADCAST_IN_DIM)
+def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPTriple:
+    primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
+    residuals = (a, shape, broadcast_dimensions)
+
+    def pullback(a, shape, broadcast_dimensions, g):
+        unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
+        bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
+        reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
+        g = prims.sum(g, reduce_dims)
+        g = unsqueeze(g, unit_dims)
+        # One return per positional argument of prims.broadcast_in_dim
+        return g, None, None
+
+    return VJPTriple(primal, residuals, pullback)
 
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):

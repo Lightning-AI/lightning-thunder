@@ -1090,6 +1090,14 @@ log2_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(log2_opinfo)
 
+neg_opinfo = OpInfo(
+    tlang.neg,
+    dtypes=set(datatypes.all_dtypes) - set(datatypes.boolean_dtypes),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.neg),
+)
+elementwise_unary_ops.append(neg_opinfo)
+
 ndtri_opinfo = OpInfo(
     tlang.ndtri,
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
@@ -1205,13 +1213,13 @@ elementwise_binary_ops = []
 
 # TODO: extend this generator
 def elementwise_binary_generator(op, device, dtype, requires_grad, **kwargs):
-    a = make_tensor((4, 4), device=device, dtype=dtype)
-    b = make_tensor((4, 4), device=device, dtype=dtype)
+    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad)
+    b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad)
 
     yield SampleInput(a, b)
 
     # Tests broadcasting
-    c = make_tensor((4, 1), device=device, dtype=dtype)
+    c = make_tensor((4, 1), device=device, dtype=dtype, requires_grad=requires_grad)
     yield SampleInput(a, c)
 
 
@@ -1220,6 +1228,19 @@ add_opinfo = OpInfo(
     tlang.add,
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.add,
+    test_directives=(
+        # See https://github.com/csarofeen/pytorch/issues/2549
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_jvp_correctness",
+            executors=("nvFuser",),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        )
+    ),
 )
 elementwise_binary_ops.append(add_opinfo)
 
@@ -1261,6 +1282,19 @@ mul_opinfo = OpInfo(
     tlang.mul,
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.mul,
+    test_directives=(
+        # See https://github.com/csarofeen/pytorch/issues/2549
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_jvp_correctness",
+            executors=("nvFuser",),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 elementwise_binary_ops.append(mul_opinfo)
 
@@ -1323,6 +1357,29 @@ sub_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(sub_opinfo)
 
+true_divide_opinfo = OpInfo(
+    tlang.true_divide,
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.true_divide,
+    test_directives=(
+        # Torch doesn't support complex half
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+            devicetypes=("cpu",),
+        ),
+        # torch doesn't support bool true_divide
+        DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8,)),
+        # See https://github.com/csarofeen/pytorch/issues/2549
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        )
+    ),
+)
+elementwise_binary_ops.append(true_divide_opinfo)
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
@@ -1456,6 +1513,19 @@ broadcast_in_dim_opinfo = OpInfo(
     sample_input_generator=broadcast_in_dim_sample_generator,
     error_input_generator=broadcast_in_dim_error_generator,
     jax_reference=jax.lax.broadcast_in_dim if JAX_AVAILABLE else None,
+    test_directives=(
+        # See https://github.com/csarofeen/pytorch/issues/2549
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_jvp_correctness",
+            executors=("nvFuser",),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        )
+    ),
 )
 shape_ops.append(broadcast_in_dim_opinfo)
 
@@ -1852,6 +1922,19 @@ unsqueeze_opinfo = OpInfo(
     tlang.unsqueeze,
     sample_input_generator=unsqueeze_sample_generator,
     jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
+    test_directives=(
+        # See https://github.com/csarofeen/pytorch/issues/2549
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_jvp_correctness",
+            executors=("nvFuser",),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 shape_ops.append(unsqueeze_opinfo)
 
@@ -1984,11 +2067,6 @@ sum_opinfo = OpInfo(
             pytest.mark.skip,  # xfail doesn't work here
             "test_vjp_correctness",
             executors=("nvFuser",),
-        ),
-        # NotImplementedError: VJP for Ops.BROADCAST_IN_DIM is not implemented
-        DecorateInfo(
-            pytest.mark.xfail(strict=True, raises=NotImplementedError),
-            "test_vjp_correctness",
         ),
     ),
 )

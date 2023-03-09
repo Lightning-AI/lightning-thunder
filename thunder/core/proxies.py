@@ -300,6 +300,11 @@ class TensorProxy(Proxy):
         ctx = get_language_context()
         return ctx.sub(other, self)
 
+    # negation
+    def __neg__(self):
+        ctx = get_language_context()
+        return ctx.neg(self)
+
     # /
     def __truediv__(self, other):
         ctx = get_language_context()
