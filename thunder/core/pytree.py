@@ -20,7 +20,21 @@ To improve the performance we can move parts of the implementation to C++.
 import functools
 from collections import namedtuple, OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, cast, Dict, List, NamedTuple, Optional, overload, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    cast,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    overload,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 T = TypeVar("T")
 S = TypeVar("S")
@@ -178,25 +192,46 @@ def tree_flatten(pytree: PyTree) -> Tuple[List[Any], TreeSpec]:
     return result, TreeSpec(node_type, context, children_specs)
 
 
-# def tree_flatten_only(pytree: PyTree, cls: Type) -> Tuple[List[Any], TreeSpec]:
-#     if _is_leaf(pytree):
-#         return [pytree], LeafSpec()
-#
-#     node_type = _get_node_type(pytree)
-#     flatten_fn = SUPPORTED_NODES[node_type].flatten_fn
-#     child_pytrees, context = flatten_fn(pytree)
-#
-#     # Recursively flatten the children
-#     result: List[Any] = []
-#     children_specs: List["TreeSpec"] = []
-#     for child in child_pytrees:
-#         flat, child_spec = tree_flatten(child)
-#         result += flat
-#         children_specs.append(child_spec)
-#
-#     return result, TreeSpec(node_type, context, children_specs)
-#
-#
+def tree_flatten_only(pytree: PyTree, fn: Any) -> Tuple[List[Any], TreeSpec]:
+    """Flattens a pytree into a list of values and a TreeSpec that can be used to reconstruct the pytree.
+    Only include leaves that satisfy the predicate fn.
+    """
+    if _is_leaf(pytree):
+        return [pytree], LeafSpec()
+
+    node_type = _get_node_type(pytree)
+    flatten_fn = SUPPORTED_NODES[node_type].flatten_fn
+    child_pytrees, context = flatten_fn(pytree)
+
+    assert isinstance(context, Sequence) or context is None
+
+    # Recursively flatten the children, only include in flat and
+    # spec if predicate fn is True
+    result: List[Any] = []
+    children_specs: List["TreeSpec"] = []
+
+    out_context = [] if context is not None else None
+    context_ = context if context is not None else [None] * len(child_pytrees)
+    for child, ctx in zip(child_pytrees, context_):
+        flat, child_spec = tree_flatten_only(child, fn)
+        if type(child_spec) == LeafSpec:
+            if fn(flat[0]):
+                result += flat
+                children_specs.append(child_spec)
+                if context is not None:
+                    out_context.append(ctx)
+        else:
+            filtered = [(f, s) for f, s in zip(flat, child_spec.children_specs) if fn(f)]
+            if filtered:
+                result += [f for f, _ in filtered]
+                child_spec = TreeSpec(child_spec.type, child_spec.context, [s for _, s in filtered])
+                children_specs.append(child_spec)
+                if context is not None:
+                    out_context.append(ctx)
+
+    return result, TreeSpec(node_type, out_context, children_specs)
+
+
 def tree_unflatten(values: List[Any], spec: TreeSpec) -> PyTree:
     """Given a list of values and a TreeSpec, builds a pytree.
 

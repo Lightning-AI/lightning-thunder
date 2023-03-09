@@ -13,6 +13,7 @@ import thunder.core.lang as tlang
 import thunder.core.proxies as proxies
 import thunder.langs.torch as ttorch
 import thunder.core.codeutils as codeutils
+from thunder.core.pytree import tree_flatten_only, tree_unflatten
 from thunder.tests.framework import Executor, executors, NOTHING, nvFuser, requiresCUDA, TorchEx
 
 
@@ -1301,3 +1302,34 @@ def test_codeutils_siginfo():
     assert siginfo.varargs == ("argles", (7, "a", (1, 2)))
     assert siginfo.kwargs == {"c": 2, "d": 2, "e": 9}
     assert siginfo.varkwargs == ("vargles", {"f": 1, "g": o})
+
+
+def test_tree_flatten_only():
+    tree = [1, "a"]
+    flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
+    tree_only = tree_unflatten(flat, spec)
+
+    assert tree_only == ["a"]
+
+    flat[0] = "b"
+    tree_only = tree_unflatten(flat, spec)
+
+    assert tree_only == ["b"]
+
+    tree = [1, 2]
+    flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
+    tree_only = tree_unflatten(flat, spec)
+
+    assert tree_only == []
+
+    tree = [1, {"a": 1, "b": "two", "c": {"d": 5}}]
+    flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
+    tree_only = tree_unflatten(flat, spec)
+
+    assert tree_only == [{"b": "two"}]
+
+    tree = [1, {"a": 1, "b": 2, "c": {"d": "five"}}]
+    flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
+    tree_only = tree_unflatten(flat, spec)
+
+    assert tree_only == [{"c": {"d": "five"}}]

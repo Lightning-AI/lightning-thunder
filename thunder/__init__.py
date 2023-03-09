@@ -189,7 +189,9 @@ def _construct_trace(fn, trace, proxyargs, proxykwargs):
     return trace
 
 
-def make_trace(fn: Callable, executor: Optional[str] = None, language_ctx=langs.torch):
+def make_trace(
+    fn: Callable, executor: Optional[str] = None, language_ctx=langs.torch, *, _preprocess=False
+) -> Callable:
     """Converts a callable into a callable that will be traced and the trace returned.
 
     Args:
@@ -210,16 +212,21 @@ def make_trace(fn: Callable, executor: Optional[str] = None, language_ctx=langs.
     ex = _get_executor(executor)
     langctx = language_ctx.ctx()
 
+    if _preprocess:
+        tfn = preprocess(fn, is_module=isinstance(fn, langctx.module_cls))
+    else:
+        tfn = fn
+
     @wraps(fn)
-    def wrapper(*args, **kwargs):
+    def _fn(*args, **kwargs):
         try:
             # Sets the proper tracing context
             trace_token = new_trace()
             executor_token = set_executor_context(ex)
             lang_token = set_language_context(langctx)
             trace = get_trace()
-            proxyargs, proxykwargs = _make_proxies(fn, trace, langctx, *args, **kwargs)
-            trace = _construct_trace(fn, trace, proxyargs, proxykwargs)
+            proxyargs, proxykwargs = _make_proxies(tfn, trace, langctx, *args, **kwargs)
+            trace = _construct_trace(tfn, trace, proxyargs, proxykwargs)
         finally:
             # Resets the tracing context
             reset_trace(trace_token)
@@ -228,7 +235,10 @@ def make_trace(fn: Callable, executor: Optional[str] = None, language_ctx=langs.
                 reset_executor_context(executor_token)
         return trace
 
-    return wrapper
+    if isinstance(fn, langctx.module_cls):
+        _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names)
+
+    return _fn
 
 
 # Preprocesses function
