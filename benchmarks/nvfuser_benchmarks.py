@@ -712,8 +712,8 @@ nanogpt_info = (
     ),
     BenchmarkArg(
         name="inshape",
-        description="The shape of the input. Default is (8, 64).",
-        default=(8, 64),
+        description="The shape of the input. Default is (32, 128).",
+        default=(32, 128),
     ),
     BenchmarkArg(
         name="device",
