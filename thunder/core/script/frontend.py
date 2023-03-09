@@ -19,7 +19,14 @@ from thunder.core.script.graph import (
     PhiValue,
     Value,
 )
-from thunder.core.script.python_ir_data import compute_jump, jump_instructions, make_jump_absolute, return_instructions, stack_effect_detail, unconditional_jump_names
+from thunder.core.script.python_ir_data import (
+    compute_jump,
+    jump_instructions,
+    make_jump_absolute,
+    return_instructions,
+    stack_effect_detail,
+    unconditional_jump_names,
+)
 from thunder.core.utils import OrderedSet
 
 
@@ -44,10 +51,7 @@ def parse_bytecode(method: Callable) -> Graph:
     # Drop the group index, copy from the groupby iter, and unzip `enumerate`.
     groups = (zip(*tuple(i)) for _, i in groups)
 
-    blocks = {
-        start: (instructions, Block(is_ssa=False))
-        for (start, *_), instructions in groups
-    }
+    blocks = {start: (instructions, Block(is_ssa=False)) for (start, *_), instructions in groups}
 
     # The first block is special because it must be initialized with a `None`
     # jump source. (Effectively indicating "start of function".)
@@ -86,7 +90,7 @@ def parse_bytecode(method: Callable) -> Graph:
                 node.jump_targets.append((stack_effect, destination_block))
 
         if node.i.opcode in jump_instructions:
-            is_conditional_jump = (node.i.opname not in unconditional_jump_names)
+            is_conditional_jump = node.i.opname not in unconditional_jump_names
             maybe_add_jump(end + 1 if is_conditional_jump else None, False)
             maybe_add_jump(compute_jump(node.i, end), True)
 

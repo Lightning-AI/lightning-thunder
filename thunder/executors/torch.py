@@ -459,7 +459,8 @@ class torchCtx:
         return None
 
     # TODO: maybe return some actual profiling information
-    def fuse(self, trace, *, profile_info=False):
+    # TODO: don't ignore additional kwargs, like mode
+    def fuse(self, trace, *, profile_info=False, **kwargs):
         if profile_info:
             return _fuse(trace), None
         return _fuse(trace)

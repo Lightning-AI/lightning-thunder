@@ -732,7 +732,19 @@ def _fuse(
     trace,
     *,
     profile_info=False,
+    mode=None,
+    args=None,
+    kwargs=None,
+    static_input_names=[],
 ):
+    static_input_names = [] if static_input_names is None else static_input_names
+
+    # TODO: improve name canonicalization
+    def _canonicalize_variable_name(x):
+        return x.replace(".", "_").replace("[", "").replace("]", "")
+
+    static_input_names = [_canonicalize_variable_name(x) for x in static_input_names]
+
     # Separates the trace into parts to execute with nvFuser, and parts to execute with PyTorch
     # TODO: consider where this pass should live in the future
     # TODO: consider reordering operations cleverly
@@ -813,6 +825,8 @@ def _fuse(
     proxy_args = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, trace.args)
     proxy_kwargs = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, trace.kwargs)
     func = partial(eval_trace, trace)
+    # TODO: need to be more careful about preserving names here
+    original_trace = trace
     trace = make_trace(lower_for_nvfuser(func), executor="nvfuser")(*proxy_args, **proxy_kwargs)
 
     # Processes input proxies
@@ -892,15 +906,40 @@ def _fuse(
     cstr += f"\n{tab}# Extracts inputs"
     cstr += f"\n{tab}flat_args, _ = tree_flatten(args)"
     cstr += f"\n{tab}flat_kwargs, _ = tree_flatten(kwargs)"
+
+    inner_signature_arg_names = []
+    bound_numbers = {}
     for idx, pinp in enumerate(flat_positional_inputs):
         if isinstance(pinp, Variable):
             cstr += f"\n{tab}{pinp.name} = flat_args[{idx}]"
+            if isinstance(pinp.proxy, TensorProxy):
+                inner_signature_arg_names.append(pinp.name)
+            if isinstance(pinp.proxy, NumberProxy):
+                if mode == "cudagraphs":
+                    bound_numbers[pinp.name] = pinp.proxy.value
+                else:
+                    inner_signature_arg_names.append(pinp.name)
     for idx, kwinp in enumerate(flat_kwarg_inputs):
         if isinstance(kwinp, Variable):
             cstr += f"\n{tab}{kwinp.name} = flat_kwargs[{idx}]"
+            if isinstance(kwinp.proxy, TensorProxy):
+                inner_signature_arg_names.append(kwinp.name)
+            if isinstance(kwinp.proxy, NumberProxy):
+                if mode == "cudagraphs":
+                    bound_numbers[kwinp.name] = kwinp.proxy.value
+                else:
+                    inner_signature_arg_names.append(kwinp.name)
+
+    # Constructs inner fusion
+    if_arg_str = ", ".join(inner_signature_arg_names)
+    ifstr = f"def _inner_fusion({if_arg_str}):"
+
+    # Binds numbers (when using CUDA graphs)
+    for k, v in bound_numbers.items():
+        ifstr += f"\n{tab}{k} = {v}"
 
     # Calls fusion(s)
-    cstr += f"\n{tab}# Invokes fusion(s)"
+    ifstr += f"\n{tab}# Invokes fusion(s)"
 
     for idx, region in enumerate(regions):
         # Skips regions that do nothing
@@ -909,12 +948,123 @@ def _fuse(
 
         arg_str = ", ".join(tuple(_extract_name(inp) for inp in region.inputs))
         result_str = ", ".join(tuple(_extract_name(out) for out in region.outputs))
-        cstr += f"\n{tab}{result_str} = _fusion{idx}({arg_str})"
+        ifstr += f"\n{tab}{result_str} = _fusion{idx}({arg_str})"
+
+    # Returns region outputs which are also outputs of the entire fusion
+    if_outputs = []
+    for out in flat_outputs:
+        for region in regions:
+            if out in region.outputs:
+                if_outputs.append(out)
+    if_output_str = ", ".join(tuple(_extract_name(out) for out in if_outputs))
+    ifstr += f"\n{tab}return {if_output_str}"
+
+    if len(if_outputs) > 0:
+        cstr += f"\n{tab}{if_output_str} = _inner_fusion({if_arg_str})"
 
     # Constructs return statement
     output_str = ", ".join(tuple(_extract_name(out) for out in flat_outputs))
     cstr += f"\n{tab}# Assembles output"
     cstr += f"\n{tab}return tree_unflatten(({output_str},), output_structure)"
+
+    if len(if_outputs) > 0:
+        cstr = f"{ifstr}\n{cstr}"
+
+    if mode == "cudagraphs":
+        flat_args, _ = tree_flatten(args)
+        flat_kwargs, _ = tree_flatten(kwargs)
+        flat_original_positional_inputs, _ = tree_flatten(original_trace.args)
+        flat_original_kwarg_inputs, _ = tree_flatten(original_trace.kwargs)
+        if_args = []
+        for arg, parg in zip(flat_args, flat_original_positional_inputs):
+            if isinstance(parg, Variable) and isinstance(parg.proxy, TensorProxy):
+                if_args.append((arg, parg))
+        for kwarg, pkwarg in zip(flat_kwargs, flat_original_kwarg_inputs):
+            if isinstance(pkwarg, Variable) and isinstance(pkwarg.proxy, TensorProxy):
+                if_args.append((kwarg, pkwarg))
+
+        if_code = compile(ifstr, "nvfuser.gen", mode="exec")
+        if_ctx = {}
+
+        for idx, region in enumerate(regions):
+            if_ctx[f"_fusion{idx}"] = region.fusion
+
+        exec(if_code, if_ctx)
+        if_callable = if_ctx["_inner_fusion"]
+        actual_args = [x[0] for x in if_args]
+
+        # Warmup
+        # TODO: stream syncs probably not necessary
+        torch.cuda.synchronize()
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            if_callable(*actual_args)
+        stream.synchronize()
+        torch.cuda.current_stream().wait_stream(stream)
+        torch.cuda.synchronize()
+
+        # Records the graph
+        static_outputs = None
+        # TODO: improve code for handling params we assume to be static (from modules)
+        static_inputs = []
+        for arg, proxy in if_args:
+            if proxy.name in static_input_names:
+                static_inputs.append(arg)
+            else:
+                static_inputs.append(torch.empty_like(arg))
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            static_outputs = if_callable(*static_inputs)
+
+        # TODO: refactor cstr construction to avoid this redundancy
+        cstr = f"def fusion(*args, **kwargs):"
+        cstr += f"\n{tab}# Extracts inputs"
+        cstr += f"\n{tab}flat_args, _ = tree_flatten(args)"
+        cstr += f"\n{tab}flat_kwargs, _ = tree_flatten(kwargs)"
+
+        # TODO: this should be smarter about extracting variables -- currently that's done to support
+        #   the packing later
+        static_counter = 0
+        for idx, (pinp, poriginal) in enumerate(zip(flat_positional_inputs, flat_original_positional_inputs)):
+            if isinstance(pinp, Variable):
+                cstr += f"\n{tab}{pinp.name} = flat_args[{idx}]"
+                if isinstance(pinp.proxy, TensorProxy):
+                    if poriginal.name not in static_input_names:
+                        cstr += f"\n{tab}static_inputs[{static_counter}].copy_(flat_args[{idx}])"
+                    static_counter += 1
+        for idx, (kwinp, kworiginal) in enumerate(zip(flat_kwarg_inputs, flat_original_kwarg_inputs)):
+            if isinstance(kwinp, Variable):
+                cstr += f"\n{tab}{kwinp.name} = flat_kwargs[{idx}]"
+                if isinstance(kwinp.proxy, TensorProxy):
+                    if kworiginal.name not in static_input_names:
+                        cstr += f"\n{tab}static_inputs[{static_counter}].copy_(flat_kwargs[{idx}])"
+                    static_counter += 1
+
+        cstr += f"\n{tab}graph.replay()"
+
+        cstr += f"\n{tab}# Assembles output"
+        cstr += f"\n{tab}{if_output_str} = static_outputs"
+        cstr += f"\n{tab}return tree_unflatten(({output_str},), output_structure)"
+
+        ctx = {
+            "tree_flatten": tree_flatten,
+            "tree_unflatten": tree_unflatten,
+            "output_structure": output_structure,
+            "graph": graph,
+            "static_inputs": static_inputs,
+            "static_outputs": static_outputs,
+        }
+
+        # Compiles the function
+        code = compile(cstr, "nvfuser.gen", mode="exec")
+        exec(code, ctx)
+        fusion = ctx["fusion"]
+
+        if profile_info:
+            return fusion, regions
+
+        return fusion
 
     # Creates context
     ctx = {
@@ -955,5 +1105,11 @@ class nvFuserCtx:
         trace,
         *,
         profile_info=False,
+        mode=None,
+        args=None,
+        kwargs=None,
+        static_inputs=None,
     ):
-        return _fuse(trace, profile_info=profile_info)
+        return _fuse(
+            trace, profile_info=profile_info, mode=mode, args=args, kwargs=kwargs, static_input_names=static_inputs
+        )

@@ -2064,7 +2064,7 @@ tensor_creation_ops.append(full_opinfo)
 def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
     cases = (
         # (),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
-        (1, ),
+        (1,),
         (4, 4),
         # (2, 0, 3),  # FIXME: nvFuser does not yet support shapes with 0-sized dimensions
         (8, 1, 6),

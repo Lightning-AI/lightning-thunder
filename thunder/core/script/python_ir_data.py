@@ -189,6 +189,7 @@ def stack_effect_detail(opname: str, oparg: Optional[int], *, jump: bool = False
 
 jump_instructions = set(dis.hasjabs) | set(dis.hasjrel)
 
+
 def make_jump_absolute(arg: int):
     return dis.Instruction(
         opname="JUMP_ABSOLUTE",
@@ -200,6 +201,7 @@ def make_jump_absolute(arg: int):
         starts_line=None,
         is_jump_target=False,
     )
+
 
 def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:
     if instruction.opcode in dis.hasjabs:

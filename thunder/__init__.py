@@ -248,6 +248,8 @@ def preprocess(fn, is_module):
     thunder_fn._gr = gr
     if is_module:
         thunder_fn._additional_param_names = additional_param_names
+    else:
+        thunder_fn._additional_param_names = None
     return thunder_fn
 
 
@@ -289,6 +291,7 @@ def make_traced(
     executor: Optional[str] = None,
     language_ctx=langs.torch,
     *,
+    mode=None,
     _info=False,
     _return_fusion=False,
     _preprocess=False,
@@ -344,9 +347,22 @@ def make_traced(
             profile_info = None
             fusion = None
             if _profile_info:
-                fusion, profile_info = ex.fuse(trace, profile_info=_profile_info)
+                fusion, profile_info = ex.fuse(
+                    trace,
+                    profile_info=_profile_info,
+                    mode=mode,
+                    args=args,
+                    kwargs=kwargs,
+                    static_inputs=tfn._additional_param_names if hasattr(tfn, "_additional_param_names") else None,
+                )
             else:
-                fusion = ex.fuse(trace)
+                fusion = ex.fuse(
+                    trace,
+                    mode=mode,
+                    args=args,
+                    kwargs=kwargs,
+                    static_inputs=tfn._additional_param_names if hasattr(tfn, "_additional_param_names") else None,
+                )
             translation_end = time.time_ns()
 
             invocation_start = time.time_ns()

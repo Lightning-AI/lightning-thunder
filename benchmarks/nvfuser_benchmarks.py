@@ -40,6 +40,7 @@ class BenchmarkArg:
 
 
 # Helper to easily modify thunder construction
+# TODO: let benchmark set mode as an option, or even compare multiple modes at once
 def thunder_compile(fn):
     return thunder.make_traced(
         fn,
@@ -49,6 +50,7 @@ def thunder_compile(fn):
         _return_fusion=True,
         _profile_info=True,
         _static=True,
+        mode="cudagraphs",
     )
 
 
@@ -59,6 +61,8 @@ def get_executors(torch_fn, thunder_fn, args):
             return (x, torch_fn)
         if x == "torch.compile":
             return (x, torch.compile(torch_fn))
+        if x == "torch.compile_cuda_graphs":
+            return (x, torch.compile(torch_fn, options={"triton.cudagraphs": True}))
         if x == "torch.compile_nvfuser_prims":
             return (x, torch.compile(torch_fn, backend="nvprims_nvfuser"))
         if x == "thunder+nvfuser" or x == "thunder" or x == "nvfuser":
@@ -1230,8 +1234,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-executors",
         "-x",
-        default="('torch-eager', 'torch.compile', 'torch.compile_nvfuser_prims', 'thunder+nvfuser')",
-        help="Specifies the executors to collect statistics for. Default is all executors, -x \"('torch-eager', 'torch.compile', 'torch.compile_nvfuser_prims', 'thunder+nvfuser')\"",
+        default="('torch-eager', 'torch.compile', 'torch.compile_cuda_graphs', 'torch.compile_nvfuser_prims', 'thunder+nvfuser')",
+        help="Specifies the executors to collect statistics for. Default is all executors, -x \"('torch-eager', 'torch.compile', 'torch.compile_cuda_graphs', 'torch.compile_nvfuser_prims', 'thunder+nvfuser')\"",
     )
     parser.add_argument(
         "-iters",
