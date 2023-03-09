@@ -138,7 +138,7 @@ def test_split_block():
         d = a + c
         return d
 
-    gr = thunder.core.script.frontend.acquire_method(foo, verbose=False)
+    gr = thunder.core.script.frontend.acquire_method(foo)
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.split_block(gr, gr.blocks[0], gr.blocks[0].nodes[1])
@@ -191,7 +191,7 @@ def test_inline_submodule():
             return self.l2(torch.tanh(self.l1(x)))
 
     m = MLP()
-    gr = thunder.core.script.frontend.acquire_method(m.forward, verbose=False)
+    gr = thunder.core.script.frontend.acquire_method(m.forward)
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)
 
@@ -220,7 +220,7 @@ def test_inline_submodule():
 def test_nanogpt_inlining_unrolling():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
-    gr = thunder.core.script.frontend.acquire_method(m.forward, verbose=False)
+    gr = thunder.core.script.frontend.acquire_method(m.forward)
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
@@ -303,7 +303,7 @@ def test_exception_source_line():
 def test_nanogpt_functionalization():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
-    gr = thunder.core.script.frontend.acquire_method(m.forward, verbose=False)
+    gr = thunder.core.script.frontend.acquire_method(m.forward)
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
@@ -364,7 +364,7 @@ def foo(a, c_fc_weight, c_proj_weight):
 @requiresCUDA
 def test_inlining_function_and_convert_to_thunder():
     def convert_to_thunder(fn):
-        gr = thunder.core.script.frontend.acquire_method(fn, verbose=False)
+        gr = thunder.core.script.frontend.acquire_method(fn)
 
         thunder.core.script.frontend.make_ssa(gr)
         thunder.core.script.frontend.make_single_return(gr)
@@ -488,7 +488,7 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
 
 
 def test_clone_graph():
-    gr = thunder.core.script.frontend.acquire_method(new_gelu, verbose=False)
+    gr = thunder.core.script.frontend.acquire_method(new_gelu)
 
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)

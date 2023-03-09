@@ -226,6 +226,9 @@ def linetable_writer(first_lineno: int) -> Tuple[List[int], Callable, Callable]:
 
 
 def generate_function(gr: "Graph") -> Callable:
+    orig_gr = gr
+    gr, _ = gr.clone()
+
     local_vars, lv_names, names, consts = undo_ssa(gr)
     assert len(local_vars) == len(lv_names)
 
@@ -361,7 +364,7 @@ def generate_function(gr: "Graph") -> Callable:
     # types.FunctionType(code, globals, name=None, argdefs=None, closure=None)
     func = types.FunctionType(c, {}, argdefs=tuple(gr.func_defaults))
     func.__kwdefaults__ = gr.func_kwdefaults
-    func._gr = gr
+    func._gr = orig_gr
 
     # simple cache hack
     mtime = None  # this signals that the cache should not be invalidated(!)

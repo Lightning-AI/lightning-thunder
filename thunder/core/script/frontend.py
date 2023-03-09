@@ -101,7 +101,9 @@ def parse_bytecode(method: Callable) -> Graph:
 
 
 def acquire_method(
-    method: Callable, module: Optional[object] = None, mro_klass: Optional[type] = None, verbose: bool = False
+    method: Callable,
+    module: Optional[object] = None,
+    mro_klass: Optional[type] = None,
 ) -> Graph:
     if isinstance(method, torch.nn.Module):
         method = method.forward
@@ -166,7 +168,7 @@ def acquire_method(
     return gr
 
 
-def make_ssa(gr: "Graph", verbose: bool = False) -> None:
+def make_ssa(gr: "Graph") -> None:
     for bl in gr.blocks:
         for n in bl.nodes:
             n.block = bl
@@ -264,8 +266,8 @@ def make_ssa(gr: "Graph", verbose: bool = False) -> None:
                 ap = inputs[0]
                 outputs = [Value(name=an, parent=ap)]
             elif cur_ins.opname == "CALL_FUNCTION" and cur_ins.arg == 0 and isinstance(inputs[0].value, Super):
+                # TODO(t-vi): this needs testing (e.g. whisper Conv1d)
                 outputs = [Value(value=MROAwareObjectRef(gr.self_value, start_klass=gr.mro_klass))]
-                print("##super#", outputs)
             elif cur_ins.opname == "LOAD_METHOD":  # also used for modules (callables)
                 (obj,) = inputs
                 mn = gr.method.__code__.co_names[cur_ins.arg]
@@ -273,12 +275,7 @@ def make_ssa(gr: "Graph", verbose: bool = False) -> None:
                 if obj.value is not None:
                     m.value = getattr(obj.value, mn)
                     m.typ = type(m.value)
-                # error case
-                # print("#lm###", type(m), type(obj), str(obj.value)[:100], m.value)
-                if isinstance(obj.value, MROAwareObjectRef):
-                    pass
-                    # print("...###", obj.value.start_klass)
-                #    obj = obj.obj
+                # TODO(t-vi): handle if isinstance(obj.value, MROAwareObjectRef):
                 outputs = [m, obj]
             elif cur_ins.opname == "LOAD_CONST":
                 outputs = [Value(value=gr.method.__code__.co_consts[cur_ins.arg], is_const=True)]
@@ -304,8 +301,6 @@ def make_ssa(gr: "Graph", verbose: bool = False) -> None:
                 new_nodes.append(n)
                 outputs = []
             else:
-                if verbose:
-                    print("unhandled", cur_ins)
                 outputs = [Value(node=n, nr=k) for k in range(push)]
                 new_nodes.append(n)
             if n.jump_targets is not None:

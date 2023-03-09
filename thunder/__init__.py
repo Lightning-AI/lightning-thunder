@@ -244,7 +244,7 @@ def make_trace(
 # Preprocesses function
 # Currently tries to map torch.foo lookups to thunder.torch.foo lookups
 def preprocess(fn, is_module):
-    gr = script.frontend.acquire_method(fn.forward if is_module else fn, verbose=False)
+    gr = script.frontend.acquire_method(fn.forward if is_module else fn)
 
     script.frontend.make_ssa(gr)
     script.frontend.make_single_return(gr)

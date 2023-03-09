@@ -42,7 +42,6 @@ class MROAwareObjectRef:  # or as they call it super
         self.start_klass = start_klass
 
     def __getattr__(self, name: str) -> Any:
-        print("###", self.obj, self.start_klass, name)
         ## handle non-methods...
         i = 0
         mro = inspect.getmro(self.obj.value.__class__)
@@ -439,8 +438,10 @@ def replace_values(
     # - value.parent for other values
     # - phi nodes
     # - graph input (?) / initial vars
+    values_currently_processed = set()
 
     def map_values(v: Value) -> Value:
+        # do not call map_values without guarding for infinite recursion
         if v in value_map:
             if follow_phi_values:
                 for pv in v.phi_values[:]:
@@ -449,6 +450,10 @@ def replace_values(
                     pv.add_missing_value(value_map[v])
                     assert len(pv.values) == len(pv.jump_sources)
             return value_map[v]
+        # guard from infinite recursion in loops (the abvoe does not call map_values)...
+        if v in values_currently_processed:
+            return value_map.get(v, v)
+        values_currently_processed.add(v)
         if isinstance(v.value, MROAwareObjectRef):
             v.value.obj = map_values(v.value.obj)
         if v.parent is not None:
@@ -460,6 +465,7 @@ def replace_values(
                 v.remove_value(ov)
                 v.add_missing_value(nv)
             assert len(v.values) == len(v.jump_sources)
+        values_currently_processed.remove(v)
         return v
 
     def process_block(bl: Block) -> None:
@@ -538,7 +544,7 @@ def make_dot(gr: Graph, format: str = "png", add_names: bool = False) -> "graphv
                 if i in value_idxes:
                     dot.edge(f"v {value_idxes[i]}", f"i {i_bl} {i_n}", color="blue")
                 elif isinstance(i, PhiValue):
-                    print("oops", repr(i))
+                    assert False, "This should be removed?"
                     for v in i.values:
                         if v in value_idxes:
                             dot.edge(f"v {value_idxes[v]}", f"i {i_bl} {i_n}", color="red")
