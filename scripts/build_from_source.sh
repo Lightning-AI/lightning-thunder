@@ -5,7 +5,7 @@ set -euo pipefail
 
 CUDA_VERSION_DEFAULT=11.7
 
-VALID_ARGS=$(getopt -o h -l help,cuda:,use_kineto,use_distributed -- "$@")
+VALID_ARGS=$(getopt -o h -l help,cuda:,use_kineto,use_distributed,cmake-only -- "$@")
 if [[ $? -ne 0 ]]; then
     exit 1;
 fi
@@ -18,6 +18,7 @@ while [ : ]; do
         echo "  --cuda             The version of CUDA to install and build with. (default ${CUDA_VERSION_DEFAULT})"
         echo "  --use_kineto       Build PyTorch with Kineto support"
         echo "  --use_distributed  Build PyTorch with distributed support"
+        echo "  --cmake-only       Only run PyTorch build cmake, don't compile"
         exit 0
         ;;
     --cuda)
@@ -26,6 +27,8 @@ while [ : ]; do
         USE_KINETO=1 ; shift ;;
     --use_distributed)
         USE_DISTRIBUTED=1 ; shift ;;
+    --cmake-only)
+        PYTORCH_CMAKE_ONLY=1 ; shift ;;
     --) shift;
         break
         ;;
@@ -80,6 +83,7 @@ CUDA_VERSION=${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}
 if [ ! $(command -v nvcc) ]; then
   printf "\n\nNote: This might take 5+ minutes.\n\n"
   time conda install -y -c conda-forge cudatoolkit-dev=${CUDA_VERSION}
+  time conda install -y -c nvidia cuda-cupti=${CUDA_VERSION}
 fi
 
 # Compile a trivial kernel to ensure CUDA has everything it needs.
@@ -124,7 +128,15 @@ git submodule foreach --recursive git clean -xfdf;
 conda install -y cmake ninja
 conda update cmake
 pip install -r "requirements.txt"
+
+CMAKE_FLAG="--cmake"
+if [ ${PYTORCH_CMAKE_ONLY:-} ]; then
+  CMAKE_FLAG="--cmake-only"
+fi
+
 time \
+  USE_CUDA=1 \
+  USE_ROCM=0 \
   USE_DISTRIBUTED=${USE_DISTRIBUTED:-0} \
   BUILD_CAFFE2=0 \
   BUILD_CAFFE2_OPS=0 \
@@ -136,8 +148,12 @@ time \
   USE_PYTORCH_QNNPACK=0 \
   USE_KINETO=${USE_KINETO:-0} \
   REL_WITH_DEB_INFO=1 \
-  python setup.py develop --cmake
+  python setup.py develop ${CMAKE_FLAG}
 popd
+
+if [ ${PYTORCH_CMAKE_ONLY:-} ]; then
+  exit 0
+fi
 
 # =============================================================================
 # == Thunder ==================================================================
