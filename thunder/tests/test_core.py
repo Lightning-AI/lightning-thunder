@@ -1245,6 +1245,40 @@ def test_hybrid_execution(executor, device, dtype):
     assert_close(result, torch_result)
 
 
+@executors(
+    dtypes=(thunder.float32, thunder.float16),
+)
+def test_uniform(executor, device, dtype):
+    if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0.0.3":
+        pytest.skip("'uniform' not implemented before nvfuser 0.0.3")
+
+    def foo(shape, lo, hi, dtype, device):
+        return tlang.uniform(shape, lo, hi, dtype=dtype, device=device)
+
+    thunder_uniform = thunder.make_traced(tlang.uniform, executor=executor)
+    uniform = partial(thunder_uniform, dtype=dtype, device=device)
+    tdtype = ttorch.torch_dtype(dtype)
+
+    # lo, hi, shape
+    cases = ( (-12.0, 128, (8, 12, 7)),
+        (-.3, 0.5, (2, 3, 4, 1)),
+        (0., 128., (2, 4)),
+        (-12., 0., (8, 3)),
+        (-1e-3, 1e-3, (8, 3)),
+        (0., 7., (0, 3)),
+        (0., 1., ()),
+    )
+
+    for lo, hi, shape in cases:
+        result = uniform(shape, lo, hi)
+        assert result.shape == shape
+        # note: numpy.random.uniform take value from [lo, hi)
+        #       But that doesn't seem to be the case for all backends. I'm relaxing this
+        if result.numel() != 0:
+            assert result.min() >= lo
+            assert result.max() <= hi
+
+
 @executors(dtypes=NOTHING)
 def test_dtype_conversion(executor: Executor, device, dtype):
     if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0":

@@ -434,6 +434,43 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.FULL: _full_preprocessor,
 }
 
+if nvfuser_version >= LooseVersion("0.0.3"):
+
+    # Note: uniform is added in nvfuser version 0.0.3
+    # NOTE: this will need to be updated when python refactor is done.
+    def _uniform_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_args, nv_kwargs):
+        (
+            shape,
+            minval,
+            maxval,
+        ) = nv_args
+        dtype = nv_kwargs["dtype"]
+        # TODO: dropping device here. add assert
+        device = nv_kwargs["device"]
+        # NOTE: nvfuser only accepts cuda device and can't take device index yet
+        assert device == "cuda"
+
+        def _add_constant_number(x):
+            if isinstance(x, Number) and not isinstance(x, NumberProxy):
+                nv = fd.define_constant(x)
+                return nv
+            return x
+
+        shape = tuple(_add_constant_number(s) for s in shape)
+
+        return (shape, minval, maxval), {"dtype": dtype}
+
+
+    def _uniform_helper(fd):
+        # TODO: should accept device hint.
+        def _fn(shape, minval, maxval, *, dtype):
+            return fd.ops.uniform(minval, maxval, shape, dtype=dtype)
+
+        return _fn
+
+    ops_to_nvfuser_ops_map[prims.Ops.UNIFORM] = _uniform_helper
+    ops_to_nvfuser_preprocessors_map[prims.Ops.UNIFORM] = _uniform_preprocessor
+
 
 def _var_mean_prim_meta(a, dim, *, correction, **kwargs):
     output_dtype = a.dtype
