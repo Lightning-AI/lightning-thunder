@@ -502,12 +502,12 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
         d = tlang.add(c, func(z))
         return c, d
 
-    x = make_tensor((2, 3), device=device, dtype=torch.float32)
-    y = make_tensor((2, 3), device=device, dtype=torch.float32)
-    z = make_tensor((2, 3), device=device, dtype=torch.float32)
+    x = make_tensor((2, 3), device=device, dtype=torch.float64)
+    y = make_tensor((2, 3), device=device, dtype=torch.float64)
+    z = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
-    g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
+    g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
     vjp_eager = thunder.make_traced(inline(vjp(func_2_2)), executor=executor)
 
