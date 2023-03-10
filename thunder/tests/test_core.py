@@ -1252,12 +1252,8 @@ def test_uniform(executor, device, dtype):
     if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0.0.3":
         pytest.skip("'uniform' not implemented before nvfuser 0.0.3")
 
-    def foo(shape, lo, hi, dtype, device):
-        return tlang.uniform(shape, lo, hi, dtype=dtype, device=device)
-
     thunder_uniform = thunder.make_traced(tlang.uniform, executor=executor)
     uniform = partial(thunder_uniform, dtype=dtype, device=device)
-    tdtype = ttorch.torch_dtype(dtype)
 
     # lo, hi, shape
     cases = ( (-12.0, 128, (8, 12, 7)),
@@ -1277,6 +1273,15 @@ def test_uniform(executor, device, dtype):
         if result.numel() != 0:
             assert result.min() >= lo
             assert result.max() <= hi
+
+    def foo():
+        return tlang.uniform([2, 3, 4], 0.5, 1.0, dtype=dtype, device=device)
+
+    thunder_static_uniform = thunder.make_traced(foo, executor=executor)
+    result = thunder_static_uniform()
+    result.shape == (2, 3, 4)
+    result.min() >= 0.5
+    result.max() <= 1.0
 
 
 @executors(dtypes=NOTHING)

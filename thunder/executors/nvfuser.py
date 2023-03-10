@@ -457,6 +457,8 @@ if nvfuser_version >= LooseVersion("0.0.3"):
             return x
 
         shape = tuple(_add_constant_number(s) for s in shape)
+        minval = _add_constant_number(minval)
+        maxval = _add_constant_number(maxval)
 
         return (shape, minval, maxval), {"dtype": dtype}
 
