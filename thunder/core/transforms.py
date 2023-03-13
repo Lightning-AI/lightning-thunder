@@ -853,7 +853,14 @@ vjp_impls = {
     prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
     prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x**2)),
     prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
-    prims.Ops.DIV: lambda x, y: (prims.div(x, y), (x, y,), lambda x, y, g: (g / y, -g * x / (y**2))),
+    prims.Ops.DIV: lambda x, y: (
+        prims.div(x, y),
+        (
+            x,
+            y,
+        ),
+        lambda x, y, g: (g / y, -g * x / (y**2)),
+    ),
     prims.Ops.MUL: lambda x, y: (prims.mul(x, y), (x, y), lambda x, y, g: (g * y, g * x)),
 }
 

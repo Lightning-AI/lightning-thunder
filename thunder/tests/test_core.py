@@ -1256,13 +1256,14 @@ def test_uniform(executor, device, dtype):
     uniform = partial(thunder_uniform, dtype=dtype, device=device)
 
     # lo, hi, shape
-    cases = ( (-12.0, 128, (8, 12, 7)),
-        (-.3, 0.5, (2, 3, 4, 1)),
-        (0., 128., (2, 4)),
-        (-12., 0., (8, 3)),
+    cases = (
+        (-12.0, 128, (8, 12, 7)),
+        (-0.3, 0.5, (2, 3, 4, 1)),
+        (0.0, 128.0, (2, 4)),
+        (-12.0, 0.0, (8, 3)),
         (-1e-3, 1e-3, (8, 3)),
-        (0., 7., (0, 3)),
-        (0., 1., ()),
+        (0.0, 7.0, (0, 3)),
+        (0.0, 1.0, ()),
     )
 
     for lo, hi, shape in cases:

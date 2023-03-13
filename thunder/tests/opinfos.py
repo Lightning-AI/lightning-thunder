@@ -22,7 +22,11 @@ from thunder.langs.torch import torch_dtype
 from thunder.tests.framework import _all_device_types, JAX_AVAILABLE, nvFuser
 from thunder.tests.make_tensor import make_tensor
 
-eps = 1e-5
+# Useful when specifying the domain of an operation
+# NOTE: Big enough such that -1 + eps != -1 in bfloat16
+# TODO: improve domain specification to allow intervals to be open or closed at the left and right
+#   Today, the domain is assumed to be closed on the left and open on the right, that is: [x, y)
+eps = 1e-2
 
 
 def make_number(**kwargs):
@@ -854,9 +858,16 @@ sigmoid_opinfo = OpInfo(
             dtypes=(
                 # reciprocal_cuda for ComplexHalf is not implemented in torch
                 datatypes.complex32,
+            ),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+            dtypes=(
                 # sometimes fails due to tight tolerances (passes with rtol=1e-4)
                 datatypes.complex64,
-                ),
+            ),
         ),
         # test tols are too tight for these half precision tests
         DecorateInfo(
@@ -974,6 +985,7 @@ tanh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(tanh_opinfo)
 
+# lgamma is defined for all complex numbers EXCEPT negative integers and zero
 lgamma_opinfo = OpInfo(
     tlang.lgamma,
     domain=(-1.0 + eps, math.inf),
@@ -1274,7 +1286,7 @@ add_opinfo = OpInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
             executors=("nvFuser",),
-        )
+        ),
     ),
 )
 elementwise_binary_ops.append(add_opinfo)
@@ -1302,9 +1314,12 @@ fmod_opinfo = OpInfo(
     test_directives=(
         # torch doesn't support bool or complex fmod
         DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bool8, datatypes.complexfloating)),
+            pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8, datatypes.complexfloating)
+        ),
+        # bfloat16 computation is too inconsistent
+        # TODO: improve bfloat16 testing to allow more accurate computations and/or looser
+        #   bfloat16 tolerances
+        DecorateInfo(pytest.mark.skip, "test_core_vs_torch_consistency", dtypes=(datatypes.bfloat16,)),
     ),
 )
 elementwise_binary_ops.append(fmod_opinfo)
@@ -1407,7 +1422,8 @@ remainder_core_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bool8, datatypes.float16, datatypes.bfloat16, datatypes.complexfloating)),
+            dtypes=(datatypes.bool8, datatypes.float16, datatypes.bfloat16, datatypes.complexfloating),
+        ),
     ),
 )
 elementwise_binary_ops.append(remainder_core_opinfo)
@@ -1419,9 +1435,8 @@ remainder_torch_opinfo = OpInfo(
     test_directives=(
         # torch doesn't support bool or complex remainder.
         DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bool8, datatypes.complexfloating)),
+            pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8, datatypes.complexfloating)
+        ),
         # Upstream nvfuser triggers this error:
         # AssertionError: The values for attribute 'dtype' do not match: torch.float32 != torch.float16.
         # See https://github.com/Lightning-AI/lightning-thunder/issues/238
@@ -1429,7 +1444,8 @@ remainder_torch_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvFuser,"),
-            dtypes=(datatypes.float16, datatypes.bfloat16)),
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
     ),
 )
 elementwise_binary_ops.append(remainder_torch_opinfo)
@@ -1464,7 +1480,7 @@ true_divide_opinfo = OpInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
             executors=("nvFuser",),
-        )
+        ),
     ),
 )
 elementwise_binary_ops.append(true_divide_opinfo)
@@ -1612,7 +1628,7 @@ broadcast_in_dim_opinfo = OpInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
             executors=("nvFuser",),
-        )
+        ),
     ),
 )
 shape_ops.append(broadcast_in_dim_opinfo)

@@ -293,7 +293,6 @@ class TorchLangCtx:
     def add(self, a, b):
         return tlang.add(a, b)
 
-
     # ==
     def eq(self, a, b):
         return tlang.eq(a, b)
@@ -301,7 +300,7 @@ class TorchLangCtx:
     # fmod
     def fmod(self, a, b):
         return tlang.fmod(a, b)
-    
+
     # >=
     def ge(self, a, b):
         return tlang.ge(a, b)
