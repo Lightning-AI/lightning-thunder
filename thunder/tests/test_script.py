@@ -307,18 +307,21 @@ def test_nanogpt_functionalization():
     thunder.core.script.frontend.make_ssa(gr)
     thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
-    additional_param_names = thunder.core.script.passes.module_to_function(gr)
+    additional_param_names, additional_param_values = thunder.core.script.passes.module_to_function(gr)
     thunder.core.script.graph.check_graph(gr)
 
     fn = thunder.core.script.python_ir.generate_function(gr)
 
     x = torch.randint(0, 255, (5, 5))
 
-    sd = m.state_dict()
+    sd = m.state_dict(keep_vars=True)
     additional_params = [sd[n.replace("[", "").replace("]", "")] for n in additional_param_names]
 
+    assert len(additional_param_names) == len(additional_param_values)
+    assert all(a is b for a, b in zip(additional_params, additional_param_values))
+
     torch.manual_seed(5)
-    o = fn(x, None, *additional_params)
+    o = fn(*additional_params, x, None)
     torch.manual_seed(5)
 
     o2 = m.forward(x)

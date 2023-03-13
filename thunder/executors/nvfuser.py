@@ -435,7 +435,6 @@ ops_to_nvfuser_preprocessors_map = {
 }
 
 if nvfuser_version >= LooseVersion("0.0.3"):
-
     # Note: uniform is added in nvfuser version 0.0.3
     # NOTE: this will need to be updated when python refactor is done.
     def _uniform_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_args, nv_kwargs):
@@ -461,7 +460,6 @@ if nvfuser_version >= LooseVersion("0.0.3"):
         maxval = _add_constant_number(maxval)
 
         return (shape, minval, maxval), {"dtype": dtype}
-
 
     def _uniform_helper(fd):
         # TODO: should accept device hint.
@@ -794,15 +792,11 @@ def _fuse(
     mode=None,
     args=None,
     kwargs=None,
-    static_input_names=[],
+    static_inputs=[],
 ):
-    static_input_names = [] if static_input_names is None else static_input_names
-
     # TODO: improve name canonicalization
     def _canonicalize_variable_name(x):
         return x.replace(".", "_").replace("[", "").replace("]", "")
-
-    static_input_names = [_canonicalize_variable_name(x) for x in static_input_names]
 
     # Separates the trace into parts to execute with nvFuser, and parts to execute with PyTorch
     # TODO: consider where this pass should live in the future
@@ -1066,10 +1060,14 @@ def _fuse(
         # Records the graph
         static_outputs = None
         # TODO: improve code for handling params we assume to be static (from modules)
+        static_inputs_raw = set(static_inputs)
         static_inputs = []
+        static_input_names = set()
         for arg, proxy in if_args:
-            if proxy.name in static_input_names:
+            # if proxy.name in static_input_names:
+            if arg in static_inputs_raw:
                 static_inputs.append(arg)
+                static_input_names.add(proxy.name)
             else:
                 static_inputs.append(torch.empty_like(arg))
         graph = torch.cuda.CUDAGraph()
@@ -1169,6 +1167,4 @@ class nvFuserCtx:
         kwargs=None,
         static_inputs=None,
     ):
-        return _fuse(
-            trace, profile_info=profile_info, mode=mode, args=args, kwargs=kwargs, static_input_names=static_inputs
-        )
+        return _fuse(trace, profile_info=profile_info, mode=mode, args=args, kwargs=kwargs, static_inputs=static_inputs)

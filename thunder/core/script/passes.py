@@ -651,6 +651,7 @@ def unroll_for_loops_and_inline_modules(gr: "Graph") -> None:
 def module_to_function(gr: "Graph") -> List[str]:
     attr_dict: Dict[str, int] = {}
     attr_list = []
+    attr_values = []
     for bl in gr.blocks:
         for n in bl.nodes:
             for idx_i, i in enumerate(n.inputs):
@@ -660,14 +661,16 @@ def module_to_function(gr: "Graph") -> List[str]:
 
                 if maybe_self.value is gr.module and isinstance(v, torch.Tensor):
                     attr_string = ".".join(attrs)
-                    idx = attr_dict.setdefault(attr_string, gr.co_argcount)
-                    if idx == gr.co_argcount:
+                    # the new attributes come directly after the self argument
+                    idx = attr_dict.setdefault(attr_string, len(attr_list) + 1)
+                    if idx == len(attr_list) + 1:
                         func_arg = Value(name=attr_string, is_function_arg=True)
                         gr.local_variables_at_start.insert(idx, func_arg)
                         attr_list.append(attr_string)
+                        attr_values.append(v)
                         gr.co_argcount += 1
                         # we need a default argument to be able to put the things at the end (but this will have to change for *args, **kwargs anyway...
-                        gr.func_defaults.append(None)
+                        # gr.func_defaults.append(None)
                     else:
                         func_arg = gr.local_variables_at_start[idx]
 
@@ -695,4 +698,4 @@ def module_to_function(gr: "Graph") -> List[str]:
         raise RuntimeError("could not eliminate self argument")
     del gr.local_variables_at_start[0]
     gr.co_argcount -= 1
-    return attr_list
+    return attr_list, attr_values

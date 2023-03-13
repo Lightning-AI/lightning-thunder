@@ -236,7 +236,7 @@ def make_trace(
         return trace
 
     if isinstance(fn, langctx.module_cls):
-        _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names)
+        _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names, tfn._additional_param_values)
 
     return _fn
 
@@ -250,16 +250,17 @@ def preprocess(fn, is_module):
     script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
     if is_module:
-        additional_param_names = thunder.core.script.passes.module_to_function(gr)
+        additional_param_names, additional_param_values = thunder.core.script.passes.module_to_function(gr)
     script.passes.strongly_inline_functions(gr)
     script.passes.torch_to_thunder(gr)
 
     thunder_fn = script.python_ir.generate_function(gr)
-    thunder_fn._gr = gr
     if is_module:
         thunder_fn._additional_param_names = additional_param_names
+        thunder_fn._additional_param_values = additional_param_values
     else:
         thunder_fn._additional_param_names = None
+        thunder_fn._additional_param_values = None
     return thunder_fn
 
 
@@ -269,30 +270,17 @@ import torch  # oops
 class ThunderOptimizedModule(torch.nn.Module):  # TOM
     # todo: subclass nn.Module or forward things like .state_dict() to the
     #       model
-    def __init__(self, model, fn, tfn, additional_param_names):
+    def __init__(self, model, fn, tfn, additional_param_names, additional_param_values):
         super().__init__()
         self._model = model
         self._forward_fn = fn
         self._tfn = tfn
+        self._additional_param_values = additional_param_values
         self._additional_param_names = additional_param_names
-        self._fn_param_names = [
-            n
-            for n, p in inspect.signature(self._tfn).parameters.items()
-            if p.kind in {p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD}
-        ][-len(additional_param_names) :]
 
     def __call__(self, *args, **kwargs):
-        sd = self._model.state_dict()
-        params = {
-            pn: sd[n.replace("[", "").replace("]", "")]
-            for pn, n in zip(self._fn_param_names, self._additional_param_names)
-        }
-        kwargs_params = {**params, **kwargs}
-        if len(kwargs_params) != len(params) + len(kwargs):
-            # We could allow this, but once we do, people will rely on it.
-            # As long as we don't we can still discuss.
-            raise RuntimeError("passing parameter values is not supported")
-        res = self._forward_fn(*args, **kwargs_params)
+        all_args = (*self._additional_param_values, *args)
+        res = self._forward_fn(*all_args, **kwargs)
         return res
 
 
@@ -363,7 +351,7 @@ def make_traced(
                     mode=mode,
                     args=args,
                     kwargs=kwargs,
-                    static_inputs=tfn._additional_param_names if hasattr(tfn, "_additional_param_names") else None,
+                    static_inputs=tfn._additional_param_values if hasattr(tfn, "_additional_param_values") else None,
                 )
             else:
                 fusion = ex.fuse(
@@ -401,7 +389,7 @@ def make_traced(
         return result
 
     if isinstance(fn, langctx.module_cls):
-        _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names)
+        _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names, tfn._additional_param_values)
 
     _fn._tfn = tfn
     setattr(_fn, "_thunder_cache", None)
