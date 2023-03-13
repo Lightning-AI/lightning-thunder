@@ -127,3 +127,6 @@ lightning_logs
 
 # Build artifacts
 scripts/build
+
+# Profiler traces
+benchmarks/traces
