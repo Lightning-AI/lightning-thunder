@@ -732,7 +732,7 @@ rsqrt = make_prim(
     partial(
         _elementwise_unary_meta,
         name="rsqrt",
-        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
+        type_promotion_kind=ELEMENTWISE_PRIM_TYPE_PROMOTION_KIND.DEFAULT,
         number_handler=_rsqrt_number,
     ),
 )

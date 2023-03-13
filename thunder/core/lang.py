@@ -65,6 +65,7 @@ __all__ = [
     "reciprocal",
     "round",
     "rsqrt",
+    "sigmoid",
     "sign",
     "sin",
     "sinh",
@@ -520,6 +521,16 @@ def isfinite(a):
 
 def rsqrt(a):
     return _elementwise_unary_helper(prims.rsqrt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+
+
+def sigmoid(a):
+    # We manually promote a, then determine type of the constant 1.0 value
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        a, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+    a = maybe_convert_to_dtype(a, computation_dtype)
+    one = 1 + 0j if isinstance(computation_dtype, dtypes.complexfloating) else 1.0
+    return reciprocal(add(one, exp(neg(a))))
 
 
 def sign(a):

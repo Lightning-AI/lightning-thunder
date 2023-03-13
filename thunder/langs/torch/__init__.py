@@ -49,6 +49,7 @@ __all__ = [
     "cos",
     "exp",
     "rsqrt",
+    "sigmoid",
     "sign",
     "sin",
     "sinh",
@@ -738,7 +739,12 @@ def rsqrt(a):
     return tlang.rsqrt(a)
 
 
-@torch_function(torch.sin)
+@torch_function(torch.sigmoid)
+def sigmoid(a):
+    return tlang.sigmoid(a)
+
+
+@torch_function(torch.sign)
 def sign(a):
     return tlang.sign(a)
 

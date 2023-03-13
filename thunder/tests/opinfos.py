@@ -833,6 +833,41 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
+sigmoid_opinfo = OpInfo(
+    tlang.sigmoid,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.sigmoid),
+    test_directives=(
+        # torch.sigmoid is not implemented for CPU float16 or complex32
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+            devicetypes=("cpu",),
+            dtypes=(datatypes.float16, datatypes.complex32),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+            devicetypes=("cuda",),
+            dtypes=(
+                # reciprocal_cuda for ComplexHalf is not implemented in torch
+                datatypes.complex32,
+                # sometimes fails due to tight tolerances (passes with rtol=1e-4)
+                datatypes.complex64,
+                ),
+        ),
+        # test tols are too tight for these half precision tests
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+    ),
+)
+elementwise_unary_ops.append(sigmoid_opinfo)
+
 sign_opinfo = OpInfo(
     tlang.sign,
     sample_input_generator=elementwise_unary_generator,
