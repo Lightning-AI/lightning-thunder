@@ -970,6 +970,31 @@ def exp_vjp(x):
     return VJPTriple(primal, residuals, pullback)
 
 
+@register_vjp(prims.Ops.POW)
+def pow_vjp(x, y):
+    """VJP of the pow operation.
+
+    Args:
+        x (Variable): Tensor with the base to be exponentiated.
+        y (Variable): Tensor with power to raise to.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.pow(x, y)
+    residuals = (primal,)
+
+    def pullback(result, g):
+        import thunder.core.lang as tlang
+
+        gresult = g * result  # reuse common factor
+        dx = gresult * y / x
+        dy = gresult * tlang.log(x)
+        return dx, dy
+
+    return VJPTriple(primal, residuals, pullback)
+
+
 @register_vjp(prims.Ops.BROADCAST_IN_DIM)
 def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPTriple:
     primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
