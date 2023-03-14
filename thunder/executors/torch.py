@@ -305,11 +305,12 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
 
     # Creates signature
     # NOTE: PyTorch fusions are run in a no grad context
-    arg_str = ", ".join(tuple(_extract_name(inp) for inp in inputs))
-    cstr = f"@torch.no_grad()\ndef fusion({arg_str}):"
+    # arg_str = ", ".join(tuple(_extract_name(inp) for inp in inputs))
+    # cstr = f"@torch.no_grad()\ndef fusion({arg_str}):"
 
     # Calls PyTorch and Python operations
-    cstr += f"\n{tab}# Executes the trace"
+    # cstr += f"\n{tab}# Executes the trace"
+    cstr = ""
     for sym in symbols:
         torch_args = tree_map(_get_torch, sym.args)
         torch_kwargs = tree_map(_get_torch, sym.kwargs)
@@ -328,11 +329,11 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
             op_str = torch_op.__name__
             ctx[op_str] = torch_op
 
-        # NOTE: currently assumes that the trace is stored in the "trace" kwarg
-        if "trace" in torch_kwargs and any(isinstance(v, Trace) for v in torch_kwargs.values()):
-            key = result.name + "_" + op_str + "_trace"
-            ctx[key] = torch_kwargs["trace"]
-            torch_kwargs["trace"] = key
+        # # NOTE: currently assumes that the trace is stored in the "trace" kwarg
+        # if "trace" in torch_kwargs and any(isinstance(v, Trace) for v in torch_kwargs.values()):
+        #     key = result.name + "_" + op_str + "_trace"
+        #     ctx[key] = torch_kwargs["trace"]
+        #     torch_kwargs["trace"] = key
 
         result_str = ", ".join(out.name for out in sym.outputs)
         arg_str = ", ".join(f"{a}" for a in torch_args)
@@ -342,10 +343,12 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
         cstr += f"\n{tab}{result_str} = {op_str}({arg_str}{segue_str}{kwarg_str})"
 
     # Constructs outputs
+    output_names = []
     output_strs = []
     for out in outputs:
         if isinstance(out, Variable) and isinstance(out.proxy, TensorProxy):
             out = out.proxy
+            output_names.append(_extract_name(out))
             if _contiguous:
                 # TODO: FIXME: currently makes all outputs contiguous to simplify stride analysis
                 output_strs.append(f"{_extract_name(out)}.contiguous()")
@@ -353,17 +356,21 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
                 output_strs.append(f"{_extract_name(out)}")
         else:
             output_strs.append(_extract_name(out))
+    out_names_str = ", ".join(output_names)
     out_str = ", ".join(output_strs)
-    cstr += f"\n{tab}return {out_str}"
+    cstr += f"\n{tab}{out_names_str} = {out_str}"
+    # cstr += f"\n{tab}return {out_str}"
 
-    code = compile(cstr, "torch.gen", mode="exec")
-    exec(code, ctx)
-    fusion = ctx["fusion"]
+    # code = compile(cstr, "torch.gen", mode="exec")
+    # exec(code, ctx)
+    # fusion = ctx["fusion"]
 
-    if _return_code:
-        return fusion, cstr
+    # if _return_code:
+    #     return fusion, cstr
 
-    return fusion
+    # return fusion
+
+    return cstr, ctx
 
 
 # TODO: intercept PyTorch operations and handle functions whose results are

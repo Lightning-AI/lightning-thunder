@@ -827,7 +827,7 @@ def _fuse(
 
     cur_region = None
 
-    # NOTE: this takes advantage of both symbols and the trace itself stores inputs
+    # NOTE: this takes advantage of the fact that both symbols and the trace itself stores inputs
     #   as args and kwargs
     def _extract_input_variables(sym):
         flat_args, _ = tree_flatten(sym.args)
@@ -888,7 +888,7 @@ def _fuse(
     for v in variables:
         _update_producers(v, "input")
 
-    # Identifies regions and where proxies are produced and consumed
+    # Identifies regions, producers and consumers
     for sym in trace.symbols:
         cur_region = _update_region(sym, cur_region)
 
@@ -900,13 +900,61 @@ def _fuse(
         for v in (o for o in flat_outputs if isinstance(o, Variable)):
             _update_producers(v, sym)
 
+    # Takes view operations at the tail of nvFuser regions and puts them in a Torch executor region
+    # TODO: this is just a hack for reshape and transpose at the moment, and reshape isn't always a view op!
+    def _is_view_op(sym):
+        return sym.op in (prims.Ops.TRANSPOSE, prims.Ops.RESHAPE)
+
+    new_regions = []
+    for region_idx, region in enumerate(regions):
+        if region.is_supported:
+            tail_idx = 0
+            for idx, sym in enumerate(reversed(region.symbols)):
+                if _is_view_op(sym):
+                    tail_idx += 1
+                    continue
+                break
+            if tail_idx > 0:
+                tail_view_ops = region.symbols[-tail_idx:]
+                if len(tail_view_ops) == len(region.symbols):
+                    region.is_supported = False
+                else:
+                    new_regions.append((1 + region_idx + len(new_regions), tail_view_ops))
+                    region.symbols = region.symbols[:-tail_idx]
+
+    for region_idx, symbols in new_regions:
+        region = Region(False)
+        region.symbols = symbols
+
+        # Remap symbols
+        for sym in symbols:
+            symbols_to_region_map[sym] = region
+
+        regions.insert(region_idx, region)
+
+    # Merges regions that are next to each other and both unsupported
+    previous_region = None
+    for region in regions:
+        if previous_region is not None:
+            if not previous_region.is_supported and not region.is_supported:
+                previous_region.symbols.extend(region.symbols)
+                for sym in region.symbols:
+                    symbols_to_region_map[sym] = previous_region
+                region.symbols = []
+                # NOTE: preserves previous_region
+                continue
+
+        previous_region = region
+
     # Processes outputs
     # TODO: is output its own region?
     flat_outputs, output_structure = tree_flatten(trace.outputs)
     for v in (o for o in flat_outputs if isinstance(o, Variable)):
         _update_consumers(v, "output")
 
-    # Identifies inputs and outputs for each region, creates fusion for each region
+    # Identifies inputs and outputs for each region
+    _has_torch_region = False
+    ctx = {}
     for region in regions:
         consumed = []
         produced = []
@@ -940,7 +988,9 @@ def _fuse(
             region.fusion = _fuse_region(region.inputs, region.outputs, region.symbols)
         else:
             # CASE: not region.is_supported (currently using PyTorch to run)
-            region.fusion = _fuse_torch_region(region.inputs, region.outputs, region.symbols)
+            _has_torch_region = True
+            region.fusion, ctx_update = _fuse_torch_region(region.inputs, region.outputs, region.symbols)
+            ctx.update(ctx_update)
 
     #
     # Creates the callable connecting the fusions
@@ -950,7 +1000,11 @@ def _fuse(
     tab = "  "
 
     # Creates the signature
-    cstr = f"def fusion(*args, **kwargs):"
+    cstr = ""
+    if _has_torch_region:
+        cstr += "@torch.no_grad()\n"
+
+    cstr += f"def fusion(*args, **kwargs):"
 
     # Acquires inputs
     flat_positional_inputs, _ = tree_flatten(trace.args)
@@ -999,9 +1053,12 @@ def _fuse(
         if region.fusion is None:
             continue
 
-        arg_str = ", ".join(tuple(_extract_name(inp) for inp in region.inputs))
-        result_str = ", ".join(tuple(_extract_name(out) for out in region.outputs))
-        ifstr += f"\n{tab}{result_str} = _fusion{idx}({arg_str})"
+        if isinstance(region.fusion, str):
+            ifstr += region.fusion
+        else:
+            arg_str = ", ".join(tuple(_extract_name(inp) for inp in region.inputs))
+            result_str = ", ".join(tuple(_extract_name(out) for out in region.outputs))
+            ifstr += f"\n{tab}{result_str} = _fusion{idx}({arg_str})"
 
     # Returns region outputs which are also outputs of the entire fusion
     if_outputs = []
@@ -1037,7 +1094,7 @@ def _fuse(
                 if_args.append((kwarg, pkwarg))
 
         if_code = compile(ifstr, "nvfuser.gen", mode="exec")
-        if_ctx = {}
+        if_ctx = ctx
 
         for idx, region in enumerate(regions):
             if_ctx[f"_fusion{idx}"] = region.fusion
@@ -1124,11 +1181,12 @@ def _fuse(
         return fusion
 
     # Creates context
-    ctx = {
+    addtl_ctx = {
         "tree_flatten": tree_flatten,
         "tree_unflatten": tree_unflatten,
         "output_structure": output_structure,
     }
+    ctx.update(addtl_ctx)
 
     for idx, region in enumerate(regions):
         ctx[f"_fusion{idx}"] = region.fusion
@@ -1137,6 +1195,8 @@ def _fuse(
     code = compile(cstr, "nvfuser.gen", mode="exec")
     exec(code, ctx)
     fusion = ctx["fusion"]
+
+    print(cstr)
 
     if profile_info:
         return fusion, regions
