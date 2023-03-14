@@ -852,9 +852,8 @@ no_residuals = (no_residual,)
 # The VJP implementation is a function that takes the primal values and returns
 # a triple of primal result, residuals, and pullback function.
 vjp_impls = {
-    prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
-    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x**2)),
     prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
+    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x**2)),
     prims.Ops.DIV: lambda x, y: (
         prims.div(x, y),
         (
@@ -864,6 +863,8 @@ vjp_impls = {
         lambda x, y, g: (g / y, -g * x / (y**2)),
     ),
     prims.Ops.MUL: lambda x, y: (prims.mul(x, y), (x, y), lambda x, y, g: (g * y, g * x)),
+    prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
+    prims.Ops.SUB: lambda x, y: (prims.sub(x, y), no_residuals, lambda _, g: (g, -g)),
 }
 
 
@@ -899,6 +900,30 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
 
     unsqueezed = tlang.unsqueeze(x, reduced_dims)
     return tlang.expand(unsqueezed, original_shape)
+
+
+@register_vjp(prims.Ops.RSQRT)
+def rsqrt_vjp(x):
+    """VJP of the rsqrt operation.
+
+    Args:
+        x (Variable): input tensor.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.rsqrt(x)
+    residuals = (
+        primal,
+    )
+
+    def pullback(result, g):
+        # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x 
+        # where rsqrt(x) and x are saved for the backwards pass.
+        # This derivation was selected because it avoids saving the input tensor.
+        return -0.5 * g * result**3.
+
+    return VJPTriple(primal, residuals, pullback)
 
 
 @register_vjp(prims.Ops.SUM)
