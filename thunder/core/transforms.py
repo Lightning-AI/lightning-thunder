@@ -951,6 +951,32 @@ def sum_vjp(x, dims, output_dtype=None):
     return VJPTriple(primal, residuals, pullback)
 
 
+@register_vjp(prims.Ops.PROD)
+def prod_vjp(x, dims):
+    """VJP of the prod operation.
+
+    Args:
+        x (Variable): Tensor to be multiplied.
+        dims (Tuple[int, ...]): Dimensions to be multiplied.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.prod(x, dims)
+    residuals = (
+        primal,
+        x,
+        x.shape,
+        dims,
+    )
+
+    def pullback(primal, x, x_shape, reduced_dims, g):
+        # One return per positional argument of prims.prod
+        return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x), None
+
+    return VJPTriple(primal, residuals, pullback)
+
+
 @register_vjp(prims.Ops.EXP)
 def exp_vjp(x):
     """VJP of the exp operation.
