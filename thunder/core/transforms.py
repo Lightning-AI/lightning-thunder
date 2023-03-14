@@ -3,16 +3,18 @@ from dataclasses import dataclass
 from enum import auto, Enum
 from functools import lru_cache, partial
 from numbers import Number
-from typing import Any, Callable, Dict, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Sequence, Tuple, Union, Optional
 
 from thunder import make_trace, make_traced
 from thunder.core import prims
-from thunder.core.lang import full, full_like, unsqueeze
+from thunder.core.lang import full, full_like, unsqueeze, squeeze
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import detached_trace, get_trace, Trace, Variable
 from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2
 from thunder.executors.torch import ops_to_torch_ops_map
+
+import torch
 
 
 class Transforms(Enum):
@@ -956,6 +958,62 @@ def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: S
         g = unsqueeze(g, unit_dims)
         # One return per positional argument of prims.broadcast_in_dim
         return g, None, None
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+@register_vjp(prims.Ops.MATMUL)
+def matmul_vjp(a: TensorProxy, b: TensorProxy) -> VJPTriple:
+    primal = prims.matmul(a, b)
+    residuals = (a, b)
+
+    def pullback(a, b, g):
+        last_dim = (-1,)
+        first_dim = (-2,)
+        if a.ndim == 1 and b.ndim == 1:
+            return g * b, g * a
+
+        if b.ndim == 1:
+            ga = (unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT)
+            gb = a.mT @ unsqueeze(g, last_dim)
+            if g.ndim > 1:
+                gb = squeeze(gb, last_dim)
+                gb = prims.sum(gb, tuple(range(gb.ndim - 1)))
+            return ga, gb
+
+        if a.ndim == 1:
+            ga = unsqueeze(g, first_dim) @ b.mT
+            if g.ndim > 1:
+                ga = prims.sum(ga, tuple(range(ga.ndim - 1)))
+            gb = unsqueeze(a, first_dim).mT @ unsqueeze(g, first_dim)
+            return ga, gb
+
+        return g @ b.mT, a.mT @ g
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+# TODO: Remove registration against torch.nn.functional.linear once we have a
+#       better way to handle VJPs for composite functions that are not in the prims/corelang
+@register_vjp(torch.nn.functional.linear)
+def linear_vjp(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy] = None) -> VJPTriple:
+    #
+    from thunder.langs.torch import matmul
+
+    primal = prims.linear(a, b, c)
+    residuals = (a, b, c)
+
+    def pullback(a, b, c, g):
+        first_dim = (-2,)
+        ga = matmul(g, b)
+        if a.ndim == 1:
+            gb = matmul(unsqueeze(a, first_dim).mT, unsqueeze(g, first_dim)).mT
+        else:
+            gb = matmul(a.mT, g).mT
+        if c is None:
+            return ga, gb
+        gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
+        return ga, gb, gc
 
     return VJPTriple(primal, residuals, pullback)
 

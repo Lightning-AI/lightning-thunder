@@ -2276,6 +2276,106 @@ tensor_creation_ops.append(empty_opinfo)
 opinfos.extend(tensor_creation_ops)
 
 #
+# Matmul OpInfos
+#
+matmul_ops = []
+
+
+def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    M = 4
+    N = 3
+    B = 2
+    # shape_a, shape_b
+    cases = (
+        ((M,), (M,)),
+        ((M,), (M, N)),
+        ((M, N), (N,)),
+        ((M,), (B, M, N)),
+        ((B, M, N), (N,)),
+        ((M, N), (N, M)),
+        ((B, M, N), (B, N, M)),
+        ((B, B, M, N), (B, B, N, M)),
+    )
+
+    for shape_a, shape_b in cases:
+        yield SampleInput(make(shape_a), make(shape_b))
+
+
+matmul_opinfo = OpInfo(
+    ttorch.matmul,
+    sample_input_generator=matmul_sample_generator,
+    torch_reference=torch.matmul,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # PyTorch CPU doesn't support float16 matmul
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # PyTorch doesn't support complex32 matmul
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.complex32,),
+            devicetypes=("cpu", "cuda"),
+        ),
+    ),
+)
+matmul_ops.append(matmul_opinfo)
+
+
+def linear_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    in_features = 3
+    out_features = 5
+    batch_size = 2
+    # shape_input, shape_weight
+    cases_no_bias = (
+        ((in_features,), (out_features, in_features)),
+        ((batch_size, in_features), (out_features, in_features)),
+    )
+
+    for shape_input, shape_weight in cases_no_bias:
+        yield SampleInput(make(shape_input), make(shape_weight))
+
+    # shape_input, shape_weight, shape_bias
+    cases_with_bias = (
+        ((in_features,), (out_features, in_features), (out_features,)),
+        ((batch_size, in_features), (out_features, in_features), (out_features,)),
+    )
+
+    for shape_input, shape_weight, shape_bias in cases_with_bias:
+        yield SampleInput(make(shape_input), make(shape_weight), make(shape_bias))
+
+
+linear_opinfo = OpInfo(
+    ttorch.linear,
+    sample_input_generator=linear_sample_generator,
+    torch_reference=torch.nn.functional.linear,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # PyTorch CPU doesn't support float16 linear
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # PyTorch doesn't support complex32 linear
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.complex32,),
+            devicetypes=("cpu", "cuda"),
+        ),
+    ),
+)
+matmul_ops.append(linear_opinfo)
+
+opinfos.extend(matmul_ops)
+
+#
 # NN Ops
 #
 nn_ops = []

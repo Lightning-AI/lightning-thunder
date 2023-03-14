@@ -335,6 +335,11 @@ class TensorProxy(Proxy):
         ctx = get_language_context()
         return partial(getattr(ctx, name), self)
 
+    @property
+    def mT(self):
+        ctx = get_language_context()
+        return ctx.matrix_transpose(self)
+
 
 def proxy(x, *, name):
     """Creates a proxy object."""

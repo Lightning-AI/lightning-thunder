@@ -390,6 +390,33 @@ def compute_broadcast_shape(*_shapes):
     return tuple(common_shape)
 
 
+def matrix_transpose(a: TensorProxy) -> TensorProxy:
+    """Transposes the last two dimensions of a tensor.
+
+    This function is used to implement the `.mT` attribute.
+
+    Args:
+        a (TensorProxy): The tensor to transpose.
+
+    Returns:
+        TensorProxy: The transposed tensor.
+
+    Examples:
+        >>> a = torch.tensor([[1, 2, 3], [4, 5, 6]])
+        >>> def func(x): return x.mT
+        >>> traced_func = thunder.make_traced(func, executor="torch")
+        >>> traced_func(a)
+        tensor([[1, 4],
+                [2, 5],
+                [3, 6]])
+    """
+    dim0, dim1 = -2, -1
+    dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
+    permutation = list(range(a.ndim))
+    permutation[dim0], permutation[dim1] = permutation[dim1], permutation[dim0]
+    return transpose(a, permutation)
+
+
 # TODO: add scalar support
 # TODO: review hasattr pattern
 def maybe_broadcast(*args):

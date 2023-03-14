@@ -236,6 +236,9 @@ class TorchLangCtx:
     def get_item(self, a, key):
         return basic_indexing(a, key)
 
+    def matrix_transpose(self, a):
+        return tlang.matrix_transpose(a)
+
     # TODO: refactor so disambiguator's aren't needed
     def split(self, a, sizes_or_sections, dim=0):
         return _split_disambiguator(a, sizes_or_sections, dim)
@@ -1321,6 +1324,9 @@ def matmul_disambiguator(*args, **kwargs):
 
 # NOTE: this wrapper for prim matmul just broadcasts batch dimensions
 def matmul(a, b):
+    if a.ndim == 1 or b.ndim == 1:
+        return prims.matmul(a, b)
+
     a_batch_dims = a.shape[:-2]
     b_batch_dims = b.shape[:-2]
 

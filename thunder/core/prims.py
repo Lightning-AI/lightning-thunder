@@ -1540,14 +1540,40 @@ def matmul_meta(a, b):
     utils.check(isinstance(a, TensorProxy), lambda: f"a={a} was not a TensorProxy")
     utils.check(isinstance(b, TensorProxy), lambda: f"b={b} was not a TensorProxy")
 
-    if a.ndim < 2 or b.ndim < 2:
-        raise NotImplemented
+    if a.ndim < 1 or b.ndim < 1:
+        raise NotImplementedError
 
     utils.check(a.device == b.device, lambda: f"Expected a.device={a.device} and b.device={b.device} to be the same")
 
     utils.check(
         dtypes.are_same_dtypes(a, b), lambda: f"Expected a.dtype={a.dtype} and b.dtype={b.dtype} to be the same"
     )
+
+    if a.ndim == 1 and b.ndim == 1:
+        utils.check(
+            a.shape[0] == b.shape[0],
+            lambda: f"Expected a.shape={a.shape} and b.shape={b.shape} to have the same length",
+        )
+        return TensorProxy(name=get_trace().make_proxy_name(), shape=(), device=a.device, dtype=a.dtype)
+
+    if a.ndim == 1:
+        utils.check(
+            a.shape[0] == b.shape[-2],
+            lambda: f"Expected a.shape={a.shape} to be matrix multipiable with b.shape={b.shape}",
+        )
+        shape = list(b.shape[:-2])
+        shape.append(b.shape[-1])
+        return TensorProxy(name=get_trace().make_proxy_name(), shape=shape, device=a.device, dtype=a.dtype)
+
+    if b.ndim == 1:
+        utils.check(
+            a.shape[-1] == b.shape[0],
+            lambda: f"Expected a.shape={a.shape} to be matrix multipiable with b.shape={b.shape}",
+        )
+        shape = list(a.shape[:-2])
+        shape.append(a.shape[-2])
+        return TensorProxy(name=get_trace().make_proxy_name(), shape=shape, device=a.device, dtype=a.dtype)
+
 
     utils.check(
         utils.same_shape(a.shape[:-2], b.shape[:-2]),
@@ -1579,7 +1605,7 @@ def embedding_meta(a, weight, padding_idx=-1, max_norm=None, norm_type=2.0, scal
     # TODO: canonicalize and validating padding idx with weight.shape[0]
 
     if max_norm is not None:
-        raise NotImplemented
+        raise NotImplementedError
 
     utils.check(a.dtype == dtypes.int64, lambda: f"Expected a.dtype={a.dtype} to be int64")
     utils.check(weight.ndim == 2, lambda: f"Expected weight (weight.shape={weight.shape} to be a matrix)")
