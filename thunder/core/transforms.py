@@ -969,6 +969,7 @@ def prod_vjp(x, dims):
         VJPTriple: Primal, residuals, and pullback.
     """
     primal = prims.prod(x, dims)
+
     residuals = (
         primal,
         x,
@@ -981,6 +982,49 @@ def prod_vjp(x, dims):
         return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x), None
 
     return VJPTriple(primal, residuals, pullback)
+
+
+def keepdim_reduction(reduction_fn, x, dims):
+    """Applies reduction and fixes output to conform to keepdim=True"""
+    out = reduction_fn(x, dims)
+    argmax_sum_out_shape = [x.shape[i] if i not in dims else 1 for i in range(x.ndim)]
+    broadcast_dims = [i for i in range(x.ndim) if i not in dims]
+    return prims.broadcast_in_dim(out, argmax_sum_out_shape, broadcast_dims)
+
+
+# Inspired from https://github.com/HIPS/autograd/blob/master/autograd/numpy/numpy_vjps.py#L353
+def grad_chooser_pullback(primal, x, x_shape, reduced_dims, g):
+    """Builds gradient of functions that choose a single item, such as min or max."""
+    g_repeated = restore_reduced_dims(g, reduced_dims, x_shape)
+    primal_repeated = restore_reduced_dims(primal, reduced_dims, x_shape)
+    argmax_locations = x == primal_repeated
+    argmax_sum = keepdim_reduction(prims.sum, argmax_locations, reduced_dims)
+    out = g_repeated * argmax_locations / argmax_sum
+    return out, None
+
+
+# TODO: exact same for amin, argmax, argmin
+@register_vjp(prims.Ops.AMAX)
+def amax_vjp(x, dims):
+    """VJP of the amax operation.
+
+    Args:
+        x (Variable): Tensor to compute amax on.
+        dims (Tuple[int, ...]): Dimensions to compute amax over.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.amax(x, dims)
+
+    residuals = (
+        primal,
+        x,
+        x.shape,
+        dims,
+    )
+
+    return VJPTriple(primal, residuals, grad_chooser_pullback)
 
 
 @register_vjp(prims.Ops.EXP)
