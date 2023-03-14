@@ -15,7 +15,7 @@ from thunder.core.transforms import jvp, vjp
 from thunder.core.utils import flatten_func
 from thunder.tests.framework import ops, run_snippet
 from thunder.tests.make_tensor import make_tensor_like
-from thunder.tests.opinfos import opinfos, tensor_creation_ops
+from thunder.tests.opinfos import opinfos, tensor_creation_ops, push_away_from_singularities
 
 boolean_ops = {
     "eq",
@@ -297,11 +297,14 @@ def snippet_jvp_correctness(func, args, executor):
 @ops((op for op in opinfos if op.name in supported_jvp_ops), supported_dtypes=(dtypes.float64,))
 def test_jvp_correctness(op, device, dtype, executor):
     at_least_one_differentiable_input = False
+    eps = 1e-2
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
+        if op.singularity_fn is not None:
+            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_jvp_correctness,
@@ -326,11 +329,14 @@ def snippet_vjp_correctness(func, args, executor):
 @ops((op for op in opinfos if op.name in supported_vjp_ops), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness(op, device, dtype, executor):
     at_least_one_differentiable_input = False
+    eps = 1e-2
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
+        if op.singularity_fn is not None:
+            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,

@@ -852,8 +852,15 @@ no_residuals = (no_residual,)
 # The VJP implementation is a function that takes the primal values and returns
 # a triple of primal result, residuals, and pullback function.
 vjp_impls = {
+    prims.Ops.ACOS: lambda x: (prims.acos(x), (x,), lambda x, g: -g / prims.sqrt(1.0 - x * x)),
+    prims.Ops.ACOSH: lambda x: (prims.acosh(x), (x,), lambda x, g: g * prims.rsqrt(x * x - 1.0)),
     prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
-    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1 - x**2)),
+    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1.0 - x * x)),
+    prims.Ops.ASINH: lambda x: (prims.asinh(x), (x,), lambda x, g: g * prims.rsqrt(1.0 + x * x)),
+    prims.Ops.ATAN: lambda x: (prims.atan(x), (x,), lambda x, g: g / (1.0 + x * x)),
+    prims.Ops.ATANH: lambda x: (prims.atanh(x), (x,), lambda x, g: g / (1.0 - x * x)),
+    prims.Ops.COS: lambda x: (prims.cos(x), (x,), lambda x, g: prims.mul(g, -prims.sin(x))),
+    prims.Ops.COSH: lambda x: (prims.cosh(x), (x,), lambda x, g: prims.mul(g, prims.sinh(x))),
     prims.Ops.DIV: lambda x, y: (
         prims.div(x, y),
         (
@@ -864,6 +871,7 @@ vjp_impls = {
     ),
     prims.Ops.MUL: lambda x, y: (prims.mul(x, y), (x, y), lambda x, y, g: (g * y, g * x)),
     prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
+    prims.Ops.SINH: lambda x: (prims.sinh(x), (x,), lambda x, g: prims.mul(g, prims.cosh(x))),
     prims.Ops.SUB: lambda x, y: (prims.sub(x, y), no_residuals, lambda _, g: (g, -g)),
 }
 
@@ -913,15 +921,13 @@ def rsqrt_vjp(x):
         VJPTriple: Primal, residuals, and pullback.
     """
     primal = prims.rsqrt(x)
-    residuals = (
-        primal,
-    )
+    residuals = (primal,)
 
     def pullback(result, g):
-        # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x 
+        # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x
         # where rsqrt(x) and x are saved for the backwards pass.
         # This derivation was selected because it avoids saving the input tensor.
-        return -0.5 * g * result**3.
+        return -0.5 * g * result**3.0
 
     return VJPTriple(primal, residuals, pullback)
 
@@ -1021,6 +1027,42 @@ def pow_vjp(x, y):
     return VJPTriple(primal, residuals, pullback)
 
 
+@register_vjp(prims.Ops.TAN)
+def tan_vjp(x):
+    """VJP of the tan operation.
+
+    Args:
+        x (Variable): Tensor to be passed to tan.
+    """
+
+    primal = prims.tan(x)
+    residuals = (primal,)
+
+    def pullback(result, g):
+        return g * (1 + result * result)
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+@register_vjp(prims.Ops.TANH)
+def tanh_vjp(x):
+    """VJP of the tanh operation.
+
+    Args:
+        x (Variable): Tensor to be passed to tanh.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.tanh(x)
+    residuals = (primal,)
+
+    def pullback(result, g):
+        return g * (1.0 - result * result)
+
+    return VJPTriple(primal, residuals, pullback)
+
+
 @register_vjp(prims.Ops.BROADCAST_IN_DIM)
 def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPTriple:
     primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
@@ -1050,7 +1092,7 @@ def matmul_vjp(a: TensorProxy, b: TensorProxy) -> VJPTriple:
             return g * b, g * a
 
         if b.ndim == 1:
-            ga = (unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT)
+            ga = unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT
             gb = a.mT @ unsqueeze(g, last_dim)
             if g.ndim > 1:
                 gb = squeeze(gb, last_dim)

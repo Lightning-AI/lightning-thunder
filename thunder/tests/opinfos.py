@@ -29,6 +29,20 @@ from thunder.tests.make_tensor import make_tensor
 eps = 1e-2
 
 
+def round_remainder(x, y):
+    return x - torch.round(x / y) * y
+
+
+def push_away_from_singularities(x, singularity_fn, eps):
+    """This function takes a tensor and moves individual values away
+    from singularities in `eps` increments, until they are further than
+    `eps` away from them. The `singularity_fn`  returns the (signed)
+    distance from `x` to the nearest singularity."""
+    x_dist = singularity_fn(x)
+    x_ = torch.where((x_dist > 0) & (x_dist < eps), x + eps, x)
+    return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
+
+
 def make_number(**kwargs):
     v = make_tensor((), device="cpu", **kwargs).item()
     return v
@@ -205,6 +219,7 @@ class OpInfo:
         jax_reference=None,
         test_directives=(),
         domain=(None, None),
+        singularity_fn=None,
     ):
         self.op = op
         self.name = name if name is not None else op.__name__
@@ -220,6 +235,7 @@ class OpInfo:
         self.jax_reference = jax_reference
         self.test_directives = test_directives
         self.domain = Domain(*domain)
+        self.singularity_fn = singularity_fn
 
     def __call__(self, *args, **kwargs):
         """Calls the function variant of the operator."""
@@ -953,8 +969,10 @@ sqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(sqrt_opinfo)
 
+
 tan_opinfo = OpInfo(
     tlang.tan,
+    singularity_fn=lambda x: round_remainder(x, torch.pi / 2),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.tan),
     test_directives=(
