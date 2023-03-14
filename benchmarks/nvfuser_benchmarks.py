@@ -82,15 +82,15 @@ class Benchmark:
 
         if executor == "torch-eager":
             assert not cudagraphs
-            return executor, False, self._fn, None
+            return executor, self._fn, None
 
         elif executor == "torch.compile":
             options = {"triton.cudagraphs": True} if cudagraphs else None
-            return f"{executor}{'_cuda_graphs' if cudagraphs else ''}", False, torch.compile(self._fn, options=options), None
+            return f"{executor}{'_cuda_graphs' if cudagraphs else ''}", torch.compile(self._fn, options=options), None
 
         elif executor == "torch.compile_nvfuser_prims":
             assert not cudagraphs
-            return executor, False, torch.compile(self._fn, backend="nvprims_nvfuser"), None
+            return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
 
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
             name = f"thunder+nvfuser{'_cuda_graphs' if cudagraphs else ''}"
@@ -98,7 +98,6 @@ class Benchmark:
             args, kwargs = self.make_batch()
             return (
                 name,
-                cudagraphs,
                 lambda *args, **kwargs: tom(*args, **kwargs)["result"],
                 tom(*args, **kwargs)["profile_info"],
             )
@@ -912,9 +911,9 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, inshape, device, indices_dtype, **_) -> Tuple[List, Dict]:
-        x = make_tensor(inshape, low=0, high=255, device=device, dtype=ttorch.torch_dtype(indices_dtype))
-        return (x, None), {}
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> Tuple[List, Dict]:
+        x = make_tensor(batch_dims + (gpt_config.n_embd,), device=device, dtype=tdtype)
+        return (x,), {}
 
 
 def new_gelu(a):
@@ -1038,8 +1037,14 @@ def benchmark(
     nsight=False,
 ):
     if print_program:
-        _, _, _, thunder_profile = benchmark.compiled_fn("thunder+nvfuser")
+        _, _, thunder_profile = benchmark.compiled_fn("thunder+nvfuser")
         prettyprint_program(thunder_profile)
+
+    # Workaround an initialization issue with Kineto and CUDA graphs
+    #   https://github.com/pytorch/pytorch/issues/75504#issuecomment-1467065935
+    if profile:
+        with torch.profiler.profile():
+            pass
 
     torch.backends.cuda.matmul.allow_tf32 = use_tf32
 
@@ -1053,21 +1058,14 @@ def benchmark(
         except:
             pass
 
-        name, cudagraph, fn, _ = benchmark.compiled_fn(executor)
+        name, fn, _ = benchmark.compiled_fn(executor)
         stats = time_ns(fn, benchmark.make_batch, warmup_iters=warmup_iters, iters=iters)
         _prettyprint_stats(name, stats)
 
         if profile:
             assert name is not None
             inputs = [benchmark.make_batch() for _ in range(5)]
-            with torch.profiler.profile(
-                with_stack=True,
-
-                # If CUDA graph and profiler are mixed execution will fail with an illegal memory
-                # access error. (Cause is currently unknown, but unrelated to Thunder)
-                # So if CUDA graphs are used we have to disable the GPU kernel part of profiler.
-                activities=[torch.autograd.ProfilerActivity.CPU] if cudagraph else None,
-            ) as p:
+            with torch.profiler.profile(with_stack=True) as p:
                 for args, kwargs in inputs:
                     _ = fn(*args, **kwargs)
                     torch.cuda.synchronize()
@@ -1154,10 +1152,10 @@ if __name__ == "__main__":
             help=f"Specifies the executors to collect statistics for. (Default: all)\n{listed_executors}",
         )
         parser.add_argument(
-            "--tf-32", "--tf32",
-            dest="use_tf32",
+            "--no-tf-32", "--no-tf32",
+            dest="disable_tf32",
             action="store_true",
-            help="Use TensorFloat-32 for single precision matrix multiplications.",
+            help="Disable the use of TensorFloat-32 for single precision matrix multiplications. (Default: on)",
         )
         parser.add_argument(
             "--iters",
@@ -1229,7 +1227,7 @@ if __name__ == "__main__":
     benchmark(
         benchmark_constructor(**kwargs),
         executors=parsed.executors.split(","),
-        use_tf32=parsed.use_tf32,
+        use_tf32=not parsed.disable_tf32,
         iters=parsed.iters,
         warmup_iters=parsed.warmup_iters,
         print_program=parsed.print_program,
