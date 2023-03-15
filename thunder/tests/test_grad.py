@@ -35,8 +35,6 @@ op_skip = {
     # See https://github.com/Lightning-AI/lightning-thunder/issues/226
     # TODO: AttributeError: 'Tensor' object has no attribute 'true_dtype'
     "masked_fill",
-    # TODO: RuntimeError: Unexpected type <class 'torch.Tensor'> for pred
-    "where",
     # TODO: RuntimeError: Expected index=tensor([2, 3, 2, 0, 3, 1, 0, 2],
     # device='cuda:0', dtype=torch.int32) to be a TensorProxy!
     "index_select",
@@ -210,6 +208,28 @@ def check_jvp(f, *primals, executor="torch", atol=None, rtol=None):
     torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
 
 
+def _replace_none_with_zero(x, y):
+    """Replace None with torch.tensor(0.0) to avoid errors when computing the dot product.
+
+    Args:
+        x (list): The first list of tensors.
+        y (list): The second list of tensors.
+
+    Returns:
+        tuple: The two lists of tensors.
+    """
+    x = list(x)
+    y = list(y)
+    assert x[0] is not None or y[0] is not None, "Both x and y are None"
+    device = x[0].device if x[0] is not None else y[0].device
+    zero = torch.tensor(0.0, device=device, dtype=torch.float64)
+    for i, (a, b) in enumerate(zip(x, y)):
+        if a is None or b is None:
+            x[i] = zero
+            y[i] = zero
+    return x, y
+
+
 def _dot(x, y):
     """Compute the dot product of two lists of tensors.
 
@@ -220,6 +240,7 @@ def _dot(x, y):
     Returns:
         torch.Tensor: The dot product.
     """
+    x, y = _replace_none_with_zero(x, y)
     assert all(
         isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
     ), "Not all elements are torch.Tensor"
@@ -272,7 +293,7 @@ def check_vjp(f, *primals, executor="torch", atol=None, rtol=None):
 
 
 def _is_differentiable(x):
-    """Check if a tensor is differentiable.
+    """Check if a tensor is allowed to be sent as an argument to a differentiable function.
 
     Args:
         x (torch.Tensor): The tensor to check.

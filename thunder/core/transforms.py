@@ -1192,6 +1192,10 @@ def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: S
     residuals = (a, shape, broadcast_dimensions)
 
     def pullback(a, shape, broadcast_dimensions, g):
+        # If g is None, then the primal was a constant and the pullback is zero.
+        # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
+        if g is None:
+            return None, None, None
         unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
         bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
         reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
@@ -1271,6 +1275,17 @@ def linear_vjp(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy] = None) 
             return ga, gb
         gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
         return ga, gb, gc
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+@register_vjp(prims.Ops.WHERE)
+def where_vjp(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJPTriple:
+    primal = prims.where(condition, x, y)
+    residuals = (condition, )
+
+    def pullback(condition, g):
+        return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
     return VJPTriple(primal, residuals, pullback)
 
