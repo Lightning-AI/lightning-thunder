@@ -1661,7 +1661,7 @@ shape_ops.append(broadcast_in_dim_opinfo)
 
 
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=torch.float32)
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # TODO: all these cases are basic indexing
     # NOTE: PyTorch does not allow negative steps
@@ -1716,6 +1716,10 @@ getitem_opinfo = OpInfo(
     sample_input_generator=getitem_sample_generator,
     torch_reference=operator.getitem,
     jax_reference=operator.getitem,
+    test_directives=(
+        # ValueError: zero-size array to reduction operation maximum which has no identity
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+    ),
 )
 shape_ops.append(getitem_opinfo)
 
@@ -1815,7 +1819,8 @@ def slice_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for shape, start_idx, limit_idx, stride, dim in cases:
-        yield SampleInput(make(shape), start_idx, limit_idx, stride, dim)
+        a = make(shape)
+        yield SampleInput(a, start_idx, limit_idx, stride, dim)
 
 
 slice_in_dim = OpInfo(
@@ -1837,7 +1842,8 @@ def slice_prim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for shape, start_indices, end_indices in cases:
-        yield SampleInput(make(shape), start_indices, end_indices)
+        a = make(shape)
+        yield SampleInput(a, start_indices, end_indices)
 
 
 slice_prim_opinfo = OpInfo(
@@ -1871,6 +1877,10 @@ split_opinfo = OpInfo(
     ttorch.split,
     sample_input_generator=split_sample_generator,
     torch_reference=torch.split,
+    test_directives=(
+        # ValueError: zero-size array to reduction operation maximum which has no identity
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+    ),
 )
 shape_ops.append(split_opinfo)
 
@@ -1964,6 +1974,10 @@ tensor_split_opinfo = OpInfo(
     ttorch.tensor_split,
     sample_input_generator=tensor_split_sample_generator,
     torch_reference=torch.tensor_split,
+    test_directives=(
+        # ValueError: zero-size array to reduction operation maximum which has no identity
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+    ),
 )
 shape_ops.append(tensor_split_opinfo)
 

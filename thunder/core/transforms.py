@@ -11,10 +11,12 @@ from thunder.core.lang import full, full_like, unsqueeze, squeeze
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import detached_trace, get_trace, Trace, Variable
-from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2
+from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as
 from thunder.executors.torch import ops_to_torch_ops_map
 
 import torch
+
+import numpy as np
 
 
 class Transforms(Enum):
@@ -1135,17 +1137,30 @@ def reshape_vjp(a, shape):
     return VJPTriple(primal, residuals, pullback)
 
 
-# TODO: slice requires pad
-# @register_vjp(prims.Ops.SLICE)
-# def slice_vjp(a, start_indices, end_indices, strides=None):
+@register_vjp(prims.Ops.SLICE)
+def slice_vjp(a, start_indices, end_indices, strides=None):
+    primal = prims.slice_prim(a, start_indices, end_indices, strides)
+    residuals = (a.shape, start_indices, end_indices, strides)
 
-#     primal = prims.slice(a, start_indices, end_indices, strides)
-#     residuals = None
+    # Adapted from https://github.com/google/jax/blob/main/jax/_src/lax/slicing.py#L768
+    def pullback(shape, start_indices, end_indices, strides, g):
+        padding = None
+        if strides is None or np.all(np.equal(strides, 1)):
+            padding = tuple(zip(start_indices, np.subtract(shape, end_indices), (0,) * len(start_indices)))
+        else:
+            real_limits = np.add(
+                start_indices,
+                np.where(np.equal(g.shape, 0), 0, np.add(1, np.multiply(np.subtract(g.shape, 1), strides))),
+            )
+            padding = tuple(zip(start_indices, np.subtract(shape, real_limits), np.subtract(strides, 1)))
 
-#     def pullback(g):
-#         pass
+        result = prims.pad(g, const_as(0, g.dtype), padding)
 
-#     return VJPTriple(primal, residuals, pullback)
+        if strides is None:
+            return result, None, None
+        return result, None, None, None
+
+    return VJPTriple(primal, residuals, pullback)
 
 
 @register_vjp(prims.Ops.BROADCAST_IN_DIM)

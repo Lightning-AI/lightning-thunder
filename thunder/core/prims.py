@@ -1282,7 +1282,8 @@ def pad_meta(a, padding_value, padding_config):
     for l, (lo, hi, dilation) in zip(a.shape, padding_config):
         utils.check(dilation >= 0, lambda: f"Expected {dilation=} to be weakly positive")
         final_length = l + max(0, l - 1) * dilation + lo + hi
-        utils.check(final_length >= 0, lambda: "The length of a dimension after padding would be {final_length} < 0")
+        utils.check(final_length >= 0, lambda: f"The length of a dimension after padding would be {final_length=} < 0")
+        shape.append(final_length)
 
     proxy_name = get_trace().make_proxy_name()
     return TensorProxy(tensor=a, name=proxy_name, shape=shape, strides=None)

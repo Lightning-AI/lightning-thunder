@@ -44,6 +44,7 @@ __all__ = [
     "ELEMENTWISE_TYPE_PROMOTION_KIND",
     "get_computation_dtype",
     "elementwise_type_promotion",
+    "const_as",
     # Shape-related functions
     "extract_shape_from_varargs",
     "is_numbertensor",
@@ -447,6 +448,14 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
     if is_low_precision_dtype(promotiontype):
         return get_computation_dtype(promotiontype), promotiontype
     return promotiontype, promotiontype
+
+
+def const_as(number, dtype):
+    """
+    Returns the value with the typed with the numbertype corresponding to the dtype
+    """
+
+    return dtype_to_numbertype(dtype)(number)
 
 
 #

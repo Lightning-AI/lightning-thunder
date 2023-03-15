@@ -220,7 +220,7 @@ class TensorProxy(Proxy):
             self._dtype = dtypes.numbertype_to_dtype(self._dtype)
 
     def __repr__(self):
-        return f"[TensorProxy, name={self.name}, shape={self.shape}, dtype={self.dtype}, has_weak_dtype={dtypes.is_weak_dtype(self._dtype)}]"
+        return f"[TensorProxy, name={self.name}, shape={self.shape}, device={self.device}, dtype={self.dtype}, has_weak_dtype={dtypes.is_weak_dtype(self._dtype)}]"
 
     def __hash__(self):
         return object.__hash__(self)

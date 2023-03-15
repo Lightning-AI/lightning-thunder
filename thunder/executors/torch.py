@@ -106,7 +106,7 @@ def pad(a, padding_value, padding_config):
     if just_pad:
         return torch.nn.functional.pad(a, pad_config, value=padding_value)
 
-    result = torch.full(intermediate_shape, padding_value)
+    result = torch.full(intermediate_shape, padding_value, device=a.device, dtype=a.dtype)
     result[intermediate_slices] = a
     result = torch.nn.functional.pad(result, pad_config, value=padding_value)
     return result
