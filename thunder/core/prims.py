@@ -1574,7 +1574,6 @@ def matmul_meta(a, b):
         shape.append(a.shape[-2])
         return TensorProxy(name=get_trace().make_proxy_name(), shape=shape, device=a.device, dtype=a.dtype)
 
-
     utils.check(
         utils.same_shape(a.shape[:-2], b.shape[:-2]),
         lambda: f"Expected the batch dimensions of a ({a.shape[:-2],}) and the batch dimensions of b ({b.shape[:-2]}) to be the same",

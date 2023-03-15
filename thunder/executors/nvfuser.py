@@ -1196,8 +1196,6 @@ def _fuse(
     exec(code, ctx)
     fusion = ctx["fusion"]
 
-    print(cstr)
-
     if profile_info:
         return fusion, regions
 

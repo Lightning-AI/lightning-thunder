@@ -1107,6 +1107,47 @@ def tanh_vjp(x):
     return VJPTriple(primal, residuals, pullback)
 
 
+# NOTE: Jax uses np.argsort in its transpose vjp computation
+def _argsort(seq):
+    return sorted(range(len(seq)), key=seq.__getitem__)
+
+
+@register_vjp(prims.Ops.TRANSPOSE)
+def transpose_vjp(a, permutation):
+    primal = prims.transpose(a, permutation)
+    residuals = (permutation,)
+
+    def pullback(permutation, g):
+        undo = _argsort(permutation)
+        return prims.transpose(g, undo), None
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+@register_vjp(prims.Ops.RESHAPE)
+def reshape_vjp(a, shape):
+    primal = prims.reshape(a, shape)
+    residuals = (a.shape,)
+
+    def pullback(orig_shape, g):
+        return prims.reshape(g, orig_shape), None
+
+    return VJPTriple(primal, residuals, pullback)
+
+
+# TODO: slice requires pad
+# @register_vjp(prims.Ops.SLICE)
+# def slice_vjp(a, start_indices, end_indices, strides=None):
+
+#     primal = prims.slice(a, start_indices, end_indices, strides)
+#     residuals = None
+
+#     def pullback(g):
+#         pass
+
+#     return VJPTriple(primal, residuals, pullback)
+
+
 @register_vjp(prims.Ops.BROADCAST_IN_DIM)
 def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPTriple:
     primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
