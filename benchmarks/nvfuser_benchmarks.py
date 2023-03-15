@@ -9,6 +9,7 @@ import pathlib
 import textwrap
 import time
 from typing import Any, Callable, Dict, List, Tuple
+import types
 
 import torch
 from torch.testing import make_tensor
@@ -44,7 +45,7 @@ class BenchmarkArg:
 
 # Helper to easily modify thunder construction
 # TODO: let benchmark set mode as an option, or even compare multiple modes at once
-def thunder_compile(fn, cudagraphs: bool=True):
+def thunder_compile(fn, cudagraphs: bool = True):
     return thunder.make_traced(
         fn,
         executor="nvfuser",
@@ -363,12 +364,16 @@ def get_torch_code_for_region(region, *, contiguous):
 
 def _prettyprint_stats(name, stats):
     us = "\u03BCs"
-    print(textwrap.dedent(f"""\
+    print(
+        textwrap.dedent(
+            f"""\
         {name} results:
             The median time of {stats['iters']} post-warmup iterations was {ns_to_us(stats['median'])}{us}
             The initial iteration took {ns_to_us(stats['initial'])}{us}
             The final iteration took {ns_to_us(stats['final'])}{us}
-    """))
+    """
+        )
+    )
 
 
 # def _compare_stats(thunder_name, thunder_stats, name_b, stats_b):
@@ -739,9 +744,9 @@ class GPTConfig:
     dropout: float = 0.1
 
     def update(self, **kwargs) -> None:
-       for field in dataclasses.fields(self):
-           if field.name in kwargs:
-               setattr(self, field.name, kwargs[field.name])
+        for field in dataclasses.fields(self):
+            if field.name in kwargs:
+                setattr(self, field.name, kwargs[field.name])
 
 
 class GPTBenchMarkBase(Benchmark):
@@ -787,7 +792,10 @@ class GPTBenchMarkBase(Benchmark):
 
         assert cls.benchmark_factory is not None
         tdtype = ttorch.torch_dtype(dtype)
-        model = cls.benchmark_factory(gpt_config).to(device=device, dtype=tdtype)
+        if isinstance(cls.benchmark_factory, types.FunctionType):
+            model = cls.benchmark_factory
+        else:
+            model = cls.benchmark_factory(gpt_config).to(device=device, dtype=tdtype)
 
         kwargs.update({"config": config, "gpt_config": gpt_config, "device": device, "dtype": dtype, "tdtype": tdtype})
         self.ctor_kwargs = kwargs
@@ -919,6 +927,7 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
 def new_gelu(a):
     return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))
 
+
 class NanoGPTGeLUBenchmark(GPTBenchMarkBase):
     benchmark_factory = lambda *_, **__: new_gelu
     name_template = "nanogpt-{gpt_config}-gelu"
@@ -935,7 +944,6 @@ class NanoGPTGeLUBenchmark(GPTBenchMarkBase):
 
 
 class HuggingFaceSelfAttnBenchmark(Benchmark):
-
     # Taken from HuggingFace Bart-Large model config:
     # https://huggingface.co/facebook/bart-large/blob/main/config.json
     _configs = {
@@ -956,13 +964,13 @@ class HuggingFaceSelfAttnBenchmark(Benchmark):
             self.hf_config["num_heads"],
             dropout=dropout,
         ).to(device=self.device, dtype=self.tdtype)
-        
+
         super().__init__(
             name=f"hf-{self.hf_config}-self-attn",
             shortname=f"hf-{config}-self-attn",
             fn=bart_model,
         )
-    
+
     @classmethod
     @property
     def args(cls):
@@ -1130,11 +1138,11 @@ benchmarks = {
 if __name__ == "__main__":
     # TODO: "torch.compile_nvfuser_prims" doesn't work with nightly nvFuser
     executors = (
-        'torch-eager',
-        'torch.compile',
-        'torch.compile_cuda_graphs',
-        'thunder+nvfuser',
-        'thunder+nvfuser_cuda_graphs',
+        "torch-eager",
+        "torch.compile",
+        "torch.compile_cuda_graphs",
+        "thunder+nvfuser",
+        "thunder+nvfuser_cuda_graphs",
     )
 
     # Argparse doesn't properly share parents, so subparsers have to make a parent without defaults.
@@ -1152,7 +1160,8 @@ if __name__ == "__main__":
             help=f"Specifies the executors to collect statistics for. (Default: all)\n{listed_executors}",
         )
         parser.add_argument(
-            "--no-tf-32", "--no-tf32",
+            "--no-tf-32",
+            "--no-tf32",
             dest="disable_tf32",
             action="store_true",
             help="Disable the use of TensorFloat-32 for single precision matrix multiplications. (Default: on)",
@@ -1191,14 +1200,16 @@ if __name__ == "__main__":
         add_help=True,
         parents=[make_shared_parser()],
         formatter_class=argparse.RawTextHelpFormatter,
-        epilog=textwrap.dedent("""
+        epilog=textwrap.dedent(
+            """
             Examples:
               # Compare backends.
               $ python nvfuser_benchmarks.py -x torch-eager,torch.compile,thunder+nvfuser -pp nanogpt --iters 50
 
               # Detailed profiling of a region.
               $ python nvfuser_benchmarks.py -x thunder+nvfuser --tf32 nanogpt-mlp --warmup_iters 500 --iters 1000 --profile
-        """)
+        """
+        ),
     )
     subparsers = parser.add_subparsers(title="benchmarks", dest="benchmark", required=True)
     for benchmark_name, (benchmark_constructor, _) in benchmarks.items():
@@ -1208,11 +1219,11 @@ if __name__ == "__main__":
                 f"--{benchmark_arg.name}",
                 default=benchmark_arg.default,
                 help=benchmark_arg.description,
-
                 # TODO: make this more robust.
                 type=(
-                    type(benchmark_arg.default) if isinstance(benchmark_arg.default, (str, int, float)) else 
-                    lambda x: getattr(thunder, x)
+                    type(benchmark_arg.default)
+                    if isinstance(benchmark_arg.default, (str, int, float))
+                    else lambda x: getattr(thunder, x)
                 ),
             )
 
