@@ -1770,6 +1770,41 @@ reshape_opinfo = OpInfo(
 shape_ops.append(reshape_opinfo)
 
 
+def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, padding_config
+    cases = (
+        ((2, 2), ((1, 1, 1), (-1, 2, 0))),
+        ((1, 3), ((0, 0, 0), (0, 0, 0))),
+        ((2, 0, 3), ((1, 0, 0), (1, 1, 2), (0, 0, 0))),
+        ((7, 5), ((0, 0, 3), (-6, 2, 1))),
+        ((3, 7, 5), ((-2, 1, 0), (1, 3, 0), (-1, 2, 0))),
+        ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 1))),
+    )
+
+    for shape, padding_config in cases:
+        yield SampleInput(make(shape), make_number(dtype=dtype), padding_config)
+
+
+# NOTE: jax is very strict about tensor dtype vs number type, necessitating this helper
+def _jax_pad(a, padding_value, padding_config):
+    padding_value = jax.lax.convert_element_type(padding_value, a.dtype)
+    return jax.lax.pad(a, padding_value, padding_config)
+
+
+pad_opinfo = OpInfo(
+    prims.pad,
+    sample_input_generator=pad_sample_generator,
+    jax_reference=_jax_pad if JAX_AVAILABLE else None,
+    test_directives=(
+        # PyTorch's pad doesn't support complex padding values
+        DecorateInfo(pytest.mark.xfail, dtypes=(datatypes.complexfloating,)),
+    ),
+)
+shape_ops.append(pad_opinfo)
+
+
 def slice_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

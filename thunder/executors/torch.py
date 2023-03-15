@@ -80,6 +80,38 @@ def broadcast_in_dim(a, shape, broadcast_dims):
     return v.expand(shape)
 
 
+# NOTE: PyTorch doesn't have a padding operation exactly like XLA's
+#   When dilations are all zero, torch.nn.functional.pad can substitute for XLA's
+#   Otherwise, this first dilates the original tensor by copying it into a slice of
+#   a larger tensor, then pads the dilated tensor
+def pad(a, padding_value, padding_config):
+    intermediate_shape = []
+    intermediate_slices = []
+    pad_config = []
+    just_pad = True
+    for l, (low, high, dilation) in zip(a.shape, padding_config):
+        assert dilation >= 0
+
+        if dilation > 0:
+            just_pad = False
+
+        intermediate_length = l + max(0, l - 1) * dilation
+        intermediate_shape.append(intermediate_length)
+        intermediate_slices.append(slice(None, None, dilation + 1))
+
+        pad_config.append((low, high))
+
+    pad_config = [x for y in reversed(pad_config) for x in y]
+
+    if just_pad:
+        return torch.nn.functional.pad(a, pad_config, value=padding_value)
+
+    result = torch.full(intermediate_shape, padding_value)
+    result[intermediate_slices] = a
+    result = torch.nn.functional.pad(result, pad_config, value=padding_value)
+    return result
+
+
 def erfcinv_helper(a):
     erfinv = _elementwise_unary_torch(torch.erfinv)
     return erfinv(1 - a)
@@ -176,6 +208,7 @@ ops_to_torch_ops_map = {
     prims.Ops.UNIFORM: uniform_helper,
     # Shape prims
     prims.Ops.BROADCAST_IN_DIM: broadcast_in_dim,
+    prims.Ops.PAD: pad,
     prims.Ops.RESHAPE: "torch.reshape",
     prims.Ops.SLICE: slice_helper,
     prims.Ops.SQUEEZE: squeeze_helper,

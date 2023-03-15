@@ -37,6 +37,7 @@ __all__ = [
     # Shape prims
     "broadcast_in_dim_meta",
     "broadcast_in_dim",
+    "pad",
     "reshape",
     "slice",
     "squeeze",
@@ -123,6 +124,7 @@ class Ops(Enum):
     UNIFORM = auto()
     # Shape prims
     BROADCAST_IN_DIM = auto()
+    PAD = auto()
     RESHAPE = auto()
     SLICE = auto()
     SQUEEZE = auto()
@@ -1269,6 +1271,27 @@ broadcast_in_dim = make_prim(
     Ops.BROADCAST_IN_DIM,
     "broadcast_in_dim",
     broadcast_in_dim_meta,
+)
+
+
+def pad_meta(a, padding_value, padding_config):
+    utils.check(a.ndim == len(padding_config), lambda: f"Expected {a.ndim=} to equal {len(padding_config)=}")
+    utils.check_same_dtype(a, padding_value)
+
+    shape = []
+    for l, (lo, hi, dilation) in zip(a.shape, padding_config):
+        utils.check(dilation >= 0, lambda: f"Expected {dilation=} to be weakly positive")
+        final_length = l + max(0, l - 1) * dilation + lo + hi
+        utils.check(final_length >= 0, lambda: "The length of a dimension after padding would be {final_length} < 0")
+
+    proxy_name = get_trace().make_proxy_name()
+    return TensorProxy(tensor=a, name=proxy_name, shape=shape, strides=None)
+
+
+pad = make_prim(
+    Ops.PAD,
+    "pad",
+    pad_meta,
 )
 
 
