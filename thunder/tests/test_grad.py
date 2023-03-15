@@ -10,12 +10,14 @@ import torch
 import thunder.core.dtypes as dtypes
 
 from thunder import make_trace, make_traced
+from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map
 from thunder.core.transforms import jvp, vjp
 from thunder.core.utils import flatten_func
+from thunder.langs.torch import thunder_dtype
 from thunder.tests.framework import ops, run_snippet
 from thunder.tests.make_tensor import make_tensor_like
-from thunder.tests.opinfos import opinfos, tensor_creation_ops, push_away_from_singularities
+from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops
 
 boolean_ops = {
     "eq",
@@ -38,7 +40,21 @@ op_skip = {
     # TODO: RuntimeError: Expected index=tensor([2, 3, 2, 0, 3, 1, 0, 2],
     # device='cuda:0', dtype=torch.int32) to be a TensorProxy!
     "index_select",
+    # Finite difference approximation doesn't work for this function
+    "embedding",
 }
+
+
+def _is_exact_dtype(torch_dtype):
+    """Check if the given torch.dtype is an exact dtype.
+
+    Args:
+        torch_dtype (torch.dtype): The torch dtype to check.
+
+    Returns:
+        bool: True if the given torch.dtype is an exact dtype, False otherwise.
+    """
+    return is_exact_dtype(thunder_dtype(torch_dtype))
 
 
 def _generate_supported_op_list(checker):
@@ -155,6 +171,9 @@ def numerical_jvp(f):
         np_out_tangents = tuple(np.zeros_like(o) for o in np_out_primals)
         for j, out_tangent in enumerate(np_out_tangents):
             for i in range(len(primals)):
+                if _is_exact_dtype(primals[i].dtype):
+                    # It doesn't contribute to the Jacobian-vector product.
+                    continue
                 # fdm only supports single input single output functions
                 # Create a function that only varies the `i`th argument.
                 def f_i(x):
@@ -262,6 +281,10 @@ def _is_differentiable(x):
         bool: True if the tensor is differentiable, False otherwise.
     """
     if isinstance(x, torch.Tensor):
+        # Allow passing through bool and integer tensors
+        # Their gradient is None
+        if _is_exact_dtype(x.dtype):
+            return True
         return x.requires_grad
     # NOTE: we skip testing Python numbers for now
     # because internally fp32 may be used for computations with PyTorch
@@ -352,3 +375,22 @@ def test_vjp_correctness(op, device, dtype, executor):
 
     if not at_least_one_differentiable_input:
         raise pytest.skip("No differentiable inputs found")
+
+
+# Embedding is a special case because its Jacobian product can't be approximated
+# with finite differences
+@ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected = torch.autograd.grad(out, sample.args[1], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        actual_out, (gindices, gweight) = make_traced(vjp(filtered_op), executor=executor)(filtered_args, (v,))
+        assert gindices is None, "gindices should be None"
+        torch.testing.assert_close(gweight, expected[0])
+        torch.testing.assert_close(actual_out, out)

@@ -89,6 +89,7 @@ __all__ = [
     # TODO: move to torch.nn.functional
     "dropout",
     "embedding",
+    "embedding_backward",
     "softmax",
     # Norm Ops
     # Matmul Ops
@@ -1224,6 +1225,14 @@ def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_g
         scale_grad_by_freq=scale_grad_by_freq,
         sparse=sparse,
     )
+
+
+@torch_function(torch.ops.aten.embedding_backward)
+def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
+    result = prims.embedding_backward(
+        grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse
+    )
+    return result
 
 
 # CompositeImplicitAutograd - don't register decomp

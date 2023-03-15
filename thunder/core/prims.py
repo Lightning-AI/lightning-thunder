@@ -113,6 +113,7 @@ __all__ = [
     "matmul",
     # NN prims
     "embedding",
+    "embedding_backward",
 ]
 
 
@@ -197,6 +198,7 @@ class Ops(Enum):
     MATMUL = auto()
     # NN prims
     EMBEDDING = auto()
+    EMBEDDING_BACKWARD = auto()
 
 
 # maps from operators to their meta functions
@@ -1627,7 +1629,7 @@ matmul = make_prim(Ops.MATMUL, "matmul", matmul_meta)
 # TODO: these require review
 
 
-def embedding_meta(a, weight, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
+def embedding_meta(a, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
     # TODO: canonicalize and validating padding idx with weight.shape[0]
 
     if max_norm is not None:
@@ -1644,3 +1646,14 @@ def embedding_meta(a, weight, padding_idx=-1, max_norm=None, norm_type=2.0, scal
 
 
 embedding = make_prim(Ops.EMBEDDING, "embedding", embedding_meta)
+
+
+# TODO: Once we have fusable index_put we can implement it using primitives
+# For now we just use the PyTorch implementation
+def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
+    proxy_name = get_trace().make_proxy_name()
+    shape = (num_weights, grad.shape[-1])
+    return TensorProxy(name=proxy_name, shape=shape, device=grad.device, dtype=grad.dtype)
+
+
+embedding_backward = make_prim(Ops.EMBEDDING_BACKWARD, "embedding_backward", embedding_backward_meta)

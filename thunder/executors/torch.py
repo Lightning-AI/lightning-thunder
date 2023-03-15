@@ -283,6 +283,7 @@ ops_to_torch_ops_map = {
     prims.Ops.MATMUL: "torch.matmul",
     # NN prims
     prims.Ops.EMBEDDING: "torch.nn.functional.embedding",
+    prims.Ops.EMBEDDING_BACKWARD: "torch.ops.aten.embedding_backward",
 }
 
 

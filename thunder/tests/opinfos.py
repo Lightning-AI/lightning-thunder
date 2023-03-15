@@ -2503,4 +2503,42 @@ softmax_opinfo = OpInfo(
 nn_ops.append(softmax_opinfo)
 
 
+def embedding_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    N = 5
+    S = 2
+    # indices_shape, weight_shape, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse
+    cases = (
+        ((S,), (N, S), None, None, 2.0, False, False),
+        ((S,), (N, S), 0, None, 2.0, False, False),
+        ((S,), (N, S), None, None, 2.0, True, False),
+        # nvFuser executor would raise an error when running this test
+        # PyTorch works fine
+        # RuntimeError: unsupported memory format option Contiguous
+        # Because sparse=True, the output tensor is always in sparse format
+        # ((S,), (N, S), None, None, 2.0, False, True),
+    )
+
+    for indices_shape, weight_shape, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse in cases:
+        yield SampleInput(
+            make(indices_shape, low=0, high=N, dtype=torch.long, requires_grad=False),
+            make(weight_shape),
+            padding_idx=padding_idx,
+            max_norm=max_norm,
+            norm_type=norm_type,
+            scale_grad_by_freq=scale_grad_by_freq,
+            sparse=sparse,
+        )
+
+
+embedding_opinfo = OpInfo(
+    ttorch.embedding,
+    sample_input_generator=embedding_sample_generator,
+    torch_reference=torch.nn.functional.embedding,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+nn_ops.append(embedding_opinfo)
+
+
 opinfos.extend(nn_ops)

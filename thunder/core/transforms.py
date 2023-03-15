@@ -1203,6 +1203,22 @@ def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: S
     return VJPTriple(primal, residuals, pullback)
 
 
+@register_vjp(torch.nn.functional.embedding)
+def embedding_vjp(a: Proxy, weight: Proxy, *, padding_idx: Optional[int] = None, max_norm: Optional[float] = None,
+                    norm_type: float = 2.0, scale_grad_by_freq: bool = False, sparse: bool = False) -> VJPTriple:
+    # from thunder.langs.torch import embedding_backward
+    primal = prims.embedding(a, weight, padding_idx=padding_idx, max_norm=max_norm, norm_type=norm_type,
+                             scale_grad_by_freq=scale_grad_by_freq, sparse=sparse)
+    residuals = (a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
+
+    def pullback(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
+        padding_idx = -1 if padding_idx is None else padding_idx
+        gweight = prims.embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
+        return None, gweight
+
+    return VJPTriple(primal, residuals, pullback)
+
+
 @register_vjp(prims.Ops.MATMUL)
 def matmul_vjp(a: TensorProxy, b: TensorProxy) -> VJPTriple:
     primal = prims.matmul(a, b)
