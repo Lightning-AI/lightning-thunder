@@ -1717,7 +1717,7 @@ getitem_opinfo = OpInfo(
     torch_reference=operator.getitem,
     jax_reference=operator.getitem,
     test_directives=(
-        # ValueError: zero-size array to reduction operation maximum which has no identity
+        # NotImplementedError: VJP for Ops.SQUEEZE is not implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
 )
@@ -1877,10 +1877,6 @@ split_opinfo = OpInfo(
     ttorch.split,
     sample_input_generator=split_sample_generator,
     torch_reference=torch.split,
-    test_directives=(
-        # ValueError: zero-size array to reduction operation maximum which has no identity
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(split_opinfo)
 
@@ -1974,10 +1970,6 @@ tensor_split_opinfo = OpInfo(
     ttorch.tensor_split,
     sample_input_generator=tensor_split_sample_generator,
     torch_reference=torch.tensor_split,
-    test_directives=(
-        # ValueError: zero-size array to reduction operation maximum which has no identity
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
 )
 shape_ops.append(tensor_split_opinfo)
 

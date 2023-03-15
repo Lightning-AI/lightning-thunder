@@ -830,10 +830,15 @@ class VJPTriple:
 
 
 class NoPullback:
-    """A dummy pullback function that raises an error when called."""
+    """A dummy pullback function that returns None or raises an error."""
+
+    def __init__(self, num_args=0):
+        self.num_args = num_args
 
     def __call__(self, *args, **kwargs):
-        raise RuntimeError("Pullback called on a non-differentiable symbol")
+        if self.num_args > 0:
+            return (None,) * self.num_args
+        raise RuntimeError("Pullback called on a non-differentiable symbol or a constant.")
 
 
 no_pullback = NoPullback()
@@ -1306,9 +1311,10 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
         def vjp_impl_const(symbol, *args, **kwargs):
             primals = symbol_to_eval(symbol)(*args, **kwargs)
+            n_args = len(args)
             if isinstance(primals, Sequence):
-                return safe_map(lambda x: VJPTriple(x, (), no_pullback), primals)
-            return VJPTriple(primals, (), no_pullback)
+                return safe_map(lambda x: VJPTriple(x, (), NoPullback(n_args)), primals)
+            return VJPTriple(primals, (), NoPullback(n_args))
 
         return partial(vjp_impl_const, symbol)
 
@@ -1338,18 +1344,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         return (VJPTriple(out_primal, out_residuals, out_pullback),)
 
     return _vjp_impl
-
-
-def augmented_primal_metafunc(*primals, trace: Trace, **kwargs):
-    primals_residuals_pullbacks = [VJPTriple(primal, tuple(), no_pullback) for primal in primals]
-    result, env = eval_trace(
-        trace,
-        *primals_residuals_pullbacks,
-        **kwargs,
-        with_env=True,
-        symbol_mapper=vjp_symbol_mapper,
-    )
-    return result, env
 
 
 def backward_pass(forward_env, trace, init_cotangents):

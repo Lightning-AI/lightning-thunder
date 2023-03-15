@@ -168,6 +168,9 @@ def numerical_jvp(f):
         np_out_primals = tree_map(_to_numpy, out_primals)
         np_out_tangents = tuple(np.zeros_like(o) for o in np_out_primals)
         for j, out_tangent in enumerate(np_out_tangents):
+            # Skip computing the jth output tangent if the jth output is 0-sized.
+            if out_tangent.size == 0:
+                continue
             for i in range(len(primals)):
                 if _is_exact_dtype(primals[i].dtype):
                     # It doesn't contribute to the Jacobian-vector product.
