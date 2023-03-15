@@ -2127,7 +2127,7 @@ reduction_ops = []
 
 
 # TODO: increase reduction samples and refacort amax and sum generators
-def amax_sample_generator(op, device, dtype, requires_grad, **kwargs):
+def amax_amin_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # shape, dim, keepdim
@@ -2143,12 +2143,22 @@ def amax_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 amax_opinfo = OpInfo(
     ttorch.amax,
-    sample_input_generator=amax_sample_generator,
+    sample_input_generator=amax_amin_sample_generator,
     torch_reference=torch.amax,
     # Complex numbers are unordered
     dtypes=(datatypes.exact, datatypes.floating),
 )
 reduction_ops.append(amax_opinfo)
+
+
+amin_opinfo = OpInfo(
+    ttorch.amin,
+    sample_input_generator=amax_amin_sample_generator,
+    torch_reference=torch.amin,
+    # Complex numbers are unordered
+    dtypes=(datatypes.exact, datatypes.floating),
+)
+reduction_ops.append(amin_opinfo)
 
 
 def reduction_sample_generator(op, device, dtype, requires_grad, **kwargs):

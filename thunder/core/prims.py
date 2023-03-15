@@ -103,6 +103,7 @@ __all__ = [
     "reduction_meta",
     "sum_meta",
     "amax",
+    "amin",
     "prod",
     "sum",
     "var",
@@ -187,6 +188,7 @@ class Ops(Enum):
     WHERE = auto()
     # Reduction prims
     AMAX = auto()
+    AMIN = auto()
     PROD = auto()
     SUM = auto()
     VAR = auto()
@@ -1474,6 +1476,7 @@ def reduction_meta(a, dims, *, output_dtype=None, **kwargs):
 
 # TODO: review if reduction meta is OK for amax
 amax = make_prim(Ops.AMAX, "amax", reduction_meta)
+amin = make_prim(Ops.AMIN, "amin", reduction_meta)
 prod = make_prim(Ops.PROD, "prod", reduction_meta)
 sum = make_prim(Ops.SUM, "sum", reduction_meta)
 

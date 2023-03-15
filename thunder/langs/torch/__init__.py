@@ -79,6 +79,7 @@ __all__ = [
     "_set_correction",
     "_reduction_dims",
     "amax",
+    "amin",
     "mean",
     "prod",
     "sum",
@@ -1033,6 +1034,18 @@ def amax(a, dim, keepdim):
     return _reduction(
         a,
         prims.amax,
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=False,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+    )
+
+
+def amin(a, dim, keepdim):
+    return _reduction(
+        a,
+        prims.amin,
         dims=dim,
         keepdims=keepdim,
         dtype=None,

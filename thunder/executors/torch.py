@@ -272,6 +272,7 @@ ops_to_torch_ops_map = {
     prims.Ops.WHERE: "torch.where",
     # Reduction prims
     prims.Ops.AMAX: "torch.amax",
+    prims.Ops.AMIN: "torch.amin",
     prims.Ops.PROD: torch._refs.prod,
     prims.Ops.SUM: sum_helper,
     prims.Ops.VAR: "torch.var",

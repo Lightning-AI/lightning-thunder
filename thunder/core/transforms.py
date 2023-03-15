@@ -1029,6 +1029,29 @@ def amax_vjp(x, dims):
     return VJPTriple(primal, residuals, grad_chooser_pullback)
 
 
+@register_vjp(prims.Ops.AMIN)
+def amin_vjp(x, dims):
+    """VJP of the amin operation.
+
+    Args:
+        x (Variable): Tensor to compute amin on.
+        dims (Tuple[int, ...]): Dimensions to compute amin over.
+
+    Returns:
+        VJPTriple: Primal, residuals, and pullback.
+    """
+    primal = prims.amin(x, dims)
+
+    residuals = (
+        primal,
+        x,
+        x.shape,
+        dims,
+    )
+
+    return VJPTriple(primal, residuals, grad_chooser_pullback)
+
+
 @register_vjp(prims.Ops.EXP)
 def exp_vjp(x):
     """VJP of the exp operation.
