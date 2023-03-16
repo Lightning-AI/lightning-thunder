@@ -648,9 +648,9 @@ def unroll_for_loops_and_inline_modules(gr: "Graph") -> None:
                 thunder.core.script.passes.merge_blocks_where_possible(gr)
 
 
-def module_to_function(gr: "Graph") -> List[str]:
+def module_to_function(gr: "Graph") -> Tuple[List[str], List[torch.Tensor]]:
     attr_dict: Dict[str, int] = {}
-    attr_list = []
+    attr_list: List[str] = []
     attr_values = []
     for bl in gr.blocks:
         for n in bl.nodes:

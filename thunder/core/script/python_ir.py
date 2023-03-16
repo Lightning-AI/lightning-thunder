@@ -114,13 +114,12 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
 
     nodes_to_skip = set()
 
-    def store_phi_values(o: Value, o_idx: int, last_n: Optional[Node]) -> Node:
+    def store_phi_values(o: Value, o_idx: int, last_n: Optional[Node]) -> Optional[Node]:
         phi_values_in_processing = set()
 
-        def store_phi_values_inner(o: Value, o_idx: int, last_n: Optional[Node]) -> Node:
+        def store_phi_values_inner(o: Value, o_idx: int, last_n: Optional[Node]) -> Optional[Node]:
             if o in phi_values_in_processing:
                 # avoid loops
-                assert last_n is not None
                 return last_n
             phi_values_in_processing.add(o)
             for v in o.phi_values:
@@ -137,7 +136,6 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
                 nodes_to_skip.add(new_n)
                 insert_after(new_n, last_n)
                 last_n = new_n
-            assert last_n is not None
             return last_n
 
         return store_phi_values_inner(o, o_idx, last_n)
@@ -169,6 +167,7 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
                         outputs=[],
                         inputs=[o],
                     )
+                    assert last_n is not None
                     insert_after(new_n, last_n)
                     last_n = new_n
                     if o in bl.block_outputs:

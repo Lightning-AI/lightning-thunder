@@ -1119,7 +1119,7 @@ def _fuse(
         # Records the graph
         static_outputs = None
         # TODO: improve code for handling params we assume to be static (from modules)
-        static_inputs_raw = set(static_inputs)
+        static_inputs_raw = set(static_inputs) if static_inputs is not None else set()
         static_inputs = []
         static_input_names = set()
         for arg, proxy in if_args:

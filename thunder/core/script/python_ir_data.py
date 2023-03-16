@@ -190,7 +190,7 @@ def stack_effect_detail(opname: str, oparg: Optional[int], *, jump: bool = False
 jump_instructions = set(dis.hasjabs) | set(dis.hasjrel)
 
 
-def make_jump_absolute(arg: int):
+def make_jump_absolute(arg: int) -> dis.Instruction:
     return dis.Instruction(
         opname="JUMP_ABSOLUTE",
         opcode=dis.opmap.get("JUMP_ABSOLUTE", -1),
