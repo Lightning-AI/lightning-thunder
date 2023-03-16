@@ -792,10 +792,9 @@ class GPTBenchMarkBase(Benchmark):
 
         assert cls.benchmark_factory is not None
         tdtype = ttorch.torch_dtype(dtype)
-        if isinstance(cls.benchmark_factory, types.FunctionType):
-            model = cls.benchmark_factory
-        else:
-            model = cls.benchmark_factory(gpt_config).to(device=device, dtype=tdtype)
+        model = cls.benchmark_factory(gpt_config)
+        if not isinstance(cls.benchmark_factory, types.FunctionType):
+            model = model.to(device=device, dtype=tdtype)
 
         kwargs.update({"config": config, "gpt_config": gpt_config, "device": device, "dtype": dtype, "tdtype": tdtype})
         self.ctor_kwargs = kwargs
