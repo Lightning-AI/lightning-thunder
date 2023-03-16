@@ -1,20 +1,20 @@
 import builtins
-import math
 import cmath
+import math
 import operator
 import sys
 from dataclasses import dataclass, field
 from enum import auto, Enum
-from functools import partial, reduce, lru_cache
+from functools import lru_cache, partial, reduce
 from numbers import Number
-from typing import Dict, Sequence, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
 from thunder.core.proxies import Proxy, proxy, TensorProxy
+from thunder.core.pytree import tree_flatten
 from thunder.core.trace import detached_trace, get_trace, Variable
 from thunder.core.utils import check, get_numberlike_value, same_shape
-from thunder.core.pytree import tree_flatten
 
 # This file defines Thunder's "primitive" operations. These are the
 #   "building blocks" for all of Thunder's operators.
@@ -241,6 +241,7 @@ class Symbol:
     outputs: Tuple[Variable]
     args: Tuple[Variable]
     kwargs: Dict[str, Variable]
+    decomposed_fn: Optional[Callable] = None
 
     def __repr__(self):
         result_string = ", ".join(str(output) for output in self.outputs)
@@ -266,8 +267,19 @@ class Symbol:
         flat_args = tree_flatten(self.args)[0]
         return not any(isinstance(arg, Variable) for arg in flat_args)
 
+    @property
+    @lru_cache(maxsize=None)
+    def non_decomposed_fn(self):
+        """Returns the function that records the symbol in the current trace.
 
-def make_symbol(id, name, outputs, args, kwargs):
+        This function should be used to record the single symbol corresponding
+        to the operation that this Symbol represents. If the decomposed version
+        of the operation is needed, use decomposed_fn instead.
+        """
+        return eval_meta_and_record_symbol_fn(self.decomposed_fn, self.op, self.name)
+
+
+def make_symbol(id, name, outputs, args, kwargs, decomposed_fn=None):
     """Creates a Symbol and adds it to the current trace.
 
     Prepares the arguments and outputs for the Symbol.
@@ -278,6 +290,7 @@ def make_symbol(id, name, outputs, args, kwargs):
         outputs: the result of the operation
         args: the arguments to the operation
         kwargs: the keyword arguments to the operation
+        decomposed_fn: the function that decomposes the operation into a sequence of other operations
 
     Returns:
         The symbol.
@@ -285,7 +298,7 @@ def make_symbol(id, name, outputs, args, kwargs):
     # Normalize the outputs and args to tuples
     symbol_outputs = tuple(outputs) if isinstance(outputs, Sequence) else (outputs,)
     symbol_args = tuple(map(lambda a: tuple(a) if isinstance(a, Sequence) else a, args))
-    symbol = Symbol(id, name, symbol_outputs, symbol_args, kwargs)
+    symbol = Symbol(id, name, symbol_outputs, symbol_args, kwargs, decomposed_fn)
     return symbol
 
 
@@ -317,7 +330,10 @@ def eval_meta_and_record_symbol_fn(meta, id, name, *args, **kwargs):
             get_trace().names.update(outer_names)
             result = meta(*args, **kwargs)
             new_names = get_trace().names
-        sym = make_symbol(id, name, result, args, kwargs)
+        # Assuming that the meta function implements a decomposed version of the operation,
+        # the decomposition can be empty, in which case we don't want to record a symbol.
+        decomposed_fn = meta
+        sym = make_symbol(id, name, result, args, kwargs, decomposed_fn)
         get_trace().add_symbol(sym)
         get_trace().names.update(new_names)
         return result

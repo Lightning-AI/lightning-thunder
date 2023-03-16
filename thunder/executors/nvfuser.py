@@ -745,13 +745,10 @@ def lower_for_nvfuser_mapper(symbol: prims.Symbol):
     if symbol.op == prims.Ops.SLICE:
         return prims.slice_prim
 
-    assert symbol.op in ttorch._torch_to_thunder_function_map, f"Unknown op {symbol.name}, {symbol.op}!"
-
     # All other symbols are treated as composite functions
     # We decompose them into primitives if the decomposition is fully supported
     # by nvFuser. Otherwise, we keep them as is.
-    # TODO: shall we store the meta function in the symbol?
-    decomposed_fn = prims.ops_to_meta_functions_map[symbol.op]
+    decomposed_fn = symbol.decomposed_fn
     proxy_args = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, symbol.args)
     proxy_kwargs = tree_map(lambda x: x.proxy if isinstance(x, Variable) else x, symbol.kwargs)
     trace = make_trace(lower_for_nvfuser(decomposed_fn))(*proxy_args, **proxy_kwargs)
@@ -759,10 +756,9 @@ def lower_for_nvfuser_mapper(symbol: prims.Symbol):
     if all_supported:
         return lower_for_nvfuser(decomposed_fn)
 
-    # When the decomposition is not supported, we use the original function
-    # TODO: shall we store the original function in the symbol?
-    original_fn = ttorch._torch_to_thunder_function_map[symbol.op]
-    return original_fn
+    # When the decomposition is not supported, we use the original trace recording
+    # function that was used to create the given symbol on the trace.
+    return symbol.non_decomposed_fn
 
 
 def lower_for_nvfuser(func):
