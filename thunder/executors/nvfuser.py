@@ -283,6 +283,18 @@ def _full_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_arg
     return (shape, _number_to_constant(fill_value), dtype), {}
 
 
+def _sum_helper(fd):
+    def helper(fd, a, dims, *, output_dtype=None):
+        output_dtype = _thunder_dtype_to_nvfuser_dtype_map.get(output_dtype, DataType.Null)
+        # nvFuser's sum primitive does not accept an empty dims sequence
+        if len(dims) == 0:
+            if output_dtype != DataType.Null:
+                return fd.ops.cast(a, output_dtype)
+            return a
+        return fd.ops.sum(a, dims, dtype=output_dtype)
+    return partial(helper, fd)
+
+
 # Maps the Thunder primitives to their corresponding nvfuser operation names
 # TODO: map directly to the nvfuser operations, not their names
 # TODO: review the cast operation on tensors vs scalars
@@ -364,7 +376,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.AMAX: "max",
     prims.Ops.AMIN: "min",
     prims.Ops.PROD: "prod",
-    prims.Ops.SUM: "sum",
+    prims.Ops.SUM: _sum_helper,
     prims.Ops.VAR: "var",
     nvOps.VAR_MEAN: "var_mean",
 }

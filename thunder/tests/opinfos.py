@@ -2243,12 +2243,6 @@ sum_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             active_if=LooseVersion(torch.__version__) < "1.13",
         ),
-        # TypeError: sum(): incompatible function arguments.
-        DecorateInfo(
-            pytest.mark.skip,  # xfail doesn't work here
-            "test_vjp_correctness",
-            executors=("nvFuser",),
-        ),
     ),
 )
 reduction_ops.append(sum_opinfo)
