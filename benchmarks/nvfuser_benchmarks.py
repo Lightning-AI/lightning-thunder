@@ -11,6 +11,11 @@ import time
 from typing import Any, Callable, Dict, List, Tuple
 import types
 
+# Note: This needs to run before `import torch`.
+_DEFAULT_DEVICE = {"luca": "5", "mike": "6", "taylor": "7"}.get(os.getenv("USER", None), None)
+if _DEFAULT_DEVICE is not None:
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", _DEFAULT_DEVICE)
+
 import torch
 from torch.testing import make_tensor
 
