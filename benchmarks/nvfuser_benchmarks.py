@@ -1155,45 +1155,50 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(add_help=False, argument_default=argument_default)
         listed_executors = textwrap.indent("\n".join(executors), " " * 4)
 
+        def add_argument(*args, **kwargs):
+            if argument_default is argparse.SUPPRESS:
+                kwargs.pop("default", None)
+            return parser.add_argument(*args, **kwargs)
+
         # == Universal Arguments ==
-        parser.add_argument(
+        add_argument(
             "--executors",
             "-x",
             default=",".join(executors),
             type=str,
             help=f"Specifies the executors to collect statistics for. (Default: all)\n{listed_executors}",
         )
-        parser.add_argument(
+        add_argument(
             "--no-tf-32",
             "--no-tf32",
             dest="disable_tf32",
             action="store_true",
             help="Disable the use of TensorFloat-32 for single precision matrix multiplications. (Default: on)",
         )
-        parser.add_argument(
+        add_argument(
             "--iters",
             default=20,
             type=int,
             help="Specifies the number of post-warmup iterations to use to collect statistics for each executor. (Default: 20)",
         )
-        parser.add_argument(
+        add_argument(
             "--warmup_iters",
             default=5,
             type=int,
             help="The number of warmup iterations to run for each executor before collecting statistics. (Default: 5)",
         )
-        parser.add_argument(
+        add_argument(
             "--print_program",
             "-pp",
             action="store_true",
             help="Displays information about lightning+nvFuser fusions",
         )
-        parser.add_argument(
+        add_argument(
             "--profile",
             action="store_true",
             help="Collect a trace using torch.profiler.profile()",
         )
-        parser.add_argument(
+        add_argument(
             "--nsight",
             action="store_true",
             help="Run a profiled region for nsight systems. (Requires `nsys python nvfuser_benchmarks.py ...`)",
