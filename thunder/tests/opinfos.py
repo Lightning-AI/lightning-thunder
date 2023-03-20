@@ -2484,6 +2484,13 @@ softmax_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bfloat16,),
         ),
+        # TypeError: sum(): incompatible function arguments.
+        # See: https://github.com/Lightning-AI/lightning-thunder/issues/269
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
     ),
 )
 nn_ops.append(softmax_opinfo)

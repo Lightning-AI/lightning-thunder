@@ -912,6 +912,8 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
         Variable: Tensor with the reduced dimensions restored.
     """
     import thunder.core.lang as tlang
+    if original_shape == ():  # scalar
+        return x
 
     unsqueezed = tlang.unsqueeze(x, reduced_dims)
     return tlang.expand(unsqueezed, original_shape)
@@ -1284,6 +1286,31 @@ def linear_vjp(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy] = None) 
     return VJPTriple(primal, residuals, pullback)
 
 
+def decomposed_fn_vjp_rule(*args, decomposed_fn, non_decomposed_fn, **kwargs):
+    """VJP rule for composite functions implemented in terms of other functions that are
+    supposed to be supported by the VJP infrastructure.
+
+    Args:
+        decomposed_fn (Callable): decomposed version of the function
+        non_decomposed_fn (Callable): non-decomposed version of the function
+
+    Returns:
+        Callable: VJP rule for the composite function
+    """
+    results = non_decomposed_fn(*args, **kwargs)
+    residuals = (decomposed_fn, args, kwargs)
+
+    def pullback(decomposed_fn, args, kwargs, *grads):
+        # Use of the decomposed_fn here results in a decomposed trace after
+        # calling the `inline` transform
+        result = inline(vjp(decomposed_fn))(args, grads, **kwargs)[1]
+        if len(args) == 1:
+            return result[0]
+        return result
+
+    return VJPTriple(results, residuals, pullback)
+
+
 @register_vjp(prims.Ops.WHERE)
 def where_vjp(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJPTriple:
     primal = prims.where(condition, x, y)
@@ -1321,7 +1348,13 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     # Normal case, we have a proxy tangent
     vjp_impl = vjp_impls.get(symbol.op)
     if vjp_impl is None:
-        raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
+        # We could not find a VJP for this symbol, so we try to decompose it
+        if symbol.decomposed_fn is not None:
+            vjp_impl = partial(
+                decomposed_fn_vjp_rule, decomposed_fn=symbol.decomposed_fn, non_decomposed_fn=symbol.non_decomposed_fn
+            )
+        else:
+            raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
 
     def wrap_arg(arg):
         if isinstance(arg, Number):
@@ -1338,6 +1371,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         assert all(isinstance(arg, VJPTriple) for arg in tree_flatten(args)[0])
 
         primals = tree_map(lambda x: x.primal, args)
+        kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPTriple) else x, kwargs)
         out_primal, out_residuals, out_pullback = vjp_impl(*primals, **kwargs)
 
         assert not isinstance(out_primal, Sequence), "Not implemented for multiple outputs"
@@ -1367,6 +1401,9 @@ def backward_pass(forward_env, trace, init_cotangents):
         elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
             # TODO: remove when we move dims to kwargs
             pass
+        elif isinstance(v, Sequence) and val is None:
+            # broadcast None to the right shape
+            safe_map(write, v, [0] * len(v))
         else:
             raise TypeError(f"Unexpected type {type(v)}")
 

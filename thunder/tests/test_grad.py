@@ -42,6 +42,11 @@ op_skip = {
     "embedding",
 }
 
+# Don't rely on the generated list of supported ops.
+# TODO: modify the generated list to support composite ops
+vjp_op_force = {
+    "softmax",
+}
 
 def _is_exact_dtype(torch_dtype):
     """Check if the given torch.dtype is an exact dtype.
@@ -90,7 +95,7 @@ def _jvp_symbol_checker(symbol):
     return symbol.op in jvp_impls
 
 
-supported_vjp_ops = set(_generate_supported_op_list(_vjp_symbol_checker))
+supported_vjp_ops = set(_generate_supported_op_list(_vjp_symbol_checker)).union(vjp_op_force)
 supported_jvp_ops = set(_generate_supported_op_list(_jvp_symbol_checker))
 
 
