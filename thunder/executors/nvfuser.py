@@ -310,8 +310,6 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.RESHAPE: "reshape" if use_reshape else "view",
     # TODO: can re-enable squeeze by allowing one prim to become multiple nvFuser prims
     # prims.Ops.SQUEEZE: "squeeze",
-    # See https://github.com/csarofeen/pytorch/issues/2396 for slice request
-    # prims.Ops.SLICE
     # NOTE: nvFuser exposes the "transpose" prim as "permute"
     prims.Ops.TRANSPOSE: "permute",
     prims.Ops.INDEX_SELECT: _index_select_wrapper,
@@ -448,6 +446,15 @@ ops_to_nvfuser_preprocessors_map = {
     # Tensor creation prims
     prims.Ops.FULL: _full_preprocessor,
 }
+
+if nvfuser_version >= LooseVersion("0.0.6"):
+    # nvFuser has two slice implementation holes:
+    # 1. It does not support strides > 1, this condition raises an error.
+    # 2. Slices beyond the bounds of a tensor do not return a zero-element tensor.
+    #    Silently, an empty tensor of the slice size is returned.  There is an issue filed.
+    #    https://github.com/NVIDIA/Fuser/issues/52
+    ops_to_nvfuser_ops_map[prims.Ops.SLICE] = "slice"
+    ops_to_nvfuser_preprocessors_map[prims.Ops.SLICE] = _nvScalars_to_Numbers_preprocessor
 
 if nvfuser_version >= LooseVersion("0.0.3"):
     # Note: uniform is added in nvfuser version 0.0.3
