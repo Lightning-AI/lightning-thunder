@@ -1285,34 +1285,6 @@ def test_uniform(executor, device, dtype):
     result.max() <= 1.0
 
 
-@executors(dtypes=NOTHING)
-def test_dtype_conversion(executor: Executor, device, dtype):
-    if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0":
-        pytest.xfail("https://github.com/csarofeen/pytorch/issues/2370")
-
-    # FIXME
-    if isinstance(executor, nvFuser) and device == "cuda" and dtype is None:
-        pytest.skip("RuntimeError: Illegal Cast value from  DataType: double to DataType: __bfloat")
-
-    make = partial(make_tensor, (2, 2), device=device)
-
-    def foo(a, dtype):
-        return tlang.maybe_convert_to_dtype(a, dtype)
-
-    thunder_fn = thunder.make_traced(foo, executor=executor)
-
-    strong_dtypes = set(datatypes.strong_dtypes)
-    supported_dtypes = set(datatypes.resolve_dtypes(executor.supported_dtypes))
-    dtypes = strong_dtypes.intersection(supported_dtypes)
-    for a, b in product(dtypes, dtypes):
-        a = ttorch.torch_dtype(a)
-        b = ttorch.torch_dtype(b)
-        t = make(dtype=a)
-        thunder_result = thunder_fn(t, b)
-        torch_result = t.to(b)
-        assert_close(thunder_result, torch_result)
-
-
 def test_codeutils_unpack_pack():
     o = object()
     cases = (

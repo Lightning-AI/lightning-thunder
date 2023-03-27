@@ -6,7 +6,7 @@ from numbers import Number
 from typing import Any, Callable, Dict, Sequence, Tuple, Union, Optional
 
 from thunder import make_trace, make_traced
-from thunder.core import prims
+from thunder.core import dtypes, prims
 from thunder.core.lang import full, full_like, unsqueeze, squeeze
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
@@ -1214,6 +1214,18 @@ def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: S
     return VJPTriple(primal, residuals, pullback)
 
 
+@register_vjp(prims.Ops.CONVERT_ELEMENT_TYPE)
+def convert_element_type_vjp(a: Proxy, dtype: dtypes.dtype) -> VJPTriple:
+    primal = prims.convert_element_type(a, dtype)
+    residuals = (primal,)
+
+    def pullback(a, g):
+        # perform cast back to input type during backward
+        return prims.convert_element_type(g, a.dtype), None
+
+    return VJPTriple(primal, residuals, pullback)
+
+
 @register_vjp(torch.nn.functional.embedding)
 def embedding_vjp(a: Proxy, weight: Proxy, *, padding_idx: Optional[int] = None, max_norm: Optional[float] = None,
                     norm_type: float = 2.0, scale_grad_by_freq: bool = False, sparse: bool = False) -> VJPTriple:
@@ -1357,7 +1369,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
 
     def wrap_arg(arg):
-        if isinstance(arg, Number):
+        if isinstance(arg, (Number, dtypes.dtype)):
             return VJPTriple(arg, tuple(), no_pullback)
         elif isinstance(arg, VJPTriple):
             return arg
@@ -1397,6 +1409,8 @@ def backward_pass(forward_env, trace, init_cotangents):
                 return
             env[v.name] = val
         elif isinstance(v, Number):
+            pass
+        elif isinstance(v, dtypes.dtype):
             pass
         elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
             # TODO: remove when we move dims to kwargs

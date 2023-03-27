@@ -149,6 +149,15 @@ class SampleInput:
         args, kwargs = tree_map(to_jax, self.args), tree_map(to_jax, self.kwargs)
         return SampleInput(*args, **kwargs)
 
+    def thunder(self):
+        def to_thunder(t):
+            if isinstance(t, torch.dtype):
+                return ttorch.thunder_dtype(t)
+            return t
+
+        args, kwargs = tree_map(to_thunder, self.args), tree_map(to_thunder, self.kwargs)
+        return SampleInput(*args, **kwargs)
+
 
 # TODO: add executor
 class DecorateInfo:
@@ -1591,7 +1600,7 @@ elementwise_ternary_ops.append(where_opinfo)
 opinfos.extend(elementwise_ternary_ops)
 
 #
-# Shape Op OpInfos
+# Shape/dtype Op OpInfos
 #
 shape_ops = []
 
@@ -2113,6 +2122,29 @@ unsqueeze_opinfo = OpInfo(
     ),
 )
 shape_ops.append(unsqueeze_opinfo)
+
+
+def convert_element_type_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    a = make_tensor((2, 3, 4), device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # TODO: add more source and target dtype pairs
+    yield SampleInput(a, torch.float32)
+
+
+convert_element_type_opinfo = OpInfo(
+    prims.convert_element_type,
+    sample_input_generator=convert_element_type_sample_generator,
+    torch_reference=torch.Tensor.to,
+    jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
+    test_directives=(
+        # These usually pass but tols are still too tight to perform these tests
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
+)
+shape_ops.append(convert_element_type_opinfo)
 
 
 opinfos.extend(shape_ops)

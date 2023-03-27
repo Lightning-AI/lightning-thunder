@@ -252,10 +252,10 @@ def _dot(x, y):
     assert all(
         isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
     ), "Not all elements are torch.Tensor"
-    return sum([torch.dot(a.ravel(), b.ravel()) for a, b in zip(x, y)])
+    return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, executor="torch", atol=None, rtol=None):
+def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -283,6 +283,7 @@ def check_vjp(f, *primals, executor="torch", atol=None, rtol=None):
 
     u = tree_map(make_tensor_like, primals)
     outs_p, J_u = numerical_jvp(make_traced(f, executor=executor))(primals, u)
+
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make_tensor_like, outs_p)
@@ -383,7 +384,20 @@ def test_vjp_correctness(op, device, dtype, executor):
     at_least_one_differentiable_input = False
     eps = 1e-2
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Here we convert any args in the sample to thunder args (specifically
+        # to thunder dtypes). It was necessary to add this for the
+        # convert_element_type tests, which have a non-differentiable argument
+        # `dtype`. That argument is typically provided as a `torch.dtype`. In
+        # the lines below, we strip non-differentiable arguments before
+        # evaluating the op, which means stripped arguments do not undergo the
+        # usual conversions in thunder.__init__._make_proxies(). The
+        # sample.thunder() line below attempts to approximate those conversions
+        # for non-differentiable arguments like dtypes so that the test will
+        # execute properly.
+        sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
