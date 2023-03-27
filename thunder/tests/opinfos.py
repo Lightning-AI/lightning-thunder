@@ -1804,6 +1804,11 @@ pad_opinfo = OpInfo(
     test_directives=(
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(pytest.mark.xfail, dtypes=(datatypes.complexfloating,)),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.6",
+        ),
     ),
 )
 shape_ops.append(pad_opinfo)

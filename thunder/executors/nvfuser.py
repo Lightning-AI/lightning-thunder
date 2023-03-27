@@ -305,6 +305,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.FULL: "full",
     # Shape prims
     prims.Ops.BROADCAST_IN_DIM: "broadcast_in_dim",
+    prims.Ops.PAD: "pad",
     # NOTE: "reshape" was called "view" in earlier versions of nvFuser
     prims.Ops.RESHAPE: "reshape" if use_reshape else "view",
     # TODO: can re-enable squeeze by allowing one prim to become multiple nvFuser prims
