@@ -1,7 +1,6 @@
 """Check that `scripts/build_from_source.sh` has produced a correct build."""
 
 import os
-import re
 
 BUILD_DIR = os.path.abspath(os.path.join(os.path.split(__file__)[0], "build"))
 
@@ -13,7 +12,8 @@ def main():
     assert expected == actual, f"{expected} vs. {actual}"
 
     import nvfuser
-    assert re.match(r"0\.0\.3.+", nvfuser.version()), nvfuser.version()
+    from looseversion import LooseVersion
+    assert LooseVersion(nvfuser.version()) >= LooseVersion("0.0.6"), nvfuser.version()
 
     import thunder
     expected = os.path.abspath(os.path.join(BUILD_DIR, "..", "..", "thunder", "__init__.py"))

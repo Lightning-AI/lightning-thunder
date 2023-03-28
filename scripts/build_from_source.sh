@@ -63,18 +63,16 @@ conda update git
 # =============================================================================
 # == nvFuser ==================================================================
 # =============================================================================
-NVFUSER_PYTORCH="${BUILD}/pytorch_for_nvfuser"
-if [ ! -d "${NVFUSER_PYTORCH}" ]; then
-  git clone https://github.com/csarofeen/pytorch.git "${NVFUSER_PYTORCH}"
+export NVFUSER_SOURCE_DIR="${BUILD}/fuser"
+if [ ! -d "${NVFUSER_SOURCE_DIR}" ]; then
+  git clone https://github.com/NVIDIA/fuser.git "${NVFUSER_SOURCE_DIR}"
 fi
 
-pushd "${NVFUSER_PYTORCH}"
-git checkout devel;
-git fetch origin devel;
-git reset --hard origin/devel;
+pushd "${NVFUSER_SOURCE_DIR}"
+git checkout main;
+git fetch origin main;
+git reset --hard origin/main;
 popd
-
-export NVFUSER_SOURCE_DIR="${NVFUSER_PYTORCH}/third_party/nvfuser"
 
 # =============================================================================
 # == CUDA / NVCC (Try to respect existing install) ============================
