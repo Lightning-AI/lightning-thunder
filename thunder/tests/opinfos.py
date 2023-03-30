@@ -1414,7 +1414,7 @@ nextafter_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.4",
+            active_if=nvFuser().version() < "0.0.7",
         ),
     ),
 )
