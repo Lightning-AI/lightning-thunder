@@ -2284,6 +2284,35 @@ sum_opinfo = OpInfo(
 )
 reduction_ops.append(sum_opinfo)
 
+mean_opinfo = OpInfo(
+    ttorch.mean,
+    sample_input_generator=reduction_sample_generator,
+    torch_reference=torch.mean,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # PyTorch doesn't support CPU and CUDA complex half mean
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+            devicetypes=("cpu", "cuda"),
+        ),
+        # See https://github.com/csarofeen/pytorch/issues/2369
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.complexfloating,),
+            executors=("nvFuser",),
+        ),
+        # PyTorch CPU bfloat16 doesn't pass test_core_vs_torch_consistency
+        # but CUDA bfloat16 passes
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=("cpu",),
+        ),
+    ),
+)
+reduction_ops.append(mean_opinfo)
 opinfos.extend(reduction_ops)
 
 #

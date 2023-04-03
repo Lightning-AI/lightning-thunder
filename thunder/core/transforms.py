@@ -1408,10 +1408,6 @@ def backward_pass(forward_env, trace, init_cotangents):
                 env[v.name] = prims.add(env[v.name], val)
                 return
             env[v.name] = val
-        elif isinstance(v, Number):
-            pass
-        elif isinstance(v, dtypes.dtype):
-            pass
         elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
             # TODO: remove when we move dims to kwargs
             pass
@@ -1419,7 +1415,8 @@ def backward_pass(forward_env, trace, init_cotangents):
             # broadcast None to the right shape
             safe_map(write, v, [0] * len(v))
         else:
-            raise TypeError(f"Unexpected type {type(v)}")
+            # Skip writing to constants
+            pass
 
     if isinstance(trace.outputs, Sequence):
         safe_map(write, tuple(trace.outputs), init_cotangents)

@@ -938,6 +938,8 @@ def _reduction_dtypes(
 
 
 def _reduction_dims(shape, dims: Optional[Sequence]) -> Tuple[int, ...]:
+    if isinstance(dims, int):
+        dims = (dims,)
     if dims is None or len(dims) == 0:
         return tuple(range(len(shape)))
 
