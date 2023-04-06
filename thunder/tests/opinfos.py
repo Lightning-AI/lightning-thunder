@@ -1841,6 +1841,15 @@ slice_in_dim = OpInfo(
     tlang.slice_in_dim,
     sample_input_generator=slice_in_dim_sample_generator,
     jax_reference=jax.lax.slice_in_dim if JAX_AVAILABLE else None,
+    test_directives=(
+        # nvFuser executor doesn't support pad correctly
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 shape_ops.append(slice_in_dim)
 
@@ -1865,6 +1874,15 @@ slice_prim_opinfo = OpInfo(
     name="slice_prim",
     sample_input_generator=slice_prim_sample_generator,
     jax_reference=jax.lax.slice if JAX_AVAILABLE else None,
+    test_directives=(
+        # nvFuser executor doesn't support pad correctly
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 shape_ops.append(slice_prim_opinfo)
 
@@ -1891,6 +1909,15 @@ split_opinfo = OpInfo(
     ttorch.split,
     sample_input_generator=split_sample_generator,
     torch_reference=torch.split,
+    test_directives=(
+        # nvFuser executor doesn't support pad correctly
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 shape_ops.append(split_opinfo)
 
@@ -1984,6 +2011,15 @@ tensor_split_opinfo = OpInfo(
     ttorch.tensor_split,
     sample_input_generator=tensor_split_sample_generator,
     torch_reference=torch.tensor_split,
+    test_directives=(
+        # nvFuser executor doesn't support pad correctly
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 shape_ops.append(tensor_split_opinfo)
 
