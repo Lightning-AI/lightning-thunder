@@ -82,7 +82,12 @@ class Benchmark:
         self.shortname = shortname if shortname is not None else name
 
     @functools.cache
-    def compiled_fn(self, executor: str):
+    def compiled_fn(
+        self,
+        executor: str,
+        *,
+        with_profile_data=False,
+    ):
         cudagraphs = executor.endswith("_cuda_graphs")
         executor = executor.replace("_cuda_graphs", "")
 
@@ -102,10 +107,18 @@ class Benchmark:
             name = f"thunder+nvfuser{'_cuda_graphs' if cudagraphs else ''}"
             tom = thunder_compile(self._fn, cudagraphs=cudagraphs)
             args, kwargs = self.make_batch()
+
+            # NOTE: we don't always want to run the model to acquire the profile info, because
+            #   that will trigger compilation, and that will make lightning.compile's first
+            #   run look great, because we already compiled everything!
+            # TODO: refactor this so the profile info can be extracted AFTER the benchmark has run
+            profile_info = None
+            if with_profile_data:
+                profile_info = (tom(*args, **kwargs)["profile_info"],)
             return (
                 name,
                 lambda *args, **kwargs: tom(*args, **kwargs)["result"],
-                tom(*args, **kwargs)["profile_info"],
+                profile_info,
             )
 
         raise ValueError(f"Unknown executor {executor} requested")
@@ -552,62 +565,6 @@ def _prettyprint_stats(name, stats):
 #     _benchmark(f"add_dozen_{shape_str}", gen=gen, iters=iters, thunder_fn=_add_dozen, other_name="pt2", other_fn=pt2_fn)
 
 
-# def add_stack100_64x64(iters, make_arg):
-#     shape = (64, 64)
-
-#     def gen():
-#         a = make_arg(shape)
-#         b = make_arg(shape)
-#         return (a, b), {}
-
-#     def _add_stack100(a, b):
-#         cur = a
-#         for _ in range(100):
-#             cur = cur + b
-
-#         return cur
-
-#     pt2_fn = torch.compile(_add_stack100)
-
-#     shape_str = "x".join(str(l) for l in shape)
-#     _benchmark(
-#         f"add_stack100_{shape_str}",
-#         gen=gen,
-#         iters=iters,
-#         thunder_fn=_add_stack100,
-#         other_name="pt2",
-#         other_fn=pt2_fn,
-#     )
-
-
-# def add_stack1000_64x64(iters, make_arg):
-#     shape = (64, 64)
-
-#     def gen():
-#         a = make_arg(shape)
-#         b = make_arg(shape)
-#         return (a, b), {}
-
-#     def _add_stack1000(a, b):
-#         cur = a
-#         for _ in range(1000):
-#             cur = cur + b
-
-#         return cur
-
-#     pt2_fn = torch.compile(_add_stack1000)
-
-#     shape_str = "x".join(str(l) for l in shape)
-#     _benchmark(
-#         f"add_stack1000_{shape_str}",
-#         gen=gen,
-#         iters=iters,
-#         thunder_fn=_add_stack1000,
-#         other_name="pt2",
-#         other_fn=pt2_fn,
-#     )
-
-
 # def _add_contiguous_transposed_nvfuser_vs_pt2_factory(shape, *, iters, make_arg):
 #     def gen():
 #         a = make_arg(shape)
@@ -685,50 +642,109 @@ def _prettyprint_stats(name, stats):
 #     return "var", gen, foo, thunder_info['fusion'], thunder_info['profile_info']
 
 
-def simple_number_conditional_constructor(shape=(64, 64), device="cuda", dtype=thunder.float32):
-    tdtype = ttorch.torch_dtype(dtype)
-    make = functools.partial(make_tensor, device=device, dtype=tdtype)
+# def simple_number_conditional_constructor(shape=(64, 64), device="cuda", dtype=thunder.float32):
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = functools.partial(make_tensor, device=device, dtype=tdtype)
 
-    def gen():
-        return (make(shape), make(shape), 2), {}
+#     def gen():
+#         return (make(shape), make(shape), 2), {}
 
-    def foo(alpha, beta, n):
-        if n < 0:
-            result = alpha - beta
-        else:
-            result = alpha + beta
+#     def foo(alpha, beta, n):
+#         if n < 0:
+#             result = alpha - beta
+#         else:
+#             result = alpha + beta
 
-        return alpha, result
+#         return alpha, result
 
-    thunder_fn = thunder_compile(foo)
+#     thunder_fn = thunder_compile(foo)
 
-    args, kwargs = gen()
-    thunder_info = thunder_fn(*args, **kwargs)
+#     args, kwargs = gen()
+#     thunder_info = thunder_fn(*args, **kwargs)
 
-    return "simple-number-conditional", gen, foo, thunder_info["fusion"], thunder_info["profile_info"]
+#     return "simple-number-conditional", gen, foo, thunder_info["fusion"], thunder_info["profile_info"]
 
 
-def simple_kwarg_conditional_constructor(shape=(64, 64), device="cuda", dtype=thunder.float32):
-    tdtype = ttorch.torch_dtype(dtype)
-    make = functools.partial(make_tensor, device=device, dtype=tdtype)
+# def simple_kwarg_conditional_constructor(shape=(64, 64), device="cuda", dtype=thunder.float32):
+#     tdtype = ttorch.torch_dtype(dtype)
+#     make = functools.partial(make_tensor, device=device, dtype=tdtype)
 
-    def gen():
-        return (make(shape), make(shape)), {"n": 2}
+#     def gen():
+#         return (make(shape), make(shape)), {"n": 2}
 
-    def foo(alpha, beta, n):
-        if n < 0:
-            result = alpha - beta
-        else:
-            result = alpha + beta
+#     def foo(alpha, beta, n):
+#         if n < 0:
+#             result = alpha - beta
+#         else:
+#             result = alpha + beta
 
-        return alpha, result
+#         return alpha, result
 
-    thunder_fn = thunder_compile(foo)
+#     thunder_fn = thunder_compile(foo)
 
-    args, kwargs = gen()
-    thunder_info = thunder_fn(*args, **kwargs)
+#     args, kwargs = gen()
+#     thunder_info = thunder_fn(*args, **kwargs)
 
-    return "simple-kwarg-conditional", gen, foo, thunder_info["fusion"], thunder_info["profile_info"]
+#     return "simple-kwarg-conditional", gen, foo, thunder_info["fusion"], thunder_info["profile_info"]
+
+
+def _stacked_add_benchmark(a, b, *, depth=100):
+    cur = a
+    for _ in range(depth):
+        cur = cur + b
+
+    return cur
+
+
+# FIXME: currently not working with lightning.compile + nvFuser CUDA graphs
+class StackedAddBenchmark(Benchmark):
+    _universal_args = (
+        BenchmarkArg(
+            name="depth",
+            description="The number of additions to perform.",
+            default=100,
+        ),
+        BenchmarkArg(
+            name="shape",
+            description="The shape of the input and intermediates.",
+            default=(16, 16),
+        ),
+        BenchmarkArg(
+            name="device",
+            description="The device to run on. Default is 'cuda'.",
+            default="cuda",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The device of the model. Default is 'thunder.float32'.",
+            default=thunder.float32,
+        ),
+    )
+
+    @classmethod
+    @property
+    def args(cls):
+        return cls._universal_args
+
+    def __init__(self, depth, shape, device, dtype, **kwargs) -> None:
+        self.depth = depth
+        self.shape = shape
+        self.device = device
+        self.dtype = dtype
+        self.tdtype = ttorch.torch_dtype(dtype)
+
+        super().__init__(
+            name=f"StackedAddBenchmark",
+            # NOTE: partial here won't work with torch.compile, which is why depth is passed as a kwarg
+            #   (See make_batch)
+            # fn=partial(_stacked_add_benchmark, depth=self.depth)
+            fn=_stacked_add_benchmark,
+        )
+
+    def make_batch(self) -> Tuple[List, Dict]:
+        a = make_tensor(self.shape, device=self.device, dtype=self.tdtype)
+        b = make_tensor(self.shape, device=self.device, dtype=self.tdtype)
+        return (a, b), {"depth": self.depth}
 
 
 #
@@ -1048,10 +1064,6 @@ def benchmark(
     profile=False,
     nsight=False,
 ):
-    if print_program:
-        _, _, thunder_profile = benchmark.compiled_fn("thunder+nvfuser")
-        prettyprint_program(thunder_profile)
-
     # Workaround an initialization issue with Kineto and CUDA graphs
     #   https://github.com/pytorch/pytorch/issues/75504#issuecomment-1467065935
     if profile:
@@ -1099,6 +1111,10 @@ def benchmark(
                 torch.cuda.synchronize()
             torch.cuda.profiler.stop()
 
+    if print_program:
+        _, _, thunder_profile = benchmark.compiled_fn("thunder+nvfuser", with_profile_info=True)
+        prettyprint_program(thunder_profile)
+
 
 # TODO: port to benchmarks dict below
 # benchmarks = {
@@ -1127,6 +1143,8 @@ benchmarks = {
     # Control flow benchmarks
     # "simple-number-conditional": simple_number_conditional_constructor,
     # "simple-kwarg-conditional": simple_kwarg_conditional_constructor,
+    # Generic benchmarks
+    "stacked-additions": (StackedAddBenchmark, "adding in a loop"),
     # nanogpt benchmarks
     "nanogpt": (NanoGPTBenchmark, "nanogpt forward"),
     "nanogpt-block": (NanoGPTBlockBenchmark, "nanogpt block module forward"),
