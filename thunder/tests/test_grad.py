@@ -15,7 +15,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.transforms import jvp, vjp
 from thunder.core.utils import flatten_func
 from thunder.langs.torch import thunder_dtype
-from thunder.tests.framework import ops, run_snippet
+from thunder.tests.framework import executors, NOTHING, ops, run_snippet
 from thunder.tests.make_tensor import make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops
 
@@ -47,6 +47,7 @@ op_skip = {
 vjp_op_force = {
     "softmax",
 }
+
 
 def _is_exact_dtype(torch_dtype):
     """Check if the given torch.dtype is an exact dtype.
@@ -437,3 +438,68 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
         assert gindices is None, "gindices should be None"
         torch.testing.assert_close(gweight, expected[0])
         torch.testing.assert_close(actual_out, out)
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_multiple_output_vjp(executor, device, _):
+    from thunder.core.prims import cos, make_prim, sin
+    from thunder.core.transforms import register_vjp, vjp, inline
+
+    def sincos_meta(x):
+        return sin(x), cos(x)
+
+    sincos = make_prim("sincos", "sincos", sincos_meta)
+
+    @register_vjp("sincos")
+    def sincos_vjp_rule(x):
+        out = sincos(x)
+        saved = out
+
+        def vjp(sin_x, cos_x, g1, g2):
+            return g1 * cos_x, g2 * -sin_x
+
+        return out, saved, vjp
+
+    def func(x):
+        return sincos(x)
+
+    x = torch.tensor(1.0)
+    v = torch.tensor(1.0)
+
+    # Let's check that we get the correct error if we don't pass the right number of cotangents
+    with pytest.raises(RuntimeError, match="Expected cotangents to be a sequence of length 2"):
+        out, (g,) = make_traced(vjp(func), executor=executor)((x,), (v,))
+
+    # The "vjp" function defined above is incorrect, let's check that we get the correct error
+    with pytest.raises(RuntimeError, match="Pullback for sincos returned 2 values, but expected 1"):
+        out, (g,) = make_traced(vjp(func), executor=executor)((x,), (v, v))
+
+
+    @register_vjp("sincos")
+    def sincos_vjp_rule(x):
+        out = sincos(x)
+        saved = out
+
+        def vjp(sin_x, cos_x, g1, g2):
+            return g1 * cos_x + g2 * -sin_x
+
+        return out, saved, vjp
+
+    # It's not possible to teach Thunder about the PyTorch implementation of sincos
+    # The following doesn't work because the PyTorch executor generates
+    # a string of code with something like "out1, out2 = <lambda>(input)"
+    # ops_to_torch_ops_map["sincos"] = lambda x: (torch.sin(x), torch.cos(x))
+    # Therefore here we'll just check that the trace is correct
+    trace = make_trace(inline(vjp(func)), executor=executor)((x,), (v, v))
+    # Length of outputs should be two
+    assert len(trace.outputs) == 2
+    # Length of the first output should be two
+    assert len(trace.outputs[0]) == 2
+    # Length of the second output should match the length of primal args
+    assert len(trace.outputs[1]) == len(trace.args[0])
+    # The first symbol is sincos
+    assert trace.symbols[0].name == "sincos"
+    # The first output should be from sincos
+    assert trace.outputs[0] == trace.symbols[0].outputs

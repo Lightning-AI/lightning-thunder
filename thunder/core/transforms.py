@@ -1386,7 +1386,11 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPTriple) else x, kwargs)
         out_primal, out_residuals, out_pullback = vjp_impl(*primals, **kwargs)
 
-        assert not isinstance(out_primal, Sequence), "Not implemented for multiple outputs"
+        # We are saving the residuals and pullback only in the first output
+        # backward_pass then retrieves the residuals and pullback from the first output
+        if isinstance(out_primal, Sequence):
+            return (VJPTriple(out_primal[0], out_residuals, out_pullback), *(VJPTriple(o, (), no_pullback) for o in out_primal[1:]))
+
         return (VJPTriple(out_primal, out_residuals, out_pullback),)
 
     return _vjp_impl
@@ -1428,12 +1432,15 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
-        assert len(cotangents) == 1, "Not implemented for multiple outputs"
         residuals = forward_env[symbol.outputs[0].name].residuals
         pullback = forward_env[symbol.outputs[0].name].pullback
         result = pullback(*residuals, *cotangents)
         if not isinstance(result, Sequence):
             result = (result,)
+        check(
+            len(result) == len(symbol.args),
+            lambda: f"Pullback for {symbol.op} returned {len(result)} values, but expected {len(symbol.args)}",
+        )
         safe_map(write, symbol.args, result)
 
     return tree_map(read, tuple(trace.args))
@@ -1453,6 +1460,10 @@ def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
         )
         # Unwrap the VJPTriple
         result = tree_map(lambda x: x.primal, result)
+        check(
+            len(result) == len(cotangents) if isinstance(result, Sequence) else True,
+            lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
+        )
         return result, backward_pass(env, trace, cotangents)
 
 
