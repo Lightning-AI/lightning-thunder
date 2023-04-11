@@ -16,7 +16,7 @@ from thunder.core.transforms import jvp, vjp
 from thunder.core.utils import flatten_func
 from thunder.langs.torch import thunder_dtype
 from thunder.tests.framework import executors, NOTHING, ops, run_snippet
-from thunder.tests.make_tensor import make_tensor_like
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops
 
 boolean_ops = {
@@ -85,9 +85,9 @@ def _generate_supported_op_list(checker):
 
 
 def _vjp_symbol_checker(symbol):
-    from thunder.core.transforms import vjp_impls
+    from thunder.core.transforms import augmented_forward_impls, backward_impls
 
-    return symbol.op in vjp_impls
+    return symbol.op in augmented_forward_impls and symbol.op in backward_impls
 
 
 def _jvp_symbol_checker(symbol):
@@ -445,22 +445,22 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
 )
 def test_multiple_output_vjp(executor, device, _):
     from thunder.core.prims import cos, make_prim, sin
-    from thunder.core.transforms import register_vjp, vjp, inline
+    from thunder.core.transforms import inline, register_augmented_forward, register_backward, vjp
 
     def sincos_meta(x):
         return sin(x), cos(x)
 
     sincos = make_prim("sincos", "sincos", sincos_meta)
 
-    @register_vjp("sincos")
+    @register_augmented_forward("sincos")
     def sincos_vjp_rule(x):
         out = sincos(x)
         saved = out
+        return out, saved
 
-        def vjp(sin_x, cos_x, g1, g2):
-            return g1 * cos_x, g2 * -sin_x
-
-        return out, saved, vjp
+    @register_backward("sincos")
+    def sincos_backward(sin_x, cos_x, g1, g2):
+        return g1 * cos_x, g2 * -sin_x
 
     def func(x):
         return sincos(x)
@@ -476,16 +476,10 @@ def test_multiple_output_vjp(executor, device, _):
     with pytest.raises(RuntimeError, match="Pullback for sincos returned 2 values, but expected 1"):
         out, (g,) = make_traced(vjp(func), executor=executor)((x,), (v, v))
 
-
-    @register_vjp("sincos")
-    def sincos_vjp_rule(x):
-        out = sincos(x)
-        saved = out
-
-        def vjp(sin_x, cos_x, g1, g2):
-            return g1 * cos_x + g2 * -sin_x
-
-        return out, saved, vjp
+    # Let's define a correct sincos_backward function
+    @register_backward("sincos")
+    def sincos_backward(sin_x, cos_x, g1, g2):
+        return g1 * cos_x + g2 * -sin_x
 
     # It's not possible to teach Thunder about the PyTorch implementation of sincos
     # The following doesn't work because the PyTorch executor generates
@@ -503,3 +497,23 @@ def test_multiple_output_vjp(executor, device, _):
     assert trace.symbols[0].name == "sincos"
     # The first output should be from sincos
     assert trace.outputs[0] == trace.symbols[0].outputs
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_torch_autograd_function(executor, device, _):
+    from thunder.core.lang import cos, sin
+    from thunder.executors.torch import thunder_backward
+
+    @thunder_backward(executor=executor)
+    def func(a, b, *, c):
+        d = a + b + c
+        e = d * a + d * b + d * c
+        return sin(e) + cos(e), e
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
+
+    assert torch.autograd.gradcheck(lambda a, b, c: func(a, b, c=c), (a, b, c))

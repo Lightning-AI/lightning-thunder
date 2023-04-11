@@ -10,6 +10,7 @@ from thunder.core import prims
 from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Trace, Variable
+from thunder.core.utils import flatten_func
 from thunder.executors.executor_prims import nvOps
 
 __all__ = [
@@ -514,3 +515,98 @@ class torchCtx:
         if profile_info:
             return _fuse(trace), None
         return _fuse(trace)
+
+
+class ThunderFunction(torch.autograd.Function):
+    @staticmethod
+    def augmented_forward_pass_wrapper(trace, *args):
+        from thunder.core.transforms import augmented_forward_pass
+
+        result, env = augmented_forward_pass(*args, trace=trace)
+        saved_for_backward = {key: tuple(value) for key, value in env.items()}
+        return result, saved_for_backward
+
+    @staticmethod
+    def backward_pass_wrapper(trace, saved_for_backward, cotangents):
+        from thunder.core.transforms import backward_pass, VJPDual
+
+        env = {key: VJPDual(*value) for key, value in saved_for_backward.items()}
+        out = backward_pass(env, trace, cotangents)
+        return out
+
+    @staticmethod
+    def forward(ctx, thunder_func, executor, *flat_args):
+        from thunder import make_trace, make_traced
+
+        trace = make_trace(thunder_func, executor=executor)(*flat_args)
+        augmented_trace_fn = lambda *args: ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
+        out, saved_info = make_traced(augmented_trace_fn, executor=executor)(*flat_args)
+        ctx.executor = executor
+        ctx.trace = trace
+
+        # We must save tensors using ctx.save_for_backward
+        flat_env, ctx.env_spec = tree_flatten(saved_info)
+        is_tensor = tuple(isinstance(x, torch.Tensor) for x in flat_env)
+        ctx.save_for_backward(*(x for x, is_tensor in zip(flat_env, is_tensor) if is_tensor))
+        ctx.saved_non_tensors = tuple(x for x, is_tensor in zip(flat_env, is_tensor) if not is_tensor)
+        ctx.is_tensor = is_tensor
+        return out
+
+    @staticmethod
+    @torch.autograd.function.once_differentiable
+    def backward(ctx, *args):
+        from thunder import make_traced
+
+        # Restore saved_info from ctx.saved_non_tensors and ctx.saved_tensors
+        saved_tensors = iter(ctx.saved_tensors)
+        saved_non_tensors = iter(ctx.saved_non_tensors)
+        flat_saved_info = tuple(
+            next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
+        )
+        saved_info = tree_unflatten(flat_saved_info, ctx.env_spec)
+
+        backward = lambda saved_info, *args: ThunderFunction.backward_pass_wrapper(ctx.trace, saved_info, args)
+        grads = make_traced(backward, executor=ctx.executor)(saved_info, *args)
+        return (None, None, *grads)
+
+
+def thunder_backward(executor="nvfuser"):
+    """Decorator to wrap a Thunder function for use with PyTorch autograd.
+
+    Args:
+        thunder_func: A Thunder function.
+
+    Returns:
+        A wrapped function that can be used with PyTorch autograd.
+
+    Example:
+    >>> import torch
+    >>> import thunder.core.lang as tlang
+    >>> from thunder.executors.torch import thunder_backward
+    >>> @thunder_backward()
+    ... def func(a, b):
+    ...     c = a + b
+    ...     d = c * b
+    ...     e = tlang.sin(d) + tlang.cos(c)
+    ...     return e
+    >>> a = torch.randn(3, device="cuda", requires_grad=True)
+    >>> b = torch.randn(3, device="cuda", requires_grad=True)
+    >>> c = func(a, b)
+    >>> print(c)
+    >>> sum(c).sum().backward()
+    >>> print(f"a.grad: {a.grad}")
+    >>> print(f"b.grad: {b.grad}")
+    """
+
+    def flat_wrapper(flat_func, *flat_args):
+        return ThunderFunction.apply(flat_func, executor, *flat_args)
+
+    def decorator(thunder_func):
+        @wraps(thunder_func)
+        def wrapper(*args, **kwargs):
+            flat_func, flat_args, _ = flatten_func(thunder_func, args, kwargs)
+            return flat_wrapper(flat_func, *flat_args)
+
+        return wrapper
+
+    return decorator

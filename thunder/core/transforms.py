@@ -805,28 +805,24 @@ def jvp_eager(func, primals, tangents, executor="torch"):
 # VJP transform
 # =============
 @dataclass(frozen=True)
-class VJPTriple:
-    """A triple of primal, residuals, and pullback.
+class VJPDual:
+    """A pair of primal and saved information for backward (residuals).
 
     Args:
         primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
         residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
-            saved for the pullback.
-        pullback (Callable): Pullback function, i.e., the function that computes
-            the vector-Jacobian products given the cotangents.
+            saved for the backward.
 
     Yields:
-        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal, residuals, and pullback.
+        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
     """
 
     primal: Union[Proxy, Number]
     residuals: Tuple[Proxy, ...]
-    pullback: Callable
 
     def __iter__(self):
         yield self.primal
         yield self.residuals
-        yield self.pullback
 
 
 class NoPullback:
@@ -844,57 +840,76 @@ class NoPullback:
 no_pullback = NoPullback()
 
 
-# This is a dummy class that is used to represent empty residuals
-# instead of an empty tuple to make the pullback function more readable
-class NoResidual:
-    """A dummy residual value."""
-
-    pass
-
-
-no_residual = NoResidual()
-no_residuals = (no_residual,)
-
-# Mapping from symbols to VJP implementations
-# The VJP implementation is a function that takes the primal values and returns
-# a triple of primal result, residuals, and pullback function.
-vjp_impls = {
-    prims.Ops.ACOS: lambda x: (prims.acos(x), (x,), lambda x, g: -g / prims.sqrt(1.0 - x * x)),
-    prims.Ops.ACOSH: lambda x: (prims.acosh(x), (x,), lambda x, g: g * prims.rsqrt(x * x - 1.0)),
-    prims.Ops.ADD: lambda x, y: (prims.add(x, y), no_residuals, lambda _, g: (g, g)),
-    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,), lambda x, g: g / prims.sqrt(1.0 - x * x)),
-    prims.Ops.ASINH: lambda x: (prims.asinh(x), (x,), lambda x, g: g * prims.rsqrt(1.0 + x * x)),
-    prims.Ops.ATAN: lambda x: (prims.atan(x), (x,), lambda x, g: g / (1.0 + x * x)),
-    prims.Ops.ATANH: lambda x: (prims.atanh(x), (x,), lambda x, g: g / (1.0 - x * x)),
-    prims.Ops.COS: lambda x: (prims.cos(x), (x,), lambda x, g: prims.mul(g, -prims.sin(x))),
-    prims.Ops.COSH: lambda x: (prims.cosh(x), (x,), lambda x, g: prims.mul(g, prims.sinh(x))),
-    prims.Ops.DIV: lambda x, y: (
-        prims.div(x, y),
-        (
-            x,
-            y,
-        ),
-        lambda x, y, g: (g / y, -g * x / (y**2)),
-    ),
-    prims.Ops.MUL: lambda x, y: (prims.mul(x, y), (x, y), lambda x, y, g: (g * y, g * x)),
-    prims.Ops.SIN: lambda x: (prims.sin(x), (x,), lambda x, g: prims.mul(g, prims.cos(x))),
-    prims.Ops.SINH: lambda x: (prims.sinh(x), (x,), lambda x, g: prims.mul(g, prims.cosh(x))),
-    prims.Ops.SUB: lambda x, y: (prims.sub(x, y), no_residuals, lambda _, g: (g, -g)),
+# Mapping from symbols to augmented primal (forward) functions used in VJP
+# The augmented_primal function takes the primal values and returns the primal
+# result and the residuals (saved values for the backward).
+augmented_forward_impls = {
+    prims.Ops.ACOS: lambda x: (prims.acos(x), (x,)),
+    prims.Ops.ACOSH: lambda x: (prims.acosh(x), (x,)),
+    prims.Ops.ADD: lambda x, y: (prims.add(x, y), tuple()),
+    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,)),
+    prims.Ops.ASINH: lambda x: (prims.asinh(x), (x,)),
+    prims.Ops.ATAN: lambda x: (prims.atan(x), (x,)),
+    prims.Ops.ATANH: lambda x: (prims.atanh(x), (x,)),
+    prims.Ops.COS: lambda x: (prims.cos(x), (x,)),
+    prims.Ops.COSH: lambda x: (prims.cosh(x), (x,)),
+    prims.Ops.DIV: lambda x, y: (prims.div(x, y), (x, y)),
+    prims.Ops.MUL: lambda x, y: (prims.mul(x, y), (x, y)),
+    prims.Ops.SIN: lambda x: (prims.sin(x), (x,)),
+    prims.Ops.SINH: lambda x: (prims.sinh(x), (x,)),
+    prims.Ops.SUB: lambda x, y: (prims.sub(x, y), tuple()),
 }
 
+# Mapping from symbols to backward functions used in VJP
+# The backward function takes the residuals and cotangents and returns the
+# vector-Jacobian products for each argument.
+backward_impls = {
+    prims.Ops.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
+    prims.Ops.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
+    prims.Ops.ADD: lambda g: (g, g),
+    prims.Ops.ASIN: lambda x, g: g / prims.sqrt(1.0 - x * x),
+    prims.Ops.ASINH: lambda x, g: g * prims.rsqrt(1.0 + x * x),
+    prims.Ops.ATAN: lambda x, g: g / (1.0 + x * x),
+    prims.Ops.ATANH: lambda x, g: g / (1.0 - x * x),
+    prims.Ops.COS: lambda x, g: prims.mul(g, -prims.sin(x)),
+    prims.Ops.COSH: lambda x, g: prims.mul(g, prims.sinh(x)),
+    prims.Ops.DIV: lambda x, y, g: (g / y, -g * x / (y**2)),
+    prims.Ops.MUL: lambda x, y, g: (g * y, g * x),
+    prims.Ops.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
+    prims.Ops.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
+    prims.Ops.SUB: lambda g: (g, -g),
+    prims.Ops.FULL: NoPullback(num_args=2),
+}
 
-def register_vjp(op):
-    """Decorator to register a VJP implementation for a symbol.
+def register_augmented_forward(op):
+    """Decorator to register an augmented forward implementation for a symbol.
 
     Args:
-        op (Ops): Symbol for which to register the VJP implementation.
+        op (Ops): Symbol for which to register the augmented forward implementation.
 
     Returns:
         Callable: Decorator function.
     """
 
     def decorator(func):
-        vjp_impls[op] = func
+        augmented_forward_impls[op] = func
+        return func
+
+    return decorator
+
+
+def register_backward(op):
+    """Decorator to register a backward implementation for a symbol.
+
+    Args:
+        op (Ops): Symbol for which to register the backward implementation.
+
+    Returns:
+        Callable: Decorator function.
+    """
+
+    def decorator(func):
+        backward_impls[op] = func
         return func
 
     return decorator
@@ -919,31 +934,32 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
     return tlang.expand(unsqueezed, original_shape)
 
 
-@register_vjp(prims.Ops.RSQRT)
-def rsqrt_vjp(x):
-    """VJP of the rsqrt operation.
+@register_augmented_forward(prims.Ops.RSQRT)
+def rsqrt_augmented(x):
+    """Augmented rsqrt operation.
 
     Args:
         x (Variable): input tensor.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.rsqrt(x)
     residuals = (primal,)
-
-    def pullback(result, g):
-        # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x
-        # where rsqrt(x) and x are saved for the backwards pass.
-        # This derivation was selected because it avoids saving the input tensor.
-        return -0.5 * g * result**3.0
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.SUM)
-def sum_vjp(x, dims, output_dtype=None):
-    """VJP of the sum operation.
+@register_backward(prims.Ops.RSQRT)
+def rsqrt_backward(result, g):
+    # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x
+    # where rsqrt(x) and x are saved for the backwards pass.
+    # This derivation was selected because it avoids saving the input tensor.
+    return -0.5 * g * result**3.0
+
+
+@register_augmented_forward(prims.Ops.SUM)
+def sum_aug_fwd(x, dims, output_dtype=None):
+    """Augmented sum operation.
 
     Args:
         x (Variable): Tensor to be summed.
@@ -951,7 +967,7 @@ def sum_vjp(x, dims, output_dtype=None):
         output_dtype (str, optional): Output data type. Defaults to None.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.sum(x, dims, output_dtype=output_dtype)
     residuals = (
@@ -959,23 +975,25 @@ def sum_vjp(x, dims, output_dtype=None):
         dims,
     )
 
-    def pullback(x_shape, reduced_dims, g):
-        # One return per positional argument of prims.sum
-        return restore_reduced_dims(g, reduced_dims, x_shape), None
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.PROD)
-def prod_vjp(x, dims):
-    """VJP of the prod operation.
+@register_backward(prims.Ops.SUM)
+def sum_backward(x_shape, reduced_dims, g):
+    # One return per positional argument of prims.sum
+    return restore_reduced_dims(g, reduced_dims, x_shape), None
+
+
+@register_augmented_forward(prims.Ops.PROD)
+def prod_aug_fwd(x, dims):
+    """Augmented prod operation.
 
     Args:
         x (Variable): Tensor to be multiplied.
         dims (Tuple[int, ...]): Dimensions to be multiplied.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.prod(x, dims)
 
@@ -985,12 +1003,13 @@ def prod_vjp(x, dims):
         x.shape,
         dims,
     )
+    return VJPDual(primal, residuals)
 
-    def pullback(primal, x, x_shape, reduced_dims, g):
-        # One return per positional argument of prims.prod
-        return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x), None
 
-    return VJPTriple(primal, residuals, pullback)
+@register_backward(prims.Ops.PROD)
+def prod_pullback(primal, x, x_shape, reduced_dims, g):
+    # One return per positional argument of prims.prod
+    return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x), None
 
 
 def keepdim_reduction(reduction_fn, x, dims):
@@ -1012,17 +1031,21 @@ def grad_chooser_pullback(primal, x, x_shape, reduced_dims, g):
     return out, None
 
 
+register_backward(prims.Ops.AMAX)(grad_chooser_pullback)
+register_backward(prims.Ops.AMIN)(grad_chooser_pullback)
+
+
 # TODO: exact same for amin, argmax, argmin
-@register_vjp(prims.Ops.AMAX)
-def amax_vjp(x, dims):
-    """VJP of the amax operation.
+@register_augmented_forward(prims.Ops.AMAX)
+def amax_aug_fwd(x, dims):
+    """Augmented amax operation.
 
     Args:
         x (Variable): Tensor to compute amax on.
         dims (Tuple[int, ...]): Dimensions to compute amax over.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.amax(x, dims)
 
@@ -1033,19 +1056,19 @@ def amax_vjp(x, dims):
         dims,
     )
 
-    return VJPTriple(primal, residuals, grad_chooser_pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.AMIN)
-def amin_vjp(x, dims):
-    """VJP of the amin operation.
+@register_augmented_forward(prims.Ops.AMIN)
+def amin_aug_fwd(x, dims):
+    """Augmented amin operation.
 
     Args:
         x (Variable): Tensor to compute amin on.
         dims (Tuple[int, ...]): Dimensions to compute amin over.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.amin(x, dims)
 
@@ -1056,56 +1079,58 @@ def amin_vjp(x, dims):
         dims,
     )
 
-    return VJPTriple(primal, residuals, grad_chooser_pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.EXP)
-def exp_vjp(x):
-    """VJP of the exp operation.
+@register_augmented_forward(prims.Ops.EXP)
+def exp_aug_fwd(x):
+    """Augmented exp operation.
 
     Args:
         x (Variable): Tensor to be exponentiated.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.exp(x)
     residuals = (primal,)
-
-    def pullback(result, g):
-        return g * result
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.POW)
-def pow_vjp(x, y):
-    """VJP of the pow operation.
+@register_backward(prims.Ops.EXP)
+def exp_backward(result, g):
+    return g * result
+
+
+@register_augmented_forward(prims.Ops.POW)
+def pow_aug_fed(x, y):
+    """Augmented the pow operation.
 
     Args:
         x (Variable): Tensor with the base to be exponentiated.
         y (Variable): Tensor with power to raise to.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.pow(x, y)
-    residuals = (primal,)
-
-    def pullback(result, g):
-        import thunder.core.lang as tlang
-
-        gresult = g * result  # reuse common factor
-        dx = gresult * y / x
-        dy = gresult * tlang.log(x)
-        return dx, dy
-
-    return VJPTriple(primal, residuals, pullback)
+    residuals = (primal, x, y)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.TAN)
-def tan_vjp(x):
-    """VJP of the tan operation.
+@register_backward(prims.Ops.POW)
+def pow_backward(result, x, y, g):
+    import thunder.core.lang as tlang
+
+    gresult = g * result  # reuse common factor
+    dx = gresult * y / x
+    dy = gresult * tlang.log(x)
+    return dx, dy
+
+
+@register_augmented_forward(prims.Ops.TAN)
+def tan_aug_fwd(x):
+    """Augmented tan operation.
 
     Args:
         x (Variable): Tensor to be passed to tan.
@@ -1113,30 +1138,32 @@ def tan_vjp(x):
 
     primal = prims.tan(x)
     residuals = (primal,)
-
-    def pullback(result, g):
-        return g * (1 + result * result)
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.TANH)
-def tanh_vjp(x):
-    """VJP of the tanh operation.
+@register_backward(prims.Ops.TAN)
+def tan_backward(result, g):
+    return g * (1 + result * result)
+
+
+@register_augmented_forward(prims.Ops.TANH)
+def tanh_aug_fwd(x):
+    """Augmented tanh operation.
 
     Args:
         x (Variable): Tensor to be passed to tanh.
 
     Returns:
-        VJPTriple: Primal, residuals, and pullback.
+        VJPDual: Primal and residuals.
     """
     primal = prims.tanh(x)
     residuals = (primal,)
+    return VJPDual(primal, residuals)
 
-    def pullback(result, g):
-        return g * (1.0 - result * result)
 
-    return VJPTriple(primal, residuals, pullback)
+@register_backward(prims.Ops.TANH)
+def tanh_backward(result, g):
+    return g * (1.0 - result * result)
 
 
 # NOTE: Jax uses np.argsort in its transpose vjp computation
@@ -1144,162 +1171,170 @@ def _argsort(seq):
     return sorted(range(len(seq)), key=seq.__getitem__)
 
 
-@register_vjp(prims.Ops.TRANSPOSE)
-def transpose_vjp(a, permutation):
+@register_augmented_forward(prims.Ops.TRANSPOSE)
+def transpose_aug_fwd(a, permutation):
     primal = prims.transpose(a, permutation)
     residuals = (permutation,)
-
-    def pullback(permutation, g):
-        undo = _argsort(permutation)
-        return prims.transpose(g, undo), None
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.RESHAPE)
-def reshape_vjp(a, shape):
+@register_backward(prims.Ops.TRANSPOSE)
+def transpose_backward(permutation, g):
+    undo = _argsort(permutation)
+    return prims.transpose(g, undo), None
+
+
+@register_augmented_forward(prims.Ops.RESHAPE)
+def reshape_aug_fwd(a, shape):
     primal = prims.reshape(a, shape)
     residuals = (a.shape,)
-
-    def pullback(orig_shape, g):
-        return prims.reshape(g, orig_shape), None
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.SLICE)
-def slice_vjp(a, start_indices, end_indices, strides=None):
+@register_backward(prims.Ops.RESHAPE)
+def reshape_backward(orig_shape, g):
+    return prims.reshape(g, orig_shape), None
+
+
+@register_augmented_forward(prims.Ops.SLICE)
+def slice_aug_fwd(a, start_indices, end_indices, strides=None):
     primal = prims.slice_prim(a, start_indices, end_indices, strides)
     residuals = (a.shape, start_indices, end_indices, strides)
-
-    # Adapted from https://github.com/google/jax/blob/main/jax/_src/lax/slicing.py#L768
-    def pullback(shape, start_indices, end_indices, strides, g):
-        padding = None
-        if strides is None or np.all(np.equal(strides, 1)):
-            padding = tuple(zip(start_indices, np.subtract(shape, end_indices), (0,) * len(start_indices)))
-        else:
-            real_limits = np.add(
-                start_indices,
-                np.where(np.equal(g.shape, 0), 0, np.add(1, np.multiply(np.subtract(g.shape, 1), strides))),
-            )
-            padding = tuple(zip(start_indices, np.subtract(shape, real_limits), np.subtract(strides, 1)))
-
-        result = prims.pad(g, const_as(0, g.dtype), padding)
-
-        if strides is None:
-            return result, None, None
-        return result, None, None, None
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.BROADCAST_IN_DIM)
-def broadcast_in_dim_vjp(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPTriple:
+# Adapted from https://github.com/google/jax/blob/main/jax/_src/lax/slicing.py#L768
+@register_backward(prims.Ops.SLICE)
+def pullback(shape, start_indices, end_indices, strides, g):
+    padding = None
+    if strides is None or np.all(np.equal(strides, 1)):
+        padding = tuple(zip(start_indices, np.subtract(shape, end_indices), (0,) * len(start_indices)))
+    else:
+        real_limits = np.add(
+            start_indices,
+            np.where(np.equal(g.shape, 0), 0, np.add(1, np.multiply(np.subtract(g.shape, 1), strides))),
+        )
+        padding = tuple(zip(start_indices, np.subtract(shape, real_limits), np.subtract(strides, 1)))
+
+    result = prims.pad(g, const_as(0, g.dtype), padding)
+
+    if strides is None:
+        return result, None, None
+    return result, None, None, None
+
+
+@register_augmented_forward(prims.Ops.BROADCAST_IN_DIM)
+def broadcast_in_dim_aug_fwd(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPDual:
     primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
     residuals = (a, shape, broadcast_dimensions)
-
-    def pullback(a, shape, broadcast_dimensions, g):
-        # If g is None, then the primal was a constant and the pullback is zero.
-        # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
-        if g is None:
-            return None, None, None
-        unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
-        bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
-        reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
-        g = prims.sum(g, reduce_dims)
-        g = unsqueeze(g, unit_dims)
-        # One return per positional argument of prims.broadcast_in_dim
-        return g, None, None
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.CONVERT_ELEMENT_TYPE)
-def convert_element_type_vjp(a: Proxy, dtype: dtypes.dtype) -> VJPTriple:
+@register_backward(prims.Ops.BROADCAST_IN_DIM)
+def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
+    # If g is None, then the primal was a constant and the pullback is zero.
+    # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
+    if g is None:
+        return None, None, None
+    unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
+    bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
+    reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
+    g = prims.sum(g, reduce_dims)
+    g = unsqueeze(g, unit_dims)
+    # One return per positional argument of prims.broadcast_in_dim
+    return g, None, None
+
+
+
+@register_augmented_forward(prims.Ops.CONVERT_ELEMENT_TYPE)
+def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
     primal = prims.convert_element_type(a, dtype)
     residuals = (primal,)
-
-    def pullback(a, g):
-        # perform cast back to input type during backward
-        return prims.convert_element_type(g, a.dtype), None
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(torch.nn.functional.embedding)
-def embedding_vjp(a: Proxy, weight: Proxy, *, padding_idx: Optional[int] = None, max_norm: Optional[float] = None,
-                    norm_type: float = 2.0, scale_grad_by_freq: bool = False, sparse: bool = False) -> VJPTriple:
+@register_backward(prims.Ops.CONVERT_ELEMENT_TYPE)
+def convert_element_type_backward(a, g):
+    # perform cast back to input type during backward
+    return prims.convert_element_type(g, a.dtype), None
+
+
+@register_augmented_forward(torch.nn.functional.embedding)
+def embedding_aug_fwd(a: Proxy, weight: Proxy, *, padding_idx: Optional[int] = None, max_norm: Optional[float] = None,
+                    norm_type: float = 2.0, scale_grad_by_freq: bool = False, sparse: bool = False) -> VJPDual:
     # from thunder.langs.torch import embedding_backward
     primal = prims.embedding(a, weight, padding_idx=padding_idx, max_norm=max_norm, norm_type=norm_type,
                              scale_grad_by_freq=scale_grad_by_freq, sparse=sparse)
     residuals = (a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
-
-    def pullback(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
-        padding_idx = -1 if padding_idx is None else padding_idx
-        gweight = prims.embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
-        return None, gweight
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-@register_vjp(prims.Ops.MATMUL)
-def matmul_vjp(a: TensorProxy, b: TensorProxy) -> VJPTriple:
+@register_backward(torch.nn.functional.embedding)
+def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
+    padding_idx = -1 if padding_idx is None else padding_idx
+    gweight = prims.embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
+    return None, gweight
+
+
+@register_augmented_forward(prims.Ops.MATMUL)
+def matmul_aug_fwd(a: TensorProxy, b: TensorProxy) -> VJPDual:
     primal = prims.matmul(a, b)
     residuals = (a, b)
+    return VJPDual(primal, residuals)
 
-    def pullback(a, b, g):
-        last_dim = (-1,)
-        first_dim = (-2,)
-        if a.ndim == 1 and b.ndim == 1:
-            return g * b, g * a
 
-        if b.ndim == 1:
-            ga = unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT
-            gb = a.mT @ unsqueeze(g, last_dim)
-            if g.ndim > 1:
-                gb = squeeze(gb, last_dim)
-                gb = prims.sum(gb, tuple(range(gb.ndim - 1)))
-            return ga, gb
+@register_backward(prims.Ops.MATMUL)
+def matmul_backward(a, b, g):
+    last_dim = (-1,)
+    first_dim = (-2,)
+    if a.ndim == 1 and b.ndim == 1:
+        return g * b, g * a
 
-        if a.ndim == 1:
-            ga = unsqueeze(g, first_dim) @ b.mT
-            if g.ndim > 1:
-                ga = prims.sum(ga, tuple(range(ga.ndim - 1)))
-            gb = unsqueeze(a, first_dim).mT @ unsqueeze(g, first_dim)
-            return ga, gb
+    if b.ndim == 1:
+        ga = unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT
+        gb = a.mT @ unsqueeze(g, last_dim)
+        if g.ndim > 1:
+            gb = squeeze(gb, last_dim)
+            gb = prims.sum(gb, tuple(range(gb.ndim - 1)))
+        return ga, gb
 
-        return g @ b.mT, a.mT @ g
+    if a.ndim == 1:
+        ga = unsqueeze(g, first_dim) @ b.mT
+        if g.ndim > 1:
+            ga = prims.sum(ga, tuple(range(ga.ndim - 1)))
+        gb = unsqueeze(a, first_dim).mT @ unsqueeze(g, first_dim)
+        return ga, gb
 
-    return VJPTriple(primal, residuals, pullback)
+    return g @ b.mT, a.mT @ g
 
 
 # TODO: Remove registration against torch.nn.functional.linear once we have a
 #       better way to handle VJPs for composite functions that are not in the prims/corelang
-@register_vjp(torch.nn.functional.linear)
-def linear_vjp(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy] = None) -> VJPTriple:
-    #
-    from thunder.langs.torch import matmul
-
+@register_augmented_forward(torch.nn.functional.linear)
+def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy] = None) -> VJPDual:
     primal = prims.linear(a, b, c)
     residuals = (a, b, c)
-
-    def pullback(a, b, c, g):
-        first_dim = (-2,)
-        ga = matmul(g, b)
-        if a.ndim == 1:
-            gb = matmul(unsqueeze(a, first_dim).mT, unsqueeze(g, first_dim)).mT
-        else:
-            gb = matmul(a.mT, g).mT
-        if c is None:
-            return ga, gb
-        gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
-        return ga, gb, gc
-
-    return VJPTriple(primal, residuals, pullback)
+    return VJPDual(primal, residuals)
 
 
-def decomposed_fn_vjp_rule(*args, decomposed_fn, non_decomposed_fn, **kwargs):
-    """VJP rule for composite functions implemented in terms of other functions that are
+@register_backward(torch.nn.functional.linear)
+def linear_backward(a, b, c, g):
+    from thunder.langs.torch import matmul
+
+    first_dim = (-2,)
+    ga = matmul(g, b)
+    if a.ndim == 1:
+        gb = matmul(unsqueeze(a, first_dim).mT, unsqueeze(g, first_dim)).mT
+    else:
+        gb = matmul(a.mT, g).mT
+    if c is None:
+        return ga, gb
+    gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
+    return ga, gb, gc
+
+
+def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, non_decomposed_fn, **kwargs):
+    """Augmented forward rule for composite functions implemented in terms of other functions that are
     supposed to be supported by the VJP infrastructure.
 
     Args:
@@ -1307,31 +1342,32 @@ def decomposed_fn_vjp_rule(*args, decomposed_fn, non_decomposed_fn, **kwargs):
         non_decomposed_fn (Callable): non-decomposed version of the function
 
     Returns:
-        Callable: VJP rule for the composite function
+        Callable: Augmented forward rule for the composite function
     """
     results = non_decomposed_fn(*args, **kwargs)
-    residuals = (decomposed_fn, args, kwargs)
-
-    def pullback(decomposed_fn, args, kwargs, *grads):
-        # Use of the decomposed_fn here results in a decomposed trace after
-        # calling the `inline` transform
-        result = inline(vjp(decomposed_fn))(args, grads, **kwargs)[1]
-        if len(args) == 1:
-            return result[0]
-        return result
-
-    return VJPTriple(results, residuals, pullback)
+    residuals = (args, kwargs)
+    return VJPDual(results, residuals)
 
 
-@register_vjp(prims.Ops.WHERE)
-def where_vjp(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJPTriple:
+def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, *grads):
+    # Use of the decomposed_fn here results in a decomposed trace after
+    # calling the `inline` transform
+    result = inline(vjp(decomposed_fn))(args, grads, **kwargs)[1]
+    if len(args) == 1:
+        return result[0]
+    return result
+
+
+@register_augmented_forward(prims.Ops.WHERE)
+def where_aug_fwd(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJPDual:
     primal = prims.where(condition, x, y)
     residuals = (condition, )
+    return VJPDual(primal, residuals)
 
-    def pullback(condition, g):
-        return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
-    return VJPTriple(primal, residuals, pullback)
+@register_backward(prims.Ops.WHERE)
+def where_backward(condition, g):
+    return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
@@ -1352,26 +1388,27 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             primals = symbol_to_eval(symbol)(*args, **kwargs)
             n_args = len(args)
             if isinstance(primals, Sequence):
-                return safe_map(lambda x: VJPTriple(x, (), NoPullback(n_args)), primals)
-            return VJPTriple(primals, (), NoPullback(n_args))
+                return tree_map(lambda x: VJPDual(x, tuple()), primals)
+            return VJPDual(primals, tuple())
 
         return partial(vjp_impl_const, symbol)
 
     # Normal case, we have a proxy tangent
-    vjp_impl = vjp_impls.get(symbol.op)
+    vjp_impl = augmented_forward_impls.get(symbol.op)
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
-        if symbol.decomposed_fn is not None:
+        if symbol.decomposed_fn is not None and not isinstance(symbol.op, prims.Ops):
             vjp_impl = partial(
-                decomposed_fn_vjp_rule, decomposed_fn=symbol.decomposed_fn, non_decomposed_fn=symbol.non_decomposed_fn
+                decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.decomposed_fn, non_decomposed_fn=symbol.non_decomposed_fn
             )
+            register_backward(symbol.op)(partial(decomposed_fn_backward_rule, symbol.decomposed_fn))
         else:
             raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
 
     def wrap_arg(arg):
         if isinstance(arg, (Number, dtypes.dtype)):
-            return VJPTriple(arg, tuple(), no_pullback)
-        elif isinstance(arg, VJPTriple):
+            return VJPDual(arg, tuple())
+        elif isinstance(arg, VJPDual):
             return arg
         else:
             raise TypeError(f"Unexpected type {type(arg)}")
@@ -1379,24 +1416,65 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     def _vjp_impl(*args, **kwargs):
         args = tree_map(wrap_arg, args)
 
-        # Expecting VJPTriple wrapping pairs of primals and residuals
-        assert all(isinstance(arg, VJPTriple) for arg in tree_flatten(args)[0])
+        # Expecting VJPDual wrapping pairs of primals and residuals
+        assert all(isinstance(arg, VJPDual) for arg in tree_flatten(args)[0])
 
         primals = tree_map(lambda x: x.primal, args)
-        kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPTriple) else x, kwargs)
-        out_primal, out_residuals, out_pullback = vjp_impl(*primals, **kwargs)
+        kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, kwargs)
+        out_primal, out_residuals = vjp_impl(*primals, **kwargs)
 
         # We are saving the residuals and pullback only in the first output
         # backward_pass then retrieves the residuals and pullback from the first output
         if isinstance(out_primal, Sequence):
-            return (VJPTriple(out_primal[0], out_residuals, out_pullback), *(VJPTriple(o, (), no_pullback) for o in out_primal[1:]))
+            return (VJPDual(out_primal[0], out_residuals), *(VJPDual(o, tuple()) for o in out_primal[1:]))
 
-        return (VJPTriple(out_primal, out_residuals, out_pullback),)
+        return (VJPDual(out_primal, out_residuals),)
 
     return _vjp_impl
 
 
+def augmented_forward_pass(*args, trace: Trace, **kwargs):
+    """Augmented forward pass for the VJP transform.
+
+    The augmented forward pass is a forward pass that returns the residuals
+    of the forward pass.
+    These residuals are used in the backward pass to compute the VJP and they
+    are recorded in the environment dictionary for each variable.
+
+    Args:
+        args (Tuple[Variable]): Arguments to the function.
+        trace (Trace): Trace of the function.
+        kwargs (Dict[str, Variable]): Keyword arguments to the function.
+
+    Returns:
+        Tuple[Any, Dict[str, Any]]: Tuple of the primal outputs and the environment.
+    """
+    primals_residuals = [VJPDual(primal, tuple()) for primal in args]
+    result, env = eval_trace(
+        trace,
+        *primals_residuals,
+        **kwargs,
+        with_env=True,
+        symbol_mapper=vjp_symbol_mapper,
+    )
+    result = tree_map(lambda x: x.primal, result)
+    return result, env
+
+
 def backward_pass(forward_env, trace, init_cotangents):
+    """Backward pass for the VJP transform.
+
+    The backward pass is a reverse mode automatic differentiation pass that
+    computes the vector-Jacobian product (VJP) of the function.
+
+    Args:
+        forward_env (Dict[str, Any]): Environment of the forward pass.
+        trace (Trace): Trace of the function.
+        init_cotangents (Tuple[Variable]): Initial cotangents.
+
+    Returns:
+        Tuple[Proxy, ...]: Tuple of the results of the backward pass for each input.
+    """
     env = {}
 
     def read(x: Variable):
@@ -1433,7 +1511,10 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
         residuals = forward_env[symbol.outputs[0].name].residuals
-        pullback = forward_env[symbol.outputs[0].name].pullback
+        if symbol.are_all_args_constant:
+            # We can skip the pullback if all the arguments are constant
+            continue
+        pullback = backward_impls[symbol.op]
         result = pullback(*residuals, *cotangents)
         if not isinstance(result, Sequence):
             result = (result,)
@@ -1454,12 +1535,7 @@ def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
 
     ctx = detached_trace() if detached else nullcontext()
     with ctx:
-        primals_residuals_pullbacks = [VJPTriple(primal, tuple(), no_pullback) for primal in primals]
-        result, env = eval_trace(
-            trace, *primals_residuals_pullbacks, with_env=True, **kwargs, symbol_mapper=vjp_symbol_mapper
-        )
-        # Unwrap the VJPTriple
-        result = tree_map(lambda x: x.primal, result)
+        result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
         check(
             len(result) == len(cotangents) if isinstance(result, Sequence) else True,
             lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",

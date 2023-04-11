@@ -106,26 +106,27 @@ print("manual_backward2(x, y, v)", manual_backward2(x.detach(), y.detach(), v))
 ## Implementing the vector-Jacobian product
 Once we have the formula for the vector-Jacobian product, we can implement it in
 code. In Thunder, all reverse differentiation rules are registered in the
-`vjp_impls` dictionary in `thunder/core/transforms.py`. The keys of the
-dictionary are the enums of the primitives, and the values are the augmented
-primal functions that compute the primitive result, save necessary information
-for the reverse mode rule, and construct a callable that computes the
-vector-Jacobian product given the vector and the saved from the primal
-computation.
+`augmented_forward_impls` and `backward_impls` dictionaries in
+`thunder/core/transforms.py`. The keys of the dictionary are the enums of the
+primitives, and the values are the augmented primal functions that compute the
+primitive result, save necessary information for the reverse mode rule for the
+`augmented_forward_impls`, and a function that computes the vector-Jacobian
+product given the vector and the saved from the primal computation for the
+`backward_impls`.
 
 ```python
 # continue from the previous code block
-from thunder.core.transforms import vjp_impls, register_vjp
+from thunder.core.transforms import augmented_forward_impls, register_augmented_forward, register_backward
 from thunder.core.prims import Ops
 
 # Remove the existing rule for element-wise multiplication
 try:
-    del vjp_impls[Ops.MUL]
+    del augmented_forward_impls[Ops.MUL]
 except KeyError:
     pass
 
 # The decorator registers the augmented primal function for the given primitive
-@register_vjp(Ops.MUL)
+@register_augmented_forward(Ops.MUL)
 def augmented_mul(x, y):
     """Augmented version of the element-wise multiplication primitive.
 
@@ -134,14 +135,16 @@ def augmented_mul(x, y):
         the reverse mode rule, and a callable that computes the vector-Jacobian
         product given the vector and the saved information.
     """
-    def backward(x, y, v):
-        """Computes the vector-Jacobian product given the vector and the saved
-        information.
-        """
-        # Note that this function is exactly the same as the manual_backward2
-        return v * y, v * x
     saved_info = (x, y)
-    return x * y, saved_info, backward
+    return x * y, saved_info
+
+@register_backward(Ops.MUL)
+def mul_backward(x, y, v):
+    """Computes the vector-Jacobian product given the vector and the saved
+    information.
+    """
+    # Note that this function is exactly the same as the manual_backward2
+    return v * y, v * x
 
 # Test the new rule
 def func(x, y):
@@ -162,10 +165,11 @@ print("Thunder's vjp ", vjp_traced((x, y), (v,))[1])
 ```
 
 Since this particular rule is so simple, we can also implement it using the less
-readable one-liner
+readable two lines of code.
 
 ```python
-register_vjp(Ops.MUL)(lambda x, y: (x * y, (x, y), lambda x, y, v: (v * y, v * x)))
+register_augmented_forward(Ops.MUL)(lambda x, y: (x * y, (x, y), ))
+register_backward(Ops.MUL)(lambda x, y, v: (v * y, v * x))
 ```
 
 ## Testing the vector-Jacobian product
@@ -173,7 +177,7 @@ Currently tests are implemented using OpInfos and the tests are located in
 `test_grad.py`. The tests are parametrized by the OpInfo and the executor
 ("torch" or "nvfuser"). The tests are run for all the OpInfos that have
 `float64` as a supported dtype. The tests are run for all the executors that
-support the OpInfo. For each OpInfo, the test suite first checks the `vjp_impls`
+support the OpInfo. For each OpInfo, the test suite first checks the `augmented_forward_impls`
 dictionary to see if there is a registered rule for the OpInfo. If there is no
 rule, the test is not generated. If there is a rule, the test suite generates a
 test for each of the OpInfo's sample inputs. The test checks that the result of
@@ -194,5 +198,6 @@ python -m pytest tests/test_grad.py -k "_mul_" -vvv
 Checklist for submitting a PR:
 * If OpInfo does not exist, add it to `opinfos.py`, covering representative
     input cases.
-* Add the rule to `vjp_impls` in `thunder/core/transforms.py`.
+* Add the rule to `augmented_forward_impls` and `backward_impls` in
+  `thunder/core/transforms.py`.
 * Run the test suite to verify that the OpInfo-generated tests pass.
