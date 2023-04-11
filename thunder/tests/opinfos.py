@@ -2193,7 +2193,8 @@ reduction_ops = []
 
 # TODO: increase reduction samples and refacort amax and sum generators
 def amax_amin_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # For grad test stability it's better to use wider range of values
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-1000, high=1000)
 
     # shape, dim, keepdim
     cases = (
