@@ -151,6 +151,19 @@ def _remainder_wrapper(fd):
     return _fn
 
 
+def _div_wrapper(fd):
+    def _fn(a, b):
+        # TODO: nvfuser sometimes generates an accuracy mismatched result
+        # when the divisor is a scalar
+        # Remove this workaround once the issue is fixed
+        # See: https://github.com/NVIDIA/Fuser/issues/160
+        if isinstance(b, nvNumber):
+            return fd.ops.mul(a, fd.ops.reciprocal(b))
+        return fd.ops.div(a, b)
+
+    return _fn
+
+
 # NOTE: this function is needed because currently nvfuser has a different signature from torch op
 #       more context: https://github.com/csarofeen/pytorch/pull/2449#issuecomment-1427491532
 def _index_select_wrapper(fd):
@@ -359,7 +372,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.ADD: "add",
     prims.Ops.ATAN2: "atan2",
     prims.Ops.BITWISE_AND: "bitwise_and",
-    prims.Ops.DIV: "div",
+    prims.Ops.DIV: _div_wrapper,
     prims.Ops.EQ: "eq",
     prims.Ops.FMOD: "fmod",
     prims.Ops.GE: "ge",
