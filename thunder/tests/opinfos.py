@@ -2348,6 +2348,30 @@ sum_opinfo = OpInfo(
 )
 reduction_ops.append(sum_opinfo)
 
+
+def var_sample_generator(op, device, dtype, requires_grad):
+    unbiased = (None, True, False)
+    correction = (None, 0, 1)
+    samples = reduction_sample_generator(op, device, dtype, requires_grad)
+    for u, c, sample in itertools.product(unbiased, correction, samples):
+        a = sample.args[0]
+        dim = sample.args[1] if len(sample.args) > 1 else None
+        keepdim = sample.args[2] if len(sample.args) > 2 else False
+        # cannot specify both correction and unbiased arguments
+        if u is not None and c is not None:
+            continue
+        elif u is not None:
+            yield SampleInput(a, dim, u, keepdim)
+        elif c is not None:
+            yield SampleInput(a, dim, keepdim=keepdim, correction=c)
+        else:
+            yield SampleInput(a, dim, keepdim)
+
+    # TODO: nvFuser's var and var_mean doesn't support 0-dim input
+    # re-enable this sample when https://github.com/NVIDIA/Fuser/pull/121 is merged
+    # yield SampleInput(make_tensor((), device=device, dtype=dtype, requires_grad=requires_grad))
+
+
 mean_opinfo = OpInfo(
     ttorch.mean,
     sample_input_generator=reduction_sample_generator,
@@ -2377,6 +2401,38 @@ mean_opinfo = OpInfo(
     ),
 )
 reduction_ops.append(mean_opinfo)
+
+var_mean_opinfo = OpInfo(
+    ttorch.var_mean,
+    sample_input_generator=var_sample_generator,
+    torch_reference=torch.var_mean,
+    # Complex var is not supported yet
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch doesn't support float16 and bfloat16 on CUDA
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+            devicetypes=("cuda",),
+        ),
+        # NotImplementedError: VJP for Ops.VAR is not implemented
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("TorchEx",),
+        ),
+        # Internal nvFuser error
+        # RuntimeError: producer->getMemoryType() == MemoryType::Global
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.7",
+        ),
+    ),
+)
+reduction_ops.append(var_mean_opinfo)
+
 opinfos.extend(reduction_ops)
 
 #

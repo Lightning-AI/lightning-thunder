@@ -13,7 +13,7 @@ from thunder.core import prims, utils
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Variable
-from thunder.core.transforms import eval_trace
+from thunder.core.transforms import eval_trace, register_augmented_forward, register_backward, restore_reduced_dims
 from thunder.core.utils import OrderedSet
 
 # TODO: consider further refactoring this
@@ -507,7 +507,7 @@ if nvfuser_version >= LooseVersion("0.0.3"):
     ops_to_nvfuser_preprocessors_map[prims.Ops.UNIFORM] = _uniform_preprocessor
 
 
-def _var_mean_prim_meta(a, dim, *, correction, **kwargs):
+def _var_mean_prim_meta(a, dim, *, correction):
     output_dtype = a.dtype
     if utils.is_complex_dtype(output_dtype):
         output_dtype = utils.corresponding_real_dtype(output_dtype)
@@ -546,6 +546,39 @@ def var_mean(a, dim=None, unbiased=None, keepdim=False, *, correction=None):
         m = prims.broadcast_in_dim(m, output_shape, broadcast_dims)
 
     return v, m
+
+
+@register_augmented_forward(nvOps.VAR_MEAN)
+def _var_mean_aug_fwd(a, dim, *, correction):
+    v, m = var_mean(a, dim, correction=correction)
+
+    return (v, m), (a, dim, correction, m)
+
+
+@register_backward(nvOps.VAR_MEAN)
+def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
+    def n_elem_reduced(a, dims):
+        dims = utils.canonicalize_dims(a.ndim, dims)
+        reduction_size = 1
+        for idx, size in enumerate(a.size()):
+            if idx in dims:
+                reduction_size *= size
+        return reduction_size
+
+    def mean_backward(a, dims, grad):
+        mean_local_grad = 1.0 / n_elem_reduced(a, dims)
+        return restore_reduced_dims(grad, dims, a.shape) * mean_local_grad
+
+    def var_backward(a, dims, correction, mean, grad):
+        # Doing first the multiplication to avoid Python's float division
+        var_local_grad = (2.0 * restore_reduced_dims(grad, dims, a.shape)) / (n_elem_reduced(a, dims) - correction)
+        return var_local_grad * (a - restore_reduced_dims(mean, dims, a.shape))
+
+    return (
+        var_backward(a, dim, correction, mean, grad_v)
+        + mean_backward(a, dim, grad_m),
+        None,
+    )
 
 
 def _get_nvfuser_op(fd, op):

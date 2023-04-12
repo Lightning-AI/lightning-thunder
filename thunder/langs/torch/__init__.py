@@ -1015,7 +1015,7 @@ def _set_correction(
     elif correction is None and unbiased is None:
         correction = 1
     elif correction is None and unbiased is not None:
-        correction = 0 if unbiased is False else 1
+        correction = 0 if not unbiased else 1
     if not isinstance(correction, int):
         raise ValueError("correction argument should be integer")
     if correction < 0:
