@@ -1339,6 +1339,15 @@ eq_opinfo = OpInfo(
     tlang.eq,
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.eq,
+    test_directives=(
+        # There's a problem of reducing a tensor produced by full op
+        # See https://github.com/NVIDIA/Fuser/issues/132
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 elementwise_binary_ops.append(eq_opinfo)
 
@@ -1365,6 +1374,15 @@ ge_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.ge,
+    test_directives=(
+        # There's a problem of reducing a tensor produced by full op
+        # See https://github.com/NVIDIA/Fuser/issues/132
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 elementwise_binary_ops.append(ge_opinfo)
 
@@ -1374,6 +1392,15 @@ lt_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.lt,
+    test_directives=(
+        # There's a problem of reducing a tensor produced by full op
+        # See https://github.com/NVIDIA/Fuser/issues/132
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
 )
 elementwise_binary_ops.append(lt_opinfo)
 

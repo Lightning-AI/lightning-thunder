@@ -837,7 +837,23 @@ class NoPullback:
         raise RuntimeError("Pullback called on a non-differentiable symbol or a constant.")
 
 
-no_pullback = NoPullback()
+class ZeroBackward:
+    """A helper backward function that returns zeros."""
+
+    def __init__(self, num_args):
+        self.num_args = num_args
+
+    def __call__(self, *args, **kwargs):
+        # Assuming that the first arguments are the forward arguments
+        forward_args = args[:self.num_args]
+        def zeros_like(x):
+            if isinstance(x, TensorProxy):
+                return full_like(x, fill_value=0)
+            elif isinstance(x, NumberProxy):
+                return type(x.value)(0)
+            else:
+                raise ValueError(f"zeros_like inside JVP got an unsupported type {type(x)}")
+        return tuple(zeros_like(arg) for arg in forward_args)
 
 
 # Mapping from symbols to augmented primal (forward) functions used in VJP
@@ -858,6 +874,9 @@ augmented_forward_impls = {
     prims.Ops.SIN: lambda x: (prims.sin(x), (x,)),
     prims.Ops.SINH: lambda x: (prims.sinh(x), (x,)),
     prims.Ops.SUB: lambda x, y: (prims.sub(x, y), tuple()),
+    prims.Ops.EQ: lambda x, y: (prims.eq(x, y), (x, y)),
+    prims.Ops.GE: lambda x, y: (prims.ge(x, y), (x, y)),
+    prims.Ops.LT: lambda x, y: (prims.lt(x, y), (x, y)),
 }
 
 # Mapping from symbols to backward functions used in VJP
@@ -879,6 +898,9 @@ backward_impls = {
     prims.Ops.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
     prims.Ops.SUB: lambda g: (g, -g),
     prims.Ops.FULL: NoPullback(num_args=2),
+    prims.Ops.EQ: ZeroBackward(num_args=2),
+    prims.Ops.GE: ZeroBackward(num_args=2),
+    prims.Ops.LT: ZeroBackward(num_args=2),
 }
 
 def register_augmented_forward(op):

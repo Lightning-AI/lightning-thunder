@@ -19,16 +19,6 @@ from thunder.tests.framework import executors, NOTHING, ops, run_snippet
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops
 
-boolean_ops = {
-    "eq",
-    "ne",
-    "ge",
-    "gt",
-    "le",
-    "lt",
-    "isfinite",
-}
-
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
     # TODO: thunder.make_traced doesn't work with closures with torch.Tensor arguments
@@ -72,7 +62,7 @@ def _generate_supported_op_list(checker):
         generator: A generator of operator info objects that support vjp.
     """
     for opinfo in opinfos:
-        if opinfo not in tensor_creation_ops and opinfo.name not in op_skip | boolean_ops:
+        if opinfo not in tensor_creation_ops and opinfo.name not in op_skip:
             if opinfo.dtypes().intersection({dtypes.float64}) == set():
                 continue
             samples = iter(opinfo.sample_inputs("cpu", dtypes.float64, requires_grad=True))
@@ -172,7 +162,7 @@ def numerical_jvp(f):
             return out
 
         np_out_primals = tree_map(_to_numpy, out_primals)
-        np_out_tangents = tuple(np.zeros_like(o) for o in np_out_primals)
+        np_out_tangents = tuple(np.zeros_like(o, dtype=np.float64) for o in np_out_primals)
         for j, out_tangent in enumerate(np_out_tangents):
             # Skip computing the jth output tangent if the jth output is 0-sized.
             if out_tangent.size == 0:
