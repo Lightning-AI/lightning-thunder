@@ -1335,9 +1335,12 @@ bitwise_and_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(bitwise_and_opinfo)
 
+# For grad test stability it's better to use wider range of values
+elementwise_comparison_generator = partial(elementwise_binary_generator, low=-1000, high=1000)
+
 eq_opinfo = OpInfo(
     tlang.eq,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.eq,
     test_directives=(
         # There's a problem of reducing a tensor produced by full op
@@ -1372,7 +1375,7 @@ ge_opinfo = OpInfo(
     tlang.ge,
     # NOTE: comparison is only defined for real numbers
     dtypes=(datatypes.exact, datatypes.floating),
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
     test_directives=(
         # There's a problem of reducing a tensor produced by full op
@@ -1390,7 +1393,7 @@ lt_opinfo = OpInfo(
     tlang.lt,
     # NOTE: comparison is only defined for real numbers
     dtypes=(datatypes.exact, datatypes.floating),
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.lt,
     test_directives=(
         # There's a problem of reducing a tensor produced by full op
