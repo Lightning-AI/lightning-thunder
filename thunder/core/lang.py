@@ -32,7 +32,8 @@ __all__ = [
     "slice_in_dim",
     "squeeze",
     "transpose",
-    "index_select",
+    "take",
+    "take_along_axis",
     "unsqueeze",
     # Elemenwise unary operations
     "abs",
@@ -326,9 +327,14 @@ def transpose(a, permutation):
     return prims.transpose(a, permutation)
 
 
-def index_select(a, dim, index):
-    dim = utils.canonicalize_dim(a.ndim, dim)
-    return prims.index_select(a, dim, index)
+def take(a, indices, axis):
+    axis = utils.canonicalize_dim(a.ndim, axis)
+    return prims.take(a, indices, axis)
+
+
+def take_along_axis(arr, indices, axis):
+    axis = utils.canonicalize_dim(arr.ndim, axis)
+    return prims.take_along_axis(arr, indices, axis)
 
 
 # Unsqueezes a, adding zero or more dimensions of length 1

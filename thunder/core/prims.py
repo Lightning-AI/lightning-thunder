@@ -42,7 +42,8 @@ __all__ = [
     "slice",
     "squeeze",
     "transpose",
-    "index_select",
+    "take",
+    "take_along_axis",
     # NOTE: view is EXPERIMENTAL ONLY
     "view",
     # Elementwise unary prims
@@ -131,7 +132,8 @@ class Ops(Enum):
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
-    INDEX_SELECT = auto()
+    TAKE = auto()
+    TAKE_ALONG_AXIS= auto()
     VIEW = auto()
     # Elementwise unary prims
     ABS = auto()
@@ -1431,28 +1433,36 @@ def transpose_meta(a, permutation):
 transpose = make_prim(Ops.TRANSPOSE, "transpose", transpose_meta)
 
 
-def index_select_meta(a, dim, index):
+def take_along_axis_meta(a, index, dim):
     utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
     utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
-    utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or scalar TensorProxy!")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(index.ndim == a.ndim, lambda: f"Expected index={index} to a 1-D or scalar TensorProxy!")
+    utils.validate_idx(a.ndim, dim)
+    for idx, l in enumerate(a.shape):
+        if idx != dim:
+            utils.check(index.shape[idx] == l or index.shape[idx] == 1, lambda: f"take_along_axis 'index' size on all dimensions to be broadcast against 'a', except `dim`. Found incompatible sizes on dim {dim}, where 'a' has {l} and 'index' has {index.shape[idx]}")
+
+    proxy_name = get_trace().make_proxy_name()
+    return TensorProxy(name=proxy_name, shape=index.shape, device=a.device, dtype=a.dtype)
+
+take_along_axis = make_prim(Ops.TAKE_ALONG_AXIS, "take_along_axis", take_along_axis_meta)
+
+def take_meta(a, index, dim):
+    utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
+    utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or number TensorProxy!")
     utils.validate_idx(a.ndim, dim)
 
-    new_shape = []
-    for idx, l in enumerate(a.shape):
-        # Checks that squeezed dims have length one
-        if idx == dim:
-            if index.ndim == 1:
-                new_shape.append(index.shape[0])
-            else:
-                new_shape.append(1)
-        else:
-            new_shape.append(l)
+    l = index.shape[0] if index.ndim == 1 else 1
+    new_shape = a.shape[:dim] + (l,) + a.shape[dim+1:]
 
     proxy_name = get_trace().make_proxy_name()
     return TensorProxy(name=proxy_name, shape=new_shape, device=a.device, dtype=a.dtype)
 
 
-index_select = make_prim(Ops.INDEX_SELECT, "index_select", index_select_meta)
+take = make_prim(Ops.TAKE, "take", take_meta)
 
 view = make_prim(Ops.VIEW, "view", reshape_meta)
 

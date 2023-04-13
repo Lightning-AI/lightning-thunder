@@ -2105,11 +2105,11 @@ transpose_opinfo = OpInfo(
 shape_ops.append(transpose_opinfo)
 
 
-def index_select_sample_generator(op, device, dtype, requires_grad, **kwargs):
+def take_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-    make_index = partial(make_tensor, device=device, dtype=torch.int, requires_grad=False)
+    make_index = partial(make_tensor, device=device, requires_grad=False)
 
-    # a.shape, dims, b.shape
+    # a.shape, dim, b.shape
     cases = (
         ((4, 2, 3), 0, (8)),
         ((4, 2, 3), 1, (7)),
@@ -2118,6 +2118,7 @@ def index_select_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4,), 0, (1)),
         ((4, 1), 0, (3)),
         ((4, 1), 1, (5)),
+        ((1, 0, 3), 0, (8)),
         # TODO: FIXME
         # nvFuser: index array can't have zero elements
         # ((4, 2, 3), 0, (0)),
@@ -2130,16 +2131,21 @@ def index_select_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for shape_a, dim, shape_b in cases:
-        a = make(shape_a)
-        b = make_index(shape_b, low=0, high=shape_a[dim])
-        yield SampleInput(a, dim, b)
+        for index_dtype in [torch.int, torch.long]:
+            a = make(shape_a)
+            b = make_index(shape_b, low=0, high=shape_a[dim], dtype=index_dtype)
+            yield SampleInput(a, b, dim)
+
+
+def torch_index_select_wrapper(a, b, dim):
+    return torch.index_select(a, dim, b)
 
 
 # TODO: mapping jax.lax.gather for testing
-index_select_opinfo = OpInfo(
-    tlang.index_select,
-    sample_input_generator=index_select_sample_generator,
-    torch_reference=torch.index_select,
+take_opinfo = OpInfo(
+    tlang.take,
+    sample_input_generator=take_sample_generator,
+    torch_reference=torch_index_select_wrapper,
     test_directives=(
         DecorateInfo(
             pytest.mark.xfail,
@@ -2148,7 +2154,48 @@ index_select_opinfo = OpInfo(
         ),
     ),
 )
-shape_ops.append(index_select_opinfo)
+shape_ops.append(take_opinfo)
+
+
+def take_along_axis_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.take_along_dim expects index to be long but not int
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+
+    # a.shape, dim, b.shape
+    cases = (
+        ((4, 2, 3), 0, (8, 2, 3)),
+        ((4, 2, 3), 1, (4, 1, 3)),
+        ((4, 2, 3), 2, (4, 2, 5)),
+        ((4,), 0, (8)),
+        ((4,), 0, (1)),
+        ((4, 1), 0, (3, 1)),
+        ((4, 1), 1, (4, 5)),
+        # broadcasting is supported by numpy
+        ((4, 2, 3), 2, (1, 2, 7)),
+    )
+
+    for shape_a, dim, shape_b in cases:
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        yield SampleInput(a, b, dim)
+
+
+# TODO: mapping jax.lax.gather for testing
+take_along_axis_opinfo = OpInfo(
+    tlang.take_along_axis,
+    sample_input_generator=take_along_axis_sample_generator,
+    torch_reference=torch.take_along_dim,
+    # Torch doesn't support complex half on take_along_dim
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+    ),
+)
+shape_ops.append(take_along_axis_opinfo)
 
 
 def unsqueeze_sample_generator(op, device, dtype, requires_grad, **kwargs):

@@ -164,15 +164,6 @@ def _div_wrapper(fd):
     return _fn
 
 
-# NOTE: this function is needed because currently nvfuser has a different signature from torch op
-#       more context: https://github.com/csarofeen/pytorch/pull/2449#issuecomment-1427491532
-def _index_select_wrapper(fd):
-    def _fn(a, dim, index):
-        return fd.ops.index_select(a, index, dim)
-
-    return _fn
-
-
 # TODO: consider refactoring the preprocessors with a common pattern to bind or flatten/unflatten?
 
 
@@ -325,7 +316,7 @@ ops_to_nvfuser_ops_map = {
     # prims.Ops.SQUEEZE: "squeeze",
     # NOTE: nvFuser exposes the "transpose" prim as "permute"
     prims.Ops.TRANSPOSE: "permute",
-    prims.Ops.INDEX_SELECT: _index_select_wrapper,
+    prims.Ops.TAKE: "index_select",
     # Elementwise unary prims
     prims.Ops.ABS: "abs",
     prims.Ops.ACOS: "acos",
@@ -398,7 +389,7 @@ ops_to_nvfuser_preprocessors_map = {
     prims.Ops.RESHAPE: _reshape_preprocessor,
     # prims.Ops.SQUEEZE: _squeeze_preprocessor,
     prims.Ops.TRANSPOSE: _nvScalars_to_Numbers_preprocessor,
-    prims.Ops.INDEX_SELECT: _nvScalars_to_Numbers_preprocessor,
+    prims.Ops.TAKE: _nvScalars_to_Numbers_preprocessor,
     # Elementwise unary prims
     prims.Ops.ABS: _elementwise_preprocessor,
     prims.Ops.ACOS: _elementwise_preprocessor,

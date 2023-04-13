@@ -36,6 +36,7 @@ __all__ = [
     "transpose",
     "unsqueeze",
     "index_select",
+    "take_along_dim",
     "view",
     # Elementwise Unary Ops
     "abs",
@@ -703,7 +704,12 @@ def unsqueeze(a, dim):
 
 @torch_function(torch.index_select)
 def index_select(a, dim, index):
-    return tlang.index_select(a, dim, index)
+    return tlang.take(a, index, dim)
+
+
+@torch_function(torch.take_along_dim)
+def take_along_dim(input, indices, dim):
+    return tlang.take_along_axis(input, indices, dim)
 
 
 def _view_disambiguator(*args, **kwargs):

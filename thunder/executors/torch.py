@@ -141,6 +141,11 @@ def squeeze_helper(a, dim):
     return a
 
 
+# TODO: maps to torch.index_select
+def take_helper(a, index, dim):
+    return torch.index_select(a, dim, index)
+
+
 def view_helper(a, shape):
     return a.view(shape)
 
@@ -215,7 +220,8 @@ ops_to_torch_ops_map = {
     prims.Ops.SQUEEZE: squeeze_helper,
     # NOTE: PyTorch's transpose is not equivalent to the transpose prim
     prims.Ops.TRANSPOSE: "torch.permute",
-    prims.Ops.INDEX_SELECT: "torch.index_select",
+    prims.Ops.TAKE: take_helper,
+    prims.Ops.TAKE_ALONG_AXIS: "torch.take_along_dim",
     prims.Ops.VIEW: view_helper,
     # Elementwise unary prims
     prims.Ops.ABS: _elementwise_unary_torch(torch.abs),
