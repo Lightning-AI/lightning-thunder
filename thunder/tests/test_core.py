@@ -1345,3 +1345,40 @@ def test_tree_flatten_only():
     tree_only = tree_unflatten(flat, spec)
 
     assert tree_only == [{"c": {"d": "five"}}]
+
+
+@executors(
+    dtypes=NOTHING,
+)
+def test_torch_gen_remove_last_used_variables(executor, device, _):
+    # This test is to make sure that the last used variables are removed
+    # from the generated code. This is important for freeing up memory.
+    from thunder.executors.torch import _fuse_region
+
+    def foo(a):
+        b = a + 1.0
+        c = b + 1.0
+        d = c + 1.0
+        e = d + 1.0
+        return e
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    trace = thunder.make_trace(foo, executor=executor)(a)
+    code_str, _ = _fuse_region((), [trace.outputs], trace.symbols)
+
+    # Check that there are for del commands
+    assert code_str.count("del") == 4
+
+    def foo(a):
+        b = a + 1.0
+        c = b + 1.0
+        d = c + 1.0
+        e = d + 1.0
+        return e, d
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    trace = thunder.make_trace(foo, executor=executor)(a)
+    code_str, _ = _fuse_region(_, [trace.outputs], trace.symbols, global_outputs=trace.outputs)
+    # Same as above, but now the last del should be removed since the variable
+    # is used in the output
+    assert code_str.count("del") == 3

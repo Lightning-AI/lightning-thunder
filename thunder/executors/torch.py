@@ -10,7 +10,7 @@ from thunder.core import prims
 from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Trace, Variable
-from thunder.core.utils import flatten_func
+from thunder.core.utils import flatten_func, get_symbols_to_last_used_variables
 from thunder.executors.executor_prims import nvOps
 
 __all__ = [
@@ -335,7 +335,7 @@ def _extract_name(x):
 
 
 # TODO: refactor _fuse_region to be called by a common executor utility to generate fusions
-def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=True):
+def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=True, global_outputs=None):
     # Defines utilities
     tab = "  "
 
@@ -349,6 +349,12 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
     # NOTE: PyTorch fusions are run in a no grad context
     # arg_str = ", ".join(tuple(_extract_name(inp) for inp in inputs))
     # cstr = f"@torch.no_grad()\ndef fusion({arg_str}):"
+
+    # Retrieve variable to be deleted
+    symbol_to_deletable_variables = get_symbols_to_last_used_variables(
+        symbols,
+        (tuple(inputs), outputs, global_outputs)
+    )
 
     # Calls PyTorch and Python operations
     # cstr += f"\n{tab}# Executes the trace"
@@ -383,6 +389,9 @@ def _fuse_region(inputs, outputs, symbols, *, _return_code=False, _contiguous=Tr
         segue_str = ", " if (len(arg_str) > 0 and len(kwarg_str) > 0) else ""
 
         cstr += f"\n{tab}{result_str} = {op_str}({arg_str}{segue_str}{kwarg_str})"
+        deletable_variables = symbol_to_deletable_variables.get(sym, [])
+        if len(deletable_variables) > 0:
+            cstr += f"\n{tab}del {', '.join(tree_map(lambda x: str(_get_torch(x)), deletable_variables))}"
 
     # Constructs outputs
     output_names = []
@@ -462,6 +471,9 @@ def _fuse(trace):
         if isinstance(kwinp, Variable):
             cstr += f"\n{tab}{kwinp.name} = flat_kwargs[{idx}]"
 
+    # Retrieve variable to be deleted
+    symbol_to_deletable_variables = get_symbols_to_last_used_variables(trace.symbols, trace.outputs)
+
     # Calls PyTorch and Python operations
     cstr += f"\n{tab}# Executes the trace"
     for sym in trace.symbols:
@@ -493,6 +505,9 @@ def _fuse(trace):
         segue_str = ", " if (len(arg_str) > 0 and len(kwarg_str) > 0) else ""
 
         cstr += f"\n{tab}{result_str} = {op_str}({arg_str}{segue_str}{kwarg_str})"
+        deletable_variables = symbol_to_deletable_variables.get(sym, [])
+        if len(deletable_variables) > 0:
+            cstr += f"\n{tab}del {', '.join(tree_map(lambda x: str(_get_torch(x)), deletable_variables))}"
 
     # Constructs output
     # NOTE: len(flat_outputs) > 0

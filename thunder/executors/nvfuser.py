@@ -14,7 +14,7 @@ from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import Variable
 from thunder.core.transforms import eval_trace, register_augmented_forward, register_backward, restore_reduced_dims
-from thunder.core.utils import OrderedSet
+from thunder.core.utils import OrderedSet, get_symbols_to_last_used_variables
 
 # TODO: consider further refactoring this
 from thunder.executors.executor_prims import nvOps
@@ -1027,7 +1027,6 @@ def _fuse(
         region.inputs = consumed - produced
 
         # A proxy that's produced in the region and consumed in another region is an output
-        outputs = []
         for p in produced:
             consumers = variables_to_consumers_map.get(p, ())
             for c in consumers:
@@ -1035,6 +1034,9 @@ def _fuse(
                     region.outputs.append(p)
                     break
 
+    region_to_deletable_variables = get_symbols_to_last_used_variables(regions, trace.outputs)
+
+    for region in regions:
         # Short-circuits if the region outputs nothing
         # NOTE: because regions are functional, this means the region does nothing
         if len(region.outputs) == 0:
@@ -1044,7 +1046,7 @@ def _fuse(
         else:
             # CASE: not region.is_supported (currently using PyTorch to run)
             _has_torch_region = True
-            region.fusion, ctx_update = _fuse_torch_region(region.inputs, region.outputs, region.symbols)
+            region.fusion, ctx_update = _fuse_torch_region(region.inputs, region.outputs, region.symbols, global_outputs=trace.outputs)
             ctx.update(ctx_update)
 
     #
@@ -1114,6 +1116,8 @@ def _fuse(
             arg_str = ", ".join(tuple(_extract_name(inp) for inp in region.inputs))
             result_str = ", ".join(tuple(_extract_name(out) for out in region.outputs))
             ifstr += f"\n{tab}{result_str} = _fusion{idx}({arg_str})"
+        if len(region_to_deletable_variables.get(region, ())) > 0:
+            ifstr += f"\n{tab}del {', '.join(tuple(_extract_name(v) for v in region_to_deletable_variables[region]))}"
 
     # Returns region outputs which are also outputs of the entire fusion
     if_outputs = []

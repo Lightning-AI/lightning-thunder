@@ -8,7 +8,7 @@ from typing import Callable, Sequence, Type
 import thunder.core.dtypes as dtypes
 import thunder.core.trace as trace
 from thunder.core.proxies import NumberProxy, TensorProxy
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 
 # This file defines utilities that can be used when defining primitive operations.
 
@@ -787,3 +787,40 @@ def unzip2(pairs):
         lst1.append(x1)
         lst2.append(x2)
     return lst1, lst2
+
+
+def get_symbols_to_last_used_variables(symbols, ignore):
+    """Get a mapping from symbols to the last used variables.
+
+    Mark last used intermediates to be deleted. This is necessary to avoid memory leaks.
+
+    Args:
+        symbols: list of symbols
+        ignore: list of variables to be ignored, they will not be marked as last used
+
+    Returns:
+        dict: mapping from symbols to the last used variables
+    """
+    ignore = (ignore,) if not isinstance(ignore, Sequence) else ignore
+    ignore = tree_flatten(ignore)[0]
+    variable_to_last_symbol = {}
+    symbol_to_last_variables = {}
+
+    def _mark_last_use(symbol, variable):
+        if variable in ignore:
+            return
+        if not variable in variable_to_last_symbol:
+            variable_to_last_symbol[variable] = symbol
+            symbol_to_last_variables.setdefault(symbol, []).append(variable)
+
+    for symbol in reversed(symbols):
+        # If this function is used in the combined nvfuser+torch executor, there are no symbols but regions.
+        # Regions do not have args, kwargs
+        if hasattr(symbol, "inputs"):
+            variables = tuple(symbol.inputs)
+        else:
+            variables = (symbol.args, symbol.kwargs)
+        tree_map(
+            lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables
+        )
+    return symbol_to_last_variables
