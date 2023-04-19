@@ -13,7 +13,7 @@ import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script.python_ir
 import thunder.langs.torch as ttorch
-from thunder.tests import nanogpt_model
+from thunder.tests import nanogpt_model, lit_llama_model
 from thunder.tests.framework import executors, requiresCUDA
 
 
@@ -211,6 +211,54 @@ def test_inline_submodule():
     assert_close(fn(m, x), m(x))
 
     # explicitly check for things to have been inlined?
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
+    reason="requires python3.10",
+)
+def test_llama_block_inlining():
+    m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
+
+    gr = thunder.core.script.frontend.acquire_method(m.forward)
+    thunder.core.script.frontend.make_ssa(gr)
+    thunder.core.script.frontend.make_single_return(gr)
+    thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
+    thunder.core.script.passes.strongly_inline_functions(gr)
+
+    ## Check on the graph
+    thunder.core.script.graph.check_graph(gr)
+
+    # has everything been inlined/unrolled?
+    funcs = _helper_get_func_calls(gr)
+    allowed_funcs = {
+        ## PyTorch functions
+        torch.arange,
+        torch.mean,
+        torch.polar,
+        torch.outer,
+        torch.ones_like,
+        torch.rsqrt,
+        torch.view_as_complex,
+        torch.view_as_real,
+        torch._C._nn.silu_,  ## fix: define thunder for torch.nn.functional.silu
+        torch._C._nn.silu,  ## fix: define thunder for torch.nn.functional.silu
+        torch.nn.functional.has_torch_function_unary,  ## form silu
+        torch.nn.functional.handle_torch_function,  ## form silu?
+        torch.nn.functional.scaled_dot_product_attention,
+        torch.nn.functional.linear,
+        ## these should be Tensor methods
+        "contiguous",
+        "flatten",
+        "float",
+        "size",
+        "split",
+        "transpose",
+        "view",
+        "to",
+        "type_as",
+    }
+    assert not (funcs ^ allowed_funcs)
 
 
 @pytest.mark.skipif(

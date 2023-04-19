@@ -23,7 +23,7 @@ import thunder
 import thunder.langs.torch as ttorch
 import thunder.core.proxies as proxies
 from thunder.executors.torch import _fuse_region as fuse_torch_region
-from thunder.tests import nanogpt_model
+from thunder.tests import nanogpt_model, lit_llama_model
 from thunder.tests import hf_bart_self_attn
 from thunder.core.trace import Variable
 
@@ -1051,6 +1051,71 @@ class HuggingFaceSelfAttnBenchmark(Benchmark):
         ), {}
 
 
+class LLaMABlockBenchmark(Benchmark):
+    _configs = {"7B": "7B"}
+
+    def __init__(self, *, config, device, dtype, sequences, seq_length, **_) -> None:
+        cls = self.__class__
+        self.device = device
+        self.dtype = dtype
+        self.sequences = sequences
+        self.seq_length = seq_length
+        self.config = lit_llama_model.LLaMAConfig.from_name(config)
+
+        self.tdtype = ttorch.torch_dtype(dtype)
+        model = lit_llama_model.Block(self.config).to(device=self.device, dtype=self.tdtype)
+
+        super().__init__(
+            name=f"llama-{config}-block",
+            shortname=f"llama-{config}-block",
+            fn=model,
+        )
+
+    @classmethod
+    @property
+    def args(cls):
+        return (
+            BenchmarkArg(
+                name="config",
+                description="The llama configuration to use. Default is 7B.",
+                default="7B",
+            ),
+            BenchmarkArg(
+                name="sequences",
+                description="The number of sequences executed by the model.",
+                default=8,
+            ),
+            BenchmarkArg(
+                name="seq_length",
+                description="The sequence length of each sequence.",
+                default=1024,
+            ),
+            BenchmarkArg(
+                name="device",
+                description="The device of the model. Default is 'cuda'.",
+                default="cuda",
+            ),
+            BenchmarkArg(
+                name="dtype",
+                description="The dtype of the model. Default is float32.",
+                default=thunder.float32,
+            ),
+        )
+
+    def make_batch(self) -> Tuple[List, Dict]:
+        return (
+            make_tensor(
+                (
+                    self.sequences,
+                    self.seq_length,
+                    self.config.n_embd,
+                ),
+                device=self.device,
+                dtype=self.tdtype,
+            ),
+        ), {}
+
+
 # NOTE: new benchmark style, in development
 def benchmark(
     benchmark: Benchmark,
@@ -1152,6 +1217,7 @@ benchmarks = {
     "nanogpt-mlp": (NanoGPTMLPBenchmark, "nanogpt MLP module forward"),
     "nanogpt-gelu": (NanoGPTGeLUBenchmark, "nanogpt gelu function forward"),
     "hf-bart-self-attn": (HuggingFaceSelfAttnBenchmark, "hf bart self-attn module forward"),
+    "llama-block": (LLaMABlockBenchmark, "lit llama block forward"),
 }
 
 
