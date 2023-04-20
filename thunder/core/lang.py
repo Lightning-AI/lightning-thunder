@@ -68,6 +68,7 @@ __all__ = [
     "rsqrt",
     "sigmoid",
     "sign",
+    "silu",
     "sin",
     "sinh",
     "sqrt",
@@ -563,7 +564,13 @@ def sigmoid(a):
     )
     a = maybe_convert_to_dtype(a, computation_dtype)
     one = 1 + 0j if isinstance(computation_dtype, dtypes.complexfloating) else 1.0
-    return reciprocal(add(one, exp(neg(a))))
+    result = reciprocal(add(one, exp(neg(a))))
+    result = maybe_convert_to_dtype(result, result_dtype)
+    return result
+
+
+def silu(a):
+    return mul(a, sigmoid(a))
 
 
 def sign(a):

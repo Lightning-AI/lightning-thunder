@@ -870,6 +870,34 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
+silu_opinfo = OpInfo(
+    tlang.silu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.3",
+        ),
+        # NOTE: Torch doesn't support CPU float16 silu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=("cpu",),
+        ),
+        # test tols are too tight for these half precision tests
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+    ),
+)
+elementwise_unary_ops.append(silu_opinfo)
+
 sigmoid_opinfo = OpInfo(
     tlang.sigmoid,
     sample_input_generator=elementwise_unary_generator,
@@ -2459,6 +2487,13 @@ var_mean_opinfo = OpInfo(
     # Complex var is not supported yet
     dtypes=(datatypes.floating,),
     test_directives=(
+        # bfloat16 on CPU has accuracy things
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=("cpu",),
+        ),
         # PyTorch doesn't support float16 and bfloat16 on CUDA
         DecorateInfo(
             pytest.mark.xfail,

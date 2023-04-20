@@ -234,17 +234,13 @@ def test_llama_block_inlining():
     allowed_funcs = {
         ## PyTorch functions
         torch.arange,
+        torch.cos,
         torch.mean,
-        torch.polar,
         torch.outer,
-        torch.ones_like,
         torch.rsqrt,
-        torch.view_as_complex,
-        torch.view_as_real,
-        torch._C._nn.silu_,  ## fix: define thunder for torch.nn.functional.silu
-        torch._C._nn.silu,  ## fix: define thunder for torch.nn.functional.silu
-        torch.nn.functional.has_torch_function_unary,  ## form silu
-        torch.nn.functional.handle_torch_function,  ## form silu?
+        torch.sin,
+        torch.stack,
+        torch.nn.functional.silu,
         torch.nn.functional.scaled_dot_product_attention,
         torch.nn.functional.linear,
         ## these should be Tensor methods
@@ -255,10 +251,12 @@ def test_llama_block_inlining():
         "split",
         "transpose",
         "view",
-        "to",
         "type_as",
+        "half",
     }
-    assert not (funcs ^ allowed_funcs)
+    disallowed = funcs - allowed_funcs
+    unseen = allowed_funcs - funcs
+    assert (not disallowed) and (not unseen)
 
 
 @pytest.mark.skipif(

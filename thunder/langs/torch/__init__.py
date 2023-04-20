@@ -52,6 +52,7 @@ __all__ = [
     "rsqrt",
     "sigmoid",
     "sign",
+    "silu",
     "sin",
     "sinh",
     "sqrt",
@@ -363,12 +364,20 @@ class TorchLangCtx:
     def matmul(self, *args, **kwargs):
         return matmul_disambiguator(*args, **kwargs)
 
+    # type casting
+    def float(self, a):
+        return tlang.maybe_convert_to_dtype(a, dtypes.float32)
+
+
 
 #
 # Tensor Creation Ops
 #
 @torch_function(torch.arange)
-def arange(start, end, step=1, *, device="cpu", dtype=None):
+def arange(start, end=None, step=1, *, device="cpu", dtype=None):
+    if end is None:
+        end = start
+        start = 0
     return tlang.arange(start=start, step=step, stop=end, device=device, dtype=dtype)
 
 
@@ -1063,6 +1072,7 @@ def amin(a, dim, keepdim):
     )
 
 
+@torch_function(torch.mean)
 def mean(a, dim=None, keepdim: bool = False, *, dtype=None):
     dtype = dtype if dtype is not None else a.dtype
     utils.check(
@@ -1197,6 +1207,11 @@ def _dropout_helper(self, val):
     result = r < val
 
     return result
+
+
+@torch_function(torch.nn.functional.silu)
+def silu(a):
+    return tlang.silu(a)
 
 
 # full torch signature is: a, p, training, inplace
@@ -1377,6 +1392,13 @@ def matmul(a, b):
 @torch_function(torch.bmm)
 def bmm(a, b):
     return prims.matmul(a, b)
+
+@torch_function(torch.outer)
+def outer(a, b):
+    utils.check(a.ndim == 1 and b.ndim == 1,
+                lambda: f"expected two 1-d arguments, but got {a.ndim}-d and {b.ndim}-d.")
+    return tlang.mul(a[:, None], b[None, :])
+
 
 
 #

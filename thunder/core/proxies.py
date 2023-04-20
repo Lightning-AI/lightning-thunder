@@ -280,6 +280,11 @@ class TensorProxy(Proxy):
         ctx = get_language_context()
         return ctx.pow(self, other)
 
+    # **
+    def __rpow__(self, other):
+        ctx = get_language_context()
+        return ctx.pow(other, self)
+
     # *
     def __mul__(self, other):
         ctx = get_language_context()
@@ -310,10 +315,20 @@ class TensorProxy(Proxy):
         ctx = get_language_context()
         return ctx.true_divide(self, other)
 
+    # /
+    def __rtruediv__(self, other):
+        ctx = get_language_context()
+        return ctx.true_divide(other, self)
+
     # @
     def __matmul__(self, other):
         ctx = get_language_context()
         return ctx.matmul(self, other)
+
+    # @
+    def __rmatmul__(self, other):
+        ctx = get_language_context()
+        return ctx.matmul(other, self)
 
     def __getitem__(self, key):
         ctx = get_language_context()
