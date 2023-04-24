@@ -1301,7 +1301,7 @@ if __name__ == "__main__":
               $ python nvfuser_benchmarks.py -x torch-eager,torch.compile,thunder+nvfuser -pp nanogpt --iters 50
 
               # Detailed profiling of a region.
-              $ python nvfuser_benchmarks.py -x thunder+nvfuser --tf32 nanogpt-mlp --warmup_iters 500 --iters 1000 --profile
+              $ python nvfuser_benchmarks.py -x thunder+nvfuser nanogpt-mlp --warmup_iters 500 --iters 1000 --profile
         """
         ),
     )
