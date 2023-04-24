@@ -164,6 +164,7 @@ def time_ns(fn, gen, *, warmup_iters=5, iters=20):
         _helper()
 
     for _ in range(iters):
+        result = None  # Let GC collect the previous result
         t, result = _helper()
         elapsed.append(t)
 
