@@ -761,7 +761,7 @@ def _fuse_region(inputs, outputs, symbols):
         if isinstance(o.proxy, NumberProxy):
             out_strs.append(f"{o.name}.cpu().item()")
         else:
-            out_strs.append(f"{o.name}")
+            out_strs.append(f"{o.name}.contiguous()")
     out_str = ", ".join(out_strs)
     cstr += f"\n{tab}return {out_str}"
 
