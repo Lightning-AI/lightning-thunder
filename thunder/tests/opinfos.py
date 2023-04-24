@@ -1727,6 +1727,66 @@ broadcast_in_dim_opinfo = OpInfo(
 shape_ops.append(broadcast_in_dim_opinfo)
 
 
+def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shapes, dim
+    cases = [
+        ([(3,)], 0),  # single tensor provided
+        # 1D
+        ([(2,), (3,)], 0),
+        ([(2,), (4,)], 0),
+        # Currently, padding tensors along singleton dimensions is unsupported
+        # by nvFuser. The following issue is relevant since both cat and pad
+        # are implemented with the same op on the backend:
+        # https://github.com/NVIDIA/Fuser/issues/21
+        # ([(1,), (2,), (3,)], 0),
+        ([(0,), (2,)], 0),
+        ([(0,), (2,)], -1),
+        ([(2, 3), (2, 4)], 1),
+        ([(2, 3), (2, 4), (2, 5)], 1),
+    ]
+
+    for shapes, dim in cases:
+        yield SampleInput([make(s) for s in shapes], dim)
+
+
+def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shapes, dim, exception type
+    cases = [
+        ([], 0, RuntimeError),  # empty list of tensors
+        ([(2,), (2,)], 1, IndexError),  # index out of range (positive)
+        ([(1,), (2,)], -2, IndexError),  # index out of range (negative)
+        ([(2,), (2, 3)], 0, RuntimeError),  # differing dimensions
+        ([(2, 3), (4, 5)], 0, RuntimeError),  # mismatched shapes in non-cat dim
+    ]
+
+    for shapes, dim, exc_type in cases:
+        yield SampleInput([make(s) for s in shapes], dim), exc_type
+
+
+cat_opinfo = OpInfo(
+    tlang.cat,
+    sample_input_generator=cat_sample_generator,
+    error_input_generator=cat_error_generator,
+    torch_reference=torch.cat,
+    test_directives=(
+        # cat op was introduced in nvFuser 0.0.5
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.5",
+        ),
+        # vjp and jvp not yet implemented
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
+    ),
+)
+shape_ops.append(cat_opinfo)
+
+
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

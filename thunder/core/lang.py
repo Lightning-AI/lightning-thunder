@@ -1,7 +1,7 @@
 import math
 from functools import reduce
 from numbers import Number
-from typing import Sequence
+from typing import List, Sequence
 
 import thunder.core.dtypes as dtypes
 
@@ -25,6 +25,7 @@ __all__ = [
     "full_like",
     "uniform",
     # Shape operations
+    "cat",
     "compute_broadcast_shape",
     "expand",
     "maybe_broadcast",
@@ -369,6 +370,11 @@ def unsqueeze(a, dims):
             a_idx += 1
 
     return prims.broadcast_in_dim(a, shape, broadcast_dims)
+
+
+def cat(tensors: List[TensorProxy], dim: int):
+    """Concatenates the given sequence of tensors in the given dimension."""
+    return prims.cat(tensors, dim)
 
 
 def compute_broadcast_shape(*_shapes):

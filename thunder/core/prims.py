@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import auto, Enum
 from functools import lru_cache, partial, reduce
 from numbers import Number
-from typing import Callable, Dict, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as utils
@@ -37,6 +37,7 @@ __all__ = [
     # Shape prims
     "broadcast_in_dim_meta",
     "broadcast_in_dim",
+    "cat",
     "pad",
     "reshape",
     "slice",
@@ -127,13 +128,14 @@ class Ops(Enum):
     UNIFORM = auto()
     # Shape prims
     BROADCAST_IN_DIM = auto()
+    CAT = auto()
     PAD = auto()
     RESHAPE = auto()
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
     TAKE = auto()
-    TAKE_ALONG_AXIS= auto()
+    TAKE_ALONG_AXIS = auto()
     VIEW = auto()
     # Elementwise unary prims
     ABS = auto()
@@ -1296,6 +1298,49 @@ broadcast_in_dim = make_prim(
 )
 
 
+def cat_meta(tensors: List[TensorProxy], dim: int):
+    utils.check(len(tensors) > 0, lambda: "Cat expects a non-empty list of tensors")
+    utils.check_same_device(*tensors)
+    utils.check_same_dtype(*tensors)
+
+    ndim = tensors[0].ndim
+    utils.check(
+        dim >= -ndim and dim < ndim,
+        lambda: f"Expected dimension in inclusive range of {-ndim} and {ndim-1}: got {dim}.",
+        IndexError,
+    )
+
+    dim = utils.canonicalize_dim_idx(ndim, dim)
+
+    shape = [s for s in tensors[0].shape]
+    for i, ai in enumerate(tensors[1:]):
+        utils.check(
+            isinstance(ai, TensorProxy),
+            lambda: f"First argument to cat must be a list of tensors: found type {type(ai)}",
+        )
+        utils.check(
+            ai.ndim == ndim,
+            lambda: f"Attempted to concatenate tensors of different dimension: got {ndim} and {ai.ndim}",
+        )
+        for d, (sd, sad) in enumerate(zip(shape, ai.shape)):
+            utils.check(
+                sd == sad or d == dim,
+                lambda: f"Sizes of tensors must match except in dimension {dim}. "
+                f"Expected size {sd} but got size {sad} for tensor number {i+1} in the list.",
+            )
+        shape[dim] += ai.shape[dim]
+
+    proxy_name = get_trace().make_proxy_name()
+    return TensorProxy(name=proxy_name, shape=shape, dtype=tensors[0].dtype, device=tensors[0].device, strides=None)
+
+
+cat = make_prim(
+    Ops.CAT,
+    "cat",
+    cat_meta,
+)
+
+
 def pad_meta(a, padding_value, padding_config):
     utils.check(a.ndim == len(padding_config), lambda: f"Expected {a.ndim=} to equal {len(padding_config)=}")
     utils.check_same_dtype(a, padding_value)
@@ -1441,12 +1486,17 @@ def take_along_axis_meta(a, index, dim):
     utils.validate_idx(a.ndim, dim)
     for idx, l in enumerate(a.shape):
         if idx != dim:
-            utils.check(index.shape[idx] == l or index.shape[idx] == 1, lambda: f"take_along_axis 'index' size on all dimensions to be broadcast against 'a', except `dim`. Found incompatible sizes on dim {dim}, where 'a' has {l} and 'index' has {index.shape[idx]}")
+            utils.check(
+                index.shape[idx] == l or index.shape[idx] == 1,
+                lambda: f"take_along_axis 'index' size on all dimensions to be broadcast against 'a', except `dim`. Found incompatible sizes on dim {dim}, where 'a' has {l} and 'index' has {index.shape[idx]}",
+            )
 
     proxy_name = get_trace().make_proxy_name()
     return TensorProxy(name=proxy_name, shape=index.shape, device=a.device, dtype=a.dtype)
 
+
 take_along_axis = make_prim(Ops.TAKE_ALONG_AXIS, "take_along_axis", take_along_axis_meta)
+
 
 def take_meta(a, index, dim):
     utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
@@ -1456,7 +1506,7 @@ def take_meta(a, index, dim):
     utils.validate_idx(a.ndim, dim)
 
     l = index.shape[0] if index.ndim == 1 else 1
-    new_shape = a.shape[:dim] + (l,) + a.shape[dim+1:]
+    new_shape = a.shape[:dim] + (l,) + a.shape[dim + 1 :]
 
     proxy_name = get_trace().make_proxy_name()
     return TensorProxy(name=proxy_name, shape=new_shape, device=a.device, dtype=a.dtype)

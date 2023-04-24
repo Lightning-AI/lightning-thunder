@@ -360,6 +360,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.FULL: "full",
     # Shape prims
     prims.Ops.BROADCAST_IN_DIM: "broadcast_in_dim",
+    prims.Ops.CAT: "cat",
     prims.Ops.PAD: _pad_wrapper,
     # NOTE: "reshape" was called "view" in earlier versions of nvFuser
     prims.Ops.RESHAPE: "reshape" if use_reshape else "view",
@@ -437,6 +438,7 @@ ops_to_nvfuser_ops_map = {
 
 ops_to_nvfuser_preprocessors_map = {
     # Shape prims
+    prims.Ops.CAT: _nvScalars_to_Numbers_preprocessor,
     prims.Ops.RESHAPE: _reshape_preprocessor,
     prims.Ops.PAD: _pad_preprocessor,
     # prims.Ops.SQUEEZE: _squeeze_preprocessor,

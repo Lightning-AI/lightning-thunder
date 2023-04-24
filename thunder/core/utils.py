@@ -623,7 +623,7 @@ def check_same_device(*args):
         device = devices[0]
         for otherdevice in devices[1:]:
             check(
-                same_shape(device, otherdevice),
+                device == otherdevice,
                 lambda: f"Devices were expected to be the same, but got devices {device} and {otherdevice}!",
             )
 

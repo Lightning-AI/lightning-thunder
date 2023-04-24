@@ -214,6 +214,7 @@ ops_to_torch_ops_map = {
     prims.Ops.UNIFORM: uniform_helper,
     # Shape prims
     prims.Ops.BROADCAST_IN_DIM: broadcast_in_dim,
+    prims.Ops.CAT: "torch.cat",
     prims.Ops.PAD: pad,
     prims.Ops.RESHAPE: "torch.reshape",
     prims.Ops.SLICE: slice_helper,
