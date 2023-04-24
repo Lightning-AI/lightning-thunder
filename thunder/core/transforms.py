@@ -74,8 +74,8 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
     for symbol in trace.symbols:
-        args = safe_map_flat(read, symbol.args)
-        kwargs = {k: read(v) for k, v in symbol.kwargs.items()}
+        args = tree_map(read, symbol.args)
+        kwargs = tree_map(read, symbol.kwargs)
         prim_func = symbol_mapper(symbol)
         result = prim_func(*args, **kwargs)
         if not isinstance(result, Sequence):
@@ -83,9 +83,9 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         safe_map_flat(write, list(symbol.outputs), list(result))
 
     if with_env:
-        return safe_map_flat(read, trace.outputs), env
+        return tree_map(read, trace.outputs), env
 
-    return safe_map_flat(read, trace.outputs)
+    return tree_map(read, trace.outputs)
 
 
 def lower_to_prims_mapper(symbol: prims.Symbol):
@@ -1355,26 +1355,37 @@ def linear_backward(a, b, c, g):
     return ga, gb, gc
 
 
-def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, non_decomposed_fn, **kwargs):
+def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     """Augmented forward rule for composite functions implemented in terms of other functions that are
     supposed to be supported by the VJP infrastructure.
 
     Args:
         decomposed_fn (Callable): decomposed version of the function
-        non_decomposed_fn (Callable): non-decomposed version of the function
 
     Returns:
         Callable: Augmented forward rule for the composite function
     """
-    results = non_decomposed_fn(*args, **kwargs)
-    residuals = (args, kwargs)
-    return VJPDual(results, residuals)
+    trace = make_trace(decomposed_fn)(*args, **kwargs)
+    result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
+    # We cannot save the trace object in the residuals because executors may not
+    # be able to return it for the splitted forward/backward passes. Instead, we
+    # save args and kwargs of the original function call and reconstruct the
+    # trace object and its environment dict in the backward rule. Here we rely
+    # on the fact that the order of the symbols in the trace is deterministic
+    # and always the same for the same function call and the same set of
+    # arguments. See test_grad.py:test_torch_autograd_function for an example
+    # where this is tested.
+    saved_for_backward = tuple(env[symbol.outputs[0].name].residuals for symbol in trace.symbols)
+    residuals = (args, kwargs, saved_for_backward)
+    return VJPDual(result, residuals)
 
 
-def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, *grads):
-    # Use of the decomposed_fn here results in a decomposed trace after
-    # calling the `inline` transform
-    result = inline(vjp(decomposed_fn))(args, grads, **kwargs)[1]
+def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
+    trace = make_trace(decomposed_fn)(*args, **kwargs)
+    reconstructed_env = {
+        symbol.outputs[0].name: VJPDual(None, saved_for_backward[i]) for i, symbol in enumerate(trace.symbols)
+    }
+    result = backward_pass(reconstructed_env, trace, grads)
     if len(args) == 1:
         return result[0]
     return result
@@ -1421,28 +1432,14 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         # We could not find a VJP for this symbol, so we try to decompose it
         if symbol.decomposed_fn is not None and not isinstance(symbol.op, prims.Ops):
             vjp_impl = partial(
-                decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.decomposed_fn, non_decomposed_fn=symbol.non_decomposed_fn
+                decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.decomposed_fn
             )
             register_backward(symbol.op)(partial(decomposed_fn_backward_rule, symbol.decomposed_fn))
         else:
             raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
 
-    def wrap_arg(arg):
-        if isinstance(arg, (Number, dtypes.dtype)):
-            return VJPDual(arg, tuple())
-        elif isinstance(arg, VJPDual):
-            return arg
-        else:
-            raise TypeError(f"Unexpected type {type(arg)}")
-
     def _vjp_impl(*args, **kwargs):
-        args = tree_map(wrap_arg, args)
-
-        # Expecting VJPDual wrapping pairs of primals and residuals
-        assert all(isinstance(arg, VJPDual) for arg in tree_flatten(args)[0])
-
-        primals = tree_map(lambda x: x.primal, args)
-        kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, kwargs)
+        primals, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
         out_primal, out_residuals = vjp_impl(*primals, **kwargs)
 
         # We are saving the residuals and pullback only in the first output
@@ -1471,10 +1468,10 @@ def augmented_forward_pass(*args, trace: Trace, **kwargs):
     Returns:
         Tuple[Any, Dict[str, Any]]: Tuple of the primal outputs and the environment.
     """
-    primals_residuals = [VJPDual(primal, tuple()) for primal in args]
+    args, kwargs = tree_map(lambda x: VJPDual(x, tuple()), (args, kwargs))
     result, env = eval_trace(
         trace,
-        *primals_residuals,
+        *args,
         **kwargs,
         with_env=True,
         symbol_mapper=vjp_symbol_mapper,
@@ -1483,6 +1480,9 @@ def augmented_forward_pass(*args, trace: Trace, **kwargs):
     return result, env
 
 
+# TODO: Instead of using the environment dictionary, we could use the trace
+# symbols order (that should be deterministic) to retrieve the residuals needed
+# for the backward pass.
 def backward_pass(forward_env, trace, init_cotangents):
     """Backward pass for the VJP transform.
 
@@ -1546,7 +1546,15 @@ def backward_pass(forward_env, trace, init_cotangents):
         )
         safe_map(write, symbol.args, result)
 
-    return tree_map(read, tuple(trace.args))
+    def read_with_none(x: Variable):
+        if isinstance(x, Variable):
+            # Return None if the variable was not used in the computation and
+            # hence not in the env
+            return env.get(x.name, None)
+        else:
+            return x
+
+    return tree_map(read_with_none, tuple(trace.args))
 
 
 def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
