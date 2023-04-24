@@ -1,5 +1,6 @@
 from functools import partial
 from numbers import Number
+from typing import List, Tuple
 
 import torch
 from looseversion import LooseVersion
@@ -135,6 +136,55 @@ def _convert_element_type_translation(fd):
         return fd.ops.cast(a, nvfuser_dtype)
 
     return _fn
+
+
+# Note that nvFuser pad() does not perform padding between elements as is done
+# in XLA. It instead requires a flat list of static widths (int instead of
+# nvNumber), and that argument must come before the fill value.
+def _pad_wrapper(fd):
+    def _fn(x: nvTensor, value: nvNumber, pad_widths: List[int], dilations: List[int]):
+        if all(dil == 0 for dil in dilations):
+            return fd.ops.pad(x, pad_widths, value)
+        else:
+            raise NotImplementedError("Padding between elements is not supported by the nvFuser executor")
+
+    return _fn
+
+
+# NOTE: nvFuser's pad op requires pad_widths to be a sequence of Python numbers
+# (lo_n, hi_n, lo_{n-1}, hi_{n-1}, ...) where dimensions are counted in reverse
+# as shown, and dilation is not supported. This translates from
+# lightning.compile's pad primitive, which specifies padding and dilation as an
+# ndim-length list of (lo, hi, dilation) triples to nvFuser's pad operation. As
+# nvFuser currently does not support padding between elements, if a dilation !=
+# 0 is encountered then a NotImplementedError will be thrown by _pad_wrapper
+# above.
+def _pad_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_args, nv_kwargs):
+    x, fill_value, padding_config = nv_args
+
+    def _realize_number(x):
+        if isinstance(x, nvNumber):
+            for p, nv in variable_to_nvfuser_map.items():
+                if nv is x:
+                    return p.proxy.value
+            raise AssertionError("Failed to find the value of nvNumber when preprocessing pad()!")
+        return x
+
+    pad_widths = []
+    dilations = []
+    # Note that nvfuser also requires pad widths in reverse order so that fewer
+    # than ndim pairs may be passed.
+    for start, end, dilation in reversed(padding_config):
+        pad_widths += [_realize_number(start), _realize_number(end)]
+        dilations.append(_realize_number(dilation))
+
+    def _add_constant_number(x):
+        if isinstance(x, Number) and not isinstance(x, NumberProxy):
+            nv = fd.define_constant(x)
+            return nv
+        return x
+
+    return (x, _add_constant_number(fill_value), pad_widths, dilations), {}
 
 
 # A composite implementation of c++ std::remainder and Python math.remainder.
@@ -296,6 +346,7 @@ def _sum_helper(fd):
                 return fd.ops.cast(a, output_dtype)
             return a
         return fd.ops.sum(a, dims, dtype=output_dtype)
+
     return partial(helper, fd)
 
 
@@ -309,7 +360,7 @@ ops_to_nvfuser_ops_map = {
     prims.Ops.FULL: "full",
     # Shape prims
     prims.Ops.BROADCAST_IN_DIM: "broadcast_in_dim",
-    prims.Ops.PAD: "pad",
+    prims.Ops.PAD: _pad_wrapper,
     # NOTE: "reshape" was called "view" in earlier versions of nvFuser
     prims.Ops.RESHAPE: "reshape" if use_reshape else "view",
     # TODO: can re-enable squeeze by allowing one prim to become multiple nvFuser prims
@@ -387,6 +438,7 @@ ops_to_nvfuser_ops_map = {
 ops_to_nvfuser_preprocessors_map = {
     # Shape prims
     prims.Ops.RESHAPE: _reshape_preprocessor,
+    prims.Ops.PAD: _pad_preprocessor,
     # prims.Ops.SQUEEZE: _squeeze_preprocessor,
     prims.Ops.TRANSPOSE: _nvScalars_to_Numbers_preprocessor,
     prims.Ops.TAKE: _nvScalars_to_Numbers_preprocessor,

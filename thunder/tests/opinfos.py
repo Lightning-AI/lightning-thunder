@@ -1846,12 +1846,24 @@ def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # shape, padding_config
     cases = (
-        ((2, 2), ((1, 1, 1), (-1, 2, 0))),
         ((1, 3), ((0, 0, 0), (0, 0, 0))),
-        ((2, 0, 3), ((1, 0, 0), (1, 1, 2), (0, 0, 0))),
-        ((7, 5), ((0, 0, 3), (-6, 2, 1))),
         ((3, 7, 5), ((-2, 1, 0), (1, 3, 0), (-1, 2, 0))),
-        ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 1))),
+        # NOTE: The following samples use padding between elements, which is not
+        # supported by nvFuser as of v0.0.6. These should be uncommented once
+        # nvFuser supports padding between elements.
+        # ((2, 2), ((1, 1, 1), (-1, 2, 0))),
+        # ((2, 0, 3), ((1, 0, 0), (1, 1, 2), (0, 0, 0))),
+        # ((7, 5), ((0, 0, 3), (-6, 2, 1))),
+        # ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 1))),
+        # Versions of above examples but with padding between elements set to 0
+        ((2, 2), ((1, 1, 0), (-1, 2, 0))),
+        ((2, 0, 3), ((1, 0, 0), (1, 1, 0), (0, 0, 0))),
+        # without padding between, the following results in narrowing beyond extent
+        # ((7, 5), ((0, 0, 0), (-6, 2, 0))),
+        # Swapping the order fixes this because the second padding config
+        # triplet now corresponds to the axis with extent 7.
+        ((5, 7), ((0, 0, 0), (-6, 2, 0))),
+        ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 0))),  # negative pad in all 3 dims
     )
 
     for shape, padding_config in cases:
@@ -1869,12 +1881,17 @@ pad_opinfo = OpInfo(
     sample_input_generator=pad_sample_generator,
     jax_reference=_jax_pad if JAX_AVAILABLE else None,
     test_directives=(
-        # PyTorch's pad doesn't support complex padding values
-        DecorateInfo(pytest.mark.xfail, dtypes=(datatypes.complexfloating,)),
+        # NVFuser introduced the pad() op in v0.0.6
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
             active_if=nvFuser().version() < "0.0.6",
+        ),
+        # PyTorch's pad doesn't support complex padding values
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("TorchEx",),
+            dtypes=(datatypes.complexfloating,),
         ),
     ),
 )
