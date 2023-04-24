@@ -103,7 +103,6 @@ __all__ = [
     "where",
     # Reduction prims
     "reduction_meta",
-    "sum_meta",
     "amax",
     "amin",
     "prod",
