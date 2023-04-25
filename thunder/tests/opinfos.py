@@ -1787,6 +1787,62 @@ cat_opinfo = OpInfo(
 shape_ops.append(cat_opinfo)
 
 
+def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shapes, dim
+    cases = [
+        ([(3,)], 0),  # single tensor provided
+        # 1D
+        ([(3,), (3,)], 0),
+        ([(4,), (4,)], 0),
+        ([(3,), (3,)], 1),
+        ([(3,), (3,)], -1),
+        ([(2, 3), (2, 3)], 1),
+        ([(2, 3), (2, 3), (2, 3)], 1),
+    ]
+
+    for shapes, dim in cases:
+        yield SampleInput([make(s) for s in shapes], dim)
+
+
+def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shapes, dim, exception type
+    cases = [
+        ([], 0, RuntimeError),  # empty list of tensors
+        ([(2,), (3,)], 1, RuntimeError),  # differing shapes
+        ([(2,), (2,)], -3, IndexError),  # index out of range (negative)
+        ([(2,), (2,)], 4, IndexError),  # index out of range
+        ([(2,), (2, 3)], 0, RuntimeError),  # differing dimensions
+        ([(2, 3), (4, 5)], 0, RuntimeError),  # mismatched shapes in non-cat dim
+    ]
+
+    for shapes, dim, exc_type in cases:
+        yield SampleInput([make(s) for s in shapes], dim), exc_type
+
+
+stack_opinfo = OpInfo(
+    tlang.stack,
+    sample_input_generator=stack_sample_generator,
+    error_input_generator=stack_error_generator,
+    torch_reference=torch.stack,
+    test_directives=(
+        # cat op was introduced in nvFuser 0.0.5
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            active_if=nvFuser().version() < "0.0.5",
+        ),
+        # vjp and jvp not yet implemented
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
+    ),
+)
+shape_ops.append(stack_opinfo)
+
+
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

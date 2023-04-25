@@ -32,6 +32,7 @@ __all__ = [
     "reshape",
     "slice_in_dim",
     "squeeze",
+    "stack",
     "transpose",
     "take",
     "take_along_axis",
@@ -375,6 +376,18 @@ def unsqueeze(a, dims):
 def cat(tensors: List[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
     return prims.cat(tensors, dim)
+
+
+def stack(tensors: List[TensorProxy], dim: int):
+    """Concatenates the given sequence of tensors in a new (the given) dimension."""
+    shapes = tuple(t.shape for t in tensors)
+    utils.check(shapes, lambda: f"list of tensors cannot be empty")
+    for i, s in enumerate(shapes[1:], start=1):
+        utils.check(
+            s == shapes[0], lambda: f"tensors must be of the same shape, tensor at {i} is {s} instead of {shapes[0]}"
+        )
+    tensors_ = [t.unsqueeze(dim) for t in tensors]
+    return prims.cat(tensors_, dim)
 
 
 def compute_broadcast_shape(*_shapes):

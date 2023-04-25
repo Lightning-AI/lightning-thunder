@@ -3,6 +3,7 @@ from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
 from typing import Callable, Optional, Sequence, Tuple
+import math
 
 import torch
 
@@ -28,6 +29,7 @@ __all__ = [
     "uniform",
     "zeros_like",
     # Shape ops
+    "cat",
     "contiguous",
     "reshape",
     "split",
@@ -36,6 +38,7 @@ __all__ = [
     "transpose",
     "unsqueeze",
     "index_select",
+    "stack",
     "take_along_dim",
     "view",
     # Elementwise Unary Ops
@@ -97,6 +100,7 @@ __all__ = [
     # Matmul Ops
     "linear",
     "matmul",
+    "scaled_dot_product_attention",
 ]
 
 # The Torch language
@@ -243,6 +247,9 @@ class TorchLangCtx:
     def matrix_transpose(self, a):
         return tlang.matrix_transpose(a)
 
+    def flatten(self, input, start_dim=0, end_dim=-1):
+        return flatten(input, start_dim, end_dim)
+
     # TODO: refactor so disambiguator's aren't needed
     def split(self, a, sizes_or_sections, dim=0):
         return _split_disambiguator(a, sizes_or_sections, dim)
@@ -261,6 +268,9 @@ class TorchLangCtx:
         shape = utils.extract_shape_from_varargs(shape)
         # view is in fact implemented as reshape (?)
         return tlang.reshape(a, shape)
+
+    def type_as(self, a, other):
+        return tlang.maybe_convert_to_dtype(a, other.dtype)
 
     #
     # Elementwise Unary Methods
@@ -369,7 +379,6 @@ class TorchLangCtx:
         return tlang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
-
 #
 # Tensor Creation Ops
 #
@@ -437,6 +446,10 @@ def basic_indexing(a, key):
     unsqueeze_dims_post_ellipsis = []
     specified_slices = 0
     ellipsis_idx = None
+
+    if isinstance(key, (Number, slice)):
+        key = (key,)
+
     for idx, x in enumerate(key):
         if x is Ellipsis:
             utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
@@ -711,6 +724,16 @@ def unsqueeze(a, dim):
     return tlang.unsqueeze(a, (dim,))
 
 
+@torch_function(torch.cat)
+def cat(tensors, dim=0):
+    return tlang.cat(tensors, dim)
+
+
+@torch_function(torch.stack)
+def stack(tensors, dim=0):
+    return tlang.stack(tensors, dim)
+
+
 @torch_function(torch.index_select)
 def index_select(a, dim, index):
     return tlang.take(a, index, dim)
@@ -719,6 +742,18 @@ def index_select(a, dim, index):
 @torch_function(torch.take_along_dim)
 def take_along_dim(input, indices, dim):
     return tlang.take_along_axis(input, indices, dim)
+
+
+@torch_function(torch.flatten)
+def flatten(input, start_dim=0, end_dim=-1):
+    s = input.shape
+    if end_dim < 0:
+        # end_dim is inclusive in flatten(!)
+        end_dim = len(s) + end_dim + 1
+    if start_dim + 1 >= end_dim:
+        return input
+    s_new = tuple(s[:start_dim]) + (-1,) + tuple(s[end_dim:])
+    return reshape(input, s_new)
 
 
 def _view_disambiguator(*args, **kwargs):
@@ -1252,9 +1287,7 @@ def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_g
 
 @torch_function(torch.ops.aten.embedding_backward)
 def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
-    result = prims.embedding_backward(
-        grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse
-    )
+    result = prims.embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return result
 
 
@@ -1393,12 +1426,25 @@ def matmul(a, b):
 def bmm(a, b):
     return prims.matmul(a, b)
 
+
 @torch_function(torch.outer)
 def outer(a, b):
-    utils.check(a.ndim == 1 and b.ndim == 1,
-                lambda: f"expected two 1-d arguments, but got {a.ndim}-d and {b.ndim}-d.")
+    utils.check(a.ndim == 1 and b.ndim == 1, lambda: f"expected two 1-d arguments, but got {a.ndim}-d and {b.ndim}-d.")
     return tlang.mul(a[:, None], b[None, :])
 
+
+@torch_function(torch.nn.functional.scaled_dot_product_attention)
+def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
+    logits = query @ key.transpose(-2, -1) / (query.size(-1) ** 0.5)
+    if attn_mask is None and is_causal:
+        L, S = logits.shape[-2:]
+        attn_mask = arange(L, device=query.device)[:, None] >= arange(S, device=query.device)[None, :]
+        attn_mask = attn_mask.masked_fill(not attn_mask, -math.inf)
+    if attn_mask is not None:
+        logits = logits + attn_mask
+    attn_weight = softmax(logits, dim=-1)
+    attn_weight = dropout(attn_weight, dropout_p)
+    return attn_weight @ value
 
 
 #
