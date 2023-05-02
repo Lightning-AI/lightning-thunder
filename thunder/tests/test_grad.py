@@ -9,7 +9,7 @@ import torch
 
 import thunder.core.dtypes as dtypes
 
-from thunder import make_trace, make_traced
+from thunder import make_trace
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map
 from thunder.core.transforms import jvp, vjp
@@ -188,7 +188,7 @@ def numerical_jvp(f):
     return jvp
 
 
-def check_jvp(f, *primals, executor="torch", atol=None, rtol=None):
+def check_jvp(f, *primals, executor, atol=None, rtol=None):
     """Check that the Jacobian-vector product of a function is correct.
 
     Args:
@@ -202,8 +202,8 @@ def check_jvp(f, *primals, executor="torch", atol=None, rtol=None):
         AssertionError: If the Jacobian-vector product is not correct.
     """
     tangents = tree_map(make_tensor_like, primals)
-    actual_p, actual_t = make_traced(jvp(f), executor=executor)(primals, tangents)
-    expected_p, expected_t = numerical_jvp(make_traced(f, executor=executor))(primals, tangents)
+    actual_p, actual_t = executor.make_callable(jvp(f))(primals, tangents)
+    expected_p, expected_t = numerical_jvp(executor.make_callable(f))(primals, tangents)
     torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
     torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
 
@@ -274,12 +274,12 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     # Using finite differences we can compute J u, but we can't compute J* v, without computing full J, which is expensive.
 
     u = tree_map(make_tensor_like, primals)
-    outs_p, J_u = numerical_jvp(make_traced(f, executor=executor))(primals, u)
+    outs_p, J_u = numerical_jvp(executor.make_callable(f))(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make_tensor_like, outs_p)
-    _, J_star_v = make_traced(vjp(f), executor=executor)(primals, v)
+    _, J_star_v = executor.make_callable(vjp(f))(primals, v)
 
     if not multiple_results:
         v = (v,)
@@ -425,7 +425,7 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, (gindices, gweight) = make_traced(vjp(filtered_op), executor=executor)(filtered_args, (v,))
+        actual_out, (gindices, gweight) = executor.make_callable(vjp(filtered_op))(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
         torch.testing.assert_close(gweight, expected[0])
         torch.testing.assert_close(actual_out, out)
@@ -461,11 +461,11 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's check that we get the correct error if we don't pass the right number of cotangents
     with pytest.raises(RuntimeError, match="Expected cotangents to be a sequence of length 2"):
-        out, (g,) = make_traced(vjp(func), executor=executor)((x,), (v,))
+        out, (g,) = executor.make_callable(vjp(func))((x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
     with pytest.raises(RuntimeError, match="Pullback for sincos returned 2 values, but expected 1"):
-        out, (g,) = make_traced(vjp(func), executor=executor)((x,), (v, v))
+        out, (g,) = executor.make_callable(vjp(func))((x,), (v, v))
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")

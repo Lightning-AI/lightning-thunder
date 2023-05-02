@@ -67,7 +67,7 @@ def test_integer_isinstance_mimicry(executor, device, dtype):
 
         return tlang.add(b, c)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((2, 1), device=device, dtype=tdtype)
@@ -89,7 +89,7 @@ def test_integer_isinstance_mimicry(executor, device, dtype):
 
         return tlang.add(b, c)
 
-    traced_bar = thunder.make_traced(bar, executor=executor)
+    traced_bar = executor.make_callable(bar)
 
     try:
         thunder_result = traced_bar(a, b, c)
@@ -157,7 +157,7 @@ def test_torch_call_lowering_for_nvfuser(executor, device, _):
     ex = _get_executor(executor)
     fusion = ex.fuse(nvfuser_trace)
     actual = fusion(a)
-    expected = thunder.make_traced(func, executor=executor)(a)
+    expected = executor.make_callable(func)(a)
     assert_close(actual, expected)
 
 
@@ -244,7 +244,7 @@ def test_eval_trace(executor, device, _):
 
         return func
 
-    foo_traced = thunder.make_traced(eval_trace_as_function(foo_trace), executor=executor)
+    foo_traced = executor.make_callable(eval_trace_as_function(foo_trace))
     actual = foo_traced(a, b, c=c)
     expected = (a + b) * c
     assert_close(actual, expected)
@@ -297,7 +297,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
         assert len(foo_trace.outputs) == 2
         assert foo_trace.outputs[0].name == foo_trace.outputs[1].name
 
-        actual = thunder.make_traced(partial(eval_trace, foo_trace), executor=executor)(a)
+        actual = executor.make_callable(partial(eval_trace, foo_trace))(a)
         assert_close(actual, (a, a))
 
 
@@ -342,7 +342,7 @@ def test_transforms_identity(executor, device, _):
     ex = _get_executor(executor)
     fusion = ex.fuse(nested_id_trace)
     actual = fusion(a, b, c=c)
-    expected = thunder.make_traced(func, executor=executor)(a, b, c=c)
+    expected = executor.make_callable(func)(a, b, c=c)
     torch.testing.assert_close(actual, expected)
 
 
@@ -395,11 +395,11 @@ def test_transforms_inline(executor, device, _):
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import inline, vmap
 
-    actual = thunder.make_traced(inline(vmap(lambda: 2, axis_size=4)), executor=executor)()
+    actual = executor.make_callable(inline(vmap(lambda: 2, axis_size=4)))()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = thunder.make_traced(inline(vmap(lambda x: x, axis_size=4)), executor=executor)(2)
+    actual = executor.make_callable(inline(vmap(lambda x: x, axis_size=4)))(2)
     assert_close(actual, expected)
 
 
@@ -458,12 +458,12 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = thunder.make_traced(inline(vjp(func_1_2)), executor=executor)
+    vjp_eager = executor.make_callable(inline(vjp(func_1_2)))
 
     primals = (a,)
     cotangents = (g1, g2)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = thunder.make_traced(func_1_2, executor=executor)(a)
+    expected_out_p = executor.make_callable(func_1_2)(a)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     # Now check the gradients
@@ -509,13 +509,13 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = thunder.make_traced(inline(vjp(func_2_2)), executor=executor)
+    vjp_eager = executor.make_callable(inline(vjp(func_2_2)))
 
     primals = (x, y)
     primal_kwargs = {"z": z}
     cotangents = (g1, g2)
     out_p, grads = vjp_eager(primals, cotangents, **primal_kwargs)
-    expected_out_p = thunder.make_traced(func_2_2, executor=executor)(*primals, **primal_kwargs)
+    expected_out_p = executor.make_callable(func_2_2)(*primals, **primal_kwargs)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     # Now check the gradients
@@ -564,14 +564,14 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = tlang.asin(b)
         return c
 
-    vjp_eager = thunder.make_traced(inline(vjp(func_2_1)), executor=executor)
+    vjp_eager = executor.make_callable(inline(vjp(func_2_1)))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = thunder.make_traced(func_2_1, executor=executor)(*primals)
+    expected_out_p = executor.make_callable(func_2_1)(*primals)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     aa = a.clone().requires_grad_(True)
@@ -604,12 +604,12 @@ def test_transforms_vmap_inline_value_and_grad(executor, device, _):
         a = prims.sum(a, ())
         return prims.sum(a, tuple(range(a.ndim)))
 
-    vjp_func = thunder.make_traced(value_and_grad(func), executor=executor)
+    vjp_func = executor.make_callable(value_and_grad(func))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     single_out, (single_grad,) = vjp_func(a)
 
     aaa = torch.stack([a, a, a])
-    vmap_inline_vjp = thunder.make_traced(vmap(inline(value_and_grad(func))), executor=executor)
+    vmap_inline_vjp = executor.make_callable(vmap(inline(value_and_grad(func))))
     batched_out, (batched_grad,) = vmap_inline_vjp(aaa)
     for i in range(3):
         assert_close(single_out, batched_out[i])
@@ -657,7 +657,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = thunder.make_traced(inline(jvp(inline(vmap(func)))), executor=executor)(args, args)
+    out_p, out_t = executor.make_callable(inline(jvp(inline(vmap(func)))))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -682,7 +682,7 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = thunder.make_traced(inline(vmap(inline(jvp(func)), out_dims=(0, 0))), executor=executor)(args, args)
+    out_p, out_t = executor.make_callable(inline(vmap(inline(jvp(func)), out_dims=(0, 0))))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -707,7 +707,7 @@ def test_transforms_vmap_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
+    out_p, out_t = executor.make_callable(vmap(jvp(func), out_dims=(0, 0)))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -732,7 +732,7 @@ def test_transforms_jvp_vmap(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
+    out_p, out_t = executor.make_callable(jvp(vmap(func, out_dims=(0, 0))))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -754,7 +754,7 @@ def test_transforms_jvp(executor, device, _):
 
     primals = (a, b)
     tangents = (a, b)
-    out_p, out_t = thunder.make_traced(inline(identity(jvp(identity(func)))), executor=executor)(primals, tangents)
+    out_p, out_t = executor.make_callable(inline(identity(jvp(identity(func)))))(primals, tangents)
     expected_out_p = torch.sin(a) + b
     expected_out_t = torch.cos(a) + b
     assert_close(out_p, expected_out_p)
@@ -776,7 +776,7 @@ def test_transforms_jvp_no_inline(executor, device, _):
 
     primals = (a, b)
     tangents = (a, b)
-    out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
+    out_p, out_t = executor.make_callable(jvp(func))(primals, tangents)
     expected_out_p = torch.sin(a) + b
     expected_out_t = torch.cos(a) + b
     assert_close(out_p, expected_out_p)
@@ -796,7 +796,7 @@ def test_transforms_vmap_sum(executor, device, _):
 
     a = torch.ones(2, 3, device=device, dtype=torch.float32)
 
-    out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
+    out = executor.make_callable(vmap(func, out_dims=0))(a)
     expected_out = torch.sum(a, dim=1)
     assert_close(out, expected_out)
 
@@ -821,7 +821,7 @@ def test_transforms_jvp_python_number(executor, device, _):
 
         primals = (a,)
         tangents = (a,)
-        out_p, out_t = thunder.make_traced(inline(jvp(func)), executor=executor)(primals, tangents)
+        out_p, out_t = executor.make_callable(inline(jvp(func)))(primals, tangents)
 
         expected_out_p = a * scalar
         expected_out_t = a * scalar
@@ -853,7 +853,7 @@ def test_integer_return(executor, device, _):
     def foo(a, b):
         return tlang.add(a, b)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     thunder_result = traced_foo(3, 4)
     python_result = 3 + 4
@@ -866,7 +866,7 @@ def test_type_promotion_tensors(executor, device, _):
     def foo(a, b):
         return a + b
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     b1 = make_tensor((2, 2), device=device, dtype=torch.bool)
     i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
@@ -905,7 +905,7 @@ def test_type_promotion_tensors(executor, device, _):
     def bar(a, b, c):
         return a - b + c
 
-    traced_bar = thunder.make_traced(bar, executor=executor)
+    traced_bar = executor.make_callable(bar)
 
     # float x int64 x float16 type promotion -- float16 result dtype
     result = traced_bar(2.0, i64, f16)
@@ -921,7 +921,7 @@ def test_type_promotion_numbers_and_tensors(executor, device, _):
     def foo(a, b, c):
         return a + b + c
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
     f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
@@ -945,7 +945,7 @@ def test_int_to_float_type_promotion(executor, device, _):
     def foo(a, b):
         return a / b
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
     f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
@@ -972,7 +972,7 @@ def test_int_to_float_type_promotion(executor, device, _):
 # TODO: add test for full (), which will cause a segfault
 @executors(dtypes=(thunder.float32,))
 def test_full(executor, device, dtype):
-    traced_full = thunder.make_traced(tlang.full, executor=executor)
+    traced_full = executor.make_callable(tlang.full)
 
     tdtype = ttorch.torch_dtype(dtype)
 
@@ -1019,7 +1019,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
             {},
         )
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1045,7 +1045,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 
         return accum, d, kwargs["g"]
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1068,7 +1068,7 @@ def test_varargs(executor, device, dtype):
     def foo(*args):
         return reduce(operator.add, args)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1085,7 +1085,7 @@ def test_kwargs(executor, device, dtype):
     def foo(**kwargs):
         return kwargs["a"] + kwargs["b"]
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1103,7 +1103,7 @@ def test_no_return(executor, device, dtype):
         c = a + b
         pass
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1120,7 +1120,7 @@ def test_no_input(executor, device, dtype):
     def foo():
         return 3, ()
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     thunder_result = traced_foo()
     torch_result = foo()
@@ -1133,7 +1133,7 @@ def test_no_compute(executor, device, dtype):
     def foo(a, b):
         return a, 3.0
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1152,7 +1152,7 @@ def test_fusion_reuse(executor, device, dtype):
             return a + b
         return a - b
 
-    traced_foo = thunder.make_traced(foo, executor=executor, _return_fusion=True)
+    traced_foo = executor.make_callable(foo, _return_fusion=True)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype)
@@ -1196,7 +1196,7 @@ def test_fusion_reuse(executor, device, dtype):
         c = a @ b
         return c + c
 
-    traced_bar = thunder.make_traced(bar, executor=executor, _return_fusion=True)
+    traced_bar = executor.make_callable(bar, _return_fusion=True)
 
     a = make_tensor((4, 16), device=device, dtype=tdtype)
     b = make_tensor((16, 8), device=device, dtype=tdtype)
@@ -1213,6 +1213,9 @@ def test_fusion_reuse(executor, device, dtype):
 # TODO: maybe move to special test_nvfuser?
 @executors(
     dtypes=(thunder.float32,),
+    executors=[
+        nvFuser(),
+    ],
 )
 @requiresCUDA
 def test_hybrid_execution(executor, device, dtype):
@@ -1232,7 +1235,7 @@ def test_hybrid_execution(executor, device, dtype):
         g = c + f
         return (c, e, 2), 5, f, g
 
-    traced_foo = thunder.make_traced(foo, executor="nvfuser")
+    traced_foo = executor.make_callable(foo)
     tdtype = ttorch.torch_dtype(dtype)
 
     a = make_tensor((2, 2), device="cuda", dtype=torch.float32)
@@ -1252,7 +1255,7 @@ def test_uniform(executor, device, dtype):
     if isinstance(executor, nvFuser) and LooseVersion(executor.version()) < "0.0.3":
         pytest.skip("'uniform' not implemented before nvfuser 0.0.3")
 
-    thunder_uniform = thunder.make_traced(tlang.uniform, executor=executor)
+    thunder_uniform = executor.make_callable(tlang.uniform)
     uniform = partial(thunder_uniform, dtype=dtype, device=device)
 
     # lo, hi, shape
@@ -1278,7 +1281,7 @@ def test_uniform(executor, device, dtype):
     def foo():
         return tlang.uniform([2, 3, 4], 0.5, 1.0, dtype=dtype, device=device)
 
-    thunder_static_uniform = thunder.make_traced(foo, executor=executor)
+    thunder_static_uniform = executor.make_callable(foo)
     result = thunder_static_uniform()
     result.shape == (2, 3, 4)
     result.min() >= 0.5

@@ -29,7 +29,7 @@ def test_nanogpt(executor, device, dtype):
     idx = make((8, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
 
-    tom = thunder.make_traced(gpt, executor=executor, _preprocess=True, mode="cudagraphs")
+    tom = executor.make_callable(gpt, _preprocess=True, mode="cudagraphs")
     thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)
@@ -47,7 +47,7 @@ def test_nanogpt_csa(executor, device, dtype):
     inp = make((2, config.block_size, config.n_embd))
     torch_result = csa(inp)
 
-    tom = thunder.make_traced(csa, executor=executor, _preprocess=True, mode="cudagraphs")
+    tom = executor.make_callable(csa, _preprocess=True, mode="cudagraphs")
     thunder_result = tom(inp)
 
     assert_close(torch_result, thunder_result)
@@ -65,7 +65,7 @@ def test_nanogpt_block(executor, device, dtype):
     inp = make((2, config.block_size, config.n_embd))
     torch_result = block(inp)
 
-    tom = thunder.make_traced(block, executor=executor, _preprocess=True, mode="cudagraphs")
+    tom = executor.make_callable(block, _preprocess=True, mode="cudagraphs")
     thunder_result = tom(inp)
 
     assert_close(torch_result, thunder_result)
@@ -83,7 +83,7 @@ def test_nanogpt_mlp(executor, device, dtype):
     inp = make((2, config.n_embd))
     torch_result = mlp(inp)
 
-    tom = thunder.make_traced(mlp, executor=executor, _preprocess=True, mode="cudagraphs")
+    tom = executor.make_callable(mlp, _preprocess=True, mode="cudagraphs")
     thunder_result = tom(inp)
 
     assert_close(torch_result, thunder_result)
@@ -100,7 +100,7 @@ def test_nanogpt_gelu(executor, device, dtype):
     inp = make((1024, 1024))
     torch_result = new_gelu(inp)
 
-    tom = thunder.make_traced(new_gelu, executor=executor, _preprocess=True)
+    tom = executor.make_callable(new_gelu, _preprocess=True)
     thunder_result = tom(inp)
 
     assert_close(torch_result, thunder_result)

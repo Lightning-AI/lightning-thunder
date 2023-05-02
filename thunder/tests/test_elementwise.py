@@ -21,7 +21,7 @@ def test_abs_integer(executor, device, dtype):
         a_abs = tlang.abs(a)
         return tlang.add(a_abs, b)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = -3
@@ -38,7 +38,7 @@ def test_abs_float(executor, device, dtype):
         a_abs = tlang.abs(a)
         return tlang.add(a_abs, b)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = -2.7
@@ -54,7 +54,7 @@ def test_core_tensor_methods(executor, device, dtype):
     def foo(a, b, c, d):
         return a + b - c + (d - a)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((4, 4), device=device, dtype=tdtype)
@@ -73,7 +73,7 @@ def test_add_integer_constant(executor, device, dtype):
         c = tlang.add(a, 2)
         return tlang.add(c, b)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((2, 1), device=device, dtype=tdtype)
@@ -90,7 +90,7 @@ def test_add_integer_input(executor, device, dtype):
     def foo(a, b):
         return tlang.add(a, b)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((2, 1), device=device, dtype=tdtype)
@@ -107,7 +107,7 @@ def test_add_integer_inputs(executor, device, dtype):
         d = tlang.add(a, b)
         return tlang.add(c, d)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((3, 2), device=device, dtype=tdtype)
@@ -123,7 +123,7 @@ def test_add_integer_constants(executor, device, dtype):
         b = tlang.add(2, 3)
         return tlang.add(a, b)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((2, 4), device=device, dtype=tdtype)
@@ -139,7 +139,7 @@ def test_add_floats(executor, device, dtype):
         c = tlang.add(2.0, a)
         return tlang.add(b, c)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = make_tensor((2, 4), device=device, dtype=tdtype)
@@ -154,7 +154,7 @@ def test_add_floats(executor, device, dtype):
 def test_where(executor, device, dtype):
     # Tests where type promotion and number support
 
-    thunder_fn = thunder.make_traced(tlang.where, executor=executor)
+    thunder_fn = executor.make_callable(tlang.where)
     torch_fn = torch.where
 
     shape = (5, 5)

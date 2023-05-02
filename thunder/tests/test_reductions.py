@@ -17,7 +17,7 @@ def test_torch_var(executor, device, dtype):
     def foo(a, dim, *, keepdim=False, correction=1):
         return ttorch.var(a, dim, keepdim=keepdim, correction=correction)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
@@ -46,7 +46,7 @@ def test_torch_var(executor, device, dtype):
     def foo(a):
         return ttorch.var(a, [0, 1], keepdim=True, correction=2)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
 
@@ -60,7 +60,7 @@ def test_torch_mean(executor, device, dtype):
     def foo(a, dim=None, keepdim=False, *, dtype=None):
         return ttorch.mean(a, dim, keepdim, dtype=dtype)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
@@ -86,7 +86,7 @@ def test_var_mean(executor, device, dtype):
     def foo(a, dim=None, unbiased=None, keepdim=False, *, correction=None):
         return ttorch.var_mean(a, dim, unbiased, keepdim=keepdim, correction=correction)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
@@ -105,7 +105,7 @@ def test_var_mean(executor, device, dtype):
     def foo(a):
         return ttorch.var_mean(a, [0, 1], keepdim=True, correction=2)
 
-    traced_foo = thunder.make_traced(foo, executor=executor)
+    traced_foo = executor.make_callable(foo)
 
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
 
@@ -117,7 +117,7 @@ def test_var_mean(executor, device, dtype):
 # TODO: autogenerate consistency tests using opinfos
 @executors(dtypes=(thunder.float32,))
 def test_layer_norm(executor, device, dtype):
-    thunder_fn = thunder.make_traced(ttorch.layer_norm, executor=executor)
+    thunder_fn = executor.make_callable(ttorch.layer_norm)
     torch_fn = torch.nn.functional.layer_norm
     tdtype = ttorch.torch_dtype(dtype)
 

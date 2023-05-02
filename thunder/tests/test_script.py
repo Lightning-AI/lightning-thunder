@@ -452,7 +452,7 @@ def test_preprocess_option(executor, device, dtype):
     a = make_tensor((2, 1), device=device, dtype=tdtype)
     b = make_tensor((2, 2), device=device, dtype=tdtype)
 
-    thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+    thunder_fn = executor.make_callable(foo, _preprocess=True)
 
     thunder_result = thunder_fn(a, b)
     torch_result = foo(a, b)
@@ -485,7 +485,7 @@ def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
-    thunder_fn = thunder.make_traced(nanogpt_mlp_functional_simplified, executor=executor, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional_simplified, _preprocess=True)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_simplified)
 
 
@@ -498,7 +498,7 @@ def test_nanogpt_mlp_functional_inlined(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
-    thunder_fn = thunder.make_traced(nanogpt_mlp_functional_inlined, executor=executor, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional_inlined, _preprocess=True)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_inlined)
 
 
@@ -522,12 +522,12 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
-    thunder_fn = thunder.make_traced(nanogpt_mlp_functional, executor=executor, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional, _preprocess=True)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional)
 
     # see if everything works and is inlined
     allowed_funcs = {math.sqrt, ttorch.pow, ttorch.linear, ttorch.dropout, ttorch.tanh}
-    thunder_fn = thunder.make_traced(nanogpt_mlp_functional_kw, executor=executor, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional_kw, _preprocess=True)
     funcs = _helper_get_func_calls(thunder_fn._tfn._gr)
     assert not (funcs ^ allowed_funcs)
 
@@ -648,7 +648,7 @@ def test_local_aliased_translation(executor, device, dtype):
         fn = torch.nn.functional.linear
         return fn(a, b)
 
-    thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+    thunder_fn = executor.make_callable(foo, _preprocess=True)
 
     shape = (2, 2)
     a = make(shape)
