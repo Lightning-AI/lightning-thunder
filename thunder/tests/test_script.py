@@ -12,9 +12,19 @@ from torch.testing import assert_close, make_tensor
 import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script.python_ir
+import thunder.core.script.python_ir_data
 import thunder.langs.torch as ttorch
 from thunder.tests import nanogpt_model, lit_llama_model
 from thunder.tests.framework import executors, requiresCUDA
+
+thunder.core.script.frontend.enable_debug_asserts()
+
+
+def skipif_not_python_3_10(f):
+    return pytest.mark.skipif(
+        not thunder.core.script.python_ir_data.SUPPORTS_PREPROCESSING,
+        reason=f"requires python3.10, got {sys.version_info=}",
+    )(f)
 
 
 def _helper_get_func_calls(gr):
@@ -45,17 +55,10 @@ class M1(torch.nn.Module):
         return 2 * x
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_acquisition_compile():
     model = M1()
     gr = thunder.core.script.frontend.acquire_method(model.forward)
-
-    # TODO (t-vi): should these be called automatically? yes.
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     fn = thunder.core.script.python_ir.generate_function(gr)
 
     a = torch.randn(2, 3)
@@ -67,14 +70,9 @@ def test_acquisition_compile():
     assert_close(model(x=a, flag=True), fn(model, x=a, flag=True))
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_torch_to_thunder():
     gr = thunder.core.script.frontend.acquire_method(sample_add_fn)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.torch_to_thunder(gr)
     thunder_fn = thunder.core.script.python_ir.generate_function(gr)
 
@@ -87,10 +85,7 @@ def test_torch_to_thunder():
     assert_close(res, expected)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_sequential():
     model = torch.nn.Sequential(
         torch.nn.Linear(3, 5),
@@ -99,24 +94,17 @@ def test_sequential():
     )
 
     gr = thunder.core.script.frontend.acquire_method(model.forward)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     fn = thunder.core.script.python_ir.generate_function(gr)
 
     a = torch.randn(2, 3)
     assert_close(model(a), fn(model, a))
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_nanogpt_basic():
     model = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
     gr = thunder.core.script.frontend.acquire_method(model.forward)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     fn = thunder.core.script.python_ir.generate_function(gr)
 
     x = torch.randint(0, 255, (5, 5))
@@ -128,10 +116,7 @@ def test_nanogpt_basic():
     assert_close(res, expected)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_split_block():
     def foo(a, b):
         c = a + b
@@ -139,8 +124,6 @@ def test_split_block():
         return d
 
     gr = thunder.core.script.frontend.acquire_method(foo)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.split_block(gr, gr.blocks[0], gr.blocks[0].nodes[1])
     fn = thunder.core.script.python_ir.generate_function(gr)
 
@@ -154,14 +137,9 @@ def fn1(a, /, b, c=3, *args, d=5, **kwargs):
     return f"{a=}, {b=}, {c=}, {d=}, {args=}, {kwargs=}"
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_arg_handling():
     gr = thunder.core.script.frontend.acquire_method(fn1)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     generated_fn = thunder.core.script.python_ir.generate_function(gr)
 
     # structureal tests
@@ -176,10 +154,7 @@ def test_arg_handling():
         assert fn1(*args, **kwargs) == generated_fn(*args, **kwargs)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_inline_submodule():
     class MLP(torch.nn.Module):
         def __init__(self):
@@ -192,8 +167,6 @@ def test_inline_submodule():
 
     m = MLP()
     gr = thunder.core.script.frontend.acquire_method(m.forward)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
 
     nodes_to_inline = [gr.blocks[0].nodes[0], gr.blocks[0].nodes[2]]
     for n in nodes_to_inline:
@@ -213,16 +186,11 @@ def test_inline_submodule():
     # explicitly check for things to have been inlined?
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_llama_block_inlining():
     m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
 
     gr = thunder.core.script.frontend.acquire_method(m.forward)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
     thunder.core.script.passes.strongly_inline_functions(gr)
 
@@ -259,16 +227,11 @@ def test_llama_block_inlining():
     assert (not disallowed) and (not unseen)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_nanogpt_inlining_unrolling():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
     gr = thunder.core.script.frontend.acquire_method(m.forward)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
 
     ## Check on the graph
@@ -319,10 +282,7 @@ def test_nanogpt_inlining_unrolling():
     assert_close(o[0], o2[0])
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_exception_source_line():
     m = torch.nn.Sequential(
         torch.nn.Linear(3, 5),
@@ -342,16 +302,11 @@ def test_exception_source_line():
         assert "F.linear" in tb_str
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_nanogpt_functionalization():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
     gr = thunder.core.script.frontend.acquire_method(m.forward)
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
     additional_param_names, additional_param_values = thunder.core.script.passes.module_to_function(gr)
     thunder.core.script.graph.check_graph(gr)
@@ -375,10 +330,7 @@ def test_nanogpt_functionalization():
     assert_close(o[0], o2[0])
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 def test_nanogpt_tom():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig(dropout=0.0))
     tom = thunder.make_traced(m, executor="torch", _preprocess=True)
@@ -406,17 +358,11 @@ def foo(a, c_fc_weight, c_proj_weight):
     return b
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10) or sys.version_info >= (3, 11),
-    reason="requires python3.10",
-)
+@skipif_not_python_3_10
 @requiresCUDA
 def test_inlining_function_and_convert_to_thunder():
     def convert_to_thunder(fn):
         gr = thunder.core.script.frontend.acquire_method(fn)
-
-        thunder.core.script.frontend.make_ssa(gr)
-        thunder.core.script.frontend.make_single_return(gr)
 
         thunder.core.script.passes.inline_submodule_calls(gr)
         thunder.core.script.passes.inline_method_call(gr, gr.blocks[0].nodes[0])
@@ -443,6 +389,7 @@ def test_inlining_function_and_convert_to_thunder():
     assert_close(torch_result, thunder_result)
 
 
+@skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_preprocess_option(executor, device, dtype):
     def foo(a, b):
@@ -476,7 +423,7 @@ def _nanogpt_mlp_helper(device, dtype, thunder_fn, torch_fn):
 
 # TODO: enable the following tests
 
-
+@skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
     def nanogpt_mlp_functional_simplified(a, c_fc_weight, c_proj_weight):
@@ -489,6 +436,7 @@ def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_simplified)
 
 
+@skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional_inlined(executor, device, dtype):
     def nanogpt_mlp_functional_inlined(a, c_fc_weight, c_proj_weight):
@@ -506,6 +454,7 @@ def new_gelu(x):
     return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
 
+@skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional(executor, device, dtype):
     def nanogpt_mlp_functional(a, c_fc_weight, c_proj_weight):
@@ -536,11 +485,9 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
     assert not (funcs ^ allowed_funcs)
 
 
+@skipif_not_python_3_10
 def test_clone_graph():
     gr = thunder.core.script.frontend.acquire_method(new_gelu)
-
-    thunder.core.script.frontend.make_ssa(gr)
-    thunder.core.script.frontend.make_single_return(gr)
 
     thunder.core.script.passes.inline_submodule_calls(gr)
     thunder.core.script.passes.merge_blocks_where_possible(gr)
@@ -639,6 +586,7 @@ def test_clone_graph():
 #     assert_close(thunder_result, torch_result)
 
 
+@skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_local_aliased_translation(executor, device, dtype):
     tdtype = ttorch.torch_dtype(dtype)

@@ -1,147 +1,687 @@
 import collections
+import dataclasses
+import functools
 import dis
 import inspect
-import itertools as it
-import opcode
+import itertools
 import sys
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Deque, Dict, Iterable, Iterator, List, Literal, Optional, Set, Tuple, Union
 
-import torch
+import networkx as nx
 
 from thunder.core.script.graph import (
-    assert_value,
-    assert_node,
-    assert_block,
+    check_graph,
     Block,
     Graph,
     MROAwareObjectRef,
     Node,
+    NULL,
     PhiValue,
     Value,
 )
 from thunder.core.script.python_ir_data import (
+    ArgScope,
     compute_jump,
+    del_opcodes,
     jump_instructions,
+    load_opcodes,
     make_jump_absolute,
+    make_name_map,
+    make_return,
     return_instructions,
-    stack_effect_detail,
+    stack_effects_comprehensive,
+    store_opcodes,
     unconditional_jump_names,
+    NoBranchDependent,
+    PushNew,
+    VariableScope,
+    SUPPORTS_PREPROCESSING,
 )
-from thunder.core.utils import OrderedSet
+from thunder.core.utils import dict_join, OrderedSet
+
+# Aliases to make type annotations more expressive.
+IsJump = bool
+EdgeIndex = Union[Literal[0], Literal[-1]]
+_AbstractValues = Tuple["_AbstractValue", ...]
+NodeFlow = Tuple[dis.Instruction, _AbstractValues, _AbstractValues]
+
+
+DEBUG_ASSERTS = False
+
+def enable_debug_asserts():
+    global DEBUG_ASSERTS
+    DEBUG_ASSERTS = True
 
 
 class Super:
     pass
 
 
-def parse_bytecode(method: Callable) -> Graph:
+def parse_bytecode(method: Callable) -> Tuple["ProtoBlock", ...]:
     """Given a method, disassemble it to a sequence of simple blocks."""
-    source_lines, source_start_line = inspect.getsourcelines(method)
     bytecode: Tuple[dis.Instruction, ...] = tuple(dis.get_instructions(method))
 
     # Determine the boundaries for the simple blocks.
     split_after_opcodes = jump_instructions | return_instructions
-    follows_jump = it.chain([0], (int(i.opcode in split_after_opcodes) for i in bytecode))
+    follows_jump = itertools.chain([0], (int(i.opcode in split_after_opcodes) for i in bytecode))
     new_block = (int(i or j.is_jump_target) for i, j in zip(follows_jump, bytecode))
 
     # Split the bytecode (and instruction number) into groups
-    group_indices = tuple(it.accumulate(new_block))
-    groups = it.groupby(enumerate(bytecode), key=lambda args: group_indices[args[0]])
+    group_indices = tuple(itertools.accumulate(new_block))
+    groups = itertools.groupby(enumerate(bytecode), key=lambda args: group_indices[args[0]])
 
     # Drop the group index, copy from the groupby iter, and unzip `enumerate`.
     groups = (zip(*tuple(i)) for _, i in groups)
 
-    blocks = {start: (instructions, Block(is_ssa=False)) for (start, *_), instructions in groups}
+    blocks: Dict[int, Tuple[int, List[dis.Instruction]]] = {start: (len(block), list(block)) for (start, *_), block in groups}
 
-    # The first block is special because it must be initialized with a `None`
-    # jump source. (Effectively indicating "start of function".)
-    _, start_block = blocks[0]
-    start_block.jump_sources.append(None)
+    # If the last instruction is not a jump or return (which means we split
+    # because the next instruction was a jump target) then we need to tell
+    # the current block how to advance.
+    for start, (block_size, block) in blocks.items():
+        assert block, "Block is empty"
+        instruction = block[-1]
+        if instruction.opcode not in split_after_opcodes:
+            next_start = start + block_size
+            assert bytecode[next_start].is_jump_target
+            block.append(make_jump_absolute(next_start))
 
-    line_no = 1
-    for start, (block_bytecode, block) in blocks.items():
-        assert block_bytecode, "Block is empty"
-        end = start + len(block_bytecode) - 1
+    # Consolidate `return` statements.
+    def is_return(block: List[dis.Instruction]) -> bool:
+        assert block and not any(i.opcode == dis.opmap["RETURN_VALUE"] for i in block[:-1])
+        return block[-1].opcode == dis.opmap["RETURN_VALUE"]
 
-        # Populate Nodes in the Block
-        for instruction in block_bytecode:
-            if instruction.starts_line is not None:
-                line_no = instruction.starts_line - source_start_line + 1
-            node = Node(i=instruction, line_no=line_no)
-            block.insert_node(node)
+    return_starts = tuple(start for start, (_, block) in blocks.items() if is_return(block))
+    assert return_starts, "No return instruction found"
+    if len(return_starts) > 1:
+        new_return_start = len(bytecode) + 1
+        for _, block in (blocks[start] for start in return_starts):
+            prior_return = block.pop()
+            assert prior_return.opcode == dis.opmap["RETURN_VALUE"], dis.opname[prior_return.opcode]
+            block.append(make_jump_absolute(new_return_start))
 
-        # If the last instruction is not a jump or return (which means we split
-        # because the next instruction was a jump target) then we need to tell
-        # the current block how to advance.
-        if node.i.opcode not in split_after_opcodes:
-            assert bytecode[end + 1].is_jump_target
-            node = Node(i=make_jump_absolute(end + 1), line_no=line_no)
-            block.insert_node(node)
+        blocks[new_return_start] = 1, [make_return(is_jump_target=True)]
+        assert is_return(blocks[new_return_start][1])
 
-        # If the last instruction is a jump we need to compute the jump target(s)
-        # and update the block connectivity.
-        def maybe_add_jump(offset: Optional[int], jump: bool) -> None:
-            if offset is not None:
-                _, destination_block = blocks[offset]
-                stack_effect = stack_effect_detail(node.i.opname, node.i.arg, jump=jump)
+    # Assign line numbers once structure is finalized.
+    line_no = 0
+    for instruction in itertools.chain(*[block for _, block in blocks.values()]):
+        if (starts_line := instruction.starts_line) is not None:
+            line_no = starts_line - method.__code__.co_firstlineno
+        instruction.line_no = line_no
 
-                # TODO(robieta, t-vi): Add Node.add_jump_target for more safety?
-                destination_block.jump_sources.append(node)
-                node.jump_targets.append((stack_effect, destination_block))
+    protoblocks = {start: ProtoBlock(instructions) for start, (_, instructions) in blocks.items()}
 
-        if node.i.opcode in jump_instructions:
-            is_conditional_jump = node.i.opname not in unconditional_jump_names
-            maybe_add_jump(end + 1 if is_conditional_jump else None, False)
-            maybe_add_jump(compute_jump(node.i, end), True)
+    # If the last instruction is a jump we need to compute the jump target(s).
+    for start, (raw_block_len, (*_, last_instruction)) in blocks.items():
+        if last_instruction.opcode in jump_instructions:
+            end = start + raw_block_len - 1
+            if last_instruction.opname not in unconditional_jump_names:  # Fallthrough
+                protoblocks[start].jump_targets.append((protoblocks[end + 1], False))
 
-    graph = Graph([block for _, block in blocks.values()])
-    graph.source_start_line = 1  # source_start_line
-    graph.source_lines = source_lines
-    return graph
+            if (jump_offset := compute_jump(last_instruction, end)) is not None:  # Jump
+                protoblocks[start].jump_targets.append((protoblocks[jump_offset], True))
+
+    return tuple(protoblocks.values())
 
 
-def acquire_method(
-    method: Callable,
-    module: Optional[object] = None,
+class _AbstractValue:
+    """Represents a value during instruction parsing. (Prior to type binding.)"""
+    def __hash__(self) -> int:
+        return hash(id(self))
+
+
+class AbstractValue(_AbstractValue):
+    """Abstract value which is suitable for wider use. (Namely Value/PhiValue conversion.)"""
+    pass
+
+
+class ProtoBlock:
+    raw_instructions: Tuple[dis.Instruction]
+    jump_targets: List[Tuple["ProtoBlock", IsJump]]
+
+    # (block_inputs, block_outputs)
+    stacks: Tuple[Deque[_AbstractValue], Deque[_AbstractValue]]
+    stack_conditional: Tuple[bool, _AbstractValues]
+
+    # Should not contain `VariableScope.CONST` or `VariableScope.STACK`
+    variables: Dict[ArgScope, _AbstractValues]
+
+    # Entries are indexed WRT block inputs. (This matters for `VariableScope.STACK`)
+    uses: OrderedSet[ArgScope]
+
+    # Instruction level value flow.
+    node_flow: Tuple[NodeFlow, ...]
+
+    def __init__(self, instructions: Iterable[dis.Instruction]) -> None:
+        self.raw_instructions = tuple(instructions)
+        self.jump_targets = []
+
+        # Parse abstract flow. The inital pass is built using only instructions
+        # in the ProtoBlock. Later passes will extend for block connectivity.
+        self.stack_conditional = (False, ())
+        block_inputs: Deque[_AbstractValue] = collections.deque()
+        stack: Deque[_AbstractValue] = collections.deque()
+        variables: Dict[ArgScope, List[_AbstractValue]] = {}
+        node_flow: List[NodeFlow] = []
+
+        def peek_stack(pop: bool = False) -> _AbstractValue:
+            # If the stack is empty we can infer that we are trying to reference
+            # a value was already on the stack at the start of the block.
+            if not stack:
+                block_inputs.appendleft(inferred := _AbstractRef(f"Inferred stack input: {len(block_inputs)}"))
+                stack.append(inferred)
+            return stack.pop() if pop else stack[-1]
+
+        def peek_variable(arg: Optional[int], scope: VariableScope) -> List[_AbstractValue]:
+            # The first value should always be an _AbstractRef; if a variable is
+            # undefined a later pass will convert it to `ValueMissing`. However
+            # local block parsing is too early to make that determination.
+            assert arg is not None
+            if scope == VariableScope.CONST:
+                return [ExternalRef(arg, scope)]
+            return variables.setdefault(ArgScope(arg, scope), [_AbstractRef(f"Variable initial value: ({arg} {scope})")])
+
+        assert self.raw_instructions
+        for idx, instruction in enumerate(self.raw_instructions):
+            inputs: List[_AbstractValue] = []
+            outputs: List[_AbstractValue] = []
+            new_intermediates: List[IntermediateValue] = []
+            pop, push, (extra_branch, extra) = stack_effects_comprehensive(instruction)
+            assert (idx + 1) == len(self.raw_instructions) or not extra, "Branch instruction mid-block"
+
+            def assert_expected_stack_effects(*expected) -> None:
+                assert (pop, push, (extra_branch, extra)) == tuple(expected), f"{instruction=} {pop=} {push=} {(extra_branch, extra)=}"
+
+            # Peek at the stack to track variable mutations.
+            if (store_scope := store_opcodes.get(instruction.opname)) is not None:
+                assert_expected_stack_effects(1, (), NoBranchDependent)
+                peek_variable(instruction.arg, store_scope).append(peek_stack(pop=False))
+
+            elif (del_scope := del_opcodes.get(instruction.opname)) is not None:
+                assert_expected_stack_effects(1, (), NoBranchDependent)
+                peek_variable(instruction.arg, del_scope).append(ValueMissing())
+
+            # Handle stack inputs.
+            for _ in range(pop):
+                inputs.append(peek_stack(pop=True))
+
+            def lookup(index: int) -> _AbstractValue:
+                """Handle alias resolution and new outputs."""
+                if index < 0:
+                    # Negative values index into the popped values.
+                    return inputs[-1 - index]
+                
+                if index == len(new_intermediates):
+                    new_intermediates.append(IntermediateValue())
+                
+                return new_intermediates[index]
+
+            # Handle outputs.
+            if (load_scope := load_opcodes.get(instruction.opname)) is not None:
+                assert_expected_stack_effects(0, PushNew, NoBranchDependent)
+                outputs.append(peek_variable(instruction.arg, load_scope)[-1])
+
+            else:
+                outputs.extend(lookup(index) for index in push)
+                self.stack_conditional = (extra_branch, tuple(lookup(index) for index in extra))
+
+                # Nodes on node flow:
+                #   1) We have already functionalized variable accesses, so we can prune loads and stores.
+                #   2) Inputs are consumed from the stack so we reverse them to get argument order.
+                #   3) Conditional outputs are a block level concept. They are always added to node outputs.
+                extra_outputs = tuple(lookup(index) for index in extra)
+                self.stack_conditional = (extra_branch, extra_outputs)
+                if not (store_scope or del_scope):
+                    node_flow.append((instruction, tuple(reversed(inputs)), tuple((*outputs, *extra_outputs))))
+
+            stack.extend(outputs)
+
+        self.stacks = (block_inputs, stack)
+        self.variables = {k: tuple(v) for k, v in variables.items()}
+        values_used = set(itertools.chain(*(inputs for _, inputs, _ in node_flow)))
+        self.uses = OrderedSet(k for k, v in self.state(0) if v in values_used)
+        self.node_flow = tuple(node_flow)
+
+    def __repr__(self) -> str:
+        return f"ProtoBlock: {hex(id(self))}"
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    @staticmethod
+    def topology(blocks: Iterable["ProtoBlock"]):
+        parents = collections.defaultdict(list)
+        for block in blocks:
+            parents.setdefault(block, [])
+            for child, is_jump in block.jump_targets:
+                parents[child].append((block, is_jump))
+        root, = [block for block, block_parents in parents.items() if not block_parents]
+        assert not root.stacks[0], "Root block should not have stack inputs"
+        return root, {block: tuple(block_parents) for block, block_parents in parents.items()}
+    
+    @staticmethod
+    def stack_args(args: Iterable[ArgScope]) -> Tuple[int, ...]:
+        stack_args = tuple(sorted([i.arg for i in args if i.scope == VariableScope.STACK]))
+        assert stack_args == tuple(range(-len(stack_args), 0)), stack_args
+        return stack_args
+
+    def stack_effect(self, is_jump: bool) -> Tuple[int, int]:
+        return len(tuple(self.stack(0, None))), len(tuple(self.stack(-1, is_jump)))
+
+    def stack(self, index: EdgeIndex, is_jump: Optional[bool]) -> Iterable[_AbstractValue]:
+        yield from self.stacks[index]
+        extra_branch, extra_outputs = self.stack_conditional
+        if index == -1 and is_jump in (extra_branch, None):
+            yield from extra_outputs
+
+    def state(self, index: EdgeIndex, is_jump: Optional[bool]=None) -> Iterator[Tuple[ArgScope, _AbstractValue]]:
+        for k, values in sorted(self.variables.items(), key=lambda x: x[0]):
+            v = values[index]
+            assert k.scope not in (VariableScope.CONST, VariableScope.STACK) and isinstance(v, _AbstractValue), (k, v)
+            yield k, v
+
+        stack = tuple(self.stack(index, is_jump))
+        for idx, v in enumerate(stack):
+            assert isinstance(v, _AbstractValue), v
+            yield ArgScope(idx - len(stack), VariableScope.STACK), v
+
+    def replace_values(self, replace_map: Dict[_AbstractValue, _AbstractValue]) -> None:
+        def make_replacement(values):
+            cls = values.__class__
+            assert cls in (list, tuple, collections.deque)
+            assert all(isinstance(i, _AbstractValue) for i in values)
+            return cls((replace_map.get(i, i) for i in values))
+
+        self.stacks = tuple(make_replacement(stack) for stack in self.stacks)
+        extra_branch, extra_outputs = self.stack_conditional
+        self.stack_conditional = (extra_branch, make_replacement(extra_outputs))
+        self.variables = {k: make_replacement(v) for k, v in self.variables.items()}
+        self.node_flow = [
+            (instruction, make_replacement(inputs), make_replacement(outputs))
+            for instruction, inputs, outputs in self.node_flow
+        ]
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class _AbstractRef(_AbstractValue):
+    """Placeholder value which will be resolved during parsing."""
+    _debug_info: str = "N/A"
+
+
+class ValueMissing(AbstractValue):
+    """Models `del` and similar operations. (But NOT `= None`)"""
+    pass
+
+
+class IntermediateValue(AbstractValue):
+    """A (potentially) new value produced by an instruction."""
+    pass
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class ExternalRef(AbstractValue):
+    """Reference values outside of the parsed code. (Arguments, constants, globals, etc.)"""
+    arg: int
+    scope: VariableScope
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class AbstractPhiValue(AbstractValue):
+    """A value which aliases one of several inputs."""
+    constituents: Tuple[AbstractValue]
+
+    def __post_init__(self) -> None:
+        assert all(isinstance(i, AbstractValue) for i in self.constituents), self.constituents
+
+
+def _add_transitive(protoblocks: Tuple[ProtoBlock, ...]) -> None:
+    """Extend abstract value flows to include those needed by downstream blocks.
+    
+    This pass effectively functionalizes the abstract value flow. Note that
+    we assume that variables are only modified by `STORE_...` and `DELETE_...`
+    instructions. This is not a sound assumption since opaque calls
+    (`CALL_FUNCTION`, `CALL_METHOD`, etc.) could mutate global and nonlocal
+    variables. This does not, however, pose a soundness problem because we
+    can check for state mutations during inlining and rerun flow analysis.
+
+    The process is more involved than simply checking for mismatches because
+    adding a transitive value to a block may necessitate adding a transitive
+    value to the prior block and so on.
+    """
+    _, parents = ProtoBlock.topology(protoblocks)
+    keys_used = {block: OrderedSet(block.uses) for block in protoblocks}
+    blocks_to_process = collections.deque(protoblocks)
+    while blocks_to_process:
+        block = blocks_to_process.popleft()
+        initial_state = dict(block.state(0))
+        num_used = len(keys_used[block])
+        for jump_target, is_jump in block.jump_targets:
+            produced = dict(block.state(-1, is_jump))
+
+            pop, push = block.stack_effect(is_jump)
+            keys_used[block].update(
+                # We need to correct the stack indices, because `produced` is
+                # indexed based on the output stack but `uses` is indexed using
+                # the input stack.
+                ArgScope(k.arg - ((pop - push) if k.scope == VariableScope.STACK else 0), k.scope)
+                for k in keys_used[jump_target]
+                if k not in produced
+            )
+
+            edge_values = {produced[k] for k in keys_used[jump_target] if k in produced}
+            keys_used[block].update(k for k, v in initial_state.items() if v in edge_values)
+
+        if len(keys_used[block]) > num_used:
+            blocks_to_process.extend(parent for parent, _ in parents[block])
+
+    for block in protoblocks:
+        block.uses.update(keys_used[block])
+        for key in sorted(keys_used[block], reverse=True):
+            if key.scope == VariableScope.STACK:
+                while -key.arg > len(block.stacks[0]):
+                    block.stacks[0].appendleft(ref := _AbstractRef(f"Transitive: {key}"))
+                    block.stacks[1].appendleft(ref)
+            else:
+                block.variables.setdefault(key, (_AbstractRef(f"Transitive: {key}"),))
+
+
+def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
+    """Bind references to more tangible values.
+
+    We make liberal use of `_AbstractRef`s when constructing value flow because
+    it allows us to process locally and defer global analysis. However we need
+    to resolve these references before we can bind our proto-Graph to a fully
+    fledged Graph.
+    """
+    # We only need the block connectivity to pair inputs and outputs. Once that
+    # is done we can operate entirely on the value graph. (And headaches like
+    # `is_jump` or variable scope simply disappear.)
+    G = nx.DiGraph()
+    for protoblock in protoblocks:
+        for child, is_jump in protoblock.jump_targets:
+            outputs = dict(protoblock.state(index=-1, is_jump=is_jump))
+            child_inputs = dict(child.state(index=0))
+            assert (
+                # `_add_transitive` should ensure the stacks match.
+                (s_out := ProtoBlock.stack_args(outputs)) == (s_in := ProtoBlock.stack_args(child_inputs)) or
+
+                # except for return blocks where we're going to discard the stack.
+                child.raw_instructions[-1].opcode in return_instructions
+            ), f"{s_out=} != {s_in=}, {child.raw_instructions[-1].opname}"
+            for key, child_input in child_inputs.items():
+                G.add_edge(outputs.get(key, ValueMissing()), child_input)
+
+    # Our goal is to remove `_AbstractValue`s and bind them to `AbstractValue`s.
+    # In most cases that means an earlier value in the graph; however for the
+    # root node those references are truly external. Fortunately it's simple to
+    # replace them: we can simply define an equality relation with a new
+    # `ExternalRef` which will automatically take precidence over the
+    # `_AbstractRef` during the chain folding pass.
+    root, _ = ProtoBlock.topology(protoblocks)
+    for (arg, scope), (initial_ref, *_) in root.variables.items():
+        assert isinstance(initial_ref, _AbstractRef) and scope not in (VariableScope.CONST, VariableScope.STACK)
+        G.add_edge(ExternalRef(arg, scope), initial_ref)
+
+    # While not strictly necessary, it's much easier to debug the intermediate
+    # graph logic if we first convert all values to indices.
+    values = tuple(G.nodes)
+    value_to_idx = {value: idx for idx, value in enumerate(values)}
+    G = nx.DiGraph((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges)
+    index_alias_map: Dict[int, Set[int]] = {}
+
+    # We can decompose the graph into disjoint use-def chains and analyze them independently.
+    for nodes in nx.connected_components(G.to_undirected()):
+        subgraph = G.subgraph(nodes)
+        equality_edges: Set[Tuple[int, int]] = {(node, node) for node in subgraph.nodes}
+        
+        while True:
+            # Condense pairs in `equality_edges`. For example, given the
+            # following graph and `equality_edges`:
+            #   0 → 1 → 2 → 3 → 4 → 5
+            #               ↑┄──┘
+            #
+            #   equality_edges = {(0, 1), (3, 4)}
+            #
+            # After grouping we're left with:
+            #   {0, 1} → 2 → {3, 4} → 5
+            clusters: Dict[int, int] = {}
+            for cluster in nx.connected_components(nx.Graph(equality_edges)):
+                # The choice of "canonical" index is arbitrary as long as it is consistent.
+                clusters.update({i: min(cluster) for i in cluster})
+            assert len(clusters) == len(subgraph)
+            reduced_subgraph = nx.DiGraph((clusters.get(i, i), clusters.get(j, j)) for i, j in subgraph.edges)
+            reduced_subgraph.remove_edges_from(nx.selfloop_edges(reduced_subgraph))
+            num_equality_edges = len(equality_edges)
+
+            # Condense chains.
+            equality_edges.update(
+                (source, sink)
+                for source, sink in reduced_subgraph.edges
+                if reduced_subgraph.in_degree(sink)
+            )
+
+            # Condense loops.
+            for cycle in nx.simple_cycles(reduced_subgraph):
+                equality_edges.update(zip(cycle, itertools.chain(cycle[1:], cycle[:1])))
+
+            if len(equality_edges) == num_equality_edges:
+                # No progress has been made, exit loop.
+                break
+    
+        # Once we isolate the irreducible values we can flood them through the
+        # graph to resolve the `_AbstractRef`s.
+        for cluster in nx.connected_components(nx.Graph(equality_edges)):
+            cluster_subgraph = subgraph.subgraph(cluster)
+            cluster_roots = {idx for idx in cluster if not isinstance(values[idx], _AbstractRef)}
+            assert cluster_roots, [values[idx] for idx in cluster]
+            for idx in cluster_roots:
+                for reachable in itertools.chain([idx], *nx.dfs_successors(cluster_subgraph, idx).values()):
+                    index_alias_map.setdefault(reachable, set()).add(idx)
+
+            # By definition anything that isn't an `_AbstractRef` should not alias another value
+            assert all(len(index_alias_map[idx]) == 1 for idx in cluster_roots), [[values[j] for j in index_alias_map[idx]] for idx in cluster_roots]
+
+    # And finally update the block value flows to reflect the changes.
+    replace_map: Dict[_AbstractValue, _AbstractValue] = {}
+    for idx, source_indices in index_alias_map.items():
+        if source_indices == {idx}:
+            assert not isinstance(v := values[idx], _AbstractRef), f"Unhandled reference: {idx} {v}"
+        else:
+            new_values = tuple(values[idy] for idy in sorted(source_indices))
+            constants: Tuple[ExternalRef] = tuple(v for v in new_values if isinstance(v, ExternalRef) and v.scope == VariableScope.CONST)
+            if len(constants) == len(new_values) and len({i.arg for i in constants}) == 1:
+                replace_map[values[idx]], *_ = constants
+
+            elif len(new_values) > 1:
+                replace_map[values[idx]] = AbstractPhiValue(new_values)
+
+            else:
+                replace_map[values[idx]], = new_values
+
+    for protoblock in protoblocks:
+        protoblock.replace_values(replace_map)
+
+
+def _bind_to_graph(
+    protoblocks: Tuple[ProtoBlock, ...],
+    func: Callable,
+    method_self: Optional[object] = None,
     mro_klass: Optional[type] = None,
 ) -> Graph:
-    if isinstance(method, torch.nn.Module):
-        method = method.forward
-    assert sys.version_info >= (3, 9) and sys.version_info < (3, 11)
-    sig = inspect.signature(method)
-    if module is None and hasattr(method, "__self__"):
-        module = method.__self__
-    if mro_klass is None and module is not None:
-        mro_klass = type(module)
-    local_variables: List[Optional[Value]] = []
-    if inspect.ismethod(method):
-        self_value = Value(value=module, name=method.__code__.co_varnames[0], is_function_arg=True)
-        local_variables.append(self_value)
-        self_offset = 1
-    else:
-        self_value = None
-        self_offset = 0
-    for vname in method.__code__.co_varnames[self_offset : len(sig.parameters.values()) + self_offset]:
-        p = sig.parameters[vname]
-        local_variables.append(Value(typ=p.annotation, name=p.name, is_function_arg=True))
-    # KWARGS?!
-    for _ in enumerate(method.__code__.co_varnames, start=len(local_variables)):
-        local_variables.append(None)
+    """Convert abstract value graph into a concrete Graph.
+
+    The key nuance of this conversion is that the mapping from `AbstractValue`
+    to `Value` is contextual. The first time we "see" an `AbstractValue` it
+    maps to a `Value`. If we encounter it in any other block it maps to a
+    PhiValue and we need to set the proper connectivity.
+
+    This is perhaps clearer with an example. Suppose you have an argument `x`
+    which is used by the root block and passed to the next block, and suppose
+    you have another value `y` which is created in the root block and passed to
+    the next block. In the abstract flow this is represented as:
+           ________        ___________
+    `x` -> | Root | -`x`-> | Block 1 | -> ...
+           |  `y` | -`y`-> |         |
+           --------        -----------
+
+    On the other hand, `Graph` represents the same connectivity as:
+                       ________                        ___________
+    `x` ←┈┈→ `𝜙x_0` -> | Root | -`𝜙x_0` ←┈┈→ `𝜙x_1` -> | Block 1 | -> ...
+                       |  `y` | -`y` ←┈┈┈┈┈→ `𝜙y_0` -> |         |
+                       --------                        -----------
+
+    (This diagram does not show the reason for PhiValues: to accept multiple inputs.)
+    """
+    # Peek at the signature and live objects to create Values. This is the
+    # *only* region where this is permitted.
+    # =========================================================================
+    # TODO(robieta): Lazily generate specializations during runtime.
+    signature = inspect.signature(func)
+    names = make_name_map(itertools.chain(*(i.raw_instructions for i in protoblocks)), func.__code__)
+    func_constants = func.__code__.co_consts
+    func_globals = dict_join(func.__builtins__, func.__globals__, {"super": Super()})
+
+    @functools.cache  # This is for correctness, not performance.
+    def get_initial_value(key: ArgScope) -> Value:
+        if key.scope == VariableScope.CONST:
+            return Value(value=func_constants[key.arg], is_const=True)
+
+        name = names[key]
+        if key.scope == VariableScope.LOCAL:
+            if key.arg == 0 and method_self is not None:
+                return Value(value=method_self, name=name, is_function_arg=True)
+            elif (p := signature.parameters.get(name)) is not None:
+                return Value(typ=p.annotation, name=name, is_function_arg=True)
+            return Value(value=NULL, name=name)
+
+        if key.scope == VariableScope.GLOBAL:
+            return Value(name=name, value=func_globals[name], is_global=True)
+
+        raise ValueError(f"Unhandled key: {key=}")
+
+    del func
+    # End live inspection region.
+    # =========================================================================
+
+    root, parents = ProtoBlock.topology(protoblocks)
+    blocks = {protoblock: Block() for protoblock in protoblocks}
+    blocks[root].jump_sources.append(None)
+    self_value = get_initial_value(ArgScope(0, VariableScope.LOCAL)) if method_self is not None else None
+
+    # Block inputs require special handling since we may need to create `PhiValue`s.
+    input_conversions = {}
+    for protoblock, block in blocks.items():
+        uses = OrderedSet(protoblock.uses)
+        for arg_scope, abstract_value in protoblock.state(index=0):
+            if protoblock is root:
+                value = get_initial_value(arg_scope)
+                is_arg = (arg_scope.scope == VariableScope.LOCAL and value.value is not NULL)
+                assert isinstance(abstract_value, ExternalRef) or not is_arg
+                input_conversions[(abstract_value, protoblock)] = PhiValue([value], [None], block) if is_arg else value
+
+            else:
+                value = PhiValue([], [], block) if arg_scope in uses else Value(value=NULL)
+                input_conversions[(abstract_value, protoblock)] = value
+
+    @functools.cache  # Again, for correctness
+    def convert(value: AbstractValue, protoblock: ProtoBlock) -> Value:
+        assert isinstance(value, AbstractValue), value
+        if (out := input_conversions.get((value, protoblock), missing := object())) is not missing:
+            return out
+
+        if isinstance(value, ValueMissing):
+            return Value(value=NULL)
+
+        elif isinstance(value, (IntermediateValue, AbstractPhiValue)):
+            # For now we discard any information and just treat them as opaque.
+            # TODO(robieta): refine
+            return Value()
+
+        elif isinstance(value, ExternalRef) and value.scope == VariableScope.CONST:
+            return get_initial_value(ArgScope(value.arg, value.scope))
+
+        raise ValueError(f"Cannot convert abstract value: {value}, {protoblock} {protoblock is root=}")
+
+    def make_nodes(node_flow: Iterable[NodeFlow]) -> Iterable[Node]:
+        for instruction, inputs, outputs in node_flow:
+            node = Node(
+                i=instruction,
+                inputs=[convert(v, protoblock) for v in inputs],
+                outputs=[convert(v, protoblock) for v in outputs],
+                line_no=instruction.line_no
+            )
+
+            if node.i.opname in ("LOAD_ATTR", "LOAD_METHOD"):
+                # Once we set `parent` (so PhiValue can traverse through it)
+                # we can prune these just like all other load instructions.
+                node.outputs[0].parent = node.inputs[0]
+                node.outputs[0].name = node.i.argrepr
+                continue
+
+            elif node.i.opname == "CALL_FUNCTION":
+                # Note: `super` handling is not currently generic. Corner cases
+                #       such as `super(**{})` or `super_alias = super; super_alias()`
+                #       will not be correctly handled.
+                # TODO(robieta): handle `super` without load bearing names.
+                if instruction.arg == 0 and isinstance(node.inputs[0].value, Super):
+                    assert self_value is not None, "super() called in free context"
+                    node.outputs[0].value = MROAwareObjectRef(self_value, start_klass=mro_klass)
+
+            elif node.i.opname == "FOR_ITER":
+                node.outputs[1].node = node
+                node.outputs[1].name = ".for_item_iter"
+
+            yield node
+
+    # First pass: populate nodes and jump targets.
+    for protoblock, block in blocks.items():
+        block.nodes = list(make_nodes(protoblock.node_flow))
+
+        for target, is_jump in protoblock.jump_targets:
+            (jump_target := blocks[target]).jump_sources.append(last_node := block.nodes[-1])
+            last_node.jump_targets.append((protoblock.stack_effect(is_jump), jump_target))
+
+    # Second pass: link blocks.
+    for protoblock, block in blocks.items():
+        block_values = {
+            k: v for k, abstract_v in protoblock.state(index=0)
+            if isinstance(v := convert(abstract_v, protoblock), PhiValue)
+        }
+        block.block_inputs = list(OrderedSet(block_values.values()))
+
+        for parent, is_jump in parents[protoblock]:
+            parent_state = dict(parent.state(index=-1, is_jump=is_jump))
+            for arg_scope, sink in block_values.items():
+                source = convert(parent_state.get(arg_scope, ValueMissing()), parent)
+                if source.value is not NULL and source not in sink.values:
+                    sink.add_missing_value(v=source, jump_source=blocks[parent].nodes[-1])
+
+    # Third pass: specify block outputs.
+    for protoblock, block in blocks.items():
+        block.block_outputs = OrderedSet(
+            v for _, abstract_v in protoblock.state(index=-1, is_jump=None)
+            if (v := convert(abstract_v, protoblock)).phi_values
+        )
+
+    gr = Graph(list(blocks.values()))
+    gr.local_variables_at_start = [
+        v for k in sorted(root.uses)
+        if k.scope == VariableScope.LOCAL and (v := get_initial_value(k)).value is not NULL
+    ]
 
     # bound_args = [module.forward.__self__]
-    gr = parse_bytecode(method=method)
-    gr.all_local_variables_at_start = local_variables[:]
-    gr.local_variables_at_start = [lv for lv in local_variables if lv is not None]
-    gr.ismethod = inspect.ismethod(method)
-    gr.co_argcount = 0 if not gr.ismethod else 1
+    gr.self_value = self_value
+    gr.ismethod = (self_value is not None)
     # deal with other flags?
     # NESTED, GENERATOR, NOFREE, COROUTINE, ITERABLE_COROUTINE, ASYNC_GENERATOR
     gr.co_flags = inspect.CO_OPTIMIZED | inspect.CO_NEWLOCALS
+    gr.co_argcount = 0
     gr.co_posonlyargcount = 0
     gr.co_kwonlyargcount = 0
     gr.func_defaults = []
     gr.func_kwdefaults = {}
-    for p in sig.parameters.values():
+    for p in signature.parameters.values():
         if p.kind == inspect.Parameter.POSITIONAL_ONLY:
             gr.co_argcount += 1
             gr.co_posonlyargcount += 1
@@ -161,198 +701,41 @@ def acquire_method(
                 gr.func_kwdefaults[p.name] = p.default
             else:
                 gr.func_defaults.append(p.default)
+    return gr
+
+def acquire_method(
+    method: Callable,
+    module: Optional[object] = None,
+    mro_klass: Optional[type] = None,
+) -> Graph:
+    assert SUPPORTS_PREPROCESSING, sys.version_info
+    if callable(method) and not inspect.ismethod(method) and not inspect.isfunction(method):
+        method = method.__call__
+
+    method_self, func = (method.__self__, method.__func__) if inspect.ismethod(method) else (None, method)
+    assert not inspect.ismethod(func)
+
+    module = module or method_self
+    if mro_klass is None and module is not None:
+        mro_klass = type(module)
+
+    protoblocks = parse_bytecode(func)
+    _add_transitive(protoblocks)
+    _condense_values(protoblocks)
+    gr = _bind_to_graph(protoblocks, func, method_self, mro_klass)
+
+    gr.source_start_line = 1
+    try:
+        gr.source_lines, _ = inspect.getsourcelines(method)
+    except OSError:
+        gr.source_lines = ["# Failed to extract source."]
+
     gr.method = method
     gr.module = module
     gr.mro_klass = mro_klass
-    gr.self_value = self_value
+    if DEBUG_ASSERTS:
+        check_graph(gr)
     return gr
-
-
-def make_ssa(gr: "Graph") -> None:
-    for bl in gr.blocks:
-        for n in bl.nodes:
-            n.block = bl
-        bl.all_stacks_at_start = [None if js is not None else [] for js in bl.jump_sources]
-        bl.all_local_variables_at_start = [
-            None if js is not None else gr.all_local_variables_at_start[:] for js in bl.jump_sources
-        ]
-
-    blocks_to_do = set(gr.blocks)
-    while blocks_to_do:
-        next_block = None
-        for bl in blocks_to_do:
-            all_deps_done = not any(js.block in blocks_to_do for js in bl.jump_sources if js is not None)
-            if all_deps_done:
-                next_block = bl
-                break
-        if next_block is None:
-            # we need to break a cycle, so we choose one where we have variables for one branch
-            for bl in blocks_to_do:
-                any_deps_done = any(assert_block(assert_node(js).block) not in blocks_to_do for js in bl.jump_sources)
-                if any_deps_done:
-                    next_block = bl
-                    break
-
-        assert next_block is not None
-        bl = next_block
-        blocks_to_do.remove(bl)
-        assert not bl.is_ssa
-        bl.is_ssa = True
-
-        jump_sources = bl.jump_sources
-        all_stacks_at_start = bl.all_stacks_at_start
-        all_local_variables_at_start = bl.all_local_variables_at_start
-        bl.jump_source_idxes_to_postprocess = [i for i, s in enumerate(all_stacks_at_start) if s is None]
-        if bl.jump_source_idxes_to_postprocess:
-            # TODO: Check what is going on with loops w.r.t. types
-            all_complete_stacks_at_start = [s for s in bl.all_stacks_at_start if s is not None]
-            all_complete_local_variables_at_start = [lv for lv in bl.all_local_variables_at_start if lv is not None]
-
-            stack_depth_at_start = len(all_complete_stacks_at_start[0])
-            num_lv_at_start = len(all_complete_local_variables_at_start[0])
-
-            all_stacks_at_start = [
-                (s if s is not None else [None for _ in range(stack_depth_at_start)]) for s in bl.all_stacks_at_start
-            ]
-            all_local_variables_at_start = [
-                (lv if lv is not None else [None for _ in range(num_lv_at_start)])
-                for lv in bl.all_local_variables_at_start
-            ]
-
-        stack: List[Value] = [PhiValue(v, jump_sources, bl) for v in zip(*all_stacks_at_start)]
-        local_variables: List[Optional[Value]] = [
-            PhiValue(v, jump_sources, bl) for v in zip(*all_local_variables_at_start)
-        ]
-
-        bl.block_inputs = stack + [assert_value(v) for v in local_variables]
-        bl.stack_depth_at_start = len(stack)
-
-        new_nodes = []
-        for n_idx, n in enumerate(bl.nodes):
-            cur_ins = n.i
-            pop, push = stack_effect_detail(cur_ins.opname, cur_ins.arg)  # jump?
-            inputs = stack[-pop:] if pop > 0 else []
-            n.inputs = inputs[:]
-            assert len(inputs) == pop, f"stack to shallow {len(inputs)=} {pop=} {cur_ins=}"
-            if cur_ins.opname == "LOAD_FAST":
-                assert cur_ins.arg is not None
-                outputs: List[Value] = [assert_value(local_variables[cur_ins.arg])]
-            elif cur_ins.opname == "STORE_FAST":
-                outputs = []
-                assert cur_ins.arg is not None
-                if len(local_variables) <= cur_ins.arg:
-                    local_variables.extend(None for _ in range(len(local_variables), cur_ins.arg + 1))
-                (local_variables[cur_ins.arg],) = inputs  # set name?
-            elif cur_ins.opname == "DELETE_FAST":
-                outputs = []
-                assert isinstance(cur_ins.arg, int)
-                local_variables[cur_ins.arg] = None
-            elif cur_ins.opname == "LOAD_GLOBAL":
-                if gr.method.__code__.co_names[cur_ins.arg] != "super":
-                    if inspect.ismethod(gr.method):
-                        func = gr.method.__func__
-                    else:
-                        func = gr.method
-                    gn = gr.method.__code__.co_names[cur_ins.arg]
-                    NOT = object()
-                    gv = func.__globals__.get(gn, NOT)
-                    if gv is NOT:
-                        gv = func.__builtins__[gn]
-                    outputs = [Value(name=gn, value=gv, is_global=True)]
-                else:
-                    outputs = [Value(name="super", value=Super())]
-            elif cur_ins.opname == "LOAD_ATTR":
-                an = gr.method.__code__.co_names[cur_ins.arg]
-                ap = inputs[0]
-                outputs = [Value(name=an, parent=ap)]
-            elif cur_ins.opname == "CALL_FUNCTION" and cur_ins.arg == 0 and isinstance(inputs[0].value, Super):
-                # TODO(t-vi): this needs testing (e.g. whisper Conv1d)
-                outputs = [Value(value=MROAwareObjectRef(gr.self_value, start_klass=gr.mro_klass))]
-            elif cur_ins.opname == "LOAD_METHOD":  # also used for modules (callables)
-                (obj,) = inputs
-                mn = gr.method.__code__.co_names[cur_ins.arg]
-                m = Value(parent=obj, name=mn)
-                if obj.value is not None:
-                    m.value = getattr(obj.value, mn)
-                    m.typ = type(m.value)
-                # TODO(t-vi): handle if isinstance(obj.value, MROAwareObjectRef):
-                outputs = [m, obj]
-            elif cur_ins.opname == "LOAD_CONST":
-                outputs = [Value(value=gr.method.__code__.co_consts[cur_ins.arg], is_const=True)]
-            elif cur_ins.opname == "CALL_METHOD":
-                outputs = [Value(node=n, nr=k) for k in range(push)]
-                new_nodes.append(n)
-            elif cur_ins.opname == "FOR_ITER":
-                # JUMP TARGETS
-                outputs = [inputs[0], Value(node=n, name=".for_iter_item")]
-                new_nodes.append(n)
-            elif cur_ins.opname in {
-                "POP_JUMP_IF_FALSE",
-                "POP_JUMP_IF_TRUE",
-                "JUMP_FORWARD",
-                "JUMP_ABSOLUTE",
-            }:
-                new_nodes.append(n)
-                outputs = []
-            # elif cur_ins.opname == "JUMP_FORWARD":
-            # elif cur_ins.opname == "JUMP_ABSOLUTE":
-            elif cur_ins.opname == "RETURN_VALUE":
-                assert len(stack) == 1
-                new_nodes.append(n)
-                outputs = []
-            else:
-                outputs = [Value(node=n, nr=k) for k in range(push)]
-                new_nodes.append(n)
-            if n.jump_targets is not None:
-                all_block_outputs = OrderedSet(local_variables)
-                for (j_pop, j_push), jt in n.jump_targets:
-                    idx_jt = jt.jump_sources.index(n)
-                    j_stack = stack[:]
-                    if j_pop > 0:
-                        j_stack = j_stack[:-j_pop]
-                    if j_push > 0:
-                        # TODO: change to use output_jump / output_nojump or somesuch
-                        if len(outputs) < j_push:
-                            j_stack.extend([Value(node=n, nr=k) for k in range(j_push)])
-                        else:
-                            j_stack.extend(outputs[:j_push])
-                    assert len(j_stack) == len(stack) + j_push - j_pop
-                    jt.all_stacks_at_start[idx_jt] = j_stack
-                    jt.all_local_variables_at_start[idx_jt] = local_variables[:]
-                    all_block_outputs.update(j_stack)
-                bl.block_outputs = all_block_outputs
-            n.outputs = outputs
-            ol = len(stack)
-            if pop > 0:
-                stack = stack[:-pop]
-            stack.extend(outputs)
-            assert (cur_ins.opname == "JUMP_ABSOLUTE" and cur_ins.arg is None and len(stack) == ol) or (
-                len(stack) - ol == opcode.stack_effect(cur_ins.opcode, cur_ins.arg, jump=False)
-            ), f"stack effect funnyness at {cur_ins}: {len(stack)} {ol} {opcode.stack_effect(cur_ins.opcode, cur_ins.arg, jump=False)}"
-        bl.nodes = new_nodes
-
-    for bl in gr.blocks:
-        for idx_js in bl.jump_source_idxes_to_postprocess:
-            assert len(bl.all_stacks_at_start[idx_js]) == bl.stack_depth_at_start
-            assert len(bl.block_inputs) == bl.stack_depth_at_start + len(bl.all_local_variables_at_start[idx_js])
-
-            for idx_i, i in enumerate(bl.block_inputs):
-                assert len(bl.jump_sources) == len(i.values)
-                if idx_i < bl.stack_depth_at_start:
-                    v = bl.all_stacks_at_start[idx_js][idx_i]
-                else:
-                    v = bl.all_local_variables_at_start[idx_js][idx_i - bl.stack_depth_at_start]
-                i.add_missing_value(v, idx_js)
-
-    del gr.all_local_variables_at_start
-    for bl in gr.blocks:
-        del bl.all_local_variables_at_start
-        del bl.all_stacks_at_start
-        del bl.stack_depth_at_start
-        del bl.jump_source_idxes_to_postprocess
-
-    remove_unused_values(gr)
-
 
 def remove_unused_values(gr: Graph) -> None:
     gr.ensure_links()
@@ -427,51 +810,5 @@ def remove_unused_values(gr: Graph) -> None:
     for bl in gr.blocks:
         bl.block_outputs = OrderedSet(o for o in bl.block_outputs if o in outputs_used)
 
-
-def make_single_return(gr: Graph) -> None:
-    bls = [b for b in gr.blocks if b.nodes[-1].i.opname == "RETURN_VALUE"]
-    if len(bls) > 1:
-        ret_bl = Block(is_ssa=True)
-        ret_ins = dis.Instruction(
-            opname="RETURN_VALUE",
-            opcode=opcode.opmap["RETURN_VALUE"],
-            arg=None,
-            argval=None,
-            argrepr="None",
-            offset=-999,
-            starts_line=None,
-            is_jump_target=False,
-        )
-        ret_input = PhiValue([], [], ret_bl)
-        ret_node = Node(i=ret_ins, inputs=[ret_input], outputs=[], line_no=bls[-1].nodes[-1].line_no)
-        ret_bl.nodes = [ret_node]
-        ret_bl.jump_sources = []
-        ret_node.inputs = [ret_input]
-        gr.blocks.append(ret_bl)
-        ret_bl.block_outputs = OrderedSet([])
-        ret_bl.block_inputs = [ret_input]
-
-        for b in bls:
-            # jump sources + unify!!!
-            last_node_i = b.nodes[-1].i
-            assert last_node_i.opname == "RETURN_VALUE"
-            jump_ins = dis.Instruction(
-                opname="JUMP_ABSOLUTE",
-                opcode=opcode.opmap["JUMP_ABSOLUTE"],
-                arg=None,
-                argval=None,
-                argrepr="None",
-                offset=last_node_i.offset,
-                starts_line=None,
-                is_jump_target=last_node_i.is_jump_target,
-            )
-            jump_node = Node(i=jump_ins, inputs=[], outputs=[], line_no=b.nodes[-1].line_no)
-            jump_node.jump_targets = [((0, 0), ret_bl)]
-            ret_bl.jump_sources.append(jump_node)
-            # TODO: this should really be a method of PhiValue!
-            ret_input.add_missing_value(b.nodes[-1].inputs[0], jump_source=jump_node)
-            assert len(b.nodes[-1].inputs) == 1
-            assert len(b.block_outputs) == 0
-            b.block_outputs = OrderedSet([b.nodes[-1].inputs[0]])
-            del b.nodes[-1]
-            b.nodes.append(jump_node)
+    if DEBUG_ASSERTS:
+        check_graph(gr)

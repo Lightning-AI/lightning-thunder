@@ -1,6 +1,7 @@
 # This is a "TorchScript-like" graph representation of Python IR.
 # The idea is that blocks are "simple blocks" in terms of the code flow graph,
 # i.e. without branches
+import collections
 import copy
 import inspect
 from typing import Any, Dict, List, Optional, Iterable, Iterator, Tuple, Type, TYPE_CHECKING, Sequence, Set, Union
@@ -89,7 +90,7 @@ class Value:
     ):
         self.node = node
         self.nr = nr
-        self.typ = typ if typ is not None or value is None else type(value)
+        self.typ = typ if typ is not None or value in (None, NULL) else type(value)
         self.value = value
         self.name = name
         self.parent = parent
@@ -145,7 +146,7 @@ class Value:
             parts.append("global")
         if self.parent is not None:
             parts.append(f"parent={self.parent}")
-        return f"""{type(self).__name__}({' '.join(parts)})"""
+        return f"""{type(self).__name__} {hex(id(self))} ({' '.join(parts)})"""
 
     def __repr__(self) -> str:
         return f"{super().__repr__()[:-1]} {self}>"
@@ -261,7 +262,7 @@ class Node:
         # is_jump = (self.i.opname not in unconditional_jump_names) or (idx == 1) or (idx is None and self.jump_targets)
         # assert is_jump
 
-        jt_plus = (stack_effect_detail(self.i.opname, self.i.arg, jump=False), jt)
+        jt_plus = (stack_effect_detail(self.i, jump=False), jt)
         if idx is None:
             assert len(self.jump_targets) <= 1
             self.jump_targets.append(jt_plus)
@@ -288,8 +289,7 @@ class Node:
 # target first and then the jumping target.
 # The jump targets are other blocks and are atributes of the jump instruction.
 class Block:
-    def __init__(self, is_ssa: bool = True):
-        self.is_ssa = is_ssa
+    def __init__(self):
         self.jump_sources: List[Optional[Node]] = []
         self.nodes: List[Node] = []
         self.block_inputs: List[Value] = []
@@ -303,20 +303,7 @@ class Block:
 
     def insert_node(self, n: Node, insert_after: Optional[Node] = None, insert_before: Optional[Node] = None) -> None:
         assert n.block is None
-        if insert_after is None and insert_before is None:
-            if self.is_ssa:
-                raise ValueError("need to supply insert_after or insert_before")
-            else:
-                self.nodes.append(n)
-                # validity checks? (also below)
-                n.block = self
-                return
-        elif insert_after is not None and insert_before is not None:
-            raise ValueError("only one of insert_after or insert_before can be supplied")
-            # this is the usual case.
-            # in the pre-ssa graph, both None mean to insert at the end.
-            assert insert_after is not None or insert_before is not None
-
+        assert (insert_after is None) != (insert_before is None), f"{insert_after=} {insert_before=}"
         to_find = insert_after or insert_before
         for idx, n2 in enumerate(self.nodes):
             if n2 is to_find:
@@ -387,7 +374,7 @@ class Graph:
         value_counter = 1
         print(self.local_variables_at_start)
         for bl in self.blocks:
-            for n in bl.i:
+            for n in bl.nodes:
                 for o in n.outputs:
                     o.print_name = f"{o.name}:{value_counter}" if o.name is not None else f":{value_counter}"
                     value_counter += 1
@@ -403,6 +390,46 @@ class Graph:
                     f"{av}(",
                     ", ".join([i.print_name for i in n.inputs]) + ")",
                 )
+
+    def summary(self, print_lines: bool = False) -> None:
+        type_count = collections.Counter()
+        results = {}
+
+        def get_name(v):
+            if v not in results:
+                idx = type_count[type(v)]
+                type_count[type(v)] += 1
+                prefix = {PhiValue: "𝜙", Value: "V"}.get(type(v), type(v).__name__)
+                results[v] = (prefix, idx)
+
+                # Populate cache
+                if isinstance(v, PhiValue):
+                    _ = [get_name(vi) for vi in v.values]
+
+            return "{}_{}".format(*results[v])
+
+        graph_lines = []
+        legend_lines = []
+
+        for block in self.blocks:
+            graph_lines.extend((
+                f"Block inputs: {[get_name(i) for i in block.block_inputs]}",
+                f"Block outputs: {[get_name(i) for i in block.block_outputs]}",
+            ))
+            graph_lines.extend((
+                f"  {node.i.opname:<20} {[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}"
+                for node in block.nodes
+            ))
+            graph_lines.append("")
+
+        for v, (prefix, idx) in sorted(results.items(), key=lambda x: x[1]):
+            values = f"[{', '.join(get_name(vi) for vi in v.values)}]" if isinstance(v, PhiValue) else ""
+            legend_lines.append(f"{prefix}_{idx}  {str(v):<16} {values}")
+
+        if print_lines:
+            print("\n".join(graph_lines) + "\n" + "\n".join(legend_lines))
+
+        return tuple(graph_lines), tuple(legend_lines)
 
 
 def unify_values(values: List[Value], jump_sources: List[Node], bl: Block, all_predecessors_done: bool = True) -> Value:
@@ -555,7 +582,6 @@ def make_dot(gr: Graph, format: str = "png", add_names: bool = False) -> "graphv
 def clone_blocks(
     blocks_to_clone: List[Block], translation_dict: Optional[Dict[GraphObject, GraphObject]] = None
 ) -> Tuple[List[Block], Dict[GraphObject, GraphObject]]:
-    assert all(bl.is_ssa for bl in blocks_to_clone)
     if translation_dict is None:
         translation_dict = {}
 
@@ -579,7 +605,7 @@ def clone_blocks(
     return [assert_block(translation_dict[bl]) for bl in blocks_to_clone], translation_dict
 
 
-def check_graph(gr: Graph) -> None:
+def _check_graph(gr: Graph) -> None:
     # some sanity checks for the values
     import collections
 
@@ -606,8 +632,8 @@ def check_graph(gr: Graph) -> None:
                 if o not in n.inputs:
                     for v in o.phi_values:
                         phi_value_refs[v].append((o, n))
-                else:
-                    print("inplace")
+                # else:
+                #     print("inplace")
         for o in bl.block_outputs:
             is_attr = False
             o_or_parent = o
@@ -657,3 +683,12 @@ def check_graph(gr: Graph) -> None:
             js_jt.remove(bl)
 
     assert not any(jump_targets.values())
+
+
+def check_graph(gr: Graph) -> None:
+    try:
+        _check_graph(gr)
+    except BaseException:
+        print()
+        gr.summary(print_lines=True)
+        raise

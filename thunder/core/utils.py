@@ -1,9 +1,9 @@
 import sys
 from enum import Enum
 from functools import reduce, wraps
-from itertools import zip_longest
+import itertools
 from numbers import Number
-from typing import Callable, Sequence, Type
+from typing import Callable, Dict, Generic, Iterable, List, Optional, Sequence, Type, TypeVar
 
 import thunder.core.dtypes as dtypes
 import thunder.core.trace as trace
@@ -63,6 +63,9 @@ __all__ = [
     # Context-related functions and decorators
     "langctx",
 ]
+
+T = TypeVar("T")
+T1 = TypeVar("T1")
 
 #
 # Error checking helpers
@@ -637,20 +640,22 @@ def check_same_device(*args):
 # ordered
 # NOTE: dicts in Python are ordered since Python 3.7
 # TODO: implement additional methods as needed
-class OrderedSet:
+class OrderedSet(Generic[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
-    def __init__(self, args=None):
-        if args is None:
-            args = []
-        self.d = {k: None for k in args}
+    def __init__(self, args: Optional[Iterable[T]]=None):
+        self.d = {k: None for k in args or ()}
 
-    def __contains__(self, x):
+    def __repr__(self) -> str:
+        contents = ", ".join(repr(i) for i in self)
+        return f"OrderedSet{{ {contents} }}"
+
+    def __contains__(self, x: T) -> bool:
         return x in self.d
 
-    def __iter__(self):
+    def __iter__(self) -> Iterable[T]:
         return iter(self.d.keys())
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.d)
 
     # -
@@ -750,7 +755,7 @@ def safe_map_flat(f, *args):
 def _safe_zip_gen(*args):
     # It has to be a separate function because it's a generator.
     null = object()
-    for zipped in zip_longest(*args, fillvalue=null):
+    for zipped in itertools.zip_longest(*args, fillvalue=null):
         if null in zipped:
             raise ValueError("length mismatch: {}".format(list(map(len, args))))
         yield zipped
@@ -787,6 +792,19 @@ def unzip2(pairs):
         lst1.append(x1)
         lst2.append(x2)
     return lst1, lst2
+
+
+def dict_join(*args: List[Dict[T, T1]]) -> Dict[T, T1]:
+    """Combine multiple dictionaries.
+
+    Args:
+        args: Dictionaries to concatenate. If there are collisions then *later*
+              arguments take precidence.
+
+    Returns:
+        A single dictionary with all of the keys and values in args.
+    """
+    return dict(itertools.chain(*(i.items() for i in args)))
 
 
 def get_symbols_to_last_used_variables(symbols, ignore):

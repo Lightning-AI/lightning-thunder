@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 import torch  # # aehem.
 
 import thunder
-from thunder.core.script.frontend import acquire_method, make_single_return, make_ssa, remove_unused_values
+from thunder.core.script.frontend import acquire_method, remove_unused_values
 from thunder.core.script.graph import (
     assert_block,
     assert_node,
@@ -47,7 +47,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     while j < len(bl.nodes) and bl.nodes[j] is not n:
         j += 1
     assert j < len(bl.nodes), "node not found"
-    nbl = Block(is_ssa=True)
+    nbl = Block()
     nbl.nodes = bl.nodes[j:]
     del bl.nodes[j:]
     nbl.block_outputs = bl.block_outputs
@@ -207,8 +207,6 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     nbl = split_block(gr, bl, bl.nodes[i_n + 1])
 
     gr1 = acquire_method(fn_value, module=mod1, mro_klass=gr.mro_klass if mod1 == gr.module else None)
-    make_ssa(gr1)
-    make_single_return(gr1)
     for gr1_n in gr1.nodes():
         assert isinstance(gr1_n.line_no, int)
         gr1_n.line_no = gr1_n.line_no + len(gr.source_lines) + 1
@@ -342,11 +340,15 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
     """replaces calls to torch.foo functions with calls into thunder's torch language."""
 
     def fill_in_value(v: Value) -> None:
-        # PhiValues ?
-        if v.value is None and v.parent is not None:
-            fill_in_value(v.parent)
-        if v.value is None and v.parent is not None and v.parent.value is not None and v.name is not None:
-            v.value = getattr(v.parent.value, v.name)
+        parent = v.parent
+        if parent is None and isinstance(v, PhiValue) and len(v.values) == 1:
+            parent = v.values[0]
+        if v.value is None and parent is not None:
+            fill_in_value(parent)
+        if v.name is None and isinstance(v, PhiValue) and parent is not None and parent.name is not None:
+            v.name = parent.name
+        if v.value is None and parent is not None and parent.value is not None and v.name is not None:
+            v.value = getattr(parent.value, v.name, None)
 
     for bl in gr.blocks:
         for n in bl.nodes:
@@ -399,7 +401,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
 
     replacements: Dict[Value, Value] = {}
     for i in bl2.block_inputs:
-        assert isinstance(i, PhiValue) and len(i.values) == 1
+        assert isinstance(i, PhiValue) and len(i.values) == 1, (i, getattr(i, "values", None))
         (iv,) = i.values
         if iv in bl1.block_outputs:
             replacements[i] = iv
