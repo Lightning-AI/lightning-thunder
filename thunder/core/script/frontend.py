@@ -48,6 +48,7 @@ NodeFlow = Tuple[dis.Instruction, _AbstractValues, _AbstractValues]
 
 DEBUG_ASSERTS = False
 
+
 def enable_debug_asserts():
     global DEBUG_ASSERTS
     DEBUG_ASSERTS = True
@@ -73,7 +74,9 @@ def parse_bytecode(method: Callable) -> Tuple["ProtoBlock", ...]:
     # Drop the group index, copy from the groupby iter, and unzip `enumerate`.
     groups = (zip(*tuple(i)) for _, i in groups)
 
-    blocks: Dict[int, Tuple[int, List[dis.Instruction]]] = {start: (len(block), list(block)) for (start, *_), block in groups}
+    blocks: Dict[int, Tuple[int, List[dis.Instruction]]] = {
+        start: (len(block), list(block)) for (start, *_), block in groups
+    }
 
     # If the last instruction is not a jump or return (which means we split
     # because the next instruction was a jump target) then we need to tell
@@ -127,12 +130,14 @@ def parse_bytecode(method: Callable) -> Tuple["ProtoBlock", ...]:
 
 class _AbstractValue:
     """Represents a value during instruction parsing. (Prior to type binding.)"""
+
     def __hash__(self) -> int:
         return hash(id(self))
 
 
 class AbstractValue(_AbstractValue):
     """Abstract value which is suitable for wider use. (Namely Value/PhiValue conversion.)"""
+
     pass
 
 
@@ -180,7 +185,9 @@ class ProtoBlock:
             assert arg is not None
             if scope == VariableScope.CONST:
                 return [ExternalRef(arg, scope)]
-            return variables.setdefault(ArgScope(arg, scope), [_AbstractRef(f"Variable initial value: ({arg} {scope})")])
+            return variables.setdefault(
+                ArgScope(arg, scope), [_AbstractRef(f"Variable initial value: ({arg} {scope})")]
+            )
 
         assert self.raw_instructions
         for idx, instruction in enumerate(self.raw_instructions):
@@ -191,7 +198,9 @@ class ProtoBlock:
             assert (idx + 1) == len(self.raw_instructions) or not extra, "Branch instruction mid-block"
 
             def assert_expected_stack_effects(*expected) -> None:
-                assert (pop, push, (extra_branch, extra)) == tuple(expected), f"{instruction=} {pop=} {push=} {(extra_branch, extra)=}"
+                assert (pop, push, (extra_branch, extra)) == tuple(
+                    expected
+                ), f"{instruction=} {pop=} {push=} {(extra_branch, extra)=}"
 
             # Peek at the stack to track variable mutations.
             if (store_scope := store_opcodes.get(instruction.opname)) is not None:
@@ -211,10 +220,10 @@ class ProtoBlock:
                 if index < 0:
                     # Negative values index into the popped values.
                     return inputs[-1 - index]
-                
+
                 if index == len(new_intermediates):
                     new_intermediates.append(IntermediateValue())
-                
+
                 return new_intermediates[index]
 
             # Handle outputs.
@@ -256,10 +265,10 @@ class ProtoBlock:
             parents.setdefault(block, [])
             for child, is_jump in block.jump_targets:
                 parents[child].append((block, is_jump))
-        root, = [block for block, block_parents in parents.items() if not block_parents]
+        (root,) = [block for block, block_parents in parents.items() if not block_parents]
         assert not root.stacks[0], "Root block should not have stack inputs"
         return root, {block: tuple(block_parents) for block, block_parents in parents.items()}
-    
+
     @staticmethod
     def stack_args(args: Iterable[ArgScope]) -> Tuple[int, ...]:
         stack_args = tuple(sorted([i.arg for i in args if i.scope == VariableScope.STACK]))
@@ -275,7 +284,7 @@ class ProtoBlock:
         if index == -1 and is_jump in (extra_branch, None):
             yield from extra_outputs
 
-    def state(self, index: EdgeIndex, is_jump: Optional[bool]=None) -> Iterator[Tuple[ArgScope, _AbstractValue]]:
+    def state(self, index: EdgeIndex, is_jump: Optional[bool] = None) -> Iterator[Tuple[ArgScope, _AbstractValue]]:
         for k, values in sorted(self.variables.items(), key=lambda x: x[0]):
             v = values[index]
             assert k.scope not in (VariableScope.CONST, VariableScope.STACK) and isinstance(v, _AbstractValue), (k, v)
@@ -306,22 +315,26 @@ class ProtoBlock:
 @dataclasses.dataclass(frozen=True, eq=False)
 class _AbstractRef(_AbstractValue):
     """Placeholder value which will be resolved during parsing."""
+
     _debug_info: str = "N/A"
 
 
 class ValueMissing(AbstractValue):
     """Models `del` and similar operations. (But NOT `= None`)"""
+
     pass
 
 
 class IntermediateValue(AbstractValue):
     """A (potentially) new value produced by an instruction."""
+
     pass
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class ExternalRef(AbstractValue):
     """Reference values outside of the parsed code. (Arguments, constants, globals, etc.)"""
+
     arg: int
     scope: VariableScope
 
@@ -329,6 +342,7 @@ class ExternalRef(AbstractValue):
 @dataclasses.dataclass(frozen=True, eq=False)
 class AbstractPhiValue(AbstractValue):
     """A value which aliases one of several inputs."""
+
     constituents: Tuple[AbstractValue]
 
     def __post_init__(self) -> None:
@@ -337,7 +351,7 @@ class AbstractPhiValue(AbstractValue):
 
 def _add_transitive(protoblocks: Tuple[ProtoBlock, ...]) -> None:
     """Extend abstract value flows to include those needed by downstream blocks.
-    
+
     This pass effectively functionalizes the abstract value flow. Note that
     we assume that variables are only modified by `STORE_...` and `DELETE_...`
     instructions. This is not a sound assumption since opaque calls
@@ -404,8 +418,8 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
             child_inputs = dict(child.state(index=0))
             assert (
                 # `_add_transitive` should ensure the stacks match.
-                (s_out := ProtoBlock.stack_args(outputs)) == (s_in := ProtoBlock.stack_args(child_inputs)) or
-
+                (s_out := ProtoBlock.stack_args(outputs)) == (s_in := ProtoBlock.stack_args(child_inputs))
+                or
                 # except for return blocks where we're going to discard the stack.
                 child.raw_instructions[-1].opcode in return_instructions
             ), f"{s_out=} != {s_in=}, {child.raw_instructions[-1].opname}"
@@ -434,7 +448,7 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
     for nodes in nx.connected_components(G.to_undirected()):
         subgraph = G.subgraph(nodes)
         equality_edges: Set[Tuple[int, int]] = {(node, node) for node in subgraph.nodes}
-        
+
         while True:
             # Condense pairs in `equality_edges`. For example, given the
             # following graph and `equality_edges`:
@@ -456,9 +470,7 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
 
             # Condense chains.
             equality_edges.update(
-                (source, sink)
-                for source, sink in reduced_subgraph.edges
-                if reduced_subgraph.in_degree(sink)
+                (source, sink) for source, sink in reduced_subgraph.edges if reduced_subgraph.in_degree(sink)
             )
 
             # Condense loops.
@@ -468,7 +480,7 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
             if len(equality_edges) == num_equality_edges:
                 # No progress has been made, exit loop.
                 break
-    
+
         # Once we isolate the irreducible values we can flood them through the
         # graph to resolve the `_AbstractRef`s.
         for cluster in nx.connected_components(nx.Graph(equality_edges)):
@@ -480,7 +492,9 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
                     index_alias_map.setdefault(reachable, set()).add(idx)
 
             # By definition anything that isn't an `_AbstractRef` should not alias another value
-            assert all(len(index_alias_map[idx]) == 1 for idx in cluster_roots), [[values[j] for j in index_alias_map[idx]] for idx in cluster_roots]
+            assert all(len(index_alias_map[idx]) == 1 for idx in cluster_roots), [
+                [values[j] for j in index_alias_map[idx]] for idx in cluster_roots
+            ]
 
     # And finally update the block value flows to reflect the changes.
     replace_map: Dict[_AbstractValue, _AbstractValue] = {}
@@ -489,7 +503,9 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
             assert not isinstance(v := values[idx], _AbstractRef), f"Unhandled reference: {idx} {v}"
         else:
             new_values = tuple(values[idy] for idy in sorted(source_indices))
-            constants: Tuple[ExternalRef] = tuple(v for v in new_values if isinstance(v, ExternalRef) and v.scope == VariableScope.CONST)
+            constants: Tuple[ExternalRef] = tuple(
+                v for v in new_values if isinstance(v, ExternalRef) and v.scope == VariableScope.CONST
+            )
             if len(constants) == len(new_values) and len({i.arg for i in constants}) == 1:
                 replace_map[values[idx]], *_ = constants
 
@@ -497,7 +513,7 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
                 replace_map[values[idx]] = AbstractPhiValue(new_values)
 
             else:
-                replace_map[values[idx]], = new_values
+                (replace_map[values[idx]],) = new_values
 
     for protoblock in protoblocks:
         protoblock.replace_values(replace_map)
@@ -539,6 +555,8 @@ def _bind_to_graph(
     # TODO(robieta): Lazily generate specializations during runtime.
     signature = inspect.signature(func)
     names = make_name_map(itertools.chain(*(i.raw_instructions for i in protoblocks)), func.__code__)
+    for i, _ in enumerate(signature.parameters.keys()):
+        names[ArgScope(i, VariableScope.LOCAL)] = func.__code__.co_varnames[i]
     func_constants = func.__code__.co_consts
     func_globals = dict_join(func.__builtins__, func.__globals__, {"super": Super()})
 
@@ -576,7 +594,7 @@ def _bind_to_graph(
         for arg_scope, abstract_value in protoblock.state(index=0):
             if protoblock is root:
                 value = get_initial_value(arg_scope)
-                is_arg = (arg_scope.scope == VariableScope.LOCAL and value.value is not NULL)
+                is_arg = arg_scope.scope == VariableScope.LOCAL and value.value is not NULL
                 assert isinstance(abstract_value, ExternalRef) or not is_arg
                 input_conversions[(abstract_value, protoblock)] = PhiValue([value], [None], block) if is_arg else value
 
@@ -609,7 +627,7 @@ def _bind_to_graph(
                 i=instruction,
                 inputs=[convert(v, protoblock) for v in inputs],
                 outputs=[convert(v, protoblock) for v in outputs],
-                line_no=instruction.line_no
+                line_no=instruction.line_no,
             )
 
             if node.i.opname in ("LOAD_ATTR", "LOAD_METHOD"):
@@ -645,7 +663,8 @@ def _bind_to_graph(
     # Second pass: link blocks.
     for protoblock, block in blocks.items():
         block_values = {
-            k: v for k, abstract_v in protoblock.state(index=0)
+            k: v
+            for k, abstract_v in protoblock.state(index=0)
             if isinstance(v := convert(abstract_v, protoblock), PhiValue)
         }
         block.block_inputs = list(OrderedSet(block_values.values()))
@@ -660,19 +679,26 @@ def _bind_to_graph(
     # Third pass: specify block outputs.
     for protoblock, block in blocks.items():
         block.block_outputs = OrderedSet(
-            v for _, abstract_v in protoblock.state(index=-1, is_jump=None)
+            v
+            for _, abstract_v in protoblock.state(index=-1, is_jump=None)
             if (v := convert(abstract_v, protoblock)).phi_values
         )
 
     gr = Graph(list(blocks.values()))
+
+    needed_params = {
+        v for k in sorted(root.uses) if k.scope == VariableScope.LOCAL and (v := get_initial_value(k)).value is not NULL
+    }
+
     gr.local_variables_at_start = [
-        v for k in sorted(root.uses)
-        if k.scope == VariableScope.LOCAL and (v := get_initial_value(k)).value is not NULL
+        get_initial_value(ArgScope(i, VariableScope.LOCAL)) for i in range(len(signature.parameters))
     ]
+    missing_params = needed_params.difference(gr.local_variables_at_start)
+    assert not missing_params, f"missing params {missing_params}"
 
     # bound_args = [module.forward.__self__]
     gr.self_value = self_value
-    gr.ismethod = (self_value is not None)
+    gr.ismethod = self_value is not None
     # deal with other flags?
     # NESTED, GENERATOR, NOFREE, COROUTINE, ITERABLE_COROUTINE, ASYNC_GENERATOR
     gr.co_flags = inspect.CO_OPTIMIZED | inspect.CO_NEWLOCALS
@@ -702,6 +728,7 @@ def _bind_to_graph(
             else:
                 gr.func_defaults.append(p.default)
     return gr
+
 
 def acquire_method(
     method: Callable,
@@ -736,6 +763,7 @@ def acquire_method(
     if DEBUG_ASSERTS:
         check_graph(gr)
     return gr
+
 
 def remove_unused_values(gr: Graph) -> None:
     gr.ensure_links()

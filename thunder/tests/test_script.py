@@ -423,6 +423,7 @@ def _nanogpt_mlp_helper(device, dtype, thunder_fn, torch_fn):
 
 # TODO: enable the following tests
 
+
 @skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
@@ -606,6 +607,19 @@ def test_local_aliased_translation(executor, device, dtype):
     torch_result = foo(a, b)
 
     assert_close(thunder_result, torch_result)
+
+
+@skipif_not_python_3_10
+def test_unused_arg():
+    def foo(a):
+        return 1 + 2
+
+    gr = thunder.core.script.frontend.acquire_method(foo)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = foo(1)
+    actual = thunder_fn(1)
+    assert_close(actual, expected)
 
 
 # @executors(dtypes=(thunder.float32,))
