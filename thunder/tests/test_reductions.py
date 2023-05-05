@@ -4,8 +4,10 @@ import torch
 from torch.testing import assert_close, make_tensor
 
 import thunder
-import thunder.langs.torch as ttorch
+import thunder.torch as ttorch
 from thunder.tests.framework import executors
+
+import pytest
 
 
 # TODO: convert these tests to OpInfo generated tests
@@ -19,7 +21,7 @@ def test_torch_var(executor, device, dtype):
 
     traced_foo = executor.make_callable(foo)
 
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ttorch.to_torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
 
     # Full reduction
@@ -62,7 +64,7 @@ def test_torch_mean(executor, device, dtype):
 
     traced_foo = executor.make_callable(foo)
 
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ttorch.to_torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
 
     # Full reduction
@@ -88,7 +90,7 @@ def test_var_mean(executor, device, dtype):
 
     traced_foo = executor.make_callable(foo)
 
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ttorch.to_torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)
 
     # Full reduction
@@ -119,7 +121,7 @@ def test_var_mean(executor, device, dtype):
 def test_layer_norm(executor, device, dtype):
     thunder_fn = executor.make_callable(ttorch.layer_norm)
     torch_fn = torch.nn.functional.layer_norm
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ttorch.to_torch_dtype(dtype)
 
     # TODO: improve these
     # input_shape, normalized_shape, kwargs

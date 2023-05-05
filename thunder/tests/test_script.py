@@ -13,11 +13,16 @@ import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
-import thunder.langs.torch as ttorch
+import thunder.torch as ltorch
 from thunder.tests import nanogpt_model, lit_llama_model
 from thunder.tests.framework import executors, requiresCUDA
 
 thunder.core.script.frontend.enable_debug_asserts()
+
+from thunder.executors.utils import Executor
+
+torchex = [Executor.TORCH]
+nvfuserex = [Executor.NVFUSER, Executor.TORCH]
 
 
 def skipif_not_python_3_10(f):
@@ -76,7 +81,7 @@ def test_torch_to_thunder():
     thunder.core.script.passes.torch_to_thunder(gr)
     thunder_fn = thunder.core.script.python_ir.generate_function(gr)
 
-    traced_fn = thunder.make_traced(thunder_fn, executor="torch")
+    traced_fn = thunder.compile(thunder_fn, executors_list=torchex)
     a = torch.randn((2, 2), device="cpu", dtype=torch.float32)
     b = torch.randn((2, 2), device="cpu", dtype=torch.float32)
 
@@ -288,7 +293,7 @@ def test_exception_source_line():
         torch.nn.Linear(3, 5),
         torch.nn.Linear(3, 3),  # intentionally broken
     )
-    tom = thunder.make_traced(m, executor="torch", _preprocess=True)
+    tom = thunder.compile(m, executors_list=torchex)
     x = torch.randn(2, 3)
     try:
         tom(x)
@@ -333,7 +338,7 @@ def test_nanogpt_functionalization():
 @skipif_not_python_3_10
 def test_nanogpt_tom():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig(dropout=0.0))
-    tom = thunder.make_traced(m, executor="torch", _preprocess=True)
+    tom = thunder.compile(m, executors_list=torchex)
     x = torch.randint(0, 255, (5, 5))
 
     torch.manual_seed(5)
@@ -381,7 +386,7 @@ def test_inlining_function_and_convert_to_thunder():
     c_proj_weight = make_tensor((n, 4 * n), dtype=torch.float32, device="cuda")
     thunder_foo = convert_to_thunder(foo)
 
-    thunder_fn = thunder.make_traced(thunder_foo, executor="nvfuser")
+    thunder_fn = thunder.compile(thunder_foo, executors_list=nvfuserex)
 
     torch_result = foo(a, c_fc_weight, c_proj_weight)
     thunder_result = thunder_fn(a, c_fc_weight, c_proj_weight)
@@ -395,11 +400,11 @@ def test_preprocess_option(executor, device, dtype):
     def foo(a, b):
         return torch.add(a, b)
 
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 1), device=device, dtype=tdtype)
     b = make_tensor((2, 2), device=device, dtype=tdtype)
 
-    thunder_fn = executor.make_callable(foo, _preprocess=True)
+    thunder_fn = executor.make_callable(foo, disable_preprocessing=False)
 
     thunder_result = thunder_fn(a, b)
     torch_result = foo(a, b)
@@ -407,7 +412,7 @@ def test_preprocess_option(executor, device, dtype):
 
 
 def _nanogpt_mlp_helper(device, dtype, thunder_fn, torch_fn):
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ltorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
 
     n = 4
@@ -433,7 +438,7 @@ def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
-    thunder_fn = executor.make_callable(nanogpt_mlp_functional_simplified, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional_simplified, disable_preprocessing=False)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_simplified)
 
 
@@ -447,7 +452,7 @@ def test_nanogpt_mlp_functional_inlined(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
-    thunder_fn = executor.make_callable(nanogpt_mlp_functional_inlined, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional_inlined, disable_preprocessing=False)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_inlined)
 
 
@@ -472,17 +477,17 @@ def test_nanogpt_mlp_functional(executor, device, dtype):
         e = torch.nn.functional.dropout(d, p=0.0)
         return e
 
-    thunder_fn = executor.make_callable(nanogpt_mlp_functional, _preprocess=True)
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional, disable_preprocessing=False)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional)
 
     # see if everything works and is inlined
-    allowed_funcs = {math.sqrt, ttorch.pow, ttorch.linear, ttorch.dropout, ttorch.tanh}
-    thunder_fn = executor.make_callable(nanogpt_mlp_functional_kw, _preprocess=True)
-    funcs = _helper_get_func_calls(thunder_fn._tfn._gr)
+    allowed_funcs = {math.sqrt, ltorch.pow, ltorch.linear, ltorch.dropout, ltorch.tanh}
+    thunder_fn = executor.make_callable(nanogpt_mlp_functional_kw, disable_preprocessing=False)
+    funcs = _helper_get_func_calls(thunder_fn._pfn._gr)
     assert not (funcs ^ allowed_funcs)
 
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_kw)
-    funcs = _helper_get_func_calls(thunder_fn._tfn._gr)
+    funcs = _helper_get_func_calls(thunder_fn._pfn._gr)
     assert not (funcs ^ allowed_funcs)
 
 
@@ -516,7 +521,7 @@ def test_clone_graph():
 # TODO: once this test works, also test acquiring the function from a collection
 # @executors(dtypes=(thunder.float32,))
 # def test_fn_input(executor, device, dtype):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(fn, *args):
@@ -537,7 +542,7 @@ def test_clone_graph():
 # TODO: FIXME
 # @executors(dtypes=(thunder.float32,))
 # def test_local_translation(executor, device, dtype):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
@@ -549,7 +554,7 @@ def test_clone_graph():
 
 #         return a, b
 
-#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+#     thunder_fn = thunder.make_traced(foo, executor=executor, disable_preprocessing=False)
 
 #     shape = (2, 2)
 #     a = make(shape)
@@ -562,7 +567,7 @@ def test_clone_graph():
 
 # @executors(dtypes=(thunder.float32,))
 # def test_local_wrapped_translation(executor, device, dtype):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
@@ -575,7 +580,7 @@ def test_clone_graph():
 
 #         return a, b
 
-#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+#     thunder_fn = thunder.make_traced(foo, executor=executor, disable_preprocessing=False)
 
 #     shape = (2, 2)
 #     a = make(shape)
@@ -590,14 +595,14 @@ def test_clone_graph():
 @skipif_not_python_3_10
 @executors(dtypes=(thunder.float32,))
 def test_local_aliased_translation(executor, device, dtype):
-    tdtype = ttorch.torch_dtype(dtype)
+    tdtype = ltorch.to_torch_dtype(dtype)
     make = partial(make_tensor, device=device, dtype=tdtype)
 
     def foo(a, b):
         fn = torch.nn.functional.linear
         return fn(a, b)
 
-    thunder_fn = executor.make_callable(foo, _preprocess=True)
+    thunder_fn = executor.make_callable(foo, disable_preprocessing=False)
 
     shape = (2, 2)
     a = make(shape)
@@ -624,7 +629,7 @@ def test_unused_arg():
 
 # @executors(dtypes=(thunder.float32,))
 # def test_local_acquired_translation(executor, device, dtype):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
@@ -632,7 +637,7 @@ def test_unused_arg():
 #         fn = getattr(torch.nn.functional, "linear")
 #         return fn(a, b)
 
-#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+#     thunder_fn = thunder.make_traced(foo, executor=executor, disable_preprocessing=False)
 
 #     shape = (2, 2)
 #     a = make(shape)
@@ -645,13 +650,13 @@ def test_unused_arg():
 
 # @executors(dtypes=(thunder.float32,))
 # def test_lambda_translation(executor, device, dtype):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
 
 #     def foo(a, b):
 #         return map(lambda a: torch.add(a, 1), (a, b))
 
-#     thunder_fn = thunder.make_traced(foo, executor=executor, _preprocess=True)
+#     thunder_fn = thunder.make_traced(foo, executor=executor, disable_preprocessing=False)
 
 #     shape = (2, 2)
 #     a = make(shape)
@@ -686,12 +691,12 @@ def test_unused_arg():
 #             e = self.dropout(d)
 #             return e
 
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 
 #     mlp = MLP()
 #     mlp.to(device, dtype=tdtype)
 
-#     thunder_fn = thunder.make_traced(mlp, executor=executor, _preprocess=True)
+#     thunder_fn = thunder.make_traced(mlp, executor=executor, disable_preprocessing=False)
 
 #     make = partial(make_tensor, dtype=tdtype, device=device)
 

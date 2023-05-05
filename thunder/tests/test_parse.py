@@ -15,10 +15,9 @@ import pytest
 
 frontend.enable_debug_asserts()
 
-PARSE_SPECIFICATION = List[Tuple[
-    List[Tuple[str, str]],  # (opname, argrepr)
-    List[Tuple[int, bool]]  # (target_index, is_jump)
-]]
+PARSE_SPECIFICATION = List[
+    Tuple[List[Tuple[str, str]], List[Tuple[int, bool]]]  # (opname, argrepr)  # (target_index, is_jump)
+]
 
 # Block index (optional), opname, inputs, outputs
 FLOW_SPECIFICATION_ENTRY = Tuple[Optional[int], str, Tuple[Tuple[str, ...], ...], Tuple[str, ...]]
@@ -27,6 +26,7 @@ FLOW_SPECIFICATION = Tuple[FLOW_SPECIFICATION_ENTRY, ...]
 TEST_CASES = []
 DONT_CHECK_FLOW = "DONT_CHECK_FLOW"
 
+
 def add_parse_test(parse_spec: Optional[str] = None, flow_spec: Optional[str] = None):
     def wrapper(f):
         TEST_CASES.append((f, parse_spec, flow_spec))
@@ -34,20 +34,25 @@ def add_parse_test(parse_spec: Optional[str] = None, flow_spec: Optional[str] = 
 
     return wrapper
 
-@add_parse_test("""
+
+@add_parse_test(
+    """
     LOAD_FAST                0 (x)                    ║    LOAD_FAST                   x
     LOAD_CONST               1 (1)                    ║    LOAD_CONST                  1
     BINARY_ADD                                        ║    BINARY_ADD
     RETURN_VALUE                                      ║    RETURN_VALUE
-""",r"""
+""",
+    r"""
     BINARY_ADD:      (x, 1) -> out
     RETURN_VALUE:    (out) ->
-""")
+""",
+)
 def simple_fn(x):
     return x + 1
 
 
-@add_parse_test("""
+@add_parse_test(
+    """
         LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
         POP_JUMP_IF_FALSE        6 (to 12)            ║    POP_JUMP_IF_FALSE
         LOAD_FAST                0 (x)                ║        -> 1(False)
@@ -64,18 +69,21 @@ def simple_fn(x):
                                                       ║    LOAD_CONST                  1
                                                       ║    BINARY_ADD
                                                       ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     1)  INPLACE_ADD:     (x, 2) -> x_1
     2)  BINARY_ADD:      (U[x_1, x], 1) -> out
     2)  RETURN_VALUE:    (out) ->
-""")
+""",
+)
 def simple_if_fn(x):
     if x:
         x += 2
     return x + 1
 
 
-@add_parse_test("""
+@add_parse_test(
+    """
         LOAD_FAST                1 (mask)             ║    LOAD_FAST                   mask
         LOAD_METHOD              0 (any)              ║    LOAD_METHOD                 any
         CALL_METHOD              0                    ║    CALL_METHOD
@@ -119,14 +127,16 @@ def simple_if_fn(x):
                                                       ║        -> 6(True)
                                                       ║
                                                       ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     0)  LOAD_METHOD:     (mask) -> any
     0)  CALL_METHOD:     (any, mask) -> has_mask
     3)  CALL_FUNCTION:   (layer_0, x, U[mask, None]) -> x_1
     4)  CALL_FUNCTION:   (layer_1, x_1, mask) -> x_2_mask
     5)  CALL_FUNCTION:   (layer_1, x_1, None) -> x_2_no_mask
     6)  RETURN_VALUE:    (U[x_2_mask, x_2_no_mask]) ->
-""")
+""",
+)
 def cse_candidate(x, mask, layer_0, layer_1):
     has_mask = mask.any()
     x = layer_0(x, mask if has_mask else None)
@@ -134,7 +144,8 @@ def cse_candidate(x, mask, layer_0, layer_1):
     return x
 
 
-@add_parse_test("""
+@add_parse_test(
+    """
         LOAD_GLOBAL              0 (range)            ║    LOAD_GLOBAL                 range
         LOAD_CONST               1 (4)                ║    LOAD_CONST                  4
         CALL_FUNCTION            1                    ║    CALL_FUNCTION
@@ -156,13 +167,15 @@ def cse_candidate(x, mask, layer_0, layer_1):
                                                       ║
                                                       ║    LOAD_FAST                   x
                                                       ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     0)  CALL_FUNCTION:   (range, 4) -> range_generator
     0)  GET_ITER:        (range_generator) -> range_iter
     1)  FOR_ITER:        (range_iter) -> _
     2)  INPLACE_ADD:     (U[x_1, x], y) -> x_1
     3)  RETURN_VALUE:    (U[x_1, x]) ->
-""")
+""",
+)
 def simple_loop_fn(x, y):
     # NOTE:
     #   preprocessing doesn't understand that `range(4)` guarantees at least
@@ -172,7 +185,9 @@ def simple_loop_fn(x, y):
         x += y
     return x
 
-@add_parse_test("""
+
+@add_parse_test(
+    """
         LOAD_GLOBAL              0 (range)            ║    LOAD_GLOBAL                 range
         LOAD_CONST               1 (10)               ║    LOAD_CONST                  10
         CALL_FUNCTION            1                    ║    CALL_FUNCTION
@@ -205,20 +220,24 @@ def simple_loop_fn(x, y):
                                                       ║        -> 6(True)
                                                       ║
                                                       ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     0)  CALL_FUNCTION:   (range, 10) -> range_generator
     0)  GET_ITER:        (range_generator) -> range_iter
     1)  FOR_ITER:        (range_iter) -> i
     2)  COMPARE_OP:      (i, x) -> cmp
     6)  RETURN_VALUE:    (U[i, MISSING]) ->
-""")
+""",
+)
 def loop_with_break(x):
     for i in range(10):
         if i > x:
             break
     return i
 
-@add_parse_test("""
+
+@add_parse_test(
+    """
         LOAD_FAST                1 (k)                ║    LOAD_FAST                   k
         GET_ITER                                      ║    GET_ITER
                                                       ║    JUMP_ABSOLUTE               2
@@ -261,7 +280,8 @@ def loop_with_break(x):
                                                       ║        -> 6(True)
                                                       ║
                                                       ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     0)  GET_ITER:           (k) -> k_iter
     1)  FOR_ITER:           (k_iter) -> _
     2)  INPLACE_ADD:        (U[x_1, x], 1) -> x_1
@@ -269,7 +289,8 @@ def loop_with_break(x):
     3)  INPLACE_MULTIPLY:   (x_1, 2) -> x_break_path
     5)  INPLACE_SUBTRACT:   (U[x_1, x], 1) -> x_normal_path
     6)  RETURN_VALUE:       (U[x_break_path, x_normal_path]) ->
-""")
+""",
+)
 def loop_with_else(x, k):
     for _ in k:
         x += 1
@@ -292,7 +313,8 @@ def done_fn(_):
     return True
 
 
-@add_parse_test("""
+@add_parse_test(
+    """
         LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
         POP_JUMP_IF_FALSE       17 (to 34)            ║    POP_JUMP_IF_FALSE
                                                       ║        -> 1(False)
@@ -327,14 +349,16 @@ def done_fn(_):
                                                       ║    LOAD_FAST                   inner
                                                       ║    LOAD_ATTR                   count
                                                       ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     GET_ITER:               (inner) -> inner_iter
     FOR_ITER:               (inner_iter) -> _
     INPLACE_TRUE_DIVIDE:    (U[x_1, x_2, x], 2) -> x_1
     INPLACE_FLOOR_DIVIDE:   (U[x_1, x_2, x], 1) -> x_2
     LOAD_ATTR:              (inner) -> inner_count
     RETURN_VALUE:           (inner_count) ->
-""")
+""",
+)
 def nested_loop_fn(x, inner):
     while x:
         for _ in inner:
@@ -342,7 +366,9 @@ def nested_loop_fn(x, inner):
         x //= 1
     return inner.count
 
-@add_parse_test("""
+
+@add_parse_test(
+    """
         LOAD_FAST                1 (ctx)              ║    LOAD_FAST                   ctx
         CALL_FUNCTION            0                    ║    CALL_FUNCTION
         SETUP_WITH              13 (to 32)            ║    SETUP_WITH
@@ -381,12 +407,16 @@ def nested_loop_fn(x, inner):
                                                       ║        -> 5(True)
                                                       ║
                                                       ║    RETURN_VALUE
-""", flow_spec=DONT_CHECK_FLOW)
+""",
+    flow_spec=DONT_CHECK_FLOW,
+)
 def context_manager(x, ctx):
     with ctx() as c:
         x += 1
 
-@add_parse_test("""
+
+@add_parse_test(
+    """
         GEN_START                0                    ║    GEN_START
         LOAD_FAST                0 (k)                ║    LOAD_FAST                   k
         LOAD_CONST               1 (0)                ║    LOAD_CONST                  0
@@ -426,11 +456,13 @@ def context_manager(x, ctx):
                                                       ║    POP_TOP
                                                       ║    LOAD_CONST                  None
                                                       ║    RETURN_VALUE
-""", flow_spec=DONT_CHECK_FLOW)
+""",
+    flow_spec=DONT_CHECK_FLOW,
+)
 def simple_generator(k, suffix):
     if k < 0:
         yield None
-    
+
     for i in range(k):
         yield i
 
@@ -441,24 +473,30 @@ class TestClass:
     def f(self, x):
         return self.__name__ + x
 
-add_parse_test("""
+
+add_parse_test(
+    """
     LOAD_FAST                0 (self)                     ║    LOAD_FAST                   self
     LOAD_ATTR                0 (__name__)                 ║    LOAD_ATTR                   __name__
     LOAD_FAST                1 (x)                        ║    LOAD_FAST                   x
     BINARY_ADD                                            ║    BINARY_ADD
     RETURN_VALUE                                          ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     LOAD_ATTR:       (self) -> self_name
     BINARY_ADD:      (self_name, x) -> result
     RETURN_VALUE:    (result) ->
-""")(TestClass().f)
-    
+""",
+)(TestClass().f)
+
 
 class TestClassWithSuper(TestClass):
     def f(self, x):
         return super().f(x) + 1
 
-add_parse_test("""
+
+add_parse_test(
+    """
     LOAD_GLOBAL              0 (super)                    ║    LOAD_GLOBAL                 super
     CALL_FUNCTION            0                            ║    CALL_FUNCTION
     LOAD_METHOD              1 (f)                        ║    LOAD_METHOD                 f
@@ -467,19 +505,22 @@ add_parse_test("""
     LOAD_CONST               1 (1)                        ║    LOAD_CONST                  1
     BINARY_ADD                                            ║    BINARY_ADD
     RETURN_VALUE                                          ║    RETURN_VALUE
-""", r"""
+""",
+    r"""
     CALL_FUNCTION:   (super) -> super_self
     LOAD_METHOD:     (super_self) -> f
     CALL_METHOD:     (f, super_self, x) -> f_result
     BINARY_ADD:      (f_result, 1) -> output
     RETURN_VALUE:    (output) ->
-""")(TestClassWithSuper().f)
+""",
+)(TestClassWithSuper().f)
 
 
 def make_nonlocal_test():
     x: int
 
-    @add_parse_test("""
+    @add_parse_test(
+        """
     LOAD_DEREF               0 (x)                        ║    LOAD_DEREF                  x
     LOAD_CONST               1 (1)                        ║    LOAD_CONST                  1
     ROT_TWO                                               ║    ROT_TWO
@@ -487,17 +528,22 @@ def make_nonlocal_test():
     STORE_DEREF              0 (x)                        ║    STORE_DEREF                 x
     LOAD_FAST                0 (y)                        ║    LOAD_FAST                   y
     RETURN_VALUE                                          ║    RETURN_VALUE
-    """, r"""
+    """,
+        r"""
     RETURN_VALUE:    (x) ->
-    """)
+    """,
+    )
     def access_nonlocal():
         nonlocal x
         y, x = x, 1
         return y
-    
+
+
 make_nonlocal_test()
 
-@add_parse_test("""
+
+@add_parse_test(
+    """
         SETUP_FINALLY           12 (to 26)            ║    SETUP_FINALLY               to 26
         LOAD_FAST                0 (f)                ║        -> 1(False)
         LOAD_METHOD              0 (write)            ║        -> 2(True)
@@ -520,7 +566,8 @@ make_nonlocal_test()
                                                       ║    CALL_METHOD
                                                       ║    POP_TOP
                                                       ║    RERAISE
-""", r"""
+""",
+    r"""
 0)  SETUP_FINALLY:   () -> __unused_0, __unused_1, __unused_2, __unused_3, __unused_4, __unused_5
 1)  LOAD_METHOD:     (f) -> f_write
 1)  CALL_METHOD:     (f_write, f, Test) -> write_result
@@ -529,7 +576,8 @@ make_nonlocal_test()
 1)  RETURN_VALUE:    (None) ->
 2)  LOAD_METHOD:     (f) -> f_close_finally_branch
 2)  CALL_METHOD:     (f_close_finally_branch, f) -> close_result_finally_branch
-""")
+""",
+)
 def try_finally(f):
     try:
         f.write("Test")
@@ -537,7 +585,8 @@ def try_finally(f):
         f.close()
 
 
-@add_parse_test("""
+@add_parse_test(
+    """
         SETUP_FINALLY           35 (to 72)            ║    SETUP_FINALLY
         SETUP_FINALLY            7 (to 18)            ║        -> 1(False)
         LOAD_FAST                0 (f)                ║        -> 8(True)
@@ -599,7 +648,9 @@ def try_finally(f):
                                                       ║    RERAISE
                                                       ║
                                                       ║    RETURN_VALUE
-""", flow_spec=DONT_CHECK_FLOW)
+""",
+    flow_spec=DONT_CHECK_FLOW,
+)
 def try_except_finally(f, log):
     try:
         f.write("Test")
@@ -609,10 +660,7 @@ def try_except_finally(f, log):
         f.close()
 
 
-def assert_parse_matches_spec(
-    protoblocks: Tuple[frontend.ProtoBlock, ...],
-    expected: PARSE_SPECIFICATION
-) -> None:
+def assert_parse_matches_spec(protoblocks: Tuple[frontend.ProtoBlock, ...], expected: PARSE_SPECIFICATION) -> None:
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
     assert len(protoblocks) == len(block_to_index)
     assert len(protoblocks) == len(expected)
@@ -623,7 +671,10 @@ def assert_parse_matches_spec(
         for i, (opname, argrepr) in zip(protoblock.raw_instructions, expected_instructions):
             assert i.opname == opname
             assert i.argrepr == argrepr or not argrepr
-        assert tuple((block_to_index[target], is_jump) for target, is_jump in protoblock.jump_targets) == tuple(expected_jumps)
+        assert tuple((block_to_index[target], is_jump) for target, is_jump in protoblock.jump_targets) == tuple(
+            expected_jumps
+        )
+
 
 def suggest_parse_spec(protoblocks: Tuple[frontend.ProtoBlock, ...]):
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
@@ -648,7 +699,7 @@ def assert_flow_matches_spec(
     expected_outputs = tuple(itertools.chain(*(outputs for _, _, _, outputs in expected_flow)))
     assert len(observed_outputs) == len(expected_outputs)
     assert len(expected_outputs) == len(set(expected_outputs))
-    name_map = {observed: expected  for observed, expected in zip(observed_outputs, expected_outputs)}
+    name_map = {observed: expected for observed, expected in zip(observed_outputs, expected_outputs)}
 
     def to_str(block_idx, opname, inputs, outputs, name_map):
         block_segment = f"{block_idx})  " if block_idx is not None else ""
@@ -663,9 +714,8 @@ def assert_flow_matches_spec(
         assert to_str(observed_block_idx, *observed, name_map) == to_str(expected_block_idx, *expected, {})
 
 
-
 def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
-    fn =  fn.__func__ if inspect.ismethod(fn) else fn
+    fn = fn.__func__ if inspect.ismethod(fn) else fn
     names = python_ir_data.make_name_map(dis.get_instructions(fn), fn.__code__)
     num_parameters = len(inspect.signature(fn).parameters)
 
@@ -683,8 +733,8 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     root, _ = frontend.ProtoBlock.topology(protoblocks)
     num_args = len(inspect.signature(fn).parameters)
     arg_map = {
-        v: fn.__code__.co_varnames[arg] 
-        for (arg, scope), (v, *_) in root.variables.items() 
+        v: fn.__code__.co_varnames[arg]
+        for (arg, scope), (v, *_) in root.variables.items()
         if scope == python_ir_data.VariableScope.LOCAL and arg < num_args
     }
     assert all(isinstance(v, frontend.ExternalRef) for v in arg_map)
@@ -709,14 +759,14 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
             constituents = [value_to_key(vi) for vi in v.constituents]
             assert all(len(i) == 1 for i in constituents)
             return tuple(i[0] for i in constituents)
-        
+
         elif isinstance(v, frontend.ExternalRef):
             if v.scope == python_ir_data.VariableScope.CONST:
                 return (str(fn.__code__.co_consts[v.arg]),)
             elif v.scope == python_ir_data.VariableScope.LOCAL and v.arg >= num_parameters:
                 return ("MISSING",)
             return (names[python_ir_data.ArgScope(v.arg, v.scope)],)
-        
+
         elif isinstance(v, frontend.ValueMissing):
             return ("MISSING",)
 
@@ -730,7 +780,7 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
                 block_idx,
                 instruction.opname,
                 tuple(value_to_key(i) for i in inputs),
-                tuple(output_map[output] for output in outputs)
+                tuple(output_map[output] for output in outputs),
             )
 
 
@@ -762,11 +812,11 @@ def dis_str(fn: Callable) -> str:
 
     return "\n".join(new_lines)
 
+
 def split_column_blocks(s: str, split_sequence: str):
     segments = tuple(l.split(split_sequence) for l in s.splitlines(keepends=False))
     return tuple(
-        "\n".join(l.rstrip() for l in column_lines)
-        for column_lines in itertools.zip_longest(*segments, fillvalue="")
+        "\n".join(l.rstrip() for l in column_lines) for column_lines in itertools.zip_longest(*segments, fillvalue="")
     )
 
 
@@ -795,11 +845,11 @@ def extract_parse_spec(spec_str: str) -> Tuple[str, PARSE_SPECIFICATION]:
 
 
 def extract_flow_spec(spec_str: str) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
-    line_pattern = re.compile(r"^([0-9]+\))?\s*([A-Z_]+):\s+\((.*)\)\s+->\s+(.*)$")    
+    line_pattern = re.compile(r"^([0-9]+\))?\s*([A-Z_]+):\s+\((.*)\)\s+->\s+(.*)$")
     for line in textwrap.dedent(spec_str).strip().splitlines(keepends=False):
-        if (match := line_pattern.search(line.strip())):
+        if match := line_pattern.search(line.strip()):
             block, opname, inputs, outputs = match.groups()
-        elif (return_match := re.search(r"RETURN_VALUE:\s+\((.*)\).*$", line)):
+        elif return_match := re.search(r"RETURN_VALUE:\s+\((.*)\).*$", line):
             block, opname, inputs, outputs = (None, "RETURN_VALUE", return_match.groups()[0], "")
         else:
             raise ValueError(f"Unrecognized line: {line}")
@@ -826,7 +876,10 @@ def extract_flow_spec(spec_str: str) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
 @pytest.mark.parametrize(
     ("fn", "parse_spec", "flow_spec"),
     TEST_CASES,
-    ids=[f"test_parse_{fn.__self__.__class__.__name__ + '().' if hasattr(fn, '__self__') else ''}{fn.__name__}" for fn, _, _ in TEST_CASES]
+    ids=[
+        f"test_parse_{fn.__self__.__class__.__name__ + '().' if hasattr(fn, '__self__') else ''}{fn.__name__}"
+        for fn, _, _ in TEST_CASES
+    ],
 )
 def test_parse(fn, parse_spec: Optional[str], flow_spec: Optional[str]):
     fn_dis = textwrap.dedent(dis_str(fn)).rstrip()
@@ -844,7 +897,9 @@ def test_parse(fn, parse_spec: Optional[str], flow_spec: Optional[str]):
     expected_dis = textwrap.dedent(expected_dis).rstrip()
     if fn_dis.strip() != expected_dis.strip():
         diff = "\n".join(difflib.unified_diff(fn_dis.splitlines(), expected_dis.splitlines()))
-        pytest.skip(f"Disassembed input does not match:\n{diff}\nCannot test using this Python version. {sys.version_info}")
+        pytest.skip(
+            f"Disassembed input does not match:\n{diff}\nCannot test using this Python version. {sys.version_info}"
+        )
 
     observed_flow = tuple(flow_spec_for_fn(fn)) if flow_spec != DONT_CHECK_FLOW else None
     if flow_spec is None and observed_flow is not None:

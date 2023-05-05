@@ -2,13 +2,17 @@ import sys
 from enum import Enum
 from functools import reduce, wraps
 import itertools
+from itertools import zip_longest, chain
 from numbers import Number
-from typing import Callable, Dict, Generic, Iterable, List, Optional, Sequence, Type, TypeVar
+from typing import Callable, Dict, Generic, Iterable, List, Optional, Sequence, Type, TypeVar, Tuple
+
 
 import thunder.core.dtypes as dtypes
-import thunder.core.trace as trace
-from thunder.core.proxies import NumberProxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy
+from thunder.core.baseutils import *
+from thunder.core.codeutils import *
+from thunder.core.trace import TraceCtx
 
 # This file defines utilities that can be used when defining primitive operations.
 
@@ -71,16 +75,7 @@ T1 = TypeVar("T1")
 # Error checking helpers
 #
 
-
-# TODO: maybe put check in a dependency-free base_utils that's also imported here (so it can be used by proxies.py)
-def check(cond: bool, s: Callable[[], str], exception_type: Type[Exception] = RuntimeError) -> None:
-    """Helper function for raising an error_type (default: RuntimeError) if a boolean condition fails.
-
-    s is a callable producing a string to avoid string construction if the error check is passed.
-    """
-    if not cond:
-        raise exception_type(s())
-
+# This file defines utilities that can be used when defining primitive operations.
 
 #
 # dtype-related functions
@@ -149,14 +144,16 @@ def get_numberlike_type(x):
     raise ValueError(f"Trying to extract the number type of unknown object {x} with type {type(x)}!")
 
 
-def get_numberlike_value(x):
-    if isinstance(x, NumberProxy):
-        return x.value
-
-    if isinstance(x, Number):
+def get_numberlike_value(values):
+    def _extract(x):
+        check_type(x, (Number, NumberProxy))
+        if isinstance(x, NumberProxy):
+            return x.value
         return x
 
-    raise ValueError(f"Trying to acquire the value of unknown object {x} with type {type(x)}!")
+    flat, spec = tree_flatten(values)
+    modified = tuple(_extract(x) for x in flat)
+    return tree_unflatten(modified, spec)
 
 
 def check_same_dtype(*args):
@@ -422,8 +419,9 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
     """
 
     # Type checks inputs
-    assert all(isinstance(a, (TensorProxy, Number)) for a in args)
-    assert len(args) > 0
+    check(len(args) > 0, lambda: f"Execpted one or more arguments for type promotion, but got {args=}")
+    for a in args:
+        check_type(a, (TensorProxy, Number))
 
     # Computes the promotion type
     extracted = (to_dtype(x, true_dtype=True) for x in args)
@@ -568,12 +566,6 @@ def canonicalize_dims(rank, indices, wrap_scalar=True):
     return tuple(canonicalize_dim(rank, x, wrap_scalar) for x in indices)
 
 
-def check_valid_length(length: int):
-    """Validates that an object represents a valid dimension length."""
-
-    check(length >= 0, lambda: f"Found invalid length {length}!")
-
-
 def check_valid_permutation(rank: int, perm):
     """
     Validates that perm is a permutation of length rank.
@@ -581,13 +573,6 @@ def check_valid_permutation(rank: int, perm):
 
     check(isinstance(perm, Sequence), lambda: f"Expected perm={perm} to be a Sequence!")
     check(tuple(sorted(perm)) == tuple(range(0, rank)), lambda: f"Expected perm={perm} to be a valid permutation!")
-
-
-def check_valid_shape(shape):
-    """Validates that a sequence represents a valid shape."""
-
-    for l in shape:
-        check_valid_length(l)
 
 
 def validate_idx(rank: int, idx: int):
@@ -619,9 +604,10 @@ def check_no_duplicates(dims: Sequence):
 #
 
 
-# TODO: improve device handling
+# TODO: improve device handling by canonicalizing devices and expressing them per langctx
+# TODO: should the comparison between devices be ==?
 def check_same_device(*args):
-    devices = tuple(x.device for x in args if isinstance(x, TensorProxy))
+    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface))
     if len(devices) > 1:
         device = devices[0]
         for otherdevice in devices[1:]:
@@ -642,7 +628,7 @@ def check_same_device(*args):
 # TODO: implement additional methods as needed
 class OrderedSet(Generic[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
-    def __init__(self, args: Optional[Iterable[T]]=None):
+    def __init__(self, args: Optional[Iterable[T]] = None):
         self.d = {k: None for k in args or ()}
 
     def __repr__(self) -> str:
@@ -685,25 +671,6 @@ class OrderedSet(Generic[T]):
 #
 
 
-# TODO: think about preserving the original function's signature
-class langctx:
-    """A decorator that calls the decorated function in the given language context, resetting to the caller's language
-    context when the function is done."""
-
-    def __init__(self, ctx):
-        self.ctx = ctx
-
-    def __call__(self, fn_):
-        @wraps(fn_)
-        def fn(*args, **kwargs):
-            tok = trace.set_language_context(self.ctx)
-            result = fn_(*args, **kwargs)
-            trace.reset_language_context(tok)
-            return result
-
-        return fn
-
-
 def flatten_func(func, args, kwargs):
     """Returns a flattened version of func.
 
@@ -719,7 +686,7 @@ def flatten_func(func, args, kwargs):
     """
     flat_args, spec = tree_flatten((args, kwargs))
 
-    def flat_func(*flat_args):
+    def flat_func(flat_args):
         fn_args, fn_kwargs = tree_unflatten(flat_args, spec)
         return func(*fn_args, **fn_kwargs)
 
@@ -807,6 +774,118 @@ def dict_join(*args: List[Dict[T, T1]]) -> Dict[T, T1]:
     return dict(itertools.chain(*(i.items() for i in args)))
 
 
+#
+# Utilities related to traces
+#
+
+
+def get_name(trace: TraceCtx, x: Any) -> str:
+    if isinstance(x, Proxy):
+        return x.name
+
+    to = trace.get_tracked_object(x)
+    if isinstance(to, TrackedObject):
+        return to.name
+
+    check(False, lambda: f"Could not find name for {x}")
+
+
+# TODO Unify this with the "Variable" concept in proxies.py
+# TODO Make this a proper subclass of dict?
+# A dictionary(-like) object suitable for working with proxies and tracked objects.
+# NOTE Why ProxyDict?
+#   NumberProxies are hashed on their value, like Python numbers,
+#   but this means that distinct NumberProxies whose values compare
+#   equal would be hashed to the same value, and it's sometimes important
+#   to distinguish the type and history of different NumberProxies.
+#   (You can see this behavior by trying to use both 5 and 5. as keys in a dict.)
+#   ProxyDict changes the hashing behavior of proxies to hash using their name,
+#   which preserves type and history since names are unique.
+class ProxyDict:
+    def __init__(self, trace: TraceCtx):
+        self._trace = trace
+        self._dict = {}
+
+    def __setitem__(self, key: Any, val: Any):
+        key_ = get_name(self._trace, key)
+        self._dict[key_] = val
+
+    def __getitem__(self, key: Proxy) -> Any:
+        key_ = get_name(self._trace, key)
+        return self._dict[key_]
+
+    def __contains__(self, key: Any) -> bool:
+        try:
+            key_ = get_name(self._trace, key)
+            return key_ in self._dict
+        except Exception:
+            return False
+
+    def append(self, key: Any, val: Any) -> None:
+        key_ = get_name(self._trace, key)
+        vals = self._dict.get(key_, [])
+        vals.append(val)
+        self._dict[key_] = vals
+
+    def remove(self, key: Any, val: Any) -> None:
+        raise NotImplementedError
+
+    def get(self, key: Any, default: Any) -> Any:
+        try:
+            return self.__getitem__(key)
+        except Exception:
+            pass
+
+        return default
+
+    def __repr__(self) -> str:
+        return str(self._dict)
+
+
+# Returns a name -> producer mapping
+def producers(trace: TraceCtx) -> ProxyDict:
+    producers = ProxyDict(trace)
+
+    for bsym in trace.bound_symbols:
+        flat = bsym._flat_outs
+        for out in flat:
+            if not isinstance(out, Proxy):
+                continue
+
+            # NOTE out may already be in producers because some operations return their input,
+            #   which might look like the same output is being produced multiple times
+            #   The first production is what we're interested in
+            if out not in producers:
+                producers[out] = bsym
+
+    return producers
+
+
+def consumers(trace: TraceCtx) -> ProxyDict:
+    consumers = ProxyDict(trace)
+
+    for bsym in trace.bound_symbols:
+        flatargs = bsym._flat_args
+        flatkwargs = bsym._flat_kwargs
+
+        for x in chain(flatargs, flatkwargs):
+            if not isinstance(x, Proxy):
+                continue
+
+            consumers.append(x, bsym)
+
+    return consumers
+
+
+# TODO This could be optimized by computing producers and consumers at the same time
+# Returns two ProxyDicts, the first mapping proxies to the bound symbol that produced them,
+#   and the second mapping proxies to the bound symbols that consume them (if any)
+# NOTE This only returns things that are produced and consumed by "top level" bound symbols
+#   in the trace. It does not recurse into the bound symbols.
+def producers_and_consumers(trace: TraceCtx) -> Tuple[ProxyDict, ProxyDict]:
+    return producers(trace), consumers(trace)
+
+
 def get_symbols_to_last_used_variables(symbols, ignore):
     """Get a mapping from symbols to the last used variables.
 
@@ -838,7 +917,5 @@ def get_symbols_to_last_used_variables(symbols, ignore):
             variables = tuple(symbol.inputs)
         else:
             variables = (symbol.args, symbol.kwargs)
-        tree_map(
-            lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables
-        )
+        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables)
     return symbol_to_last_variables

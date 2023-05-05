@@ -20,12 +20,10 @@ import torch
 from torch.testing import make_tensor
 
 import thunder
-import thunder.langs.torch as ttorch
+import thunder.torch as ltorch
+from thunder.tests import nanogpt_model
 import thunder.core.proxies as proxies
-from thunder.executors.torch import _fuse_region as fuse_torch_region
-from thunder.tests import nanogpt_model, lit_llama_model
-from thunder.tests import hf_bart_self_attn
-from thunder.core.trace import Variable
+from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
 
 
 # This file contains custom nvFuser-related benchmarks.
@@ -48,21 +46,10 @@ class BenchmarkArg:
     default: Any
 
 
-# Helper to easily modify thunder construction
-# TODO: let benchmark set mode as an option, or even compare multiple modes at once
-def thunder_compile(fn, cudagraphs: bool = True):
-    return thunder.make_traced(
-        fn,
-        executor="nvfuser",
-        _preprocess=True,
-        _info=True,
-        _return_fusion=True,
-        _profile_info=True,
-        _static=True,
-        mode="cudagraphs" if cudagraphs else None,
-    )
-
-
+# TODO Restore CUDA graphs
+# TODO Restore lightning.compile profile info
+# TODO Add lightning.compile with the Torch executor as the principal executor (as lc+torch?)
+# TODO Improve error messages when CUDA graphs is requested but an executor that doesn't support CUDA graphs has also been requested
 class Benchmark:
     """Encapsulates a benchmark.
 
@@ -82,44 +69,35 @@ class Benchmark:
         self.shortname = shortname if shortname is not None else name
 
     @functools.cache
-    def compiled_fn(
-        self,
-        executor: str,
-        *,
-        with_profile_data=False,
-    ):
-        cudagraphs = executor.endswith("_cuda_graphs")
+    def compiled_fn(self, executor: str):
+        use_cudagraphs = executor.endswith("_cuda_graphs")
+
+        if use_cudagraphs:
+            raise NotImplementedError
+
         executor = executor.replace("_cuda_graphs", "")
 
         if executor == "torch-eager":
-            assert not cudagraphs
+            assert not use_cudagraphs
             return executor, self._fn, None
 
         elif executor == "torch.compile":
-            options = {"triton.cudagraphs": True} if cudagraphs else None
-            return f"{executor}{'_cuda_graphs' if cudagraphs else ''}", torch.compile(self._fn, options=options), None
+            options = {"triton.cudagraphs": True} if use_cudagraphs else None
+            return (
+                f"{executor}{'_cuda_graphs' if use_cudagraphs else ''}",
+                torch.compile(self._fn, options=options),
+                None,
+            )
 
         elif executor == "torch.compile_nvfuser_prims":
-            assert not cudagraphs
+            assert not use_cudagraphs
             return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
 
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
-            name = f"thunder+nvfuser{'_cuda_graphs' if cudagraphs else ''}"
-            tom = thunder_compile(self._fn, cudagraphs=cudagraphs)
-            args, kwargs = self.make_batch()
+            name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
+            tom = thunder.compile(self._fn)
 
-            # NOTE: we don't always want to run the model to acquire the profile info, because
-            #   that will trigger compilation, and that will make lightning.compile's first
-            #   run look great, because we already compiled everything!
-            # TODO: refactor this so the profile info can be extracted AFTER the benchmark has run
-            profile_info = None
-            if with_profile_data:
-                profile_info = (tom(*args, **kwargs)["profile_info"],)
-            return (
-                name,
-                lambda *args, **kwargs: tom(*args, **kwargs)["result"],
-                profile_info,
-            )
+            return (name, tom, None)
 
         raise ValueError(f"Unknown executor {executor} requested")
 
@@ -164,7 +142,8 @@ def time_ns(fn, gen, *, warmup_iters=5, iters=20):
         _helper()
 
     for _ in range(iters):
-        result = None  # Let GC collect the previous result
+        # Sets result to None to allow the Python GC to collect the previous result
+        result = None
         t, result = _helper()
         elapsed.append(t)
 
@@ -258,79 +237,81 @@ def ns_to_us(ns):
     return f"{ns / 1000:.2f}"
 
 
-def prettyprint_program(profile, with_timings=False):
-    print(f"Prettyprinting profile of {len(profile)} fusions")
+# TODO Restore this utility as a separate tool
+# def prettyprint_program(profile, with_timings=False):
+#     print(f"Prettyprinting profile of {len(profile)} fusions")
 
-    for region in profile:
-        if region.is_supported:
-            print(f"Fused region of {len(region.symbols)} operators")
-        else:
-            print(f"Unfused region of {len(region.symbols)} operators")
+#     for region in profile:
+#         if region.is_supported:
+#             print(f"Fused region of {len(region.symbols)} operators")
+#         else:
+#             print(f"Unfused region of {len(region.symbols)} operators")
 
-        thunder_fusion = region.fusion
+#         thunder_fusion = region.fusion
 
-        # NOTE: this can occur if the region has no outputs
-        if thunder_fusion is None:
-            print("region has no outputs, so was not profiled")
-            continue
+#         # NOTE: this can occur if the region has no outputs
+#         if thunder_fusion is None:
+#             print("region has no outputs, so was not profiled")
+#             continue
 
-        def gen():
-            return construct_inputs_for_region(region), {}
+#         def gen():
+#             return construct_inputs_for_region(region), {}
 
-        fusion, code = get_torch_code_for_region(region, contiguous=False)
+#         fusion, code = get_torch_code_for_region(region, contiguous=False)
 
-        print("Torch code for the region:")
-        print(code)
+#         print("Torch code for the region:")
+#         print(code)
 
-        if with_timings:
-            pt2 = torch.compile(fusion)
+#         if with_timings:
+#             pt2 = torch.compile(fusion)
 
-            thunder_stats = time_ns(thunder_fusion, gen)
-            pt2_stats = time_ns(pt2, gen)
+#             thunder_stats = time_ns(thunder_fusion, gen)
+#             pt2_stats = time_ns(pt2, gen)
 
-            print(f"thunder+nvFuser median time: {ns_to_us(thunder_stats['median'])}")
-            print(f"pt2 median time: {ns_to_us(pt2_stats['median'])}")
-
-
-def summarize_profile(profile):
-    print(f"Summarizing profile of {len(profile)} fusions")
-
-    unfused_regions = 0
-    unfused_prims = set()
-    for region in profile:
-        if not region.is_supported:
-            unfused_regions += 1
-            for sym in region.symbols:
-                unfused_prims.add(sym.name)
-
-    print(f"{unfused_regions} fusions were executed by PyTorch")
-    print(f"Unfused prims: {unfused_prims}")
+#             print(f"thunder+nvFuser median time: {ns_to_us(thunder_stats['median'])}")
+#             print(f"pt2 median time: {ns_to_us(pt2_stats['median'])}")
 
 
-def construct_inputs_for_region(region):
-    inps = []
-    for inp in region.inputs:
-        # Unwraps variables
-        if isinstance(inp, Variable):
-            inp = inp.proxy
+# TODO Restore these utilities as a separate tool
+# def summarize_profile(profile):
+#     print(f"Summarizing profile of {len(profile)} fusions")
 
-        if isinstance(inp, proxies.TensorProxy):
-            tdtype = ttorch.torch_dtype(inp.dtype)
-            a = make_tensor(inp.shape, device="cuda", dtype=tdtype)
-            inps.append(a)
-        elif isinstance(inp, proxies.NumberProxy):
-            inps.append(inp.value)
-        else:
-            inps.append(inp)
+#     unfused_regions = 0
+#     unfused_prims = set()
+#     for region in profile:
+#         if not region.is_supported:
+#             unfused_regions += 1
+#             for sym in region.symbols:
+#                 unfused_prims.add(sym.name)
 
-    return inps
+#     print(f"{unfused_regions} fusions were executed by PyTorch")
+#     print(f"Unfused prims: {unfused_prims}")
 
 
-def get_torch_code_for_region(region, *, contiguous):
-    fusion, code = fuse_torch_region(
-        region.inputs, region.outputs, region.symbols, _return_code=True, _contiguous=contiguous
-    )
-    return fusion, code
+# def construct_inputs_for_region(region):
+#     inps = []
+#     for inp in region.inputs:
+#         # Unwraps variables
+#         if isinstance(inp, Variable):
+#             inp = inp.proxy
+
+#         if isinstance(inp, proxies.TensorProxy):
+#             tdtype = ltorch.torch_dtype(inp.dtype)
+#             a = make_tensor(inp.shape, device="cuda", dtype=tdtype)
+#             inps.append(a)
+#         elif isinstance(inp, proxies.NumberProxy):
+#             inps.append(inp.value)
+#         else:
+#             inps.append(inp)
+
+#     return inps
+
+
+# def get_torch_code_for_region(region, * contiguous):
+# fusion, code = fuse_torch_region(
+#     region.inputs, region.outputs, region.symbols, _return_code=True, _contiguous=contiguous
+# )
+# return fusion, code
 
 
 # def _prettyprint_thunder_nvfuser_profile_info(profile):
@@ -625,7 +606,7 @@ def _prettyprint_stats(name, stats):
 
 # FIXME: _preprocess doesn't work with *args, **kwargs
 # def var_constructor(shape=(64, 64), device='cuda', dtype=thunder.float32, **kwargs):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.torch_dtype(dtype)
 #     make = functools.partial(make_tensor, device=device, dtype=tdtype)
 
 #     def gen():
@@ -644,7 +625,7 @@ def _prettyprint_stats(name, stats):
 
 
 # def simple_number_conditional_constructor(shape=(64, 64), device="cuda", dtype=thunder.float32):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.to_torch_dtype(dtype)
 #     make = functools.partial(make_tensor, device=device, dtype=tdtype)
 
 #     def gen():
@@ -667,7 +648,7 @@ def _prettyprint_stats(name, stats):
 
 
 # def simple_kwarg_conditional_constructor(shape=(64, 64), device="cuda", dtype=thunder.float32):
-#     tdtype = ttorch.torch_dtype(dtype)
+#     tdtype = ltorch.to_torch_dtype(dtype)
 #     make = functools.partial(make_tensor, device=device, dtype=tdtype)
 
 #     def gen():
@@ -813,7 +794,7 @@ class GPTBenchMarkBase(Benchmark):
         gpt_config.update(**kwargs)
 
         assert cls.benchmark_factory is not None
-        tdtype = ttorch.torch_dtype(dtype)
+        tdtype = ltorch.to_torch_dtype(dtype)
         model = cls.benchmark_factory(gpt_config)
         if not isinstance(cls.benchmark_factory, types.FunctionType):
             model = model.to(device=device, dtype=tdtype)
@@ -860,7 +841,7 @@ class NanoGPTBenchmark(GPTBenchMarkBase):
     )
 
     def _make_batch(self, inshape, device, indices_dtype, **_) -> Tuple[List, Dict]:
-        x = make_tensor(inshape, low=0, high=255, device=device, dtype=ttorch.torch_dtype(indices_dtype))
+        x = make_tensor(inshape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
         return (x, None), {}
 
 
@@ -945,6 +926,9 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
         return (x,), {}
 
 
+c = math.sqrt(2.0 / math.pi)
+
+
 def new_gelu(a):
     return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))
 
@@ -979,7 +963,7 @@ class HuggingFaceSelfAttnBenchmark(Benchmark):
         self.seq_length = seq_length
         self.hf_config = cls._configs[config]
 
-        self.tdtype = ttorch.torch_dtype(dtype)
+        self.tdtype = ltorch.to_torch_dtype(dtype)
         bart_model = hf_bart_self_attn.BartAttention(
             self.hf_config["embed_dim"],
             self.hf_config["num_heads"],
@@ -1063,7 +1047,7 @@ class LLaMABlockBenchmark(Benchmark):
         self.seq_length = seq_length
         self.config = lit_llama_model.LLaMAConfig.from_name(config)
 
-        self.tdtype = ttorch.torch_dtype(dtype)
+        self.tdtype = ltorch.to_torch_dtype(dtype)
         model = lit_llama_model.Block(self.config).to(device=self.device, dtype=self.tdtype)
 
         super().__init__(
@@ -1130,6 +1114,11 @@ def benchmark(
     profile=False,
     nsight=False,
 ):
+    # TODO Restore option to print the program
+    # if print_program:
+    #     _, _, thunder_profile = benchmark.compiled_fn("thunder+nvfuser")
+    #     prettyprint_program(thunder_profile)
+
     # Workaround an initialization issue with Kineto and CUDA graphs
     #   https://github.com/pytorch/pytorch/issues/75504#issuecomment-1467065935
     if profile:

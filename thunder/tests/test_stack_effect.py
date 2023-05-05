@@ -6,7 +6,14 @@ from thunder.core.script.python_ir_data import FIXED_STACK_EFFECTS_DETAIL, SIMPL
 import pytest
 
 
-JUMP_DEPENDENT = {"FOR_ITER", "JUMP_IF_TRUE_OR_POP", "JUMP_IF_FALSE_OR_POP", "SETUP_WITH", "SETUP_FINALLY", "SETUP_ASYNC_WITH"}
+JUMP_DEPENDENT = {
+    "FOR_ITER",
+    "JUMP_IF_TRUE_OR_POP",
+    "JUMP_IF_FALSE_OR_POP",
+    "SETUP_WITH",
+    "SETUP_FINALLY",
+    "SETUP_ASYNC_WITH",
+}
 OPNAMES_TO_TEST = {*FIXED_STACK_EFFECTS_DETAIL.keys(), *SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL.keys()} | JUMP_DEPENDENT
 
 # Populate with the contents of `https://github.com/python/cpython/blob/74a2b79c6265c92ef381b5ff0dc63903bf0178ac/Python/bytecodes.c#L2090`
@@ -37,11 +44,12 @@ BYTECODES_C = """
 ...
 """
 
+
 def generate():
     reference_effects = []
     inst_pattern = re.compile(r"^\s*inst\(([A-Z_]+),\s*\((.*)\)\)\s*\{\s*$")
     for line in BYTECODES_C.splitlines(keepends=False):
-        if (match := inst_pattern.search(line)):
+        if match := inst_pattern.search(line):
             opname, effect = match.groups()
             if opname in OPNAMES_TO_TEST:
                 reference_effects.append((opname, effect.strip()))

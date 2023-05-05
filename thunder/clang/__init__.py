@@ -1,108 +1,43 @@
 import math
 from functools import reduce
 from numbers import Number
-from typing import List, Sequence
+from typing import Sequence, Union, List, Optional
 
 import thunder.core.dtypes as dtypes
 
 # TODO: remove prims import
-from thunder.core import prims, utils
+from thunder.core import utils
+import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy
+from thunder.core.langctx import langctx
+import thunder.core.devices as devices
 
-# This file defines Thunder's "core" language.
+# This file defines the operations in lightning.compile's "core" language.
 #
 # These operators are intended to be used when defining user-facing languages, like the torch or NumPy
 # languages.
-#
-# This file depends on all other files in core.
 
-__all__ = [
-    # Data movement and transformation operations
-    "maybe_convert_to_dtype",
-    # Tensor creation operations
-    "arange",
-    "full",
-    "full_like",
-    "uniform",
-    # Shape operations
-    "cat",
-    "compute_broadcast_shape",
-    "expand",
-    "maybe_broadcast",
-    "reshape",
-    "slice_in_dim",
-    "squeeze",
-    "stack",
-    "transpose",
-    "take",
-    "take_along_axis",
-    "unsqueeze",
-    # Elemenwise unary operations
-    "abs",
-    "acos",
-    "acosh",
-    "asin",
-    "asinh",
-    "atan",
-    "atanh",
-    "bitwise_not",
-    "ceil",
-    "cos",
-    "cosh",
-    "erf",
-    "erfc",
-    "erfcinv",
-    "erfinv",
-    "exp",
-    "exp2",
-    "expm1",
-    "floor",
-    "isfinite",
-    "lgamma",
-    "log",
-    "log10",
-    "log1p",
-    "log2",
-    "neg",
-    "ndtri",
-    "reciprocal",
-    "round",
-    "rsqrt",
-    "sigmoid",
-    "sign",
-    "silu",
-    "sin",
-    "sinh",
-    "sqrt",
-    "tan",
-    "tanh",
-    "trunc",
-    # Elementwise binary operations
-    "add",
-    "atan2",
-    "bitwise_and",
-    "eq",
-    "fmod",
-    "ge",
-    "lt",
-    "mul",
-    "nextafter",
-    "pow",
-    "remainder",
-    "sub",
-    "true_divide",
-    # Elementwise ternary operations
-    "where",
-    # Language context
-    "CoreLangCtx",
-]
+__all__ = []
+
+
+def _module_extractor() -> None:
+    pass
+
+
+def clang_ctx(fn):
+    module_name = clang_ctx.__module__
+    module = utils.get_module(module_name)
+    _fn = langctx(module)(fn)
+    return _fn
+
 
 #
 # Data movement and transformation operations
 #
 
 
-# TODO: may want to revise enforce_safe_casting to be more like NumPy's
+# TODO Review revising enforce_safe_casting to be more like NumPy's
+@clang_ctx
 def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
     """If a has the same dtype as the given dtype, returns a unmodified.
 
@@ -114,9 +49,11 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
     if isinstance(a, Sequence):
         return tuple(maybe_convert_to_dtype(x, dtype) for x in a)
     if isinstance(a, TensorProxy):
-        pass
+        # Translates numbertypes to dtypes
+        if dtypes.is_numbertype(dtype):
+            dtype = dtypes.numbertype_to_dtype(dtype)
     elif isinstance(a, Number):
-        # NOTE: this allows conversions like (5, float32) -> 5., which is a little odd
+        # NOTE This allows conversions like (5, float32) -> 5., which is a little odd
         dtype = utils.dtype_to_numbertype(dtype)
     else:
         raise ValueError(
@@ -135,11 +72,21 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
     return a
 
 
+# TODO Consider maybe_device_put analogous to maybe_convert_to_dtype above
+@clang_ctx
+def device_put(a, device):
+    if device is not None and a.device != device:
+        return prims.device_put(a, device)
+    return a
+
+
 #
 # Tensor creation operations
 #
+# TODO Is there a good helper/wrapper for _like functions?
 
 
+# TODO Add type annotations
 def arange(*, start, step, stop, device, dtype=None):
     # Validates inputs
     # Checks that start, step, and stop are finite
@@ -191,38 +138,61 @@ def arange(*, start, step, stop, device, dtype=None):
     return result
 
 
-# TODO: add error checking
+@clang_ctx
 def full(shape, fill_value, *, device, dtype=None):
-    fill_value_dtype = dtypes.to_dtype(fill_value)
+    fill_value_dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     dtype = dtype if dtype is not None else fill_value_dtype
-
-    # Ensures the requested fill_value can be safely cast to the dtype
-    # NOTE: this is always true if the dtype is inferred
-    utils.check(
-        utils.can_safe_cast_number_to(fill_value, fill_value_dtype),
-        lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}!",
-    )
+    device = devices.to_device(device)
 
     return prims.full(shape, fill_value, device=device, dtype=dtype)
 
 
+# TODO Handle a being a number
+@clang_ctx
 def full_like(a, fill_value, *, device=None, dtype=None):
-    if isinstance(a, Number):
-        dtype = type(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
-        utils.check(
-            device is None or device == "cpu",
-            "Numbers can only be created on the CPU, but found a request for device={device}",
-        )
-        return dtype(fill_value)
+    # if isinstance(a, Number):
+    #     dtype = type(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
+    #     utils.check(
+    #         device is None or device == "cpu",
+    #         "Numbers can only be created on the CPU, but found a request for device={device}",
+    #     )
+    #     return dtype(fill_value)
 
-    device = device if device is not None else a.device
+    device = devices.to_device(device) if device is not None else a.device
     dtype = dtype if dtype is not None else a.true_dtype
 
     return full(a.shape, fill_value, device=device, dtype=dtype)
 
 
-def uniform(shape, minval=0.0, maxval=1.0, *, dtype, device):
-    return prims.uniform(shape, minval, maxval, dtype=dtype, device=device)
+# TODO Restore device and dtype
+@clang_ctx
+def uniform(
+    shape: Sequence[int],
+    minval: Number = 0.0,
+    maxval: Number = 1.0,
+    *,
+    device: Union[str, devices.Device],
+    dtype: dtypes.dtype,
+) -> TensorProxy:
+    device = devices.to_device(device)
+
+    return prims.uniform(shape, minval, maxval, device=device, dtype=dtype)
+
+
+# TODO Handle a being a number
+@clang_ctx
+def uniform_like(
+    a: TensorProxy,
+    minval: Number = 0.0,
+    maxval: Number = 1.0,
+    *,
+    device: Optional[Union[str, devices.Device]] = None,
+    dtype: Optional[dtypes.dtype] = None,
+):
+    device = devices.to_device(device) if device is not None else a.device
+    dtype = dtype if dtype is not None else a.true_dtype
+
+    return prims.uniform(a.shape, minval, maxval, device=device, dtype=dtype)
 
 
 #
@@ -232,6 +202,7 @@ def uniform(shape, minval=0.0, maxval=1.0, *, dtype, device):
 
 # Expands a to the specified shape, possibly adding new dimensions and expanding
 #   dimensions of length 1 to any length
+@clang_ctx
 def expand(a, *shape):
     shape = utils.extract_shape_from_varargs(shape)
 
@@ -261,6 +232,7 @@ def expand(a, *shape):
 
 # NOTE: shape may have a single -1 value, which is a marker that the length of that dimension
 #   should be inferred
+@clang_ctx
 def reshape(a, shape):
     # Checks for -1 marker value
     numel = 1
@@ -278,9 +250,8 @@ def reshape(a, shape):
         return prims.reshape(a, shape)
 
     # Constructs the inferred shape, replacing -1 with the necessary length
-    # TODO: this error message could probably be improved
-    utils.check(a.numel() % numel == 0, "Can't infer length of dimension {neg_one_idx}!")
-    remaining = a.numel() // numel
+    utils.check(a.numel % numel == 0, lambda: f"Trying to reshape, but can't infer how to reshape {a.shape} to {shape}")
+    remaining = a.numel // numel
     shape = list(shape)
     shape[neg_one_idx] = remaining
     # NOTE: alternatively a new tuple could be constructed as follows:
@@ -291,6 +262,7 @@ def reshape(a, shape):
 # https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.slice_in_dim.html
 # NOTE: this implementation derived from
 #   https://jax.readthedocs.io/en/latest/_modules/jax/_src/lax/slicing.html#slice_in_dim
+@clang_ctx
 def slice_in_dim(a, start_index, limit_index, stride=1, dim=0):
     len_dim = a.shape[dim]
     start_index = utils.canonicalize_dim_idx(len_dim, start_index)
@@ -319,22 +291,26 @@ def slice_in_dim(a, start_index, limit_index, stride=1, dim=0):
     return prims.slice_prim(a, start_indices, limit_indices, strides)
 
 
+@clang_ctx
 def squeeze(a, dims):
     dims = utils.canonicalize_dims(a.ndim, dims)
     result = prims.squeeze(a, dims)
     return result
 
 
+@clang_ctx
 def transpose(a, permutation):
     permutation = utils.canonicalize_dims(a.ndim, permutation)
     return prims.transpose(a, permutation)
 
 
+@clang_ctx
 def take(a, indices, axis):
     axis = utils.canonicalize_dim(a.ndim, axis)
     return prims.take(a, indices, axis)
 
 
+@clang_ctx
 def take_along_axis(arr, indices, axis):
     axis = utils.canonicalize_dim(arr.ndim, axis)
     return prims.take_along_axis(arr, indices, axis)
@@ -344,6 +320,7 @@ def take_along_axis(arr, indices, axis):
 # Added dimensions are specified by their position in the final tensor
 # Based on https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.expand_dims.html
 # NOTE: the dimensions do not have to be specified in any order
+@clang_ctx
 def unsqueeze(a, dims):
     # Short-circuits if dims is empty
     if len(dims) == 0:
@@ -373,11 +350,13 @@ def unsqueeze(a, dims):
     return prims.broadcast_in_dim(a, shape, broadcast_dims)
 
 
+@clang_ctx
 def cat(tensors: List[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
     return prims.cat(tensors, dim)
 
 
+@clang_ctx
 def stack(tensors: List[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in a new (the given) dimension."""
     shapes = tuple(t.shape for t in tensors)
@@ -390,6 +369,7 @@ def stack(tensors: List[TensorProxy], dim: int):
     return prims.cat(tensors_, dim)
 
 
+@clang_ctx
 def compute_broadcast_shape(*_shapes):
     """Computes the common shape with the fewest dimensions that all input shapes can be broadcast to."""
     shapes = tuple(x for x in filter(lambda x: x is not None, _shapes))
@@ -416,6 +396,7 @@ def compute_broadcast_shape(*_shapes):
     return tuple(common_shape)
 
 
+@clang_ctx
 def matrix_transpose(a: TensorProxy) -> TensorProxy:
     """Transposes the last two dimensions of a tensor.
 
@@ -445,6 +426,7 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 
 # TODO: add scalar support
 # TODO: review hasattr pattern
+@clang_ctx
 def maybe_broadcast(*args):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
@@ -464,13 +446,12 @@ def maybe_broadcast(*args):
 #
 # Elementwise unary operations
 #
-def _elementwise_unary_helper(prim, type_promotion_kind, a, *, supported_dtypes=None):
+# TODO Consider annotating these operators with kind and type promotion information
+
+
+# TODO Add supported dtypes
+def _elementwise_unary_wrapper(a, *, prim, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
-    if supported_dtypes is not None:
-        utils.check(
-            computation_dtype in supported_dtypes,
-            lambda: f"Unsupported dtype {computation_dtype}!",
-        )
 
     a = maybe_convert_to_dtype(a, computation_dtype)
 
@@ -480,102 +461,243 @@ def _elementwise_unary_helper(prim, type_promotion_kind, a, *, supported_dtypes=
     return result
 
 
-def abs(a):
+# TODO Return self for bool and uint datatypes?
+@clang_ctx
+def abs(a: Union[TensorProxy, Number]):
+    # Short-circuits for unsigned types like bool and int8
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return a
 
-    return _elementwise_unary_helper(prims.abs, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.abs, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT
+    )
 
 
+@clang_ctx
 def acos(a):
-    return _elementwise_unary_helper(prims.acos, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.acos, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def acosh(a):
-    return _elementwise_unary_helper(prims.acosh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.acosh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def asin(a):
-    return _elementwise_unary_helper(prims.asin, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.asin, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def asinh(a):
-    return _elementwise_unary_helper(prims.asinh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.asinh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def atan(a):
-    return _elementwise_unary_helper(prims.atan, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.atan, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def atanh(a):
-    return _elementwise_unary_helper(prims.atanh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.atanh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def bitwise_not(a):
-    return _elementwise_unary_helper(prims.bitwise_not, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.bitwise_not,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE,
+    )
 
 
+@clang_ctx
 def ceil(a):
-    if utils.is_exact_dtype(utils.to_dtype(a)):
+    if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
         return a
 
-    return _elementwise_unary_helper(prims.ceil, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.ceil,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
 
 
+@clang_ctx
 def cos(a):
-    return _elementwise_unary_helper(prims.cos, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.cos, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def cosh(a):
-    return _elementwise_unary_helper(prims.cosh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.cosh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def erf(a):
-    return _elementwise_unary_helper(prims.erf, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.erf, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def erfc(a):
-    return _elementwise_unary_helper(prims.erfc, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.erfc, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def erfcinv(a):
-    return _elementwise_unary_helper(prims.erfcinv, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.erfcinv, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def erfinv(a):
-    return _elementwise_unary_helper(prims.erfinv, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.erfinv, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def exp(a):
-    return _elementwise_unary_helper(prims.exp, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.exp, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def exp2(a):
-    return _elementwise_unary_helper(prims.exp2, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.exp2, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def expm1(a):
-    return _elementwise_unary_helper(prims.expm1, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.expm1, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def floor(a):
     if utils.is_exact_dtype(utils.to_dtype(a)):
         return a
 
-    return _elementwise_unary_helper(prims.floor, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.floor,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
 
 
+@clang_ctx
 def isfinite(a):
     if utils.is_exact_dtype(utils.to_dtype(a)):
         return full_like(a, True, dtype=dtypes.bool8)
 
-    return _elementwise_unary_helper(prims.isfinite, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a)
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.isfinite,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL,
+    )
 
 
+@clang_ctx
+def lgamma(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.lgamma, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
+def log(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.log, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
+def log10(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.log10, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
+def log1p(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.log1p, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
+def log2(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.log2, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
+def ndtri(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.ndtri, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+# TODO Should this have PRESERVE as its type promotion kind?
+@clang_ctx
+def neg(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.neg, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+@clang_ctx
+def reciprocal(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.reciprocal, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
+def round(a):
+    if utils.is_exact_dtype(utils.to_dtype(a)):
+        return a
+
+    return _elementwise_unary_wrapper(
+        a, prim=prims.round, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+@clang_ctx
 def rsqrt(a):
-    return _elementwise_unary_helper(prims.rsqrt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.rsqrt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def sigmoid(a):
     # We manually promote a, then determine type of the constant 1.0 value
     computation_dtype, result_dtype = utils.elementwise_type_promotion(
@@ -583,105 +705,77 @@ def sigmoid(a):
     )
     a = maybe_convert_to_dtype(a, computation_dtype)
     one = 1 + 0j if isinstance(computation_dtype, dtypes.complexfloating) else 1.0
-    result = reciprocal(add(one, exp(neg(a))))
+    result = reciprocal(add(one, exp(-a)))
     result = maybe_convert_to_dtype(result, result_dtype)
     return result
 
 
-def silu(a):
-    return mul(a, sigmoid(a))
-
-
+# TODO Review type promotionkind for sign
 def sign(a):
-    return _elementwise_unary_helper(prims.sign, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.sign, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
+    )
 
 
+@clang_ctx
+def silu(a):
+    return a * sigmoid(a)
+
+
+@clang_ctx
 def sin(a):
-    return _elementwise_unary_helper(prims.sin, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.sin, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def sinh(a):
-    return _elementwise_unary_helper(prims.sinh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.sinh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def sqrt(a):
-    return _elementwise_unary_helper(prims.sqrt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.sqrt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
+@clang_ctx
 def tan(a):
-    return _elementwise_unary_helper(prims.tan, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.tan, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
 def tanh(a):
-    return _elementwise_unary_helper(prims.tanh, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def lgamma(a):
-    return _elementwise_unary_helper(prims.lgamma, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def log(a):
-    return _elementwise_unary_helper(prims.log, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def log10(a):
-    return _elementwise_unary_helper(prims.log10, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def log1p(a):
-    return _elementwise_unary_helper(prims.log1p, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def log2(a):
-    return _elementwise_unary_helper(prims.log2, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def neg(a):
-    return _elementwise_unary_helper(prims.neg, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
-
-
-def ndtri(a):
-    return _elementwise_unary_helper(prims.ndtri, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def ndtri(a):
-    return _elementwise_unary_helper(prims.ndtri, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def reciprocal(a):
-    return _elementwise_unary_helper(prims.reciprocal, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a)
-
-
-def round(a):
-    if utils.is_exact_dtype(utils.to_dtype(a)):
-        return a
-
-    return _elementwise_unary_helper(prims.round, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+    return _elementwise_unary_wrapper(
+        a, prim=prims.tanh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
 def trunc(a):
-    return _elementwise_unary_helper(prims.trunc, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a)
+    if utils.is_exact_dtype(utils.to_dtype(a)):
+        return a
+
+    return _elementwise_unary_wrapper(
+        a, prim=prims.trunc, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
 
 
 #
 # Elementwise binary operations
 #
+# TODO Consider annotating these operators with kind and type promotion information
 
 
-# Helper function that implements broadcasting and type promotion for elementwise binary operations
-# TODO: consider making type promotion kind an annotation on operations so it can be queried
-#   programmatically
-def _elementwise_binary_helper(prim, type_promotion_kind, a, b, *, supported_dtypes=None):
+# TODO Add supported dtypes
+def _elementwise_binary_wrapper(a, b, *, prim, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
 
     a, b = maybe_broadcast(a, b)
-
-    if supported_dtypes is not None:
-        utils.check(
-            dtypes.to_strong_dtype(computation_dtype) in dtypes.resolve_dtypes(supported_dtypes),
-            lambda: f"Unsupported dtype {computation_dtype}!",
-        )
-
     a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
 
     result = prim(a, b)
@@ -690,94 +784,107 @@ def _elementwise_binary_helper(prim, type_promotion_kind, a, b, *, supported_dty
     return result
 
 
+@clang_ctx
 def add(a, b):
-    return _elementwise_binary_helper(prims.add, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+    return _elementwise_binary_wrapper(a, b, prim=prims.add)
 
 
+@clang_ctx
 def atan2(a, b):
-    return _elementwise_binary_helper(prims.atan2, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a, b)
-
-
-def bitwise_and(a, b):
-    return _elementwise_binary_helper(
-        prims.bitwise_and,
-        utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
-        a,
-        b,
-        supported_dtypes=(dtypes.exact,),
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.atan2, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
+@clang_ctx
+def bitwise_and(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.bitwise_and, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+@clang_ctx
 def eq(a, b):
-    return _elementwise_binary_helper(prims.eq, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.eq, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
 
 
+@clang_ctx
 def fmod(a, b):
-    return _elementwise_binary_helper(prims.fmod, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+    return _elementwise_binary_wrapper(a, b, prim=prims.fmod)
 
 
+# TODO Review mod vs fmod
+def mod(a, b):
+    return fmod(a, b)
+
+
+@clang_ctx
 def ge(a, b):
-    return _elementwise_binary_helper(prims.ge, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.ge, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
 
 
+@clang_ctx
 def lt(a, b):
-    return _elementwise_binary_helper(prims.lt, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL, a, b)
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.lt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
 
 
+@clang_ctx
 def mul(a, b):
-    return _elementwise_binary_helper(prims.mul, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+    return _elementwise_binary_wrapper(a, b, prim=prims.mul)
 
 
+@clang_ctx
 def nextafter(a, b):
-    return _elementwise_binary_helper(prims.nextafter, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE, a, b)
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.nextafter, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
+    )
 
 
+@clang_ctx
 def pow(a, b):
-    return _elementwise_binary_helper(prims.pow, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG, a, b)
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.pow, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG
+    )
 
 
+@clang_ctx
 def remainder(a, b):
-    return _elementwise_binary_helper(prims.remainder, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+    return _elementwise_binary_wrapper(a, b, prim=prims.remainder)
 
 
+@clang_ctx
 def sub(a, b):
-    return _elementwise_binary_helper(prims.sub, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT, a, b)
+    return _elementwise_binary_wrapper(a, b, prim=prims.sub)
 
 
+@clang_ctx
 def true_divide(a, b):
-    return _elementwise_binary_helper(prims.div, utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT, a, b)
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 
 #
-# Elementwise ternary operation
+# Conditional operators
 #
 
 
+@clang_ctx
 def where(pred, a, b):
     # Performs type promotion
     promotiontype, _ = utils.elementwise_type_promotion(
         a, b, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
     )
+
     a, b = maybe_convert_to_dtype(a, promotiontype), maybe_convert_to_dtype(b, promotiontype)
 
     # Broadcasts
     pred, a, b = maybe_broadcast(pred, a, b)
 
     return prims.where(pred, a, b)
-
-
-class CoreLangCtx:
-    def __init__(self):
-        pass
-
-    def add(self, a, b):
-        return add(a, b)
-
-    def sub(self, a, b):
-        return sub(a, b)
-
-    def true_divide(self, a, b):
-        return true_divide(a, b)
-
-    def intercept(self, op, *args, **kwargs):
-        return None

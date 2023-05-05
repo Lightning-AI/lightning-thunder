@@ -3,66 +3,53 @@ import os
 import sys
 from functools import wraps
 from itertools import product
+from typing import Sequence, Callable
 
 import pytest
+import torch
+
 from lightning_utilities.core.imports import package_available
 
 import thunder.core.dtypes as datatypes
-from thunder import make_traced
+import thunder.core.devices as devices
+import thunder.executors as executors
 
-__all__ = [
-    "available_device_types",
-    "executors",
-    "ops",
-    "NOTHING",
-    "JAX_AVAILABLE",
-]
+import thunder
 
 
-# A marker for actually wanting NOTHING instead of specifying nothing
+# A marker for actually wanting NOTHING instead of an unspecified value (marked with None)
 class NOTHING:
     pass
 
 
 JAX_AVAILABLE = package_available("jax")
 NVFUSER_AVAILABLE = package_available("nvfuser")
-TORCH_AVAILABLE = package_available("torch")
-
-try:
-    import torch._C._nvfuser
-
-    TORCH_C_NVFUSER_AVAILABLE = True
-except ImportError:
-    TORCH_C_NVFUSER_AVAILABLE = False
 
 
 # TODO: Add device type functionality to an object in this list
-def _all_device_types():
-    return ("cpu", "cuda")
+def _all_devicetypes() -> Sequence[devices.DeviceType]:
+    return devices.all_devicetypes
 
 
-def available_device_types():
-    if TORCH_AVAILABLE:
-        import torch
-
-        # TODO: technically CUDA can be available without a CUDA device and that might be interesting to test
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            return ("cpu", "cuda")
-    return ("cpu",)
+# TODO Technically CUDA can be available without a CUDA device and that might be interesting to test
+def available_devicetypes():
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        return devices.all_devicetypes
+    return (devices.DeviceType.CPU,)
 
 
 class Executor:
-    def supports_dtype(self, dtype):
+    def supports_dtype(self, dtype: datatypes.dtype) -> bool:
         return dtype in datatypes.resolve_dtypes(self.supported_dtypes)
 
-    def supports_devicetype(self, devicetype):
+    def supports_devicetype(self, devicetype: devices.DeviceType) -> bool:
         return devicetype in self.supported_devicetypes
 
 
-# TODO: extend with the ability to convert sample inputs to be appropriate for the executor
+# TODO Convert to singletons or just add to executor logic
 class nvFuser(Executor):
     name = "nvFuser"
-    supported_devicetypes = ("cuda",)
+    supported_devicetypes = (devices.DeviceType.CUDA,)
     supported_dtypes = (
         datatypes.floating,
         datatypes.bool8,
@@ -83,7 +70,15 @@ class nvFuser(Executor):
         return self.ctx
 
     def make_callable(self, fn, **kwargs):
-        return make_traced(fn, executor="nvfuser", **kwargs)
+        executors = thunder.executors
+        executors_list = [executors.NVFUSER, executors.TORCH, executors.PYTHON]
+        # TODO: an error is thrown for many functions because __code__ and
+        # inspect.signature for wrapped functions is not matching.
+        # KeyError: 'args'
+        # thunder/core/script/frontend.py:125: KeyError
+        # with disable_preprocessing=False
+        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
+        return thunder.compile(fn, executors_list=executors_list, disable_preprocessing=disable_preprocessing, **kwargs)
 
     # TODO: refactor this so can query the nvFuserCtx for the version
     def version(self):
@@ -92,13 +87,14 @@ class nvFuser(Executor):
 
             if hasattr(nvfuser, "version"):
                 return nvfuser.version()
-        # past -1 is not compatible with LooseVersion and gave me lots of pain
+
         return "0"
 
 
+# TODO Convert to singletons or just add to executor logic
 class TorchEx(Executor):
     name = "TorchEx"
-    supported_devicetypes = ("cpu", "cuda")
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
     ctx = None
@@ -112,92 +108,94 @@ class TorchEx(Executor):
         return self.ctx
 
     def make_callable(self, fn, **kwargs):
-        return make_traced(fn, executor="torch", **kwargs)
+        executors = thunder.executors
+        executors_list = [executors.TORCH, executors.PYTHON]
+        # TODO: an error is thrown for many functions because __code__ and
+        # inspect.signature for wrapped functions is not matching.
+        # KeyError: 'args'
+        # thunder/core/script/frontend.py:125: KeyError
+        # with disable_preprocessing=False
+        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
+        return thunder.compile(fn, executors_list=executors_list, disable_preprocessing=disable_preprocessing, **kwargs)
 
     def version(self):
-        # FIXME: which `torch`?
         return torch.__version__
+
+
+# TODO Refactor these executors into the actual executor (sub)modules
+TorchExecutor = TorchEx()
+nvFuserExecutor = None
+
+if NVFUSER_AVAILABLE:
+    nvFuserExecutor = nvFuser()
 
 
 def _all_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
-    executors = []
+    executors = [TorchExecutor]
 
-    if TORCH_AVAILABLE:
-        executors.append(TorchEx())
-
-        # TODO: refactor this so can query the nvFuserCTX for nvfuser
-        #   (this requires making the ctx importable without nvFuser)
-        import torch
-
-        if NVFUSER_AVAILABLE or TORCH_C_NVFUSER_AVAILABLE:
-            executors.append(nvFuser())
+    if NVFUSER_AVAILABLE:
+        executors.append(nvFuserExecutor)
 
     return executors
 
 
-def benchmark_executors():
-    """Constructs a list of executors to use when benchmarking.
-
-    These executors should define "get_callable", which returns a callable version of a given function.
-    """
-    executors = []
-    if NVFUSER_AVAILABLE or TORCH_C_NVFUSER_AVAILABLE:
-        executors.append(nvFuser())
-    return executors
-
-
-# TODO: refactor with _instantiate_opinfo_test_template
-def _instantiate_executor_test_template(template, scope, *, executor, device, dtype):
-    # Ex. test_foo_CUDA_float32
-    # TODO: fix test name when dtype is None
-    test_name = "_".join((template.__name__, executor.name, device.upper(), str(dtype)))
+# Translates test templates with names like test_foo into instantiated tests with names like
+#   test_foo_nvFuser_CUDA_float32
+# TODO Fix test name when dtype is None
+# TODO Refactor with _instantiate_opinfo_test_template
+# TODO Should the device str include the actual device number, or just the device type like now?
+# TODO Support multiple devices
+def _instantiate_executor_test_template(
+    template: Callable, scope, *, executor: Executor, device: devices.Device, dtype: datatypes.dtype
+) -> Callable:
+    device_str = devices.devicetype_string(device.devicetype)
+    test_name = "_".join((template.__name__, executor.name, device_str, str(dtype)))
 
     def test():
-        # TODO: currently this passes the device type as a string, but actually a device or multiple devices
-        #   should be passed to the test
-        result = template(executor, device, dtype)
+        result = template(executor, device_str, dtype)
         return result
 
     # Mimics the instantiated test
-    # TODO: review this mimicry -- are there other attributes to mimic?
+    # TODO Review this mimicry -- are there other attributes to mimic?
     test.__name__ = test_name
     test.__module__ = test.__module__
 
     return test
 
 
-# TODO: add decorator support, support for test directives -- how would this control assert_close behavior?
-def _instantiate_opinfo_test_template(template, scope, *, opinfo, executor, device, dtype):
+# TODO Support multiple devices
+def _instantiate_opinfo_test_template(
+    template: Callable, scope, *, opinfo, executor: Executor, device: devices.Device, dtype: datatypes.dtype
+) -> Callable:
     """Instanties a test template for an operator."""
 
-    # Ex. test_foo_CUDA_float32
-    test_name = "_".join((template.__name__, opinfo.name, executor.name, device.upper(), str(dtype)))
+    device_str = devices.devicetype_string(device.devicetype)
+
+    test_name = "_".join((template.__name__, opinfo.name, executor.name, device_str, str(dtype)))
 
     def test():
-        # TODO: currently this passes the device type as a string, but actually a device or multiple devices
-        #   should be passed to the test
-        result = template(opinfo, device, dtype, executor)
+        result = template(opinfo, device_str, dtype, executor)
         return result
 
-    # TODO: pass device type explicitly
     for decorator in opinfo.test_decorators(template.__name__, executor, device, dtype):
         test = decorator(test)
 
     # Mimics the instantiated test
-    # TODO: review this mimicry -- are there other attributes to mimic?
+    # TODO Review this mimicry -- are there other attributes to mimic?
+    #   Probably want to refactor this to codeutils
     test.__name__ = test_name
     test.__module__ = test.__module__
 
     return test
 
 
-# TODO: don't pass the device type to the test, select an actual device
-# TODO: example uses, note this must be the LAST decorator applied
+# TODO Add documentation and example uses; not this must be the LAST decorator applied
+# TODO Support more dtype specification flexibility
+# TODO Add ability to run on other devices by default (like cuda:1 instead of cuda:0 being the default)
 class ops:
-    # TODO: support other kinds of dtype specifications
     def __init__(
-        self, opinfos, *, supported_executors=None, supported_device_types=None, supported_dtypes=None, scope=None
+        self, opinfos, *, supported_executors=None, supported_devicetypes=None, supported_dtypes=None, scope=None
     ):
         self.opinfos = opinfos
 
@@ -205,8 +203,8 @@ class ops:
             set(supported_executors) if supported_executors is not None else set(_all_executors())
         )
 
-        self.supported_device_types = (
-            set(supported_device_types) if supported_device_types is not None else set(_all_device_types())
+        self.supported_devicetypes = (
+            set(supported_devicetypes) if supported_devicetypes is not None else set(_all_devicetypes())
         )
         self.supported_dtypes = (
             datatypes.resolve_dtypes(supported_dtypes) if supported_dtypes is not None else datatypes.all_dtypes
@@ -222,22 +220,22 @@ class ops:
         self.scope = scope
 
     def __call__(self, test_template):
-        # NOTE: unlike a typical decorator, this __call__ does not return a function, because it may
+        # NOTE Unlike a typical decorator, this __call__ does not return a function, because it may
         #   (and typically does) instantiate multiple functions from the template it consumes
         #   Since Python doesn't natively support one-to-many function decorators, the produced
         #   functions are directly assigned to the requested scope (the caller's global scope by default)
 
         for opinfo in self.opinfos:
-            device_types = (
-                opinfo.device_types()
-                .intersection(self.supported_device_types)
-                .intersection(set(available_device_types()))
+            devicetypes = (
+                opinfo.devicetypes().intersection(self.supported_devicetypes).intersection(set(available_devicetypes()))
             )
-            for executor, devicetype in product(self.supported_executors, device_types):
+            for executor, devicetype in product(self.supported_executors, devicetypes):
                 if not executor.supports_devicetype(devicetype):
                     continue
 
-                # TODO: pass device_type to dtypes()
+                device = devices.Device(devicetype, 0)
+
+                # TODO Pass device_type to dtypes()
                 dtypes = opinfo.dtypes()
                 if self.supported_dtypes != (None,):
                     dtypes = dtypes.intersection(self.supported_dtypes)
@@ -251,7 +249,7 @@ class ops:
                         self.scope,
                         opinfo=opinfo,
                         executor=executor,
-                        device=devicetype,
+                        device=device,
                         dtype=dtype,
                     )
                     # Adds the instantiated test to the requested scope
@@ -264,7 +262,7 @@ class executors:
     # TODO: support other kinds of dtype specifications
     def __init__(self, *, executors=None, devicetypes=None, dtypes=None, scope=None):
         self.executors = set(executors) if executors is not None else set(_all_executors())
-        self.devicetypes = set(devicetypes) if devicetypes is not None else set(available_device_types())
+        self.devicetypes = set(devicetypes) if devicetypes is not None else set(available_devicetypes())
 
         if dtypes == NOTHING:
             self.dtypes = (None,)
@@ -288,6 +286,8 @@ class executors:
             if not executor.supports_devicetype(devicetype):
                 continue
 
+            device = devices.Device(devicetype, 0)
+
             for dtype in self.dtypes:
                 if dtype is not None and not executor.supports_dtype(dtype):
                     continue
@@ -296,14 +296,14 @@ class executors:
                     test_template,
                     self.scope,
                     executor=executor,
-                    device=devicetype,
+                    device=device,
                     dtype=dtype,
                 )
                 # Adds the instantiated test to the requested scope
                 self.scope[test.__name__] = test
 
 
-def run_snippet(snippet, opinfo, device_type, dtype, *args, **kwargs):
+def run_snippet(snippet, opinfo, devicetype, dtype, *args, **kwargs):
     try:
         snippet(*args, **kwargs)
     except Exception as e:
@@ -314,7 +314,7 @@ def run_snippet(snippet, opinfo, device_type, dtype, *args, **kwargs):
         # NOTE: PYTEST_CURRENT_TEST is set by pytest
         if "PYTEST_CURRENT_TEST" in os.environ:
             raise e
-        return e, exc_info, snippet, opinfo, device_type, dtype, args, kwargs
+        return e, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs
 
     return None
 

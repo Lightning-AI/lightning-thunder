@@ -1,369 +1,840 @@
-import operator
-from functools import partial, reduce
 from numbers import Number
+from typing import Type, Optional, Any, Sequence, Tuple, List, Union
+from functools import reduce, partial
+import operator
 
+from thunder.core.trace import VariableInterface, get_tracectx
+from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
+import thunder.core.baseutils as baseutils
+from thunder.core.langctx import langctx_for, get_langctx
+import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.trace import get_language_context
-
-# This file defines Thunder's most basic proxies, stand-ins for other Python objects that
-#   record Python interactions for the tracing context.
-
-# This file depends on trace.py and the dtypes submodule.
-
-__all__ = [
-    # Proxies
-    "Proxy",
-    "NumberProxy",
-    "FloatProxy",
-    "IntegerProxy",
-    "TensorProxy",
-    # Proxy helpers and types
-    "proxy",
-    "make_proxy_name",
-]
 
 
-class Proxy:
-    def __init__(self, name):
-        self.name = name
+# TODO Document this class
+class Variable:
+    def __init__(self, p: ProxyInterface):
+        self.proxy = p
 
     def __hash__(self):
-        raise NotImplemented
+        return hash(self.proxy.name)
 
-    def replace_name(self, name):
-        """Returns a copy of this proxy with a new name."""
-        return self.__class__(name=name)
+    def __eq__(self, other):
+        if isinstance(other, Variable):
+            return self.proxy.name == other.proxy.name
+
+        return False
+
+    def __repr__(self):
+        return str(self.proxy)
 
 
-class NumberProxy(Proxy):
-    def __init__(self, *, name, value, python_type):
+def variableify(x: Any) -> Any:
+    if isinstance(x, ProxyInterface):
+        return Variable(x)
+
+    return x
+
+
+def unvariableify(x: Any) -> Any:
+    if isinstance(x, Variable):
+        return x.proxy
+
+    return x
+
+
+# TODO Document this class
+class Proxy(VariableInterface, ProxyInterface):
+    def __init__(self, name=None):
+        trace = get_tracectx()
+        if name is None:
+            name = trace.make_name()
+        else:
+            trace.add_name(name)
+
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def __repr__(self):
+        return f"{self._name}"
+
+    def type_string(self):
+        return "Any"
+
+
+# NOTE NumberProxies are NOT Numbers
+# TODO Maybe NumberProxies should be Numbers?
+class NumberProxy(Proxy, NumberProxyInterface):
+    def __init__(self, name=None, value=None, *, python_type):
         super().__init__(name)
-        self.python_type = python_type
         self.value = value
+        self.python_type = python_type
 
-    # Note: Python numbers hash to themselves
+    # NOTE: Python numbers hash to themselves, and this mimics that behavior
     def __hash__(self):
         return hash(self.value)
 
-    # TODO: update these comparisons to support Number x Tensor
-    def __eq__(self, other):
-        other_value = other.value if isinstance(other, NumberProxy) else other
-        return self.value == other_value
-
-    def __ge__(self, other):
-        other_value = other.value if isinstance(other, NumberProxy) else other
-        return self.value >= other_value
-
-    def __gt__(self, other):
-        other_value = other.value if isinstance(other, NumberProxy) else other
-        return self.value > other_value
-
-    def __le__(self, other):
-        other_value = other.value if isinstance(other, NumberProxy) else other
-        return self.value <= other_value
-
-    def __lt__(self, other):
-        other_value = other.value if isinstance(other, NumberProxy) else other
-        return self.value < other_value
-
-    def __ne__(self, other):
-        other_value = other.value if isinstance(other, NumberProxy) else other
-        return self.value != other_value
-
-    def replace_name(self, name):
-        """Returns a copy of this proxy with a new name."""
-        return self.__class__(name=name, value=self.value, python_type=self.python_type)
+    def known_value(self):
+        return self.value is not None
 
 
-# NOTE: Why no bool proxy? Because bool cannot be subclassed. There are no bool
-#   instances, just True and False. Further, isinstance(True, int) is True in Python!
-#   So bools get handled by IntegerProxy.
-
-
-# TODO: implement more methods
-#   See https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types
+# TODO Review dtype conversions
+# TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy, int):
-    """A proxy integer."""
+    def __new__(cls, *, name=None, value):
+        if value is None:
+            value = -9999
 
-    def __new__(cls, *, name, value):
         return int.__new__(cls, value)
 
-    def __init__(self, *, name, value):
-        # NOTE: bools are also integers in Python
+    def __init__(self, name=None, value=None):
+        # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
         NumberProxy.__init__(self, name=name, value=value, python_type=python_type)
 
-    def __repr__(self):
-        return f"[IntegerProxy name={self.name} value={self.value}]"
+    def type_string(self):
+        value_str = f"{self.value}" if self.value is not None else "?"
+        return f"int {value_str}"
 
-    def __hash__(self):
-        return NumberProxy.__hash__(self)
+    #
+    # Elementwise unary operators
+    #
 
-    # NOTE: it'd be nice to define dunders to preserve proxies
-    #   across calls to int() and float(), but returning "strict subclasses" of
-    #   numbers is deprecated.
+    def __abs__(self):
+        langctx = get_langctx()
+        return langctx.abs(self)
+
+    def __ceil__(self):
+        langctx = get_langctx()
+        return langctx.ceil(self)
+
+    def __floor__(self):
+        langctx = get_langctx()
+        return langctx.floor(self)
+
+    def __invert__(self):
+        langctx = get_langctx()
+        return langctx.invert(self)
+
+    def __neg__(self):
+        langctx = get_langctx()
+        return langctx.neg(self)
+
+    def __pos__(self):
+        return self
+
+    def __round__(self):
+        langctx = get_langctx()
+        return langctx.round(self)
+
+    def __trunc__(self):
+        langctx = get_langctx()
+        return langctx.trunc(self)
+
+    #
+    # dtype conversion operators
+    #
+
+    def __complex__(self):
+        raise NotImplemented
+
+    def __float__(self):
+        raise NotImplemented
+
+    def __int__(self):
+        return self
+
+    #
+    # Elementwise binary operators
+    #
 
     def __add__(self, other):
-        ctx = get_language_context()
-        return ctx.add(self, other)
+        langctx = get_langctx()
+        return langctx.add(self, other)
+
+    def __radd__(self, other):
+        langctx = get_langctx()
+        return langctx.add(other, self)
+
+    def __divmod__(self, other):
+        langctx = get_langctx()
+        return langctx.divmod(self, other)
+
+    def __rdivmod__(self, other):
+        langctx = get_langctx()
+        return langctx.divmod(other, self)
+
+    # TODO Re-enable
+    # def __floordiv__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.floor_divide(self, other)
+
+    # def __rfloordiv__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.floor_divide(other, self)
+
+    def __mod__(self, other):
+        langctx = get_langctx()
+        return langctx.mod(self, other)
+
+    def __rmod__(self, other):
+        langctx = get_langctx()
+        return langctx.mod(other, self)
+
+    def __mul__(self, other):
+        langctx = get_langctx()
+        return langctx.mul(self, other)
+
+    def __rmul__(self, other):
+        langctx = get_langctx()
+        return langctx.mul(other, self)
+
+    def __pow__(self, other):
+        langctx = get_langctx()
+        return langctx.pow(self, other)
+
+    def __rpow__(self, other):
+        langctx = get_langctx()
+        return langctx.pow(other, self)
 
     def __sub__(self, other):
-        ctx = get_language_context()
-        return ctx.sub(self, other)
+        langctx = get_langctx()
+        return langctx.sub(self, other)
+
+    def __rsub__(self, other):
+        langctx = get_langctx()
+        return langctx.sub(other, self)
 
     def __truediv__(self, other):
-        ctx = get_language_context()
-        return ctx.true_divide(self, other)
+        langctx = get_langctx()
+        return langctx.true_divide(self, other)
 
-    def replace_name(self, name):
-        """Returns a copy of this proxy with a new name."""
-        return self.__class__(name=name, value=self.value)
+    def __rtruediv__(self, other):
+        langctx = get_langctx()
+        return langctx.true_divide(other, self)
+
+    #
+    # Logical operations
+    #
+    # TODO Review these with constraint modeling
+
+    # def __eq__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.eq(self, other)
+
+    # def __and__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_and(self, other)
+
+    # def __rand__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_and(other, self)
+
+    # def __ge__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.ge(self, other)
+
+    # def __gt__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.gt(self, other)
+
+    # def __le__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.le(self, other)
+
+    # def __lt__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.lt(self, other)
+
+    # def __ne__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.ne(self, other)
+
+    # def __or__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_or(self, other)
+
+    # def __ror__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_or(other, self)
+
+    # def __xor__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_xor(self, other)
+
+    # def __rxor__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_xor(other, self)
+
+    #
+    # Shift operations
+    #
+
+    def __lshift__(self, other):
+        langctx = get_langctx()
+        return langctx.lshift(self, other)
+
+    def __rlshift__(self, other):
+        langctx = get_langctx()
+        return langctx.lshift(other, self)
+
+    def __rshift__(self, other):
+        langctx = get_langctx()
+        return langctx.rshift(self, other)
+
+    def __rrshift__(self, other):
+        langctx = get_langctx()
+        return langctx.rshift(other, self)
+
+    #
+    # Matmul
+    #
+
+    def __matmul__(self, other):
+        raise NotImplemented
+
+    def __rmatmul__(self, other):
+        raise NotImplemented
 
 
+# TODO Review dtype conversions
 class FloatProxy(NumberProxy, float):
-    def __new__(cls, *, name, value):
+    def __new__(cls, *, name=None, value):
+        if value is None:
+            value = float("nan")
+
         return float.__new__(cls, value)
 
-    def __init__(self, *, name, value):
+    def __init__(self, name=None, value=None):
         NumberProxy.__init__(self, name=name, value=value, python_type=float)
 
-    def __repr__(self):
-        return f"[FloatProxy name={self.name} value={self.value}]"
+    def type_string(self):
+        value_str = f"{self.value}" if self.value is not None else "?"
+        return f"float {value_str}"
 
-    def __hash__(self):
-        return NumberProxy.__hash__(self)
+    #
+    # Elementwise unary operators
+    #
 
-    # NOTE: it'd be nice to define dunders to preserve proxies
-    #   across calls to int() and float(), but returning "strict subclasses" of
-    #   numbers is deprecated.
+    def __abs__(self):
+        langctx = get_langctx()
+        return langctx.abs(self)
+
+    def __ceil__(self):
+        langctx = get_langctx()
+        return langctx.ceil(self)
+
+    def __floor__(self):
+        langctx = get_langctx()
+        return langctx.floor(self)
+
+    def __invert__(self):
+        langctx = get_langctx()
+        return langctx.invert(self)
+
+    def __neg__(self):
+        langctx = get_langctx()
+        return langctx.neg(self)
+
+    def __pos__(self):
+        return self
+
+    def __round__(self):
+        langctx = get_langctx()
+        return langctx.round(self)
+
+    def __trunc__(self):
+        langctx = get_langctx()
+        return langctx.trunc(self)
+
+    #
+    # dtype conversion operators
+    #
+
+    def __complex__(self):
+        raise NotImplemented
+
+    def __float__(self):
+        return self
+
+    def __int__(self):
+        raise NotImplemented
+
+    #
+    # Elementwise binary operators
+    #
 
     def __add__(self, other):
-        ctx = get_language_context()
-        return ctx.add(self, other)
+        langctx = get_langctx()
+        return langctx.add(self, other)
+
+    def __radd__(self, other):
+        langctx = get_langctx()
+        return langctx.add(other, self)
+
+    def __divmod__(self, other):
+        langctx = get_langctx()
+        return langctx.divmod(self, other)
+
+    def __rdivmod__(self, other):
+        langctx = get_langctx()
+        return langctx.divmod(other, self)
+
+    # TODO Re-enable
+    # def __floordiv__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.floor_divide(self, other)
+
+    # def __rfloordiv__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.floor_divide(other, self)
+
+    def __mod__(self, other):
+        langctx = get_langctx()
+        return langctx.mod(self, other)
+
+    def __rmod__(self, other):
+        langctx = get_langctx()
+        return langctx.mod(other, self)
+
+    def __mul__(self, other):
+        langctx = get_langctx()
+        return langctx.mul(self, other)
+
+    def __rmul__(self, other):
+        langctx = get_langctx()
+        return langctx.mul(other, self)
+
+    def __pow__(self, other):
+        langctx = get_langctx()
+        return langctx.pow(self, other)
+
+    def __rpow__(self, other):
+        langctx = get_langctx()
+        return langctx.pow(other, self)
 
     def __sub__(self, other):
-        ctx = get_language_context()
-        return ctx.sub(self, other)
+        langctx = get_langctx()
+        return langctx.sub(self, other)
+
+    def __rsub__(self, other):
+        langctx = get_langctx()
+        return langctx.sub(other, self)
 
     def __truediv__(self, other):
-        ctx = get_language_context()
-        return ctx.true_divide(self, other)
+        langctx = get_langctx()
+        return langctx.true_divide(self, other)
 
-    def replace_name(self, name):
-        """Returns a copy of this proxy with a new name."""
-        return self.__class__(name=name, value=self.value)
+    def __rtruediv__(self, other):
+        langctx = get_langctx()
+        return langctx.true_divide(other, self)
+
+    #
+    # Logical operations
+    #
+
+    # def __eq__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.eq(self, other)
+
+    # def __and__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_and(self, other)
+
+    # def __rand__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_and(other, self)
+
+    # def __ge__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.ge(self, other)
+
+    # def __gt__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.gt(self, other)
+
+    # def __le__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.le(self, other)
+
+    # def __lt__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.lt(self, other)
+
+    # def __ne__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.ne(self, other)
+
+    # def __or__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_or(self, other)
+
+    # def __ror__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_or(other, self)
+
+    # def __xor__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_xor(self, other)
+
+    # def __rxor__(self, other):
+    #     langctx = get_langctx()
+    #     return langctx.logical_xor(other, self)
+
+    #
+    # Shift operations
+    #
+
+    def __lshift__(self, other):
+        langctx = get_langctx()
+        return langctx.lshift(self, other)
+
+    def __rlshift__(self, other):
+        langctx = get_langctx()
+        return langctx.lshift(other, self)
+
+    def __rshift__(self, other):
+        langctx = get_langctx()
+        return langctx.rshift(self, other)
+
+    def __rrshift__(self, other):
+        langctx = get_langctx()
+        return langctx.rshift(other, self)
+
+    #
+    # Matmul
+    #
+
+    def __matmul__(self, other):
+        raise NotImplemented
+
+    def __rmatmul__(self, other):
+        raise NotImplemented
 
 
-class ComplexProxy(NumberProxy, complex):
-    def __new__(cls, *, name, value):
-        return complex.__new__(cls, value)
-
-    def __init__(self, *, name, value):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex)
-
-    def __repr__(self):
-        return f"[ComplexProxy name={self.name} value={self.value}]"
-
-    def __hash__(self):
-        return NumberProxy.__hash__(self)
-
-    def replace_name(self, name):
-        """Returns a copy of this proxy with a new name."""
-        return self.__class__(name=name, value=self.value)
-
-
-# TODO: want this to pass isinstance(p, torch.Tensor) and isinstance(p, np.array) depending on
-#   language context
-# TODO: maybe change "tensor" param to "like" to be clearer
-class TensorProxy(Proxy):
-    """A proxy tensor."""
-
+# TODO Add remaining dunders
+class TensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
+        name=None,
         *,
-        name,
-        tensor=None,
-        shape=None,
+        like=None,
+        shape: Optional[Union[Tuple[int, ...], List[int]]] = None,
         device=None,
         dtype=None,
-        strides=None,
     ):
         super().__init__(name)
 
-        if dtype is not None:
-            assert dtypes.is_dtype(dtype), f"Unknown valuetype={dtype}!"
+        self.device = None
+        self.dtype = None
+        self.shape = None
 
-        if tensor is not None:
-            # Pulls metadata from the tensor, but explicit kwargs take precedence
-            assert isinstance(tensor, TensorProxy)
-            self.shape = tuple(tensor.shape if shape is None else shape)
-            self._dtype = tensor.dtype if dtype is None else dtype
-            self.device = tensor.device if device is None else device
-        else:
-            # Requires all metadata, except strides, be specified explicitly
-            assert shape is not None
-            assert device is not None
-            assert dtype is not None
+        if like is not None:
+            baseutils.check_type(like, TensorProxy)
+            self.shape = tuple(like.shape)
+            self.device = like.device
+            self.dtype = like.true_dtype
 
-            # Shape is a tuple of integer proxies
-            self.shape = tuple(shape)
-            self.device = device
-            self._dtype = dtype
+        self.shape = shape if shape is not None else self.shape
+        self.device = device if device is not None else self.device
+        self.dtype = dtype if dtype is not None else self.dtype
+        self.dtype = dtypes.numbertype_to_dtype(self.dtype) if dtypes.is_numbertype(self.dtype) else self.dtype
 
-        # TODO: review where strides should be modeled from
-        self.strides = strides
+        # Computes derived properties
+        self.numel = reduce(operator.mul, self.shape, 1)
 
+        # TODO Alias rank to ndim?
         self.ndim = len(self.shape)
 
-        # Canonicalizes numbertypes to datatypes
-        if dtypes.is_numbertype(self._dtype):
-            self._dtype = dtypes.numbertype_to_dtype(self._dtype)
+        # Validates inputs
+        baseutils.check_valid_shape(self.shape)
+        baseutils.check_type(self.device, devices.Device)
+        baseutils.check_type(self.dtype, dtypes.dtype)
 
-    def __repr__(self):
-        return f"[TensorProxy, name={self.name}, shape={self.shape}, device={self.device}, dtype={self.dtype}, has_weak_dtype={dtypes.is_weak_dtype(self._dtype)}]"
+        # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
+        #   the true_dtype property
+        self.true_dtype = self.dtype
+        self.dtype = dtypes.to_strong_dtype(self.dtype)
 
-    def __hash__(self):
-        return object.__hash__(self)
-
-    # .dtype, registered using __getattr__
-    def _get_dtype(self):
-        """Returns the strong variant of the tensor's dtype.
-
-        To acquire the actual dtype use "true_dtype"
-        """
-        return dtypes.to_strong_dtype(self._dtype)
-
-    def replace_name(self, name):
-        """Returns a copy of this proxy with a new name."""
-        return self.__class__(
-            name=name,
-            shape=self.shape,
-            device=self.device,
-            dtype=self.dtype,
-            strides=self.strides,
-        )
-
-    def numel(self):
-        return reduce(operator.mul, self.shape, 1)
-
-    # +
-    def __add__(self, other):
-        ctx = get_language_context()
-        return ctx.add(self, other)
-
-    # +
-    def __radd__(self, other):
-        ctx = get_language_context()
-        return ctx.add(other, self)
-
-    # ==
-    def __eq__(self, other):
-        ctx = get_language_context()
-        if isinstance(other, (Number, Proxy)) and ctx is not None:
-            return ctx.eq(other, self)
-
-        # TODO: consider this out of context behavior
-        return super().__eq__(other)
-
-    # >=
-    def __ge__(self, other):
-        ctx = get_language_context()
-        return ctx.ge(self, other)
-
-    # <
-    def __lt__(self, other):
-        ctx = get_language_context()
-        return ctx.lt(self, other)
-
-    # **
-    def __pow__(self, other):
-        ctx = get_language_context()
-        return ctx.pow(self, other)
-
-    # **
-    def __rpow__(self, other):
-        ctx = get_language_context()
-        return ctx.pow(other, self)
-
-    # *
-    def __mul__(self, other):
-        ctx = get_language_context()
-        return ctx.mul(self, other)
-
-    # *
-    def __rmul__(self, other):
-        ctx = get_language_context()
-        return ctx.mul(other, self)
-
-    # -
-    def __sub__(self, other):
-        ctx = get_language_context()
-        return ctx.sub(self, other)
-
-    # -
-    def __rsub__(self, other):
-        ctx = get_language_context()
-        return ctx.sub(other, self)
-
-    # negation
-    def __neg__(self):
-        ctx = get_language_context()
-        return ctx.neg(self)
-
-    # /
-    def __truediv__(self, other):
-        ctx = get_language_context()
-        return ctx.true_divide(self, other)
-
-    # /
-    def __rtruediv__(self, other):
-        ctx = get_language_context()
-        return ctx.true_divide(other, self)
-
-    # @
-    def __matmul__(self, other):
-        ctx = get_language_context()
-        return ctx.matmul(self, other)
-
-    # @
-    def __rmatmul__(self, other):
-        ctx = get_language_context()
-        return ctx.matmul(other, self)
-
-    def __getitem__(self, key):
-        ctx = get_language_context()
-        return ctx.get_item(self, key)
-
-    # NOTE: If an attribute wasn't found, this assumes the attribute is a method defined
-    #  by the language context. Just returning that method wouldn't work, however,
-    #  since the TensorProxy, passed as self here, wouldn't be passed through to the
-    #  actual method. That's why this partials the returned method.
-    def __getattr__(self, name):
-        # Handles properties
-        if name == "dtype":
-            return super().__getattribute__("_get_dtype")()
-        if name == "true_dtype":
-            return super().__getattribute__("_dtype")
-        if name == "strides":
-            return super().__getattribute__("strides")
-
-        ctx = get_language_context()
-        return partial(getattr(ctx, name), self)
+    def type_string(self):
+        return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
 
     @property
-    def mT(self):
-        ctx = get_language_context()
-        return ctx.matrix_transpose(self)
+    def size(self):
+        langctx = get_langctx()
+        return langctx.size(self)
+
+    # NOTE __getattr__ is overridden to support language-specific methods
+    def __getattr__(self, attr):
+        langctx = get_langctx()
+        method = langctx.method_lookup(attr)
+
+        baseutils.check(method is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
+
+        return partial(method, self)
+
+    #
+    # Indexing operators
+    #
+
+    def __getitem__(self, key):
+        ctx = get_langctx()
+        return ctx.get_item(self, key)
+
+    #
+    # Elementwise unary operators
+    #
+
+    def __abs__(self):
+        langctx = get_langctx()
+        return langctx.abs(self)
+
+    def __ceil__(self):
+        langctx = get_langctx()
+        return langctx.ceil(self)
+
+    def __floor__(self):
+        langctx = get_langctx()
+        return langctx.floor(self)
+
+    def __invert__(self):
+        langctx = get_langctx()
+        return langctx.invert(self)
+
+    def __neg__(self):
+        langctx = get_langctx()
+        return langctx.neg(self)
+
+    def __pos__(self):
+        return self
+
+    def __round__(self):
+        langctx = get_langctx()
+        return langctx.round(self)
+
+    def __trunc__(self):
+        langctx = get_langctx()
+        return langctx.trunc(self)
+
+    #
+    # dtype conversion operators
+    #
+
+    def __complex__(self):
+        raise NotImplemented
+
+    def __float__(self):
+        raise NotImplemented
+
+    def __int__(self):
+        raise NotImplemented
+
+    #
+    # Elementwise binary operators
+    #
+
+    def __add__(self, other):
+        langctx = get_langctx()
+        return langctx.add(self, other)
+
+    def __radd__(self, other):
+        langctx = get_langctx()
+        return langctx.add(other, self)
+
+    def __divmod__(self, other):
+        langctx = get_langctx()
+        return langctx.divmod(self, other)
+
+    def __rdivmod__(self, other):
+        langctx = get_langctx()
+        return langctx.divmod(other, self)
+
+    def __eq__(self, other):
+        langctx = get_langctx()
+        return langctx.eq(self, other)
+
+    def __floordiv__(self, other):
+        langctx = get_langctx()
+        return langctx.floor_divide(self, other)
+
+    def __rfloordiv__(self, other):
+        langctx = get_langctx()
+        return langctx.floor_divide(other, self)
+
+    def __mod__(self, other):
+        langctx = get_langctx()
+        return langctx.mod(self, other)
+
+    def __rmod__(self, other):
+        langctx = get_langctx()
+        return langctx.mod(other, self)
+
+    def __mul__(self, other):
+        langctx = get_langctx()
+        return langctx.mul(self, other)
+
+    def __rmul__(self, other):
+        langctx = get_langctx()
+        return langctx.mul(other, self)
+
+    def __pow__(self, other):
+        langctx = get_langctx()
+        return langctx.pow(self, other)
+
+    def __rpow__(self, other):
+        langctx = get_langctx()
+        return langctx.pow(other, self)
+
+    def __sub__(self, other):
+        langctx = get_langctx()
+        return langctx.sub(self, other)
+
+    def __rsub__(self, other):
+        langctx = get_langctx()
+        return langctx.sub(other, self)
+
+    def __truediv__(self, other):
+        langctx = get_langctx()
+        return langctx.true_divide(self, other)
+
+    def __rtruediv__(self, other):
+        langctx = get_langctx()
+        return langctx.true_divide(other, self)
+
+    #
+    # Logical operations
+    #
+
+    def __and__(self, other):
+        langctx = get_langctx()
+        return langctx.logical_and(self, other)
+
+    def __rand__(self, other):
+        langctx = get_langctx()
+        return langctx.logical_and(other, self)
+
+    def __ge__(self, other):
+        langctx = get_langctx()
+        return langctx.ge(self, other)
+
+    def __gt__(self, other):
+        langctx = get_langctx()
+        return langctx.gt(self, other)
+
+    def __le__(self, other):
+        langctx = get_langctx()
+        return langctx.le(self, other)
+
+    def __lt__(self, other):
+        langctx = get_langctx()
+        return langctx.lt(self, other)
+
+    def __ne__(self, other):
+        langctx = get_langctx()
+        return langctx.ne(self, other)
+
+    def __or__(self, other):
+        langctx = get_langctx()
+        return langctx.logical_or(self, other)
+
+    def __ror__(self, other):
+        langctx = get_langctx()
+        return langctx.logical_or(other, self)
+
+    def __xor__(self, other):
+        langctx = get_langctx()
+        return langctx.logical_xor(self, other)
+
+    def __rxor__(self, other):
+        langctx = get_langctx()
+        return langctx.logical_xor(other, self)
+
+    #
+    # Shift operations
+    #
+
+    def __lshift__(self, other):
+        langctx = get_langctx()
+        return langctx.lshift(self, other)
+
+    def __rlshift__(self, other):
+        langctx = get_langctx()
+        return langctx.lshift(other, self)
+
+    def __rshift__(self, other):
+        langctx = get_langctx()
+        return langctx.rshift(self, other)
+
+    def __rrshift__(self, other):
+        langctx = get_langctx()
+        return langctx.rshift(other, self)
+
+    #
+    # Matmul
+    #
+
+    def __matmul__(self, other):
+        langctx = get_langctx()
+        return langctx.matmul(self, other)
+
+    def __rmatmul__(self, other):
+        langctx = get_langctx()
+        return langctx.matmul(other, self)
 
 
-def proxy(x, *, name):
-    """Creates a proxy object."""
+#
+# Helpers for creating and working with proxies
+#
 
-    if isinstance(x, complex):
-        return ComplexProxy(name=name, value=x)
-    if isinstance(x, int):
-        return IntegerProxy(name=name, value=x)
-    if isinstance(x, float):
-        return FloatProxy(name=name, value=x)
+_cls_to_number_proxy_map = {
+    float: FloatProxy,
+    int: IntegerProxy,
+    bool: IntegerProxy,
+}
 
-    raise ValueError(f"Can't proxy unknown type {type(x)}")
+
+def numberproxy(cls: Type, value: Optional[Number]) -> NumberProxy:
+    pcls = _cls_to_number_proxy_map[cls]
+    return pcls(value=value)
+
+
+def is_proxyable(x: Any) -> bool:
+    if isinstance(x, Number):
+        return True
+
+    # NOTE The langctx may not have defined the tensor_cls attribute
+    #   (the core language context has no associated tensor_cls)
+    langctx = langctx_for(x)
+    try:
+        tensor_cls = langctx.tensor_cls
+        return isinstance(x, tensor_cls)
+    except AttributeError:
+        return False
+
+
+# TODO Improve type annotation to return type of X or Proxy
+# TODO defer to langctx for tensor type -- consider all possible langctxs
+# TODO maybe consider what happens when a proxy is passed to this
+# TODO handle complex number type
+def proxy(x: Any, *, name=None) -> Any:
+    langctx = langctx_for(x)
+
+    try:
+        tensor_cls = langctx.tensor_cls
+        if isinstance(x, tensor_cls):
+            return langctx.tensorproxy(name, x)
+    except AttributeError:
+        pass
+
+    if isinstance(x, Number):
+        if isinstance(x, float):
+            return FloatProxy(name=name, value=x)
+        if isinstance(x, int):
+            return IntegerProxy(name=name, value=x)
+
+        raise NotImplementedError
+
+    return x

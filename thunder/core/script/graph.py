@@ -412,14 +412,18 @@ class Graph:
         legend_lines = []
 
         for block in self.blocks:
-            graph_lines.extend((
-                f"Block inputs: {[get_name(i) for i in block.block_inputs]}",
-                f"Block outputs: {[get_name(i) for i in block.block_outputs]}",
-            ))
-            graph_lines.extend((
-                f"  {node.i.opname:<20} {[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}"
-                for node in block.nodes
-            ))
+            graph_lines.extend(
+                (
+                    f"Block inputs: {[get_name(i) for i in block.block_inputs]}",
+                    f"Block outputs: {[get_name(i) for i in block.block_outputs]}",
+                )
+            )
+            graph_lines.extend(
+                (
+                    f"  {node.i.opname:<20} {[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}"
+                    for node in block.nodes
+                )
+            )
             graph_lines.append("")
 
         for v, (prefix, idx) in sorted(results.items(), key=lambda x: x[1]):

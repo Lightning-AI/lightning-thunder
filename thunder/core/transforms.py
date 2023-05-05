@@ -5,14 +5,18 @@ from functools import lru_cache, partial
 from numbers import Number
 from typing import Any, Callable, Dict, Sequence, Tuple, Union, Optional
 
-from thunder import make_trace, make_traced
+from thunder import _make_trace as make_trace
 from thunder.core import dtypes, prims
-from thunder.core.lang import full, full_like, unsqueeze, squeeze
+from thunder.clang import full, full_like, unsqueeze, squeeze
+from thunder.core.devices import cpu
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.trace import detached_trace, get_trace, Trace, Variable
-from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as
-from thunder.executors.torch import ops_to_torch_ops_map
+from thunder.core.trace import detached_trace, get_tracectx
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import VariableInterface as Variable
+from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as, sequencify
+
+# from thunder.executors.torch import ops_to_torch_ops_map
 
 import torch
 
@@ -27,19 +31,20 @@ class Transforms(Enum):
 
 
 @lru_cache(maxsize=None)
-def symbol_to_eval(symbol: prims.Symbol):
+def symbol_to_eval(bound_symbol):
     """Map a symbol to a function that evaluates it.
 
     Args:
         symbol: symbol to map
     """
-    meta_func = prims.ops_to_meta_functions_map[symbol.op]
-
+    symbol = bound_symbol.sym
     prim_func = getattr(prims, symbol.name, None)
     if prim_func is not None:
         return prim_func
 
-    return prims.eval_meta_and_record_symbol_fn(meta_func, symbol.op, symbol.name)
+    # meta_func = prims.ops_to_meta_functions_map[symbol.op]
+    # return prims.eval_meta_and_record_symbol_fn(meta_func, symbol.op, symbol.name)
+    return symbol.__call__
 
 
 def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwargs):
@@ -65,27 +70,26 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
     def write(v: Variable, val: Any) -> None:
         if not isinstance(v, Variable):
             return
-        # Duplicates are allowed but ignored
+        # Duplicates are allowed and overwritten
         if v.name in env:
-            return
+            # warnings.warn(f"Variable {v.name} is being overwritten")
+            pass
         env[v.name] = val
 
     safe_map_flat(write, list(trace.args), list(args))
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
-    for symbol in trace.symbols:
+    for symbol in trace.bound_symbols:
         args = tree_map(read, symbol.args)
         kwargs = tree_map(read, symbol.kwargs)
         prim_func = symbol_mapper(symbol)
         result = prim_func(*args, **kwargs)
-        if not isinstance(result, Sequence):
-            result = (result,)
-        safe_map_flat(write, list(symbol.outputs), list(result))
+        safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
 
     if with_env:
-        return tree_map(read, trace.outputs), env
+        return tree_map(read, trace.output), env
 
-    return tree_map(read, trace.outputs)
+    return tree_map(read, trace.output)
 
 
 def lower_to_prims_mapper(symbol: prims.Symbol):
@@ -106,7 +110,7 @@ def lower_to_prims_mapper(symbol: prims.Symbol):
     # SLICE primitive doesn't use `symbol.name` to avoid collisions with
     # Python's `slice``, so we need to explicitly map the symbol to its prim
     # function which is called `slice_prim`
-    if symbol.op == prims.Ops.SLICE:
+    if symbol.op == prims.PrimIDs.SLICE:
         return prims.slice_prim
 
     # All other symbols are treated as composite functions
@@ -134,7 +138,7 @@ def _identity_call_metafunc(*args, trace: Trace, **kwargs):
         return eval_trace(trace, *args, **kwargs)
 
 
-identity_call = prims.make_prim(Transforms.IdentityOp, "identity_call", _identity_call_metafunc)
+identity_call = prims.make_prim(Transforms.IdentityOp, "identity_call", meta=_identity_call_metafunc)
 
 
 def identity(func):
@@ -145,8 +149,15 @@ def identity(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
-        return identity_call(*args, **kwargs, trace=trace)
+        # TODO: *args, **kwargs are not supported so far
+        # we need to flatten the function before tracing it
+        flat_func, flat_args, spec = flatten_func(func, args, kwargs)
+        trace = make_trace(flat_func)(flat_args)
+        return identity_call(flat_args, trace=trace)
+
+    # def wrapper(*args, **kwargs):
+    #     trace = make_trace(func)(*args, **kwargs)
+    #     return identity_call(*args, **kwargs, trace=trace)
 
     return wrapper
 
@@ -168,7 +179,7 @@ def _identity_call_pytorch(*args, trace: Trace, **kwargs):
 
 
 # Register the identity call for PyTorch executor.
-ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
+# ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
 
 
 # Inline transform
@@ -179,11 +190,11 @@ ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
 inline_transforms_map: Dict[prims.Symbol, Callable] = dict()
 
 
-def inline_symbol_mapper(symbol: prims.Symbol):
-    if symbol.op in inline_transforms_map:
-        return inline_transforms_map[symbol.op]
+def inline_symbol_mapper(bound_symbol):
+    if bound_symbol.sym.id in inline_transforms_map:
+        return inline_transforms_map[bound_symbol.sym.id]
 
-    return symbol_to_eval(symbol)
+    return symbol_to_eval(bound_symbol)
 
 
 def _identity_call_inline(*args, trace: Trace, **kwargs):
@@ -201,8 +212,15 @@ def inline(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
-        return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
+        # TODO: *args, **kwargs are not supported so far
+        # we need to flatten the function before tracing it
+        flat_func, flat_args, spec = flatten_func(func, args, kwargs)
+        trace = make_trace(flat_func)(flat_args)
+        return eval_trace(trace, flat_args, symbol_mapper=inline_symbol_mapper)
+
+    # def wrapper(*args, **kwargs):
+    #     trace = make_trace(func)(*args, **kwargs)
+    #     return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
 
     return wrapper
 
@@ -283,7 +301,7 @@ def move_batch_dim(axis_size, src, dst, x):
         return movedim(x, src, dst)
 
 
-def binary_op_batching_rule(op: prims.Ops, axis_size: int, vals_in: BatchedValue):
+def binary_op_batching_rule(op: prims.PrimIDs, axis_size: int, vals_in: BatchedValue):
     ((x, x_bdim), (y, y_bdim)) = vals_in
     if x_bdim != y_bdim:
         if x_bdim is not_mapped:
@@ -343,14 +361,22 @@ def broadcast_in_dim_vmap(
         return BatchedValue(prims.broadcast_in_dim(a.value, new_shape, new_broadcast_dimensions), new_bdim)
 
 
+def unpack_sequence_vmap(axis_size: int, sequence: BatchedValue, length: BatchedValue) -> BatchedValue:
+    bdim = sequence[0].batch_dim
+    sequence_value = tree_map(lambda x: x.value, sequence)
+    out = prims.unpack_sequence(sequence_value, length.value)
+    return tree_map(lambda x: BatchedValue(x, bdim), out)
+
+
 vmap_impls: Dict[prims.Symbol, Callable] = dict()
 
-vmap_impls[prims.Ops.SIN] = sin_vmap
-vmap_impls[prims.Ops.COS] = cos_vmap
-vmap_impls[prims.Ops.MUL] = mul_vmap
-vmap_impls[prims.Ops.ADD] = add_vmap
-vmap_impls[prims.Ops.SUM] = sum_vmap
-vmap_impls[prims.Ops.BROADCAST_IN_DIM] = broadcast_in_dim_vmap
+vmap_impls[prims.PrimIDs.SIN] = sin_vmap
+vmap_impls[prims.PrimIDs.COS] = cos_vmap
+vmap_impls[prims.PrimIDs.MUL] = mul_vmap
+vmap_impls[prims.PrimIDs.ADD] = add_vmap
+vmap_impls[prims.PrimIDs.SUM] = sum_vmap
+vmap_impls[prims.PrimIDs.BROADCAST_IN_DIM] = broadcast_in_dim_vmap
+vmap_impls[prims.PrimIDs.UNPACK_SEQUENCE] = unpack_sequence_vmap
 
 
 def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
@@ -386,9 +412,9 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
 
         return partial(_vmap_impl_const, symbol)
 
-    vmap_impl = vmap_impls.get(symbol.op)
+    vmap_impl = vmap_impls.get(symbol.sym.id)
     if vmap_impl is None:
-        raise NotImplementedError(f"vmap for {symbol.op} is not implemented")
+        raise NotImplementedError(f"vmap for {symbol.sym.id} is not implemented")
 
     def _vmap_impl(*args, **kwargs):
         args = tree_map(wrap_arg, args)
@@ -407,8 +433,8 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0):
     Returns:
         TensorProxy: Tensor with the batch dimension removed.
     """
-    trace = get_trace()
-    name = trace.make_proxy_name()
+    trace = get_tracectx()
+    name = trace.make_name()
     new_shape = tensor.shape[:batch_dim] + tensor.shape[batch_dim + 1 :]
     return TensorProxy(name=name, shape=new_shape, dtype=tensor.dtype, device=tensor.device)
 
@@ -436,7 +462,7 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
 
     common_device = {x.device for x in args if isinstance(x, TensorProxy)}
     assert len(common_device) <= 1, "vmap for multiple devices is not implemented"
-    (common_device,) = common_device if len(common_device) == 1 else ("cpu",)
+    (common_device,) = common_device if len(common_device) == 1 else (cpu,)
 
     if axis_size is None:
         (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
@@ -470,7 +496,7 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
         return out
 
 
-vmap_call = prims.make_prim(Transforms.VmapOp, "vmap_call", partial(_vmap_call_metafunc, detached=True))
+vmap_call = prims.make_prim(Transforms.VmapOp, "vmap_call", meta=partial(_vmap_call_metafunc, detached=True))
 inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, detached=False)
 
 
@@ -631,12 +657,27 @@ def broadcast_in_dim_jvp(a: JVPDual, shape: Tuple[JVPDual, ...], broadcast_dimen
     )
 
 
+def unpack_sequence_jvp(sequence: JVPDual, length: JVPDual) -> JVPDual:
+    x = tree_map(lambda x: x.primal, sequence)
+    xd = tree_map(lambda x: x.tangent, sequence)
+    length, _ = length
+    primals = prims.unpack_sequence(x, length)
+    tangents = prims.unpack_sequence(xd, length)
+    return safe_map(pair_to_jvp_dual, safe_zip(primals, tangents))
+
+
+def unpack_trivial_jvp(x: JVPDual) -> JVPDual:
+    return x
+
+
 jvp_impls: Dict[prims.Symbol, Callable] = dict()
 
-jvp_impls[prims.Ops.SIN] = sin_jvp
-jvp_impls[prims.Ops.MUL] = mul_jvp
-jvp_impls[prims.Ops.ADD] = add_jvp
-jvp_impls[prims.Ops.BROADCAST_IN_DIM] = broadcast_in_dim_jvp
+jvp_impls[prims.PrimIDs.SIN] = sin_jvp
+jvp_impls[prims.PrimIDs.MUL] = mul_jvp
+jvp_impls[prims.PrimIDs.ADD] = add_jvp
+jvp_impls[prims.PrimIDs.BROADCAST_IN_DIM] = broadcast_in_dim_jvp
+jvp_impls[prims.PrimIDs.UNPACK_SEQUENCE] = unpack_sequence_jvp
+jvp_impls[prims.PrimIDs.UNPACK_TRIVIAL] = unpack_trivial_jvp
 
 
 def jvp_symbol_mapper(symbol: prims.Symbol):
@@ -669,6 +710,8 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
                 return full_like(x, fill_value=0)
             elif isinstance(x, NumberProxy):
                 return type(x.value)(0)
+            elif isinstance(x, Number):
+                return type(x)(0)
             else:
                 raise ValueError(f"zeros_like inside JVP got an unsupported type {type(x)}")
 
@@ -682,9 +725,9 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
         return partial(jvp_impl_const, symbol)
 
     # Normal case, we have a proxy tangent
-    jvp_impl = jvp_impls.get(symbol.op)
+    jvp_impl = jvp_impls.get(symbol.sym.id)
     if jvp_impl is None:
-        raise NotImplementedError(f"JVP for {symbol.op} is not implemented")
+        raise NotImplementedError(f"JVP for {symbol.sym.id} is not implemented")
 
     def _jvp_impl(*args, **kwargs):
         args = tree_map(wrap_arg, args)
@@ -729,7 +772,7 @@ def _jvp_call_metafunc(primals, tangents, trace: Trace, detached: bool, **kwargs
         return result.primal, result.tangent
 
 
-jvp_call = prims.make_prim(Transforms.JvpOp, "jvp_call", partial(_jvp_call_metafunc, detached=True))
+jvp_call = prims.make_prim(Transforms.JvpOp, "jvp_call", meta=partial(_jvp_call_metafunc, detached=True))
 inline_transforms_map[Transforms.JvpOp] = partial(_jvp_call_metafunc, detached=False)
 
 
@@ -845,7 +888,8 @@ class ZeroBackward:
 
     def __call__(self, *args, **kwargs):
         # Assuming that the first arguments are the forward arguments
-        forward_args = args[:self.num_args]
+        forward_args = args[: self.num_args]
+
         def zeros_like(x):
             if isinstance(x, TensorProxy):
                 return full_like(x, fill_value=0)
@@ -853,6 +897,7 @@ class ZeroBackward:
                 return type(x.value)(0)
             else:
                 raise ValueError(f"zeros_like inside JVP got an unsupported type {type(x)}")
+
         return tuple(zeros_like(arg) for arg in forward_args)
 
 
@@ -860,48 +905,49 @@ class ZeroBackward:
 # The augmented_primal function takes the primal values and returns the primal
 # result and the residuals (saved values for the backward).
 augmented_forward_impls = {
-    prims.Ops.ACOS: lambda x: (prims.acos(x), (x,)),
-    prims.Ops.ACOSH: lambda x: (prims.acosh(x), (x,)),
-    prims.Ops.ADD: lambda x, y: (prims.add(x, y), tuple()),
-    prims.Ops.ASIN: lambda x: (prims.asin(x), (x,)),
-    prims.Ops.ASINH: lambda x: (prims.asinh(x), (x,)),
-    prims.Ops.ATAN: lambda x: (prims.atan(x), (x,)),
-    prims.Ops.ATANH: lambda x: (prims.atanh(x), (x,)),
-    prims.Ops.COS: lambda x: (prims.cos(x), (x,)),
-    prims.Ops.COSH: lambda x: (prims.cosh(x), (x,)),
-    prims.Ops.DIV: lambda x, y: (prims.div(x, y), (x, y)),
-    prims.Ops.MUL: lambda x, y: (prims.mul(x, y), (x, y)),
-    prims.Ops.SIN: lambda x: (prims.sin(x), (x,)),
-    prims.Ops.SINH: lambda x: (prims.sinh(x), (x,)),
-    prims.Ops.SUB: lambda x, y: (prims.sub(x, y), tuple()),
-    prims.Ops.EQ: lambda x, y: (prims.eq(x, y), (x, y)),
-    prims.Ops.GE: lambda x, y: (prims.ge(x, y), (x, y)),
-    prims.Ops.LT: lambda x, y: (prims.lt(x, y), (x, y)),
+    prims.PrimIDs.ACOS: lambda x: (prims.acos(x), (x,)),
+    prims.PrimIDs.ACOSH: lambda x: (prims.acosh(x), (x,)),
+    prims.PrimIDs.ADD: lambda x, y: (prims.add(x, y), tuple()),
+    prims.PrimIDs.ASIN: lambda x: (prims.asin(x), (x,)),
+    prims.PrimIDs.ASINH: lambda x: (prims.asinh(x), (x,)),
+    prims.PrimIDs.ATAN: lambda x: (prims.atan(x), (x,)),
+    prims.PrimIDs.ATANH: lambda x: (prims.atanh(x), (x,)),
+    prims.PrimIDs.COS: lambda x: (prims.cos(x), (x,)),
+    prims.PrimIDs.COSH: lambda x: (prims.cosh(x), (x,)),
+    prims.PrimIDs.DIV: lambda x, y: (prims.div(x, y), (x, y)),
+    prims.PrimIDs.MUL: lambda x, y: (prims.mul(x, y), (x, y)),
+    prims.PrimIDs.SIN: lambda x: (prims.sin(x), (x,)),
+    prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
+    prims.PrimIDs.SUB: lambda x, y: (prims.sub(x, y), tuple()),
+    prims.PrimIDs.EQ: lambda x, y: (prims.eq(x, y), (x, y)),
+    prims.PrimIDs.GE: lambda x, y: (prims.ge(x, y), (x, y)),
+    prims.PrimIDs.LT: lambda x, y: (prims.lt(x, y), (x, y)),
 }
 
 # Mapping from symbols to backward functions used in VJP
 # The backward function takes the residuals and cotangents and returns the
 # vector-Jacobian products for each argument.
 backward_impls = {
-    prims.Ops.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
-    prims.Ops.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
-    prims.Ops.ADD: lambda g: (g, g),
-    prims.Ops.ASIN: lambda x, g: g / prims.sqrt(1.0 - x * x),
-    prims.Ops.ASINH: lambda x, g: g * prims.rsqrt(1.0 + x * x),
-    prims.Ops.ATAN: lambda x, g: g / (1.0 + x * x),
-    prims.Ops.ATANH: lambda x, g: g / (1.0 - x * x),
-    prims.Ops.COS: lambda x, g: prims.mul(g, -prims.sin(x)),
-    prims.Ops.COSH: lambda x, g: prims.mul(g, prims.sinh(x)),
-    prims.Ops.DIV: lambda x, y, g: (g / y, -g * x / (y**2)),
-    prims.Ops.MUL: lambda x, y, g: (g * y, g * x),
-    prims.Ops.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
-    prims.Ops.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
-    prims.Ops.SUB: lambda g: (g, -g),
-    prims.Ops.FULL: NoPullback(num_args=2),
-    prims.Ops.EQ: ZeroBackward(num_args=2),
-    prims.Ops.GE: ZeroBackward(num_args=2),
-    prims.Ops.LT: ZeroBackward(num_args=2),
+    prims.PrimIDs.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
+    prims.PrimIDs.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
+    prims.PrimIDs.ADD: lambda g: (g, g),
+    prims.PrimIDs.ASIN: lambda x, g: g / prims.sqrt(1.0 - x * x),
+    prims.PrimIDs.ASINH: lambda x, g: g * prims.rsqrt(1.0 + x * x),
+    prims.PrimIDs.ATAN: lambda x, g: g / (1.0 + x * x),
+    prims.PrimIDs.ATANH: lambda x, g: g / (1.0 - x * x),
+    prims.PrimIDs.COS: lambda x, g: prims.mul(g, -prims.sin(x)),
+    prims.PrimIDs.COSH: lambda x, g: prims.mul(g, prims.sinh(x)),
+    prims.PrimIDs.DIV: lambda x, y, g: (g / y, -g * x / (y**2)),
+    prims.PrimIDs.MUL: lambda x, y, g: (g * y, g * x),
+    prims.PrimIDs.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
+    prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
+    prims.PrimIDs.SUB: lambda g: (g, -g),
+    prims.PrimIDs.FULL: NoPullback(num_args=2),
+    prims.PrimIDs.EQ: ZeroBackward(num_args=2),
+    prims.PrimIDs.GE: ZeroBackward(num_args=2),
+    prims.PrimIDs.LT: ZeroBackward(num_args=2),
 }
+
 
 def register_augmented_forward(op):
     """Decorator to register an augmented forward implementation for a symbol.
@@ -949,6 +995,7 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
         Variable: Tensor with the reduced dimensions restored.
     """
     import thunder.core.lang as tlang
+
     if original_shape == ():  # scalar
         return x
 
@@ -956,7 +1003,7 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
     return tlang.expand(unsqueezed, original_shape)
 
 
-@register_augmented_forward(prims.Ops.RSQRT)
+@register_augmented_forward(prims.PrimIDs.RSQRT)
 def rsqrt_augmented(x):
     """Augmented rsqrt operation.
 
@@ -971,7 +1018,7 @@ def rsqrt_augmented(x):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.RSQRT)
+@register_backward(prims.PrimIDs.RSQRT)
 def rsqrt_backward(result, g):
     # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x
     # where rsqrt(x) and x are saved for the backwards pass.
@@ -979,7 +1026,7 @@ def rsqrt_backward(result, g):
     return -0.5 * g * result**3.0
 
 
-@register_augmented_forward(prims.Ops.SUM)
+@register_augmented_forward(prims.PrimIDs.SUM)
 def sum_aug_fwd(x, dims, output_dtype=None):
     """Augmented sum operation.
 
@@ -1000,13 +1047,13 @@ def sum_aug_fwd(x, dims, output_dtype=None):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.SUM)
+@register_backward(prims.PrimIDs.SUM)
 def sum_backward(x_shape, reduced_dims, g):
     # One return per positional argument of prims.sum
     return restore_reduced_dims(g, reduced_dims, x_shape), None
 
 
-@register_augmented_forward(prims.Ops.PROD)
+@register_augmented_forward(prims.PrimIDs.PROD)
 def prod_aug_fwd(x, dims):
     """Augmented prod operation.
 
@@ -1028,7 +1075,7 @@ def prod_aug_fwd(x, dims):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.PROD)
+@register_backward(prims.PrimIDs.PROD)
 def prod_pullback(primal, x, x_shape, reduced_dims, g):
     # One return per positional argument of prims.prod
     return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x), None
@@ -1053,12 +1100,12 @@ def grad_chooser_pullback(primal, x, x_shape, reduced_dims, g):
     return out, None
 
 
-register_backward(prims.Ops.AMAX)(grad_chooser_pullback)
-register_backward(prims.Ops.AMIN)(grad_chooser_pullback)
+register_backward(prims.PrimIDs.AMAX)(grad_chooser_pullback)
+register_backward(prims.PrimIDs.AMIN)(grad_chooser_pullback)
 
 
 # TODO: exact same for amin, argmax, argmin
-@register_augmented_forward(prims.Ops.AMAX)
+@register_augmented_forward(prims.PrimIDs.AMAX)
 def amax_aug_fwd(x, dims):
     """Augmented amax operation.
 
@@ -1081,7 +1128,7 @@ def amax_aug_fwd(x, dims):
     return VJPDual(primal, residuals)
 
 
-@register_augmented_forward(prims.Ops.AMIN)
+@register_augmented_forward(prims.PrimIDs.AMIN)
 def amin_aug_fwd(x, dims):
     """Augmented amin operation.
 
@@ -1104,7 +1151,7 @@ def amin_aug_fwd(x, dims):
     return VJPDual(primal, residuals)
 
 
-@register_augmented_forward(prims.Ops.EXP)
+@register_augmented_forward(prims.PrimIDs.EXP)
 def exp_aug_fwd(x):
     """Augmented exp operation.
 
@@ -1119,12 +1166,12 @@ def exp_aug_fwd(x):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.EXP)
+@register_backward(prims.PrimIDs.EXP)
 def exp_backward(result, g):
     return g * result
 
 
-@register_augmented_forward(prims.Ops.POW)
+@register_augmented_forward(prims.PrimIDs.POW)
 def pow_aug_fed(x, y):
     """Augmented the pow operation.
 
@@ -1140,7 +1187,7 @@ def pow_aug_fed(x, y):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.POW)
+@register_backward(prims.PrimIDs.POW)
 def pow_backward(result, x, y, g):
     import thunder.core.lang as tlang
 
@@ -1150,7 +1197,7 @@ def pow_backward(result, x, y, g):
     return dx, dy
 
 
-@register_augmented_forward(prims.Ops.TAN)
+@register_augmented_forward(prims.PrimIDs.TAN)
 def tan_aug_fwd(x):
     """Augmented tan operation.
 
@@ -1163,12 +1210,12 @@ def tan_aug_fwd(x):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.TAN)
+@register_backward(prims.PrimIDs.TAN)
 def tan_backward(result, g):
     return g * (1 + result * result)
 
 
-@register_augmented_forward(prims.Ops.TANH)
+@register_augmented_forward(prims.PrimIDs.TANH)
 def tanh_aug_fwd(x):
     """Augmented tanh operation.
 
@@ -1183,7 +1230,7 @@ def tanh_aug_fwd(x):
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.TANH)
+@register_backward(prims.PrimIDs.TANH)
 def tanh_backward(result, g):
     return g * (1.0 - result * result)
 
@@ -1193,32 +1240,32 @@ def _argsort(seq):
     return sorted(range(len(seq)), key=seq.__getitem__)
 
 
-@register_augmented_forward(prims.Ops.TRANSPOSE)
+@register_augmented_forward(prims.PrimIDs.TRANSPOSE)
 def transpose_aug_fwd(a, permutation):
     primal = prims.transpose(a, permutation)
     residuals = (permutation,)
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.TRANSPOSE)
+@register_backward(prims.PrimIDs.TRANSPOSE)
 def transpose_backward(permutation, g):
     undo = _argsort(permutation)
     return prims.transpose(g, undo), None
 
 
-@register_augmented_forward(prims.Ops.RESHAPE)
+@register_augmented_forward(prims.PrimIDs.RESHAPE)
 def reshape_aug_fwd(a, shape):
     primal = prims.reshape(a, shape)
     residuals = (a.shape,)
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.RESHAPE)
+@register_backward(prims.PrimIDs.RESHAPE)
 def reshape_backward(orig_shape, g):
     return prims.reshape(g, orig_shape), None
 
 
-@register_augmented_forward(prims.Ops.SLICE)
+@register_augmented_forward(prims.PrimIDs.SLICE)
 def slice_aug_fwd(a, start_indices, end_indices, strides=None):
     primal = prims.slice_prim(a, start_indices, end_indices, strides)
     residuals = (a.shape, start_indices, end_indices, strides)
@@ -1226,7 +1273,7 @@ def slice_aug_fwd(a, start_indices, end_indices, strides=None):
 
 
 # Adapted from https://github.com/google/jax/blob/main/jax/_src/lax/slicing.py#L768
-@register_backward(prims.Ops.SLICE)
+@register_backward(prims.PrimIDs.SLICE)
 def pullback(shape, start_indices, end_indices, strides, g):
     padding = None
     if strides is None or np.all(np.equal(strides, 1)):
@@ -1245,14 +1292,14 @@ def pullback(shape, start_indices, end_indices, strides, g):
     return result, None, None, None
 
 
-@register_augmented_forward(prims.Ops.BROADCAST_IN_DIM)
+@register_augmented_forward(prims.PrimIDs.BROADCAST_IN_DIM)
 def broadcast_in_dim_aug_fwd(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPDual:
     primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
     residuals = (a, shape, broadcast_dimensions)
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.BROADCAST_IN_DIM)
+@register_backward(prims.PrimIDs.BROADCAST_IN_DIM)
 def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
     # If g is None, then the primal was a constant and the pullback is zero.
     # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
@@ -1267,26 +1314,40 @@ def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
     return g, None, None
 
 
-
-@register_augmented_forward(prims.Ops.CONVERT_ELEMENT_TYPE)
+@register_augmented_forward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
 def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
     primal = prims.convert_element_type(a, dtype)
     residuals = (primal,)
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.CONVERT_ELEMENT_TYPE)
+@register_backward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
 def convert_element_type_backward(a, g):
     # perform cast back to input type during backward
     return prims.convert_element_type(g, a.dtype), None
 
 
 @register_augmented_forward(torch.nn.functional.embedding)
-def embedding_aug_fwd(a: Proxy, weight: Proxy, *, padding_idx: Optional[int] = None, max_norm: Optional[float] = None,
-                    norm_type: float = 2.0, scale_grad_by_freq: bool = False, sparse: bool = False) -> VJPDual:
+def embedding_aug_fwd(
+    a: Proxy,
+    weight: Proxy,
+    *,
+    padding_idx: Optional[int] = None,
+    max_norm: Optional[float] = None,
+    norm_type: float = 2.0,
+    scale_grad_by_freq: bool = False,
+    sparse: bool = False,
+) -> VJPDual:
     # from thunder.langs.torch import embedding_backward
-    primal = prims.embedding(a, weight, padding_idx=padding_idx, max_norm=max_norm, norm_type=norm_type,
-                             scale_grad_by_freq=scale_grad_by_freq, sparse=sparse)
+    primal = prims.embedding(
+        a,
+        weight,
+        padding_idx=padding_idx,
+        max_norm=max_norm,
+        norm_type=norm_type,
+        scale_grad_by_freq=scale_grad_by_freq,
+        sparse=sparse,
+    )
     residuals = (a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
     return VJPDual(primal, residuals)
 
@@ -1298,14 +1359,14 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     return None, gweight
 
 
-@register_augmented_forward(prims.Ops.MATMUL)
+@register_augmented_forward(prims.PrimIDs.MATMUL)
 def matmul_aug_fwd(a: TensorProxy, b: TensorProxy) -> VJPDual:
     primal = prims.matmul(a, b)
     residuals = (a, b)
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.MATMUL)
+@register_backward(prims.PrimIDs.MATMUL)
 def matmul_backward(a, b, g):
     last_dim = (-1,)
     first_dim = (-2,)
@@ -1391,14 +1452,14 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     return result
 
 
-@register_augmented_forward(prims.Ops.WHERE)
+@register_augmented_forward(prims.PrimIDs.WHERE)
 def where_aug_fwd(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJPDual:
     primal = prims.where(condition, x, y)
-    residuals = (condition, )
+    residuals = (condition,)
     return VJPDual(primal, residuals)
 
 
-@register_backward(prims.Ops.WHERE)
+@register_backward(prims.PrimIDs.WHERE)
 def where_backward(condition, g):
     return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
@@ -1431,9 +1492,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
         if symbol.decomposed_fn is not None and not isinstance(symbol.op, prims.Ops):
-            vjp_impl = partial(
-                decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.decomposed_fn
-            )
+            vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.decomposed_fn)
             register_backward(symbol.op)(partial(decomposed_fn_backward_rule, symbol.decomposed_fn))
         else:
             raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
@@ -1573,7 +1632,7 @@ def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
         return result, backward_pass(env, trace, cotangents)
 
 
-vjp_call = prims.make_prim(Transforms.VjpOp, "vjp_call", partial(vjp_call_metafunc, detached=True))
+vjp_call = prims.make_prim(Transforms.VjpOp, "vjp_call", meta=partial(vjp_call_metafunc, detached=True))
 inline_transforms_map[Transforms.VjpOp] = partial(vjp_call_metafunc, detached=False)
 
 

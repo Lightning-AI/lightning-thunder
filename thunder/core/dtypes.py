@@ -1,72 +1,6 @@
 from numbers import Number
 
-from thunder.core.proxies import NumberProxy, TensorProxy
-
-__all__ = [
-    "dtype",
-    "exact",
-    "signedinteger",
-    "int8",
-    "int8_",
-    "int16",
-    "int16_",
-    "int32",
-    "int32_",
-    "int64",
-    "int64_",
-    "unsignedinteger",
-    "uint8",
-    "uint8_",
-    "bool_",
-    "bool8",
-    "bool8_",
-    "inexact",
-    "floating",
-    "bfloat16",
-    "bfloat16_",
-    "float16",
-    "float16_",
-    "float32",
-    "float32_",
-    "float64",
-    "float64_",
-    "complexfloating",
-    "complex32",
-    "complex32_",
-    "complex64",
-    "complex64_",
-    "complex128",
-    "complex128_",
-    "all_dtypes",
-    "all_numbertypes",
-    "to_dtype",
-    "integer_dtypes",
-    "has_subdtype",
-    "low_precision_dtypes",
-    "float_dtypes",
-    "complex_dtypes",
-    "weak_dtypes",
-    "strong_dtypes",
-    "corresponding_real_dtype",
-    "corresponding_complex_dtype",
-    "to_weak_dtype",
-    "to_strong_dtype",
-    "is_boolean_dtype",
-    "is_unsigned_dtype",
-    "is_signedinteger_dtype",
-    "is_integer_dtype",
-    "is_exact_dtype",
-    "is_inexact_dtype",
-    "is_low_precision_dtype",
-    "is_float_dtype",
-    "is_complex_dtype",
-    "is_numbertype",
-    "is_dtype",
-    "is_weak_dtype",
-    "dtype_to_numbertype",
-    "numbertype_to_dtype",
-    "are_same_dtypes",
-]
+from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
 
 # This file defines Thunder's dtypes (dtypes) and numbertypes and offers utilities for
 #   working with them.
@@ -109,6 +43,7 @@ __all__ = [
 _abstract_classes = set()
 
 
+# TODO consider bytes per element to better identify low precision dtypes
 class dtype:
     # TODO: in the future might want to use ABCMeta to prevent this and the
     #   abstract classes from being instantiated
@@ -118,9 +53,10 @@ class dtype:
 
         return object.__new__(cls)
 
-    def __init__(self, *, python_type, name, bytes, is_weak):
+    def __init__(self, *, python_type, name, shortname, bytes, is_weak):
         self._python_type = python_type
         self._name = name
+        self._shortname = shortname
         self._bytes = bytes
         self._is_weak = is_weak
 
@@ -137,6 +73,10 @@ class dtype:
     def is_weak(self):
         return self._is_weak
 
+    def shortname(self):
+        return f"{self._shortname}{8 * self._bytes}"
+
+    # TODO Fix name printing
     def __repr__(self):
         return f"{self._name}{8 * self._bytes}{'_' if self._is_weak else ''}"
 
@@ -153,42 +93,43 @@ class exact(dtype):
 class signedinteger(exact):
     """Base class for the signed integer dtypes: int8, int16, int32, int64."""
 
-    def __init__(self, name, *, bytes, is_weak):
-        super().__init__(python_type=int, name=name, bytes=bytes, is_weak=is_weak)
+    def __init__(self, name, shortname, *, bytes, is_weak):
+        super().__init__(python_type=int, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak)
 
 
-int8 = signedinteger("int", bytes=1, is_weak=False)
-int8_ = signedinteger("int", bytes=1, is_weak=True)
-int16 = signedinteger("int", bytes=2, is_weak=False)
-int16_ = signedinteger("int", bytes=2, is_weak=True)
-int32 = signedinteger("int", bytes=4, is_weak=False)
-int32_ = signedinteger("int", bytes=4, is_weak=True)
-int64 = signedinteger("int", bytes=8, is_weak=False)
-int64_ = signedinteger("int", bytes=8, is_weak=True)
+int8 = signedinteger("int", "i", bytes=1, is_weak=False)
+int8_ = signedinteger("int", "i", bytes=1, is_weak=True)
+int16 = signedinteger("int", "i", bytes=2, is_weak=False)
+int16_ = signedinteger("int", "i", bytes=2, is_weak=True)
+int32 = signedinteger("int", "i", bytes=4, is_weak=False)
+int32_ = signedinteger("int", "i", bytes=4, is_weak=True)
+int64 = signedinteger("int", "i", bytes=8, is_weak=False)
+int64_ = signedinteger("int", "i", bytes=8, is_weak=True)
 
 
 class unsignedinteger(exact):
     """Base class for the unsigned integer dtypes: uint8."""
 
-    def __init__(self, name, *, bytes, is_weak):
-        super().__init__(python_type=int, name=name, bytes=bytes, is_weak=is_weak)
+    def __init__(self, name, shortname, *, bytes, is_weak):
+        super().__init__(python_type=int, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak)
 
 
-uint8 = unsignedinteger("uint", bytes=1, is_weak=False)
-uint8_ = unsignedinteger("uint", bytes=1, is_weak=True)
+uint8 = unsignedinteger("uint", "ui", bytes=1, is_weak=False)
+uint8_ = unsignedinteger("uint", "ui", bytes=1, is_weak=True)
 
 
 class bool_(exact):
     """Base class for the boolean dtype: bool8."""
 
-    def __init__(self, name, *, is_weak):
-        super().__init__(python_type=bool, name=name, bytes=1, is_weak=is_weak)
+    def __init__(self, name, shortname, *, is_weak):
+        super().__init__(python_type=bool, name=name, shortname=shortname, bytes=1, is_weak=is_weak)
 
 
 # NOTE: bool has a weak variant for completeness, but the boolean dtype could always
 #   be considered strong or weak without any effect
-bool8 = bool_("bool", is_weak=False)
-bool8_ = bool_("bool", is_weak=True)
+# TODO: review bool_ vs bool8 naming -- are we suggesting a byte per bool?
+bool8 = bool_("bool", "b", is_weak=False)
+bool8_ = bool_("bool", "b", is_weak=True)
 
 
 class inexact(dtype):
@@ -200,67 +141,71 @@ class inexact(dtype):
 class floating(inexact):
     """Base class for the floating dtypes: bfloat16, float16, float32, float64."""
 
-    def __init__(self, name, *, bytes, is_weak):
-        super().__init__(python_type=float, name=name, bytes=bytes, is_weak=is_weak)
+    def __init__(self, name, shortname, *, bytes, is_weak):
+        super().__init__(python_type=float, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak)
 
 
-bfloat16 = floating("bfloat", bytes=2, is_weak=False)
-bfloat16_ = floating("bfloat", bytes=2, is_weak=True)
-float16 = floating("float", bytes=2, is_weak=False)
-float16_ = floating("float", bytes=2, is_weak=True)
-float32 = floating("float", bytes=4, is_weak=False)
-float32_ = floating("float", bytes=4, is_weak=True)
-float64 = floating("float", bytes=8, is_weak=False)
-float64_ = floating("float", bytes=8, is_weak=True)
+bfloat16 = floating("bfloat", "bf", bytes=2, is_weak=False)
+bfloat16_ = floating("bfloat", "bf", bytes=2, is_weak=True)
+float16 = floating("float", "f", bytes=2, is_weak=False)
+float16_ = floating("float", "f", bytes=2, is_weak=True)
+float32 = floating("float", "f", bytes=4, is_weak=False)
+float32_ = floating("float", "f", bytes=4, is_weak=True)
+float64 = floating("float", "f", bytes=8, is_weak=False)
+float64_ = floating("float", "f", bytes=8, is_weak=True)
 
 
 class complexfloating(inexact):
     """Base class for the complex floating dtypes: complex32, complex64, complex128."""
 
-    def __init__(self, name, *, bytes, is_weak):
-        super().__init__(python_type=complex, name=name, bytes=bytes, is_weak=is_weak)
+    def __init__(self, name, shortname, *, bytes, is_weak):
+        super().__init__(python_type=complex, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak)
 
 
-complex32 = complexfloating("complex", bytes=4, is_weak=False)
-complex32_ = complexfloating("complex", bytes=4, is_weak=True)
-complex64 = complexfloating("complex", bytes=8, is_weak=False)
-complex64_ = complexfloating("complex", bytes=8, is_weak=True)
-complex128 = complexfloating("complex", bytes=16, is_weak=False)
-complex128_ = complexfloating("complex", bytes=16, is_weak=True)
+complex32 = complexfloating("complex", "c", bytes=4, is_weak=False)
+complex32_ = complexfloating("complex", "c", bytes=4, is_weak=True)
+complex64 = complexfloating("complex", "c", bytes=8, is_weak=False)
+complex64_ = complexfloating("complex", "c", bytes=8, is_weak=True)
+complex128 = complexfloating("complex", "c", bytes=16, is_weak=False)
+complex128_ = complexfloating("complex", "c", bytes=16, is_weak=True)
 
 
 _abstract_classes.update((dtype, exact, inexact))
 
-all_dtypes = (
-    bool8,
-    bool8_,
-    uint8,
-    uint8_,
-    int8,
-    int8_,
-    int16,
-    int16_,
-    int32,
-    int32_,
-    int64,
-    int64_,
-    bfloat16,
-    bfloat16_,
-    float16,
-    float16_,
-    float32,
-    float32_,
-    float64,
-    float64_,
-    complex32,
-    complex32_,
-    complex64,
-    complex64_,
-    complex128,
-    complex128_,
+all_dtypes = set(
+    (
+        bool8,
+        bool8_,
+        uint8,
+        uint8_,
+        int8,
+        int8_,
+        int16,
+        int16_,
+        int32,
+        int32_,
+        int64,
+        int64_,
+        bfloat16,
+        bfloat16_,
+        float16,
+        float16_,
+        float32,
+        float32_,
+        float64,
+        float64_,
+        complex32,
+        complex32_,
+        complex64,
+        complex64_,
+        complex128,
+        complex128_,
+    )
 )
 
-all_numbertypes = (bool, int, float, complex)
+all_numbertypes = set((bool, int, float, complex))
+
+all_dtypes_and_numbertypes = all_dtypes | all_numbertypes
 
 _numbertype_to_dtype_map = {
     bool: bool8_,
@@ -269,22 +214,28 @@ _numbertype_to_dtype_map = {
     float: float32_,
 }
 
-boolean_dtypes = (bool8, bool8_, bool)
+boolean_dtypes = set((bool8, bool8_, bool))
 
-integer_dtypes = tuple(d for d in all_dtypes if isinstance(d, exact)) + (
-    bool,
-    int,
+integer_dtypes = set(d for d in all_dtypes if isinstance(d, exact)) | set((bool, int))
+
+# NOTE alias for the above
+exact_dtypes = integer_dtypes
+
+low_precision_dtypes = set(
+    d
+    for d in all_dtypes
+    if (isinstance(d, inexact) and d.bytes <= 2) or (isinstance(d, complexfloating) and d.bytes <= 4)
 )
 
-low_precision_dtypes = tuple(d for d in all_dtypes if isinstance(d, inexact) and d.bytes <= 2)
+float_dtypes = set(d for d in all_dtypes if isinstance(d, floating)) | set((float,))
 
-float_dtypes = tuple(d for d in all_dtypes if isinstance(d, floating)) + (float,)
+complex_dtypes = set(d for d in all_dtypes if isinstance(d, complexfloating)) | set((complex,))
 
-complex_dtypes = tuple(d for d in all_dtypes if isinstance(d, complexfloating)) + (complex,)
+inexact_dtypes = float_dtypes | complex_dtypes
 
-weak_dtypes = tuple(d for d in all_dtypes if d.is_weak) + all_numbertypes
+weak_dtypes = set(d for d in all_dtypes if d.is_weak) | all_numbertypes
 
-strong_dtypes = tuple(d for d in all_dtypes if not d.is_weak)
+strong_dtypes = set(d for d in all_dtypes if not d.is_weak)
 
 
 def is_weak_dtype(dtype):
@@ -310,18 +261,20 @@ def _numberclass_to_numbertype(cls):
 def to_dtype(x, *, true_dtype=False):
     """Exctracts a dtype from an object or class."""
 
-    if isinstance(x, TensorProxy):
+    if isinstance(x, TensorProxyInterface):
         if true_dtype:
             return x.true_dtype
         return x.dtype
     if isinstance(x, dtype):
         return x
-    if isinstance(x, NumberProxy):
+    if isinstance(x, NumberProxyInterface):
         return x.python_type
     if isinstance(x, Number):
         return _numberclass_to_numbertype(type(x))
     if isinstance(x, type) and issubclass(x, Number):
         return _numberclass_to_numbertype(x)
+    if hasattr(x, "dtype"):
+        return x.dtype
 
     raise ValueError(f"Trying to extract a dtype from object {x} with unknown type {type(x)}!")
 
@@ -462,7 +415,7 @@ def is_numbertype(x):
     # Note: the first argument to issubclass must be a type
     if not type(x) == type:
         return False
-    return issubclass(x, all_numbertypes)
+    return issubclass(x, tuple(all_numbertypes))
 
 
 def is_dtype(x):

@@ -22,7 +22,7 @@ from thunder.core.script.graph import (
     Value,
 )
 from thunder.core.script.python_ir import get_instruction
-from thunder.langs.torch import _torch_to_thunder_complete_map
+from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.utils import OrderedSet
 
 
