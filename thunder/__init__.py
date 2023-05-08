@@ -9,7 +9,7 @@ import traceback
 
 from looseversion import LooseVersion
 
-from thunder.core.proxies import is_proxyable, proxy
+from thunder.core.proxies import is_proxyable, proxy, Proxy
 from thunder.core.trace import (
     TraceCtx,
     from_trace,
@@ -104,6 +104,15 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
     si = get_siginfo(fn, args, kwargs)
 
     def proxy_or_track(x: Any, *, name: Optional[str] = None):
+        # TODO (mruberry) One idea would be to just unpack the proxy with the new name, but how this interaction works
+        #   with nested traces is unclear
+        if isinstance(x, Proxy) and name is not None:
+            utils.check(
+                x.name == name,
+                lambda: f"An existing proxy {x} is being passed as an input, but its name is not the same name ({name}) as the unpack is requesting",
+                exception_type=NotImplementedError,
+            )
+
         if is_proxyable(x):
             return proxy(x, name=name)
 

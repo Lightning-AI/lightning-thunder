@@ -204,7 +204,11 @@ class TraceCtx:
         name: str = None,
     ) -> Union[ProxyInterface, TrackedObject]:
         # NOTE Proxies are not (currently) tracked
+        # NOTE Proxy names are recorded here, which may be redundant, but supports
+        #   proxies constructed outside traces being used as inputs to other traces
+        #   See https://github.com/Lightning-AI/lightning-thunder/issues/384
         if isinstance(x, ProxyInterface):
+            self.add_name(x.name)
             return x
 
         # Short-circuits if already tracked
@@ -212,7 +216,12 @@ class TraceCtx:
             return x
 
         # Tracks the object
-        name = name if name is not None else self.make_name()
+        if name is not None:
+            self.add_name(name)
+        else:
+            # NOTE make_name() automatically adds the name to the set of names
+            name = self.make_name()
+
         to = TrackedObject(name, x)
         key = self._tracked_object_key(x)
         self._tracked_object_map[key] = to
