@@ -1,6 +1,9 @@
 from enum import Enum, auto
 from typing import List, Set, Dict, Callable, Optional, Sequence
 
+import torch
+from looseversion import LooseVersion
+
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
@@ -16,6 +19,49 @@ class Executor(Enum):
     NVFUSER = auto()
     TORCH = auto()
     PYTHON = auto()
+
+
+# NOTE This is here because we can only import the nvFuser executor conditional on its being available
+def is_cuda_available() -> bool:
+    return torch.cuda.is_available()
+
+
+def nvfuser_version() -> Optional[LooseVersion]:
+    # Short-circuits if CUDA isn't available
+    if not is_cuda_available():
+        return None
+
+    try:
+        import nvfuser
+
+        if hasattr(nvfuser, "version"):
+            return LooseVersion(nvfuser.version())
+
+        # NOTE: This import of nvFuser may or may not have version info
+        return LooseVersion("0.0.0")
+    except ImportError:
+        pass
+
+    try:
+        # NOTE This import of nvFuser is so old it didn't have version info
+        import torch._C._nvfuser as nvfuser
+
+        return LooseVersion("0.0.0")
+    except ImportError:
+        pass
+
+    # NOTE This occurs when both attempts at importing nvFuser failed
+    return None
+
+
+def required_nvfuser_version() -> LooseVersion:
+    return LooseVersion("0.0.1")
+
+
+# NOTE We require nvFuser version 0.0.1 or greater
+def nvfuser_available() -> bool:
+    v = nvfuser_version()
+    return v is not None and v >= required_nvfuser_version()
 
 
 # TODO Document this better

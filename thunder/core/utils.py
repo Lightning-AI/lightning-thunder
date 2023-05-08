@@ -6,6 +6,7 @@ from itertools import zip_longest, chain
 from numbers import Number
 from typing import Callable, Dict, Generic, Iterable, List, Optional, Sequence, Type, TypeVar, Tuple
 
+from looseversion import LooseVersion
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -624,8 +625,8 @@ def check_same_device(*args):
 
 # Mimics a set (see https://docs.python.org/3/library/stdtypes.html#set) but is
 # ordered
-# NOTE: dicts in Python are ordered since Python 3.7
-# TODO: implement additional methods as needed
+# NOTE dicts in Python are ordered since Python 3.7
+# TODO Implement additional methods as needed
 class OrderedSet(Generic[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
     def __init__(self, args: Optional[Iterable[T]] = None):

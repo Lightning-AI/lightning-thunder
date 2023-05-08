@@ -23,7 +23,7 @@ class NOTHING:
 
 
 JAX_AVAILABLE = package_available("jax")
-NVFUSER_AVAILABLE = package_available("nvfuser")
+NVFUSER_AVAILABLE = executors.nvfuser_available()
 
 
 # TODO: Add device type functionality to an object in this list
@@ -61,14 +61,6 @@ class nvFuser(Executor):
 
     ctx = None
 
-    def get_executor_context(self):
-        if self.ctx is None:
-            from thunder.executors.nvfuser import nvFuserCtx
-
-            self.ctx = nvFuserCtx()
-
-        return self.ctx
-
     def make_callable(self, fn, **kwargs):
         executors = thunder.executors
         executors_list = [executors.NVFUSER, executors.TORCH, executors.PYTHON]
@@ -80,15 +72,8 @@ class nvFuser(Executor):
         disable_preprocessing = kwargs.pop("disable_preprocessing", True)
         return thunder.compile(fn, executors_list=executors_list, disable_preprocessing=disable_preprocessing, **kwargs)
 
-    # TODO: refactor this so can query the nvFuserCtx for the version
     def version(self):
-        if NVFUSER_AVAILABLE:
-            import nvfuser
-
-            if hasattr(nvfuser, "version"):
-                return nvfuser.version()
-
-        return "0"
+        return executors.nvfuser_version()
 
 
 # TODO Convert to singletons or just add to executor logic
@@ -98,14 +83,6 @@ class TorchEx(Executor):
     supported_dtypes = (datatypes.dtype,)
 
     ctx = None
-
-    def get_executor_context(self):
-        if self.ctx is None:
-            from thunder.executors.torch import torchCtx
-
-            self.ctx = torchCtx()
-
-        return self.ctx
 
     def make_callable(self, fn, **kwargs):
         executors = thunder.executors
@@ -336,6 +313,16 @@ def requiresCUDA(fn):
     def _fn(*args, **kwargs):
         if not torch.cuda.is_available():
             pytest.skip("Requires CUDA")
+        return fn(*args, **kwargs)
+
+    return _fn
+
+
+def requiresNVFuser(fn):
+    @wraps(fn)
+    def _fn(*args, **kwargs):
+        if not NVFUSER_AVAILABLE:
+            pytest.skip("Requires nvFuser")
         return fn(*args, **kwargs)
 
     return _fn

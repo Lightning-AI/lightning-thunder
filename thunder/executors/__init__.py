@@ -1,13 +1,16 @@
 from typing import Optional, Any, List, Sequence, Tuple
 
 from thunder.core.trace import TraceCtx
-import thunder.executors.nvfuser as nvfuser
 import thunder.executors.torch as torchex
 import thunder.executors.pythonex as pythonex
 import thunder.executors.utils as exutils
 from thunder.executors.utils import *
 import thunder.executors.passes as passes
 
+
+# NOTE This import must be guarded because nvFuser is not always available
+# TODO Should we throw a warning if nvFuser isn't available, possibly with instructions for how to install it?
+#   It is important we support CPU-only builds for development and debugging
 
 __all__ = [
     "transform_for_execution",
@@ -19,10 +22,14 @@ PYTHON = Executor.PYTHON
 
 
 _executor_map = {
-    Executor.NVFUSER: nvfuser,
     Executor.TORCH: torchex,
     Executor.PYTHON: pythonex,
 }
+
+if nvfuser_available():
+    import thunder.executors.nvfuser as nvfuser
+
+    _executor_map[Executor.NVFUSER] = nvfuser
 
 
 # TODO Improve on the "Any" annotation here
@@ -39,7 +46,11 @@ def transform_for_execution(
 ) -> Tuple[TraceCtx, List[TraceCtx]]:
     # Acquires the executors
     if executors_list is None:
-        executors_list = [Executor.NVFUSER, Executor.TORCH, Executor.PYTHON]
+        executors_list: List[Executor]
+        if nvfuser_available():
+            executors_list = [Executor.NVFUSER, Executor.TORCH, Executor.PYTHON]
+        else:
+            executors_list = [Executor.TORCH, Executor.PYTHON]
 
     # NOTE The Python executor is required to execute any nontrivial program
     if PYTHON not in executors_list:

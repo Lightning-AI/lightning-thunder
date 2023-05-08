@@ -35,8 +35,8 @@ op_skip = {
 # Don't rely on the generated list of supported ops.
 # TODO: modify the generated list to support composite ops
 vjp_op_force = {
-    #"softmax",
-    #"var_mean",
+    # "softmax",
+    # "var_mean",
 }
 
 

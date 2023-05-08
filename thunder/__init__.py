@@ -7,6 +7,8 @@ import os
 import torch as pytorch
 import traceback
 
+from looseversion import LooseVersion
+
 from thunder.core.proxies import is_proxyable, proxy
 from thunder.core.trace import (
     TraceCtx,
@@ -57,6 +59,11 @@ __all__ = [
     "prims"
     # interface functions
 ]
+
+
+def __version__():
+    return LooseVersion("0.0.1")
+
 
 # TODO maybe move these aliases to the core language?
 #

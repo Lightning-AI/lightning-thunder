@@ -15,7 +15,7 @@ import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
 import thunder.torch as ltorch
 from thunder.tests import nanogpt_model, lit_llama_model
-from thunder.tests.framework import executors, requiresCUDA
+from thunder.tests.framework import executors, requiresNVFuser
 
 thunder.core.script.frontend.enable_debug_asserts()
 
@@ -364,7 +364,7 @@ def foo(a, c_fc_weight, c_proj_weight):
 
 
 @skipif_not_python_3_10
-@requiresCUDA
+@requiresNVFuser
 def test_inlining_function_and_convert_to_thunder():
     def convert_to_thunder(fn):
         gr = thunder.core.script.frontend.acquire_method(fn)

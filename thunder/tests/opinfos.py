@@ -19,9 +19,18 @@ import thunder.clang as clang
 import thunder.core.prims as prims
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, nvFuser
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE
 from thunder.tests.make_tensor import make_tensor
 from thunder.core.symbol import Symbol
+
+import thunder.executors as executors
+
+nvfuser_version = executors.nvfuser_version()
+
+# TODO This is a hack to support comparisons like nvfuser_version > LooseVersion("0.0.3") even when
+#   nvfuser_version is None. A better approach would probably be to create a helper function
+#   nvfuser_atleast(X) which handles nvfuser_version being None properly
+nvfuser_version = nvfuser_version if nvfuser_version is not None else LooseVersion("0.0.0")
 
 # Useful when specifying the domain of an operation
 # NOTE: Big enough such that -1 + eps != -1 in bfloat16
@@ -483,7 +492,7 @@ acosh_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < LooseVersion("0.0.3"),
         ),
     ),
 )
@@ -527,7 +536,7 @@ asinh_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < LooseVersion("0.0.3"),
         ),
     ),
 )
@@ -729,7 +738,7 @@ erfcinv_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < "0.0.3",
         ),
     ),
 )
@@ -764,7 +773,7 @@ erfinv_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < "0.0.3",
         ),
     ),
 )
@@ -808,7 +817,7 @@ exp2_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < "0.0.3",
         ),
     ),
 )
@@ -927,7 +936,7 @@ silu_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < "0.0.3",
         ),
         # NOTE: Torch doesn't support CPU float16 silu
         DecorateInfo(
@@ -1013,7 +1022,7 @@ silu_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < "0.0.3",
         ),
         # NOTE: Torch doesn't support CPU float16 silu
         DecorateInfo(
@@ -1569,7 +1578,7 @@ nextafter_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.7",
+            active_if=nvfuser_version < "0.0.7",
         ),
     ),
 )
@@ -1898,7 +1907,7 @@ cat_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.5",
+            active_if=nvfuser_version < "0.0.5",
         ),
         # vjp and jvp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
@@ -1958,7 +1967,7 @@ stack_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.5",
+            active_if=nvfuser_version < "0.0.5",
         ),
         # vjp and jvp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
@@ -2132,7 +2141,7 @@ pad_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.6",
+            active_if=nvfuser_version < "0.0.6",
         ),
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(
@@ -2454,7 +2463,7 @@ take_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.3",
+            active_if=nvfuser_version < "0.0.3",
         ),
     ),
 )
@@ -2681,7 +2690,7 @@ prod_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.4",
+            active_if=nvfuser_version < "0.0.4",
         ),
     ),
 )
@@ -2809,7 +2818,7 @@ var_mean_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            active_if=nvFuser().version() < "0.0.7",
+            active_if=nvfuser_version < "0.0.7",
         ),
     ),
 )

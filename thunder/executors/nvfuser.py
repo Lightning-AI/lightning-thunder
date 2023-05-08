@@ -27,28 +27,19 @@ from thunder.core.codeutils import Printable
 import thunder.executors.passes as passes
 
 # Imports nvFuser
-# NOTE: nvFuser API changed after PyTorch 1.13
-nvfuser_version = LooseVersion("0.0.0")
-try:
-    import nvfuser
+# NOTE The nvFuser API changed after PyTorch 1.13
 
-    if hasattr(nvfuser, "version"):
-        nvfuser_version = LooseVersion(nvfuser.version())
-        from nvfuser import DataType, FusionDefinition
-        from nvfuser import compute_contiguity as nv_compute_contiguity
-    else:
-        from nvfuser._C import DataType, Fusion, FusionDefinition
-        from nvfuser._C import compute_contiguity as nv_compute_contiguity
+assert (
+    nvfuser_available()
+), f"Attempting to import nvFuser but it's either not available or is an old version that's unsupported, the minimum supported version is {required_nvfuser_version()}"
+nv_version = nvfuser_version()
 
-    nvTensor = nvfuser._C.Tensor
-    nvNumber = nvfuser._C.Scalar
-except ImportError:
-    import torch._C._nvfuser as nvfuser
-    from torch._C._nvfuser import DataType, Fusion, FusionDefinition
-    from torch._C._nvfuser import compute_contiguity as nv_compute_contiguity
+import nvfuser
+from nvfuser import DataType, FusionDefinition
+from nvfuser import compute_contiguity as nv_compute_contiguity
 
-    nvTensor = torch._C._nvfuser.Tensor
-    nvNumber = torch._C._nvfuser.Scalar
+nvTensor = nvfuser._C.Tensor
+nvNumber = nvfuser._C.Scalar
 
 #
 # Helper functions
@@ -993,7 +984,7 @@ def create_fd(
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, dtype = y
                 nvdtype = lcdtype_to_nvdtype(ltorch.to_thunder_dtype(dtype))
-                if nvfuser_version >= LooseVersion("0.0.9"):
+                if nv_version >= LooseVersion("0.0.9"):
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
                 else:
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguous=contiguity, dtype=nvdtype)
