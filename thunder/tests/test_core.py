@@ -248,12 +248,8 @@ def test_eval_trace(executor, device, _):
 
     # Test eval_trace() with retracing + fusion + execution
     def eval_trace_as_function(trace):
-        # TODO: Use this once variable-length args are supported
         def func(*args, **kwargs):
             return eval_trace(trace, *args, **kwargs)
-
-        def func(a, b, *, c=5):
-            return eval_trace(trace, a, b, c=c)
 
         return func
 
@@ -266,7 +262,7 @@ def test_eval_trace(executor, device, _):
     foo_trace2 = thunder._make_trace(eval_trace_as_function(foo_trace))(a, b, c=c)
     # How to test that two traces are equal?
     # Two operators and others are do-nothing annotations
-    assert len(foo_trace2.bound_symbols) == 8
+    assert len(foo_trace2.bound_symbols) == 7
     assert foo_trace2.bound_symbols[-2].sym.name == "add"
     assert foo_trace2.bound_symbols[-1].sym.name == "mul"
 
@@ -308,11 +304,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
         return a, a
 
     for foo in [foo1, foo2]:
-        # TODO: variable-length args, kwargs are not supported yet
-        def tmp_func(a):
-            return identity(foo)(a)
-
-        foo_trace = thunder._make_trace(tmp_func)(a)
+        foo_trace = thunder._make_trace(identity(foo))(a)
         assert len(foo_trace.bound_symbols) == 2
         assert len(foo_trace.output) == 2
         assert foo_trace.output[0].name == foo_trace.output[1].name
@@ -346,21 +338,17 @@ def test_transforms_identity(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
     c = 4.0
 
-    # TODO: variable-length args, kwargs are not supported yet
-    def tmp_func(a, b, c=5):
-        return nested_id_func(a, b, c=c)
-
-    nested_id_trace = thunder._make_trace(tmp_func)(a, b, c=c)
+    nested_id_trace = thunder._make_trace(nested_id_func)(a, b, c=c)
     # one annotating symbol per input and one actual symbol
-    assert len(nested_id_trace.bound_symbols) == 4
+    assert len(nested_id_trace.bound_symbols) == 3
     assert nested_id_trace.bound_symbols[-1].sym.id == Transforms.IdentityOp
 
     trace = nested_id_trace.bound_symbols[-1].kwargs.get("trace", None)
     for _ in range(2):
-        assert len(trace.bound_symbols) == 2
+        assert len(trace.bound_symbols) == 3
         assert trace.bound_symbols[-1].sym.id == Transforms.IdentityOp
         trace = trace.bound_symbols[-1].kwargs.get("trace", None)
-    assert len(trace.bound_symbols) == 5
+    assert len(trace.bound_symbols) == 7
     assert trace.bound_symbols[-4].sym.name == "add"
     assert trace.bound_symbols[-3].sym.name == "convert_element_type"
     assert trace.bound_symbols[-2].sym.name == "mul"
@@ -395,11 +383,7 @@ def test_transforms_inline(executor, device, _):
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    # TODO: variable-length args, kwargs are not supported yet
-    def tmp_func(a, b):
-        return inline(nested_id_func)(a, b)
-
-    inlined_nested_id_trace = thunder._make_trace(tmp_func)(a, b)
+    inlined_nested_id_trace = thunder._make_trace(inline(nested_id_func))(a, b)
     # TODO: Something fishy is going on here, "unpacking" is repeated several times
     assert len(inlined_nested_id_trace.bound_symbols) == 9
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in inlined_nested_id_trace.bound_symbols)
@@ -414,7 +398,7 @@ def test_transforms_inline(executor, device, _):
     # Since the outer-most transform is inline, the trace should not contain
     # any identity transforms.
     transformed_trace = thunder._make_trace(transformed_func)(a, b)
-    assert len(transformed_trace.bound_symbols) == 5
+    assert len(transformed_trace.bound_symbols) == 6
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
 
 

@@ -149,15 +149,8 @@ def identity(func):
     """
 
     def wrapper(*args, **kwargs):
-        # TODO: *args, **kwargs are not supported so far
-        # we need to flatten the function before tracing it
-        flat_func, flat_args, spec = flatten_func(func, args, kwargs)
-        trace = make_trace(flat_func)(flat_args)
-        return identity_call(flat_args, trace=trace)
-
-    # def wrapper(*args, **kwargs):
-    #     trace = make_trace(func)(*args, **kwargs)
-    #     return identity_call(*args, **kwargs, trace=trace)
+        trace = make_trace(func)(*args, **kwargs)
+        return identity_call(*args, **kwargs, trace=trace)
 
     return wrapper
 
@@ -212,15 +205,8 @@ def inline(func):
     """
 
     def wrapper(*args, **kwargs):
-        # TODO: *args, **kwargs are not supported so far
-        # we need to flatten the function before tracing it
-        flat_func, flat_args, spec = flatten_func(func, args, kwargs)
-        trace = make_trace(flat_func)(flat_args)
-        return eval_trace(trace, flat_args, symbol_mapper=inline_symbol_mapper)
-
-    # def wrapper(*args, **kwargs):
-    #     trace = make_trace(func)(*args, **kwargs)
-    #     return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
+        trace = make_trace(func)(*args, **kwargs)
+        return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
 
     return wrapper
 
