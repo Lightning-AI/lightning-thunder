@@ -13,55 +13,17 @@ import thunder.core.proxies as proxies
 import thunder.torch as ltorch
 import thunder.core.codeutils as codeutils
 from thunder.core.pytree import tree_flatten_only, tree_unflatten
-from thunder.tests.framework import executors, NOTHING, TorchExecutor, nvFuserExecutor
+from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
+import thunder.core.prims as prims
+
+#
+# Tests related to running valid Python programs
+#
 
 
-@executors(dtypes=NOTHING)
-def test_detached_trace(executor, device: str, _):
-    # This test ensures that the detached_trace context manager works as expected.
-    #   It should be possible to enter a detached trace, and then exit it, and
-    #   the trace should be restored to its original state.
-    from thunder.core.trace import set_tracectx, get_tracectx, TraceCtx, reset_tracectx, detached_trace
-
-    try:
-        new_trace = TraceCtx(None)
-        trace_token = set_tracectx(new_trace)
-        outer_trace = get_tracectx()
-        assert outer_trace is not None
-        assert outer_trace is trace_token.var.get()
-        with detached_trace():
-            assert get_tracectx() is not None
-            assert get_tracectx() is not outer_trace
-    finally:
-        reset_tracectx(trace_token)
-
-
-@executors(dtypes=(thunder.float32,))
-def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
-    def foo():
-        return clang.maybe_convert_to_dtype(1, dtype)
-
-    trace = thunder._make_trace(foo)()
-
-    assert len(trace.bound_symbols) == 1
-    symbol = trace.bound_symbols[0]
-    assert symbol.sym.name == "convert_element_type"
-    assert symbol.are_all_args_constant
-
-    def bar(a, b):
-        return clang.add(a, b)
-
-    trace = thunder._make_trace(bar)(1, 2)
-    # Trace consists of two trivial unpack and addition
-    assert len(trace.bound_symbols) == 3
-    symbol = trace.bound_symbols[-1]
-    assert symbol.sym.name == "add"
-    assert not symbol.are_all_args_constant
-
-
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_integer_isinstance_mimicry(executor, device: str, dtype: dtypes.dtype):
     # isinstance() works as expected
     def foo(a, b, c):
@@ -111,8 +73,283 @@ def test_integer_isinstance_mimicry(executor, device: str, dtype: dtypes.dtype):
         pass
 
 
+# TODO Subsume this by test_elementwise when sample inputs are expanded to include more numbers
+@instantiate(dtypes=NOTHING)
+def test_integer_return(executor, device, _):
+    if executor == nvFuserExecutor:
+        pytest.xfail("nvFuser does not support only scalar outputs")
+
+    def foo(a, b):
+        return clang.add(a, b)
+
+    traced_foo = executor.make_callable(foo)
+
+    thunder_result = traced_foo(3, 4)
+    python_result = 3 + 4
+    assert_close(thunder_result, python_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_crazy_collections_in_and_out(executor, device, dtype):
+    def foo(a, b, c, *, ka, kb, kc):
+        d = {
+            5: 2,
+            7: 9,
+            "a": [a, b],
+            "b": {"a": a, "b": b, "c": [b, (a, c)]},
+            "x": (a, [a, a, a], (b, (a, a, c, b))),
+        }
+
+        e = a["a"]["a"] + b[0]
+        f = c[1]["c"] + b[1]
+        g = e + f
+        h = f + ka + kb
+        i = ka + ka  # NOTE: not returned (ignored computation)
+        j = kc[0] + kc[1]
+
+        d["j"] = j
+
+        return (
+            a,
+            (g,),
+            (((j,),),),
+            g,
+            g,
+            b,
+            e,
+            d["j"],
+            (f, d, c, (d,), c, {"a": a, 5: f, "b": h}),
+            (5,),
+            (),
+            (a,),
+            [5, a, (b,), (), {}],
+            {},
+        )
+
+    traced_foo = executor.make_callable(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
+    c = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    args = ({"a": {"a": a}}, (b, c), (3, {"c": c}))
+    kwargs = {"ka": b, "kb": 3.0, "kc": (a, 2)}
+    thunder_result = traced_foo(*args, **kwargs)
+    torch_result = foo(*args, **kwargs)
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_varargs(executor, device, dtype):
+    def foo(*args):
+        return reduce(operator.add, args)
+
+    traced_foo = executor.make_callable(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype)
+    packed = (a, a, a, a, a)
+
+    thunder_result = traced_foo(*packed)
+    torch_result = foo(*packed)
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_kwargs(executor, device, dtype):
+    def foo(**kwargs):
+        return kwargs["a"] + kwargs["b"]
+
+    traced_foo = executor.make_callable(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype)
+    b = make_tensor((2,), device=device, dtype=tdtype)
+
+    thunder_result = traced_foo(a=a, b=b)
+    torch_result = foo(a=a, b=b)
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_varargs_and_kwargs(executor, device, dtype):
+    def foo(a, b, *posargs, e, **kwargs):
+        accum = a
+        for x in posargs:
+            accum = a + x
+
+        d = b + e + kwargs["f"]
+
+        return accum, d, kwargs["g"]
+
+    traced_foo = executor.make_callable(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
+    c = make_tensor((2, 2), device=device, dtype=tdtype)
+    d = make_tensor((2,), device=device, dtype=tdtype)
+    e = make_tensor((2,), device=device, dtype=tdtype)
+    f = make_tensor((2,), device=device, dtype=tdtype)
+    g = make_tensor((2,), device=device, dtype=tdtype)
+
+    thunder_result = traced_foo(a, b, c, d, e=e, f=f, g=g)
+    torch_result = foo(a, b, c, d, e=e, f=f, g=g)
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_no_return(executor, device, dtype):
+    def foo(a, b):
+        c = a + b
+        pass
+
+    traced_foo = executor.make_callable(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
+
+    thunder_result = traced_foo(a, b=b)
+    torch_result = foo(a, b)
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=NOTHING)
+def test_no_input(executor, device, dtype):
+    def foo():
+        return 3, ()
+
+    traced_foo = executor.make_callable(foo)
+
+    thunder_result = traced_foo()
+    torch_result = foo()
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_no_compute(executor, device, dtype):
+    def foo(a, b):
+        return a, 3.0
+
+    traced_foo = executor.make_callable(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
+
+    thunder_result = traced_foo(a, b=b)
+    torch_result = foo(a, b)
+
+    assert_close(thunder_result, torch_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_strings_in_and_out(executor, device, dtype):
+    def foo(a, b, c="ok"):
+        return a, b, "hello"
+
+    cfoo = executor.make_callable(foo)
+
+    lc_result = cfoo("a", b="b")
+    assert lc_result == ("a", "b", "hello")
+
+
+# TODO update with a parameter whose default value is an object
+#   As of this writing we do not support non-printable default values in signatures
+@instantiate(dtypes=(thunder.float32,))
+def test_objects_in_and_out(executor, device, dtype):
+    a = object()
+    b = object()
+    c = object()
+
+    def foo(a, b):
+        return a, b, object()
+
+    cfoo = executor.make_callable(foo)
+
+    lc_result = cfoo(a, b=b)
+    a, b, c = lc_result
+
+    assert type(a) is object
+    assert type(b) is object
+    assert type(c) is object
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_constant_creation(executor, device, dtype):
+    def foo(a):
+        x = prims.convert_element_type(1, float)
+        return a + x
+
+    cfoo = thunder.compile_with_info(foo, executors_list=executor.executors_list())
+
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    lc_result, traces = cfoo(a)
+    python_result = foo(a)
+
+    assert_close(lc_result, python_result)
+
+    for trace in traces:
+        fn = trace.python_callable()
+        lc_result = fn(a)
+        assert_close(lc_result, python_result)
+
+
+@instantiate(dtypes=NOTHING)
+def test_detached_trace(executor, device: str, _):
+    # This test ensures that the detached_trace context manager works as expected.
+    #   It should be possible to enter a detached trace, and then exit it, and
+    #   the trace should be restored to its original state.
+    from thunder.core.trace import set_tracectx, get_tracectx, TraceCtx, reset_tracectx, detached_trace
+
+    try:
+        new_trace = TraceCtx(None)
+        trace_token = set_tracectx(new_trace)
+        outer_trace = get_tracectx()
+        assert outer_trace is not None
+        assert outer_trace is trace_token.var.get()
+        with detached_trace():
+            assert get_tracectx() is not None
+            assert get_tracectx() is not outer_trace
+    finally:
+        reset_tracectx(trace_token)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
+    def foo():
+        return clang.maybe_convert_to_dtype(1, dtype)
+
+    trace = thunder._make_trace(foo)()
+
+    assert len(trace.bound_symbols) == 1
+    symbol = trace.bound_symbols[0]
+    assert symbol.sym.name == "convert_element_type"
+    assert symbol.are_all_args_constant
+
+    def bar(a, b):
+        return clang.add(a, b)
+
+    trace = thunder._make_trace(bar)(1, 2)
+    # Trace consists of two trivial unpack and addition
+    assert len(trace.bound_symbols) == 3
+    symbol = trace.bound_symbols[-1]
+    assert symbol.sym.name == "add"
+    assert not symbol.are_all_args_constant
+
+
 # This test ensures that calls to torch functions are recorded in the trace
-@executors(executors=(TorchExecutor,), dtypes=NOTHING)
+@instantiate(executors=(TorchExecutor,), dtypes=NOTHING)
 def test_torch_call_recording(executor, device: str, _):
     def func(a):
         return ltorch.dropout(a)
@@ -132,7 +369,7 @@ def test_torch_call_recording(executor, device: str, _):
     # assert actual.shape == (2, 3)
 
 
-# @executors(dtypes=NOTHING)
+# @instantiate(dtypes=NOTHING)
 # @requiresCUDA
 # def test_torch_call_lowering_for_nvfuser(executor, device, _):
 #     pytest.xfail(reason="lower_for_nvfuser is removed and replaced with 'flattening'")
@@ -165,7 +402,7 @@ def test_torch_call_recording(executor, device: str, _):
 #     assert_close(actual, expected)
 
 
-@executors(dtypes=NOTHING)
+@instantiate(dtypes=NOTHING)
 def test_nested_make_trace(executor, device, _):
     # This test ensures that make_trace() can be called from within a traced
     # function without leaking the trace context.
@@ -195,7 +432,7 @@ def test_nested_make_trace(executor, device, _):
     # assert_close(actual, expected)
 
 
-@executors(dtypes=NOTHING)
+@instantiate(dtypes=NOTHING)
 def test_nested_make_trace_no_name_collision(executor, device, _):
     def foo(a, b):
         return clang.add(a, b)
@@ -213,7 +450,7 @@ def test_nested_make_trace_no_name_collision(executor, device, _):
     thunder._make_trace(bar)(a, b)
 
 
-@executors(dtypes=NOTHING)
+@instantiate(dtypes=NOTHING)
 def test_eval_trace(executor, device, _):
     # This test ensures that eval_trace() can be called from within a trace
     #   and that all the symbols in the trace are properly evaluated.
@@ -267,7 +504,7 @@ def test_eval_trace(executor, device, _):
     assert foo_trace2.bound_symbols[-1].sym.name == "mul"
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
     executors=[
         TorchExecutor,
@@ -314,7 +551,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
     #     assert_close(actual, (a, a))
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
     executors=[
         TorchExecutor,
@@ -362,7 +599,7 @@ def test_transforms_identity(executor, device, _):
     # torch.testing.assert_close(actual, expected)
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
     executors=[
         TorchExecutor,
@@ -402,7 +639,7 @@ def test_transforms_inline(executor, device, _):
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
     executors=(
         TorchExecutor,
@@ -420,7 +657,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
     assert_close(actual, expected)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vmap_identity(executor, device, _):
@@ -435,7 +672,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     thunder.make_trace(vmap(identity(func)), executor=executor)(a)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_jvp_eager(executor, device, _):
@@ -457,7 +694,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vjp_1_2(executor, device, _):
@@ -498,7 +735,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     assert_close(expected_grads, grads, equal_nan=True)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vjp_2_2_kwarg(executor, device, _):
@@ -563,7 +800,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     assert_close(expected_grads[2], gkwargs["z"], equal_nan=True)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vjp_2_1(executor, device, _):
@@ -598,7 +835,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     assert_close(expected_grads, grads, equal_nan=True)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 #     executors=(
 #         TorchEx(),
@@ -633,7 +870,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #         assert_close(single_grad, batched_grad[i])
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vmap_x(executor, device, _):
@@ -656,7 +893,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     assert_close(out, expected_out_p)
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
 )
 def test_transforms_inline_jvp_inline_vmap(executor, device, _):
@@ -685,7 +922,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_inline_vmap_inline_jvp(executor, device, _):
@@ -710,7 +947,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vmap_jvp(executor, device, _):
@@ -735,7 +972,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_jvp_vmap(executor, device, _):
@@ -760,7 +997,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_jvp(executor, device, _):
@@ -782,7 +1019,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_jvp_no_inline(executor, device, _):
@@ -804,7 +1041,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #     assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_vmap_sum(executor, device, _):
@@ -822,7 +1059,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #     assert_close(out, expected_out)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_transforms_jvp_python_number(executor, device, _):
@@ -850,7 +1087,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #         assert_close(out_t, expected_out_t)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 #     executors=[
 #         TorchEx(),
@@ -868,24 +1105,8 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #         assert isinstance(ex, torchCtx)
 
 
-# # TODO: subsume this by test_elementwise when sample inputs are expanded to include more numbers
-@executors(dtypes=NOTHING)
-def test_integer_return(executor, device, _):
-    if executor == nvFuserExecutor:
-        pytest.xfail("nvFuser does not support only scalar outputs")
-
-    def foo(a, b):
-        return clang.add(a, b)
-
-    traced_foo = executor.make_callable(foo)
-
-    thunder_result = traced_foo(3, 4)
-    python_result = 3 + 4
-    assert_close(thunder_result, python_result)
-
-
 # TODO: this test just spot-checks type promotion -- it could probably be better
-@executors(dtypes=NOTHING)
+@instantiate(dtypes=NOTHING)
 def test_type_promotion_tensors(executor, device, _):
     if executor == TorchExecutor:
         pytest.xfail("TorchExecutor currently fails at float x int64 x float16 type promotion")
@@ -943,7 +1164,7 @@ def test_type_promotion_tensors(executor, device, _):
     assert result.dtype is torch.float32
 
 
-# @executors(dtypes=NOTHING)
+# @instantiate(dtypes=NOTHING)
 # def test_type_promotion_numbers_and_tensors(executor, device, _):
 #     def foo(a, b, c):
 #         return a + b + c
@@ -967,7 +1188,7 @@ def test_type_promotion_tensors(executor, device, _):
 #     assert result.dtype is torch.float32
 
 
-# @executors(dtypes=NOTHING)
+# @instantiate(dtypes=NOTHING)
 # def test_int_to_float_type_promotion(executor, device, _):
 #     def foo(a, b):
 #         return a / b
@@ -997,7 +1218,7 @@ def test_type_promotion_tensors(executor, device, _):
 # TODO: put this in test_tensor_creation.py
 # TODO: specify multiple specific devices (today the test suite just passes a devicetype)
 # TODO: add test for full (), which will cause a segfault
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_full(executor, device, dtype):
 #     traced_full = executor.make_callable(tlang.full)
 
@@ -1009,169 +1230,7 @@ def test_type_promotion_tensors(executor, device, _):
 #     assert_close(thunder_result, torch_result)
 
 
-@executors(dtypes=(thunder.float32,))
-def test_crazy_collections_in_and_out(executor, device, dtype):
-    def foo(a, b, c, *, ka, kb, kc):
-        d = {
-            5: 2,
-            7: 9,
-            "a": [a, b],
-            "b": {"a": a, "b": b, "c": [b, (a, c)]},
-            "x": (a, [a, a, a], (b, (a, a, c, b))),
-        }
-
-        e = a["a"]["a"] + b[0]
-        f = c[1]["c"] + b[1]
-        g = e + f
-        h = f + ka + kb
-        i = ka + ka  # NOTE: not returned (ignored computation)
-        j = kc[0] + kc[1]
-
-        d["j"] = j
-
-        return (
-            a,
-            (g,),
-            (((j,),),),
-            g,
-            g,
-            b,
-            e,
-            d["j"],
-            (f, d, c, (d,), c, {"a": a, 5: f, "b": h}),
-            (5,),
-            (),
-            (a,),
-            [5, a, (b,), (), {}],
-            {},
-        )
-
-    traced_foo = executor.make_callable(foo)
-    tdtype = ltorch.to_torch_dtype(dtype)
-
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-    c = make_tensor((2, 2), device=device, dtype=tdtype)
-
-    args = ({"a": {"a": a}}, (b, c), (3, {"c": c}))
-    kwargs = {"ka": b, "kb": 3.0, "kc": (a, 2)}
-    thunder_result = traced_foo(*args, **kwargs)
-    torch_result = foo(*args, **kwargs)
-
-    assert_close(thunder_result, torch_result)
-
-
-@executors(dtypes=(thunder.float32,))
-def test_varargs_and_kwargs(executor, device, dtype):
-    def foo(a, b, *posargs, e, **kwargs):
-        accum = a
-        for x in posargs:
-            accum = a + x
-
-        d = b + e + kwargs["f"]
-
-        return accum, d, kwargs["g"]
-
-    traced_foo = executor.make_callable(foo)
-    tdtype = ltorch.to_torch_dtype(dtype)
-
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-    c = make_tensor((2, 2), device=device, dtype=tdtype)
-    d = make_tensor((2,), device=device, dtype=tdtype)
-    e = make_tensor((2,), device=device, dtype=tdtype)
-    f = make_tensor((2,), device=device, dtype=tdtype)
-    g = make_tensor((2,), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, b, c, d, e=e, f=f, g=g)
-    torch_result = foo(a, b, c, d, e=e, f=f, g=g)
-
-    assert_close(thunder_result, torch_result)
-
-
-@executors(dtypes=(thunder.float32,))
-def test_varargs(executor, device, dtype):
-    def foo(*args):
-        return reduce(operator.add, args)
-
-    traced_foo = executor.make_callable(foo)
-    tdtype = ltorch.to_torch_dtype(dtype)
-
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    packed = (a, a, a, a, a)
-
-    thunder_result = traced_foo(*packed)
-    torch_result = foo(*packed)
-
-    assert_close(thunder_result, torch_result)
-
-
-@executors(dtypes=(thunder.float32,))
-def test_kwargs(executor, device, dtype):
-    def foo(**kwargs):
-        return kwargs["a"] + kwargs["b"]
-
-    traced_foo = executor.make_callable(foo)
-    tdtype = ltorch.to_torch_dtype(dtype)
-
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2,), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a=a, b=b)
-    torch_result = foo(a=a, b=b)
-
-    assert_close(thunder_result, torch_result)
-
-
-@executors(dtypes=(thunder.float32,))
-def test_no_return(executor, device, dtype):
-    def foo(a, b):
-        c = a + b
-        pass
-
-    traced_foo = executor.make_callable(foo)
-    tdtype = ltorch.to_torch_dtype(dtype)
-
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, b=b)
-    torch_result = foo(a, b)
-
-    assert_close(thunder_result, torch_result)
-
-
-@executors(dtypes=NOTHING)
-def test_no_input(executor, device, dtype):
-    def foo():
-        return 3, ()
-
-    traced_foo = executor.make_callable(foo)
-
-    thunder_result = traced_foo()
-    torch_result = foo()
-
-    assert_close(thunder_result, torch_result)
-
-
-@executors(dtypes=(thunder.float32,))
-def test_no_compute(executor, device, dtype):
-    def foo(a, b):
-        return a, 3.0
-
-    traced_foo = executor.make_callable(foo)
-    tdtype = ltorch.to_torch_dtype(dtype)
-
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, b=b)
-    torch_result = foo(a, b)
-
-    assert_close(thunder_result, torch_result)
-
-
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_fusion_reuse(executor, device, dtype):
 #     def foo(a, b, *, flag=False):
 #         if flag:
@@ -1237,7 +1296,7 @@ def test_no_compute(executor, device, dtype):
 
 # # TODO: probably only want to run this on nvFuser
 # # TODO: maybe move to special test_nvfuser?
-# @executors(
+# @instantiate(
 #     dtypes=(thunder.float32,),
 #     executors=[
 #         nvFuser(),
@@ -1274,7 +1333,7 @@ def test_no_compute(executor, device, dtype):
 #     assert_close(result, torch_result)
 
 
-# @executors(
+# @instantiate(
 #     dtypes=(thunder.float32, thunder.float16),
 # )
 # def test_uniform(executor, device, dtype):
@@ -1376,7 +1435,7 @@ def test_no_compute(executor, device, dtype):
 #     assert tree_only == [{"c": {"d": "five"}}]
 
 
-# @executors(
+# @instantiate(
 #     dtypes=NOTHING,
 # )
 # def test_torch_gen_remove_last_used_variables(executor, device, _):

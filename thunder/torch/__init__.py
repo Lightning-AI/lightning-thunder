@@ -1,5 +1,5 @@
 from numbers import Number
-from typing import Any, Callable, Sequence, Union, Optional, Tuple
+from typing import Any, Callable, Sequence, Union, Optional, Tuple, Type
 from functools import partial, reduce
 import math
 import operator
@@ -1421,161 +1421,12 @@ def softmax(a, dim, dtype=None):
     return converted
 
 
-torchsymbol(torch.outer)
-
-
+@torchsymbol(torch.outer)
 def outer(a, b):
     utils.check(a.ndim == 1, lambda: f"Expected {a.ndim=} to be one")
     utils.check(b.ndim == 1, lambda: f"Expected {b.ndim=} to be one")
 
     return clang.mul(a[:, None], b[None, :])
-
-
-# THIS IS ALL DEAD AND GOING TO BE REFACTORED -- IGNORE IT!
-
-#
-# Prim implementations
-#
-# NOTE Today in thunder all tensors and arrays are converted to torch tensors during execution.
-#   (An alternative would be to try and preserve NumPy (and other) arrays where possible.)
-#   To implement eager execution, the primitive operations are executed using eager torch operations,
-#   defined below.
-
-from thunder.core.prims import PrimIDs as pids
-
-_primid_to_impl_map = {}
-
-
-class fwd_for:
-    def __init__(self, id):
-        self.id = id
-
-    def __call__(self, fn):
-        _primid_to_impl_map[self.id] = fn
-        return fn
-
-
-def get_fwd(id: prims.PrimIDs) -> Callable:
-    return _primid_to_impl_map.get(id, None)
-
-
-#
-# Data movement and transformation prims
-#
-
-
-def numpy_array_to_torch_tensor_fwd(a):
-    return torch.from_numpy(a)
-
-
-fwd_for(pids.NUMPY_ARRAY_TO_TORCH_TENSOR)(numpy_array_to_torch_tensor_fwd)
-
-#
-# Elementwise unary prim implementations
-#
-# TODO these implementations have a superset of the prim's functionality,
-#   for example torch.sin(2) is OK but prims.sin(2) is not,
-#   and this might be misleading when debugging
-
-
-def _elementwise_unary_fwd(a, *, number_fn=None, torch_fn=None):
-    if isinstance(a, Number):
-        if number_fn is None:
-            raise NotImplementedError
-        return number_fn(a)
-
-    if torch_fn is None:
-        raise NotImplementedError
-
-    return torch_fn(a)
-
-
-cos_fwd = partial(_elementwise_unary_fwd, number_fn=math.cos, torch_fn=torch.cos)
-fwd_for(pids.COS)(cos_fwd)
-
-sin_fwd = (partial(_elementwise_unary_fwd, number_fn=math.sin, torch_fn=torch.sin),)
-fwd_for(pids.SIN)(sin_fwd)
-
-#
-# Elementwise binary prim implementations
-#
-
-
-def _elementwise_binary_fwd(a, b, *, number_fn=None, torch_fn=None):
-    if isinstance(a, Number) and isinstance(b, Number):
-        if number_fn is None:
-            raise NotImplementedError
-        return number_fn(a, b)
-
-    if torch_fn is None:
-        raise NotImplementedError
-
-    return torch_fn(a, b)
-
-
-add_fwd = partial(_elementwise_binary_fwd, number_fn=operator.add, torch_fn=torch.add)
-fwd_for(pids.ADD)(add_fwd)
-
-mul_fwd = partial(_elementwise_binary_fwd, number_fn=operator.mul, torch_fn=torch.mul)
-fwd_for(pids.MUL)(mul_fwd)
-
-lt_fwd = partial(_elementwise_binary_fwd, number_fn=operator.lt, torch_fn=torch.lt)
-fwd_for(pids.LT)(lt_fwd)
-
-#
-# Conditional prim impelmentations
-#
-
-# TODO fix this for numbers
-fwd_for(pids.WHERE)(torch.where)
-
-#
-# Tensor creation prim implementations
-#
-
-
-def full_fwd(shape, fill_value, *, device, dtype=None):
-    device = to_torch_device(device)
-    dtype = to_torch_dtype(dtype)
-    return torch.full(shape, fill_value, device=device, dtype=dtype)
-
-
-fwd_for(pids.FULL)(full_fwd)
-
-
-@fwd_for(pids.UNIFORM)
-def uniform_fwd(shape, minval, maxval, *, device, dtype):
-    device = to_torch_device(device)
-    dtype = to_torch_dtype(dtype)
-
-    t = torch.empty(shape, device=device, dtype=tdtype)
-    t.uniform_(minval, maxval)
-    return t
-
-
-#
-# Shape prim implementations
-#
-
-
-@fwd_for(pids.BROADCAST_IN_DIM)
-def broadcast_in_dim_fwd(a, shape, broadcast_dimensions):
-    s = list(shape)
-    for broadcast_dimension in broadcast_dimensions:
-        s[broadcast_dimension] = -1
-
-    v = a
-    for idx, x in enumerate(s):
-        if x != -1:
-            v = v.unsqueeze(idx)
-
-    return v.expand(shape)
-
-
-@torchsymbol(torch.outer)
-def outer(a, b):
-    utils.check(a.ndim == 1 and b.ndim == 1, lambda: f"expected two 1-d arguments, but got {a.ndim}-d and {b.ndim}-d.")
-    return tlang.mul(a[:, None], b[None, :])
 
 
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention)
@@ -1601,3 +1452,84 @@ _torch_to_thunder_complete_map = {
     **_torch_to_thunder_dtype_map,
     **_torch_to_thunder_function_map,
 }
+
+#
+# Prim implementations
+#
+# NOTE These operations are called when a primitive is invoked eagerly.
+#   They handle number, torch.Tensor, and np.ndarray inputs.
+# TODO Reconcile these definitions with the primitive operator mappings in the PyTorch executor
+# TODO Consider having NumPy arrays handled by the NumPy language definition -- but that would require a more
+#   complicated dispatch mechanism
+from thunder.core.prims import PrimIDs as pids
+import numpy as np
+import thunder.numpy as lnp
+
+_primid_to_impl_map = {}
+
+
+class eager_for:
+    def __init__(self, id):
+        self.id = id
+
+    def __call__(self, fn):
+        _primid_to_impl_map[self.id] = fn
+        return fn
+
+
+def get_eager_implementation_for(id: prims.PrimIDs) -> Optional[Callable]:
+    return _primid_to_impl_map.get(id, None)
+
+
+@eager_for(pids.CONVERT_ELEMENT_TYPE)
+def _convert_element_type_eager(
+    a: Union[torch.Tensor, np.ndarray, Number], dtype: Union[dtypes.dtype, Type]
+) -> Union[torch.Tensor, Number]:
+    utils.check_type(a, (torch.Tensor, np.ndarray, Number))
+    utils.check_type(dtype, (dtypes.dtype, Type))
+
+    if isinstance(a, Number):
+        utils.check(
+            dtype in dtypes.all_numbertypes, lambda: f"Expected {dtype} to be a numbertype in {dtypes.all_numbertypes}"
+        )
+        return dtype(a)
+
+    if isinstance(a, torch.Tensor):
+        torch_dtype = to_torch_dtype(dtype)
+        return a.to(dtype)
+
+    if isinstance(a, np.ndarray):
+        np_dtype = lnp.to_numpy_dtype(dtype)
+        return a.astype(dtype)
+
+    utils.check(False, lambda: f"Unexpected case!", exception_type=AssertionError)
+
+
+def _elementwise_binary_eager(
+    a: Union[torch.Tensor, np.ndarray, Number],
+    b: Union[torch.Tensor, np.ndarray, Number],
+    *,
+    name: str,
+    number_fn: Optional[Callable] = None,
+    torch_fn: Optional[Callable] = None,
+):
+    utils.check_type(name, str)
+    utils.check_type(a, (torch.Tensor, np.ndarray, Number))
+    utils.check_type(b, (torch.Tensor, np.ndarray, Number))
+
+    if isinstance(a, Number) and isinstance(b, Number):
+        utils.check(number_fn is not None, lambda: f"", exception_type=NotImplementedError)
+        return number_fn(a, b)
+
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        utils.check(False, lambda: f"{name} does not yet support NumPy arrays", exception_type=NotImplementedError)
+
+    # NOTE isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor)
+    utils.check(
+        torch_fn is not None, lambda: f"{name} does not yet support Torch tensors", exception_type=NotImplementedError
+    )
+    return torch_fn(a, b)
+
+
+add_eager = partial(_elementwise_binary_eager, name="add_eager", number_fn=operator.add, torch_fn=torch.add)
+eager_for(pids.ADD)(add_eager)

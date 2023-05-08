@@ -21,6 +21,7 @@ from thunder.core.trace import (
     maybe_reset_trace,
 )
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx
+import thunder.core.utils as utils
 from thunder.core.codeutils import get_siginfo, is_collection
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
@@ -33,6 +34,8 @@ import thunder.core.script as script
 import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script as script
+
+import thunder.torch as ltorch
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -139,7 +142,9 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
                 unpacked = prims.unpack_dict(pot_collection, tuple(pot_collection.keys()))
                 items = unpacked.values()
             else:
-                raise NotImplementedError
+                utils.check(
+                    False, lambda: f"Found an unsupported collection type {type(x)}", exception_type=NotImplementedError
+                )
 
             for o in items:
                 if is_collection(o):
@@ -358,7 +363,7 @@ def compile(fn, **compile_kwargs) -> Callable:
 
 # TODO There is probably a better way to do this
 symbol.set_eagerctx(
-    partial(compile, executors_list=[executors.TORCH], only_execute_prims=True, disable_preprocessing=True)
+    (partial(compile, executors_list=[executors.TORCH], only_execute_prims=True, disable_preprocessing=True), ltorch)
 )
 
 

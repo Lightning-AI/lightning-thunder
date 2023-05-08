@@ -3,7 +3,7 @@ import os
 import sys
 from functools import wraps
 from itertools import product
-from typing import Sequence, Callable
+from typing import Sequence, Callable, List
 
 import pytest
 import torch
@@ -45,6 +45,21 @@ class Executor:
     def supports_devicetype(self, devicetype: devices.DeviceType) -> bool:
         return devicetype in self.supported_devicetypes
 
+    # NOTE This method should be overridden by subclasses
+    def executors_list(self) -> List[executors.Executor]:
+        return []
+
+    def make_callable(self, fn, **kwargs):
+        # TODO: an error is thrown for many functions because __code__ and
+        # inspect.signature for wrapped functions is not matching.
+        # KeyError: 'args'
+        # thunder/core/script/frontend.py:125: KeyError
+        # with disable_preprocessing=False
+        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
+        return thunder.compile(
+            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
+        )
+
 
 # TODO Convert to singletons or just add to executor logic
 class nvFuser(Executor):
@@ -59,18 +74,8 @@ class nvFuser(Executor):
         datatypes.complex128,
     )
 
-    ctx = None
-
-    def make_callable(self, fn, **kwargs):
-        executors = thunder.executors
-        executors_list = [executors.NVFUSER, executors.TORCH, executors.PYTHON]
-        # TODO: an error is thrown for many functions because __code__ and
-        # inspect.signature for wrapped functions is not matching.
-        # KeyError: 'args'
-        # thunder/core/script/frontend.py:125: KeyError
-        # with disable_preprocessing=False
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(fn, executors_list=executors_list, disable_preprocessing=disable_preprocessing, **kwargs)
+    def executors_list(self) -> List[Executor]:
+        return [executors.NVFUSER, executors.TORCH, executors.PYTHON]
 
     def version(self):
         return executors.nvfuser_version()
@@ -82,18 +87,8 @@ class TorchEx(Executor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
-    ctx = None
-
-    def make_callable(self, fn, **kwargs):
-        executors = thunder.executors
-        executors_list = [executors.TORCH, executors.PYTHON]
-        # TODO: an error is thrown for many functions because __code__ and
-        # inspect.signature for wrapped functions is not matching.
-        # KeyError: 'args'
-        # thunder/core/script/frontend.py:125: KeyError
-        # with disable_preprocessing=False
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(fn, executors_list=executors_list, disable_preprocessing=disable_preprocessing, **kwargs)
+    def executors_list(self) -> List[Executor]:
+        return [executors.TORCH, executors.PYTHON]
 
     def version(self):
         return torch.__version__
@@ -233,9 +228,9 @@ class ops:
                     self.scope[test.__name__] = test
 
 
-# TODO: don't pass the device type to the test, select an actual device
-# TODO: example uses, note this must be the LAST decorator applied
-class executors:
+# TODO Don't pass the device type to the test, select an actual device
+# TODO Example uses, note this must be the LAST decorator applied
+class instantiate:
     # TODO: support other kinds of dtype specifications
     def __init__(self, *, executors=None, devicetypes=None, dtypes=None, scope=None):
         self.executors = set(executors) if executors is not None else set(_all_executors())

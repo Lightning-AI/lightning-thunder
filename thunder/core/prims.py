@@ -5,6 +5,8 @@ import operator
 import math
 from typing import Union, Type, Any, List, Sequence, Dict, Tuple
 
+import torch
+import numpy as np
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy
@@ -350,7 +352,9 @@ def del_printer(
         exception_type=AssertionError,
     )
 
-    return f"del {codeutils.prettyprint(arg_printables)}"
+    arg_string = ", ".join(codeutils.prettyprint(x, literals_allowed=False) for x in arg_printables)
+
+    return f"del {arg_string}"
 
 
 # NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
@@ -838,22 +842,6 @@ def _make_elementwise_binary_prim(
         ),
         python_printer=python_printer,
     )
-
-
-def _elementwise_binary_op_printer(bsym: "BoundSymbol", meta_lookup, *args, op_string, **kwargs):
-    a, b = args
-    a_str = codeutils.prettyprint_args(a, meta_lookup=meta_lookup)
-    b_str = codeutils.prettyprint_args(b, meta_lookup=meta_lookup)
-
-    outputs = baseutils.sequencify(bsym.output)
-    output_str = (
-        ""
-        if bsym.output is None
-        else f"{codeutils.prettyprint_args(*outputs, with_type=True, meta_lookup=meta_lookup)} = "
-    )
-
-    s = f"{output_str}({a_str} {op_string} {b_str})"
-    return s
 
 
 add = _make_elementwise_binary_prim(

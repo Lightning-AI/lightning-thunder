@@ -9,7 +9,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import executors
+from thunder.tests.framework import instantiate
 import thunder.tests.nanogpt_model as nanogpt_model
 
 #
@@ -17,7 +17,7 @@ import thunder.tests.nanogpt_model as nanogpt_model
 #
 
 # TODO Re-enable this test
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_nanogpt(executor, device, dtype):
 #     tdtype = ttorch.to_torch_dtype(dtype)
 #     make = partial(make_tensor, dtype=torch.int64, device=device)
@@ -35,7 +35,7 @@ import thunder.tests.nanogpt_model as nanogpt_model
 #     assert_close(torch_result, thunder_result)
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_csa(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -53,7 +53,7 @@ def test_nanogpt_csa(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_block(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -71,7 +71,7 @@ def test_nanogpt_block(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_mlp(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -89,7 +89,7 @@ def test_nanogpt_mlp(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)

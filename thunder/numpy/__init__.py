@@ -88,11 +88,11 @@ def to_dtype(x: Any) -> dtypes.dtype:
 # NOTE: dtype.type is required when working with NumPy dtyes, which have an odd
 #   (at least from our perspective) relationship between the type classes and the
 #   dtypes on tensors
-def numpy_to_thunder_dtype(numpy_dtype: np.dtype) -> dtypes.dtype:
+def to_thunder_dtype(numpy_dtype: np.dtype) -> dtypes.dtype:
     return _numpy_to_thunder_dtype_map[numpy_dtype.type]
 
 
-def thunder_to_numpy_dtype(thunder_dtype: dtypes.dtype) -> np.dtype:
+def to_numpy_dtype(thunder_dtype: dtypes.dtype) -> np.dtype:
     return _thunder_to_numpy_dtype_map[thunder_dtype]
 
 

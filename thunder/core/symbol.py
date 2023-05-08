@@ -63,7 +63,7 @@ def default_python_printer(
     if bsym.output is None or (codeutils.is_collection(bsym.output) and len(bsym.output) == 0):
         result_str = ""
     else:
-        result_str = f"{codeutils.prettyprint(out_printables)} = "
+        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
 
     s = f"{result_str}{bsym.name_with_module()}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str})"
     return s
@@ -171,14 +171,19 @@ class Symbol:
     def __call__(self, *args, **kwargs):
         trace = get_tracectx()
 
-        # TODO Implement eager mode for prims
         # NOTE This signals an eager invocation
         if trace is None:
+            compile_eager, prims_eager = _eagetctx.get()
             if self.is_prim:
-                raise NotImplementedError
+                peager = prims_eager.get_eager_implementation_for(self.id)
+                baseutils.check(
+                    peager is not None,
+                    lambda: f"Couldn't find an eager implementation for {self.name}",
+                    exception_type=NotImplementedError,
+                )
+                return peager(*args, **kwargs)
 
-            eager = _eagetctx.get()
-            ceager = eager(self.meta)
+            ceager = compile_eager(self.meta)
             return ceager(*args, **kwargs)
 
         result: Any

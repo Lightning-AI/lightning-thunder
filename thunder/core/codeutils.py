@@ -88,6 +88,23 @@ def is_printable(x: Any) -> Tuple[bool, Optional[Tuple[str, Any]]]:
     return False, None
 
 
+def is_literal(x: Any) -> bool:
+    if isinstance(x, (TrackedObject, ContextObject, ProxyInterface)):
+        return False
+
+    if is_collection(x):
+        flat, _ = tree_flatten(x)
+        for f in flat:
+            check(
+                not is_collection(f), lambda: f"Found a collection {f} after flattening", exception_type=AssertionError
+            )
+            if is_literal(f):
+                return True
+        return False
+
+    return True
+
+
 def to_printable(name_generator: Callable, x: Any) -> Tuple[Any, Optional[Tuple[str, Any]]]:
     can_print, module_info = is_printable(x)
     if can_print:
@@ -113,8 +130,25 @@ def _qm(s: str, quote_markers: bool) -> str:
 
 # TODO Review prettyprinting other map types like dict -- these need to print strings in a particular way
 # TODO Add None support
-def prettyprint(x: Any, *, with_type: bool = False, _quote_markers: bool = False) -> str:
+def prettyprint(
+    x: Any,
+    *,
+    with_type: bool = False,
+    literals_allowed: bool = True,
+    literals_as_underscores: bool = False,
+    _quote_markers: bool = False,
+) -> str:
+    check(
+        literals_allowed or not is_literal(x),
+        lambda: f"Attempting to print a literal {x} where literals are not allowed",
+        exception_type=AssertionError,
+    )
+
     m = partial(_qm, quote_markers=_quote_markers)
+
+    if literals_as_underscores and is_literal(x):
+        return m("_")
+
     if x is None:
         return m("None")
     if isinstance(x, TrackedObject):
@@ -140,7 +174,7 @@ def prettyprint(x: Any, *, with_type: bool = False, _quote_markers: bool = False
         unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
         return unflattened_str
     if isinstance(x, str):
-        return f'"{x}"'
+        return m(f'"{x}"')
     if isinstance(x, dtypes.dtype):
         return m(f"dtypes.{str(x)})")
     if isinstance(x, devices.Device):
@@ -171,65 +205,6 @@ def prettyprint(x: Any, *, with_type: bool = False, _quote_markers: bool = False
     )
 
 
-# TODO Review collection handling (along with constraints and tracking)
-# TODO Review collection printing
-def prettyprint_arg(x, *, with_type=False, meta_lookup=None):
-    if is_collection(x):
-        flat, tree = tree_flatten(x)
-        printed = tuple(prettyprint_arg(f, with_type=False, meta_lookup=meta_lookup) for f in flat)
-        coll_str = str(tree_unflatten(printed, tree))
-
-        # NOTE Collections of strings (so collections of names) print like this --
-        #   ('a', 'b') -- but we want them to print like this -- (a, b) --
-        #   so this just removes all the single quotes -- this is almost certainly hacky
-        coll_str = coll_str.replace("'", "")
-        return coll_str
-
-    if isinstance(x, ProxyInterface):
-        if with_type:
-            return f'{x.name}: "{x.type_string()}"'
-        else:
-            return x.name
-
-    if meta_lookup is not None:
-        om: ObjectMeta = meta_lookup(x)
-        baseutils.check(om is not None, lambda: f"Could not find metadata for {x}")
-
-        if with_type:
-            return f'{om.name}: "{baseutils.print_type(om.type)}"'
-        return om.name
-
-    if with_type:
-        return f'{x}: "{baseutils.print_type(type(x))}"'
-
-    return str(x)
-
-
-def prettyprint_args(*args, with_type=False, meta_lookup=None):
-    return ", ".join(prettyprint_arg(arg, with_type=with_type, meta_lookup=meta_lookup) for arg in args)
-
-
-def prettyprint_kwarg(key: str, value: Any, *, meta_lookup: Callable) -> str:
-    # TODO Refactor this in common with prettyprint_arg
-    if is_collection(value):
-        flat, tree = tree_flatten(value)
-        printed = tuple(prettyprint_arg(f, with_type=False, meta_lookup=meta_lookup) for f in flat)
-        coll_str = str(tree_unflatten(printed, tree))
-
-        # NOTE Collections of strings (so collections of names) print like this --
-        #   ('a', 'b') -- but we want them to print like this -- (a, b) --
-        #   so this just removes all the single quotes -- this is almost certainly hacky
-        coll_str = coll_str.replace("'", "")
-        return f"{key}={coll_str}"
-
-    om: ObjectMeta = meta_lookup(value)
-    return f"{key}={om.name}"
-
-
-def prettyprint_kwargs(kwargs: dict, *, meta_lookup: Callable) -> str:
-    return ", ".join(prettyprint_kwarg(k, v, meta_lookup=meta_lookup) for k, v in kwargs.items())
-
-
 # TODO Make this a frozen dataclass?
 class SigInfo:
     def __init__(self, name):
@@ -256,7 +231,7 @@ class SigInfo:
                     can_print,
                     lambda: f"Only signatures with printable defaults are currently supported, but found {default=} that is not serializable as a string",
                 )
-                return f"{name}={default}"
+                return f"{name}={prettyprint(default)}"
             return name
 
         args = []

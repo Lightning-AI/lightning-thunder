@@ -15,7 +15,7 @@ import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
 import thunder.torch as ltorch
 from thunder.tests import nanogpt_model, lit_llama_model
-from thunder.tests.framework import executors, requiresNVFuser
+from thunder.tests.framework import instantiate, requiresNVFuser
 
 thunder.core.script.frontend.enable_debug_asserts()
 
@@ -395,7 +395,7 @@ def test_inlining_function_and_convert_to_thunder():
 
 
 @skipif_not_python_3_10
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_preprocess_option(executor, device, dtype):
     def foo(a, b):
         return torch.add(a, b)
@@ -430,7 +430,7 @@ def _nanogpt_mlp_helper(device, dtype, thunder_fn, torch_fn):
 
 
 @skipif_not_python_3_10
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
     def nanogpt_mlp_functional_simplified(a, c_fc_weight, c_proj_weight):
         b = torch.nn.functional.linear(a, c_fc_weight)
@@ -443,7 +443,7 @@ def test_nanogpt_mlp_functional_simplified(executor, device, dtype):
 
 
 @skipif_not_python_3_10
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional_inlined(executor, device, dtype):
     def nanogpt_mlp_functional_inlined(a, c_fc_weight, c_proj_weight):
         b = torch.nn.functional.linear(a, c_fc_weight)
@@ -461,7 +461,7 @@ def new_gelu(x):
 
 
 @skipif_not_python_3_10
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_mlp_functional(executor, device, dtype):
     def nanogpt_mlp_functional(a, c_fc_weight, c_proj_weight):
         b = torch.nn.functional.linear(a, c_fc_weight)
@@ -519,7 +519,7 @@ def test_clone_graph():
 
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying
 # TODO: once this test works, also test acquiring the function from a collection
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_fn_input(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
@@ -540,7 +540,7 @@ def test_clone_graph():
 #     assert_close(thunder_result, torch_result)
 
 # TODO: FIXME
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_local_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
@@ -565,7 +565,7 @@ def test_clone_graph():
 
 #     assert_close(thunder_result, torch_result)
 
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_local_wrapped_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
@@ -593,7 +593,7 @@ def test_clone_graph():
 
 
 @skipif_not_python_3_10
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_local_aliased_translation(executor, device, dtype):
     tdtype = ltorch.to_torch_dtype(dtype)
     make = partial(make_tensor, device=device, dtype=tdtype)
@@ -627,7 +627,7 @@ def test_unused_arg():
     assert_close(actual, expected)
 
 
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_local_acquired_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
@@ -648,7 +648,7 @@ def test_unused_arg():
 
 #     assert_close(thunder_result, torch_result)
 
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_lambda_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)
 #     make = partial(make_tensor, device=device, dtype=tdtype)
@@ -668,7 +668,7 @@ def test_unused_arg():
 #     assert_close(thunder_result, torch_result)
 
 
-# @executors(dtypes=(thunder.float32,))
+# @instantiate(dtypes=(thunder.float32,))
 # def test_nanogpt_mlp(executor, device, dtype):
 
 #     def new_gelu(x):

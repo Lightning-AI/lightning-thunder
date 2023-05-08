@@ -15,7 +15,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.transforms import jvp, vjp
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
-from thunder.tests.framework import executors, NOTHING, ops, run_snippet
+from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops
 
@@ -434,7 +434,7 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
         torch.testing.assert_close(actual_out, out)
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
 )
 def test_multiple_output_vjp(executor, device, _):
@@ -494,7 +494,7 @@ def test_multiple_output_vjp(executor, device, _):
     assert trace.outputs[0] == trace.symbols[0].outputs
 
 
-@executors(
+@instantiate(
     dtypes=NOTHING,
 )
 def test_torch_autograd_function(executor, device, _):

@@ -5,7 +5,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import executors
+from thunder.tests.framework import instantiate
 
 import pytest
 
@@ -13,7 +13,7 @@ import pytest
 # TODO: convert these tests to OpInfo generated tests
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_torch_var(executor, device, dtype):
     # Tests passing all arguments as function inputs
     def foo(a, dim, *, keepdim=False, correction=1):
@@ -57,7 +57,7 @@ def test_torch_var(executor, device, dtype):
     assert_close(thunder_result, torch_result)
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_torch_mean(executor, device, dtype):
     def foo(a, dim=None, keepdim=False, *, dtype=None):
         return ttorch.mean(a, dim, keepdim, dtype=dtype)
@@ -83,7 +83,7 @@ def test_torch_mean(executor, device, dtype):
     assert_close(thunder_result, torch_result)
 
 
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_var_mean(executor, device, dtype):
     def foo(a, dim=None, unbiased=None, keepdim=False, *, correction=None):
         return ttorch.var_mean(a, dim, unbiased, keepdim=keepdim, correction=correction)
@@ -117,7 +117,7 @@ def test_var_mean(executor, device, dtype):
 
 
 # TODO: autogenerate consistency tests using opinfos
-@executors(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,))
 def test_layer_norm(executor, device, dtype):
     thunder_fn = executor.make_callable(ttorch.layer_norm)
     torch_fn = torch.nn.functional.layer_norm
