@@ -25,12 +25,16 @@ from thunder.core.symbol import Symbol
 
 import thunder.executors as executors
 
-nvfuser_version = executors.nvfuser_version()
+#
+# Helpful constants and utility functions
+#
 
 # TODO This is a hack to support comparisons like nvfuser_version > LooseVersion("0.0.3") even when
 #   nvfuser_version is None. A better approach would probably be to create a helper function
 #   nvfuser_atleast(X) which handles nvfuser_version being None properly
+nvfuser_version = executors.nvfuser_version()
 nvfuser_version = nvfuser_version if nvfuser_version is not None else LooseVersion("0.0.0")
+
 
 # Useful when specifying the domain of an operation
 # NOTE: Big enough such that -1 + eps != -1 in bfloat16
@@ -2137,6 +2141,12 @@ pad_opinfo = OpInfo(
     sample_input_generator=pad_sample_generator,
     jax_reference=_jax_pad if JAX_AVAILABLE else None,
     test_directives=(
+        # TODO FIXME nvFuser's pad translation likely just needs an update
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+            dtypes=(datatypes.complexfloating,),
+        ),
         # NVFuser introduced the pad() op in v0.0.6
         DecorateInfo(
             pytest.mark.xfail,
@@ -2173,6 +2183,11 @@ slice_in_dim = OpInfo(
     sample_input_generator=slice_in_dim_sample_generator,
     jax_reference=jax.lax.slice_in_dim if JAX_AVAILABLE else None,
     test_directives=(
+        # Output types from fusions that are not tensors are not supported at this point.
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvFuser",),
+        ),
         # nvFuser executor doesn't support pad correctly
         # See https://github.com/Lightning-AI/lightning-thunder/issues/285
         DecorateInfo(
@@ -2347,6 +2362,11 @@ tensor_split_opinfo = OpInfo(
     sample_input_generator=tensor_split_sample_generator,
     torch_reference=torch.tensor_split,
     test_directives=(
+        # TODO FIXME Needs floor_divide to be implemented
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+        ),
         # nvFuser executor doesn't support pad correctly
         # See https://github.com/Lightning-AI/lightning-thunder/issues/285
         DecorateInfo(

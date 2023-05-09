@@ -74,6 +74,18 @@ class TraceCtx:
         self._unpacking = False
         self._post_unpack = []
 
+        # NOTE SigInfo is here because we only want to construct one SigInfo for the trace
+        self._siginfo = None
+
+    #
+    # Methods related to the trace's signature
+    #
+    def siginfo(self) -> codeutils.SigInfo:
+        if self._siginfo is None:
+            self._siginfo = codeutils.get_siginfo(self.fn, self.args, self.kwargs)
+
+        return self._siginfo
+
     #
     # Methods for setting trace metadata (like the provenance)
     #
@@ -260,9 +272,18 @@ class TraceCtx:
     # Practitioner-facing command that just returns the a single Python context,
     #   combining both the import and object contexts
     def python_ctx(self) -> dict:
+        # Gathers the BoundSymbol's import, call, and object contexts
         import_ctx, call_ctx, object_ctx = self._gather_ctxs()
+
+        # Gathers the signature's import and object contexts
+        # NOTE The result of the prettyprint is ignored, this is just interested in the context updates
+        si = self.siginfo()
+        _ = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
+
+        # Creates common ctx
         import_ctx.update(call_ctx)
         import_ctx.update(object_ctx)
+
         return import_ctx
 
     # TODO Account for multi-line signatures
@@ -281,8 +302,12 @@ class TraceCtx:
         token = set_tracectx(self)
 
         try:
-            # Acquires ctx and imports
+            # Acquires ctx and imports from the BoundSymbols...
             import_ctx, call_ctx, object_ctx = self._gather_ctxs()
+
+            # ... and from the signature
+            si = self.siginfo()
+            signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
 
             # Constructs program strings
             program = []
@@ -302,8 +327,6 @@ class TraceCtx:
                 program.append("")
 
             # Prints the signature
-            si = codeutils.get_siginfo(self.fn, self.args, self.kwargs)
-            signature_str = si.prettyprint()
             program.append(signature_str)
 
             indent = codeutils.indent_string(1)
@@ -340,21 +363,9 @@ class TraceCtx:
         python_str = self.python()
         ctx = self.python_ctx()
 
-        # TODO Hacky way to extract meta function from Symbol objects
-        #   This should probably use a SymbolInterface, or Symbol should define __name__
-        cname: str
-        if hasattr(self.fn, "meta"):
-            cname = self.fn.name
-        else:
-            # TODO: Refactor this into a helper
-            # NOTE This unwraps partial objects
-            fn_ = self.fn
-            while isinstance(fn_, functools.partial):
-                fn_ = fn_.func
-            name = fn_.__name__
-            cname = name
-
-        callable = baseutils.compile_and_exec(cname, python_str=python_str, program_name="LC.gen", ctx=ctx)
+        callable = baseutils.compile_and_exec(
+            self.siginfo().name, python_str=python_str, program_name="LC.gen", ctx=ctx
+        )
         return callable
 
     def __repr__(self) -> str:
@@ -375,6 +386,8 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.names = trace.names
 
     t._tracked_object_map = trace._tracked_object_map
+
+    t._siginfo = trace._siginfo
 
     return t
 

@@ -120,16 +120,22 @@ class Symbol:
         # TODO Maybe let the module be specified directly, too?
         # TODO Test that this works with decorators -- only decorators with @wraps?
         #   Decorators defined in different modules?
+        # TODO This aggressively unwraps partials and wrapped functions, but if the user is calling
+        #   an operation that is itself a partial or a wrapper they may expect to see that call
+
         module = self._module
         if module is not None:
             result = module
         elif self.meta is None:
             result = None
         else:
-            module_func = self.meta
-            while isinstance(module_func, functools.partial):
-                module_func = module_func.func
-            result = inspect.getmodule(module_func)
+            fn_ = self.meta
+            while isinstance(fn_, functools.partial) or hasattr(fn_, "__wrapped__"):
+                if isinstance(fn_, functools.partial):
+                    fn_ = fn_.func
+                else:
+                    fn_ = fn_.__wrapped__
+            result = inspect.getmodule(fn_)
         return result
 
         # Properties used in transforms (defined later)
@@ -284,39 +290,16 @@ class BoundSymbol(BoundSymbolInterface):
         self._flat_kwargs, kwarg_spec = tree_flatten(self.kwargs)
         self._flat_outs, out_spect = tree_flatten(self.output)
 
-        # TODO Update this to be "ctx_name" or similar
-        def _to_printable(x: Any) -> Any:
-            to = trace.get_tracked_object(x)
-            is_tracked = isinstance(to, TrackedObject)
-
-            if is_tracked:
-                return to
-
-            # TODO This is unsafe if the collection cannot be flattened by tree_flatten
-            #   We should probably have tree_flatten throw an exception when that occurs
-            if codeutils.is_collection(x):
-                flat, spec = tree_flatten(x)
-                printables = tuple(_to_printable(f) for f in flat)
-                printable = tree_unflatten(printables, spec)
-                return printable
-
-            # NOTE In this case the object is not tracked nor a collection, and
-            #   it may require an import or additional context to print
-
-            printable, module_info = codeutils.to_printable(trace.make_const_name, to)
-
-            if module_info is not None:
-                module_name, module = module_info
-                self._import_ctx[module_name] = module
-
-            if isinstance(printable, codeutils.ContextObject):
-                self._object_ctx[printable.name] = x
-
-            return printable
-
-        self._out_printables = _to_printable(self.output)
-        self._arg_printables = tuple(_to_printable(x) for x in self.args)
-        self._kwarg_printables = _to_printable(self.kwargs)
+        self._out_printables = codeutils.to_printable(
+            trace, self.output, import_ctx=self._import_ctx, object_ctx=self._object_ctx
+        )
+        self._arg_printables = tuple(
+            codeutils.to_printable(trace, x, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
+            for x in self.args
+        )
+        self._kwarg_printables = codeutils.to_printable(
+            trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx
+        )
 
     # BoundSymbols are hashable and comparable by identity
     # This is necessary for using them as keys in a dict or set members

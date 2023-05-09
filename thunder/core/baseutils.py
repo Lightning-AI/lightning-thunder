@@ -205,9 +205,8 @@ def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict
     try:
         code = compile(python_str, program_name, mode="exec")
         exec(code, ctx)
+        return ctx[fn_name]
     except Exception as e:
         print("Encountered an exception while trying to compile the following program:")
         print(python_str)
         raise e
-
-    return ctx[fn_name]

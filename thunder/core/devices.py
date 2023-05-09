@@ -72,6 +72,9 @@ def _device_from_string_helper(devicestr: str) -> Tuple[DeviceType, int]:
     if devicestr == "cpu":
         return DeviceType.CPU, 0
 
+    if devicestr == "cuda":
+        return DeviceType.CUDA, 0
+
     devicetype, deviceno = devicestr.split(":")
     deviceno = int(deviceno)
 

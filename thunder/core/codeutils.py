@@ -105,7 +105,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def to_printable(name_generator: Callable, x: Any) -> Tuple[Any, Optional[Tuple[str, Any]]]:
+def _to_printable(name_generator: Callable, x: Any) -> Tuple[Any, Optional[Tuple[str, Any]]]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
@@ -114,6 +114,51 @@ def to_printable(name_generator: Callable, x: Any) -> Tuple[Any, Optional[Tuple[
     name = name_generator()
     co = ContextObject(name, x)
     return co, None
+
+
+# TODO Improve type annotations
+def to_printable(
+    trace,
+    x: Any,
+    *,
+    import_ctx: Optional[dict] = None,
+    object_ctx: Optional[dict] = None,
+    allow_tracked_objects: bool = True,
+) -> Any:
+    if allow_tracked_objects:
+        to = trace.get_tracked_object(x)
+        is_tracked = isinstance(to, TrackedObject)
+
+        if is_tracked:
+            return to
+
+    if is_collection(x):
+        flat, spec = tree_flatten(x)
+
+        printables = []
+        for f in flat:
+            check(
+                not is_collection(f), lambda: f"Found a collection {f} after flattening", exception_type=AssertionError
+            )
+            printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
+
+        printable = tree_unflatten(printables, spec)
+        return printable
+
+    # NOTE In this case the object is not tracked nor a collection, and
+    #   it may require an import or additional context to print
+
+    # TODO Instead of constant names, maybe "context names"?
+    printable, module_info = _to_printable(trace.make_const_name, x)
+
+    if module_info is not None and import_ctx is not None:
+        module_name, module = module_info
+        import_ctx[module_name] = module
+
+    if isinstance(printable, ContextObject) and object_ctx is not None:
+        object_ctx[printable.name] = x
+
+    return printable
 
 
 # NOTE This quote marker allows for removal of quotation marks when printing collections
@@ -214,23 +259,51 @@ class SigInfo:
         self.kwargs = {}
         self.varkwargs = None
         self.defaultdict = {}
+        self._import_ctx = None
+        self._object_ctx = None
 
     def __repr__(self):
         return f"[SigInfo args={self.args}, varargs={self.varargs}, kwargs={self.kwargs}, varkwargs={self.varkwargs}]"
 
     # NOTE This prints the original signature, not the bound signature
     # TODO Maybe be clear about what inputs are const and what aren't?
-    # TODO Add type annotations
-    # TODO Better support default arguments that can't be serialized as simple Python objects like strings and
-    #   numbers -- this may require including a Python ctx to support arbitrary object defaults
-    def prettyprint(self):
+    # TODO Improve this type annotation to take a TraceInterface and return the proper type(s)
+    def prettyprint(self, *, trace: Optional = None, import_ctx: Optional = None, object_ctx=None):
         def _arg_printer(name: str, has_default: bool, default: Any = None) -> str:
             if has_default:
-                can_print, _ = is_printable(default)
+                if trace is not None:
+                    # NOTE This may seem a little ridiculous, and there may be a better way to do it,
+                    #   but we only want to build the SigInfo's import and object contexts once
+                    #   This lazy initialization ensures we do that
+                    _import_ctx = None
+                    _object_ctx = None
+                    if self._import_ctx is None:
+                        self._import_ctx = {}
+                        self._object_ctx = {}
+                        _import_ctx = self._import_ctx
+                        _object_ctx = self._object_ctx
+
+                    # NOTE Arbitrary objects from the input will be tracked at this point, but this needs to print them
+                    #   as if they are just being constructed, so using the names of the tracked objects is disallowed here
+                    printable = to_printable(
+                        trace, default, import_ctx=_import_ctx, object_ctx=_object_ctx, allow_tracked_objects=False
+                    )
+                    s = f"{name}={prettyprint(printable)}"
+
+                    import_ctx.update(self._import_ctx)
+                    object_ctx.update(self._object_ctx)
+
+                    return s
+
+                # Trace is None case
+                # NOTE In this case the default value must be serializable as a string without an import or compile context
+                can_print, module_info = is_printable(default)
+
                 check(
-                    can_print,
-                    lambda: f"Only signatures with printable defaults are currently supported, but found {default=} that is not serializable as a string",
+                    can_print and module_info is None,
+                    lambda: f"This signature has a default value {default=} that is not serializable as a string; it can only be printed in a trace context",
                 )
+
                 return f"{name}={prettyprint(default)}"
             return name
 
@@ -280,25 +353,44 @@ class SigInfo:
 
 # TODO Review errors and improve message quality (ex. too many arguments error)
 def get_siginfo(fn, args, kwargs):
+    # Unwraps partials and records their arguments
+    partials = []
+    partial_kwargs = {}
+    fn_ = fn
+    while True:
+        if not isinstance(fn_, functools.partial):
+            break
+
+        partials.append(fn_)
+
+        check(
+            len(fn_.args) == 0,
+            lambda: f"Support for partials with positional args (like {fn_.args}) is not implemented yet",
+            exception_type=NotImplementedError,
+        )
+
+        fn_ = fn_.func
+
+    # NOTE That the partials are iterated over in REVERSE order because the keywords from later partials override
+    #   the keywords from earlier partials
+    for p in reversed(partials):
+        partial_kwargs.update(p.keywords)
+
     # TODO Hacky way to extract meta function from Symbol objects
     #   This should probably use a SymbolInterface, or Symbol should define __name__
-    if hasattr(fn, "meta"):
-        fn = fn.meta
+    if hasattr(fn_, "meta"):
+        fn_ = fn_.meta
 
     # Binds args and kwargs to signature
-    sig = inspect.signature(fn)
+    sig = inspect.signature(fn_)
 
-    # print(f"{sig=}")
-    # print(f"{len(args)=}")
-    # print(f"{args=}")
-    # print(f"{kwargs=}")
-
+    kwargs.update(partial_kwargs)
     ba = sig.bind(*args, **kwargs)
 
     # Augments arguments with default values
     # NOTE: for example, alpha=1., if alpha is not specified
     #   explicitly then ba above will not contain it
-    default_dict = {}
+    default_dict = partial_kwargs
 
     args_dict = {k: v.default for k, v in sig.parameters.items() if v.default is not Parameter.empty}
 
@@ -310,17 +402,11 @@ def get_siginfo(fn, args, kwargs):
 
     # Constructs signature information
 
-    # TODO Is there a better way to do this?
-    # TODO Consider refactoring name extraction
     # Acquires the name of the function
     # NOTE Not all callables define __name__, including objects that define __call__ and
     #   objects created with functools.partial
-    #   This "unwraps" partial objects until the original function is found, and the
-    #   name is taken from it
+    # TODO Is there a better way to extract the name here?
 
-    fn_ = fn
-    while isinstance(fn_, functools.partial):
-        fn_ = fn_.func
     name = fn_.__name__
 
     si = SigInfo(name)

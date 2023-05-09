@@ -18,6 +18,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.trace import get_tracectx
+from thunder.core.langctx import langctx
 
 #
 # Primitives and helpers for defining them
@@ -121,7 +122,14 @@ class PrimIDs(Enum):
     EMBEDDING = auto()
 
 
-# TODO: describe parts of the primitive
+# NOTE The primitive context is actually the lack of a context for interpreting operations
+# TODO Maybe we should represent it as an actual ctx?
+def prim_ctx(fn):
+    _fn = langctx(None)(fn)
+    return _fn
+
+
+# TODO Document this function and describe the parts of a primitive
 def make_prim(
     id,
     name,
@@ -130,7 +138,9 @@ def make_prim(
     python_printer=default_python_printer,
     python_impl=None,
 ):
-    sym = Symbol(name=name, meta=meta, python_impl=python_impl, id=id, is_prim=True, python_printer=python_printer)
+    sym = Symbol(
+        name=name, meta=prim_ctx(meta), python_impl=python_impl, id=id, is_prim=True, python_printer=python_printer
+    )
     return sym
 
 
