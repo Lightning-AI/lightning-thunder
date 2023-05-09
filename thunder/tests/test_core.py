@@ -471,14 +471,26 @@ def test_nested_make_trace(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_nested_make_trace_no_name_collision(executor, device, _):
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/145
+    # for the original issue.
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/384
+    # for the new issue.
+    pytest.xfail(
+        "NotImplementedError: An existing proxy __a is being passed"
+        "as an input, but its name is not the same"
+        "name (a) as the unpack is requesting"
+    )
+
     def foo(a, b):
         return clang.add(a, b)
 
-    def bar(a, b):
+    def bar(__a, __b):
+        a, b = __a, __b
         foo_trace = thunder._make_trace(foo)(a, b)
         # The name of the output of the add symbol should not be the same as
         # the name of the first argument to the bar function.
-        assert foo_trace.bound_symbols[0].output[0].name != foo_trace.args[0].name
+        assert foo_trace.bound_symbols[-1].sym.name == "add"
+        assert foo_trace.bound_symbols[-1].output.name != foo_trace.args[0].name
         return foo(a, b)
 
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
