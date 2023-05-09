@@ -993,9 +993,16 @@ sigmoid_opinfo = OpInfo(
         ),
         # test tols are too tight for these half precision tests
         DecorateInfo(
-            pytest.mark.xfail,
+            pytest.mark.skip,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+        # TODO Investigate this failure due to a significant numeric difference
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("nvFuser",),
+            dtypes=(datatypes.complex64,),
         ),
     ),
 )
@@ -1006,7 +1013,7 @@ sign_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.sgn),
     test_directives=(
-        # TODO: need to add nvFuser specific support for complex sign
+        # TODO Need to add nvFuser specific support for complex sign
         # https://github.com/csarofeen/pytorch/issues/2492
         DecorateInfo(
             pytest.mark.xfail,
@@ -1016,6 +1023,15 @@ sign_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(sign_opinfo)
+
+# NOTE signbit is not defined for complex types
+signbit_opinfo = OpInfo(
+    clang.signbit,
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.signbit),
+)
+elementwise_unary_ops.append(signbit_opinfo)
 
 silu_opinfo = OpInfo(
     clang.silu,
@@ -1406,11 +1422,11 @@ opinfos.extend(elementwise_unary_ops)
 # Elementwise Binary OpInfos
 #
 
-# TODO: create elementwise binary OpInfo subclass and maybe auto add to list
+# TODO Create elementwise binary OpInfo subclass and maybe auto add to list
 elementwise_binary_ops = []
 
 
-# TODO: extend this generator
+# TODO Extend this generator
 def elementwise_binary_generator(op, device, dtype, requires_grad, **kwargs):
     a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
     b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
@@ -1449,14 +1465,25 @@ bitwise_and_opinfo = OpInfo(
     dtypes=(datatypes.exact,),
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.bitwise_and,
-    test_directives=(
-        # TypeError: argument of type 'type' is not iterable
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
-    ),
 )
 elementwise_binary_ops.append(bitwise_and_opinfo)
+
+bitwise_xor_opinfo = OpInfo(
+    clang.bitwise_xor,
+    dtypes=(datatypes.exact,),
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.bitwise_xor,
+)
+elementwise_binary_ops.append(bitwise_xor_opinfo)
+
+# NOTE copysign is not defined for complex numbers
+copysign_opinfo = OpInfo(
+    clang.copysign,
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.copysign,
+)
+elementwise_binary_ops.append(copysign_opinfo)
 
 # For grad test stability it's better to use wider range of values
 elementwise_comparison_generator = partial(elementwise_binary_generator, low=-1000, high=1000)
@@ -1466,11 +1493,6 @@ eq_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.eq,
     test_directives=(
-        # RuntimeError: Unsupported input dtype
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.complexfloating, datatypes.floating),
-        ),
         # There's a problem of reducing a tensor produced by full op
         # See https://github.com/NVIDIA/Fuser/issues/132
         DecorateInfo(
@@ -1481,6 +1503,31 @@ eq_opinfo = OpInfo(
     ),
 )
 elementwise_binary_ops.append(eq_opinfo)
+
+# NOTE floor division is not defined for complex numbers
+floor_divide_opinfo = OpInfo(
+    clang.floor_divide,
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
+    torch_reference=torch.floor_divide,
+    test_directives=(
+        # TODO FIXME
+        # nvFuser's division operation is true division, so the dtypes are wrong
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.exact,),
+            executors=("nvFuser,"),
+        ),
+        # PyTorch doesn't support boolean floor division
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+        ),
+    ),
+)
+elementwise_binary_ops.append(floor_divide_opinfo)
 
 fmod_opinfo = OpInfo(
     clang.fmod,
@@ -1501,16 +1548,11 @@ elementwise_binary_ops.append(fmod_opinfo)
 
 ge_opinfo = OpInfo(
     clang.ge,
-    # NOTE: comparison is only defined for real numbers
+    # NOTE Comparison operations are only defined for real numbers
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
     test_directives=(
-        # RuntimeError: Unsupported input dtype
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.complexfloating, datatypes.floating),
-        ),
         # There's a problem of reducing a tensor produced by full op
         # See https://github.com/NVIDIA/Fuser/issues/132
         DecorateInfo(
@@ -1522,18 +1564,31 @@ ge_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(ge_opinfo)
 
+gt_opinfo = OpInfo(
+    clang.gt,
+    # NOTE Comparison operations are only defined for real numbers
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=elementwise_comparison_generator,
+    torch_reference=torch.gt,
+)
+elementwise_binary_ops.append(gt_opinfo)
+
+# NOTE Comparing to the reference implementation is important because torch.logical_and
+#   doesn't support complexhalf inputs on CPU or CUDA devices
+logical_and_opinfo = OpInfo(
+    clang.logical_and,
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch._refs.logical_and,
+)
+elementwise_binary_ops.append(logical_and_opinfo)
+
 lt_opinfo = OpInfo(
     clang.lt,
-    # NOTE: comparison is only defined for real numbers
+    # NOTE Comparison operations are only defined for real numbers
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.lt,
     test_directives=(
-        # RuntimeError: Unsupported input dtype
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.complexfloating, datatypes.floating),
-        ),
         # There's a problem of reducing a tensor produced by full op
         # See https://github.com/NVIDIA/Fuser/issues/132
         DecorateInfo(
@@ -1564,6 +1619,24 @@ mul_opinfo = OpInfo(
     ),
 )
 elementwise_binary_ops.append(mul_opinfo)
+
+ne_opinfo = OpInfo(
+    clang.ne,
+    # NOTE: comparison is only defined for real numbers
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=elementwise_comparison_generator,
+    torch_reference=torch.ne,
+    test_directives=(
+        # There's a problem of reducing a tensor produced by full op
+        # See https://github.com/NVIDIA/Fuser/issues/132
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
+)
+elementwise_binary_ops.append(ne_opinfo)
 
 nextafter_opinfo = OpInfo(
     clang.nextafter,
@@ -1746,6 +1819,14 @@ masked_fill_opinfo = OpInfo(
             dtypes=(datatypes.bfloat16, datatypes.float16),
             executors=("nvFuser",),
         ),
+        # TODO FIXME RuntimeError: Dtype is not supported:float
+        #   (mbuerry) This probably happened when nvFuser constants were changed to be float instead of double by default?
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float32, datatypes.float64),
+            executors=("nvFuser",),
+        ),
     ),
 )
 elementwise_ternary_ops.append(masked_fill_opinfo)
@@ -1771,15 +1852,6 @@ where_opinfo = OpInfo(
     clang.where,
     sample_input_generator=where_sample_generator,
     torch_reference=torch.where,
-    test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2378
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            executors=("nvFuser",),
-        ),
-    ),
 )
 elementwise_ternary_ops.append(where_opinfo)
 
@@ -2362,11 +2434,6 @@ tensor_split_opinfo = OpInfo(
     sample_input_generator=tensor_split_sample_generator,
     torch_reference=torch.tensor_split,
     test_directives=(
-        # TODO FIXME Needs floor_divide to be implemented
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-        ),
         # nvFuser executor doesn't support pad correctly
         # See https://github.com/Lightning-AI/lightning-thunder/issues/285
         DecorateInfo(

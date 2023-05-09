@@ -396,6 +396,11 @@ def sign(a):
     return clang.sign(a)
 
 
+@torchsymbol(torch.signbit, is_method=True)
+def signbit(a):
+    return clang.signbit(a)
+
+
 # TODO Move this to torch.nn.functional
 @torchsymbol(torch.nn.functional.silu, is_method=True)
 def silu(a):
@@ -450,9 +455,29 @@ def atan2(a, b):
     return clang.atan2(a, b)
 
 
+@torchsymbol(torch.bitwise_and, is_method=True)
+def bitwise_and(a, b):
+    return clang.bitwise_and(a, b)
+
+
+@torchsymbol(torch.bitwise_xor, is_method=True)
+def bitwise_xor(a, b):
+    return clang.bitwise_xor(a, b)
+
+
+@torchsymbol(torch.copysign, is_method=True)
+def copysign(a, b):
+    return clang.copysign(a, b)
+
+
 @torchsymbol(torch.eq, is_method=True)
 def eq(a, b):
     return clang.eq(a, b)
+
+
+@torchsymbol(torch.floor_divide, is_method=True)
+def floor_divide(a, b):
+    return clang.floor_divide(a, b)
 
 
 @torchsymbol(torch.fmod, is_method=True)
@@ -470,6 +495,16 @@ def ge(a, b):
     return clang.ge(a, b)
 
 
+@torchsymbol(torch.gt, is_method=True)
+def gt(a, b):
+    return clang.gt(a, b)
+
+
+@torchsymbol(torch.logical_and, is_method=True)
+def logical_and(a, b):
+    return clang.logical_and(a, b)
+
+
 @torchsymbol(torch.lt, is_method=True)
 def lt(a, b):
     return clang.lt(a, b)
@@ -478,6 +513,11 @@ def lt(a, b):
 @torchsymbol(torch.mul, is_method=True)
 def mul(a, b):
     return clang.mul(a, b)
+
+
+@torchsymbol(torch.ne, is_method=True)
+def ne(a):
+    return clang.ne(a)
 
 
 @torchsymbol(torch.neg, is_method=True)
@@ -517,10 +557,6 @@ def sub(a, b, *, alpha=None):
 @torchsymbol(torch.true_divide, is_method=True)
 def true_divide(a, b):
     return clang.true_divide(a, b)
-
-    # type casting
-    def float(self, a):
-        return tlang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
 #

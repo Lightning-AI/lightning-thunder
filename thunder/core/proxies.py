@@ -1287,13 +1287,14 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # Logical operations
     #
 
+    # TODO Review logical vs bitwise dispatch
     def __and__(self, other):
         langctx = get_langctx()
-        return langctx.logical_and(self, other)
+        return langctx.bitwise_and(self, other)
 
     def __rand__(self, other):
         langctx = get_langctx()
-        return langctx.logical_and(other, self)
+        return langctx.bitwise_and(other, self)
 
     def __ge__(self, other):
         langctx = get_langctx()
@@ -1315,21 +1316,22 @@ class TensorProxy(Proxy, TensorProxyInterface):
         langctx = get_langctx()
         return langctx.ne(self, other)
 
+    # TODO Review logical vs bitwise dispatch
     def __or__(self, other):
         langctx = get_langctx()
-        return langctx.logical_or(self, other)
+        return langctx.bitwise_or(self, other)
 
     def __ror__(self, other):
         langctx = get_langctx()
-        return langctx.logical_or(other, self)
+        return langctx.bitwise_or(other, self)
 
     def __xor__(self, other):
         langctx = get_langctx()
-        return langctx.logical_xor(self, other)
+        return langctx.bitwise_xor(self, other)
 
     def __rxor__(self, other):
         langctx = get_langctx()
-        return langctx.logical_xor(other, self)
+        return langctx.bitwise_xor(other, self)
 
     #
     # Shift operations

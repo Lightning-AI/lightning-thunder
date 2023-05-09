@@ -15,7 +15,6 @@ import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.baseutils import *
 
-
 #
 # Functions related to analyzing and printing functions and arguments
 #
@@ -221,7 +220,7 @@ def prettyprint(
     if isinstance(x, str):
         return m(f'"{x}"')
     if isinstance(x, dtypes.dtype):
-        return m(f"dtypes.{str(x)})")
+        return m(f"dtypes.{str(x)}")
     if isinstance(x, devices.Device):
         return m(f'devices.Device("{str(x)}")')
     if x is bool:

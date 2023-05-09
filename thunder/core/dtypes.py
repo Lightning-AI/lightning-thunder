@@ -1,6 +1,9 @@
 from numbers import Number
+from typing import Iterable
 
+import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
+from thunder.core.pytree import tree_flatten
 
 # This file defines Thunder's dtypes (dtypes) and numbertypes and offers utilities for
 #   working with them.
@@ -292,7 +295,21 @@ def resolve_dtypes(args):
             dtypes.add(arg)
             continue
 
-        assert arg in (dtype, exact, signedinteger, unsignedinteger, bool_, inexact, floating, complexfloating)
+        if isinstance(arg, Iterable):
+            for a in arg:
+                baseutils.check(
+                    isinstance(a, dtype),
+                    lambda: f"Iterables passed to resolve_dtypes must only contain dtypes, but found an Iterable with {a}",
+                    exception_type=NotImplementedError,
+                )
+                dtypes.add(a)
+
+        baseutils.check(
+            arg in (dtype, exact, signedinteger, unsignedinteger, bool_, inexact, floating, complexfloating),
+            lambda: f"Excepted arguments to resolve_dtypes to be dtypes, sets of dtypes, or a dtype (sub)calss, but got {arg}",
+            exception_type=AssertionError,
+        )
+
         updates = tuple(dtype for dtype in all_dtypes if isinstance(dtype, arg) and not dtype.is_weak)
         dtypes.update(updates)
 

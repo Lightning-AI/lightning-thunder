@@ -11,7 +11,7 @@ import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
 from thunder.core import prims, utils
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, unvariableify, Variable
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, unvariableify, Variable, pyval
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.utils import OrderedSet
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
@@ -65,8 +65,8 @@ _lcdtype_to_nvdtype_map: Dict[Union[None, dtypes.dtype, Type], DataType] = {
     dtypes.int32_: DataType.Int32,
     dtypes.bool8_: DataType.Bool,
     # Number types
-    complex: DataType.ComplexDouble,
-    float: DataType.Double,
+    complex: DataType.ComplexFloat,
+    float: DataType.Float,
     int: DataType.Int,
     bool: DataType.Bool,
     # Null types
@@ -84,7 +84,9 @@ def lcdtype_to_nvdtype(lcdtype: Union[dtypes.dtype, Type]) -> DataType:
 # Helper to map objects to nvFuser fusion definitions
 def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
     if isinstance(constant, Number):
-        return fd.define_constant(constant)
+        val = pyval(constant)
+        nvdtype = lcdtype_to_nvdtype(type(val))
+        return fd.define_constant(constant, nvdtype)
     if isinstance(constant, (dtypes.dtype, type)):
         return lcdtype_to_nvdtype(constant)
     if isinstance(constant, Device):
@@ -392,6 +394,15 @@ def sign(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: D
     return fd.ops.sign(nva)
 
 
+# NOTE nvFuser does not expose a signbit operation
+#   https://github.com/NVIDIA/Fuser/issues/314
+# TODO This could implement the operation as a composite
+def signbit(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.signbit(nva)
+
+
 def sin(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
@@ -501,6 +512,17 @@ def bitwise_and(
     return fd.ops.bitwise_and(nva, nvb)
 
 
+def bitwise_xor(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_xor(nva, nvb)
+
+
+# TODO nvFuser's div operation is not equivalent to the div primitive
+#   (mruberry) I need to investigate if nvFuser exposes a truncation division operation
 def div(
     a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict
 ) -> Any:
@@ -543,6 +565,15 @@ def ge(
     return fd.ops.ge(nva, nvb)
 
 
+def gt(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.gt(nva, nvb)
+
+
 def lt(
     a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict
 ) -> Any:
@@ -559,6 +590,15 @@ def mul(
     nvb = getnv(b, fd, lc_to_nv_map)
 
     return fd.ops.mul(nva, nvb)
+
+
+def ne(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.ne(nva, nvb)
 
 
 def nextafter(
@@ -804,6 +844,9 @@ _ops_map.update(
         PrimIDs.ROUND: (_elementwise_unary_check, nv_round),
         PrimIDs.RSQRT: (_elementwise_unary_check, rsqrt),
         PrimIDs.SIGN: (_elementwise_unary_check, sign),
+        # NOTE nvFuser does not yet implement signbit
+        #   See https://github.com/NVIDIA/Fuser/issues/314
+        # PrimIDs.SIGNBIT: (_elementwise_unary_check, signbit),
         PrimIDs.SIN: (_elementwise_unary_check, sin),
         PrimIDs.SINH: (_elementwise_unary_check, sinh),
         PrimIDs.SQRT: (_elementwise_unary_check, sqrt),
@@ -814,12 +857,15 @@ _ops_map.update(
         PrimIDs.ADD: (_elementwise_binary_check, add),
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),
         PrimIDs.BITWISE_AND: (_elementwise_binary_check, bitwise_and),
+        PrimIDs.BITWISE_XOR: (_elementwise_binary_check, bitwise_xor),
         PrimIDs.DIV: (_elementwise_binary_check, div),
         PrimIDs.EQ: (_elementwise_binary_check, eq),
         PrimIDs.FMOD: (_elementwise_binary_check, fmod),
         PrimIDs.GE: (_elementwise_binary_check, ge),
+        PrimIDs.GT: (_elementwise_binary_check, gt),
         PrimIDs.LT: (_elementwise_binary_check, lt),
         PrimIDs.MUL: (_elementwise_binary_check, mul),
+        PrimIDs.NE: (_elementwise_binary_check, ne),
         PrimIDs.NEXTAFTER: (_elementwise_binary_check, nextafter),
         PrimIDs.POW: (_elementwise_binary_check, pow),
         PrimIDs.REMAINDER: (_elementwise_binary_check, remainder),

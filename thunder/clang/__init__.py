@@ -717,6 +717,16 @@ def sign(a):
     )
 
 
+# TODO Add supported dtypes to exclude complex
+def signbit(a):
+    if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
+        return full_like(a, False, dtype=dtypes.bool8)
+
+    return _elementwise_unary_wrapper(
+        a, prim=prims.signbit, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
+
+
 @clang_ctx
 def silu(a):
     return a * sigmoid(a)
@@ -804,10 +814,120 @@ def bitwise_and(a, b):
 
 
 @clang_ctx
+def bitwise_xor(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.bitwise_xor, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+# NOTE Python's math.copysign has int to float type promotion, and PyTorch's copysign does, too
+# NOTE copysign is not defined for complex types, and this must be explicitly checked for since the
+#   following definition would be valid for complex numbers, too
+@clang_ctx
+def copysign(a, b):
+    utils.check(
+        not dtypes.is_complex_dtype(dtypes.to_dtype(a)) and not dtypes.is_complex_dtype(dtypes.to_dtype(b)),
+        lambda: f"copysign is not defined for complex dtypes",
+    )
+
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        a, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+    compute_a = maybe_convert_to_dtype(a, computation_dtype)
+
+    result = where(signbit(b), -abs(compute_a), abs(compute_a))
+    return maybe_convert_to_dtype(result, result_dtype)
+
+
+@clang_ctx
 def eq(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.eq, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
     )
+
+
+# NOTE Floor division in Python is defined to complement its modulus operator, s.t.
+
+#   let a and b be numbers
+#   q = a // b
+#   r = a % b
+#   b * q + r = a
+
+#   This is NOT equivalent to floor(a/b). For example:
+
+#   import math
+#   a = .25
+#   b = .001
+
+#   # Compares flooring true division vs. floor division
+#   math.floor(a / b)  # 250
+#   a // b  # 249.
+
+#   # Tests the invariant
+#   q = a // b
+#   r = a % b
+#   b * q + r   # .25 == a
+
+# See CPython's implementation here:
+# https://github.com/python/cpython/blob/ace008c531dd685a30c1dd68f9b5ba35f20171cf/Objects/floatobject.c#L636
+
+
+# NOTE This is distinct from true_divide, which also wraps prims.div, because it doesn't promote
+#   integers to floating point values
+def _c_div(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+def _floor_divide_integer(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, computation_dtype
+) -> Union[TensorProxy, Number]:
+    # Converts truncation division to floor division
+
+    offset = logical_and(signbit(a) != signbit(b), fmod(a, b) != 0)
+    return _c_div(a, b) - offset
+
+
+def _floor_divide_float(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+    mod = fmod(a, b)
+    div = (a - mod) / b
+
+    # Ensures that the remainder has the same sign as denominator
+    different_signed_inputs = (a < 0) ^ (b < 0)
+    non_zero_remainder = mod != 0
+    mask = non_zero_remainder & different_signed_inputs
+    div = where(mask, div - 1, div)
+
+    # Maps quotient to nearest integer value
+    floor_div = floor(div)
+    mask = (div - floor_div) > 0.5
+    floor_div = where(mask, floor_div + 1, floor_div)
+
+    true_div = a / b
+
+    # Copies signbit where floor division is zero
+    floor_div = where(div != 0, floor_div, copysign(0, true_div))
+
+    # Follows true divide behavior when the denominator is zero
+    return where(b == 0, true_div, floor_div)
+
+
+# Dispatches floor division to integer or floating point specializations
+@clang_ctx
+def floor_divide(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+    computation_dtype, _ = utils.elementwise_type_promotion(
+        a, b, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+    utils.check(not dtypes.is_complex_dtype(computation_dtype), lambda: f"Complex floor division is not supported")
+
+    if dtypes.is_float_dtype(computation_dtype):
+        return _floor_divide_float(a, b)
+
+    # NOTE At this point the datatypes are neither complex nor floating point, so they are exact types
+    return _floor_divide_integer(a, b, computation_dtype=computation_dtype)
 
 
 @clang_ctx
@@ -828,6 +948,23 @@ def ge(a, b):
 
 
 @clang_ctx
+def gt(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.gt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
+
+
+@clang_ctx
+def logical_and(a, b):
+    if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
+        a = a != 0
+    if not utils.is_boolean_dtype(dtypes.to_dtype(b)):
+        b = b != 0
+
+    return a & b
+
+
+@clang_ctx
 def lt(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.lt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
@@ -837,6 +974,13 @@ def lt(a, b):
 @clang_ctx
 def mul(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.mul)
+
+
+@clang_ctx
+def ne(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.ne, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
 
 
 @clang_ctx

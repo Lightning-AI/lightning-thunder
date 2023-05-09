@@ -390,8 +390,10 @@ reciprocal = _elementwise_unary_factory("reciprocal")
 torch_round = _elementwise_unary_factory("round")
 rsqrt = _elementwise_unary_factory("rsqrt")
 # NOTE That PyTorch's "sgn" corresponds with the "sign" primitive
-# sign =  _elementwise_unary_factory("sign")
 sgn = _elementwise_unary_factory("sgn")
+# NOTE torch.sign isn't bound here because lightning.compile always uses sgn
+# sign =  _elementwise_unary_factory("sign")
+signbit = _elementwise_unary_factory("signbit")
 sin = _elementwise_unary_factory("sin")
 sinh = _elementwise_unary_factory("sinh")
 sqrt = _elementwise_unary_factory("sqrt")
@@ -420,15 +422,32 @@ def _elementwise_binary_factory(name: str) -> Callable:
     return fn
 
 
+# Maps exact inputs to truncation division
+def div_prim(bsym: BoundSymbol, a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> BoundSymbol:
+    sym = Symbol(name="div", meta=None, _module=torch)
+    kwargs = {}
+    if dtypes.is_exact_dtype(dtypes.to_dtype(a)) and dtypes.is_exact_dtype(dtypes.to_dtype(b)):
+        kwargs = {"rounding_mode": "trunc"}
+
+    tbsym = BoundSymbol(sym, args=(a, b), kwargs=kwargs, output=bsym.output)
+    return tbsym
+
+
 add = _elementwise_binary_factory("add")
 atan2 = _elementwise_binary_factory("atan2")
 bitwise_and = _elementwise_binary_factory("bitwise_and")
+bitwise_xor = _elementwise_binary_factory("bitwise_xor")
+copysign = _elementwise_binary_factory("copysign")
 div = _elementwise_binary_factory("div")
+floor_divide = _elementwise_binary_factory("floor_divide")
 eq = _elementwise_binary_factory("eq")
 fmod = _elementwise_binary_factory("fmod")
 ge = _elementwise_binary_factory("ge")
+gt = _elementwise_binary_factory("gt")
+logical_and = _elementwise_binary_factory("logical_and")
 lt = _elementwise_binary_factory("lt")
 mul = _elementwise_binary_factory("mul")
+ne = _elementwise_binary_factory("ne")
 nextafter = _elementwise_binary_factory("nextafter")
 pow = _elementwise_binary_factory("pow")
 remainder = _elementwise_binary_factory("remainder")
@@ -688,6 +707,8 @@ _ops_map.update(
         PrimIDs.RSQRT: (_elementwise_unary_check, rsqrt),
         "torch.sign": (_elementwise_unary_check, sgn),
         PrimIDs.SIGN: (_elementwise_unary_check, sgn),
+        "torch.signbit": (_elementwise_unary_check, signbit),
+        PrimIDs.SIGNBIT: (_elementwise_unary_check, signbit),
         "torch.sin": (_elementwise_unary_check, sin),
         PrimIDs.SIN: (_elementwise_unary_check, sin),
         "torch.sinh": (_elementwise_unary_check, sinh),
@@ -707,18 +728,27 @@ _ops_map.update(
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),
         "torch.bitwise_and": (_elementwise_binary_check, bitwise_and),
         PrimIDs.BITWISE_AND: (_elementwise_binary_check, bitwise_and),
+        "torch.bitwise_xor": (_elementwise_binary_check, bitwise_xor),
+        PrimIDs.BITWISE_XOR: (_elementwise_binary_check, bitwise_xor),
+        "torch.copysign": (_elementwise_binary_check, copysign),
         "torch.div": (_elementwise_binary_check, div),
-        PrimIDs.DIV: (_elementwise_binary_check, div),
+        PrimIDs.DIV: (_elementwise_binary_check, div_prim),
         "torch.eq": (_elementwise_binary_check, eq),
         PrimIDs.EQ: (_elementwise_binary_check, eq),
+        "torch.floor_divide": (_elementwise_binary_check, floor_divide),
         "torch.fmod": (_elementwise_binary_check, fmod),
         PrimIDs.FMOD: (_elementwise_binary_check, fmod),
         "torch.ge": (_elementwise_binary_check, ge),
         PrimIDs.GE: (_elementwise_binary_check, ge),
+        "torch.gt": (_elementwise_binary_check, gt),
+        PrimIDs.GT: (_elementwise_binary_check, gt),
+        "torch.logical_and": (_elementwise_binary_check, logical_and),
         "torch.lt": (_elementwise_binary_check, lt),
         PrimIDs.LT: (_elementwise_binary_check, lt),
         "torch.mul": (_elementwise_binary_check, mul),
         PrimIDs.MUL: (_elementwise_binary_check, mul),
+        "torch.ne": (_elementwise_binary_check, ne),
+        PrimIDs.NE: (_elementwise_binary_check, ne),
         "torch.nextafter": (_elementwise_binary_check, nextafter),
         PrimIDs.NEXTAFTER: (_elementwise_binary_check, nextafter),
         "torch.pow": (_elementwise_binary_check, pow),
@@ -760,7 +790,10 @@ def is_supported(bsym: BoundSymbol, *, prims_only: bool = False) -> bool:
     fusible_check, _ = _ops_map.get(sym.id, (None, None))
     if fusible_check is None:
         return False
-    return fusible_check(*bsym.args, **bsym.kwargs)
+
+    is_fusible = fusible_check(*bsym.args, **bsym.kwargs)
+
+    return is_fusible
 
 
 # TODO This is identical to the same function in the nvFuser executor -- is it

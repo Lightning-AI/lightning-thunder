@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy
+from thunder.core.proxies import TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy, pyval
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 import thunder.core.utils as utils
@@ -87,6 +87,7 @@ class PrimIDs(Enum):
     ROUND = auto()
     RSQRT = auto()
     SIGN = auto()
+    SIGNBIT = auto()
     SIN = auto()
     SINH = auto()
     SQRT = auto()
@@ -97,12 +98,15 @@ class PrimIDs(Enum):
     ADD = auto()
     ATAN2 = auto()
     BITWISE_AND = auto()
+    BITWISE_XOR = auto()
     DIV = auto()
     EQ = auto()
     FMOD = auto()
     GE = auto()
+    GT = auto()
     LT = auto()
     MUL = auto()
+    NE = auto()
     NEXTAFTER = auto()
     POW = auto()
     REMAINDER = auto()
@@ -324,10 +328,33 @@ def _print_meta(x):
     pass
 
 
+def python_print_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+):
+    utils.check(
+        out_printables is None or len(out_printables) == 0,
+        lambda: f"Expected no out printables when printing python_print, but got {out_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwarg printables when printing python_print, but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected only one arg printablewhen printing python_print, but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    return f"print({codeutils.prettyprint(arg_printables[0])})"
+
+
 python_print = make_prim(
     PrimIDs.PRINT,
     "print",
     meta=_print_meta,
+    python_printer=python_print_printer,
     python_impl=print,
 )
 
@@ -495,7 +522,7 @@ class ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND(Enum):
 
 math_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.low_precision_dtypes
 fp_math_dtypes = math_dtypes - dtypes.exact_dtypes
-comparison_dtypes = math_dtypes - dtypes.complex_dtypes
+comparison_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.complex_dtypes
 
 #
 # Elementwise unary prims
@@ -516,9 +543,14 @@ def _elementwise_unary_meta(
     if isinstance(a, Number):
         # Checks that the numbertype is supported
         typ = utils.get_numberlike_type(a)
+        val = utils.get_numberlike_value(a)
+
+        if val is None or number_handler is None:
+            return numberproxy(typ, None)
+
         utils.check(typ in supported_input_dtypes, lambda: f"Unsupported input dtype {typ}")
 
-        value = number_handler(a) if number_handler is not None else None
+        value = number_handler(a)
         typ = a.python_type if isinstance(a, NumberProxy) else type(a)
         return numberproxy(typ, value)
 
@@ -723,10 +755,10 @@ rsqrt = make_prim(
     meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
 )
 
-# NOTE: jax.lax.sign and torch.sgn differ from numpy.sign in complex support
+# NOTE jax.lax.sign and torch.sgn differ from numpy.sign in complex support
 #       nump.sign: x / sqrt(x * x)
-#       jax.lax.sign/torch.sgn: x / abs(x)
-# NOTE: pytorch sign and sgn differ in that sgn includes complex support
+#       jax.lax.sign & torch.sgn: x / abs(x)
+# NOTE PyTorch's sign and sgn differ in that sgn includes complex support
 # NOTE This follows the convention of jax.lax.sign and torch.sgn
 # jax.lax.sign: https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.sign.html
 # numpy.sign: https://numpy.org/doc/stable/reference/generated/numpy.sign.html
@@ -736,6 +768,12 @@ sign = make_prim(
     PrimIDs.SIGN,
     "sign",
     meta=_elementwise_unary_meta,
+)
+
+signbit = make_prim(
+    PrimIDs.SIGNBIT,
+    "signbit",
+    meta=partial(_elementwise_unary_meta, output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL),
 )
 
 sin = make_prim(
@@ -781,6 +819,7 @@ trunc = make_prim(
 
 
 # TODO add stride logic
+# TODO Improve error messages for mismatched dtypes (using an error context)
 def _elementwise_binary_meta(
     a: Union[TensorProxy, Number],
     b: Union[TensorProxy, Number],
@@ -805,7 +844,13 @@ def _elementwise_binary_meta(
     # Special-cases number x number inputs
     if isinstance(a, Number) and isinstance(b, Number):
         aval, bval = utils.get_numberlike_value(a), utils.get_numberlike_value(b)
-        value = number_handler(aval, bval) if number_handler is not None else None
+
+        # Handles the case where a number has an indeterminate value, or the operation has
+        #   no number handler, by returning another indeterminate value
+        if aval is None or bval is None or number_handler is None:
+            return numberproxy(numbertype, None)
+
+        value = number_handler(aval, bval)
         return numberproxy(numbertype, value)
 
     # Checks same shape
@@ -871,12 +916,31 @@ atan2 = _make_elementwise_binary_prim(
 bitwise_and = _make_elementwise_binary_prim(
     PrimIDs.BITWISE_AND,
     "bitwise_and",
-    supported_input_dtypes=dtypes.exact,
+    supported_input_dtypes=dtypes.exact_dtypes,
 )
+
+bitwise_xor = _make_elementwise_binary_prim(
+    PrimIDs.BITWISE_XOR,
+    "bitwise_and",
+    supported_input_dtypes=dtypes.exact_dtypes,
+)
+
+
+def _div_numbers(a: Number, b: Number) -> Number:
+    if type(a) in dtypes.exact_dtypes and type(b) in dtypes.exact_dtypes:
+        # Accounts for rounding towards zero instead of flooring
+        if (a >= 0) != (b >= 0) and a % b:
+            return a // b + 1
+        else:
+            return a // b
+
+    return a / b
+
 
 div = _make_elementwise_binary_prim(
     PrimIDs.DIV,
     "div",
+    number_fn=_div_numbers,
     supported_input_dtypes=math_dtypes,
 )
 
@@ -885,7 +949,6 @@ eq = _make_elementwise_binary_prim(
     "eq",
     number_fn=operator.eq,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
-    supported_input_dtypes=comparison_dtypes,
 )
 
 fmod = _make_elementwise_binary_prim(
@@ -898,6 +961,14 @@ ge = _make_elementwise_binary_prim(
     PrimIDs.GE,
     "ge",
     number_fn=operator.ge,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
+    supported_input_dtypes=comparison_dtypes,
+)
+
+gt = _make_elementwise_binary_prim(
+    PrimIDs.GT,
+    "gt",
+    number_fn=operator.gt,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
 )
@@ -915,6 +986,12 @@ mul = _make_elementwise_binary_prim(
     "mul",
     number_fn=operator.mul,
     supported_input_dtypes=math_dtypes,
+)
+
+ne = _make_elementwise_binary_prim(
+    PrimIDs.NE,
+    "ne",
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
 
 # TODO Review supported dtypes
@@ -1264,6 +1341,7 @@ def slice_meta(a, start_indices, end_indices, strides=None):
             start <= shape,
             lambda: f"Expected all the indices in start_indices={start_indices} to be weakly less than the length of the corresponding dimension in a.shape={a.shape}",
         )
+        print(f"{start=}, {stop=} {type(stop)=} {pyval(stop)=}")
         utils.check(
             start <= stop,
             lambda: f"Expected all the indices in start_indices={start_indices} to be weakly less than the indices in end_indices={end_indices}",
