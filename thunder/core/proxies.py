@@ -58,6 +58,10 @@ class Proxy(VariableInterface, ProxyInterface):
     def name(self):
         return self._name
 
+    def replace_name(self, name):
+        """Return a copy of this proxy with the given name."""
+        return self.__class__(name=name)
+
     def __repr__(self):
         return f"{self._name}"
 
@@ -76,6 +80,10 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # NOTE: Python numbers hash to themselves, and this mimics that behavior
     def __hash__(self):
         return hash(self.value)
+
+    def replace_name(self, name):
+        """Return a copy of this proxy with the given name."""
+        return self.__class__(name=name, value=self.value, python_type=self.python_type)
 
     def known_value(self):
         return self.value is not None
@@ -101,6 +109,10 @@ class ComplexProxy(NumberProxy, complex):
 
     def __init__(self, name=None, value=None):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex)
+
+    def replace_name(self, name):
+        """Return a copy of this proxy with the given name."""
+        return ComplexProxy(name=name, value=self.value)
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
@@ -430,6 +442,10 @@ class IntegerProxy(NumberProxy, int):
         python_type = bool if isinstance(value, bool) else int
         NumberProxy.__init__(self, name=name, value=value, python_type=python_type)
 
+    def replace_name(self, name):
+        """Return a copy of this proxy with the given name."""
+        return IntegerProxy(name=name, value=self.value)
+
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
         return f"int {value_str}"
@@ -755,6 +771,10 @@ class FloatProxy(NumberProxy, float):
 
     def __init__(self, name=None, value=None):
         NumberProxy.__init__(self, name=name, value=value, python_type=float)
+
+    def replace_name(self, name):
+        """Return a copy of this proxy with the given name."""
+        return FloatProxy(name=name, value=self.value)
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
@@ -1113,6 +1133,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         #   the true_dtype property
         self.true_dtype = self.dtype
         self.dtype = dtypes.to_strong_dtype(self.dtype)
+
+    def replace_name(self, name):
+        """Return a copy of this proxy with the given name."""
+        return TensorProxy(name, like=self)
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"

@@ -104,14 +104,16 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
     si = get_siginfo(fn, args, kwargs)
 
     def proxy_or_track(x: Any, *, name: Optional[str] = None):
-        # TODO (mruberry) One idea would be to just unpack the proxy with the new name, but how this interaction works
-        #   with nested traces is unclear
+        # When we encounter a proxy, we need to make sure that it's name is the
+        # same as the name that the unpack is requesting. If it's not, we need to
+        # create a new proxy with the requested name.
+        # TODO: There might be better ways to do this, but this is the simplest
+        # way to get it working correctly now.
+        # One alternative would be to modify the function's signature to include
+        # the name of the proxy, but that might require a lot of changes to the
+        # codebase.
         if isinstance(x, Proxy) and name is not None:
-            utils.check(
-                x.name == name,
-                lambda: f"An existing proxy {x} is being passed as an input, but its name is not the same name ({name}) as the unpack is requesting",
-                exception_type=NotImplementedError,
-            )
+            return x.replace_name(name)
 
         if is_proxyable(x):
             return proxy(x, name=name)

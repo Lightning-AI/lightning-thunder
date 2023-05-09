@@ -562,10 +562,6 @@ def test_eval_trace(executor, device, _):
     ],
 )
 def test_eval_trace_duplicate_output(executor, device, _):
-    pytest.xfail(
-        "NotImplementedError: An existing proxy __a is being passed as an input, but its name is not the same name (a) as the unpack is requesting"
-    )
-
     # This test ensures that eval_trace() can evaluate a trace with duplicate
     # outputs.
     from thunder.core.transforms import eval_trace, identity
@@ -611,10 +607,6 @@ def test_eval_trace_duplicate_output(executor, device, _):
     ],
 )
 def test_transforms_identity(executor, device, _):
-    pytest.xfail(
-        "NotImplementedError: An existing proxy __a is being passed as an input, but its name is not the same name (a) as the unpack is requesting"
-    )
-
     # This test ensures that identity() can be called from within a traced
     # function without leaking the trace context.
     # Also tests that identity() can be nested.
@@ -663,9 +655,6 @@ def test_transforms_identity(executor, device, _):
     ],
 )
 def test_transforms_inline(executor, device, _):
-    pytest.xfail(
-        "NotImplementedError: An existing proxy __a is being passed as an input, but its name is not the same name (a) as the unpack is requesting"
-    )
     # This test ensures that inline() can be called from within a traced
     # function removing (inlining) all identity() transforms.
     # Also tests that inline() can be nested.
