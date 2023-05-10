@@ -951,10 +951,13 @@ eq = _make_elementwise_binary_prim(
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
 
+# NOTE fmod vs remainder
+#   fmod is defined as fmod(a, b) == a - trunc_div(a, b) * b
+#   It is the complement to truncation dividing a and b, unlike
+#   remainder, which is the complement to floor dividing a and b
 fmod = _make_elementwise_binary_prim(
     PrimIDs.FMOD,
     "fmod",
-    number_fn=operator.mod,
     supported_input_dtypes=math_dtypes,
 )
 
@@ -1009,9 +1012,28 @@ pow = _make_elementwise_binary_prim(
     supported_input_dtypes=math_dtypes,
 )
 
+
+# NOTE What remainder is this?
+#   There are several "remainder" functions of interest.
+#   PyTorch's torch.remainder (https://pytorch.org/docs/master/generated/torch.remainder.html),
+#       which is defined a remainder(a, b) = a - (a // b) * b
+#   PyTorch's prims.remainder, which is defined the same way
+#   NumPy's numpy.remainder (https://numpy.org/doc/stable/reference/generated/numpy.remainder.html),
+#       which is defined as equivalent to Python's modulus operation and is the
+#       remainder complement to floor divide
+#   Python's math.remainder (https://docs.python.org/3/library/math.html#math.remainder),
+#       which is the IEEE 754-style remainder x - n*y where n = rtne(x/y) (rtne being "round to nearest even")
+#       when x and y are finite and y is nonzero. math.remainder complements rtne(x/y).
+#   JAX's lax.rem (https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.rem.html),
+#       which is defined as x mod y with the sign from the dividend and the absolute value
+#       always being less than the divisor's absolute value. This is NOT consistent
+#       with torch.remainder, numpy.remainder, math.remainder or Python's modulus operator.
+# This prim is defined as equivalent to Python's modulus operator, and is consistent with
+#   torch.remainder and numpy.remainder.
 remainder = _make_elementwise_binary_prim(
     PrimIDs.REMAINDER,
     "remainder",
+    number_fn=operator.mod,
     supported_input_dtypes=math_dtypes,
 )
 

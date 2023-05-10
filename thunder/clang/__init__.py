@@ -935,9 +935,8 @@ def fmod(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.fmod)
 
 
-# TODO Review mod vs fmod
 def mod(a, b):
-    return fmod(a, b)
+    return remainder(a, b)
 
 
 @clang_ctx

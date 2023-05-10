@@ -43,6 +43,14 @@ nvfuser_version = nvfuser_version if nvfuser_version is not None else LooseVersi
 eps = 1e-2
 
 
+# NOTE This wrapper is necessary because prims cannot be compiled directly as they are not callable
+def prims_wrapper(prim):
+    def fn_(*args, **kwargs):
+        return prim(*args, **kwargs)
+
+    return fn_
+
+
 def round_remainder(x, y):
     return x - torch.round(x / y) * y
 
@@ -1427,15 +1435,23 @@ elementwise_binary_ops = []
 
 
 # TODO Extend this generator
-def elementwise_binary_generator(op, device, dtype, requires_grad, **kwargs):
+# Generates sample inputs compatible with the elementwise binary primitives
+def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs):
     a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
     b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
 
     yield SampleInput(a, b)
 
+
+# TODO Extend this generator
+def elementwise_binary_generator(op, device, dtype, requires_grad, **kwargs):
+    yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
+
+    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((4, 1), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+
     # Tests broadcasting
-    c = make_tensor((4, 1), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
-    yield SampleInput(a, c)
+    yield SampleInput(a, b)
 
 
 # TODO: update dtypes with Thunder dtypes (when they exist)
@@ -1700,17 +1716,14 @@ pow_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(pow_opinfo)
 
-# A test for the prim remainder which corresponds with python's math.remainder and c++ std::remainder
-remainder_core_opinfo = OpInfo(
-    clang.remainder,
-    name="remainder_prim",
-    sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
-    torch_reference=lambda a, b: a - torch.round(a.div(b)) * b,
+remainder_prim_opinfo = OpInfo(
+    prims_wrapper(prims.remainder),
+    name="prims_remainder",
+    dtypes=(datatypes.all_dtypes - datatypes.low_precision_dtypes),
+    sample_input_generator=partial(elementwise_binary_prims_generator, exclude_zero=True),
+    torch_reference=torch.remainder,
+    jax_reference=jax.numpy.remainder if JAX_AVAILABLE else None,
     test_directives=(
-        # TypeError: argument of type 'type' is not iterable
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
         # torch doesn't support bool or complex remainder.
         # torch_reference is inaccurate since it computes in the lower precision dtype.
         DecorateInfo(
@@ -1718,31 +1731,26 @@ remainder_core_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8, datatypes.float16, datatypes.bfloat16, datatypes.complexfloating),
         ),
+        # Torch executor doesn't support bool or complex remainder
+        DecorateInfo(pytest.mark.xfail, dtypes=(datatypes.bool8, datatypes.complexfloating), executors=("TorchEx",)),
+        # JAX doesn't support complex remainder
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_jax_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
     ),
 )
-elementwise_binary_ops.append(remainder_core_opinfo)
+elementwise_binary_ops.append(remainder_prim_opinfo)
 
 remainder_torch_opinfo = OpInfo(
     ltorch.remainder,
     sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
     torch_reference=torch.remainder,
     test_directives=(
-        # TypeError: argument of type 'type' is not iterable
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
         # torch doesn't support bool or complex remainder.
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8, datatypes.complexfloating)
-        ),
-        # Upstream nvfuser triggers this error:
-        # AssertionError: The values for attribute 'dtype' do not match: torch.float32 != torch.float16.
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/238
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            executors=("nvFuser,"),
-            dtypes=(datatypes.float16, datatypes.bfloat16),
         ),
     ),
 )
@@ -2632,11 +2640,6 @@ convert_element_type_opinfo = OpInfo(
     torch_reference=torch.Tensor.to,
     jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
     test_directives=(
-        # ValueError: torch.float32 had an unexpected type <class
-        # 'torch.dtype'>.
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
         # These usually pass but tols are still too tight to perform these tests
         DecorateInfo(
             pytest.mark.skip,
@@ -3130,10 +3133,6 @@ softmax_opinfo = OpInfo(
     torch_reference=None if LooseVersion(torch.__version__) < "1.13" else torch._refs.softmax,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # ValueError: () had an unexpected type <class 'tuple'>.
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
         # torch.softmax doesn't support float16 on CPU
         # RuntimeError: "softmax_lastdim_kernel_impl" not implemented for 'Half'
         DecorateInfo(

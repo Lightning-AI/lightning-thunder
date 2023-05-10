@@ -485,9 +485,11 @@ def fmod(a, b):
     return clang.fmod(a, b)
 
 
+# NOTE This is just an alias for proxies to find operation defined for the modulus
+#   operator
 # TODO Review this alias
 def mod(a, b):
-    return fmod(a, b)
+    return clang.mod(a, b)
 
 
 @torchsymbol(torch.ge, is_method=True)
@@ -535,15 +537,9 @@ def pow(a, b):
     return clang.pow(a, b)
 
 
-# A composite operation that matches PyTorch, Jax, and Numpy remainder
-# torch.remainder(a, b) == a - a.div(b, rounding_mode="floor") * b
 @torchsymbol(torch.remainder, is_method=True)
 def remainder(a, b):
-    mod = clang.fmod(a, b)
-    lhs = clang.bitwise_not(mod == 0)
-    rhs = clang.bitwise_not((b < 0) == (mod < 0))
-    mask = clang.bitwise_and(lhs, rhs)
-    return clang.where(mask, mod + b, mod)
+    return clang.remainder(a, b)
 
 
 @torchsymbol(torch.sub, is_method=True)

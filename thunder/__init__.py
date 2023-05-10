@@ -118,6 +118,11 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         if is_proxyable(x):
             return proxy(x, name=name)
 
+        # Translates torch dtypes to lightning.compile dtypes
+        # TODO Translate NumPy dtypes
+        if isinstance(x, pytorch.dtype):
+            x = ltorch.to_thunder_dtype(x)
+
         return tracectx.track(x, name=name)
 
     def _unpack(x: Any, *, name: str = None) -> List:
@@ -154,7 +159,9 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
                 items = unpacked.values()
             else:
                 utils.check(
-                    False, lambda: f"Found an unsupported collection type {type(x)}", exception_type=NotImplementedError
+                    False,
+                    lambda: f"Found an unsupported collection {x} of type {type(x)}",
+                    exception_type=NotImplementedError,
                 )
 
             for o in items:

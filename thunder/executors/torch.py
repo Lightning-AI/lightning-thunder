@@ -450,6 +450,7 @@ mul = _elementwise_binary_factory("mul")
 ne = _elementwise_binary_factory("ne")
 nextafter = _elementwise_binary_factory("nextafter")
 pow = _elementwise_binary_factory("pow")
+# TODO Remainder bool isn't implement, so mark it as non-fusible
 remainder = _elementwise_binary_factory("remainder")
 sub = _elementwise_binary_factory("sub")
 
@@ -616,7 +617,21 @@ def embedding(
     }
 
     tbsym = BoundSymbol(sym, args=(a, weight), kwargs=kwargs, output=bsym.output)
+    return tbsym
 
+
+def softmax(bsym: BoundSymbol, a, dim, dtype=None) -> BoundSymbol:
+    torch_dtype = None
+    if dtype is not None:
+        torch_dtype = ltorch.to_torch_dtype(dtypes.numbertype_to_dtype(dtype))
+
+    sym = Symbol(name="softmax", meta=None, _module=torch)
+
+    kwargs = {
+        "dtype": torch_dtype,
+    }
+
+    tbsym = BoundSymbol(sym, args=(a, dim), kwargs=kwargs, output=bsym.output)
     return tbsym
 
 
@@ -772,6 +787,7 @@ _ops_map.update(
         # NN operations
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.EMBEDDING: (_always_executable, embedding),
+        "torch.softmax": (_always_executable, softmax),
     }
 )
 
