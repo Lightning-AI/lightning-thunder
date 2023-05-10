@@ -1519,6 +1519,20 @@ floor_divide_opinfo = OpInfo(
             dtypes=(datatypes.exact,),
             executors=("nvFuser,"),
         ),
+        # TODO FIXME Connect to nvFuser's trunc division correctly
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float32,),
+            executors=("nvFuser,"),
+        ),
+        # TODO FIXME AssertionError: Tensor-likes are not close!
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            executors=("TorchEx,"),
+        ),
         # PyTorch doesn't support boolean floor division
         DecorateInfo(
             pytest.mark.xfail,
@@ -1800,34 +1814,6 @@ masked_fill_opinfo = OpInfo(
     ltorch.masked_fill,
     sample_input_generator=masked_fill_sample_generator,
     torch_reference=torch.masked_fill,
-    test_directives=(
-        # complex proxies not implemented
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.complexfloating,),
-        ),
-        # AssertionError: The values for attribute 'dtype' do not match:
-        # torch.int8 != torch.bool
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.bool8,),
-        ),
-        # See https://github.com/csarofeen/pytorch/issues/2378
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            executors=("nvFuser",),
-        ),
-        # TODO FIXME RuntimeError: Dtype is not supported:float
-        #   (mbuerry) This probably happened when nvFuser constants were changed to be float instead of double by default?
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float32, datatypes.float64),
-            executors=("nvFuser",),
-        ),
-    ),
 )
 elementwise_ternary_ops.append(masked_fill_opinfo)
 

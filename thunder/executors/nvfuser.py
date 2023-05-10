@@ -65,8 +65,8 @@ _lcdtype_to_nvdtype_map: Dict[Union[None, dtypes.dtype, Type], DataType] = {
     dtypes.int32_: DataType.Int32,
     dtypes.bool8_: DataType.Bool,
     # Number types
-    complex: DataType.ComplexFloat,
-    float: DataType.Float,
+    complex: DataType.ComplexDouble,
+    float: DataType.Double,
     int: DataType.Int,
     bool: DataType.Bool,
     # Null types
@@ -1206,7 +1206,10 @@ def fuse(
         return fd.execute(args)
 
     # 4) Creates a BoundSymbol invoking the fusion
-    # ctx: Dict[str, Any] = {"nvFuser": fd.execute}
+
+    # Initializes last_used
+    fn_.last_used = None
+
     fn_name = f"nvFusion{counter}"
     ctx: Dict[str, Any] = {fn_name: fn_}
     sym = Symbol(name=fn_name, meta=None, python_printer=nvfusion_printer)
