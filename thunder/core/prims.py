@@ -954,6 +954,7 @@ eq = _make_elementwise_binary_prim(
 fmod = _make_elementwise_binary_prim(
     PrimIDs.FMOD,
     "fmod",
+    number_fn=operator.mod,
     supported_input_dtypes=math_dtypes,
 )
 
@@ -1341,7 +1342,6 @@ def slice_meta(a, start_indices, end_indices, strides=None):
             start <= shape,
             lambda: f"Expected all the indices in start_indices={start_indices} to be weakly less than the length of the corresponding dimension in a.shape={a.shape}",
         )
-        print(f"{start=}, {stop=} {type(stop)=} {pyval(stop)=}")
         utils.check(
             start <= stop,
             lambda: f"Expected all the indices in start_indices={start_indices} to be weakly less than the indices in end_indices={end_indices}",

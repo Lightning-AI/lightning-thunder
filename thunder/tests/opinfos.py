@@ -2314,10 +2314,6 @@ split_opinfo = OpInfo(
     sample_input_generator=split_sample_generator,
     torch_reference=torch.split,
     test_directives=(
-        # TODO Review this failure
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
         # nvFuser executor doesn't support pad correctly
         # See https://github.com/Lightning-AI/lightning-thunder/issues/285
         DecorateInfo(

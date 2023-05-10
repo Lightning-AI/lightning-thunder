@@ -458,30 +458,27 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
+            baseutils.check(
+                self.value is not None, lambda: f"Trying to __abs__ an unknown int", exception_type=AssertionError
+            )
+
             return pyval(self).__abs__()
 
         return langctx.abs(self)
 
     def __ceil__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__ceil__()
-
-        return langctx.ceil(self)
+        return self
 
     def __floor__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__floor__()
-
-        return langctx.floor(self)
+        return self
 
     def __invert__(self):
         langctx = get_langctx()
 
         if langctx is None:
+            baseutils.check(
+                self.value is not None, lambda: f"Trying to __invert__ an unknown int", exception_type=AssertionError
+            )
             return pyval(self).__invert__()
 
         return langctx.invert(self)
@@ -490,31 +487,29 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
+            baseutils.check(
+                self.value is not None, lambda: f"Trying to __neg__ an unknown int", exception_type=AssertionError
+            )
             return pyval(self).__neg__()
 
         return langctx.neg(self)
 
     def __pos__(self):
+        langctx = get_langctx()
+
         if langctx is None:
+            baseutils.check(
+                self.value is not None, lambda: f"Trying to __pos__ an unknown int", exception_type=AssertionError
+            )
             return pyval(self).__pos__()
 
         return self
 
     def __round__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__round__()
-
-        return langctx.round(self)
+        return self
 
     def __trunc__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__trunc__()
-
-        return langctx.trunc(self)
+        return self
 
     #
     # dtype conversion operators
@@ -533,11 +528,19 @@ class IntegerProxy(NumberProxy, int):
     # Elementwise binary operators
     #
 
+    @staticmethod
+    def _elementwise_binary_no_ctx(name, fn, a, b):
+        baseutils.check(a is not None, lambda: f"Trying to {name} an unknown int", exception_type=AssertionError)
+        baseutils.check(
+            b is not None, lambda: f"Trying to {name} with an unknown number", exception_type=AssertionError
+        )
+        return fn(a, b)
+
     def __add__(self, other):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self) + pyval(other)
+            return self._elementwise_binary_no_ctx("__add__", int.__add__, self.value, pyval(other))
 
         return langctx.add(self, other)
 
@@ -545,7 +548,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(other) + pyval(self)
+            return self._elementwise_binary_no_ctx("__radd__", int.__radd__, self.value, pyval(other))
 
         return langctx.add(other, self)
 
@@ -553,7 +556,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__divmod__(pyval(other))
+            return self._elementwise_binary_no_ctx("__divmod__", int.__divmod__, self.value, pyval(other))
 
         return langctx.divmod(self, other)
 
@@ -561,7 +564,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rdivmod__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rdivmod__", int.__rdivmod__, self.value, pyval(other))
 
         return langctx.divmod(other, self)
 
@@ -569,7 +572,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__floordiv__(pyval(other))
+            return self._elementwise_binary_no_ctx("__floordiv__", int.__floordiv__, self.value, pyval(other))
 
         return langctx.floor_divide(self, other)
 
@@ -577,7 +580,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rfloordiv__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rfloordiv__", int.__rfloordiv__, self.value, pyval(other))
 
         return langctx.floor_divide(other, self)
 
@@ -585,7 +588,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__mod__(pyval(other))
+            return self._elementwise_binary_no_ctx("__mod__", int.__mod__, self.value, pyval(other))
 
         return langctx.mod(self, other)
 
@@ -593,7 +596,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rmod__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rmod__", int.__rmod__, self.value, pyval(other))
 
         return langctx.mod(other, self)
 
@@ -601,7 +604,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self) * pyval(other)
+            return self._elementwise_binary_no_ctx("__mul__", int.__mul__, self.value, pyval(other))
 
         return langctx.mul(self, other)
 
@@ -609,7 +612,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(other) * pyval(self)
+            return self._elementwise_binary_no_ctx("__rmul__", int.__rmul__, self.value, pyval(other))
 
         return langctx.mul(other, self)
 
@@ -617,7 +620,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__pow__(pyval(other))
+            return self._elementwise_binary_no_ctx("__pow__", int.__pow__, self.value, pyval(other))
 
         return langctx.pow(self, other)
 
@@ -625,7 +628,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rpow__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rpow__", int.__rpow__, self.value, pyval(other))
 
         return langctx.pow(other, self)
 
@@ -633,7 +636,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__sub__(pyval(other))
+            return self._elementwise_binary_no_ctx("__sub__", int.__sub__, self.value, pyval(other))
 
         return langctx.sub(self, other)
 
@@ -641,7 +644,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rsub__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rsub__", int.__rsub__, self.value, pyval(other))
 
         return langctx.sub(other, self)
 
@@ -649,7 +652,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__truediv__(pyval(other))
+            return self._elementwise_binary_no_ctx("__truediv__", int.__truediv__, self.value, pyval(other))
 
         return langctx.true_divide(self, other)
 
@@ -657,7 +660,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rtruediv__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rtruediv__", int.__rtruediv__, self.value, pyval(other))
 
         return langctx.true_divide(other, self)
 
@@ -722,7 +725,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__lshift__(pyval(other))
+            return self._elementwise_binary_no_ctx("__lshift__", int.__lshift__, self.value, pyval(other))
 
         return langctx.lshift(self, other)
 
@@ -730,7 +733,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rlshift__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rlshift__", int.__rlshift__, self.value, pyval(other))
 
         return langctx.lshift(other, self)
 
@@ -738,7 +741,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rshift__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rshift__", int.__rshift__, self.value, pyval(other))
 
         return langctx.rshift(self, other)
 
@@ -746,7 +749,7 @@ class IntegerProxy(NumberProxy, int):
         langctx = get_langctx()
 
         if langctx is None:
-            return pyval(self).__rrshift__(pyval(other))
+            return self._elementwise_binary_no_ctx("__rrshift__", int.__rrshift__, self.value, pyval(other))
 
         return langctx.rshift(other, self)
 
