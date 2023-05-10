@@ -1352,9 +1352,6 @@ def slice_meta(a, start_indices, end_indices, strides=None):
         )
         utils.check(stride >= 1, lambda: f"Expected all the strides in strides={strides} to be strictly positive!")
 
-        # TODO Review this with constraint modeling -- want the proxies to go through as constraints here -- prims ctx
-        # TODO Running these in a prim ctx should just originate constraints
-        stop, start, stride = utils.get_numberlike_value((stop, start, stride))
         new_shape.append(math.floor((stop - start) / stride))
 
     return TensorProxy(like=a, shape=new_shape)

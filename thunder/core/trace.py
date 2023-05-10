@@ -317,8 +317,8 @@ class TraceCtx:
                 provenance_str = f"{str(self._provenance)}"
                 program.append(provenance_str)
 
-            # Prints imports
-            for name, module in import_ctx.items():
+            # Prints imports, sorted by name
+            for name, module in sorted(import_ctx.items(), key=lambda x: x[1].__name__):
                 import_str = f"# import {module.__name__} as {name}"
                 program.append(import_str)
 
