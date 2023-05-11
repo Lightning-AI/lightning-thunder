@@ -197,6 +197,39 @@ def broadcast_in_dim(
 
 
 #
+# Shape operations
+#
+
+
+def _reshape_check(a: TensorProxy, shape: List[int]) -> bool:
+    return a.device.devicetype is DeviceType.CUDA
+
+
+def reshape(a: TensorProxy, shape: List[int], *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.reshape(nv_a, a.shape, shape)
+
+
+def _take_check(a: TensorProxy, index: TensorProxy, dim: int) -> bool:
+    return a.device.devicetype is DeviceType.CUDA and index.device.devicetype is DeviceType.CUDA
+
+
+def take(a: TensorProxy, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_index = getnv(index, fd, lc_to_nv_map)
+
+    return fd.ops.index_select(nv_a, nv_index, dim)
+
+
+def take_along_axis(a: TensorProxy, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_index = getnv(index, fd, lc_to_nv_map)
+
+    return fd.ops.take_along_axis(nv_a, nv_index, dim)
+
+
+#
 # Elementwise unary operations
 #
 
@@ -811,6 +844,10 @@ _ops_map.update(
         PrimIDs.BROADCAST_IN_DIM: (_broadcast_in_dim_check, broadcast_in_dim),
         # Data movement operations
         PrimIDs.CONVERT_ELEMENT_TYPE: (_convert_element_type_check, convert_element_type),
+        # Shape operations
+        PrimIDs.RESHAPE: (_reshape_check, reshape),
+        PrimIDs.TAKE: (_take_check, take),
+        PrimIDs.TAKE_ALONG_AXIS: (_take_check, take_along_axis),
         # Elementwise unary operations
         PrimIDs.ABS: (_elementwise_unary_check, nv_abs),
         PrimIDs.ACOS: (_elementwise_unary_check, acos),
@@ -1430,9 +1467,6 @@ def fuse(
 #         fill_value,
 #     ) = nv_args
 #     dtype = nv_kwargs["dtype"]
-
-#     # FIXME: https://github.com/csarofeen/pytorch/issues/2358
-#     assert len(shape) > 0
 
 #     def _realize_number(x):
 #         if isinstance(x, nvNumber):

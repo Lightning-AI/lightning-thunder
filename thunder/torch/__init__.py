@@ -1417,16 +1417,27 @@ def matmul(a, b):
 
 @torchsymbol(torch.nn.functional.embedding)
 def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
-    padding_idx = padding_idx if padding_idx is not None else -1
-    return prims.embedding(
-        a,
-        weight,
-        padding_idx=padding_idx,
-        max_norm=max_norm,
-        norm_type=norm_type,
-        scale_grad_by_freq=scale_grad_by_freq,
-        sparse=sparse,
-    )
+    # TODO: add embedding_renorm_ so we can remove embedding prim
+    if max_norm is not None:
+        padding_idx = padding_idx if padding_idx is not None else -1
+        return clang.embedding(
+            a,
+            weight,
+            padding_idx=padding_idx,
+            max_norm=max_norm,
+            norm_type=norm_type,
+            scale_grad_by_freq=scale_grad_by_freq,
+            sparse=sparse)
+
+    # padding_idx / sparse not used by forward
+
+    if a.ndim == 1:
+        return clang.take(weight, a, 0)
+
+    output_shape = list(a.shape) + list(weight.shape[1:])
+    flatten_indices = clang.reshape(a, [a.numel])
+    flatten_output = clang.take(weight, flatten_indices, 0)
+    return clang.reshape(flatten_output, output_shape)
 
 
 @torchsymbol(torch.ops.aten.embedding_backward)
@@ -1473,6 +1484,242 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     attn_weight = softmax(logits, dim=-1)
     attn_weight = dropout(attn_weight, dropout_p)
     return attn_weight @ value
+
+
+@torchsymbol(torch.nn.functional.cross_entropy)
+def cross_entropy(
+    input, target, weight=None, size_average=None, ignore_index=-100, reduce=None, reduction="mean", label_smoothing=0.0
+):
+    utils.check(
+        size_average is None and reduce is None,
+        lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
+    )
+    utils.check(
+        input.ndim >= 1,
+        lambda: f"cross_entropy gets input.ndim: {input.ndim} < 1",
+    )
+    # NOTE: label_smoothing < 0 will just be ignored.
+    utils.check(
+        label_smoothing <= 1.0,
+        lambda: f"label_smoothing must be less than 1.0. Got: {label_smoothing}",
+    )
+    # extract shape information
+    C_dim = 1 if input.ndim >= 2 else 0
+    N = input.shape[0] if input.ndim >= 2 else 1
+    C = input.shape[C_dim]
+    feature_size = int(input.numel / N / C)
+
+    # short-cut to output empty tensor
+    if input.numel == 0:
+        if reduction == "none":
+            output_shape = list(input.shape)
+            output_shape.pop(C_dim)
+            return clang.full(output_shape, 0.0, device=input.device, dtype=input.dtype)
+        elif reduction == "mean":
+            # TODO: I can't use `float("nan")` here
+            fill_value = math.nan
+        elif reduction == "sum":
+            fill_value = 0.0
+        else:
+            raise ValueError(f"reduction argument: {reduction} to cross_entropy is not supported")
+
+        return clang.full([], fill_value, device=input.device, dtype=input.dtype)
+
+    if weight is not None:
+        utils.check(
+            weight.ndim == 1 and weight.numel == C,
+            lambda: f"inconsisten input: {input.shape} / weight: {weight.shape} to cross_entropy!",
+        )
+        bcast_weight = clang.reshape(weight, [C] + [1 for i in range(2, input.ndim)])
+
+    # log_softmax
+    #softmax_input = _softmax_decomp(input, C_dim)
+    #log_softmax_input = clang.log(softmax_input)
+    # implementation suggested by Jacob to avoid division in _softmax_decomp
+    input_max = amax(input, C_dim, keepdim=True)
+    input_prime = clang.sub(input, input_max)
+    sumexp = sum(clang.exp(input_prime), C_dim, keepdim=True)
+    log_softmax_input = clang.sub(input_prime, clang.log(sumexp))
+
+    out = clang.neg(log_softmax_input)
+
+    if input.shape == target.shape:
+        utils.check(
+            utils.is_float_dtype(target.dtype),
+            lambda: f"expect float dtype for probability target, but got: {target.dtype}!",
+        )
+        utils.check(
+            ignore_index < 0,
+            lambda: f"ignore_index is not supported for probability target, set ignore_index < 0!",
+        )
+
+        if label_smoothing > 0.0:
+            target = clang.add(clang.mul(target, 1 - label_smoothing), label_smoothing / C)
+
+        out = clang.mul(out, target)
+
+        if weight is not None:
+            out = clang.mul(out, bcast_weight)
+
+        if target.ndim == 1:
+            out = _reduction(
+                out,
+                prims.sum,
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+        else:
+            out = _reduction(
+                out,
+                prims.sum,
+                dims=C_dim,
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+
+        if reduction == "none":
+            return out
+        # TODO: duplicate this in probability target!
+        elif reduction == "sum":
+            # NOTE: do we need to promote dtype?!
+            return _reduction(
+                out,
+                prims.sum,
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+        elif reduction == "mean":
+            reduced_sum = _reduction(
+                out,
+                prims.sum,
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+            # NOTE: does it work with dynamic size?!
+            return clang.true_divide(reduced_sum, N * feature_size)
+        else:
+            raise ValueError(f"reduction argument: {reduction} to cross_entropy is not supported")
+    else:
+        utils.check(
+            utils.is_integer_dtype(target.dtype),
+            lambda: f"expect integer dtype for class indices target, but got: {target.dtype}!",
+        )
+        no_C_shape = list(input.shape)
+        no_C_shape.pop(C_dim)
+        utils.check(
+            input.ndim == target.ndim + 1 and no_C_shape == list(target.shape),
+            lambda: f"inconsisten shape input: {input.shape} / target: {target.shape} to cross_entropy!",
+        )
+
+        # nll_loss
+        if weight is not None:
+            out = clang.mul(out, bcast_weight)
+
+        smooth_loss_no_sum = out
+        # TODO: swap reshape with unsqueeze when nvfuser support is added
+        # bcast_target = clang.unsqueeze(target, [C_dim])
+        bcast_target_shape = list(input.shape)
+        bcast_target_shape[C_dim] = 1
+        bcast_target = clang.reshape(target, bcast_target_shape)
+
+        out = clang.take_along_axis(out, bcast_target, C_dim)
+
+        if label_smoothing > 0:
+            # smooth_loss shape [N, SPATIAL...]
+            smooth_loss = _reduction(
+                smooth_loss_no_sum,
+                prims.sum,
+                dims=[C_dim],
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+        # NOTE: [handling of 'ignore_index']
+        #       Semantically, I think we are doing the right thing here where we mask out the ignore_index entries on output from clang.take_along_axis. Because targets is expected to be within [0, C)
+        #       However, in Torch/ATen implementation, 'ignore_index' can be outside of the range, so is targets. So it could even prevent an out-of-bound error from NLLLoss. Which diverges from the behavior here.
+        #       Note that we can mimic that behavior by mask targets before take_along_axis, but that's going to add more operations here, which means more overhead. Let's not do that until we see real examples exploiting the behavior.
+        #       Alternatively, we can revisit the choice of numpy.take_along_axis.
+        #       jax.numpy.take_along_axis gives a 'mode' arg custom out-of-bound behavior. But that might be slightly tricky to handle for codegen.
+        if ignore_index >= 0:
+            # mask shape [N, 1, SPATIAL...]
+            mask = clang.eq(bcast_target, ignore_index)
+            out = clang.where(mask, 0, out)
+            if label_smoothing > 0:
+                # TODO: switch to squeeze
+                smooth_loss = clang.where(clang.reshape(mask, list(smooth_loss.shape)), 0, smooth_loss)
+
+        if reduction == "none":
+            # TODO: swap reshape with squeeze when nvfuser support is added
+            # return clang.squeeze(out, [C_dim])
+            out = clang.reshape(out, target.shape)
+            if label_smoothing > 0:
+                ret = smooth_loss
+        # TODO: duplicate this in probability target!
+        elif reduction == "sum":
+            # NOTE: do we need to promote dtype?!
+            out = _reduction(
+                out,
+                prims.sum,
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+            if label_smoothing > 0:
+                ret = _reduction(
+                    smooth_loss,
+                    prims.sum,
+                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+                )
+        elif reduction == "mean":
+            # NOTE: do we need to promote dtype?!
+            reduced_sum = _reduction(
+                out,
+                prims.sum,
+                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+            )
+            if label_smoothing > 0:
+                ret = _reduction(
+                    smooth_loss,
+                    prims.sum,
+                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+                )
+            if weight is not None:
+                # NOTE: this seems unreasonably complicated. Am I missing something obvious?!
+                input_shape = list(input.shape)
+                expanded_weight = clang.expand(bcast_weight, input_shape)
+                # DEBUG!!! this gives segfaults
+                selected_weight = clang.take_along_axis(expanded_weight, bcast_target, C_dim)
+
+                if ignore_index >= 0:
+                    selected_weight = clang.where(mask, 0, selected_weight)
+
+                bcast_weight_sum = _reduction(
+                    selected_weight,
+                    prims.sum,
+                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+                )
+                out = clang.true_divide(reduced_sum, bcast_weight_sum)
+                if label_smoothing > 0:
+                    ret = clang.true_divide(ret, bcast_weight_sum)
+            elif ignore_index >= 0:
+                mask_sum = _reduction(
+                    mask,
+                    prims.sum,
+                    dtype=to_thunder_dtype(torch.float),
+                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+                )
+                # NOTE: does the call numel here work with dynamic shape?!
+                out = clang.true_divide(reduced_sum, clang.sub(target.numel, mask_sum))
+                if label_smoothing > 0:
+                    ret = clang.true_divide(ret, clang.sub(target.numel, mask_sum))
+                elif target.ndim == 0:
+                    # NOTE: this is pytorch implementation details.
+                    # overwrite output to 0 when target hits ignore_index AND label_smoothing is missing.
+                    # https://github.com/pytorch/pytorch/pull/64572
+                    out = clang.where(clang.eq(target, ignore_index), 0, out)
+            else:
+                out = clang.true_divide(reduced_sum, target.numel)
+                if label_smoothing > 0:
+                    ret = clang.true_divide(ret, target.numel)
+        else:
+            raise ValueError(f"reduction argument: {reduction} to cross_entropy is not supported")
+
+        if label_smoothing > 0:
+            return clang.add(clang.mul(out, 1 - label_smoothing), clang.mul(ret, (label_smoothing / C)))
+        else:
+            return out
 
 
 #

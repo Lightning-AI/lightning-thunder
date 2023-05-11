@@ -3197,4 +3197,73 @@ embedding_opinfo = OpInfo(
 nn_ops.append(embedding_opinfo)
 
 
+def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input_shape, target_shape
+    shapes = (
+        ((7, 18), (7,)),
+        ((7, 18), (7, 18)),
+        ((3, 4, 2, 3), (3, 4, 2, 3)),
+        ((3, 4, 2, 3), (3, 2, 3)),
+        ((5,), ()),
+        ((3, 4, 0), (3, 0)),
+        ((3, 4, 0), (3, 4, 0)),
+    )
+
+    weight_options = (True, False)
+    reduction_options = ("none", "mean", "sum")
+    label_smoothing_options = (0.0, 0.5)
+    ignore_index_options = (-1, 3)
+    for shape, weight_flag, reduction_str, label_smoothing, ignore_index in itertools.product(
+        shapes, weight_options, reduction_options, label_smoothing_options, ignore_index_options
+    ):
+        # TODO: nvfuser segfaults here, let's skip it for now until we have the support
+        if reduction_str == "mean" and weight_flag:
+            continue
+
+        input_shape, target_shape = shape
+        probability_target = input_shape == target_shape
+        # ignore_index can't be supplied with probablity target
+        if probability_target and ignore_index >= 0:
+            continue
+
+        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+        yield SampleInput(
+            make(shape[0]),
+            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+            if not probability_target
+            else make(shape[1], low=0.0, high=1.0, requires_grad=False),
+            make(C) if weight_flag else None,
+            None,
+            ignore_index,
+            None,
+            # NOTE: I have to use kwargs, otherwise tracing on string seems to return a tuple of char.
+            reduction=reduction_str,
+            label_smoothing=label_smoothing,
+        )
+
+
+cross_entropy_opinfo = OpInfo(
+    ltorch.cross_entropy,
+    sample_input_generator=cross_entropy_sample_generator,
+    torch_reference=torch.nn.functional.cross_entropy,
+    dtypes=(datatypes.float32, datatypes.float64),
+    test_directives=(
+        # TODO: enable hybrid TorchEx & PythonEx
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+        ),
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvFuser",),
+            active_if=nvfuser_version < LooseVersion("0.0.9"),
+        ),
+    ),
+)
+nn_ops.append(cross_entropy_opinfo)
+
+
 opinfos.extend(nn_ops)
