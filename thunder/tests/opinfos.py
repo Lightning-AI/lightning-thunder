@@ -142,10 +142,8 @@ class SampleInput:
         self.args = args
         self.kwargs = kwargs
 
-    # TODO Print kwargs
     def __repr__(self):
-        arg_string = ", ".join(tuple(str(a) for a in self.args))
-        return f"[SampleInput args=({arg_string})]"
+        return f"[SampleInput args={self.args} kwargs={self.kwargs}]"
 
     def noncontiguous(self):
         def to_noncontiguous(t):
@@ -2583,6 +2581,12 @@ take_along_axis_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.complex32,),
         ),
+        # Support for take_along_axis was added in nvFuser v0.0.10
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvFuser"),
+            active_if=nvfuser_version < LooseVersion("0.0.10"),
+        ),
     ),
 )
 shape_ops.append(take_along_axis_opinfo)
@@ -2929,18 +2933,6 @@ arange_opinfo = OpInfo(
     sample_input_generator=arange_sample_generator,
     torch_reference=torch.arange,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
-    test_directives=(
-        # TypeError: exceptions must derive from BaseException
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
-        # https://github.com/csarofeen/pytorch/issues/2370
-        DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            executors=("nvFuser",),
-        ),
-    ),
 )
 tensor_creation_ops.append(arange_opinfo)
 
@@ -2963,16 +2955,6 @@ full_opinfo = OpInfo(
     clang.full,
     sample_input_generator=full_sample_generator,
     torch_reference=torch.full,
-    test_directives=(
-        # TODO FIX ME
-        #   This test is failing because we're passing a torch dtype directly to a core language
-        #   operation, and it's correct to fail
-        #   We should canonicalize the dtype and change the test to pass a lightning compile compatible
-        #   dtype when testing core language operations
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
-    ),
 )
 tensor_creation_ops.append(full_opinfo)
 
@@ -3256,10 +3238,12 @@ cross_entropy_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             executors=("TorchEx",),
         ),
+        # nvFuser version 10 adds take_along_axis, which this
+        #   operator relies on
         DecorateInfo(
             pytest.mark.skip,
             executors=("nvFuser",),
-            active_if=nvfuser_version < LooseVersion("0.0.9"),
+            active_if=nvfuser_version < LooseVersion("0.0.10"),
         ),
     ),
 )

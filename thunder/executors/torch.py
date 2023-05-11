@@ -94,29 +94,31 @@ def full(
     return tbsym
 
 
-def iota_helper(length, *, start, step, device, dtype):
+def _iota_helper(length, *, start, step, device, dtype):
     end = start + length * step
-    return torch.arange(start=start, step=step, end=end, device=device, dtype=dtype)
+    torch_device = str(device)
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    return torch.arange(start=start, step=step, end=end, device=torch_device, dtype=torch_dtype)
 
 
 def iota(bsym: BoundSymbol, length, *, start, step, device, dtype) -> BoundSymbol:
-    sym = Symbol(name="arange", meta=None, _module=torch)
-
-    end = start + length * step
-
-    torch_device = str(device)
-    torch_dtype = ltorch.to_torch_dtype(dtype)
+    sym = Symbol(name="iota_helper", meta=None)
+    ctx: Dict[str, Any] = {"iota_helper": _iota_helper}
 
     kwargs = {
         "start": start,
         "step": step,
-        "end": end,
-        "device": torch_device,
-        "dtype": torch_dtype,
+        "device": device,
+        "dtype": dtype,
     }
 
-    tbsym = BoundSymbol(sym, args=(), kwargs=kwargs, output=bsym.output)
-
+    tbsym = BoundSymbol(
+        sym,
+        args=(length,),
+        kwargs=kwargs,
+        output=bsym.output,
+        _call_ctx=ctx,
+    )
     return tbsym
 
 

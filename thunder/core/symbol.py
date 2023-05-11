@@ -192,6 +192,7 @@ class Symbol:
             ceager = compile_eager(self.meta)
             return ceager(*args, **kwargs)
 
+        baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
         result: Any
         subsymbols = []
         if self.is_prim:

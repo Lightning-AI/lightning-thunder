@@ -147,14 +147,35 @@ def del_last_used(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
 # Identifies which executor will execute each operation
 #   Executors are queried in the order provided
 #   An error is thrown if none of the given executors can execute the operation
+# TODO Improve this to explain what couldn't be executed
+# TODO This could probably be done more efficiently
 def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False) -> Tuple[TraceCtx, List[TraceCtx]]:
-    for bsym in trace.bound_symbols:
+    def _set_executor(bsym: BoundSymbol, ex):
+        bsym._executor = ex
+
+        for sbsym in bsym.subsymbols:
+            _set_executor(sbsym, ex)
+
+    def _find_executor(bsym: BoundSymbol):
+        # Attempts to find an executor for the symbol
         for ex in executors_list:
             if ex.can_execute(bsym, prims_only=prims_only):
-                bsym._executor = ex
-                break
+                _set_executor(bsym, ex)
+                return True
 
-        utils.check(bsym._executor is not None, lambda: f"Could not find executor for bound symbol {bsym}")
+        # If no executors can execute the symbol directly, find
+        #   executors for the sub-symbols
+        if len(bsym.subsymbols) == 0:
+            return False
+
+        for sbsym in bsym.subsymbols:
+            if not _find_executor(sbsym):
+                return False
+
+        return True
+
+    for bsym in trace.bound_symbols:
+        utils.check(_find_executor(bsym), lambda: f"Could not find executor for bound symbol {bsym}")
 
     return trace, []
 
@@ -164,10 +185,11 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> Tuple[TraceCtx, Lis
     flattened: List[BoundSymbol] = []
 
     # TODO Maybe make this nonrecursive
-    def _flatten(bsym: BoundSymbol, ex):
+    def _flatten(bsym: BoundSymbol):
         nonlocal flattened
+        ex = bsym._executor
 
-        if ex.is_supported(bsym, prims_only=prims_only):
+        if ex is not None and ex.is_supported(bsym, prims_only=prims_only):
             # Propagates executor to subsymbols
             bsym._executor = ex
             flattened.append(bsym)
@@ -178,10 +200,10 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> Tuple[TraceCtx, Lis
                 exception_type=AssertionError,
             )
             for ssym in bsym.subsymbols:
-                _flatten(ssym, ex)
+                _flatten(ssym)
 
     for bsym in trace.bound_symbols:
-        _flatten(bsym, bsym._executor)
+        _flatten(bsym)
 
     flattenedtrace.bound_symbols = flattened
     flattenedtrace.set_provenance(TraceProvenance("Flatten"))

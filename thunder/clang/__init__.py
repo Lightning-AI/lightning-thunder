@@ -8,7 +8,7 @@ import thunder.core.dtypes as dtypes
 # TODO: remove prims import
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import TensorProxy, pyval
 from thunder.core.langctx import langctx
 import thunder.core.devices as devices
 
@@ -87,7 +87,7 @@ def device_put(a, device):
 
 
 # TODO Add type annotations
-def arange(*, start, step, stop, device, dtype=None):
+def arange(*, start, step, stop, device: Union[str, devices.Device], dtype=None):
     # Validates inputs
     # Checks that start, step, and stop are finite
     # TODO: semantically an infinite step seems fine?
@@ -106,8 +106,12 @@ def arange(*, start, step, stop, device, dtype=None):
         lambda: f"step={step} must make progress from start={start} to stop={stop}",
     )
 
+    # Canonicalizes device
+    if isinstance(device, str):
+        device = devices.Device(device)
+
     # (Optionally) infers dtype
-    # TODO: replace with default datatypes for integer and float
+    # TODO Replace with default datatypes for integer and float
     if dtype is None:
         if all(tuple(isinstance(x, int) for x in (start, step, stop))):
             dtype = dtypes.int64

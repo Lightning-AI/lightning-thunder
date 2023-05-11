@@ -2,14 +2,15 @@ from enum import auto, Enum
 from numbers import Number
 from functools import partial, reduce
 import operator
+import builtins
 import math
-from typing import Union, Type, Any, List, Sequence, Dict, Tuple
+from typing import Union, Type, Any, List, Sequence, Dict, Tuple, Optional, Callable
 
 import torch
 import numpy as np
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy, pyval
+from thunder.core.proxies import TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 import thunder.core.utils as utils
@@ -533,6 +534,7 @@ comparison_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.complex_dtypes
 def _elementwise_unary_meta(
     a: Union[TensorProxy, Number],
     *,
+    name=None,
     number_handler=None,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
@@ -551,8 +553,8 @@ def _elementwise_unary_meta(
         utils.check(typ in supported_input_dtypes, lambda: f"Unsupported input dtype {typ}")
 
         value = number_handler(a)
-        typ = a.python_type if isinstance(a, NumberProxy) else type(a)
-        return numberproxy(typ, value)
+        result = numberproxy(type(value), value)
+        return result
 
     # Checks that dtype is supported
     utils.check(a.dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {a.dtype}")
@@ -569,13 +571,33 @@ def _elementwise_unary_meta(
     utils.check(False, lambda: f"Unknown {output_dtype_kind=}", exception_type=AssertionError)
 
 
-abs = make_prim(
+def _make_elementwise_unary_prim(
+    id: PrimIDs,
+    name: str,
+    number_fn: Optional[Callable] = None,
+    python_printer=default_python_printer,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
+    supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
+):
+    return make_prim(
+        id,
+        name,
+        meta=partial(
+            _elementwise_unary_meta,
+            name=name,
+            number_handler=number_fn,
+            output_dtype_kind=output_dtype_kind,
+            supported_input_dtypes=supported_input_dtypes,
+        ),
+        python_printer=python_printer,
+    )
+
+
+abs = _make_elementwise_unary_prim(
     PrimIDs.ABS,
     "abs",
-    meta=partial(
-        _elementwise_unary_meta,
-        output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT,
-    ),
+    number_fn=operator.abs,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT,
 )
 
 acos = make_prim(
@@ -621,10 +643,11 @@ bitwise_not = make_prim(
 )
 
 # TODO Should ceil accept float16 and bfloat16 types?
-ceil = make_prim(
+ceil = _make_elementwise_unary_prim(
     PrimIDs.CEIL,
     "ceil",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=dtypes.float_dtypes),
+    number_fn=math.ceil,
+    supported_input_dtypes=dtypes.float_dtypes,
 )
 
 cos = make_prim(
@@ -682,10 +705,11 @@ expm1 = make_prim(
 )
 
 # TODO Should floor accept float16 and bfloat16 types?
-floor = make_prim(
+floor = _make_elementwise_unary_prim(
     PrimIDs.FLOOR,
     "floor",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=dtypes.float_dtypes),
+    number_fn=math.floor,
+    supported_input_dtypes=dtypes.float_dtypes,
 )
 
 isfinite = make_prim(
@@ -824,6 +848,7 @@ def _elementwise_binary_meta(
     a: Union[TensorProxy, Number],
     b: Union[TensorProxy, Number],
     *,
+    name=None,
     number_handler=None,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
@@ -851,7 +876,7 @@ def _elementwise_binary_meta(
             return numberproxy(numbertype, None)
 
         value = number_handler(aval, bval)
-        return numberproxy(numbertype, value)
+        return numberproxy(type(value), value)
 
     # Checks same shape
     # NOTE: this doesn't verify a common shape if one or more inputs is a number
@@ -878,6 +903,7 @@ def _elementwise_binary_meta(
 #   it should only depend on Python and standard Python libraries
 # torch_fn should be a PyTorch operation or composition of PyTorch
 #   operations that implements the primitive
+# TODO Maybe wrap number number functions in the prim ctx?
 def _make_elementwise_binary_prim(
     id,
     name,
@@ -891,6 +917,7 @@ def _make_elementwise_binary_prim(
         name,
         meta=partial(
             _elementwise_binary_meta,
+            name=name,
             number_handler=number_fn,
             output_dtype_kind=output_dtype_kind,
             supported_input_dtypes=supported_input_dtypes,
@@ -921,13 +948,14 @@ bitwise_and = _make_elementwise_binary_prim(
 
 bitwise_xor = _make_elementwise_binary_prim(
     PrimIDs.BITWISE_XOR,
-    "bitwise_and",
+    "bitwise_xor",
     supported_input_dtypes=dtypes.exact_dtypes,
 )
 
 
 def _div_numbers(a: Number, b: Number) -> Number:
-    if type(a) in dtypes.exact_dtypes and type(b) in dtypes.exact_dtypes:
+    print("_div_numbers!")
+    if dtypes.is_exact_dtype(type(a)) and dtypes.is_exact_dtype(type(b)):
         # Accounts for rounding towards zero instead of flooring
         if (a >= 0) != (b >= 0) and a % b:
             return a // b + 1
@@ -1111,7 +1139,10 @@ where = make_prim(
 # TODO: add some architecture for constructing tensor creation prims
 
 
-def _iota_meta(length, *, start, step, device, dtype):
+# TODO Improve type annotations and type checking
+def _iota_meta(length, *, start, step, device: devices.Device, dtype: dtypes.dtype):
+    # NOTE that device and dtype types will be checked by TensorProxy, below
+
     utils.check(utils.is_exact_dtype(dtype), lambda: f"dtype={dtype} was not an exact dtype")
     utils.check(not utils.is_boolean_dtype(dtype), lambda: f"dtype={dtype} was not a non-boolean dtype")
     utils.check(length >= 0, lambda: f"length={length} was not weakly positive")

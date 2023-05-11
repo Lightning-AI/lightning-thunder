@@ -77,6 +77,9 @@ class TraceCtx:
         # NOTE SigInfo is here because we only want to construct one SigInfo for the trace
         self._siginfo = None
 
+        # TODO Improve "freezing" traces
+        self._complete = False
+
     #
     # Methods related to the trace's signature
     #
@@ -146,6 +149,7 @@ class TraceCtx:
 
     def set_output(self, output: Any) -> None:
         self.output = output
+        self._complete = True
 
     def add_bound_symbol(self, bsym: BoundSymbolInterface) -> None:
         self.bound_symbols.append(bsym)

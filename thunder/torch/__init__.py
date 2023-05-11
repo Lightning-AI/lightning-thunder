@@ -1427,7 +1427,8 @@ def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_g
             max_norm=max_norm,
             norm_type=norm_type,
             scale_grad_by_freq=scale_grad_by_freq,
-            sparse=sparse)
+            sparse=sparse,
+        )
 
     # padding_idx / sparse not used by forward
 
@@ -1533,8 +1534,8 @@ def cross_entropy(
         bcast_weight = clang.reshape(weight, [C] + [1 for i in range(2, input.ndim)])
 
     # log_softmax
-    #softmax_input = _softmax_decomp(input, C_dim)
-    #log_softmax_input = clang.log(softmax_input)
+    # softmax_input = _softmax_decomp(input, C_dim)
+    # log_softmax_input = clang.log(softmax_input)
     # implementation suggested by Jacob to avoid division in _softmax_decomp
     input_max = amax(input, C_dim, keepdim=True)
     input_prime = clang.sub(input, input_max)

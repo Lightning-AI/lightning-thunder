@@ -2,6 +2,7 @@ from numbers import Number
 from typing import Type, Optional, Any, Sequence, Tuple, List, Union
 from functools import reduce, partial
 import operator
+import builtins
 
 from thunder.core.trace import VariableInterface, get_tracectx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
@@ -88,6 +89,109 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def known_value(self):
         return self.value is not None
 
+    #
+    # Elementwise unary operators
+    #
+    # TODO Track these elementwise operations by adding explicit calls to
+    #   the appropriate prims
+
+    def __abs__(self):
+        return pyval(self).__abs__()
+
+    def __ceil__(self):
+        return pyval(self).__ceil__()
+
+    def __floor__(self):
+        return pyval(self).__floor__()
+
+    def __invert__(self):
+        return pyval(self).__invert__()
+
+    def __neg__(self):
+        return pyval(self).__neg__()
+
+    def __pos__(self):
+        return pyval(self).__pos__()
+
+    def __round__(self):
+        return pyval(self).__round__()
+
+    def __trunc__(self):
+        return pyval(self).__trunc__()
+
+    #
+    # Elementwise binary operators
+    #
+
+    #
+    # Elementwise binary operators
+    #
+
+    @staticmethod
+    def _elementwise_binary_helper(a, b, name, fn):
+        baseutils.check_type(b, (TensorProxy, Number))
+
+        if isinstance(b, TensorProxy):
+            langctx = get_langctx()
+            tensor_fn = getattr(langctx, name)
+            return tensor_fn(a, b)
+
+        a, b = pyval(a), pyval(b)
+        baseutils.check(a is not None, lambda: f"Trying to {name} an unknown int", exception_type=AssertionError)
+        baseutils.check(
+            b is not None, lambda: f"Trying to {name} with an unknown number", exception_type=AssertionError
+        )
+
+        return fn(a, b)
+
+    def __add__(self, other):
+        return self._elementwise_binary_helper(self, other, "add", operator.add)
+
+    def __radd__(self, other):
+        return self._elementwise_binary_helper(other, self, "add", operator.add)
+
+    def __divmod__(self, other):
+        return self._elementwise_binary_helper(self, other, "divmod", builtins.divmod)
+
+    def __rdivmod__(self, other):
+        return self._elementwise_binary_helper(other, self, "divmod", builtins.divmod)
+
+    def __floordiv__(self, other):
+        return self._elementwise_binary_helper(self, other, "floordiv", operator.floordiv)
+
+    def __rfloordiv__(self, other):
+        return self._elementwise_binary_helper(other, self, "floordiv", operator.floordiv)
+
+    def __mod__(self, other):
+        return self._elementwise_binary_helper(self, other, "mod", operator.mod)
+
+    def __rmod__(self, other):
+        return self._elementwise_binary_helper(other, self, "mod", operator.mod)
+
+    def __mul__(self, other):
+        return self._elementwise_binary_helper(self, other, "mul", operator.mul)
+
+    def __rmul__(self, other):
+        return self._elementwise_binary_helper(other, self, "mul", operator.mul)
+
+    def __pow__(self, other):
+        return self._elementwise_binary_helper(self, other, "pow", operator.pow)
+
+    def __rpow__(self, other):
+        return self._elementwise_binary_helper(other, self, "pow", operator.pow)
+
+    def __sub__(self, other):
+        return self._elementwise_binary_helper(self, other, "sub", operator.sub)
+
+    def __rsub__(self, other):
+        return self._elementwise_binary_helper(other, self, "sub", operator.sub)
+
+    def __truediv__(self, other):
+        return self._elementwise_binary_helper(self, other, "truediv", operator.truediv)
+
+    def __rtruediv__(self, other):
+        return self._elementwise_binary_helper(other, self, "truediv", operator.truediv)
+
 
 def pyval(x: Union[NumberProxy, Number]) -> Number:
     baseutils.check_type(x, (NumberProxy, Number))
@@ -119,267 +223,17 @@ class ComplexProxy(NumberProxy, complex):
         return f"complex {value_str}"
 
     #
-    # Elementwise unary operators
-    #
-
-    def __abs__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__abs__()
-
-        return langctx.abs(self)
-
-    def __ceil__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__ceil__()
-
-        return langctx.ceil(self)
-
-    def __floor__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__floor__()
-
-        return langctx.floor(self)
-
-    def __invert__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__invert__()
-
-        return langctx.invert(self)
-
-    def __neg__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__neg__()
-
-        return langctx.neg(self)
-
-    def __pos__(self):
-        if langctx is None:
-            return pyval(self).__pos__()
-
-        return self
-
-    def __round__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__round__()
-
-        return langctx.round(self)
-
-    def __trunc__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__trunc__()
-
-        return langctx.trunc(self)
-
-    #
     # dtype conversion operators
     #
 
     def __complex__(self):
-        raise self
+        return self.value
 
     def __float__(self):
-        raise NotImplemented
+        return self.value.__float__()
 
     def __int__(self):
-        raise NotImplemented
-
-    #
-    # Elementwise binary operators
-    #
-
-    def __add__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self) + pyval(other)
-
-        return langctx.add(self, other)
-
-    def __radd__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(other) + pyval(self)
-
-        return langctx.add(other, self)
-
-    def __divmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__divmod__(pyval(other))
-
-        return langctx.divmod(self, other)
-
-    def __rdivmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rdivmod__(pyval(other))
-
-        return langctx.divmod(other, self)
-
-    def __floordiv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__floordiv__(pyval(other))
-
-        return langctx.floor_divide(self, other)
-
-    def __rfloordiv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rfloordiv__(pyval(other))
-
-        return langctx.floor_divide(other, self)
-
-    def __mod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__mod__(pyval(other))
-
-        return langctx.mod(self, other)
-
-    def __rmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rmod__(pyval(other))
-
-        return langctx.mod(other, self)
-
-    def __mul__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self) * pyval(other)
-
-        return langctx.mul(self, other)
-
-    def __rmul__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(other) * pyval(self)
-
-        return langctx.mul(other, self)
-
-    def __pow__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__pow__(pyval(other))
-
-        return langctx.pow(self, other)
-
-    def __rpow__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rpow__(pyval(other))
-
-        return langctx.pow(other, self)
-
-    def __sub__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__sub__(pyval(other))
-
-        return langctx.sub(self, other)
-
-    def __rsub__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rsub__(pyval(other))
-
-        return langctx.sub(other, self)
-
-    def __truediv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__truediv__(pyval(other))
-
-        return langctx.true_divide(self, other)
-
-    def __rtruediv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rtruediv__(pyval(other))
-
-        return langctx.true_divide(other, self)
-
-    #
-    # Logical operations
-    #
-
-    # def __eq__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.eq(self, other)
-
-    # def __and__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_and(self, other)
-
-    # def __rand__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_and(other, self)
-
-    # def __ge__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.ge(self, other)
-
-    # def __gt__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.gt(self, other)
-
-    # def __le__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.le(self, other)
-
-    # def __lt__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.lt(self, other)
-
-    # def __ne__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.ne(self, other)
-
-    # def __or__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_or(self, other)
-
-    # def __ror__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_or(other, self)
-
-    # def __xor__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_xor(self, other)
-
-    # def __rxor__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_xor(other, self)
+        return self.value.__int__()
 
     #
     # Shift operations
@@ -422,10 +276,10 @@ class ComplexProxy(NumberProxy, complex):
     #
 
     def __matmul__(self, other):
-        raise NotImplemented
+        raise NotImplementedError
 
     def __rmatmul__(self, other):
-        raise NotImplemented
+        raise NotImplementedError
 
 
 # TODO Review dtype conversions
@@ -451,271 +305,17 @@ class IntegerProxy(NumberProxy, int):
         return f"int {value_str}"
 
     #
-    # Elementwise unary operators
-    #
-
-    def __abs__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            baseutils.check(
-                self.value is not None, lambda: f"Trying to __abs__ an unknown int", exception_type=AssertionError
-            )
-
-            return pyval(self).__abs__()
-
-        return langctx.abs(self)
-
-    def __ceil__(self):
-        return self
-
-    def __floor__(self):
-        return self
-
-    def __invert__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            baseutils.check(
-                self.value is not None, lambda: f"Trying to __invert__ an unknown int", exception_type=AssertionError
-            )
-            return pyval(self).__invert__()
-
-        return langctx.invert(self)
-
-    def __neg__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            baseutils.check(
-                self.value is not None, lambda: f"Trying to __neg__ an unknown int", exception_type=AssertionError
-            )
-            return pyval(self).__neg__()
-
-        return langctx.neg(self)
-
-    def __pos__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            baseutils.check(
-                self.value is not None, lambda: f"Trying to __pos__ an unknown int", exception_type=AssertionError
-            )
-            return pyval(self).__pos__()
-
-        return self
-
-    def __round__(self):
-        return self
-
-    def __trunc__(self):
-        return self
-
-    #
     # dtype conversion operators
     #
 
     def __complex__(self):
-        raise NotImplemented
+        return self.value.__complex__()
 
     def __float__(self):
-        raise NotImplemented
+        return self.value.__float__()
 
     def __int__(self):
-        return self
-
-    #
-    # Elementwise binary operators
-    #
-
-    @staticmethod
-    def _elementwise_binary_no_ctx(name, fn, a, b):
-        baseutils.check(a is not None, lambda: f"Trying to {name} an unknown int", exception_type=AssertionError)
-        baseutils.check(
-            b is not None, lambda: f"Trying to {name} with an unknown number", exception_type=AssertionError
-        )
-        return fn(a, b)
-
-    def __add__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__add__", int.__add__, self.value, pyval(other))
-
-        return langctx.add(self, other)
-
-    def __radd__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__radd__", int.__radd__, self.value, pyval(other))
-
-        return langctx.add(other, self)
-
-    def __divmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__divmod__", int.__divmod__, self.value, pyval(other))
-
-        return langctx.divmod(self, other)
-
-    def __rdivmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rdivmod__", int.__rdivmod__, self.value, pyval(other))
-
-        return langctx.divmod(other, self)
-
-    def __floordiv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__floordiv__", int.__floordiv__, self.value, pyval(other))
-
-        return langctx.floor_divide(self, other)
-
-    def __rfloordiv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rfloordiv__", int.__rfloordiv__, self.value, pyval(other))
-
-        return langctx.floor_divide(other, self)
-
-    def __mod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__mod__", int.__mod__, self.value, pyval(other))
-
-        return langctx.mod(self, other)
-
-    def __rmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rmod__", int.__rmod__, self.value, pyval(other))
-
-        return langctx.mod(other, self)
-
-    def __mul__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__mul__", int.__mul__, self.value, pyval(other))
-
-        return langctx.mul(self, other)
-
-    def __rmul__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rmul__", int.__rmul__, self.value, pyval(other))
-
-        return langctx.mul(other, self)
-
-    def __pow__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__pow__", int.__pow__, self.value, pyval(other))
-
-        return langctx.pow(self, other)
-
-    def __rpow__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rpow__", int.__rpow__, self.value, pyval(other))
-
-        return langctx.pow(other, self)
-
-    def __sub__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__sub__", int.__sub__, self.value, pyval(other))
-
-        return langctx.sub(self, other)
-
-    def __rsub__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rsub__", int.__rsub__, self.value, pyval(other))
-
-        return langctx.sub(other, self)
-
-    def __truediv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__truediv__", int.__truediv__, self.value, pyval(other))
-
-        return langctx.true_divide(self, other)
-
-    def __rtruediv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rtruediv__", int.__rtruediv__, self.value, pyval(other))
-
-        return langctx.true_divide(other, self)
-
-    #
-    # Logical operations
-    #
-    # TODO Review these with constraint modeling
-
-    # def __eq__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.eq(self, other)
-
-    # def __and__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_and(self, other)
-
-    # def __rand__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_and(other, self)
-
-    # def __ge__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.ge(self, other)
-
-    # def __gt__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.gt(self, other)
-
-    # def __le__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.le(self, other)
-
-    # def __lt__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.lt(self, other)
-
-    # def __ne__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.ne(self, other)
-
-    # def __or__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_or(self, other)
-
-    # def __ror__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_or(other, self)
-
-    # def __xor__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_xor(self, other)
-
-    # def __rxor__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_xor(other, self)
+        return self.value
 
     #
     # Shift operations
@@ -758,10 +358,10 @@ class IntegerProxy(NumberProxy, int):
     #
 
     def __matmul__(self, other):
-        raise NotImplemented
+        raise NotImplementedError
 
     def __rmatmul__(self, other):
-        raise NotImplemented
+        raise NotImplementedError
 
 
 # TODO Review dtype conversions
@@ -784,267 +384,17 @@ class FloatProxy(NumberProxy, float):
         return f"float {value_str}"
 
     #
-    # Elementwise unary operators
-    #
-
-    def __abs__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__abs__()
-
-        return langctx.abs(self)
-
-    def __ceil__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__ceil__()
-
-        return langctx.ceil(self)
-
-    def __floor__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__floor__()
-
-        return langctx.floor(self)
-
-    def __invert__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__invert__()
-
-        return langctx.invert(self)
-
-    def __neg__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__neg__()
-
-        return langctx.neg(self)
-
-    def __pos__(self):
-        if langctx is None:
-            return pyval(self).__pos__()
-
-        return self
-
-    def __round__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__round__()
-
-        return langctx.round(self)
-
-    def __trunc__(self):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__trunc__()
-
-        return langctx.trunc(self)
-
-    #
     # dtype conversion operators
     #
 
     def __complex__(self):
-        raise NotImplemented
+        return self.value.__complex__()
 
     def __float__(self):
-        return self
+        return self.value
 
     def __int__(self):
-        raise NotImplemented
-
-    #
-    # Elementwise binary operators
-    #
-
-    def __add__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self) + pyval(other)
-
-        return langctx.add(self, other)
-
-    def __radd__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(other) + pyval(self)
-
-        return langctx.add(other, self)
-
-    def __divmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__divmod__(pyval(other))
-
-        return langctx.divmod(self, other)
-
-    def __rdivmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rdivmod__(pyval(other))
-
-        return langctx.divmod(other, self)
-
-    def __floordiv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__floordiv__(pyval(other))
-
-        return langctx.floor_divide(self, other)
-
-    def __rfloordiv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rfloordiv__(pyval(other))
-
-        return langctx.floor_divide(other, self)
-
-    def __mod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__mod__(pyval(other))
-
-        return langctx.mod(self, other)
-
-    def __rmod__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rmod__(pyval(other))
-
-        return langctx.mod(other, self)
-
-    def __mul__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self) * pyval(other)
-
-        return langctx.mul(self, other)
-
-    def __rmul__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(other) * pyval(self)
-
-        return langctx.mul(other, self)
-
-    def __pow__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__pow__(pyval(other))
-
-        return langctx.pow(self, other)
-
-    def __rpow__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rpow__(pyval(other))
-
-        return langctx.pow(other, self)
-
-    def __sub__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__sub__(pyval(other))
-
-        return langctx.sub(self, other)
-
-    def __rsub__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rsub__(pyval(other))
-
-        return langctx.sub(other, self)
-
-    def __truediv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__truediv__(pyval(other))
-
-        return langctx.true_divide(self, other)
-
-    def __rtruediv__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rtruediv__(pyval(other))
-
-        return langctx.true_divide(other, self)
-
-    #
-    # Logical operations
-    #
-
-    # def __eq__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.eq(self, other)
-
-    # def __and__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_and(self, other)
-
-    # def __rand__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_and(other, self)
-
-    # def __ge__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.ge(self, other)
-
-    # def __gt__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.gt(self, other)
-
-    # def __le__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.le(self, other)
-
-    # def __lt__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.lt(self, other)
-
-    # def __ne__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.ne(self, other)
-
-    # def __or__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_or(self, other)
-
-    # def __ror__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_or(other, self)
-
-    # def __xor__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_xor(self, other)
-
-    # def __rxor__(self, other):
-    #     langctx = get_langctx()
-    #     return langctx.logical_xor(other, self)
+        return self.value.__int__()
 
     #
     # Shift operations
@@ -1087,10 +437,10 @@ class FloatProxy(NumberProxy, float):
     #
 
     def __matmul__(self, other):
-        raise NotImplemented
+        raise NotImplementedError
 
     def __rmatmul__(self, other):
-        raise NotImplemented
+        raise NotImplementedError
 
 
 # TODO Add remaining dunders
@@ -1206,13 +556,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
 
     def __complex__(self):
-        raise NotImplemented
+        raise NotImplementedError
 
     def __float__(self):
-        raise NotImplemented
+        raise NotImplementedError
 
     def __int__(self):
-        raise NotImplemented
+        raise NotImplementedError
 
     #
     # Elementwise binary operators

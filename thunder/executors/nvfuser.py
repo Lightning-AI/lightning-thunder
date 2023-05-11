@@ -109,6 +109,58 @@ def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
 _ops_map: Dict[Any, Tuple[Callable, Callable]] = {}
 
 
+# TODO Check the CUDA arch?
+def is_supported_device(device: Device) -> bool:
+    utils.check_type(device, Device)
+    return device.devicetype is DeviceType.CUDA
+
+
+def is_supported_devicetype(devicetype: DeviceType) -> bool:
+    utils.check_type(devicetype, DeviceType)
+    return devicetype is DeviceType.CUDA
+
+
+def is_supported_dtype(dtype: Union[Type, dtypes.dtype]) -> bool:
+    utils.check_type(dtype, (Type, dtypes.dtype))
+    return dtype in _lcdtype_to_nvdtype_map
+
+
+def is_supported_tensor(a: TensorProxy) -> bool:
+    utils.check_type(a, TensorProxy)
+    devicetype_supported = a.device.devicetype is DeviceType.CUDA
+    dtype_supported = is_supported_dtype(a.dtype)
+    rank_supported = a.ndim <= 8
+    return devicetype_supported and dtype_supported and rank_supported
+
+
+def is_supported_tensor_or_number(a: Union[TensorProxy, Number]) -> bool:
+    if isinstance(a, Number):
+        return True
+
+    return is_supported_tensor(a)
+
+
+# Returns True when all arguments given are supported tensors
+#   Throws an error if any arguments are not tensors
+# TODO Add a check for the tensor have > 0 elements?
+def are_supported_tensors(*args) -> bool:
+    for a in args:
+        if not is_supported_tensor(a):
+            return False
+
+    return True
+
+
+# Returns True when all arguments given are supported tensors or numbers
+#   Throws an error if any arguments are not numbers or tensors
+def are_supported_tensors_or_numbers(*args) -> bool:
+    for a in args:
+        if not is_supported_tensor_or_number(a):
+            return False
+
+    return True
+
+
 # Note that nvFuser pad() does not perform padding between elements as is done
 # in XLA. It instead requires a flat list of static widths (int instead of
 # nvNumber), and that argument must come before the fill value.
@@ -170,7 +222,7 @@ def _pad_preprocessor(fd, variable_to_nvfuser_map, sym_args, sym_kwargs, nv_args
 
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
 def _broadcast_in_dim_check(a: TensorProxy, shape: List[int], broadcast_dimensions: List[int]) -> bool:
-    return a.device.devicetype is DeviceType.CUDA
+    return is_supported_tensor(a)
 
 
 def _div_wrapper(fd):
@@ -202,7 +254,7 @@ def broadcast_in_dim(
 
 
 def _reshape_check(a: TensorProxy, shape: List[int]) -> bool:
-    return a.device.devicetype is DeviceType.CUDA
+    return is_supported_tensor(a)
 
 
 def reshape(a: TensorProxy, shape: List[int], *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
@@ -212,7 +264,7 @@ def reshape(a: TensorProxy, shape: List[int], *, fd: FusionDefinition, lc_to_nv_
 
 
 def _take_check(a: TensorProxy, index: TensorProxy, dim: int) -> bool:
-    return a.device.devicetype is DeviceType.CUDA and index.device.devicetype is DeviceType.CUDA
+    return are_supported_tensors(a, index)
 
 
 def take(a: TensorProxy, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
@@ -236,7 +288,7 @@ def take_along_axis(a: TensorProxy, index: TensorProxy, dim: int, *, fd: FusionD
 
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
 def _elementwise_unary_check(a: Union[TensorProxy, Number]) -> bool:
-    return isinstance(a, Number) or a.device.devicetype is DeviceType.CUDA
+    return is_supported_tensor_or_number(a)
 
 
 # NOTE nv_abs to avoid a name conflict with the builin abs
@@ -479,9 +531,7 @@ def trunc(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 
 # TODO Review support for all elementwise binary operators, like nextafter
 def _elementwise_binary_check(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> bool:
-    return (isinstance(a, Number) or a.device.devicetype is DeviceType.CUDA) and (
-        isinstance(b, Number) or b.device.devicetype is DeviceType.CUDA
-    )
+    return are_supported_tensors_or_numbers(a, b)
 
 
 # TODO Generalize to use an elementwise binary helper or factory?
@@ -678,7 +728,7 @@ def sub(
 # TODO Check supported dtypes
 # TODO Properly implement this check
 def _where_check(pred, a, b) -> bool:
-    return isinstance(pred, Number) or pred.device.devicetype is DeviceType.CUDA
+    return are_supported_tensors_or_numbers(pred, a, b)
 
 
 def where(
@@ -705,7 +755,7 @@ def where(
 def _uniform_check(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: Device, dtype: dtypes.dtype
 ) -> bool:
-    return device.devicetype is DeviceType.CUDA
+    return is_supported_device(device) and is_supported_dtype(dtype)
 
 
 # TODO Add type annotations
@@ -733,7 +783,7 @@ def uniform(
 # TODO Fix this check
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
 def _convert_element_type_check(a: Union[TensorProxy, Number], dtype: Union[Type, dtypes.dtype]) -> bool:
-    return True
+    return is_supported_tensor_or_number(a) and is_supported_dtype(dtype)
 
 
 def convert_element_type(
@@ -752,7 +802,8 @@ def convert_element_type(
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dim: Sequence[int], *, output_dtype: Optional[dtypes.dtype] = None) -> bool:
-    return a.device.devicetype is DeviceType.CUDA
+    dtype_supported = output_dtype is None or is_supported_dtype(output_dtype)
+    return is_supported_tensor(a) and dtype_supported
 
 
 # TODO Review if this accepts empty dim sequences
@@ -825,7 +876,7 @@ def sum(
 
 
 def _var_check(a: TensorProxy, dims, *, correction: int) -> bool:
-    return a.device.devicetype is DeviceType.CUDA
+    return is_supported_tensor(a)
 
 
 # TODO Add type annotations
