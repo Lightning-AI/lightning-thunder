@@ -425,7 +425,7 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
         check_type(a, (TensorProxy, Number))
 
     # Computes the promotion type
-    extracted = (to_dtype(x, true_dtype=True) for x in args)
+    extracted = tuple(to_dtype(x, true_dtype=True) for x in args)
     promotiontype = reduce(_elementwise_type_promotion, extracted, bool)
 
     # Applies the different kinds of type promotion

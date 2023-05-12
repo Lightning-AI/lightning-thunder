@@ -12,6 +12,7 @@ from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
+import thunder.core.utils as utils
 
 from thunder.executors.utils import *
 
@@ -533,8 +534,7 @@ def var_prim(bsym: BoundSymbol, a: TensorProxy, dims, *, correction: int) -> Bou
     return tbsym
 
 
-# TODO Add type annotations
-# TODO Check for unbiased and correction both being specified and error
+# NOTE var does not allow keepdim to be specified if dim is not specified
 # NOTE This is the direct translation of torch.var
 def var(
     bsym: BoundSymbol,
@@ -545,13 +545,25 @@ def var(
     *,
     correction: Optional[int] = None,
 ) -> BoundSymbol:
+    utils.check(
+        correction is None or unbiased is None,
+        lambda: f"Cannot specify both {unbiased=} and {correction=} when calling var",
+    )
+
     sym = Symbol(name="var", meta=None, _module=torch)
+
+    # Explicitly specifies dimensions (if unspecified) if keepdim or correction must be specified
+    if dim is None and (keepdim is not None or correction is not None):
+        dim = tuple(range(a.ndim))
 
     args = tuple(x for x in (a, dim) if x is not None)
     kwargs = {
-        "keepdim": keepdim,
         "correction": correction,
     }
+
+    # Adds keepdim
+    if keepdim:
+        kwargs["keepdim"] = keepdim
 
     # NOTE PyTorch does not allow both correction and unbiased to be specified
     if unbiased is not None:

@@ -342,6 +342,131 @@ def test_constant_creation(executor, device, dtype):
         assert_close(lc_result, python_result)
 
 
+#
+# Type promotion tests
+#
+# TODO Maybe move to test_type_promotion.py?
+
+
+# TODO This test just spot-checks type promotion -- it could probably be better
+@instantiate(dtypes=NOTHING)
+def test_type_promotion_tensors(executor, device, _):
+    if executor == TorchExecutor:
+        pytest.xfail("https://github.com/Lightning-AI/lightning-thunder/issues/406")
+
+    def foo(a, b):
+        return a + b
+
+    traced_foo = executor.make_callable(foo)
+
+    b1 = make_tensor((2, 2), device=device, dtype=torch.bool)
+    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
+    bf16 = make_tensor((2, 2), device=device, dtype=torch.bfloat16)
+    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
+    f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+    # float16 x float16 type promotion -- float16 result dtype
+    result = traced_foo(f16, f16)
+    assert result.dtype is torch.float16
+
+    # float16 x float32 type promotion -- float32 result dtype
+    result = traced_foo(f16, f32)
+    assert result.dtype is torch.float32
+
+    # float16 x bfloat16 type promotion -- float32 result dtype
+    result = traced_foo(f16, bf16)
+    assert result.dtype is torch.float32
+
+    # int64 x float16 type promotion -- float16 result dtype
+    result = traced_foo(f16, i64)
+    assert result.dtype is torch.float16
+
+    # bool x int64 type promotion -- int64 result dtype
+    result = traced_foo(b1, i64)
+    assert result.dtype is torch.int64
+
+    # f x int64 type promotion -- float result dtype
+    result = traced_foo(2.0, i64)
+    assert result.dtype is torch.float32
+
+    # b1 x int64 type promotion -- int64 result dtype
+    result = traced_foo(b1, i64)
+    assert result.dtype is torch.int64
+
+    def bar(a, b, c):
+        return a - b + c
+
+    traced_bar = executor.make_callable(bar)
+
+    # float x int64 x float16 type promotion -- float16 result dtype
+    result = traced_bar(2.0, i64, f16)
+    assert result.dtype is torch.float16
+
+    # float x int x int64 -- float32 result dtype
+    result = traced_bar(2.1, -1, i64)
+    assert result.dtype is torch.float32
+
+
+@instantiate(dtypes=NOTHING)
+def test_type_promotion_numbers_and_tensors(executor, device, _):
+    if executor == TorchExecutor:
+        pytest.xfail("https://github.com/Lightning-AI/lightning-thunder/issues/406")
+
+    def foo(a, b, c):
+        return a + b + c
+
+    cfoo = executor.make_callable(foo)
+
+    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
+    f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
+    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
+
+    result = cfoo(5, f32, 2)
+    assert result.dtype is torch.float32
+
+    result = cfoo(f32, 1, f32)
+    assert result.dtype is torch.float32
+
+    result = cfoo(i64, 3.0, f16)
+    assert result.dtype is torch.float16
+
+    result = cfoo(i64, 3.0, i64)
+    assert result.dtype is torch.float32
+
+
+@instantiate(dtypes=NOTHING)
+def test_int_to_float_type_promotion(executor, device, _):
+    def foo(a, b):
+        return a / b
+
+    cfoo = executor.make_callable(foo)
+
+    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
+    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
+
+    # int64 x int64 -- float32 result dtype
+    result = cfoo(i64, i64)
+    assert result.dtype is torch.float32
+
+    # int x int64 -- float32 result dtype
+    result = cfoo(2, i64)
+    assert result.dtype is torch.float32
+
+    # int64 x bool -- float32 result dtype
+    result = cfoo(i64, True)
+    assert result.dtype is torch.float32
+
+    # int64 x float16 -- float16 result dtype
+    result = cfoo(i64, f16)
+    assert result.dtype is torch.float16
+
+
+#
+# Tests related to trace manipulation and transformation
+#
+# TODO Maybe move to test_transforms.py?
+
+
 @instantiate(dtypes=NOTHING)
 def test_detached_trace(executor, device: str, _):
     # This test ensures that the detached_trace context manager works as expected.
@@ -1155,234 +1280,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
 #         assert isinstance(ex, torchCtx)
 
 
-# TODO: this test just spot-checks type promotion -- it could probably be better
-@instantiate(dtypes=NOTHING)
-def test_type_promotion_tensors(executor, device, _):
-    if executor == TorchExecutor:
-        pytest.xfail("TorchExecutor currently fails at float x int64 x float16 type promotion")
-
-    def foo(a, b):
-        return a + b
-
-    traced_foo = executor.make_callable(foo)
-
-    b1 = make_tensor((2, 2), device=device, dtype=torch.bool)
-    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
-    bf16 = make_tensor((2, 2), device=device, dtype=torch.bfloat16)
-    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
-    f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
-
-    # float16 x float16 type promotion -- float16 result dtype
-    result = traced_foo(f16, f16)
-    assert result.dtype is torch.float16
-
-    # float16 x float32 type promotion -- float32 result dtype
-    result = traced_foo(f16, f32)
-    assert result.dtype is torch.float32
-
-    # float16 x bfloat16 type promotion -- float32 result dtype
-    result = traced_foo(f16, bf16)
-    assert result.dtype is torch.float32
-
-    # int64 x float16 type promotion -- float16 result dtype
-    result = traced_foo(f16, i64)
-    assert result.dtype is torch.float16
-
-    # bool x int64 type promotion -- int64 result dtype
-    result = traced_foo(b1, i64)
-    assert result.dtype is torch.int64
-
-    # f x int64 type promotion -- float result dtype
-    result = traced_foo(2.0, i64)
-    assert result.dtype is torch.float32
-
-    # b1 x int64 type promotion -- int64 result dtype
-    result = traced_foo(b1, i64)
-    assert result.dtype is torch.int64
-
-    def bar(a, b, c):
-        return a - b + c
-
-    traced_bar = executor.make_callable(bar)
-
-    # float x int64 x float16 type promotion -- float16 result dtype
-    result = traced_bar(2.0, i64, f16)
-    assert result.dtype is torch.float16
-
-    # float x int x int64 -- float32 result dtype
-    result = traced_bar(2.1, -1, i64)
-    assert result.dtype is torch.float32
-
-
-# @instantiate(dtypes=NOTHING)
-# def test_type_promotion_numbers_and_tensors(executor, device, _):
-#     def foo(a, b, c):
-#         return a + b + c
-
-#     traced_foo = executor.make_callable(foo)
-
-#     f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
-#     f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
-#     i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
-
-#     result = traced_foo(5, f32, 2)
-#     assert result.dtype is torch.float32
-
-#     result = traced_foo(f32, 1, f32)
-#     assert result.dtype is torch.float32
-
-#     result = traced_foo(i64, 3.0, f16)
-#     assert result.dtype is torch.float16
-
-#     result = traced_foo(i64, 3.0, i64)
-#     assert result.dtype is torch.float32
-
-
-# @instantiate(dtypes=NOTHING)
-# def test_int_to_float_type_promotion(executor, device, _):
-#     def foo(a, b):
-#         return a / b
-
-#    traced_foo = executor.make_callable(foo)
-
-#     i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
-#     f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
-
-#     # int64 x int64 -- float32 result dtype
-#     result = traced_foo(i64, i64)
-#     assert result.dtype is torch.float32
-
-#     # int x int64 -- float32 result dtype
-#     result = traced_foo(2, i64)
-#     assert result.dtype is torch.float32
-
-#     # int64 x bool -- float32 result dtype
-#     result = traced_foo(i64, True)
-#     assert result.dtype is torch.float32
-
-#     # int64 x float16 -- float16 result dtype
-#     result = traced_foo(i64, f16)
-#     assert result.dtype is torch.float16
-
-
-# TODO: put this in test_tensor_creation.py
-# TODO: specify multiple specific devices (today the test suite just passes a devicetype)
-# TODO: add test for full (), which will cause a segfault
-# @instantiate(dtypes=(thunder.float32,))
-# def test_full(executor, device, dtype):
-#     traced_full = executor.make_callable(tlang.full)
-
-#     tdtype = ttorch.torch_dtype(dtype)
-
-#     thunder_result = traced_full((1, 2, 3), 1.0, device=device, dtype=tdtype)
-#     torch_result = torch.full((1, 2, 3), 1.0, device=device, dtype=tdtype)
-
-#     assert_close(thunder_result, torch_result)
-
-
-# @instantiate(dtypes=(thunder.float32,))
-# def test_fusion_reuse(executor, device, dtype):
-#     def foo(a, b, *, flag=False):
-#         if flag:
-#             return a + b
-#         return a - b
-
-#     traced_foo = executor.make_callable(foo, _return_fusion=True)
-#     tdtype = ttorch.torch_dtype(dtype)
-
-#     a = make_tensor((2,), device=device, dtype=tdtype)
-#     b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-
-#     args = (a,)
-#     kwargs = {"b": b, "flag": True}
-
-#     thunder_result = traced_foo(*args, **kwargs)
-
-#     torch_result = foo(*args, **kwargs)
-#     assert_close(thunder_result["result"], torch_result)
-
-#     fusion_result = thunder_result["fusion"](*args, **kwargs)
-#     assert_close(fusion_result, torch_result)
-
-#     # Calls the fusion with new tensor data (but preserves the flag arg)
-#     a = make_tensor((2,), device=device, dtype=tdtype)
-#     b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-
-#     args = (a,)
-#     kwargs = {"b": b, "flag": True}
-
-#     fusion_result = thunder_result["fusion"](*args, **kwargs)
-#     torch_result = foo(*args, **kwargs)
-#     assert_close(fusion_result, torch_result)
-
-#     # Calls the fusion with new tensor data, and verifies the flag arg is ignored
-#     a = make_tensor((2,), device=device, dtype=tdtype)
-#     b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-
-#     args = (a,)
-#     kwargs = {"b": b, "flag": False}
-
-#     fusion_result = thunder_result["fusion"](*args, **kwargs)
-#     torch_result = foo(*args, b=b, flag=True)
-#     assert_close(fusion_result, torch_result)
-
-#     # Tests with PyTorch fallback
-#     def bar(a, b):
-#         c = a @ b
-#         return c + c
-
-#     traced_bar = executor.make_callable(bar, _return_fusion=True)
-
-#     a = make_tensor((4, 16), device=device, dtype=tdtype)
-#     b = make_tensor((16, 8), device=device, dtype=tdtype)
-
-#     thunder_result = traced_bar(a, b)
-#     torch_result = bar(a, b)
-#     assert_close(torch_result, thunder_result["result"])
-
-#     fusion_result = thunder_result["fusion"](a, b)
-#     assert_close(torch_result, fusion_result)
-
-
-# # TODO: probably only want to run this on nvFuser
-# # TODO: maybe move to special test_nvfuser?
-# @instantiate(
-#     dtypes=(thunder.float32,),
-#     executors=[
-#         nvFuser(),
-#     ],
-# )
-# @requiresCUDA
-# def test_hybrid_execution(executor, device, dtype):
-#     def foo(a, b, bias=None):
-#         c = a + b
-#         d = c + a
-#         e = d + 2
-#         f = ttorch.linear(a, c, bias)
-#         g = c + f
-#         return (c, e, 2), 5, f, g
-
-#     def bar(a, b, bias=None):
-#         c = a + b
-#         d = c + a
-#         e = d + 2
-#         f = torch.nn.functional.linear(a, c, bias)
-#         g = c + f
-#         return (c, e, 2), 5, f, g
-
-#     traced_foo = executor.make_callable(foo)
-#     tdtype = ttorch.torch_dtype(dtype)
-
-#     a = make_tensor((2, 2), device="cuda", dtype=torch.float32)
-#     b = make_tensor((2, 2), device="cuda", dtype=torch.float32)
-#     bias = None
-
-#     result = traced_foo(a, b, bias)
-#     torch_result = bar(a, b, bias)
-
-#     assert_close(result, torch_result)
-
-
+# TODO Move to test_tensor_creation.py
 # @instantiate(
 #     dtypes=(thunder.float32, thunder.float16),
 # )
@@ -1421,68 +1319,6 @@ def test_type_promotion_tensors(executor, device, _):
 #     result.shape == (2, 3, 4)
 #     result.min() >= 0.5
 #     result.max() <= 1.0
-
-
-# def test_codeutils_unpack_pack():
-#     o = object()
-#     cases = (
-#         [1, 2, 3],
-#         [1, "a", object()],
-#         (1, 2, 3),
-#         (1, "a", object()),
-#         {"a": 1, 2: 3, "x": object()},
-#         [1, 2, [3, 4, o, [], 6, [[], [], (o, 5)], ((), ()), {}]],
-#         {"x": (1, 2), (3, 4): ["a", o, ("c", {"d": o, 5: 3, 7: [1, 2, ((),)]})]},
-#     )
-
-#     for c in cases:
-#         leaves, keys, packinfo = codeutils.unpack(c)
-#         packed = codeutils.pack(leaves, packinfo)
-#         assert c == packed
-
-
-# def test_codeutils_siginfo():
-#     def foo(a, b, *argles, c, d=2, e="hello", **vargles):
-#         pass
-
-#     o = object()
-#     siginfo = codeutils.get_siginfo(foo, (3, 4, 7, "a", (1, 2)), {"c": 2, "e": 9, "f": 1, "g": o})
-
-#     assert siginfo.args == (("a", 3), ("b", 4))
-#     assert siginfo.varargs == ("argles", (7, "a", (1, 2)))
-#     assert siginfo.kwargs == {"c": 2, "d": 2, "e": 9}
-#     assert siginfo.varkwargs == ("vargles", {"f": 1, "g": o})
-
-
-# def test_tree_flatten_only():
-#     tree = [1, "a"]
-#     flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
-#     tree_only = tree_unflatten(flat, spec)
-
-#     assert tree_only == ["a"]
-
-#     flat[0] = "b"
-#     tree_only = tree_unflatten(flat, spec)
-
-#     assert tree_only == ["b"]
-
-#     tree = [1, 2]
-#     flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
-#     tree_only = tree_unflatten(flat, spec)
-
-#     assert tree_only == []
-
-#     tree = [1, {"a": 1, "b": "two", "c": {"d": 5}}]
-#     flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
-#     tree_only = tree_unflatten(flat, spec)
-
-#     assert tree_only == [{"b": "two"}]
-
-#     tree = [1, {"a": 1, "b": 2, "c": {"d": "five"}}]
-#     flat, spec = tree_flatten_only(tree, lambda x: isinstance(x, str))
-#     tree_only = tree_unflatten(flat, spec)
-
-#     assert tree_only == [{"c": {"d": "five"}}]
 
 
 # @instantiate(

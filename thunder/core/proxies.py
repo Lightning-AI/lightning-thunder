@@ -157,10 +157,10 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self._elementwise_binary_helper(other, self, "divmod", builtins.divmod)
 
     def __floordiv__(self, other):
-        return self._elementwise_binary_helper(self, other, "floordiv", operator.floordiv)
+        return self._elementwise_binary_helper(self, other, "floor_divide", operator.floordiv)
 
     def __rfloordiv__(self, other):
-        return self._elementwise_binary_helper(other, self, "floordiv", operator.floordiv)
+        return self._elementwise_binary_helper(other, self, "floor_divide", operator.floordiv)
 
     def __mod__(self, other):
         return self._elementwise_binary_helper(self, other, "mod", operator.mod)
@@ -187,10 +187,10 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self._elementwise_binary_helper(other, self, "sub", operator.sub)
 
     def __truediv__(self, other):
-        return self._elementwise_binary_helper(self, other, "truediv", operator.truediv)
+        return self._elementwise_binary_helper(self, other, "true_divide", operator.truediv)
 
     def __rtruediv__(self, other):
-        return self._elementwise_binary_helper(other, self, "truediv", operator.truediv)
+        return self._elementwise_binary_helper(other, self, "true_divide", operator.truediv)
 
 
 def pyval(x: Union[NumberProxy, Number]) -> Number:

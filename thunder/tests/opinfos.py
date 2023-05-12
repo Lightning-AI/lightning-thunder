@@ -891,10 +891,11 @@ isfinite_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.isfinite),
     test_directives=(
-        # nvFuser doesn't correctly return outputs as boolean tensors, and doesn't support full
+        # https://github.com/Lightning-AI/lightning-thunder/issues/407
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
+            dtypes=(datatypes.bfloat16, datatypes.float16),
         ),
         # Torch preserves the uint8 dtype
         DecorateInfo(
@@ -2776,6 +2777,8 @@ sum_opinfo = OpInfo(
 reduction_ops.append(sum_opinfo)
 
 
+# TODO Update this so we can access sample input args/kwargs by name
+#   instead of by offset, as is done here
 def var_sample_generator(op, device, dtype, requires_grad):
     unbiased = (None, True, False)
     correction = (None, 0, 1)
@@ -2836,12 +2839,6 @@ var_mean_opinfo = OpInfo(
     # Complex var is not supported yet
     dtypes=(datatypes.floating,),
     test_directives=(
-        # TODO Review PyTorch's odd translation of var_mean
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            executors=("TorchEx",),
-        ),
         # bfloat16 on CPU has accuracy things
         DecorateInfo(
             pytest.mark.xfail,
@@ -2910,14 +2907,15 @@ arange_opinfo = OpInfo(
 tensor_creation_ops.append(arange_opinfo)
 
 
-# TODO: match fill values to dtype
 def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape, fill_value
+    make_fv = partial(make_number, dtype=dtype)
+
     cases = (
-        # ((), .5),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
-        ((4, 4), 1),
-        ((8, 1, 6), 1),
-        ((8, 7, 5, 1), 1),
+        ((), make_fv()),
+        ((4, 4), make_fv()),
+        ((8, 1, 6), make_fv()),
+        ((8, 7, 5, 1), make_fv()),
     )
 
     for shape, fill_value in cases:
