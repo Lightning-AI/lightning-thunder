@@ -494,9 +494,11 @@ where = _elementwise_ternary_factory("where")
 # TODO Capture torch reductions for amax, amin, prod, and sum
 
 
-def _prim_reduction_factory(name: str) -> Callable:
+def _prim_reduction_factory(name_or_symbol: Union[str, Symbol]) -> Callable:
     def fn(bsym: BoundSymbol, a: TensorProxy, dims, *, output_dtype: Optional[dtypes.dtype] = None) -> BoundSymbol:
-        sym = Symbol(name=name, meta=None, _module=torch)
+        sym = name_or_symbol
+        if isinstance(name_or_symbol, str):
+            sym = Symbol(name=name_or_symbol, meta=None, _module=torch)
 
         output_dtype = ltorch.to_torch_dtype(output_dtype)
 
@@ -517,7 +519,7 @@ def _prim_reduction_factory(name: str) -> Callable:
 
 amax_prim = _prim_reduction_factory("amax")
 amin_prim = _prim_reduction_factory("amin")
-prod_prim = _prim_reduction_factory("prod")
+prod_prim = _prim_reduction_factory(Symbol(name="prod", meta=None, _module=torch._refs))
 sum_prim = _prim_reduction_factory("sum")
 
 

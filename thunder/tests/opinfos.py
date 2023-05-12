@@ -2027,10 +2027,6 @@ stack_opinfo = OpInfo(
     error_input_generator=stack_error_generator,
     torch_reference=torch.stack,
     test_directives=(
-        # AttributeError: module 'thunder.clang' has no attribute 'method_lookup'
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
         # cat op was introduced in nvFuser 0.0.5
         DecorateInfo(
             pytest.mark.xfail,
@@ -2155,12 +2151,6 @@ reshape_opinfo = OpInfo(
     clang.reshape,
     sample_input_generator=reshape_sample_generator,
     torch_reference=torch.reshape,
-    test_directives=(
-        # TODO Review this failure
-        DecorateInfo(
-            pytest.mark.xfail,
-        ),
-    ),
 )
 shape_ops.append(reshape_opinfo)
 
@@ -2247,11 +2237,6 @@ slice_in_dim = OpInfo(
     sample_input_generator=slice_in_dim_sample_generator,
     jax_reference=jax.lax.slice_in_dim if JAX_AVAILABLE else None,
     test_directives=(
-        # Output types from fusions that are not tensors are not supported at this point.
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-        ),
         # nvFuser executor doesn't support pad correctly
         # See https://github.com/Lightning-AI/lightning-thunder/issues/285
         DecorateInfo(
@@ -2481,14 +2466,6 @@ transpose_opinfo = OpInfo(
     clang.transpose,
     sample_input_generator=transpose_sample_generator,
     torch_reference=torch.permute,
-    test_directives=(
-        DecorateInfo(
-            # TODO File issue
-            #   RuntimeError: out->getValType() == ValType::TensorView
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-        ),
-    ),
 )
 shape_ops.append(transpose_opinfo)
 
@@ -2740,11 +2717,6 @@ prod_opinfo = OpInfo(
     sample_input_generator=reduction_sample_generator,
     torch_reference=torch._refs.prod,
     test_directives=(
-        # TODO Update the torch executor to use the reference implementation of prod
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("TorchEx",),
-        ),
         # NOTE Test fails due to precision
         # TODO Investigate or reduce test precision
         DecorateInfo(
@@ -2757,7 +2729,8 @@ prod_opinfo = OpInfo(
             dtypes=(datatypes.complex32, datatypes.float16),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # See https://github.com/csarofeen/pytorch/issues/2369
+        # TODO Review this
+        # Greatest absolute difference: 11723436.0
         DecorateInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),

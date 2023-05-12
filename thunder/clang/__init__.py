@@ -325,7 +325,10 @@ def take_along_axis(arr, indices, axis):
 # Based on https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.expand_dims.html
 # NOTE: the dimensions do not have to be specified in any order
 @clang_ctx
-def unsqueeze(a, dims):
+def unsqueeze(a, dims: Union[Sequence, Number]):
+    if isinstance(dims, Number):
+        dims = (dims,)
+
     # Short-circuits if dims is empty
     if len(dims) == 0:
         return a
@@ -369,7 +372,7 @@ def stack(tensors: List[TensorProxy], dim: int):
         utils.check(
             s == shapes[0], lambda: f"tensors must be of the same shape, tensor at {i} is {s} instead of {shapes[0]}"
         )
-    tensors_ = [t.unsqueeze(dim) for t in tensors]
+    tensors_ = [unsqueeze(t, dim) for t in tensors]
     return prims.cat(tensors_, dim)
 
 

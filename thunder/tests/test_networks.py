@@ -16,23 +16,23 @@ import thunder.tests.nanogpt_model as nanogpt_model
 # nanoGPT tests
 #
 
-# TODO Re-enable this test
-# @instantiate(dtypes=(thunder.float32,))
-# def test_nanogpt(executor, device, dtype):
-#     tdtype = ttorch.to_torch_dtype(dtype)
-#     make = partial(make_tensor, dtype=torch.int64, device=device)
 
-#     # NOTE: currently setting dropout to zero for reproducibility
-#     config = nanogpt_model.GPTConfig(dropout=0)
-#     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
+@instantiate(dtypes=(thunder.float32,))
+def test_nanogpt_complete(executor, device, dtype):
+    tdtype = ttorch.to_torch_dtype(dtype)
+    make = partial(make_tensor, dtype=torch.int64, device=device)
 
-#     idx = make((8, 64), dtype=torch.int64, low=0, high=255)
-#     torch_result = gpt(idx)
+    # NOTE: currently setting dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-#     tom = executor.make_callable(gpt, disable_preprocessing=False)
-#     thunder_result = tom(idx)
+    idx = make((8, 64), dtype=torch.int64, low=0, high=255)
+    torch_result = gpt(idx)
 
-#     assert_close(torch_result, thunder_result)
+    tom = executor.make_callable(gpt, disable_preprocessing=False)
+    thunder_result = tom(idx)
+
+    assert_close(torch_result, thunder_result)
 
 
 @instantiate(dtypes=(thunder.float32,))
