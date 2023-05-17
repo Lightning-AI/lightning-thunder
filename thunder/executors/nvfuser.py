@@ -479,8 +479,6 @@ def sign(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: D
     return fd.ops.sign(nva)
 
 
-# NOTE nvFuser does not expose a signbit operation
-#   https://github.com/NVIDIA/Fuser/issues/314
 # TODO This could implement the operation as a composite
 def signbit(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: Dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
@@ -932,9 +930,7 @@ _ops_map.update(
         PrimIDs.ROUND: (_elementwise_unary_check, nv_round),
         PrimIDs.RSQRT: (_elementwise_unary_check, rsqrt),
         PrimIDs.SIGN: (_elementwise_unary_check, sign),
-        # NOTE nvFuser does not yet implement signbit
-        #   See https://github.com/NVIDIA/Fuser/issues/314
-        # PrimIDs.SIGNBIT: (_elementwise_unary_check, signbit),
+        PrimIDs.SIGNBIT: (_elementwise_unary_check, signbit),
         PrimIDs.SIN: (_elementwise_unary_check, sin),
         PrimIDs.SINH: (_elementwise_unary_check, sinh),
         PrimIDs.SQRT: (_elementwise_unary_check, sqrt),
