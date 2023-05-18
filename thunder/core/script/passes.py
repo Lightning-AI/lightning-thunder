@@ -697,7 +697,9 @@ def module_to_function(gr: "Graph") -> Tuple[List[str], List[torch.Tensor]]:
 
     remove_unused_values(gr)
     if gr.local_variables_at_start[0].phi_values:
-        raise RuntimeError("could not eliminate self argument")
+        raise RuntimeError("""could not eliminate self argument
+    this most likely means that you are setting attributes in forward or using them
+    in an unexpected way that thunder does not yet support.""")
     del gr.local_variables_at_start[0]
     gr.co_argcount -= 1
     return attr_list, attr_values
