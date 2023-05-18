@@ -113,9 +113,9 @@ pip uninstall --yes torch;
 
 pushd "${PYTORCH}"
 git submodule sync;
-git checkout master;
+git checkout main;
 git fetch origin; 
-git reset --hard origin/master;
+git reset --hard origin/main;
 make clean || true
 python setup.py clean; 
 git clean -xfdf;
