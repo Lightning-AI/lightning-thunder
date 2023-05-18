@@ -243,7 +243,7 @@ def _uniform_check(
 
 # TODO Add type annotations
 # TODO Fix device handling
-# TODO Review tuple translation
+# NOTE Shape must be a list of nvScalars or nvConstants
 def uniform(
     shape, minval, maxval, *, device: Device, dtype: dtypes.dtype, fd: FusionDefinition, lc_to_nv_map: Dict
 ) -> Any:
@@ -252,7 +252,7 @@ def uniform(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nvshape = list(lc_to_nv_map[x] for x in shape)
+    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
 
     return fd.ops.uniform(nv_minval, nv_maxval, nvshape, dtype=nvdtype)
 

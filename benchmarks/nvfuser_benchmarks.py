@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Tuple
 import types
 
 # Note: This needs to run before `import torch`.
-_DEFAULT_DEVICE = {"luca": "5", "mike": "6", "taylor": "7"}.get(os.getenv("USER", None), None)
+_DEFAULT_DEVICE = {"luca": "5", "mike": "2", "taylor": "7"}.get(os.getenv("USER", None), None)
 if _DEFAULT_DEVICE is not None:
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", _DEFAULT_DEVICE)
 
@@ -95,7 +95,7 @@ class Benchmark:
 
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
-            tom = thunder.compile(self._fn)
+            tom = thunder.compile(self._fn, use_static_caching=True)
 
             return (name, tom, None)
 

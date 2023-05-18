@@ -270,6 +270,45 @@ class ThunderOptimizedModule(pytorch.nn.Module):  # TOM
         return res
 
 
+# TODO Improve type annotation
+# TODO Add additional cache options
+def _make_cache_key(args, kwargs) -> Any:
+    if len(kwargs) > 0:
+        raise NotImplementedError
+
+    def _cache_argkey_helper(x: Any) -> Any:
+        if isinstance(x, pytorch.Tensor):
+            return (pytorch.Tensor, x.shape, x.stride(), x.device, x.dtype)
+        if isinstance(x, Number):
+            return (type(x), x)
+
+        # TODO Review these types more closely
+        return x
+
+    def _cache_kwargkey_helper(x: Any, *, key: str) -> Any:
+        if isinstance(x, pytorch.Tensor):
+            return (key, pytorch.Tensor, x.shape, x.stride(), x.device, x.dtype)
+        if isinstance(x, Number):
+            return (key, type(x), x)
+
+        # TODO Review these types more closely
+        return key, x
+
+    arg_key = tuple(_cache_argkey_helper(arg) for arg in args)
+    kwarg_key = tuple(_cache_kwargkey_helper(v, key=key) for key, v in kwargs.items())
+    return arg_key + kwarg_key
+
+
+def cache_put(cache, fn, args, kwargs) -> None:
+    key = _make_cache_key(args, kwargs)
+    cache[key] = fn
+
+
+def cache_get(cache, args, kwargs) -> Optional[Callable]:
+    key = _make_cache_key(args, kwargs)
+    return cache.get(key, None)
+
+
 # Constructs a function that returns its output + the trace for further analysis
 # TODO probably a better name for this?
 # TODO review functions which compute large objects unrelated to tensors and how
@@ -287,20 +326,32 @@ def compile_with_info(
     executors_list: Optional[List[executors.Executor]] = None,
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
+    use_static_caching: bool = False,
+    use_last_executed: bool = False,
 ) -> Callable:
     pfn: Callable
 
-    import time
-
-    start = time.time_ns()
+    # TODO Disentangle caching from preprocessing
     if disable_preprocessing:
         pfn = fn
     else:
         pfn = preprocess(fn, is_module=isinstance(fn, pytorch.nn.Module))
-    elapsed = time.time_ns()
+        pfn._last_executed = None
+        pfn._cache = {}
 
     @wraps(fn)
     def _fn(*args, **kwargs) -> Tuple[Any, List[TraceCtx]]:
+        # TODO Return the previous traces when caching
+        if use_last_executed and pfn._last_executed is not None:
+            if pfn._last_executed is not None:
+                c = pfn._last_executed
+                result = c(*args, **kwargs)
+                return result, None
+        if use_static_caching:
+            c = cache_get(pfn._cache, args[pfn._num_constant_args :], kwargs)
+            if c is not None:
+                return c(*args, **kwargs), None
+
         # Sets the language and tracing context
         nonlocal langctx
         langctx_tok = None
@@ -335,6 +386,10 @@ def compile_with_info(
                 traces.extend(extraces)
 
                 c = extrace.python_callable()
+                if not disable_preprocessing:
+                    pfn._last_executed = c
+                if use_static_caching:
+                    cache_put(pfn._cache, c, args[pfn._num_constant_args :], kwargs)
 
                 # Attempts to execute the trace, returning the traces
                 # TODO Review the pattern of returning the exception
@@ -363,6 +418,8 @@ def compile_with_info(
 
     if isinstance(fn, pytorch.nn.Module):
         _fn = ThunderOptimizedModule(fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values)
+        # TODO Revisit assuming these are const
+        pfn._num_constant_args = len(pfn._additional_param_values)
 
     return _fn
 

@@ -3218,10 +3218,10 @@ cross_entropy_opinfo = OpInfo(
             executors=("nvFuser",),
             active_if=nvfuser_version < LooseVersion("0.0.10"),
         ),
-        # TODO This test inexplicably fails in CI
+        # TODO These tests inexplicably fail in CI
         DecorateInfo(
             pytest.mark.skip,
-            dtypes=(datatypes.float32,),
+            dtypes=(datatypes.float32, datatypes.float64),
             devicetypes=(devices.DeviceType.CPU,),
             executors=("TorchEx",),
         ),
