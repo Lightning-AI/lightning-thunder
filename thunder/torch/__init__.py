@@ -485,13 +485,6 @@ def fmod(a, b):
     return clang.fmod(a, b)
 
 
-# NOTE This is just an alias for proxies to find operation defined for the modulus
-#   operator
-# TODO Review this alias
-def mod(a, b):
-    return clang.mod(a, b)
-
-
 @torchsymbol(torch.ge, is_method=True)
 def ge(a, b):
     return clang.ge(a, b)
@@ -510,6 +503,13 @@ def logical_and(a, b):
 @torchsymbol(torch.lt, is_method=True)
 def lt(a, b):
     return clang.lt(a, b)
+
+
+# NOTE This is just an alias for proxies to find operation defined for the modulus
+#   operator
+# TODO Review this alias
+def mod(a, b):
+    return clang.mod(a, b)
 
 
 @torchsymbol(torch.mul, is_method=True)

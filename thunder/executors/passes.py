@@ -82,7 +82,7 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     return dcetrace, [dcetrace]
 
 
-# TODO Review deleting tracked inputs
+# TODO Review deleting non-proxies
 def del_last_used(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     """Mark last used intermediates to be deleted. This is necessary to avoid memory leaks.
 

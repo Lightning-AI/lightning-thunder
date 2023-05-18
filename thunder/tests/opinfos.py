@@ -44,6 +44,7 @@ eps = 1e-2
 
 
 # NOTE This wrapper is necessary because prims cannot be compiled directly as they are not callable
+# TODO Review if this is still necessary
 def prims_wrapper(prim):
     def fn_(*args, **kwargs):
         return prim(*args, **kwargs)
@@ -1935,11 +1936,7 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # 1D
         ([(2,), (3,)], 0),
         ([(2,), (4,)], 0),
-        # Currently, padding tensors along singleton dimensions is unsupported
-        # by nvFuser. The following issue is relevant since both cat and pad
-        # are implemented with the same op on the backend:
-        # https://github.com/NVIDIA/Fuser/issues/21
-        # ([(1,), (2,), (3,)], 0),
+        ([(1,), (2,), (3,)], 0),
         ([(0,), (2,)], 0),
         ([(0,), (2,)], -1),
         ([(2, 3), (2, 4)], 1),
@@ -2028,12 +2025,6 @@ stack_opinfo = OpInfo(
     error_input_generator=stack_error_generator,
     torch_reference=torch.stack,
     test_directives=(
-        # cat op was introduced in nvFuser 0.0.5
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-            active_if=nvfuser_version < "0.0.5",
-        ),
         # vjp and jvp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
         DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
@@ -2045,8 +2036,8 @@ shape_ops.append(stack_opinfo)
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-    # TODO: all these cases are basic indexing
-    # NOTE: PyTorch does not allow negative steps
+    # TODO Test advanced indexing, all cases below are basic indexing
+    # NOTE PyTorch does not allow negative steps
     # a.shape, key
     cases = (
         # Fully specified slicing
@@ -2079,13 +2070,11 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((1, 5, 3), (..., slice(1, 2))),
         ((1, 5, 3), (0, ..., slice(1, 2))),
         # Newaxis/None
-        # TODO: nvFuser only supports kernels with <= 8 dimensions
-        # ((1, 5, 3), (None, None, 0, None, 2, ..., None, None, None)),
+        ((1, 5, 3), (None, None, 0, None, 2, ..., None, None, None)),
         ((1, 5, 3), (None, None, 0, None, 2, ..., None, None)),
         # Addtl. cases
         ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),
-        # TODO: nvFuser only supports kernels with <= 8 dimensions
-        # ((11, 7, 9, 5), (None, slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None, None)),
+        ((11, 7, 9, 5), (None, slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None, None)),
     )
 
     for shape, key in cases:
@@ -2099,6 +2088,8 @@ getitem_opinfo = OpInfo(
     torch_reference=operator.getitem,
     jax_reference=operator.getitem,
     test_directives=(
+        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/422
+        DecorateInfo(pytest.mark.xfail, executors=("nvFuser",)),
         # NotImplementedError: VJP for Ops.SQUEEZE is not implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
@@ -2163,20 +2154,16 @@ def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
     cases = (
         ((1, 3), ((0, 0, 0), (0, 0, 0))),
         ((3, 7, 5), ((-2, 1, 0), (1, 3, 0), (-1, 2, 0))),
-        # NOTE: The following samples use padding between elements, which is not
-        # supported by nvFuser as of v0.0.6. These should be uncommented once
-        # nvFuser supports padding between elements.
-        # ((2, 2), ((1, 1, 1), (-1, 2, 0))),
-        # ((2, 0, 3), ((1, 0, 0), (1, 1, 2), (0, 0, 0))),
-        # ((7, 5), ((0, 0, 3), (-6, 2, 1))),
-        # ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 1))),
+        ((2, 2), ((1, 1, 1), (-1, 2, 0))),
+        ((2, 0, 3), ((1, 0, 0), (1, 1, 2), (0, 0, 0))),
+        ((7, 5), ((0, 0, 3), (-6, 2, 1))),
+        ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 1))),
         # Versions of above examples but with padding between elements set to 0
         ((2, 2), ((1, 1, 0), (-1, 2, 0))),
         ((2, 0, 3), ((1, 0, 0), (1, 1, 0), (0, 0, 0))),
-        # without padding between, the following results in narrowing beyond extent
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/415
+        #   The PyTorch lowering does not handle this case properly
         # ((7, 5), ((0, 0, 0), (-6, 2, 0))),
-        # Swapping the order fixes this because the second padding config
-        # triplet now corresponds to the axis with extent 7.
         ((5, 7), ((0, 0, 0), (-6, 2, 0))),
         ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 0))),  # negative pad in all 3 dims
     )
@@ -2201,12 +2188,6 @@ pad_opinfo = OpInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
             dtypes=(datatypes.complexfloating,),
-        ),
-        # NVFuser introduced the pad() op in v0.0.6
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-            active_if=nvfuser_version < "0.0.6",
         ),
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(
@@ -2250,7 +2231,8 @@ slice_in_dim = OpInfo(
 shape_ops.append(slice_in_dim)
 
 
-# TODO: add stride testing
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/416
+#   Add strides and slicing outside tensor boundaries
 def slice_prim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -2293,7 +2275,8 @@ def split_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 6, 7), 3, -1),
         ((4, 6, 7), 9, 1),
         ((4, 6, 7), (1, 2, 1, 2), 1),
-        ((4, 6, 7), (3, 1, 2, 0, 0, 1), -1),
+        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/420
+        # ((4, 6, 7), (3, 1, 2, 0, 0, 1), -1),
         ((4, 4, 12), 4, 2),
     )
 
@@ -2392,11 +2375,13 @@ def tensor_split_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 6, 7), 2, 2),
         ((4, 6, 7), 3, 0),
         ((4, 6, 7), 5, -1),
-        ((4, 6, 7), (0, 1), 1),
+        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/421
+        # ((4, 6, 7), (0, 1), 1),
         ((4, 6, 7), (1, 5, 6), 2),
         ((4, 6, 7), (1, 5, 9, 9), 2),
         ((4, 6, 7), (1, 5, 6, 7), 2),
-        ((4, 6, 7), (0, 0, 1, 1, 2), -2),
+        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/421
+        # ((4, 6, 7), (0, 0, 1, 1, 2), -2),
     )
 
     for shape, indices_or_sections, dim in cases:
@@ -2797,9 +2782,8 @@ def var_sample_generator(op, device, dtype, requires_grad):
         else:
             yield SampleInput(a, dim, keepdim)
 
-    # TODO: nvFuser's var and var_mean doesn't support 0-dim input
-    # re-enable this sample when https://github.com/NVIDIA/Fuser/pull/121 is merged
-    # yield SampleInput(make_tensor((), device=device, dtype=dtype, requires_grad=requires_grad))
+    # Tests zero-dim tensor
+    yield SampleInput(make_tensor((), device=device, dtype=dtype, requires_grad=requires_grad))
 
 
 mean_opinfo = OpInfo(
@@ -2832,6 +2816,37 @@ mean_opinfo = OpInfo(
 )
 reduction_ops.append(mean_opinfo)
 
+var_opinfo = OpInfo(
+    ltorch.var,
+    sample_input_generator=var_sample_generator,
+    torch_reference=torch.var,
+    # Complex var is not supported yet
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # bfloat16 on CPU has accuracy things
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # PyTorch doesn't support float16 and bfloat16 on CUDA
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # NotImplementedError: VJP for Ops.VAR is not implemented
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("TorchEx",),
+        ),
+    ),
+)
+reduction_ops.append(var_opinfo)
+
 var_mean_opinfo = OpInfo(
     ltorch.var_mean,
     sample_input_generator=var_sample_generator,
@@ -2858,13 +2873,6 @@ var_mean_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
             executors=("TorchEx",),
-        ),
-        # Internal nvFuser error
-        # RuntimeError: producer->getMemoryType() == MemoryType::Global
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-            active_if=nvfuser_version < "0.0.7",
         ),
     ),
 )
@@ -3171,7 +3179,7 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape, weight_flag, reduction_str, label_smoothing, ignore_index in itertools.product(
         shapes, weight_options, reduction_options, label_smoothing_options, ignore_index_options
     ):
-        # TODO: nvfuser segfaults here, let's skip it for now until we have the support
+        # TODO nvfuser segfaults here, let's skip it for now until we have the support
         if reduction_str == "mean" and weight_flag:
             continue
 
@@ -3203,18 +3211,19 @@ cross_entropy_opinfo = OpInfo(
     torch_reference=torch.nn.functional.cross_entropy,
     dtypes=(datatypes.float32, datatypes.float64),
     test_directives=(
-        # TODO: enable hybrid TorchEx & PythonEx
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_torch_consistency",
-            executors=("TorchEx",),
-        ),
         # nvFuser version 10 adds take_along_axis, which this
         #   operator relies on
         DecorateInfo(
             pytest.mark.skip,
             executors=("nvFuser",),
             active_if=nvfuser_version < LooseVersion("0.0.10"),
+        ),
+        # TODO This test inexplicably fails in CI
+        DecorateInfo(
+            pytest.mark.skip,
+            dtypes=(datatypes.float32,),
+            devicetypes=(devices.DeviceType.CPU,),
+            executors=("TorchEx",),
         ),
     ),
 )

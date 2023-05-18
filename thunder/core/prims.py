@@ -45,7 +45,7 @@ class PrimIDs(Enum):
     FULL = auto()
     IOTA = auto()
     UNIFORM = auto()
-    # Shape prims
+    # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
     PAD = auto()
@@ -1139,10 +1139,16 @@ where = make_prim(
 # TODO: add some architecture for constructing tensor creation prims
 
 
-# TODO Improve type annotations and type checking
-def _iota_meta(length, *, start, step, device: devices.Device, dtype: dtypes.dtype):
+def _iota_meta(
+    length: Number, *, start: Number, step: Number, device: devices.Device, dtype: dtypes.dtype
+) -> TensorProxy:
+    # Checks types
     # NOTE that device and dtype types will be checked by TensorProxy, below
+    utils.check_type(length, Number)
+    utils.check_type(start, Number)
+    utils.check_type(step, Number)
 
+    # Checks input properties
     utils.check(utils.is_exact_dtype(dtype), lambda: f"dtype={dtype} was not an exact dtype")
     utils.check(not utils.is_boolean_dtype(dtype), lambda: f"dtype={dtype} was not a non-boolean dtype")
     utils.check(length >= 0, lambda: f"length={length} was not weakly positive")
@@ -1324,7 +1330,13 @@ cat = make_prim(
 )
 
 
-def pad_meta(a, padding_value, padding_config):
+def pad_meta(a: TensorProxy, padding_value: Number, padding_config: Sequence[Tuple[int, int, int]]) -> TensorProxy:
+    # Validates types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(padding_value, Number)
+    utils.check_type(padding_config, Sequence)
+
+    # Validates input properties
     utils.check(a.ndim == len(padding_config), lambda: f"Expected {a.ndim=} to equal {len(padding_config)=}")
     utils.check_same_dtype(a, padding_value)
 
@@ -1347,7 +1359,7 @@ pad = make_prim(
 
 def reshape_meta(a, shape):
     # Validates inputs
-    utils.check(isinstance(a, TensorProxy), lambda: f"a={a} was not a TensorProxy!")
+    utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
 
     numel = reduce(operator.mul, shape, 1)
@@ -1366,17 +1378,22 @@ reshape = make_prim(
 )
 
 
-# TODO: be clear about what the prim can handle and what it can't
-# NOTE: the stride parameter here refers to the stride of the slice, not the tensor's
-#   strides
-def slice_meta(a, start_indices, end_indices, strides=None):
+# TODO Be clear about what the prim can handle and what it can't
+# TODO Validate that start_indices, end_indices, and strides are sequences of ints
+# TODO Update the prim to not accept optional strides
+# NOTE The stride parameter here refers to the stride of the slice, not the tensor's strides
+def slice_meta(
+    a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: Optional[Sequence[int]] = None
+) -> TensorProxy:
     if strides is None:
         strides = [1] * a.ndim
 
     # Checks types
-    utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
-    utils.check(isinstance(start_indices, Sequence), lambda: f"Expected start_indices={start_indices} to be a Sequence")
-    utils.check(isinstance(end_indices, Sequence), lambda: f"Expected end_indices={end_indices} to be a Sequence")
+    utils.check_type(a, TensorProxy)
+    utils.check_type(start_indices, Sequence)
+    utils.check_type(end_indices, Sequence)
+
+    # NOTE This check doesn't use check type to inform callers that None is valid, too
     utils.check(isinstance(strides, Sequence), lambda: f"Expected strides={strides} to be None or a Sequence")
 
     # Checks all same length
@@ -1414,7 +1431,11 @@ def slice_meta(a, start_indices, end_indices, strides=None):
 slice_prim = make_prim(PrimIDs.SLICE, "slice", meta=slice_meta)
 
 
-def squeeze_meta(a, dims):
+def squeeze_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
+    # Checks types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+
     # Checks that no dims are redundant
     utils.check_no_duplicates(dims)
 
@@ -1439,22 +1460,20 @@ def squeeze_meta(a, dims):
 squeeze = make_prim(PrimIDs.SQUEEZE, "squeeze", meta=squeeze_meta)
 
 
-def transpose_meta(a, permutation):
+def take_meta(a, index, dim):
     utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
-    utils.check(
-        a.ndim == len(permutation),
-        lambda: f"Expected the length ({len(permutation)}) of the permutation={permutation} to be the number of dimensions ({a.ndim}) of a={a}",
-    )
-    utils.check_valid_permutation(a.ndim, permutation)
+    utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or number TensorProxy!")
+    utils.validate_idx(a.ndim, dim)
 
-    new_shape = [0] * a.ndim
-    for idx, dim in enumerate(permutation):
-        new_shape[idx] = a.shape[dim]
+    l = index.shape[0] if index.ndim == 1 else 1
+    new_shape = a.shape[:dim] + (l,) + a.shape[dim + 1 :]
 
     return TensorProxy(like=a, shape=new_shape)
 
 
-transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta)
+take = make_prim(PrimIDs.TAKE, "take", meta=take_meta)
 
 
 def take_along_axis_meta(a, index, dim):
@@ -1476,20 +1495,23 @@ def take_along_axis_meta(a, index, dim):
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
 
 
-def take_meta(a, index, dim):
+def transpose_meta(a: TensorProxy, permutation: Sequence[int]) -> TensorProxy:
     utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
-    utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
-    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
-    utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or number TensorProxy!")
-    utils.validate_idx(a.ndim, dim)
+    utils.check(
+        a.ndim == len(permutation),
+        lambda: f"Expected the length ({len(permutation)}) of the permutation={permutation} to be the number of dimensions ({a.ndim}) of a={a}",
+    )
+    utils.check_valid_permutation(a.ndim, permutation)
 
-    l = index.shape[0] if index.ndim == 1 else 1
-    new_shape = a.shape[:dim] + (l,) + a.shape[dim + 1 :]
+    new_shape = [0] * a.ndim
+    for idx, dim in enumerate(permutation):
+        new_shape[idx] = a.shape[dim]
 
     return TensorProxy(like=a, shape=new_shape)
 
 
-take = make_prim(PrimIDs.TAKE, "take", meta=take_meta)
+transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta)
+
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta)
 
@@ -1536,10 +1558,15 @@ prod = make_prim(PrimIDs.PROD, "prod", meta=_reduction_meta)
 sum = make_prim(PrimIDs.SUM, "sum", meta=_reduction_meta)
 
 
-# TODO Add type annotations
 # TODO Add comment for why var doesn't use _reduction_meta
-# TODO Validate input types
-def _var_meta(a: TensorProxy, dims, *, correction):
+# TODO Add output_dtype?
+# TODO Check that dims is a sequence of integers
+def _var_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    # Checks input types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+    utils.check_type(correction, Number)
+
     output_dtype = None
     if utils.is_complex_dtype(a.dtype):
         output_dtype = utils.corresponding_real_dtype(a.true_dtype)
