@@ -627,6 +627,79 @@ def test_unused_arg():
     assert_close(actual, expected)
 
 
+@skipif_not_python_3_10
+def test_partial():
+    def foo(a, b):
+        return a + b
+
+    def foo2(a=3, b=4):
+        return a + b
+
+    def foo3(*args, **kwargs):
+        return args, kwargs
+
+    pfoo = partial(foo, 1)
+    gr = thunder.core.script.frontend.acquire_method(pfoo)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo(2)
+    actual = thunder_fn(2)
+    assert_close(actual, expected)
+
+    pfoo2 = partial(foo2, 1)
+    gr = thunder.core.script.frontend.acquire_method(pfoo2)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo2(2)
+    actual = thunder_fn(2)
+    assert_close(actual, expected)
+
+    pfoo2 = partial(foo2, a=1)
+    gr = thunder.core.script.frontend.acquire_method(pfoo2)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo2()
+    actual = thunder_fn()
+    assert_close(actual, expected)
+
+    pfoo = partial(foo, a=1)
+    gr = thunder.core.script.frontend.acquire_method(pfoo2)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo(b=1)
+    actual = thunder_fn(b=1)
+    assert_close(actual, expected)
+
+    pfoo2 = partial(foo2, a=1, c=1)
+    with pytest.raises(TypeError, match="'c'"):
+        gr = thunder.core.script.frontend.acquire_method(pfoo2)
+
+    # test varargs
+    pfoo3 = partial(foo3, 1)
+    gr = thunder.core.script.frontend.acquire_method(pfoo3)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo3(2)
+    actual = thunder_fn(2)
+    assert expected == actual
+
+    pfoo3 = partial(foo3, a=1)
+    gr = thunder.core.script.frontend.acquire_method(pfoo3)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo3(b=1)
+    actual = thunder_fn(b=1)
+    assert expected == actual
+
+    pfoo_nested = partial(partial(foo3, 1, a=1, b=2), a=1, c=2)
+    gr = thunder.core.script.frontend.acquire_method(pfoo_nested)
+    thunder.core.script.graph.check_graph(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
+    expected = pfoo_nested(b=1)
+    actual = thunder_fn(b=1)
+    assert expected == actual
+
+
 # @instantiate(dtypes=(thunder.float32,))
 # def test_local_acquired_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)

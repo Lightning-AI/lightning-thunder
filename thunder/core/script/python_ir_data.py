@@ -306,17 +306,18 @@ def make_return(is_jump_target: bool) -> dis.Instruction:
     )
 
 
-def make_return(is_jump_target: bool) -> dis.Instruction:
-    return dis.Instruction(
-        opname="RETURN_VALUE",
-        opcode=dis.opmap["RETURN_VALUE"],
-        arg=None,
+def get_instruction(opname: str, arg: Optional[int]) -> dis.Instruction:
+    i = dis.Instruction(
+        opname=opname,
+        opcode=dis.opmap.get(opname, -1),
+        arg=arg,
         argval=None,
-        argrepr="",
+        argrepr="None",
         offset=-999,
         starts_line=None,
-        is_jump_target=is_jump_target,
+        is_jump_target=False,
     )
+    return i
 
 
 def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:

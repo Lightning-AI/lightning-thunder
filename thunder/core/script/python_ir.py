@@ -5,20 +5,7 @@ import types
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 
 from thunder.core.script.graph import Graph, MROAwareObjectRef, Node, Value, insert_before, insert_after
-
-
-def get_instruction(opname: str, arg: Optional[int]) -> dis.Instruction:
-    i = dis.Instruction(
-        opname=opname,
-        opcode=dis.opmap.get(opname, -1),
-        arg=arg,
-        argval=None,
-        argrepr="None",
-        offset=-999,
-        starts_line=None,
-        is_jump_target=False,
-    )
-    return i
+from thunder.core.script.python_ir_data import get_instruction
 
 
 def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]:
@@ -123,9 +110,17 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
                 return last_n
             phi_values_in_processing.add(o)
             for v in o.phi_values:
+                # TODO: refactor into general mechanism
                 idx2 = get_or_add_lv(v)
                 # last_n = store_phi_values_inner(v, o_idx, last_n)
-                new_n = Node(i=get_instruction(opname="LOAD_FAST", arg=o_idx), outputs=[o], inputs=[])
+                if o.is_const:
+                    if o.value not in consts:
+                        consts.append(o.value)
+                    o_idx = consts.index(o.value)
+                    new_n = Node(i=get_instruction(opname="LOAD_CONST", arg=o_idx), outputs=[o], inputs=[])
+                else:
+                    new_n = Node(i=get_instruction(opname="LOAD_FAST", arg=o_idx), outputs=[o], inputs=[])
+
                 nodes_to_skip.add(new_n)
                 if last_n is None:
                     insert_before(new_n, gr.blocks[0].nodes[0])
@@ -149,6 +144,11 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
     # need to make a copy of the list because we're adding items to the list
     for idx, i in enumerate(local_vars[:]):
         last_n = store_phi_values(i, idx, last_n)
+    for i in gr.blocks[0].block_inputs:  # inlined parameters (partial) will be here
+        for v, js in zip(i.values, i.jump_sources):
+            if js is None and v.is_const:
+                last_n = store_phi_values(v, None, last_n)
+                # print(i.values, i.jump_sources)
 
     names = []
 

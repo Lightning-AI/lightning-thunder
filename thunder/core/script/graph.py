@@ -686,7 +686,7 @@ def _check_graph(gr: Graph) -> None:
             js_jt = jump_targets[js]
             js_jt.remove(bl)
 
-    assert not any(jump_targets.values())
+    assert not any(jump_targets.values()), f"{jump_targets} should be all empty"
 
 
 def check_graph(gr: Graph) -> None:

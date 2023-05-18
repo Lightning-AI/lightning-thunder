@@ -11,6 +11,7 @@ import networkx as nx
 
 from thunder.core.script.graph import (
     check_graph,
+    replace_values,
     Block,
     Graph,
     MROAwareObjectRef,
@@ -23,6 +24,7 @@ from thunder.core.script.python_ir_data import (
     ArgScope,
     compute_jump,
     del_opcodes,
+    get_instruction,
     jump_instructions,
     load_opcodes,
     make_jump_absolute,
@@ -657,7 +659,9 @@ def _bind_to_graph(
         block.nodes = list(make_nodes(protoblock.node_flow))
 
         for target, is_jump in protoblock.jump_targets:
-            (jump_target := blocks[target]).jump_sources.append(last_node := block.nodes[-1])
+            jump_target = blocks[target]
+            last_node = block.nodes[-1]
+            jump_target.jump_sources.append(last_node)
             last_node.jump_targets.append((protoblock.stack_effect(is_jump), jump_target))
 
     # Second pass: link blocks.
@@ -730,12 +734,183 @@ def _bind_to_graph(
     return gr
 
 
+def acquire_partial(
+    pfunc: functools.partial,
+    module: Optional[object] = None,
+    mro_klass: Optional[type] = None,
+) -> Graph:
+    # This is complicated due to the semantics of calling Python functions.
+    # The partial wrapper does the following:
+    # def pfunc.__call__(*args, **kwargs):
+    #    kw = pfunc.keywords.copy()
+    #    kw.update(kwargs)
+    #    return pfunc.func(*pfunc.args, *args, **kw)
+
+    # This means:
+    # - positional partial_args are applied from the front and once
+    #   they are bound, they are removed from the signature,
+    # - keyword only args get new defautls,
+    # - binding a positional arg as a keyword arg effectively (i.e. in how
+    #   it can be set in calls) makes that arg and all args to the right
+    #   keyword only.
+    # - things that cannot be bound to parameters may show up in varargs
+    #   or kwargs parameters of the function.
+
+    gr = acquire_method(pfunc.func, module, mro_klass)
+
+    # first we shuffle positional args to kw only if they are in the kwargs of the partial
+    pos_param_names = [v.name for v in gr.local_variables_at_start[: gr.co_argcount]]
+    pos_param_names_to_idx = {n: i for i, n in enumerate(pos_param_names)}
+    kw_pos_param_idx = [pos_param_names_to_idx[k] for k in pfunc.keywords if k in pos_param_names_to_idx]
+    if kw_pos_param_idx:
+        # convert positional default args to kw ones
+        kw_pos_param_min = min(kw_pos_param_idx)
+        if kw_pos_param_min < gr.co_posonlyargcount:
+            raise TypeError(
+                f"cannot bin positional-only argument {pos_param_names[kw_pos_param_min]} as keyword in partial"
+            )
+
+        num_to_kw = gr.co_argcount - kw_pos_param_min
+        if gr.func_defaults:
+            to_kw = gr.func_defaults[-num_to_kw:]
+            del gr.func_defaults[-num_to_kw:]
+            to_kw_names = pos_param_names[-num_to_kw:]
+            gr.func_kwdefaults.update(zip(to_kw_names, to_kw))
+        # convert positional args to kw only
+        gr.co_kwonlyargcount += num_to_kw
+        gr.co_argcount -= num_to_kw
+
+    # deal with positional args. some will be mapped to concrete positional args, some might be added to varargs (*args)
+    if gr.ismethod:
+        arg_start = 1
+        arg_count = gr.co_argcount - 1
+    else:
+        arg_start = 0
+        arg_count = gr.co_argcount
+
+    args_to_bind = pfunc.args[:arg_count]
+    args_for_varargs = pfunc.args[arg_count:]
+
+    # do we need to drop positional default args?
+    posarg_default_start = gr.co_argcount - len(gr.func_defaults)
+    posarg_default_to_delete = len(args_to_bind) + arg_start - posarg_default_start
+    if posarg_default_to_delete > 0:
+        gr.func_defaults = gr.func_defaults[posarg_default_to_delete:]
+
+    bound_values = gr.local_variables_at_start[arg_start : arg_start + len(args_to_bind)]
+    del gr.local_variables_at_start[arg_start : arg_start + len(args_to_bind)]
+
+    for bound_value, arg in zip(bound_values, args_to_bind):
+        bound_value.is_function_arg = False
+        bound_value.is_const = True
+        # TODO: check type?
+        bound_value.value = arg
+        gr.co_argcount -= 1
+        if gr.co_posonlyargcount > 0:
+            gr.co_posonlyargcount -= 1
+
+    # handle keyword arguments to concrete parameters, collect in kwargs those for kw-varargs (**kwargs)
+    param_names_to_idx = {
+        v.name: i for i, v in enumerate(gr.local_variables_at_start[: gr.co_argcount + gr.co_kwonlyargcount])
+    }
+    kwargs = {}
+    for argname, argvalue in pfunc.keywords.items():
+        idx = param_names_to_idx.get(argname, -1)
+        if idx == -1:
+            kwargs[argname] = argvalue
+            continue
+        gr.func_kwdefaults[argname] = argvalue
+
+    # for varargs and kwargs fed from partial we need the following prelude:
+    # TODO: (but maybe we should just have a prelude always for the consts, too...)
+    # if it has *varargs:
+    #    TMP1 = LOAD_CONST partial_args_for_varargs (needs to be a tuple)
+    #    varargs = TMP1 + varargs
+    # if it has **kwargs:
+    #    TMP2 = LOAD_CONST partial_kwargs
+    #    kwargs = partial_kwargs | kwargs
+
+    if args_for_varargs or kwargs:
+        prelude = Block()
+        jump_node = Node(i=make_jump_absolute(None), inputs=[], outputs=[], line_no=0)
+        prelude.nodes.append(jump_node)
+        jump_target = gr.blocks[0]
+        assert jump_target.jump_sources[0] is None
+        jump_target.jump_sources[0] = jump_node
+        jump_node.jump_targets.append((0, jump_target))
+        prelude.jump_sources.append(None)
+        for i in jump_target.block_inputs:
+            assert i.jump_sources[0] is None
+            i.jump_sources[0] = jump_node
+    else:
+        prelude = None
+
+    # handle *args (varargs)
+    if args_for_varargs:
+        if kw_pos_param_idx:
+            raise TypeError(
+                f"partial tried to bind {len(pfunc.args)} positional arguments, but only {arg_count} are allowed after keyword binding"
+            )
+        if not (gr.co_flags & inspect.CO_VARARGS):
+            raise TypeError(
+                f"partial tried to bind {len(pfunc.args)} positional arguments, but only {arg_count} are allowed"
+            )
+        # the variable for varargs is at gr.co_argcount + gr.co_kwonlyargcount
+        v_vararg_param = gr.local_variables_at_start[gr.co_argcount + gr.co_kwonlyargcount]
+        v_partial_varargs = Value(name="partial_varargs", value=tuple(args_for_varargs), is_const=True)
+        v_varargs_new = Value(name="varargs_with_partial")  # type is tuple
+        pv = PhiValue([v_vararg_param], [None], block=prelude)
+        new_n = Node(
+            i=get_instruction(opname="BINARY_ADD", arg=None),
+            inputs=[v_partial_varargs, pv],
+            outputs=[v_varargs_new],
+            line_no=0,
+        )  # line number?
+        prelude.nodes.insert(0, new_n)
+        prelude.block_outputs.add(v_varargs_new)
+        # replace v_vararg_param with v_varargs_new in remainder
+        replace_values(gr, {v_vararg_param: v_varargs_new})
+        prelude.block_inputs.append(pv)
+
+    # handle **kwargs
+    if kwargs:
+        if not (gr.co_flags & inspect.CO_VARKEYWORDS):
+            raise TypeError(
+                f"function does not have **kwargs but partial tries to bind unknown keywords {tuple(kwargs)}."
+            )
+
+        # the variable for varargs is at gr.co_argcount + gr.co_kwonlyargcount
+        v_kwvararg_param = gr.local_variables_at_start[
+            gr.co_argcount + gr.co_kwonlyargcount + (1 if gr.co_flags & inspect.CO_VARARGS else 0)
+        ]
+        v_partial_kwvarargs = Value(name="partial_kwvarargs", value=kwargs, is_const=True)
+        v_kwvarargs_new = Value(name="kwvarargs_with_partial")  # type is dict
+        pv = PhiValue([v_kwvararg_param], [None], block=prelude)
+        new_n = Node(
+            i=get_instruction(opname="BINARY_OR", arg=None),
+            inputs=[v_partial_kwvarargs, pv],
+            outputs=[v_kwvarargs_new],
+            line_no=0,
+        )  # line number?
+        prelude.nodes.insert(-1, new_n)
+        prelude.block_outputs.add(v_kwvarargs_new)
+        # replace v_vararg_param with v_varargs_new in remainder
+        replace_values(gr, {v_kwvararg_param: v_kwvarargs_new})
+        prelude.block_inputs.append(pv)
+
+    if prelude:
+        gr.blocks.insert(0, prelude)
+    return gr
+
+
 def acquire_method(
     method: Callable,
     module: Optional[object] = None,
     mro_klass: Optional[type] = None,
 ) -> Graph:
     assert SUPPORTS_PREPROCESSING, sys.version_info
+    if isinstance(method, functools.partial):
+        return acquire_partial(method, module, mro_klass)
     if callable(method) and not inspect.ismethod(method) and not inspect.isfunction(method):
         method = method.__call__
 

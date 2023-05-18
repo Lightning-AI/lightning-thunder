@@ -266,7 +266,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     ret_node.i = dis.Instruction(
         opname="JUMP_ABSOLUTE",
         opcode=opcode.opmap["JUMP_ABSOLUTE"],
-        arg=None,
+        arg=-1,
         argval=None,
         argrepr="None",
         offset=ret_node.i.offset,
