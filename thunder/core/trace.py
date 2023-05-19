@@ -459,7 +459,11 @@ def detached_trace():
     manager to detach the current trace before calling the function that should
     not be traced.
     """
+    outer_trace = get_tracectx()
+    if outer_trace is not None:
+        outer_names = outer_trace.names
     trace = TraceCtx(None)
+    trace.names.update(outer_names)
     trace_token = set_tracectx(trace)
     yield
     reset_tracectx(trace_token)

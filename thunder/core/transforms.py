@@ -1,7 +1,8 @@
 from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import auto, Enum
-from functools import lru_cache, partial
+from itertools import chain
+from functools import lru_cache, partial, wraps
 from numbers import Number
 from typing import Any, Callable, Dict, Sequence, Tuple, Union, Optional
 
@@ -9,11 +10,12 @@ from thunder import _make_trace as make_trace
 from thunder.core import dtypes, prims
 from thunder.clang import full, full_like, unsqueeze, squeeze
 from thunder.core.devices import cpu
+from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.trace import detached_trace, get_tracectx
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
+from thunder.core.trace import detached_trace, get_tracectx
 from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as, sequencify
 
 # from thunder.executors.torch import ops_to_torch_ops_map
@@ -28,6 +30,31 @@ class Transforms(Enum):
     VmapOp = auto()
     JvpOp = auto()
     VjpOp = auto()
+
+
+# TODO: We are hitting a problem here that langctx might be set to None
+# inside make_prim. This is because we are calling make_prim for transform call definition.
+# We need to figure out a way to fix this.
+# For now we are setting langctx to default langctx
+# See https://github.com/Lightning-AI/lightning-thunder/issues/436
+def make_transform_prim(
+    id,
+    name,
+    *,
+    meta,
+):
+    def wrapper_fixing_langctx(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            token = set_langctx(get_langctx() or get_default_langctx())
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                reset_langctx(token)
+
+        return wrapper
+
+    return prims.make_prim(id, name, meta=wrapper_fixing_langctx(meta))
 
 
 @lru_cache(maxsize=None)
@@ -72,14 +99,22 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
             return
         # Duplicates are allowed and overwritten
         if v.name in env:
-            # warnings.warn(f"Variable {v.name} is being overwritten")
+            raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
             pass
         env[v.name] = val
 
     safe_map_flat(write, list(trace.args), list(args))
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
+    skip_list = (
+        prims.PrimIDs.UNPACK_SEQUENCE,
+        prims.PrimIDs.UNPACK_TRIVIAL,
+        prims.PrimIDs.UNPACK_DICT,
+    )
+
     for symbol in trace.bound_symbols:
+        if symbol.sym.id in skip_list:
+            continue
         args = tree_map(read, symbol.args)
         kwargs = tree_map(read, symbol.kwargs)
         prim_func = symbol_mapper(symbol)
@@ -138,7 +173,7 @@ def _identity_call_metafunc(*args, trace: Trace, **kwargs):
         return eval_trace(trace, *args, **kwargs)
 
 
-identity_call = prims.make_prim(Transforms.IdentityOp, "identity_call", meta=_identity_call_metafunc)
+identity_call = make_transform_prim(Transforms.IdentityOp, "identity_call", meta=_identity_call_metafunc)
 
 
 def identity(func):
@@ -347,14 +382,32 @@ def broadcast_in_dim_vmap(
         return BatchedValue(prims.broadcast_in_dim(a.value, new_shape, new_broadcast_dimensions), new_bdim)
 
 
-def unpack_sequence_vmap(axis_size: int, sequence: BatchedValue, length: BatchedValue) -> BatchedValue:
-    bdim = sequence[0].batch_dim
-    sequence_value = tree_map(lambda x: x.value, sequence)
-    out = prims.unpack_sequence(sequence_value, length.value)
-    return tree_map(lambda x: BatchedValue(x, bdim), out)
-
-
 vmap_impls: Dict[prims.Symbol, Callable] = dict()
+
+
+def unwrap_one_level_of_subsymbols(trace):
+    new_symbols_iter = (
+        bound_symbol.subsymbols if len(bound_symbol.subsymbols) > 0 else [bound_symbol]
+        for bound_symbol in trace.bound_symbols
+    )
+    new_symbols = list(chain.from_iterable(new_symbols_iter))
+    trace.bound_symbols = new_symbols
+    return trace
+
+
+def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
+    args, in_dims = unzip2(args)
+    unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
+    trace = make_trace(fn)(*unbatched_args, **kwargs)
+    trace = unwrap_one_level_of_subsymbols(trace)
+    outs = _vmap_call_metafunc(
+        args, in_dims, 0, axis_size, trace=trace, detached=False, **kwargs
+    )
+    if isinstance(outs, Sequence):
+        out_dims = (0,) * len(outs)
+        return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
+    return BatchedValue(outs, 0)
+
 
 vmap_impls[prims.PrimIDs.SIN] = sin_vmap
 vmap_impls[prims.PrimIDs.COS] = cos_vmap
@@ -362,7 +415,6 @@ vmap_impls[prims.PrimIDs.MUL] = mul_vmap
 vmap_impls[prims.PrimIDs.ADD] = add_vmap
 vmap_impls[prims.PrimIDs.SUM] = sum_vmap
 vmap_impls[prims.PrimIDs.BROADCAST_IN_DIM] = broadcast_in_dim_vmap
-vmap_impls[prims.PrimIDs.UNPACK_SEQUENCE] = unpack_sequence_vmap
 
 
 def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
@@ -400,7 +452,10 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
 
     vmap_impl = vmap_impls.get(symbol.sym.id)
     if vmap_impl is None:
-        raise NotImplementedError(f"vmap for {symbol.sym.id} is not implemented")
+        if len(symbol.subsymbols) > 0:
+            vmap_impl = partial(decomposed_fn_vmap_rule, fn=symbol.sym.__call__)
+        else:
+            raise NotImplementedError(f"vmap for {symbol.sym.id} is not implemented")
 
     def _vmap_impl(*args, **kwargs):
         args = tree_map(wrap_arg, args)
@@ -482,7 +537,7 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
         return out
 
 
-vmap_call = prims.make_prim(Transforms.VmapOp, "vmap_call", meta=partial(_vmap_call_metafunc, detached=True))
+vmap_call = make_transform_prim(Transforms.VmapOp, "vmap_call", meta=partial(_vmap_call_metafunc, detached=True))
 inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, detached=False)
 
 
@@ -491,11 +546,10 @@ inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, detached
 # This should be fine. If we have vmap(identity(func), out_dims=N) then this rule is first used
 # to get the vmapped result of identity(func) in vmap_symbol_mapper, and out_dims is handled
 # after that in the outer _vmap_call_metafunc.
-def _identity_call_vmap(*batched_args, trace: Trace, **kwargs):
-    half = len(batched_args) // 2
-    args, in_dims = batched_args[:half], batched_args[half:]
+def _identity_call_vmap(axis_size, *batched_args, trace: Trace, **kwargs):
+    args, in_dims = unzip2(batched_args)
     out_dims = 0  # Fixme
-    outs, out_dims = _vmap_call_metafunc(args, in_dims, out_dims, trace=trace, detached=False, **kwargs)
+    outs, out_dims = _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace=trace, detached=False, **kwargs)
     if isinstance(outs, Sequence):
         return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
     return BatchedValue(outs, out_dims)
@@ -662,8 +716,8 @@ jvp_impls[prims.PrimIDs.SIN] = sin_jvp
 jvp_impls[prims.PrimIDs.MUL] = mul_jvp
 jvp_impls[prims.PrimIDs.ADD] = add_jvp
 jvp_impls[prims.PrimIDs.BROADCAST_IN_DIM] = broadcast_in_dim_jvp
-jvp_impls[prims.PrimIDs.UNPACK_SEQUENCE] = unpack_sequence_jvp
-jvp_impls[prims.PrimIDs.UNPACK_TRIVIAL] = unpack_trivial_jvp
+# jvp_impls[prims.PrimIDs.UNPACK_SEQUENCE] = unpack_sequence_jvp
+# jvp_impls[prims.PrimIDs.UNPACK_TRIVIAL] = unpack_trivial_jvp
 
 
 def jvp_symbol_mapper(symbol: prims.Symbol):
@@ -758,7 +812,7 @@ def _jvp_call_metafunc(primals, tangents, trace: Trace, detached: bool, **kwargs
         return result.primal, result.tangent
 
 
-jvp_call = prims.make_prim(Transforms.JvpOp, "jvp_call", meta=partial(_jvp_call_metafunc, detached=True))
+jvp_call = make_transform_prim(Transforms.JvpOp, "jvp_call", meta=partial(_jvp_call_metafunc, detached=True))
 inline_transforms_map[Transforms.JvpOp] = partial(_jvp_call_metafunc, detached=False)
 
 
@@ -1618,7 +1672,7 @@ def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
         return result, backward_pass(env, trace, cotangents)
 
 
-vjp_call = prims.make_prim(Transforms.VjpOp, "vjp_call", meta=partial(vjp_call_metafunc, detached=True))
+vjp_call = make_transform_prim(Transforms.VjpOp, "vjp_call", meta=partial(vjp_call_metafunc, detached=True))
 inline_transforms_map[Transforms.VjpOp] = partial(vjp_call_metafunc, detached=False)
 
 

@@ -673,7 +673,7 @@ def test_eval_trace(executor, device, _):
     foo_trace2 = thunder._make_trace(eval_trace_as_function(foo_trace))(a, b, c=c)
     # How to test that two traces are equal?
     # Two operators and others are do-nothing annotations
-    assert len(foo_trace2.bound_symbols) == 7
+    assert len(foo_trace2.bound_symbols) == 4
     assert foo_trace2.bound_symbols[-2].sym.name == "add"
     assert foo_trace2.bound_symbols[-1].sym.name == "mul"
 
@@ -795,8 +795,7 @@ def test_transforms_inline(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
     inlined_nested_id_trace = thunder._make_trace(inline(nested_id_func))(a, b)
-    # TODO: Something fishy is going on here, "unpacking" is repeated several times
-    assert len(inlined_nested_id_trace.bound_symbols) == 9
+    assert len(inlined_nested_id_trace.bound_symbols) == 4
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in inlined_nested_id_trace.bound_symbols)
     assert inlined_nested_id_trace.bound_symbols[-3].sym.name == "add"
     assert inlined_nested_id_trace.bound_symbols[-2].sym.name == "convert_element_type"
@@ -809,7 +808,7 @@ def test_transforms_inline(executor, device, _):
     # Since the outer-most transform is inline, the trace should not contain
     # any identity transforms.
     transformed_trace = thunder._make_trace(transformed_func)(a, b)
-    assert len(transformed_trace.bound_symbols) == 6
+    assert len(transformed_trace.bound_symbols) == 4
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
 
 
@@ -831,19 +830,18 @@ def test_transforms_vmap_axis_size(executor, device, _):
     assert_close(actual, expected)
 
 
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_identity(executor, device, _):
-#     pytest.skip("Skipped temporarily until we have a fix")
-#     from thunder.core.transforms import identity, vmap
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_transforms_vmap_identity(executor, device, _):
+    from thunder.core.transforms import identity, vmap
 
-#     def func(a):
-#         return tlang.sin(a)
+    def func(a):
+        return clang.sin(a)
 
-#     a = torch.randn(2, 2)
+    a = torch.randn(2, 2)
 
-#     thunder.make_trace(vmap(identity(func)), executor=executor)(a)
+    thunder._make_trace(vmap(identity(func)))(a)
 
 
 # @instantiate(
@@ -1097,29 +1095,29 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     assert_close(out_t, expected_out_t)
 
 
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp, inline
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_transforms_inline_vmap_inline_jvp(executor, device, _):
+    from thunder.core.transforms import vmap, jvp, inline
 
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
+    def func(a, b):
+        assert isinstance(a, proxies.TensorProxy)
+        assert isinstance(b, proxies.TensorProxy)
+        assert a.ndim == 1
+        assert a.shape == b.shape
+        c = clang.sin(a)
+        return clang.mul(clang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+    a = torch.ones(2, 3, device=device, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(inline(vmap(inline(jvp(func)), out_dims=(0, 0))), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
+    args = (a, b)
+    out_p, out_t = executor.make_callable(inline(vmap(inline(jvp(func)), out_dims=(0, 0))))(args, args)
+    expected_out_p = torch.sin(a) + b
+    assert_close(out_p, expected_out_p)
+    expected_out_t = torch.cos(a) + b
+    assert_close(out_t, expected_out_t)
 
 
 # @instantiate(
