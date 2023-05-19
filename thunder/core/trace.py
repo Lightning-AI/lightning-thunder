@@ -326,11 +326,17 @@ class TraceCtx:
                 import_str = f"# import {module.__name__} as {name}"
                 program.append(import_str)
 
+            # NOTE torch is explicitly imported because we always run in the no_grad() ctx (see below)
+            # TODO Only do this if calling torch operators?
+            torch_import_str = "import torch"
+            program.append(torch_import_str)
+
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
                 program.append("")
 
-            # Prints the signature
+            # Prints the signature and the no_grad context (for when calling torch operations)
+            program.append("@torch.no_grad()")
             program.append(signature_str)
 
             indent = codeutils.indent_string(1)

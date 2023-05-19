@@ -72,13 +72,11 @@ class Benchmark:
     def compiled_fn(self, executor: str):
         use_cudagraphs = executor.endswith("_cuda_graphs")
 
-        if use_cudagraphs:
-            raise NotImplementedError
-
         executor = executor.replace("_cuda_graphs", "")
 
         if executor == "torch-eager":
-            assert not use_cudagraphs
+            if use_cudagraphs:
+                raise NotImplementedError("PyTorch eager + CUDA graphs is not supported")
             return executor, self._fn, None
 
         elif executor == "torch.compile":
@@ -94,6 +92,8 @@ class Benchmark:
             return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
 
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
+            if use_cudagraphs:
+                raise NotImplementedError("thunder + CUDA graphs is currently disabled")
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
             tom = thunder.compile(self._fn, use_static_caching=True)
 
@@ -799,6 +799,11 @@ class GPTBenchMarkBase(Benchmark):
         if not isinstance(cls.benchmark_factory, types.FunctionType):
             model = model.to(device=device, dtype=tdtype)
 
+            # Ensures no parameters require grad (suitable for forward testing)
+            # TODO Make this an option
+            for p in model.parameters():
+                p.requires_grad = False
+
         kwargs.update({"config": config, "gpt_config": gpt_config, "device": device, "dtype": dtype, "tdtype": tdtype})
         self.ctor_kwargs = kwargs
         super().__init__(
@@ -1211,16 +1216,18 @@ benchmarks = {
 }
 
 
-# TODO: provide a programmatic way to run these benchmarks and acquire the results
-# TODO: allow a file to specify which benchmarks to run and how
+# TODO Provide a programmatic way to run these benchmarks and acquire the results
+# TODO Allow a file to specify which benchmarks to run and how
 if __name__ == "__main__":
-    # TODO: "torch.compile_nvfuser_prims" doesn't work with nightly nvFuser
     executors = (
         "torch-eager",
         "torch.compile",
         "torch.compile_cuda_graphs",
         "thunder+nvfuser",
-        "thunder+nvfuser_cuda_graphs",
+        # TODO Re-enable thunder + CUDA graphs when they're supported again
+        # "thunder+nvfuser_cuda_graphs",
+        # NOTE "torch.compile_nvfuser_prims" doesn't work with nightly nvFuser
+        # "torch.compile_nvfuser_prims",
     )
 
     # Argparse doesn't properly share parents, so subparsers have to make a parent without defaults.
@@ -1302,7 +1309,7 @@ if __name__ == "__main__":
                 f"--{benchmark_arg.name}",
                 default=benchmark_arg.default,
                 help=benchmark_arg.description,
-                # TODO: make this more robust.
+                # TODO Make this more robust
                 type=(
                     type(benchmark_arg.default)
                     if isinstance(benchmark_arg.default, (str, int, float))
