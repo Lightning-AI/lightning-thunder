@@ -60,6 +60,10 @@ class M1(torch.nn.Module):
         return 2 * x
 
 
+def new_gelu(x):
+    return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+
+
 @skipif_not_python_3_10
 def test_acquisition_compile():
     model = M1()
@@ -103,6 +107,26 @@ def test_sequential():
 
     a = torch.randn(2, 3)
     assert_close(model(a), fn(model, a))
+
+
+@skipif_not_python_3_10
+@pytest.mark.parametrize("use_static_caching", (True, False))
+def test_thunder_compile(use_static_caching):
+    model = torch.nn.Sequential(
+        torch.nn.Linear(3, 5),
+        torch.nn.Tanh(),
+        torch.nn.Linear(5, 3),
+    )
+    tom = thunder.compile(model, use_static_caching=use_static_caching)
+
+    # several times for caching
+    a = torch.randn(2, 3)
+    for _ in range(3):
+        assert_close(model(a), tom(a))
+
+    tfn = thunder.compile(new_gelu, use_static_caching=use_static_caching)
+    for _ in range(3):
+        assert_close(new_gelu(a), tfn(a))
 
 
 @skipif_not_python_3_10
@@ -454,10 +478,6 @@ def test_nanogpt_mlp_functional_inlined(executor, device, dtype):
 
     thunder_fn = executor.make_callable(nanogpt_mlp_functional_inlined, disable_preprocessing=False)
     _nanogpt_mlp_helper(device, dtype, thunder_fn, nanogpt_mlp_functional_inlined)
-
-
-def new_gelu(x):
-    return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
 
 @skipif_not_python_3_10

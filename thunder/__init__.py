@@ -420,6 +420,9 @@ def compile_with_info(
         _fn = ThunderOptimizedModule(fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values)
         # TODO Revisit assuming these are const
         pfn._num_constant_args = len(pfn._additional_param_values)
+    elif not disable_preprocessing:
+        # this is used for static caching
+        pfn._num_constant_args = 0
 
     return _fn
 
