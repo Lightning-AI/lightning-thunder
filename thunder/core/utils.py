@@ -687,7 +687,7 @@ def flatten_func(func, args, kwargs):
     """
     flat_args, spec = tree_flatten((args, kwargs))
 
-    def flat_func(flat_args):
+    def flat_func(*flat_args):
         fn_args, fn_kwargs = tree_unflatten(flat_args, spec)
         return func(*fn_args, **fn_kwargs)
 

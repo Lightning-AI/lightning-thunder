@@ -74,6 +74,15 @@ def symbol_to_eval(bound_symbol):
     return symbol.__call__
 
 
+# TODO: Currently we use trace.args and trace.kwargs to get the arguments
+# Maybe we should use these instead
+transform_skip_list = (
+    prims.PrimIDs.UNPACK_SEQUENCE,
+    prims.PrimIDs.UNPACK_TRIVIAL,
+    prims.PrimIDs.UNPACK_DICT,
+)
+
+
 def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwargs):
     """Evaluate a trace.
 
@@ -106,14 +115,8 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
     safe_map_flat(write, list(trace.args), list(args))
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
-    skip_list = (
-        prims.PrimIDs.UNPACK_SEQUENCE,
-        prims.PrimIDs.UNPACK_TRIVIAL,
-        prims.PrimIDs.UNPACK_DICT,
-    )
-
     for symbol in trace.bound_symbols:
-        if symbol.sym.id in skip_list:
+        if symbol.sym.id in transform_skip_list:
             continue
         args = tree_map(read, symbol.args)
         kwargs = tree_map(read, symbol.kwargs)
@@ -145,12 +148,12 @@ def lower_to_prims_mapper(symbol: prims.Symbol):
     # SLICE primitive doesn't use `symbol.name` to avoid collisions with
     # Python's `slice``, so we need to explicitly map the symbol to its prim
     # function which is called `slice_prim`
-    if symbol.op == prims.PrimIDs.SLICE:
+    if symbol.sym.id == prims.PrimIDs.SLICE:
         return prims.slice_prim
 
     # All other symbols are treated as composite functions
     # We decompose them into primitives
-    decomposed_fn = prims.ops_to_meta_functions_map[symbol.op]
+    decomposed_fn = symbol.__call__
     return lower_to_prims(decomposed_fn)
 
 
@@ -368,7 +371,7 @@ def broadcast_in_dim_vmap(
     # TODO: remove this when shape and broadcast_dimensions become mandatory kwargs
     # See https://github.com/Lightning-AI/lightning-thunder/issues/181
     shape, _ = safe_zip(*shape)
-    if broadcast_dimensions != ():
+    if len(broadcast_dimensions) > 0:
         broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
     if bdim is not_mapped:
         return BatchedValue(prims.broadcast_in_dim(a.value, shape, broadcast_dimensions), bdim)
@@ -970,7 +973,9 @@ augmented_forward_impls = {
 backward_impls = {
     prims.PrimIDs.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
-    prims.PrimIDs.ADD: lambda g: (g, g),
+    # Duplicates are not allowed in the backward_impls
+    # Therefore, we multiply the gradient by 1.0 to make it a different tensor
+    prims.PrimIDs.ADD: lambda g: (1.0 * g, 1.0 * g),
     prims.PrimIDs.ASIN: lambda x, g: g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ASINH: lambda x, g: g * prims.rsqrt(1.0 + x * x),
     prims.PrimIDs.ATAN: lambda x, g: g / (1.0 + x * x),
@@ -1034,13 +1039,13 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
     Returns:
         Variable: Tensor with the reduced dimensions restored.
     """
-    import thunder.core.lang as tlang
+    from thunder import clang
 
     if original_shape == ():  # scalar
         return x
 
-    unsqueezed = tlang.unsqueeze(x, reduced_dims)
-    return tlang.expand(unsqueezed, original_shape)
+    unsqueezed = clang.unsqueeze(x, reduced_dims)
+    return clang.expand(unsqueezed, original_shape)
 
 
 @register_augmented_forward(prims.PrimIDs.RSQRT)
@@ -1467,6 +1472,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
         Callable: Augmented forward rule for the composite function
     """
     trace = make_trace(decomposed_fn)(*args, **kwargs)
+    trace = unwrap_one_level_of_subsymbols(trace)
     result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
     # We cannot save the trace object in the residuals because executors may not
     # be able to return it for the splitted forward/backward passes. Instead, we
@@ -1476,15 +1482,17 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     # and always the same for the same function call and the same set of
     # arguments. See test_grad.py:test_torch_autograd_function for an example
     # where this is tested.
-    saved_for_backward = tuple(env[symbol.outputs[0].name].residuals for symbol in trace.symbols)
+    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in trace.bound_symbols)
     residuals = (args, kwargs, saved_for_backward)
     return VJPDual(result, residuals)
 
 
 def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
     trace = make_trace(decomposed_fn)(*args, **kwargs)
+    trace = unwrap_one_level_of_subsymbols(trace)
     reconstructed_env = {
-        symbol.outputs[0].name: VJPDual(None, saved_for_backward[i]) for i, symbol in enumerate(trace.symbols)
+        sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
+        for i, symbol in enumerate(trace.bound_symbols)
     }
     result = backward_pass(reconstructed_env, trace, grads)
     if len(args) == 1:
@@ -1528,14 +1536,14 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         return partial(vjp_impl_const, symbol)
 
     # Normal case, we have a proxy tangent
-    vjp_impl = augmented_forward_impls.get(symbol.op)
+    vjp_impl = augmented_forward_impls.get(symbol.sym.id)
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
-        if symbol.decomposed_fn is not None and not isinstance(symbol.op, prims.Ops):
-            vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.decomposed_fn)
-            register_backward(symbol.op)(partial(decomposed_fn_backward_rule, symbol.decomposed_fn))
+        if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
+            vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.sym.__call__)
+            register_backward(symbol.sym.id)(partial(decomposed_fn_backward_rule, symbol.sym.__call__))
         else:
-            raise NotImplementedError(f"VJP for {symbol.op} is not implemented")
+            raise NotImplementedError(f"VJP for {symbol.sym.id} is not implemented")
 
     def _vjp_impl(*args, **kwargs):
         primals, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
@@ -1621,27 +1629,30 @@ def backward_pass(forward_env, trace, init_cotangents):
             # Skip writing to constants
             pass
 
-    if isinstance(trace.outputs, Sequence):
-        safe_map(write, tuple(trace.outputs), init_cotangents)
+    if isinstance(trace.output, Sequence):
+        safe_map(write, tuple(trace.output), init_cotangents)
     else:
-        write(trace.outputs, init_cotangents)
+        write(trace.output, init_cotangents)
 
-    for symbol in reversed(trace.symbols):
-        cotangents = safe_map(read, symbol.outputs)
+    for symbol in reversed(trace.bound_symbols):
+        if symbol.sym.id in transform_skip_list:
+            continue
+        symbol_output = sequencify(symbol.output)
+        cotangents = safe_map(read, symbol_output)
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
-        residuals = forward_env[symbol.outputs[0].name].residuals
+        residuals = forward_env[symbol_output[0].name].residuals
         if symbol.are_all_args_constant:
             # We can skip the pullback if all the arguments are constant
             continue
-        pullback = backward_impls[symbol.op]
+        pullback = backward_impls[symbol.sym.id]
         result = pullback(*residuals, *cotangents)
         if not isinstance(result, Sequence):
             result = (result,)
         check(
             len(result) == len(symbol.args),
-            lambda: f"Pullback for {symbol.op} returned {len(result)} values, but expected {len(symbol.args)}",
+            lambda: f"Pullback for {symbol.sym.id} returned {len(result)} values, but expected {len(symbol.args)}",
         )
         safe_map(write, symbol.args, result)
 
@@ -1714,7 +1725,7 @@ def value_and_grad(func):
 
     def _value_and_grad(*args, **kwargs):
         trace = make_trace(func)(*args, **kwargs)
-        cotangents = tree_map(lambda v: ones_like(v.proxy), trace.outputs)
+        cotangents = tree_map(lambda v: ones_like(v), trace.output)
         return vjp(func)(args, cotangents, **kwargs)
 
     return _value_and_grad

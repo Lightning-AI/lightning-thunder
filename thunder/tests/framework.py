@@ -255,6 +255,9 @@ class instantiate:
         #   functions are directly assigned to the requested scope (the caller's global scope by default)
 
         for executor, devicetype in product(self.executors, self.devicetypes):
+            if executor is None:
+                continue
+
             if not executor.supports_devicetype(devicetype):
                 continue
 

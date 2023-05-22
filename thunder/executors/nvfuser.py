@@ -868,7 +868,7 @@ def where(
 
 
 # TODO Checks that the dtype is supported by nvFuser
-def _reduction_check(a: TensorProxy, dim: Sequence[int], *, output_dtype: Optional[dtypes.dtype] = None) -> bool:
+def _reduction_check(a: TensorProxy, dims: Sequence[int], *, output_dtype: Optional[dtypes.dtype] = None) -> bool:
     dtype_supported = output_dtype is None or is_supported_dtype(output_dtype)
     return is_supported_tensor(a) and dtype_supported
 
