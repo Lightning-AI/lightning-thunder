@@ -892,12 +892,6 @@ isfinite_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.isfinite),
     test_directives=(
-        # https://github.com/Lightning-AI/lightning-thunder/issues/407
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-        ),
         # Torch preserves the uint8 dtype
         DecorateInfo(
             pytest.mark.xfail,
