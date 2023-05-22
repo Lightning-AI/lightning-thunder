@@ -7,20 +7,24 @@ on:  # Trigger the workflow on push or pull request, but only for the main branc
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 defaults:
   run:
     shell: bash
 
 jobs:
-  pytest:
 
+  pytester:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, windows-2019]
+        os: [ubuntu-20.04, macOS-11, windows-2022]
         python-version: ['3.10']
-        requires: ['latest']
+        requires: ['latest']  # todo: add 'oldest'
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -67,11 +71,9 @@ jobs:
       shell: bash
 
     - name: Tests
-      run: |
-        coverage run --source thunder -m pytest thunder/tests/ -v
+      run: coverage run --source thunder -m pytest thunder/tests/ -v
 
     - name: Statistics
-      if: success()
       run: |
         coverage report
         coverage xml
@@ -85,3 +87,18 @@ jobs:
         env_vars: OS,PYTHON
         name: codecov-umbrella
         fail_ci_if_error: false
+
+
+  testing-guardian:
+    runs-on: ubuntu-latest
+    needs: pytester
+    if: always()
+    steps:
+    - run: echo "${{ needs.pytester.result }}"
+    - name: failing...
+      if: needs.pytester.result == 'failure'
+      run: exit 1
+    - name: cancelled or skipped...
+      if: contains(fromJSON('["cancelled", "skipped"]'), needs.pytester.result)
+      timeout-minutes: 1
+      run: sleep 90

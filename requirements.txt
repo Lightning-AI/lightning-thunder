@@ -1,4 +1,4 @@
-torch>=1.13.1
-looseversion==1.0.3
-lightning-utilities>=0.4.1
-numpy>=1.20.0
+torch >=1.13.1
+looseversion ==1.0.3
+lightning-utilities >=0.4.1
+numpy >=1.20.0
