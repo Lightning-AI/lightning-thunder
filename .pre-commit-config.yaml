@@ -1,5 +1,5 @@
 default_language_version:
-  python: python3.8
+  python: python3.10
 
 ci:
   autofix_prs: true
@@ -24,7 +24,7 @@ repos:
     rev: v3.2.2
     hooks:
       - id: pyupgrade
-        args: [--py37-plus]
+        args: [--py310-plus]
         name: Upgrade code
 
   # - repo: https://github.com/PyCQA/isort
