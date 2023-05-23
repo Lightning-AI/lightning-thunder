@@ -1468,6 +1468,24 @@ def linear_backward(a, b, c, g):
     return ga, gb, gc
 
 
+def iter_bound_symbols(bound_symbols):
+    """Iterate over bound symbols, skipping symbols that are not supported by
+    the transforms infrastructure.
+
+    Args:
+        bound_symbols (List[BoundSymbol]): List of bound symbols
+
+    Yields:
+        BoundSymbol: Bound symbols that are supported by the transforms
+        infrastructure
+    """
+    for symbol in bound_symbols:
+        if symbol.sym.id in transform_skip_list:
+            continue
+        else:
+            yield symbol
+
+
 def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     """Augmented forward rule for composite functions implemented in terms of other functions that are
     supposed to be supported by the VJP infrastructure.
@@ -1489,7 +1507,8 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     # and always the same for the same function call and the same set of
     # arguments. See test_grad.py:test_torch_autograd_function for an example
     # where this is tested.
-    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in trace.bound_symbols)
+    bound_symbols = iter_bound_symbols(trace.bound_symbols)
+    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
     residuals = (args, kwargs, saved_for_backward)
     return VJPDual(result, residuals)
 
@@ -1497,9 +1516,10 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
 def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
     trace = make_trace(decomposed_fn)(*args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
+    bound_symbols = iter_bound_symbols(trace.bound_symbols)
     reconstructed_env = {
         sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
-        for i, symbol in enumerate(trace.bound_symbols)
+        for i, symbol in enumerate(bound_symbols)
     }
     result = backward_pass(reconstructed_env, trace, grads)
     if len(args) == 1:
