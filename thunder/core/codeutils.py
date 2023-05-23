@@ -29,6 +29,9 @@ class TrackedObject:
         self.name = name
         self.obj = obj
 
+    def __repr__(self):
+        return f"[TrackedObject name={self.name} obj={self.obj}]"
+
 
 # TODO This can be a frozen dataclass
 class ContextObject:

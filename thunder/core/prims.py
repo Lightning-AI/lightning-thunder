@@ -300,8 +300,10 @@ def unpack_dict_printer(
     dprintable, keyprintables = arg_printables
     dname = codeutils.prettyprint(dprintable)
 
+    print(f"unpack_dict_printer {d=} {dprintable=} {keyprintables=}")
+
     trace = get_tracectx()
-    for key in keyprintables:
+    for key in utils.sequencify(keyprintables):
         out = d[key]
         out = trace.get_tracked_object(out)
 

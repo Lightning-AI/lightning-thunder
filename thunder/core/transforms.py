@@ -118,9 +118,7 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
 
     # Duplicates are allowed for jvp_call symbols
     # Because the transformed trace is empty in this case and it's no-op
-    allow_duplicates_list = (
-        Transforms.JvpOp,
-    )
+    allow_duplicates_list = (Transforms.JvpOp,)
     write_with_duplicates = partial(write, allow_duplicates=True)
 
     for symbol in trace.bound_symbols:
@@ -414,9 +412,7 @@ def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
     unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
     trace = make_trace(fn)(*unbatched_args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
-    outs = _vmap_call_metafunc(
-        args, in_dims, 0, axis_size, trace=trace, detached=False, **kwargs
-    )
+    outs = _vmap_call_metafunc(args, in_dims, 0, axis_size, trace=trace, detached=False, **kwargs)
     if isinstance(outs, Sequence):
         out_dims = (0,) * len(outs)
         return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))

@@ -203,8 +203,7 @@ class ops:
             )
 
             for executor, devicetype in product(
-                    sorted(self.supported_executors, key=lambda x: repr(x)),
-                    sorted(devicetypes, key=lambda x: repr(x))
+                sorted(self.supported_executors, key=lambda x: repr(x)), sorted(devicetypes, key=lambda x: repr(x))
             ):
                 if not executor.supports_devicetype(devicetype):
                     continue
@@ -259,8 +258,7 @@ class instantiate:
         #   functions are directly assigned to the requested scope (the caller's global scope by default)
 
         for executor, devicetype in product(
-                sorted(self.executors, key=lambda x: repr(x)),
-                sorted(self.devicetypes, key=lambda x: repr(x))
+            sorted(self.executors, key=lambda x: repr(x)), sorted(self.devicetypes, key=lambda x: repr(x))
         ):
             if executor is None:
                 continue

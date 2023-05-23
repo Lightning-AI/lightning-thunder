@@ -123,10 +123,6 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # Elementwise binary operators
     #
 
-    #
-    # Elementwise binary operators
-    #
-
     @staticmethod
     def _elementwise_binary_helper(a, b, name, fn):
         baseutils.check_type(b, (TensorProxy, Number))
@@ -235,6 +231,9 @@ class ComplexProxy(NumberProxy, complex):
     def __int__(self):
         return self.value.__int__()
 
+    def __bool__(self):
+        raise self.value.__bool__()
+
     #
     # Shift operations
     #
@@ -317,6 +316,9 @@ class IntegerProxy(NumberProxy, int):
     def __int__(self):
         return self.value
 
+    def __bool__(self):
+        return self.value.__bool__()
+
     #
     # Shift operations
     #
@@ -395,6 +397,9 @@ class FloatProxy(NumberProxy, float):
 
     def __int__(self):
         return self.value.__int__()
+
+    def __bool__(self):
+        return self.value.__bool__()
 
     #
     # Shift operations
@@ -562,6 +567,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
         raise NotImplementedError
 
     def __int__(self):
+        raise NotImplementedError
+
+    def __bool__(self):
         raise NotImplementedError
 
     #

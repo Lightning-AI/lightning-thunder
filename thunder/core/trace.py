@@ -231,6 +231,15 @@ class TraceCtx:
         if self.is_tracked(x):
             return x
 
+        # NOTE Empty tuples () are all the same object
+        #   This means that tracking one empty tuple would cause all of them to
+        #   be tracked, even if others are constants
+        #   For now, this disables tracking of all empty tuples
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/460
+        #   for the issue tracking this
+        if x == ():
+            return x
+
         # Tracks the object
         if name is not None:
             self.add_name(name)
