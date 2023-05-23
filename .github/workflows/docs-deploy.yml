@@ -6,7 +6,7 @@ on:
 jobs:
   # https://github.com/marketplace/actions/deploy-to-github-pages
   build-docs-deploy:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v3
@@ -15,7 +15,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: "3.10"
 
       # Note: This uses an internal pip API and may not always work
       # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow

@@ -11,20 +11,18 @@ on:  # Trigger the workflow on push or pull request, but only for the main branc
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-python@v4
       with:
-        python-version: 3.10
+        python-version: "3.10"
 
     - name: Install dependencies
-      run: >-
-        python -m pip install --user --upgrade setuptools wheel
+      run: python -m pip install --user --upgrade setuptools wheel
     - name: Build
-      run: >-
-        python setup.py sdist bdist_wheel
+      run: python setup.py sdist bdist_wheel
 
     # We do this, since failures on test.pypi aren't that bad
     - name: Publish to Test PyPI
