@@ -944,6 +944,29 @@ def transpose(a, dim0, dim1):
     return clang.transpose(a, permutation)
 
 
+def matrix_transpose(a):
+    """Transposes the last two dimensions of a tensor.
+
+    This function is used to implement the `.mT` attribute.
+
+    Args:
+        a (TensorProxy): The tensor to transpose.
+
+    Returns:
+        TensorProxy: The transposed tensor.
+
+    Examples:
+        >>> a = torch.tensor([[1, 2, 3], [4, 5, 6]])
+        >>> def func(x): return x.mT
+        >>> traced_func = thunder.compile(func)
+        >>> traced_func(a)
+        tensor([[1, 4],
+                [2, 5],
+                [3, 6]])
+    """
+    return clang.matrix_transpose(a)
+
+
 # TODO Add type annotations
 @torchsymbol(torch.unsqueeze, is_method=True)
 def unsqueeze(a, dim):

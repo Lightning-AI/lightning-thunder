@@ -2450,6 +2450,27 @@ transpose_opinfo = OpInfo(
 shape_ops.append(transpose_opinfo)
 
 
+def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape
+    cases = (
+        (4, 7, 8),
+        (4, 7),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+transpose_opinfo = OpInfo(
+    clang.matrix_transpose,
+    sample_input_generator=matrix_transpose_sample_generator,
+    torch_reference=lambda x: x.mT,
+)
+shape_ops.append(transpose_opinfo)
+
+
 def take_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     make_index = partial(make_tensor, device=device, requires_grad=False)
