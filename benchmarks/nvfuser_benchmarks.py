@@ -713,7 +713,7 @@ class StackedAddBenchmark(Benchmark):
         self.shape = shape
         self.device = device
         self.dtype = dtype
-        self.tdtype = ttorch.torch_dtype(dtype)
+        self.tdtype = ltorch.torch_dtype(dtype)
 
         super().__init__(
             name=f"StackedAddBenchmark",
