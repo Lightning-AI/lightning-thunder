@@ -140,7 +140,7 @@ def _instantiate_executor_test_template(
 def _instantiate_opinfo_test_template(
     template: Callable, scope, *, opinfo, executor: Executor, device: devices.Device, dtype: datatypes.dtype
 ) -> Callable:
-    """Instanties a test template for an operator."""
+    """Instantiates a test template for an operator."""
 
     device_str = devices.devicetype_string(device.devicetype)
 
@@ -201,7 +201,11 @@ class ops:
             devicetypes = (
                 opinfo.devicetypes().intersection(self.supported_devicetypes).intersection(set(available_devicetypes()))
             )
-            for executor, devicetype in product(self.supported_executors, devicetypes):
+
+            for executor, devicetype in product(
+                    sorted(self.supported_executors, key=lambda x: repr(x)),
+                    sorted(devicetypes, key=lambda x: repr(x))
+            ):
                 if not executor.supports_devicetype(devicetype):
                     continue
 
@@ -212,7 +216,7 @@ class ops:
                 if self.supported_dtypes != (None,):
                     dtypes = dtypes.intersection(self.supported_dtypes)
 
-                for dtype in dtypes:
+                for dtype in sorted(dtypes, key=lambda t: repr(t)):
                     if not executor.supports_dtype(dtype):
                         continue
 
@@ -254,7 +258,10 @@ class instantiate:
         #   Since Python doesn't natively support one-to-many function decorators, the produced
         #   functions are directly assigned to the requested scope (the caller's global scope by default)
 
-        for executor, devicetype in product(self.executors, self.devicetypes):
+        for executor, devicetype in product(
+                sorted(self.executors, key=lambda x: repr(x)),
+                sorted(self.devicetypes, key=lambda x: repr(x))
+        ):
             if executor is None:
                 continue
 
@@ -263,7 +270,7 @@ class instantiate:
 
             device = devices.Device(devicetype, 0)
 
-            for dtype in self.dtypes:
+            for dtype in sorted(self.dtypes, key=lambda t: repr(t)):
                 if dtype is not None and not executor.supports_dtype(dtype):
                     continue
 
@@ -281,15 +288,15 @@ class instantiate:
 def run_snippet(snippet, opinfo, devicetype, dtype, *args, **kwargs):
     try:
         snippet(*args, **kwargs)
-    except Exception as e:
+    except Exception as ex:
         exc_info = sys.exc_info()
 
         # Raises exceptions that occur with pytest, and returns debug information when
         # called otherwise
         # NOTE: PYTEST_CURRENT_TEST is set by pytest
         if "PYTEST_CURRENT_TEST" in os.environ:
-            raise e
-        return e, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs
+            raise ex
+        return ex, exc_info, snippet, opinfo, devicetype, dtype, args, kwargs
 
     return None
 

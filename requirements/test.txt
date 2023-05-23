@@ -2,5 +2,7 @@ coverage ==7.0.1
 pytest ==7.2.0
 pytest-timeout ==2.1.0
 pytest-cov ==4.0.0
+pytest-xdist ==3.3.1
+pytest-random-order ==1.1.0
 graphviz ==0.20.1
 fdm ==0.4.1

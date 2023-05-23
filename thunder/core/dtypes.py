@@ -90,8 +90,6 @@ class dtype:
 class exact(dtype):
     """Abstract base class for the signedinteger, unsignedinteger and bool_ dtypes."""
 
-    pass
-
 
 class signedinteger(exact):
     """Base class for the signed integer dtypes: int8, int16, int32, int64."""
