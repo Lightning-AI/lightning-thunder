@@ -12,7 +12,7 @@ import thunder.core.dtypes as dtypes
 from thunder import _make_trace as make_trace
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map
-from thunder.core.transforms import jvp, vjp
+from thunder.core.transforms import jvp, vjp, inline
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
 from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
@@ -63,8 +63,6 @@ def _generate_supported_op_list(checker):
         generator: A generator of operator info objects that support vjp.
     """
     for opinfo in opinfos:
-        # TODO: SKipping all opinfos for now
-        continue
         if opinfo not in tensor_creation_ops and opinfo.name not in op_skip:
             if opinfo.dtypes().intersection({dtypes.float64}) == set():
                 continue
@@ -77,6 +75,8 @@ def _generate_supported_op_list(checker):
 
 
 def _vjp_symbol_checker(symbol):
+    # TODO: Skipping all opinfos for now
+    return False
     from thunder.core.transforms import augmented_forward_impls, backward_impls
 
     return symbol.sym.id in augmented_forward_impls and symbol.sym.id in backward_impls
@@ -84,8 +84,9 @@ def _vjp_symbol_checker(symbol):
 
 def _jvp_symbol_checker(symbol):
     from thunder.core.transforms import jvp_impls
+    from thunder.core.transforms import transform_skip_list
 
-    return symbol.sym.id in jvp_impls
+    return symbol.sym.id in jvp_impls or symbol.sym.id in transform_skip_list
 
 
 supported_vjp_ops = set(_generate_supported_op_list(_vjp_symbol_checker)).union(vjp_op_force)
@@ -204,7 +205,7 @@ def check_jvp(f, *primals, executor, atol=None, rtol=None):
         AssertionError: If the Jacobian-vector product is not correct.
     """
     tangents = tree_map(make_tensor_like, primals)
-    actual_p, actual_t = executor.make_callable(jvp(f))(primals, tangents)
+    actual_p, actual_t = executor.make_callable(inline(jvp(f)))(primals, tangents)
     expected_p, expected_t = numerical_jvp(executor.make_callable(f))(primals, tangents)
     torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
     torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
@@ -418,6 +419,7 @@ def test_vjp_correctness(op, device, dtype, executor):
 # with finite differences
 @ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
+    # TODO: NotImplementedError: VJP for PrimIDs.TAKE is not implemented
     pytest.xfail("Not fixed yet")
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         # Compute vjp result using PyTorch
@@ -438,7 +440,6 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
     dtypes=NOTHING,
 )
 def test_multiple_output_vjp(executor, device, _):
-    pytest.skip("Not implemented yet")
     from thunder.core.prims import cos, make_prim, sin
     from thunder.core.transforms import inline, register_augmented_forward, register_backward, vjp
 
@@ -483,15 +484,15 @@ def test_multiple_output_vjp(executor, device, _):
     # Therefore here we'll just check that the trace is correct
     trace = make_trace(inline(vjp(func)))((x,), (v, v))
     # Length of outputs should be two
-    assert len(trace.outputs) == 2
+    assert len(trace.output) == 2
     # Length of the first output should be two
-    assert len(trace.outputs[0]) == 2
+    assert len(trace.output[0]) == 2
     # Length of the second output should match the length of primal args
-    assert len(trace.outputs[1]) == len(trace.args[0])
-    # The first symbol is sincos
-    assert trace.symbols[0].name == "sincos"
+    assert len(trace.output[1]) == len(trace.args[0])
+    # The fourth symbol is sincos
+    assert trace.bound_symbols[3].sym.name == "sincos"
     # The first output should be from sincos
-    assert trace.outputs[0] == trace.symbols[0].outputs
+    assert trace.output[0] == trace.bound_symbols[3].output
 
 
 @instantiate(
