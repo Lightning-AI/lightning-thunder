@@ -75,11 +75,12 @@ def _generate_supported_op_list(checker):
 
 
 def _vjp_symbol_checker(symbol):
-    # TODO: Skipping all opinfos for now
-    return False
     from thunder.core.transforms import augmented_forward_impls, backward_impls
+    from thunder.core.transforms import transform_skip_list
 
-    return symbol.sym.id in augmented_forward_impls and symbol.sym.id in backward_impls
+    return (
+        symbol.sym.id in augmented_forward_impls and symbol.sym.id in backward_impls
+    ) or (symbol.sym.id in transform_skip_list)
 
 
 def _jvp_symbol_checker(symbol):
@@ -282,7 +283,7 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make_tensor_like, outs_p)
-    _, J_star_v = executor.make_callable(vjp(f))(primals, v)
+    _, J_star_v = executor.make_callable(inline(vjp(f)))(primals, v)
 
     if not multiple_results:
         v = (v,)

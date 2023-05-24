@@ -118,7 +118,7 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
 
     # Duplicates are allowed for jvp_call symbols
     # Because the transformed trace is empty in this case and it's no-op
-    allow_duplicates_list = (Transforms.JvpOp,)
+    allow_duplicates_list = (Transforms.JvpOp, Transforms.VjpOp)
     write_with_duplicates = partial(write, allow_duplicates=True)
 
     for symbol in trace.bound_symbols:
@@ -1241,7 +1241,7 @@ def pow_aug_fed(x, y):
 
 @register_backward(prims.PrimIDs.POW)
 def pow_backward(result, x, y, g):
-    import thunder.core.lang as tlang
+    import thunder.clang as tlang
 
     gresult = g * result  # reuse common factor
     dx = gresult * y / x
@@ -1337,6 +1337,8 @@ def pullback(shape, start_indices, end_indices, strides, g):
         )
         padding = tuple(zip(start_indices, np.subtract(shape, real_limits), np.subtract(strides, 1)))
 
+    # We used NumPy arithmetics above, but the current infra expects Python ints.
+    padding = tree_map(int, padding)
     result = prims.pad(g, const_as(0, g.dtype), padding)
 
     if strides is None:
