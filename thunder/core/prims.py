@@ -179,7 +179,7 @@ def unpack_trivial_printer(
     result_str = "" if bsym.output is None else f"{codeutils.prettyprint(out_printables)} = "
     arg_str = codeutils.prettyprint(arg_printables)
 
-    s = f"# {result_str} {arg_str}"
+    s = f"# {result_str} {arg_str}  (trivial unpack)"
     return s
 
 
@@ -235,7 +235,11 @@ def unpack_sequence_printer(
     lines = []
     for out in bsym.output:
         out = trace.get_tracked_object(out)
-        line = f"{codeutils.prettyprint(out)}, \\"
+        line: str
+        if codeutils.is_literal(out):
+            line = f"_,  \\"
+        else:
+            line = f"{codeutils.prettyprint(out)}, \\"
         lines.append(line)
 
     lines.append(f"= {call_str}")
@@ -304,9 +308,13 @@ def unpack_dict_printer(
     for key in utils.sequencify(keyprintables):
         out = d[key]
         out = trace.get_tracked_object(out)
-
         keystr = codeutils.prettyprint(key)
-        s = f"{codeutils.prettyprint(out, with_type=True)} = {dname}[{keystr}]"
+
+        s: str
+        if codeutils.is_literal(out):
+            s = f"_ = {dname}[{keystr}]"
+        else:
+            s = f"{codeutils.prettyprint(out, with_type=True)} = {dname}[{keystr}]"
         lines.append(s)
 
     return lines

@@ -78,9 +78,9 @@ def _vjp_symbol_checker(symbol):
     from thunder.core.transforms import augmented_forward_impls, backward_impls
     from thunder.core.transforms import transform_skip_list
 
-    return (
-        symbol.sym.id in augmented_forward_impls and symbol.sym.id in backward_impls
-    ) or (symbol.sym.id in transform_skip_list)
+    return (symbol.sym.id in augmented_forward_impls and symbol.sym.id in backward_impls) or (
+        symbol.sym.id in transform_skip_list
+    )
 
 
 def _jvp_symbol_checker(symbol):

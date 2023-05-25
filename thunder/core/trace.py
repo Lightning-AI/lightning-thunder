@@ -212,6 +212,20 @@ class TraceCtx:
 
         return True
 
+    # NOTE Empty tuples () and None are all the same object
+    #   This means that tracking one of them would cause all of them to
+    #   be tracked, even if others are constants
+    #   For now, this disables tracking of all such singletons
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/460
+    #   for the issue tracking this
+    def _is_singleton(self, x: Any) -> bool:
+        if x == ():
+            return True
+        if x is None:
+            return True
+
+        return False
+
     # NOTE This is a "fluid" interface that returns its input x
     def track(
         self,
@@ -231,13 +245,7 @@ class TraceCtx:
         if self.is_tracked(x):
             return x
 
-        # NOTE Empty tuples () are all the same object
-        #   This means that tracking one empty tuple would cause all of them to
-        #   be tracked, even if others are constants
-        #   For now, this disables tracking of all empty tuples
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/460
-        #   for the issue tracking this
-        if x == ():
+        if self._is_singleton(x):
             return x
 
         # Tracks the object

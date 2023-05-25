@@ -303,6 +303,9 @@ class IntegerProxy(NumberProxy, int):
         value_str = f"{self.value}" if self.value is not None else "?"
         return f"int {value_str}"
 
+    def __repr__(self):
+        return f"[IntegerProxy name={self.name}, value={self.value}]"
+
     #
     # dtype conversion operators
     #
@@ -384,6 +387,9 @@ class FloatProxy(NumberProxy, float):
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
         return f"float {value_str}"
+
+    def __repr__(self):
+        return f"[FloatProxy name={self.name}, value={self.value}]"
 
     #
     # dtype conversion operators
