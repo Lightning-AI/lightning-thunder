@@ -535,6 +535,27 @@ def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
     assert not symbol.are_all_args_constant
 
 
+# Check for https://github.com/Lightning-AI/lightning-thunder/issues/471
+@instantiate(dtypes=(thunder.float32,))
+def test_argument_of_none(executor, device, dtype):
+    from thunder.executors.utils import Region
+
+    def foo(x, y, z):
+        return x + y
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a, b = [make_tensor((1,), device=device, dtype=tdtype) for _ in range(2)]
+    c = None
+    trace_func = thunder._make_trace(foo)
+    trace = trace_func(a, b, c)
+
+    producers = thunder.core.utils.producers(trace)
+    consumers = thunder.core.utils.consumers(trace)
+    region_bsyms = trace.bound_symbols[:3]
+    region = Region(trace, producers, consumers, region_bsyms)
+    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == ["x", "y"]
+
+
 # This test ensures that calls to torch functions are recorded in the trace
 @instantiate(executors=(TorchExecutor,), dtypes=NOTHING)
 def test_torch_call_recording(executor, device: str, _):

@@ -77,7 +77,10 @@ class Region:
         for bsym in self.bound_symbols:
             flatouts = bsym._flat_outs
 
-            produces.update(variableify(x) for x in flatouts if producers[x] in self.bound_symbols)
+            produces.update(
+                variableify(x) for x in flatouts
+                if isinstance(x, Proxy) and producers[x] in self.bound_symbols
+            )
 
             consumes.update(variableify(x) for x in bsym._flat_args if isinstance(x, Proxy))
             consumes.update(variableify(x) for x in bsym._flat_kwargs if isinstance(x, Proxy))
