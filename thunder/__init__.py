@@ -273,9 +273,6 @@ class ThunderOptimizedModule(pytorch.nn.Module):  # TOM
 # TODO Improve type annotation
 # TODO Add additional cache options
 def _make_cache_key(args, kwargs) -> Any:
-    if len(kwargs) > 0:
-        raise NotImplementedError
-
     def _cache_argkey_helper(x: Any) -> Any:
         if isinstance(x, pytorch.Tensor):
             return (pytorch.Tensor, x.shape, x.stride(), x.device, x.dtype)

@@ -583,7 +583,7 @@ def validate_idx(rank: int, idx: int):
     """
 
     check(
-        idx >= 0 and (idx < rank or idx == 0),
+        isinstance(idx, int) and idx >= 0 and (idx < rank or idx == 0),
         lambda: f"Found invalid index {idx} for rank {rank}!",
     )
 

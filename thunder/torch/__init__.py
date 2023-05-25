@@ -208,8 +208,10 @@ def size(a):
 #
 
 
-# NOTE This clobbers the builtin name "float", so use builtins.float when that's desired
-def float(self, a):
+# NOTE This handles a.float()
+#   It avoids using the name "float" to not collide with the builtin
+#   "float"
+def to_float(a):
     return clang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
@@ -235,6 +237,17 @@ def to(a, device=None, dtype=None):
         return clang.maybe_convert_to_dtype(a, dtype)
 
     return a
+
+
+@torchsymbol(torch.Tensor.type_as, is_method=True)
+def type_as(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    # NOTE This type check is intentional since we're accessing the true_dtype
+    #   attribute of the TensorProxy
+    # TODO Create a generic Tensor annotation, and support both PyTorch
+    #   tensors and TensorProxies being passed to this operation
+    utils.check_type(b, TensorProxy)
+
+    return clang.maybe_convert_to_dtype(a, b.true_dtype)
 
 
 #
@@ -779,7 +792,9 @@ def get_item(a, key):
 
 # TODO Add type annotations
 @torchsymbol(torch.reshape, is_method=True)
-def reshape(a, shape):
+def reshape(a, *shape):
+    shape = utils.extract_shape_from_varargs(shape)
+
     return clang.reshape(a, shape)
 
 
@@ -998,7 +1013,7 @@ def take_along_dim(input, indices, dim):
 
 
 # TODO Add type annotations
-@torchsymbol(torch.flatten)
+@torchsymbol(torch.flatten, is_method=True)
 def flatten(input, start_dim=0, end_dim=-1):
     s = input.shape
     if end_dim < 0:
@@ -1373,6 +1388,12 @@ def layer_norm(input: TensorProxy, normalized_shape, weight=None, bias=None, eps
 #
 
 
+# TODO bmm is more restrictive than matmul
+@torchsymbol(torch.bmm, is_method=True)
+def bmm(a, b):
+    return matmul(a, b)
+
+
 def _dropout_helper(a, p):
     """Helper function for all dropout-type operators. During training, some of the elements of the input tensor are
     randomly masked.
@@ -1502,7 +1523,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     if attn_mask is None and is_causal:
         L, S = logits.shape[-2:]
         attn_mask = arange(L, device=query.device)[:, None] >= arange(S, device=query.device)[None, :]
-        attn_mask = attn_mask.masked_fill(not attn_mask, -math.inf)
+        attn_mask = attn_mask.masked_fill(neg(attn_mask), -math.inf)
     if attn_mask is not None:
         logits = logits + attn_mask
     attn_weight = softmax(logits, dim=-1)

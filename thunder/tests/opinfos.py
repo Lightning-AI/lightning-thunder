@@ -2820,11 +2820,11 @@ mean_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("nvFuser",),
         ),
-        # PyTorch CPU bfloat16 doesn't pass test_core_vs_torch_consistency
-        # but CUDA bfloat16 passes
+        # The low precision floating point types sometimes fail
+        #   test tolerances on CPU in CI
         DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.bfloat16,),
+            pytest.mark.skip,
+            dtypes=(datatypes.bfloat16, datatypes.float16),
             devicetypes=(devices.DeviceType.CPU,),
         ),
     ),

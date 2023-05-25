@@ -514,6 +514,19 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return partial(method, self)
 
     #
+    # Datatype conversion shorthands
+    #
+    # NOTE This don't map the names directly because we want to avoid defining
+    #   functions named "float" that clobber the builtin "float" wherever possible
+    #   That's why these functions are defined directly (instead of automatically
+    #   being translated using the language context)
+    # TODO Implement additional shorthands
+
+    def float(self):
+        langctx = get_langctx()
+        return langctx.to_float(self)
+
+    #
     # Indexing operators
     #
 
@@ -734,6 +747,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def mT(self):
         langctx = get_langctx()
         return langctx.matrix_transpose(self)
+
 
 #
 # Helpers for creating and working with proxies

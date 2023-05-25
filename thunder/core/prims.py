@@ -300,8 +300,6 @@ def unpack_dict_printer(
     dprintable, keyprintables = arg_printables
     dname = codeutils.prettyprint(dprintable)
 
-    print(f"unpack_dict_printer {d=} {dprintable=} {keyprintables=}")
-
     trace = get_tracectx()
     for key in utils.sequencify(keyprintables):
         out = d[key]
@@ -1524,7 +1522,7 @@ view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta)
 
 
 # TODO Add type annotations
-def _compute_reduction_output_shape(shape, dims):
+def _compute_reduction_output_shape(shape: Sequence[int], dims: Sequence[int]) -> Sequence[int]:
     for idx in dims:
         utils.validate_idx(len(shape), idx)
 
@@ -1538,12 +1536,20 @@ def _compute_reduction_output_shape(shape, dims):
     return tuple(new_shape)
 
 
-# TODO Add type annotations
-# TODO Validate input types
-def _reduction_meta(a, dims, *, output_dtype=None):
+def _reduction_meta(a: TensorProxy, dims: Sequence[int], *, output_dtype: Optional[dtypes.dtype] = None) -> TensorProxy:
     """Meta function for single output reduction operations."""
     if output_dtype is None:
         output_dtype = a.true_dtype
+
+    # Validates types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+    utils.check_type(output_dtype, dtypes.dtype)
+
+    utils.check(
+        len(dims) > 0 or len(a.shape) == 0,
+        lambda: f"Expected {dims=} to be a non-empty sequence when the tensor's shape {a.shape} is non-empty",
+    )
 
     output_shape = _compute_reduction_output_shape(a.shape, dims)
 

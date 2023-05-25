@@ -91,11 +91,15 @@ class Benchmark:
             assert not use_cudagraphs
             return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
 
+        # TODO Add an option to use different kinds of caching
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
             if use_cudagraphs:
                 raise NotImplementedError("thunder + CUDA graphs is currently disabled")
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
-            tom = thunder.compile(self._fn, use_static_caching=True)
+            tom = thunder.compile(
+                self._fn,
+                use_static_caching=True,
+            )
 
             return (name, tom, None)
 
@@ -713,7 +717,7 @@ class StackedAddBenchmark(Benchmark):
         self.shape = shape
         self.device = device
         self.dtype = dtype
-        self.tdtype = ltorch.torch_dtype(dtype)
+        self.tdtype = ltorch.to_torch_dtype(dtype)
 
         super().__init__(
             name=f"StackedAddBenchmark",
