@@ -71,7 +71,9 @@ jobs:
       shell: bash
 
     - name: Tests
-      run: coverage run --source thunder -m pytest thunder/tests/ -v --random-order-seed=$GITHUB_RUN_ID
+      run: |
+        coverage run --source thunder -m \
+          pytest thunder/tests/ -v -n 2 --random-order-seed=$GITHUB_RUN_ID
 
     - name: Statistics
       run: |
