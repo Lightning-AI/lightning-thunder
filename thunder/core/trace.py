@@ -469,6 +469,7 @@ def detached_trace():
     not be traced.
     """
     outer_trace = get_tracectx()
+    outer_names = set()
     if outer_trace is not None:
         outer_names = outer_trace.names
     trace = TraceCtx(None)

@@ -28,7 +28,7 @@ import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.core.symbol as symbol
 import thunder.core.devices as devices
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 
 import thunder.core.script as script
 import thunder.core.script.frontend
@@ -112,6 +112,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         # One alternative would be to modify the function's signature to include
         # the name of the proxy, but that might require a lot of changes to the
         # codebase.
+        name = name or tracectx.make_name()
         if isinstance(x, Proxy) and name is not None:
             return x.replace_name(name)
 
@@ -133,9 +134,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         # TODO Add support for dicts and sets
         # TODO Consider reviewing dict values
         if is_collection(x):
-            flat, spec = tree_flatten(x)
-            pot_flat = tuple(proxy_or_track(f) for f in flat)
-            pot_collection = tree_unflatten(pot_flat, spec)
+            pot_collection = tree_map(proxy_or_track, x)
 
             # NOTE It's important that the collection is tracked after the unflattening -- because it's now a different
             #   collection that will actually be passed through the program!

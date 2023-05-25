@@ -650,6 +650,28 @@ def test_nested_make_trace_no_name_collision(executor, device, _):
 
 
 @instantiate(dtypes=NOTHING)
+def test_trace_args_no_name_collision(executor, device, _):
+    from thunder.core.trace import detached_trace
+    from thunder.core.proxies import TensorProxy
+
+    with detached_trace():
+        a = TensorProxy(
+            name="__a",
+            shape=(2, 2),
+            device=thunder.core.devices.cpu,
+            dtype=thunder.core.dtypes.float32
+        )
+
+    def func(*args):
+        return args[0] + args[1]
+
+    trace = thunder._make_trace(func)(a, a)
+    # trace.args must have non-duplicate names
+    # because Python disallows duplicate names in function definitions
+    assert trace.args[0].name != trace.args[1].name
+
+
+@instantiate(dtypes=NOTHING)
 def test_eval_trace(executor, device, _):
     # This test ensures that eval_trace() can be called from within a trace
     #   and that all the symbols in the trace are properly evaluated.
