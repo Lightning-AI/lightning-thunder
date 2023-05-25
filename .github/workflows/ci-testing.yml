@@ -24,7 +24,7 @@ jobs:
       matrix:
         os: [ubuntu-20.04, macOS-11, windows-2022]
         python-version: ['3.10']
-        requires: ['latest']  # todo: add 'oldest'
+        requires: ['latest', 'oldest']
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -66,7 +66,7 @@ jobs:
         TORCH_URL: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
       run: |
         pip --version
-        pip install -e '.[test]' -U -q --find-links ${TORCH_URL}
+        pip install -e '.[test]' -U --find-links ${TORCH_URL}
         pip list
       shell: bash
 
