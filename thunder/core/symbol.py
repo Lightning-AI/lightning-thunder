@@ -232,73 +232,82 @@ class Symbol:
 # _object_ctx can be provided to specify a name -> Python object binding required to compile
 #   the BoundSymbol
 # NOTE This could also provide an _import_ctx to specify the import context directly
-# TODO Can we make this frozen?
-@dataclass(**({} if sys.version_info < (3, 10) else {"slots": True}))
+@dataclass(**baseutils.default_dataclass_params)
 class BoundSymbol(BoundSymbolInterface):
     sym: Symbol
     args: Sequence
     kwargs: dict
     output: Any
     subsymbols: Sequence["BoundSymbol"] = ()
-    # TODO Add flat_outs
-    _flat_args: Optional[Sequence] = None
-    _flat_kwargs: Optional[Sequence] = None
-    _flat_outs: Optional[Sequence] = None
-    _arg_strings: Optional[str] = None
-    _kwarg_strings: Optional[str] = None
-    _import_ctx: Optional[Dict[str, Any]] = None
     _call_ctx: Optional[Dict[str, Any]] = None
-    _object_ctx: Optional[Dict[str, Any]] = None
 
     # NOTE _executor, being an implementation detail, must be set after
     #   the BoundSymbol is constructed
+    # If you need to set it after construction, use dataclasses.replace
+    # to create a new BoundSymbol with the new executor
     # TODO Maybe the _executor annotation should be modeled differently?
     _executor: Optional = None
 
     # TODO Document contexts
-    def __post_init__(self):
-        trace = get_tracectx()
+    @functools.cached_property
+    def _import_ctx(self):
+        # BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
+        #   to not need any imports to run properly
+        if self.sym is not None and self.sym.python_impl is not None:
+            import_ctx = {}
+        # NOTE If the call ctx was specified directly, then no import is needed to call the function
+        elif self._call_ctx is not None:
+            import_ctx = {}
+        else:
+            # BoundSymbols of Symbols without Python implementations are assumed to need
+            #   a module import to run properly
+            module_name = self.sym.module.__name__
+            import_ctx = {module_name: self.sym.module}
 
-        # Adds the needed import to call the function and initializes the import ctx
-        if self._import_ctx is None:
-            # BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
-            #   to not need any imports to run properly
-            if self.sym is not None and self.sym.python_impl is not None:
-                self._import_ctx = {}
-            # NOTE If the call ctx was specified directly, then no import is needed to call the function
-            elif self._call_ctx is not None:
-                self._import_ctx = {}
-            else:
-                # BoundSymbols of Symbols without Python implementations are assumed to need
-                #   a module import to run properly
-                module_name = self.sym.module.__name__
-                self._import_ctx = {module_name: self.sym.module}
+            # TODO Include the other modules on the path?
+            # Also includes the root module of this (potential) submodule
+            if "." in module_name:
+                root_name = module_name.split(".")[0]
+                import_ctx[root_name] = sys.modules[root_name]
+        return import_ctx
 
-                # TODO Include the other modules on the path?
-                # Also includes the root module of this (potential) submodule
-                if "." in module_name:
-                    root_name = module_name.split(".")[0]
-                    self._import_ctx[root_name] = sys.modules[root_name]
-
-        # Constructs the call ctx
-        self._call_ctx = self._call_ctx if self._call_ctx is not None else {}
-
+    @functools.cached_property
+    def _object_ctx(self):
         # Constructs the object ctx and printables
         # NOTE The object ctx may update the import ctx
-        self._object_ctx = {}
+        return {}
 
-        self._flat_args, arg_spec = tree_flatten(self.args)
-        self._flat_kwargs, kwarg_spec = tree_flatten(self.kwargs)
-        self._flat_outs, out_spect = tree_flatten(self.output)
+    @functools.cached_property
+    def _flat_args(self):
+        return tree_flatten(self.args)[0]
 
-        self._out_printables = codeutils.to_printable(
+    @functools.cached_property
+    def _flat_kwargs(self):
+        return tree_flatten(self.kwargs)[0]
+
+    @functools.cached_property
+    def _flat_outs(self):
+        return tree_flatten(self.output)[0]
+
+    @functools.cached_property
+    def _out_printables(self):
+        trace = get_tracectx()
+        return codeutils.to_printable(
             trace, self.output, import_ctx=self._import_ctx, object_ctx=self._object_ctx
         )
-        self._arg_printables = tuple(
+
+    @functools.cached_property
+    def _arg_printables(self):
+        trace = get_tracectx()
+        return tuple(
             codeutils.to_printable(trace, x, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
             for x in self.args
         )
-        self._kwarg_printables = codeutils.to_printable(
+
+    @functools.cached_property
+    def _kwarg_printables(self):
+        trace = get_tracectx()
+        return codeutils.to_printable(
             trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx
         )
 
@@ -319,11 +328,14 @@ class BoundSymbol(BoundSymbolInterface):
     def name_with_module(self):
         return self.sym.name_with_module()
 
+    def _get_call_ctx(self):
+        return self._call_ctx if self._call_ctx is not None else {}
+
     # TODO Consider if this should gather contexts recursively
     #   Currently this means that imports required for the subsymbols won't
     #   be printed, even though they're used in the comments
     def _gather_ctxs(self) -> Tuple[dict, dict, dict]:
-        return self._import_ctx, self._call_ctx, self._object_ctx
+        return self._import_ctx, self._get_call_ctx(), self._object_ctx
 
     def _get_lines(self, indent: int, commented: bool = False):
         lines = []
@@ -355,8 +367,7 @@ class BoundSymbol(BoundSymbolInterface):
         return lines
 
     # TODO Revisit this in the broader context of what's const
-    @property
-    @functools.lru_cache(maxsize=None)
+    @functools.cached_property
     def are_all_args_constant(self):
         """Returns True if all arguments are constant (i.e. not Variables)."""
         return not any(isinstance(arg, VariableInterface) for arg in self._flat_args)

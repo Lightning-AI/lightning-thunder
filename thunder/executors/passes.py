@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Callable, Sequence, Tuple
 from collections import deque
+from dataclasses import replace
 from itertools import chain
 
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
@@ -151,31 +152,38 @@ def del_last_used(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
 # TODO This could probably be done more efficiently
 def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False) -> Tuple[TraceCtx, List[TraceCtx]]:
     def _set_executor(bsym: BoundSymbol, ex):
-        bsym._executor = ex
+        if len(bsym.subsymbols) == 0:
+            return replace(bsym, _executor=ex)
 
-        for sbsym in bsym.subsymbols:
-            _set_executor(sbsym, ex)
+        bsym_subsymbols = list(bsym.subsymbols)
+        for i, sbsym in enumerate(bsym_subsymbols):
+            bsym_subsymbols[i] = _set_executor(sbsym, ex)
+        return replace(bsym, subsymbols=bsym_subsymbols)
 
     def _find_executor(bsym: BoundSymbol):
         # Attempts to find an executor for the symbol
         for ex in executors_list:
             if ex.can_execute(bsym, prims_only=prims_only):
-                _set_executor(bsym, ex)
-                return True
+                bsym = _set_executor(bsym, ex)
+                return bsym, True
 
         # If no executors can execute the symbol directly, find
         #   executors for the sub-symbols
         if len(bsym.subsymbols) == 0:
-            return False
+            return bsym, False
 
-        for sbsym in bsym.subsymbols:
-            if not _find_executor(sbsym):
+        bsym_subsymbols = list(bsym.subsymbols)
+        for i, sbsym in enumerate(bsym_subsymbols):
+            bsym_subsymbols[i], found = _find_executor(sbsym)
+            if not found:
                 return False
 
-        return True
+        return replace(bsym, subsymbols=bsym_subsymbols), True
 
-    for bsym in trace.bound_symbols:
-        utils.check(_find_executor(bsym), lambda: f"Could not find executor for bound symbol {bsym}")
+    for i, bsym in enumerate(trace.bound_symbols):
+        bsym, found = _find_executor(bsym)
+        utils.check(found, lambda: f"Could not find executor for bound symbol {bsym}")
+        trace.bound_symbols[i] = bsym
 
     return trace, []
 
@@ -191,7 +199,6 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> Tuple[TraceCtx, Lis
 
         if ex is not None and ex.is_supported(bsym, prims_only=prims_only):
             # Propagates executor to subsymbols
-            bsym._executor = ex
             flattened.append(bsym)
         else:
             utils.check(
