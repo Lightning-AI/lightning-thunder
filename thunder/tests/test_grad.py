@@ -500,16 +500,15 @@ def test_multiple_output_vjp(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_function(executor, device, _):
-    pytest.skip("Not implemented yet")
     from thunder.clang import cos, sin
     from thunder.executors.torch import thunder_backward
-    import thunder.langs.torch as ttorch
+    import thunder.torch as ltorch
 
-    @thunder_backward(executor=executor)
+    @thunder_backward(executors_list=executor.executors_list())
     def func(a, b, *, c):
         d = a + b + c
         e = d * a + d * b + d * c
-        return sin(e) + cos(e), e, ttorch.sin(e) + ttorch.cos(e)
+        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)

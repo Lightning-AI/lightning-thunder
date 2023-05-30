@@ -1031,13 +1031,19 @@ class ThunderFunction(torch.autograd.Function):
         return out
 
     @staticmethod
-    def forward(ctx, thunder_func, executor, *flat_args):
-        from thunder import make_trace, make_traced
+    def forward(ctx, thunder_func, executors_list, *flat_args):
+        from thunder import _make_trace as make_trace
+        from thunder import compile
 
-        trace = make_trace(thunder_func, executor=executor)(*flat_args)
+        trace = make_trace(thunder_func)(*flat_args)
         augmented_trace_fn = lambda *args: ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
-        out, saved_info = make_traced(augmented_trace_fn, executor=executor)(*flat_args)
-        ctx.executor = executor
+        augmented_trace_fn.__name__ = "augmented_trace_fn" # compile doesn't like lambdas
+        out, saved_info = compile(
+            augmented_trace_fn,
+            executors_list=executors_list,
+            disable_preprocessing=True,
+        )(*flat_args)
+        ctx.executors_list = executors_list
         ctx.trace = trace
 
         # We must save tensors using ctx.save_for_backward
@@ -1051,7 +1057,7 @@ class ThunderFunction(torch.autograd.Function):
     @staticmethod
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):
-        from thunder import make_traced
+        from thunder import compile
 
         # Restore saved_info from ctx.saved_non_tensors and ctx.saved_tensors
         saved_tensors = iter(ctx.saved_tensors)
@@ -1062,11 +1068,16 @@ class ThunderFunction(torch.autograd.Function):
         saved_info = tree_unflatten(flat_saved_info, ctx.env_spec)
 
         backward = lambda saved_info, *args: ThunderFunction.backward_pass_wrapper(ctx.trace, saved_info, args)
-        grads = make_traced(backward, executor=ctx.executor)(saved_info, *args)
+        backward.__name__ = "backward" # compile doesn't like lambdas
+        grads = compile(
+            backward,
+            executors_list=ctx.executors_list,
+            disable_preprocessing=True,
+        )(saved_info, *args)
         return (None, None, *grads)
 
 
-def thunder_backward(executor="nvfuser"):
+def thunder_backward(executors_list=(Executor.NVFUSER,)):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
 
     Args:
@@ -1095,12 +1106,12 @@ def thunder_backward(executor="nvfuser"):
     """
 
     def flat_wrapper(flat_func, *flat_args):
-        return ThunderFunction.apply(flat_func, executor, *flat_args)
+        return ThunderFunction.apply(flat_func, executors_list, *flat_args)
 
     def decorator(thunder_func):
         @wraps(thunder_func)
         def wrapper(*args, **kwargs):
-            flat_func, flat_args, _ = flatten_func(thunder_func, args, kwargs)
+            flat_func, flat_args, _ = utils.flatten_func(thunder_func, args, kwargs)
             return flat_wrapper(flat_func, *flat_args)
 
         return wrapper
