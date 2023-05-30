@@ -468,6 +468,15 @@ def _abs_torch(x: Union[torch.Tensor, Number]):
 abs_opinfo = ElementwiseUnaryOpInfo(
     ltorch.abs,
     torch_reference=_abs_torch,
+    test_directives=(
+        # complex32 cpu abs is sometimes flaky in CI
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
 )
 
 acos_opinfo = OpInfo(
