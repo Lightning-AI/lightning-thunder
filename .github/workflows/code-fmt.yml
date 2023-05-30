@@ -1,0 +1,39 @@
+name: Code updates
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 0"  # on Sundays
+
+jobs:
+
+  precommit-run:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout 🛎️
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        submodules: recursive
+
+    - name: Set up Python 🐍
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Determine cache hash
+      run: echo "PY=$(python -VV | sha256sum | cut -d' ' -f1)" >> $GITHUB_ENV
+
+    - name: Cache 💽 pre-commit
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pre-commit
+        key: pre-commit|${{ env.PY }}|${{ hashFiles('.pre-commit-config.yaml') }}
+
+    - name: Run pre-commit
+      uses: pre-commit/action@v3.0.0
+      # this action also provides an additional behaviour when used in private repositories
+      # when configured with a github token, the action will push back fixes to the pull request branch
+      with:
+        extra_args: --all-files
+        token: ${{ secrets.GITHUB_TOKEN }}

@@ -77,6 +77,7 @@ select = [
 #]
 ignore = [
     "E731",  # Do not assign a lambda expression, use a def
+    "E501",  # todo: Line too long (235 > 120 characters)
 ]
 # Exclude a variety of commonly ignored directories.
 exclude = [
