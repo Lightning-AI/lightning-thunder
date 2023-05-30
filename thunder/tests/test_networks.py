@@ -11,6 +11,7 @@ import thunder
 import thunder.torch as ttorch
 from thunder.tests.framework import instantiate
 import thunder.tests.nanogpt_model as nanogpt_model
+import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
 #
 # nanoGPT tests
@@ -103,4 +104,18 @@ def test_nanogpt_gelu(executor, device, dtype):
     tom = executor.make_callable(new_gelu, disable_preprocessing=False)
     thunder_result = tom(inp)
 
+    assert_close(torch_result, thunder_result)
+
+
+def test_hf_bart_self_attn():
+    model = hf_bart_self_attn.BartAttention(
+        1024,
+        16,
+        dropout=0.0,
+    )
+
+    inp = torch.randn(1, 10, 1024)
+    torch_result = model(inp, None)
+    tom = thunder.compile(model)
+    thunder_result = tom(inp, None)
     assert_close(torch_result, thunder_result)

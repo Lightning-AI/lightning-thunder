@@ -341,8 +341,13 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
 
     def fill_in_value(v: Value) -> None:
         parent = v.parent
-        if parent is None and isinstance(v, PhiValue) and len(v.values) == 1:
-            parent = v.values[0]
+        if parent is None and isinstance(v, PhiValue):
+            for vv in v.values:
+                fill_in_value(vv)
+            for vv in v.values[1:]:
+                if vv.value is not v.values[0].value:
+                    return
+            v.value = v.values[0].value
         if v.value is None and parent is not None:
             fill_in_value(parent)
         if v.name is None and isinstance(v, PhiValue) and parent is not None and parent.name is not None:
