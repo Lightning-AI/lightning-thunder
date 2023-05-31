@@ -182,6 +182,8 @@ class torchsymbol:
 
         if self.is_method:
             _torch_methods[sym.name] = sym
+            torch_method = getattr(torch.Tensor, fn.__name__)
+            _torch_to_thunder_function_map[torch_method] = sym
 
         if self.torchfn is not None:
             _torch_to_thunder_function_map[self.torchfn] = sym
@@ -415,7 +417,7 @@ def signbit(a):
 
 
 # TODO Move this to torch.nn.functional
-@torchsymbol(torch.nn.functional.silu, is_method=True)
+@torchsymbol(torch.nn.functional.silu)
 def silu(a):
     return clang.silu(a)
 
@@ -1288,9 +1290,7 @@ def var(
 
 
 # TODO: consider being more aggressive about kwarg-only
-# TODO: use of @langctx here is just for testing and could be removed
-#  (the method call to var below would need to be replaced with a function call)
-@torchsymbol(torch.var_mean, is_method=True)
+@torchsymbol(torch.var_mean)
 def var_mean(
     a: TensorProxy,
     dim=None,
