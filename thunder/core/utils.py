@@ -791,9 +791,7 @@ def get_name(trace: TraceCtx, x: Any) -> str:
     check(False, lambda: f"Could not find name for {x}")
 
 
-# TODO Unify this with the "Variable" concept in proxies.py
-# TODO Make this a proper subclass of dict?
-# A dictionary(-like) object suitable for working with proxies and tracked objects.
+# A dictionary-like class with proxies as keys
 # NOTE Why ProxyDict?
 #   NumberProxies are hashed on their value, like Python numbers,
 #   but this means that distinct NumberProxies whose values compare
@@ -807,37 +805,43 @@ class ProxyDict:
         self._trace = trace
         self._dict = {}
 
-    def __setitem__(self, key: Any, val: Any):
-        key_ = get_name(self._trace, key)
+    def __setitem__(self, key: Proxy, val: Any):
+        key_ = key.name
         self._dict[key_] = val
 
     def __getitem__(self, key: Proxy) -> Any:
-        key_ = get_name(self._trace, key)
+        check_type(key, Proxy)
+        key_ = key.name
         return self._dict[key_]
 
-    def __contains__(self, key: Any) -> bool:
-        try:
-            key_ = get_name(self._trace, key)
-            return key_ in self._dict
-        except Exception:
-            return False
+    def __contains__(self, key: Proxy) -> bool:
+        check_type(key, Proxy)
+        key_ = key.name
+        return key_ in self._dict
 
-    def append(self, key: Any, val: Any) -> None:
-        key_ = get_name(self._trace, key)
+    # Helper when values are lists
+    def append(self, key: Proxy, val: Any) -> None:
+        key_ = key.name
         vals = self._dict.get(key_, [])
+        check_type(vals, list)
         vals.append(val)
         self._dict[key_] = vals
 
-    def remove(self, key: Any, val: Any) -> None:
+    def remove(self, key: Proxy, val: Any) -> None:
         raise NotImplementedError
 
-    def get(self, key: Any, default: Any) -> Any:
+    def get(self, key: Proxy, default: Any) -> Any:
         try:
             return self.__getitem__(key)
         except Exception:
             pass
 
         return default
+
+    # Acquires the proxy by name
+    def get_by_name(self, name: str) -> Any:
+        check_type(name, str)
+        return self._dict[name]
 
     def __repr__(self) -> str:
         return str(self._dict)
