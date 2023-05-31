@@ -304,7 +304,7 @@ def resolve_dtypes(args):
 
         baseutils.check(
             arg in (dtype, exact, signedinteger, unsignedinteger, bool_, inexact, floating, complexfloating),
-            lambda: f"Excepted arguments to resolve_dtypes to be dtypes, sets of dtypes, or a dtype (sub)calss, but got {arg}",
+            lambda: f"Excepted arguments to resolve_dtypes to be dtypes, sets of dtypes, or a dtype (sub)class, but got {arg}",
             exception_type=AssertionError,
         )
 

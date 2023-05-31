@@ -887,9 +887,7 @@ def producers_and_consumers(trace: TraceCtx) -> Tuple[ProxyDict, ProxyDict]:
     return producers(trace), consumers(trace)
 
 
-def find_producer_symbols(
-    trace: TraceCtx, proxies: Sequence[Proxy], stop_proxies: Sequence[Proxy]
-) -> Tuple[Any, ...]:
+def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxies: Sequence[Proxy]) -> Tuple[Any, ...]:
     """Find the symbols that produce the given proxies.
 
     This function is useful for finding a set of symbols that can be used to

@@ -1037,7 +1037,7 @@ class ThunderFunction(torch.autograd.Function):
 
         trace = make_trace(thunder_func)(*flat_args)
         augmented_trace_fn = lambda *args: ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
-        augmented_trace_fn.__name__ = "augmented_trace_fn" # compile doesn't like lambdas
+        augmented_trace_fn.__name__ = "augmented_trace_fn"  # compile doesn't like lambdas
         out, saved_info = compile(
             augmented_trace_fn,
             executors_list=executors_list,
@@ -1068,7 +1068,7 @@ class ThunderFunction(torch.autograd.Function):
         saved_info = tree_unflatten(flat_saved_info, ctx.env_spec)
 
         backward = lambda saved_info, *args: ThunderFunction.backward_pass_wrapper(ctx.trace, saved_info, args)
-        backward.__name__ = "backward" # compile doesn't like lambdas
+        backward.__name__ = "backward"  # compile doesn't like lambdas
         grads = compile(
             backward,
             executors_list=ctx.executors_list,

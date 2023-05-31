@@ -292,9 +292,7 @@ class BoundSymbol(BoundSymbolInterface):
     @functools.cached_property
     def _out_printables(self):
         trace = get_tracectx()
-        return codeutils.to_printable(
-            trace, self.output, import_ctx=self._import_ctx, object_ctx=self._object_ctx
-        )
+        return codeutils.to_printable(trace, self.output, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
 
     @functools.cached_property
     def _arg_printables(self):
@@ -307,9 +305,7 @@ class BoundSymbol(BoundSymbolInterface):
     @functools.cached_property
     def _kwarg_printables(self):
         trace = get_tracectx()
-        return codeutils.to_printable(
-            trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx
-        )
+        return codeutils.to_printable(trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
 
     # BoundSymbols are hashable and comparable by identity
     # This is necessary for using them as keys in a dict or set members

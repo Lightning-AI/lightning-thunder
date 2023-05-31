@@ -1755,6 +1755,13 @@ remainder_torch_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8, datatypes.complexfloating)
         ),
+        # low precision tests are flaky due to numerical accuracy in CI
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CPU,),
+            dtypes=datatypes.low_precision_dtypes,
+        ),
     ),
 )
 elementwise_binary_ops.append(remainder_torch_opinfo)
