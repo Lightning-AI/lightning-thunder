@@ -86,7 +86,10 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
     if isinstance(constant, Number):
         val = pyval(constant)
         nvdtype = lcdtype_to_nvdtype(type(val))
-        return fd.define_constant(constant, nvdtype)
+        if nv_version >= LooseVersion("0.0.14"):
+            return fd.define_scalar(constant, nvdtype)
+        else:
+            return fd.define_constant(constant, nvdtype)
     if isinstance(constant, (dtypes.dtype, type)):
         return lcdtype_to_nvdtype(constant)
     if isinstance(constant, Device):
