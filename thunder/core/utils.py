@@ -887,6 +887,58 @@ def producers_and_consumers(trace: TraceCtx) -> Tuple[ProxyDict, ProxyDict]:
     return producers(trace), consumers(trace)
 
 
+def find_producer_symbols(
+    trace: TraceCtx, proxies: Sequence[Proxy], stop_proxies: Sequence[Proxy]
+) -> Tuple[Any, ...]:
+    """Find the symbols that produce the given proxies.
+
+    This function is useful for finding a set of symbols that can be used to
+    compute the given proxies.
+
+    Args:
+        trace: trace context
+        proxies: proxies to find producers for
+        stop_proxies: proxies to stop at
+
+    Returns:
+        tuple of symbols that produce the given proxies
+
+    Example:
+        >>> import torch
+        >>> import thunder
+        >>> from thunder.core import utils
+        >>> x = torch.randn(3, 4)
+        >>> y = torch.randn(3, 4)
+        >>> def f(x, y):
+        ...     return (x + y) * (x - y)
+        >>> _, traces = thunder.compile_with_info(f)(x, y)
+        >>> trace = traces[0]
+        >>> x_proxy = trace.args[0]
+        >>> y_proxy = trace.args[1]
+        >>> intermediate = trace.bound_symbols[-3].output
+        >>> utils.find_producer_symbols(trace, [intermediate], [x_proxy, y_proxy])
+        (__b = ltorch.sub(x, y)
+        # __b = prims.sub(x, y),)
+    """
+    trace_producers = producers(trace)
+    result = set()
+    queue = list(proxies)
+    while queue:
+        proxy = queue.pop()
+        p = trace_producers.get(proxy, None)
+        if p is not None:
+            result.add(p)
+            for arg in p._flat_args:
+                if arg.name not in map(lambda x: x.name, stop_proxies):
+                    queue.append(arg)
+    # Sequence output is not supported at the moment
+    check(
+        all(map(lambda x: not isinstance(x.output, Sequence), result)),
+        lambda: "Tuple output is not supported",
+    )
+    return tuple(sorted(result, key=lambda x: x.output.name))
+
+
 def get_symbols_to_last_used_variables(symbols, ignore):
     """Get a mapping from symbols to the last used variables.
 
