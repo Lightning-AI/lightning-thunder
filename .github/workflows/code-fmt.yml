@@ -19,7 +19,7 @@ jobs:
     - name: Set up Python 🐍
       uses: actions/setup-python@v4
       with:
-        python-version: "3.9"
+        python-version: "3.10"
 
     - name: Determine cache hash
       run: echo "PY=$(python -VV | sha256sum | cut -d' ' -f1)" >> $GITHUB_ENV
