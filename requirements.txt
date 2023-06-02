@@ -1,4 +1,4 @@
 torch >=2.0.0
-looseversion ==1.0.3
+looseversion ==1.2.0
 lightning-utilities >=0.7.0
 numpy >=1.23.0
