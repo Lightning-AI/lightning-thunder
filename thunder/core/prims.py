@@ -1472,7 +1472,7 @@ squeeze = make_prim(PrimIDs.SQUEEZE, "squeeze", meta=squeeze_meta)
 def take_meta(a, index, dim):
     utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
     utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
-    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
     utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or number TensorProxy!")
     utils.validate_idx(a.ndim, dim)
 
