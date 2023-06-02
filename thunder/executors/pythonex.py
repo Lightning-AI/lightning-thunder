@@ -6,12 +6,16 @@ import operator
 import builtins
 import cmath
 
-import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy
-from thunder.core.trace import TraceCtx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.dtypes as dtypes
+from thunder.executors.utils import Region, Executor
+
+
+def name() -> Executor:
+    return Executor.PYTHON
+
 
 # NOTE _ops_map is declared here and defined after the callables have been defined
 #   below
@@ -236,12 +240,10 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 
 # NOTE This is part of the executor interface
-def fuse(
-    trace: TraceCtx, producers, consumers, bound_symbols: Sequence[BoundSymbol], counter: int
-) -> list[BoundSymbol]:
-    bsyms: list[BoundSymbol] = []
+def fuse(region: Region) -> list[BoundSymbol]:
+    bsyms: List[BoundSymbol] = []
 
-    for bsym in bound_symbols:
+    for bsym in region.bound_symbols:
         # Symbols with Python implementations don't need to be translated
         if bsym.sym.python_impl is not None:
             bsyms.append(bsym)

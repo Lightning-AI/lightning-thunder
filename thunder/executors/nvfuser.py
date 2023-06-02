@@ -23,9 +23,10 @@ import thunder.executors.torch as torchex
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 
-# from thunder.core.transforms import register_augmented_forward, register_backward, restore_reduced_dims
 
-import thunder.executors.passes as passes
+def name() -> Executor:
+    return Executor.NVFUSER
+
 
 # Imports nvFuser
 # NOTE The nvFuser API changed after PyTorch 1.13
@@ -41,6 +42,7 @@ from nvfuser import compute_contiguity as nv_compute_contiguity
 
 nvTensor = nvfuser._C.Tensor
 nvNumber = nvfuser._C.Scalar
+
 
 #
 # Helper functions
@@ -1358,16 +1360,12 @@ def to_descriptors(args):
 
 # NOTE This is part of the executor interface
 # Translates a region to nvFuser, then creates a Python string invoking the call
-def fuse(
-    trace: TraceCtx, producers, consumers, bound_symbols: Sequence[BoundSymbol], counter: int
-) -> list[BoundSymbol]:
+def fuse(region: Region) -> List[BoundSymbol]:
     utils.check(
-        len(bound_symbols) > 0,
+        len(region.bound_symbols) > 0,
         lambda: f"Trying to fuse an empty sequence of bound symbols",
         exception_type=AssertionError,
     )
-
-    region = Region(trace, producers, consumers, bound_symbols)
 
     # NOTE Region Inputs and Outputs
     # The inputs and outputs to a region are represented as sets, which are sorted by name
@@ -1380,7 +1378,7 @@ def fuse(
 
     def keyfn(x):
         x = unvariableify(x)
-        return utils.get_name(trace, x)
+        return utils.get_name(region.trace, x)
 
     # keyfn = partial(utils.get_name, trace)
     sorted_inputs = list(unvariableify(x) for x in sorted(region.inputs, key=keyfn))
@@ -1414,7 +1412,7 @@ def fuse(
     @lru_cache(maxsize=2048)
     def get_fd(input_descriptors) -> FusionDefinition:
         # A closure over local trace and region
-        return create_fd(trace, region, input_descriptors)
+        return create_fd(region.trace, region, input_descriptors)
 
     # TODO Re-enable a static fusion option
     # NOTE This fusion definition uses only region's proxy inputs to construct the fusion
@@ -1462,9 +1460,9 @@ def fuse(
     # Initializes last_used
     fn_.last_used = None
 
-    fn_name = f"nvFusion{counter}"
-    ctx: dict[str, Any] = {fn_name: fn_}
-    sym = Symbol(name=fn_name, meta=None, python_printer=nvfusion_printer)
+    fn_name = f"nvFusion{region.counter}"
+    ctx: Dict[str, Any] = {fn_name: fn_}
+    sym = Symbol(name=fn_name, meta=None, python_printer=nvfusion_printer, is_fusion=True)
 
     # Adds a comment explaining what the fusion (conceptually) does
     bsym = BoundSymbol(

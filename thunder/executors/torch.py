@@ -1,7 +1,7 @@
 import operator
 from functools import wraps
 from numbers import Number
-from typing import Union, Callable, Any, Tuple
+from typing import Union, Callable, Any, Tuple, Sequence, Optional
 
 import torch
 
@@ -14,9 +14,14 @@ from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.utils as utils
 
-from thunder.executors.utils import *
+from thunder.executors.utils import Region, Executor
 
 import thunder.torch as ltorch
+
+
+def name() -> Executor:
+    return Executor.TORCH
+
 
 torch_ctx = {
     "torch": torch,
@@ -24,7 +29,7 @@ torch_ctx = {
 
 # NOTE _ops_map is declared here and defined after the callables have been defined
 #   below
-_ops_map: Dict[Any, tuple[Callable, Callable]] = {}
+_ops_map: dict[Any, Tuple[Callable, Callable]] = {}
 
 
 # Helper to signal that an operation is always executable
@@ -857,12 +862,10 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 
 # NOTE This is part of the executor interface
-def fuse(
-    trace: TraceCtx, producers, consumers, bound_symbols: Sequence[BoundSymbol], counter: int
-) -> List[BoundSymbol]:
+def fuse(region: Region) -> list[BoundSymbol]:
     bsyms: List[BoundSymbol] = []
 
-    for bsym in bound_symbols:
+    for bsym in region.bound_symbols:
         translator = get_translator(bsym)
         tbsym = translator(bsym, *bsym.args, **bsym.kwargs)
         bsyms.append(tbsym)

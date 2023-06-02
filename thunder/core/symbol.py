@@ -102,6 +102,7 @@ class Symbol:
     python_impl: Callable | None = None
     id: Any | None = None
     is_prim: bool = False
+    is_fusion: bool = False
     python_printer: Callable = default_python_printer
     _module: Any | None = None
 
@@ -370,5 +371,4 @@ class BoundSymbol(BoundSymbolInterface):
         return not any(isinstance(arg, VariableInterface) for arg in self._flat_args)
 
     def __repr__(self):
-        trace = get_tracectx()
         return "\n".join(self.python(indent=0, print_depth=-1))

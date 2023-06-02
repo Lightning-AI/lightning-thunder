@@ -8,6 +8,7 @@ from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
 
 import thunder
+import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
 import thunder.torch as ltorch
@@ -487,6 +488,222 @@ def test_int_to_float_type_promotion(executor, device, _):
 
 
 #
+# Tests related to optimizing passes
+#
+# TODO Maybe move to test_passes.py? test_nvfuser.py?
+
+
+# Tests that two separated nvFuser regions can be merged when they don't depend
+#   on an intermediate PyTorch region
+# TODO Create a testing operator that can only be executed by PyTorch so that
+#   these tests don't rely on matmul not being executable by nvFuser
+# TODO Explicitly use the nvFuserExecutor in these tests
+#   (by creating executor.make_callable_with_info?)
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - b
+
+        return c, d, e
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can be merged when they have no
+#   dependencies
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - b
+        f = b @ a
+        g = a * b
+
+        return c, d, e, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can be merged when the middle region
+#   depends on the first region
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - c
+        f = b @ a
+        g = a * b
+
+        return c, d, e, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can be merged when the middle
+#   and final regions depend on the first one
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - c
+        f = b @ a
+        g = c * b
+
+        return c, d, e, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can be merged when each region
+#   depends on the other
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - c
+        f = b @ a
+        g = c * e
+
+        return c, d, e, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can be merged when the first region
+#   is entirely consumed by later regions
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - c
+        f = b @ a
+        g = c * e
+
+        return d, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can be merged even if a PyTorch
+#   region has to be reordered BEFORE them
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = a @ b
+        e = a - c
+        f = b @ a
+        g = d * e
+
+        return d, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+
+
+# Tests that three separated nvFuser regions can only be partially merged
+#   if there's a PyTorch data dependency between them
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, b):
+        c = a + b
+        d = c @ b
+        e = a - c
+        f = b @ a
+        g = d * e
+
+        return d, f, g
+
+    cfoo = thunder.compile_with_info(foo)
+
+    result, traces = cfoo(a, b)
+
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 2
+
+
+#
 # Tests related to trace manipulation and transformation
 #
 # TODO Maybe move to test_transforms.py?
@@ -552,7 +769,7 @@ def test_argument_of_none(executor, device, dtype):
     producers = thunder.core.utils.producers(trace)
     consumers = thunder.core.utils.consumers(trace)
     region_bsyms = trace.bound_symbols[:3]
-    region = Region(trace, producers, consumers, region_bsyms)
+    region = Region(trace, producers, consumers, region_bsyms, executor=executor, counter=0)
     assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == ["x", "y"]
 
 

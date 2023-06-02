@@ -2,6 +2,7 @@ from typing import Any, Callable
 
 import thunder
 import thunder.core.script as script
+from thunder.core.trace import TraceCtx
 from thunder.torch import _torch_to_thunder_function_map
 
 import torch
@@ -128,3 +129,18 @@ def examine(fn: Callable, *args, **kwargs):
 
     # TODO Consider returning additional information
     print(f"The function appears to be working as expected")
+
+
+# Acquires all fusions in the given trace, returning them as a tuple of
+#   (name, fusion) pairs
+def get_fusions(trace: TraceCtx) -> list[tuple[str, Callable]]:
+    fusions = []
+
+    ctx = trace.python_ctx()
+
+    for bsym in trace.bound_symbols:
+        sym = bsym.sym
+        if sym.is_fusion:
+            fusions.append((sym.name, ctx[sym.name]))
+
+    return fusions

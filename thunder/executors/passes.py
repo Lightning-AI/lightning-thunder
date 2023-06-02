@@ -1,16 +1,15 @@
-from typing import Dict, Any, List, Callable, Tuple
-from collections.abc import Sequence
+from typing import Dict, Any, List, Callable, Sequence, Tuple, Optional
 from collections import deque
 from dataclasses import replace
 from itertools import chain
 
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
-import thunder.core.utils as utils
+import thunder.core.utils as cutils
 from thunder.core.utils import ProxyDict
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten
 import thunder.core.prims as prims
-from thunder.executors.utils import *
+from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor
 from thunder.core.proxies import Proxy
 
 
@@ -22,8 +21,8 @@ from thunder.core.proxies import Proxy
 #   element of the tuple is unused
 # TODO Consider tracking only proxy computations
 # TODO We could probably remove RETURN and the UNPACK prims from dont collect with better producer-consumer modeling
-def dce(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    producers: ProxyDict = utils.producers(trace)
+def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
+    producers: ProxyDict = cutils.producers(trace)
 
     # NOTE Not an ordered set because we're just checking for membership
     needed_nodes = set()
@@ -95,7 +94,7 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     del_trace = from_trace(trace)
     bsyms = deque()
 
-    outs = utils.sequencify(trace.output)
+    outs = cutils.sequencify(trace.output)
     flat_outs, _ = tree_flatten(outs)
 
     # TODO Replace with ProxySet (which does not exist at the time of this writing)
@@ -181,7 +180,7 @@ def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False
 
     for i, bsym in enumerate(trace.bound_symbols):
         bsym, found = _find_executor(bsym)
-        utils.check(found, lambda: f"Could not find executor for bound symbol {bsym}")
+        cutils.check(found, lambda: f"Could not find executor for bound symbol {bsym}")
         trace.bound_symbols[i] = bsym
 
     return trace, []
@@ -200,7 +199,7 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, lis
             # Propagates executor to subsymbols
             flattened.append(bsym)
         else:
-            utils.check(
+            cutils.check(
                 len(bsym.subsymbols) > 0,
                 lambda: f"Trying to flatten {bsym} for execution but it's not supported and has no subsymbols",
                 exception_type=AssertionError,
@@ -221,28 +220,98 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     fusedtrace = from_trace(trace)
     fused_bsyms = []
 
-    producers = utils.producers(trace)
-    consumers = utils.consumers(trace)
+    producers = cutils.producers(trace)
+    consumers = cutils.consumers(trace)
 
     batch = []
     batch_ex = trace.bound_symbols[0]._executor if len(trace.bound_symbols) > 0 else None
-    _executor_ctrs = {batch_ex: 0}
+
+    regions = []
+
+    # Constructs regions of contiguous operations that all share
+    #   an executor
     for bsym in trace.bound_symbols:
         if batch_ex != bsym._executor:
-            fused_bsyms.extend(batch_ex.fuse(trace, producers, consumers, batch, _executor_ctrs[batch_ex]))
-            _executor_ctrs[batch_ex] += 1
+            # Constructs a region representing what to fuse (currently unused)
+            region = Region(trace, producers, consumers, batch, batch_ex, -1)
+            regions.append(region)
+
+            # Updates region collection metadata
             batch = [bsym]
             batch_ex = bsym._executor
-
-            if batch_ex not in _executor_ctrs:
-                _executor_ctrs[batch_ex] = 0
         else:
             batch.append(bsym)
 
     # Processes last batch
     if len(batch) > 0:
-        fused_bsyms.extend(batch_ex.fuse(trace, producers, consumers, batch, _executor_ctrs[batch_ex]))
+        region = Region(trace, producers, consumers, batch, batch_ex, -1)
+        regions.append(region)
 
+    g = graph_from_regions(regions)
+
+    # TODO Maybe implement a more advanced selection criteria?
+    def _selector(last_added: Optional[Node], nodes: list[Node]) -> Node:
+        if last_added is None or last_added.region.executor.name() != Executor.NVFUSER:
+            # NOTE In this case the last added is None or the executor
+            #   was not nvFuser
+            # Attempts to find a non-nvFuser region to go next
+            for node in nodes:
+                if node.region.executor.name() != Executor.NVFUSER:
+                    return node
+
+            # Defaults to returning the first eligible node
+            return nodes[0]
+
+        # NOTE In this case the last added region's executor is nvFuser
+        # Attempts to find another nvFuser region
+        for node in nodes:
+            if node.region.executor.name() == Executor.NVFUSER:
+                return node
+
+        # Defaults to returning the first eligible node
+        return nodes[0]
+
+    toposorted = toposort(g, _selector)
+
+    # Merges adjacent regions that share an executor
+    node = toposorted.reset()
+    while node is not None:
+        # Tries to merge one or more regions into the current node
+        while True:
+            peek = toposorted.peek()
+
+            if peek is None:
+                break
+
+            ar = node.node.region
+            br = peek.node.region
+
+            if ar.executor is br.executor:
+                toposorted.merge(node, peek)
+            else:
+                break
+
+        node = toposorted.next()
+
+    # Translates the (possibly) merged linearization to a trace
+    # Counts how many fusions (per executor) have been constructed
+    #   (Used to name fusions like nvFusion0, nvFusion1, ...)
+    executor_ctrs = {}
+    node = toposorted.reset()
+    while node is not None:
+        region = node.node.region
+        ex = region.executor
+
+        if ex not in executor_ctrs:
+            executor_ctrs[ex] = 0
+        counter = executor_ctrs[ex]
+        executor_ctrs[ex] += 1
+
+        region.counter = counter
+        fused_bsyms.extend(ex.fuse(region))
+        node = toposorted.next()
+
+    # Constructs the new trace
     fusedtrace.bound_symbols = fused_bsyms
     fusedtrace.set_provenance(TraceProvenance("Fusion"))
 

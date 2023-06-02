@@ -230,7 +230,11 @@ def unpack_sequence_printer(
     result_str: str
     # Special-cases unpacking one item
     if not codeutils.is_collection(bsym.output):
-        out = trace.get_tracked_object(bsym.output)
+        if trace is not None:
+            out = trace.get_tracked_object(bsym.output)
+        else:
+            out = bsym.output
+
         return f"{codeutils.prettyprint(out)}, = {call_str}"
 
     lines = []
@@ -308,7 +312,10 @@ def unpack_dict_printer(
     trace = get_tracectx()
     for key in utils.sequencify(keyprintables):
         out = d[key]
-        out = trace.get_tracked_object(out)
+
+        if trace is not None:
+            out = trace.get_tracked_object(out)
+
         keystr = codeutils.prettyprint(key)
 
         s: str

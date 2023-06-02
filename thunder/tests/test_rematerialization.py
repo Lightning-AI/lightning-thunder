@@ -8,6 +8,7 @@ from thunder.core import utils
 from thunder.core.transforms import inline, value_and_grad
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.examine import get_fusions
 
 
 @inline
@@ -29,8 +30,12 @@ def test_find_producer_symbols(executor, device, _):
     t0 = torch.randn(2, 2, dtype=torch.float32, device="cuda")
     _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
     trace = traces[-1]
-    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 4
+    fusions = get_fusions(trace)
+
+    assert len(fusions) == 2
+
+    # TODO Update this to use the fusions returned from get_fusions
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.is_fusion, trace.bound_symbols))
 
     # Let's consider the last nvFuser region
     nvfuser_symbol = nvfuser_symbols[-1]

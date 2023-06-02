@@ -107,20 +107,24 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(name_generator: Callable, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
+def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
 
-    # NOTE Non-printable objects are serialized in the Python context
-    name = name_generator()
-    co = ContextObject(name, x)
-    return co, None
+    # NOTE Non-printable objects are serialized in the Python context, if a trace context is available
+    if tracectx is not None:
+        name = tracectx.make_const_name()
+        co = ContextObject(name, x)
+        return co, None
+    else:
+        # NOTE When printing outside a trace context we just print a placeholder description of the object
+        return f"[Non-serializable object of type {type(x)}]", None
 
 
 # TODO Improve type annotations
 def to_printable(
-    trace,
+    trace: Optional,
     x: Any,
     *,
     import_ctx: Optional[dict] = None,
@@ -128,6 +132,11 @@ def to_printable(
     allow_tracked_objects: bool = True,
 ) -> Any:
     if allow_tracked_objects:
+        check(
+            trace is not None,
+            lambda: f"When printing tracked objects expect to be printing in a trace ctx",
+            exception_type=AssertionError,
+        )
         to = trace.get_tracked_object(x)
         is_tracked = isinstance(to, TrackedObject)
 
@@ -151,7 +160,7 @@ def to_printable(
     #   it may require an import or additional context to print
 
     # TODO Instead of constant names, maybe "context names"?
-    printable, module_info = _to_printable(trace.make_const_name, x)
+    printable, module_info = _to_printable(trace, x)
 
     if module_info is not None and import_ctx is not None:
         module_name, module = module_info
