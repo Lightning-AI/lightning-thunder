@@ -1,5 +1,6 @@
 from numbers import Number
-from typing import Any, Callable, Sequence, Union, Optional, Tuple, Type
+from typing import Any, Callable, Union, Optional, Tuple, Type
+from collections.abc import Sequence
 from functools import partial, reduce
 import math
 import operator
@@ -1072,7 +1073,7 @@ def _reduction_dtypes(
     return computation_dtype, result_dtype
 
 
-def _reduction_dims(shape, dims: Optional[Sequence]) -> Tuple[int, ...]:
+def _reduction_dims(shape, dims: Optional[Sequence]) -> tuple[int, ...]:
     if isinstance(dims, int):
         dims = (dims,)
     if dims is None or len(dims) == 0:
@@ -1298,7 +1299,7 @@ def var_mean(
     keepdim: bool = False,
     *,
     correction: Optional[int] = None,
-) -> Tuple[TensorProxy, TensorProxy]:
+) -> tuple[TensorProxy, TensorProxy]:
     dim, unbiased = _dim_var_dispatch(dim, unbiased)
     v = var(a, dim, unbiased, keepdim, correction=correction)
     m = mean(a, dim, keepdim)
@@ -1807,10 +1808,10 @@ def get_eager_implementation_for(id: prims.PrimIDs) -> Optional[Callable]:
 
 @eager_for(pids.CONVERT_ELEMENT_TYPE)
 def _convert_element_type_eager(
-    a: Union[torch.Tensor, np.ndarray, Number], dtype: Union[dtypes.dtype, Type]
+    a: Union[torch.Tensor, np.ndarray, Number], dtype: Union[dtypes.dtype, type]
 ) -> Union[torch.Tensor, Number]:
     utils.check_type(a, (torch.Tensor, np.ndarray, Number))
-    utils.check_type(dtype, (dtypes.dtype, Type))
+    utils.check_type(dtype, (dtypes.dtype, type))
 
     if isinstance(a, Number):
         utils.check(

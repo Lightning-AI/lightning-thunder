@@ -4,7 +4,8 @@ from enum import auto, Enum
 from itertools import chain
 from functools import lru_cache, partial, wraps
 from numbers import Number
-from typing import Any, Callable, Dict, Sequence, Tuple, Union, Optional
+from typing import Any, Callable, Dict, Tuple, Union, Optional
+from collections.abc import Sequence
 
 from thunder import _make_trace as make_trace
 from thunder.core import dtypes, prims
@@ -227,7 +228,7 @@ def _identity_call_pytorch(*args, trace: Trace, **kwargs):
 # The inline transform is a special case of the identity transform.
 # It is used to inline the transformation of a function in the trace without
 # removing separate transform primitives from the trace.
-inline_transforms_map: Dict[prims.Symbol, Callable] = dict()
+inline_transforms_map: dict[prims.Symbol, Callable] = dict()
 
 
 def inline_symbol_mapper(bound_symbol):
@@ -394,7 +395,7 @@ def broadcast_in_dim_vmap(
         return BatchedValue(prims.broadcast_in_dim(a.value, new_shape, new_broadcast_dimensions), new_bdim)
 
 
-vmap_impls: Dict[prims.Symbol, Callable] = dict()
+vmap_impls: dict[prims.Symbol, Callable] = dict()
 
 
 def unwrap_one_level_of_subsymbols(trace):
@@ -693,7 +694,7 @@ def add_jvp(a: JVPDual, b: JVPDual):
     return JVPDual(x + y, xd + yd)
 
 
-def broadcast_in_dim_jvp(a: JVPDual, shape: Tuple[JVPDual, ...], broadcast_dimensions: Tuple[JVPDual, ...]) -> JVPDual:
+def broadcast_in_dim_jvp(a: JVPDual, shape: tuple[JVPDual, ...], broadcast_dimensions: tuple[JVPDual, ...]) -> JVPDual:
     x, xd = a
     # TODO: shape and broadcast_dimensions should be tuples of ints
     # but for now it's a tuple of JVPDuals
@@ -720,7 +721,7 @@ def unpack_trivial_jvp(x: JVPDual) -> JVPDual:
     return x
 
 
-jvp_impls: Dict[prims.Symbol, Callable] = dict()
+jvp_impls: dict[prims.Symbol, Callable] = dict()
 
 jvp_impls[prims.PrimIDs.SIN] = sin_jvp
 jvp_impls[prims.PrimIDs.MUL] = mul_jvp
@@ -911,7 +912,7 @@ class VJPDual:
     """
 
     primal: Union[Proxy, Number]
-    residuals: Tuple[Proxy, ...]
+    residuals: tuple[Proxy, ...]
 
     def __iter__(self):
         yield self.primal

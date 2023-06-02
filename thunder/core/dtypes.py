@@ -1,5 +1,5 @@
 from numbers import Number
-from typing import Iterable
+from collections.abc import Iterable
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
@@ -173,38 +173,36 @@ complex128_ = complexfloating("complex", "c", bytes=16, is_weak=True)
 
 _abstract_classes.update((dtype, exact, inexact))
 
-all_dtypes = set(
-    (
-        bool8,
-        bool8_,
-        uint8,
-        uint8_,
-        int8,
-        int8_,
-        int16,
-        int16_,
-        int32,
-        int32_,
-        int64,
-        int64_,
-        bfloat16,
-        bfloat16_,
-        float16,
-        float16_,
-        float32,
-        float32_,
-        float64,
-        float64_,
-        complex32,
-        complex32_,
-        complex64,
-        complex64_,
-        complex128,
-        complex128_,
-    )
-)
+all_dtypes = {
+    bool8,
+    bool8_,
+    uint8,
+    uint8_,
+    int8,
+    int8_,
+    int16,
+    int16_,
+    int32,
+    int32_,
+    int64,
+    int64_,
+    bfloat16,
+    bfloat16_,
+    float16,
+    float16_,
+    float32,
+    float32_,
+    float64,
+    float64_,
+    complex32,
+    complex32_,
+    complex64,
+    complex64_,
+    complex128,
+    complex128_,
+}
 
-all_numbertypes = set((bool, int, float, complex))
+all_numbertypes = {bool, int, float, complex}
 
 all_dtypes_and_numbertypes = all_dtypes | all_numbertypes
 
@@ -215,28 +213,28 @@ _numbertype_to_dtype_map = {
     float: float32_,
 }
 
-boolean_dtypes = set((bool8, bool8_, bool))
+boolean_dtypes = {bool8, bool8_, bool}
 
-integer_dtypes = set(d for d in all_dtypes if isinstance(d, exact)) | set((bool, int))
+integer_dtypes = {d for d in all_dtypes if isinstance(d, exact)} | {bool, int}
 
 # NOTE alias for the above
 exact_dtypes = integer_dtypes
 
-low_precision_dtypes = set(
+low_precision_dtypes = {
     d
     for d in all_dtypes
     if (isinstance(d, inexact) and d.bytes <= 2) or (isinstance(d, complexfloating) and d.bytes <= 4)
-)
+}
 
-float_dtypes = set(d for d in all_dtypes if isinstance(d, floating)) | set((float,))
+float_dtypes = {d for d in all_dtypes if isinstance(d, floating)} | {float}
 
-complex_dtypes = set(d for d in all_dtypes if isinstance(d, complexfloating)) | set((complex,))
+complex_dtypes = {d for d in all_dtypes if isinstance(d, complexfloating)} | {complex}
 
 inexact_dtypes = float_dtypes | complex_dtypes
 
-weak_dtypes = set(d for d in all_dtypes if d.is_weak) | all_numbertypes
+weak_dtypes = {d for d in all_dtypes if d.is_weak} | all_numbertypes
 
-strong_dtypes = set(d for d in all_dtypes if not d.is_weak)
+strong_dtypes = {d for d in all_dtypes if not d.is_weak}
 
 
 def is_weak_dtype(dtype):

@@ -76,7 +76,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
             potential_bl_outputs.add(o)
     for i in bl.block_inputs:
         potential_bl_outputs.add(i)
-    value_map: Dict[GraphObject, GraphObject] = {}
+    value_map: dict[GraphObject, GraphObject] = {}
 
     def get_or_create_phi(v: Value) -> Value:
         if v in value_map:
@@ -114,7 +114,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     return nbl
 
 
-def find_method_through_phi_parent(fn_value: Value) -> Tuple[Value, List[str]]:
+def find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
     # for inlining, we need to (reverse) traverse PhiValues and attribute
     # lookups to find the actual function we want to inline
     while isinstance(fn_value, PhiValue) and len(fn_value.values) == 1:
@@ -234,7 +234,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
 
     if n.i.opname == "CALL_METHOD":
         call_args += n.inputs[2:]
-        call_kwargs: Dict[str, Any] = {}
+        call_kwargs: dict[str, Any] = {}
     elif n.i.opname == "CALL_FUNCTION":
         call_args += n.inputs[1:]
         call_kwargs = {}
@@ -404,7 +404,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
     if len(bl2.jump_sources) != 1 or bl2.jump_sources[0] != bl1.nodes[-1]:
         raise RuntimeError("second block to be fused must only have first block as jump source")
 
-    replacements: Dict[Value, Value] = {}
+    replacements: dict[Value, Value] = {}
     for i in bl2.block_inputs:
         assert isinstance(i, PhiValue) and len(i.values) == 1, (i, getattr(i, "values", None))
         (iv,) = i.values
@@ -443,7 +443,7 @@ def merge_blocks_where_possible(gr: "Graph") -> None:
             i_bl += 1
 
 
-def find_blocks_of_for(gr: "Graph", for_block: "Block") -> List[Block]:
+def find_blocks_of_for(gr: "Graph", for_block: "Block") -> list[Block]:
     assert for_block.nodes[-1].i.opname == "FOR_ITER"
 
     blocks_of_for_loop = OrderedSet({for_block})
@@ -550,7 +550,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     for i in for_iter_block.block_inputs:
         exit_block.block_inputs.append(PhiValue([], [], exit_block))
 
-    unroll_blocks: List[Tuple[List[Block], Dict[GraphObject, GraphObject]]] = [(list(bls), {})]
+    unroll_blocks: list[tuple[list[Block], dict[GraphObject, GraphObject]]] = [(list(bls), {})]
     unroll_blocks += [clone_blocks(bls) for _ in range(1, for_loop_len)]
     for idx, (nbls, td) in enumerate(unroll_blocks):
         if idx > 0:
@@ -655,9 +655,9 @@ def unroll_for_loops_and_inline_modules(gr: "Graph") -> None:
                 thunder.core.script.passes.merge_blocks_where_possible(gr)
 
 
-def module_to_function(gr: "Graph") -> Tuple[List[str], List[torch.Tensor]]:
-    attr_dict: Dict[str, int] = {}
-    attr_list: List[str] = []
+def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
+    attr_dict: dict[str, int] = {}
+    attr_list: list[str] = []
     attr_values = []
     for bl in gr.blocks:
         for n in bl.nodes:

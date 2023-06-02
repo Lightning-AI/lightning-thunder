@@ -1,7 +1,8 @@
 import math
 from functools import reduce
 from numbers import Number
-from typing import Sequence, Union, List, Optional
+from typing import Union, List, Optional
+from collections.abc import Sequence
 
 import thunder.core.dtypes as dtypes
 
@@ -358,13 +359,13 @@ def unsqueeze(a, dims: Union[Sequence, Number]):
 
 
 @clang_ctx
-def cat(tensors: List[TensorProxy], dim: int):
+def cat(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
     return prims.cat(tensors, dim)
 
 
 @clang_ctx
-def stack(tensors: List[TensorProxy], dim: int):
+def stack(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in a new (the given) dimension."""
     shapes = tuple(t.shape for t in tensors)
     utils.check(shapes, lambda: f"list of tensors cannot be empty")

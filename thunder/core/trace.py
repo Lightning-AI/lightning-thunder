@@ -1,6 +1,7 @@
 from contextvars import ContextVar
 from contextlib import contextmanager
-from typing import Optional, Sequence, Hashable, Callable, Any, Tuple, Type, Dict, List, Union
+from typing import Optional, Callable, Any, Tuple, Type, Dict, List, Union
+from collections.abc import Sequence, Hashable
 import string
 from numbers import Number
 import inspect
@@ -53,7 +54,7 @@ class TraceCtx:
         self.const_name_ctr = 0
         self.names = set()
 
-        self._tracked_object_map: dict[Tuple[int, Type], TrackedObject] = {}
+        self._tracked_object_map: dict[tuple[int, type], TrackedObject] = {}
 
         self._provenance: Optional[TraceProvenance] = None
 
@@ -193,7 +194,7 @@ class TraceCtx:
     # TODO Review if proxies should be tracked, too
 
     # TODO Make the key a specific type
-    def _tracked_object_key(self, x: Any) -> Tuple[int, Type]:
+    def _tracked_object_key(self, x: Any) -> tuple[int, type]:
         return id(x), type(x)
 
     def is_tracked(self, x: Any) -> bool:
@@ -272,7 +273,7 @@ class TraceCtx:
     # The object context maps names to Python objects; these are required to represent Python objects which
     #   cannot be readily imported or serialized as (short, readable) strings -- for example an arbitrary
     #   user-defined object
-    def _gather_ctxs(self) -> Tuple[dict, dict, dict]:
+    def _gather_ctxs(self) -> tuple[dict, dict, dict]:
         import_ctx = {}
         call_ctx = {}
         object_ctx = {}
@@ -449,7 +450,7 @@ def reset_tracectx(token):
     _tracectx.reset(token)
 
 
-def maybe_start_trace(fn) -> Tuple[bool, Optional[Any], TraceCtx]:
+def maybe_start_trace(fn) -> tuple[bool, Optional[Any], TraceCtx]:
     trace = get_tracectx()
     if trace is None:
         trace = TraceCtx(fn)

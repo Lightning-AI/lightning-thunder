@@ -1,5 +1,6 @@
 from enum import Enum, auto
-from typing import List, Set, Dict, Callable, Optional, Sequence
+from typing import List, Set, Dict, Callable, Optional
+from collections.abc import Sequence
 
 import torch
 from looseversion import LooseVersion

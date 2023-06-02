@@ -4,7 +4,8 @@ from functools import reduce, wraps
 import itertools
 from itertools import zip_longest, chain
 from numbers import Number
-from typing import Callable, Dict, Generic, Iterable, List, Optional, Sequence, Type, TypeVar, Tuple
+from typing import Callable, Dict, Generic, List, Optional, Type, TypeVar, Tuple
+from collections.abc import Iterable, Sequence
 
 from looseversion import LooseVersion
 
@@ -725,7 +726,7 @@ def _safe_zip_gen(*args):
     null = object()
     for zipped in itertools.zip_longest(*args, fillvalue=null):
         if null in zipped:
-            raise ValueError("length mismatch: {}".format(list(map(len, args))))
+            raise ValueError(f"length mismatch: {list(map(len, args))}")
         yield zipped
 
 
@@ -762,7 +763,7 @@ def unzip2(pairs):
     return lst1, lst2
 
 
-def dict_join(*args: List[Dict[T, T1]]) -> Dict[T, T1]:
+def dict_join(*args: list[dict[T, T1]]) -> dict[T, T1]:
     """Combine multiple dictionaries.
 
     Args:
@@ -887,7 +888,7 @@ def consumers(trace: TraceCtx) -> ProxyDict:
 #   and the second mapping proxies to the bound symbols that consume them (if any)
 # NOTE This only returns things that are produced and consumed by "top level" bound symbols
 #   in the trace. It does not recurse into the bound symbols.
-def producers_and_consumers(trace: TraceCtx) -> Tuple[ProxyDict, ProxyDict]:
+def producers_and_consumers(trace: TraceCtx) -> tuple[ProxyDict, ProxyDict]:
     return producers(trace), consumers(trace)
 
 

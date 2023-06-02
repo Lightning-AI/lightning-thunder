@@ -11,23 +11,26 @@ automatic differentiation. It's a step-by-step guide that describes how to
 implement a new rule, test it, and submit for review.
 
 ## Table of contents
+
 1. [Introduction](#introduction)
-2. [Deriving the reverse mode rule (vector-Jacobian product)](#deriving-the-reverse-mode-rule-vector-jacobian-product)
-3. [Implementing the vector-Jacobian product](#implementing-the-vector-jacobian-product)
-4. [Testing the vector-Jacobian product](#testing-the-vector-jacobian-product)
-5. [Submitting a PR](#submitting-a-pr)
+1. [Deriving the reverse mode rule (vector-Jacobian product)](#deriving-the-reverse-mode-rule-vector-jacobian-product)
+1. [Implementing the vector-Jacobian product](#implementing-the-vector-jacobian-product)
+1. [Testing the vector-Jacobian product](#testing-the-vector-jacobian-product)
+1. [Submitting a PR](#submitting-a-pr)
 
 ## Introduction
+
 Some glossary first:
-* _primitive/primal_ is a function that can be differentiated. It can be a function
-    from the standard library, or a function from a library that has a custom
-    differentiation rule.
-* _reverse differentiation rule_ is a function that computes the
-    vector-Jacobian products of the result of the primitive with respect to the
-    arguments of the primitive.
-* _forward differentiation rule_ is a function that computes the
-    Jacobian-vector products of the arguments of the primitive with respect to
-    the result of the primitive.
+
+- _primitive/primal_ is a function that can be differentiated. It can be a function
+  from the standard library, or a function from a library that has a custom
+  differentiation rule.
+- _reverse differentiation rule_ is a function that computes the
+  vector-Jacobian products of the result of the primitive with respect to the
+  arguments of the primitive.
+- _forward differentiation rule_ is a function that computes the
+  Jacobian-vector products of the arguments of the primitive with respect to
+  the result of the primitive.
 
 For a function `f` with vector-valued output of size `n` and vector-valued input
 of size `m`, the Jacobian is a `n x m` matrix of partial derivatives of the
@@ -59,6 +62,7 @@ mode).
 Let's consider element-wise multiplication of two vectors as an example.
 
 ## Deriving the reverse mode rule (vector-Jacobian product)
+
 Since the primitive is element-wise multiplication, the Jacobian is a diagonal
 matrix and the Jacobian-vector product is simply the element-wise product of the
 diagonal elements with the vector.
@@ -74,8 +78,10 @@ f(x, y) = x * y
 Let's implement the manual computation of the vector-Jacobian product for
 element-wise multiplication of two vectors and compare it with the result of
 PyTorch's autograd.
+
 ```python
 import torch
+
 torch.manual_seed(0)
 
 x = torch.randn(3, requires_grad=True)
@@ -85,15 +91,18 @@ z = x * y
 v = torch.randn(3)
 z.backward(v)
 
+
 def manual_backward1(x, y, v):
     # Explicit construction of the Jacobian
     J_x = torch.diag(y)
     J_y = torch.diag(x)
     return v @ J_x, v @ J_y
 
+
 def manual_backward2(x, y, v):
     # Element-wise product of the vector with the diagonal elements
     return v * y, v * x
+
 
 print("x.grad, y.grad           ", (x.grad, y.grad))
 print("manual_backward1(x, y, v)", manual_backward1(x.detach(), y.detach(), v))
@@ -104,6 +113,7 @@ print("manual_backward2(x, y, v)", manual_backward2(x.detach(), y.detach(), v))
 ```
 
 ## Implementing the vector-Jacobian product
+
 Once we have the formula for the vector-Jacobian product, we can implement it in
 code. In Thunder, all reverse differentiation rules are registered in the
 `augmented_forward_impls` and `backward_impls` dictionaries in
@@ -116,7 +126,11 @@ product given the vector and the saved from the primal computation for the
 
 ```python
 # continue from the previous code block
-from thunder.core.transforms import augmented_forward_impls, register_augmented_forward, register_backward
+from thunder.core.transforms import (
+    augmented_forward_impls,
+    register_augmented_forward,
+    register_backward,
+)
 from thunder.core.prims import Ops
 
 # Remove the existing rule for element-wise multiplication
@@ -124,6 +138,7 @@ try:
     del augmented_forward_impls[Ops.MUL]
 except KeyError:
     pass
+
 
 # The decorator registers the augmented primal function for the given primitive
 @register_augmented_forward(Ops.MUL)
@@ -138,6 +153,7 @@ def augmented_mul(x, y):
     saved_info = (x, y)
     return x * y, saved_info
 
+
 @register_backward(Ops.MUL)
 def mul_backward(x, y, v):
     """Computes the vector-Jacobian product given the vector and the saved
@@ -146,12 +162,15 @@ def mul_backward(x, y, v):
     # Note that this function is exactly the same as the manual_backward2
     return v * y, v * x
 
+
 # Test the new rule
 def func(x, y):
     return x * y
 
+
 from thunder.core.transforms import vjp
 from thunder import make_traced
+
 # vjp_traced is a callable that computes the vector-Jacobian product given the
 # primal inputs and the vector to multiply with the Jacobian
 # it returns a tuple of the primal result and the result of the vector-Jacobian product
@@ -168,11 +187,17 @@ Since this particular rule is so simple, we can also implement it using the less
 readable two lines of code.
 
 ```python
-register_augmented_forward(Ops.MUL)(lambda x, y: (x * y, (x, y), ))
+register_augmented_forward(Ops.MUL)(
+    lambda x, y: (
+        x * y,
+        (x, y),
+    )
+)
 register_backward(Ops.MUL)(lambda x, y, v: (v * y, v * x))
 ```
 
 ## Testing the vector-Jacobian product
+
 Currently tests are implemented using OpInfos and the tests are located in
 `test_grad.py`. The tests are parametrized by the OpInfo and the executor
 ("torch" or "nvfuser"). The tests are run for all the OpInfos that have
@@ -195,9 +220,11 @@ python -m pytest tests/test_grad.py -k "_mul_" -vvv
 ```
 
 ## Submitting a PR
+
 Checklist for submitting a PR:
-* If OpInfo does not exist, add it to `opinfos.py`, covering representative
-    input cases.
-* Add the rule to `augmented_forward_impls` and `backward_impls` in
+
+- If OpInfo does not exist, add it to `opinfos.py`, covering representative
+  input cases.
+- Add the rule to `augmented_forward_impls` and `backward_impls` in
   `thunder/core/transforms.py`.
-* Run the test suite to verify that the OpInfo-generated tests pass.
+- Run the test suite to verify that the OpInfo-generated tests pass.

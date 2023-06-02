@@ -1,4 +1,5 @@
-from typing import Sequence, List, Callable, Any, Dict, Tuple, Union, Type
+from typing import List, Callable, Any, Dict, Tuple, Union, Type
+from collections.abc import Sequence
 from numbers import Number
 import math
 import operator
@@ -14,7 +15,7 @@ import thunder.core.dtypes as dtypes
 
 # NOTE _ops_map is declared here and defined after the callables have been defined
 #   below
-_ops_map: Dict[Any, Tuple[Callable, Callable]] = {}
+_ops_map: dict[Any, tuple[Callable, Callable]] = {}
 
 
 def _never_executable(*args, **kwargs) -> bool:
@@ -26,11 +27,11 @@ def _never_executable(*args, **kwargs) -> bool:
 #
 
 
-def _convert_element_type_check(a: Union[TensorProxy, Number], dtype: Union[Type, dtypes.dtype]) -> bool:
+def _convert_element_type_check(a: Union[TensorProxy, Number], dtype: Union[type, dtypes.dtype]) -> bool:
     return isinstance(a, Number) and dtype in (bool, int, float, complex)
 
 
-def convert_element_type(bsym: BoundSymbol, a: Union[TensorProxy, Number], dtype: Union[Type, dtypes.dtype]) -> Number:
+def convert_element_type(bsym: BoundSymbol, a: Union[TensorProxy, Number], dtype: Union[type, dtypes.dtype]) -> Number:
     name = {bool: "bool", int: "int", float: "float", complex: "complex"}[dtype]
 
     sym = Symbol(name=name, meta=None, _module=builtins)
@@ -237,8 +238,8 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 # NOTE This is part of the executor interface
 def fuse(
     trace: TraceCtx, producers, consumers, bound_symbols: Sequence[BoundSymbol], counter: int
-) -> List[BoundSymbol]:
-    bsyms: List[BoundSymbol] = []
+) -> list[BoundSymbol]:
+    bsyms: list[BoundSymbol] = []
 
     for bsym in bound_symbols:
         # Symbols with Python implementations don't need to be translated

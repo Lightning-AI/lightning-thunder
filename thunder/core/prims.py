@@ -4,7 +4,8 @@ from functools import partial, reduce
 import operator
 import builtins
 import math
-from typing import Union, Type, Any, List, Sequence, Dict, Tuple, Optional, Callable
+from typing import Union, Type, Any, List, Dict, Tuple, Optional, Callable
+from collections.abc import Sequence
 
 import torch
 import numpy as np
@@ -163,7 +164,7 @@ def unpack_trivial_meta(x: Any) -> Any:
 
 
 def unpack_trivial_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ) -> str:
     utils.check(
         len(arg_printables) == 1,
@@ -205,7 +206,7 @@ def unpack_sequence_meta(x, l):
 # TODO Review using multi-line unpacks more cleverly
 # TODO Possibly put the length in the code to show the requirement
 def unpack_sequence_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     utils.check(
         len(arg_printables) == 2,
@@ -266,7 +267,7 @@ def unpack_dict_impl(d: dict, keys):
 
 # TODO: instead of sorting the keys, should this return the key->value mapping? Or set it privately for printing?
 # TODO: is sorting sufficient?
-def unpack_dict_meta(d: dict, keys: Tuple) -> dict:
+def unpack_dict_meta(d: dict, keys: tuple) -> dict:
     utils.check_type(d, dict)
     utils.check_type(keys, tuple)
     utils.check(
@@ -286,7 +287,7 @@ def unpack_dict_meta(d: dict, keys: Tuple) -> dict:
 
 
 def unpack_dict_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     utils.check(
         len(arg_printables) == 2,
@@ -338,7 +339,7 @@ def _print_meta(x):
 
 
 def python_print_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     utils.check(
         out_printables is None or len(out_printables) == 0,
@@ -390,7 +391,7 @@ def _del_meta(*args):
 
 
 def del_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     utils.check(
         len(kwarg_printables) == 0,
@@ -422,7 +423,7 @@ def _return_meta(*args) -> Any:
 
 
 def return_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     utils.check(
         len(kwarg_printables) == 0,
@@ -461,10 +462,10 @@ python_return = make_prim(
 
 # TODO Require the datatype of the conversion be constant
 def _convert_element_type_meta(
-    a: Union[TensorProxy, Number], dtype: Union[Type, dtypes.dtype]
+    a: Union[TensorProxy, Number], dtype: Union[type, dtypes.dtype]
 ) -> Union[TensorProxy, NumberProxy, Number]:
     utils.check_type(a, (Number, TensorProxy))
-    utils.check_type(dtype, (Type, dtypes.dtype))
+    utils.check_type(dtype, (type, dtypes.dtype))
 
     # NOTE Python numbers are constants, and this will return another Python number when given one because
     #   The conversion is constant
@@ -1254,7 +1255,7 @@ broadcast_in_dim = make_prim(
 )
 
 
-def cat_meta(tensors: List[TensorProxy], dim: int):
+def cat_meta(tensors: list[TensorProxy], dim: int):
     utils.check(len(tensors) > 0, lambda: "Cat expects a non-empty list of tensors")
     utils.check_same_device(*tensors)
     utils.check_same_dtype(*tensors)
@@ -1296,7 +1297,7 @@ cat = make_prim(
 )
 
 
-def cat_meta(tensors: List[TensorProxy], dim: int):
+def cat_meta(tensors: list[TensorProxy], dim: int):
     utils.check(len(tensors) > 0, lambda: "Cat expects a non-empty list of tensors")
     utils.check_same_device(*tensors)
     utils.check_same_dtype(*tensors)
@@ -1338,7 +1339,7 @@ cat = make_prim(
 )
 
 
-def pad_meta(a: TensorProxy, padding_value: Number, padding_config: Sequence[Tuple[int, int, int]]) -> TensorProxy:
+def pad_meta(a: TensorProxy, padding_value: Number, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:
     # Validates types
     utils.check_type(a, TensorProxy)
     utils.check_type(padding_value, Number)

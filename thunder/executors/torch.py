@@ -24,7 +24,7 @@ torch_ctx = {
 
 # NOTE _ops_map is declared here and defined after the callables have been defined
 #   below
-_ops_map: Dict[Any, Tuple[Callable, Callable]] = {}
+_ops_map: Dict[Any, tuple[Callable, Callable]] = {}
 
 
 # Helper to signal that an operation is always executable

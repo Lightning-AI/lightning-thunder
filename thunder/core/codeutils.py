@@ -63,7 +63,7 @@ def indent_string(indent):
 #   readable names
 # TODO Refine imports so that devices can print as Devices("cuda:0") instead of
 #   having to qualify as devices.Devices
-def is_printable(x: Any) -> Tuple[bool, Optional[Tuple[str, Any]]]:
+def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
     if x is None:
         return True, None
     if isinstance(x, TrackedObject):
@@ -107,7 +107,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(name_generator: Callable, x: Any) -> Tuple[Any, Optional[Tuple[str, Any]]]:
+def _to_printable(name_generator: Callable, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info

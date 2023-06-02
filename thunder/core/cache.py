@@ -23,7 +23,7 @@ tab = "  "
 # NOTE: doesn't test if something is a sequence, because strings are
 #   sequences in Python but we don't want to treat them as collections
 def is_collection(x):
-    return isinstance(x, (List, Dict, Set))
+    return isinstance(x, (list, dict, set))
 
 
 # TODO: review what acceptable keys are better

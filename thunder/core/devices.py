@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from enum import Enum, auto
 from numbers import Number
-from typing import Sequence, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
+from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 from thunder.core.langctx import get_default_langctx
@@ -30,7 +31,7 @@ def devicetype_string(devicetype: DeviceType) -> str:
 
 
 class Device:
-    def __init__(self, string_or_devicetype: DeviceType, number: Optional[Number] = None):
+    def __init__(self, string_or_devicetype: DeviceType, number: Number | None = None):
         if number is not None:
             baseutils.check_type(number, Number)
             baseutils.check_type(string_or_devicetype, DeviceType)
@@ -68,7 +69,7 @@ def available_devices() -> Sequence[Device]:
 cpu = Device(DeviceType.CPU, 0)
 
 
-def _device_from_string_helper(devicestr: str) -> Tuple[DeviceType, int]:
+def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, int]:
     if devicestr == "cpu":
         return DeviceType.CPU, 0
 
@@ -94,7 +95,7 @@ def device_from_string(devicestr: str) -> Device:
 
 
 # TODO Maybe allow acquiring a tensor's device this way, too
-def to_device(device_or_string: Union[Device, str]) -> Device:
+def to_device(device_or_string: Device | str) -> Device:
     baseutils.check_type(device_or_string, (Device, str))
 
     if isinstance(device_or_string, str):

@@ -6,7 +6,8 @@ from __future__ import annotations
 import sys
 import collections.abc
 from numbers import Number
-from typing import Any, Sequence, Callable, Type, Union, Optional, Tuple, List
+from typing import Any, Callable, Type, Union, Optional, Tuple, List
+from collections.abc import Sequence
 from types import MappingProxyType
 import re
 
@@ -42,7 +43,7 @@ class Singleton(type):
 
     def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+            cls._instances[cls] = super().__call__(*args, **kwargs)
         return cls._instances[cls]
 
 
@@ -70,7 +71,7 @@ class TensorProxyInterface:
 class SymbolInterface:
     name: str
     is_prim: bool
-    id: Optional[Any]
+    id: Any | None
 
 
 class BoundSymbolInterface:
@@ -86,7 +87,7 @@ class BoundSymbolInterface:
 #
 
 
-def check(cond: bool, s: Callable[[], str], exception_type: Type[Exception] = RuntimeError) -> None:
+def check(cond: bool, s: Callable[[], str], exception_type: type[Exception] = RuntimeError) -> None:
     """Helper function for raising an error_type (default: RuntimeError) if a boolean condition fails.
 
     s is a callable producing a string to avoid string construction if the error check is passed.
@@ -95,7 +96,7 @@ def check(cond: bool, s: Callable[[], str], exception_type: Type[Exception] = Ru
         raise exception_type(s())
 
 
-def check_type(x: Any, types: Union[Type, Sequence[Type]]):
+def check_type(x: Any, types: type | Sequence[type]):
     check(
         isinstance(x, types),
         lambda: f"{x} had an unexpected type {type(x)}. Supported types are {types}",
@@ -147,10 +148,10 @@ def check_valid_length(length: int):
     check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
-def check_valid_shape(shape: Union[Tuple[int, ...], List[int]]):
+def check_valid_shape(shape: tuple[int, ...] | list[int]):
     """Validates that a sequence represents a valid shape."""
 
-    check_type(shape, (Tuple, List))
+    check_type(shape, (tuple, list))
 
     for l in shape:
         check_valid_length(l)
@@ -176,13 +177,13 @@ _type_to_str_map = {
 }
 
 
-def is_printable_type(typ: Type) -> bool:
+def is_printable_type(typ: type) -> bool:
     return typ in _type_to_str_map
 
 
 # TODO Document this function and ensure it's used consistently
 # TODO Add more basic Python types
-def print_type(typ: Type) -> str:
+def print_type(typ: type) -> str:
     # Special cases basic Python types
 
     if typ in _type_to_str_map:

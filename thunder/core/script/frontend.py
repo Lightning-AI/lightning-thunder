@@ -5,7 +5,8 @@ import dis
 import inspect
 import itertools
 import sys
-from typing import Callable, Deque, Dict, Iterable, Iterator, List, Literal, Optional, Set, Tuple, Union
+from typing import Callable, Deque, Dict, List, Literal, Optional, Set, Tuple, Union
+from collections.abc import Iterable, Iterator
 
 import networkx as nx
 
@@ -44,8 +45,8 @@ from thunder.core.utils import dict_join, OrderedSet
 # Aliases to make type annotations more expressive.
 IsJump = bool
 EdgeIndex = Union[Literal[0], Literal[-1]]
-_AbstractValues = Tuple["_AbstractValue", ...]
-NodeFlow = Tuple[dis.Instruction, _AbstractValues, _AbstractValues]
+_AbstractValues = tuple["_AbstractValue", ...]
+NodeFlow = tuple[dis.Instruction, _AbstractValues, _AbstractValues]
 
 
 DEBUG_ASSERTS = False
@@ -60,9 +61,9 @@ class Super:
     pass
 
 
-def parse_bytecode(method: Callable) -> Tuple["ProtoBlock", ...]:
+def parse_bytecode(method: Callable) -> tuple["ProtoBlock", ...]:
     """Given a method, disassemble it to a sequence of simple blocks."""
-    bytecode: Tuple[dis.Instruction, ...] = tuple(dis.get_instructions(method))
+    bytecode: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(method))
 
     # Determine the boundaries for the simple blocks.
     split_after_opcodes = jump_instructions | return_instructions
@@ -76,7 +77,7 @@ def parse_bytecode(method: Callable) -> Tuple["ProtoBlock", ...]:
     # Drop the group index, copy from the groupby iter, and unzip `enumerate`.
     groups = (zip(*tuple(i)) for _, i in groups)
 
-    blocks: Dict[int, Tuple[int, List[dis.Instruction]]] = {
+    blocks: dict[int, tuple[int, list[dis.Instruction]]] = {
         start: (len(block), list(block)) for (start, *_), block in groups
     }
 
@@ -92,7 +93,7 @@ def parse_bytecode(method: Callable) -> Tuple["ProtoBlock", ...]:
             block.append(make_jump_absolute(next_start))
 
     # Consolidate `return` statements.
-    def is_return(block: List[dis.Instruction]) -> bool:
+    def is_return(block: list[dis.Instruction]) -> bool:
         assert block and not any(i.opcode == dis.opmap["RETURN_VALUE"] for i in block[:-1])
         return block[-1].opcode == dis.opmap["RETURN_VALUE"]
 
@@ -144,21 +145,21 @@ class AbstractValue(_AbstractValue):
 
 
 class ProtoBlock:
-    raw_instructions: Tuple[dis.Instruction]
-    jump_targets: List[Tuple["ProtoBlock", IsJump]]
+    raw_instructions: tuple[dis.Instruction]
+    jump_targets: list[tuple["ProtoBlock", IsJump]]
 
     # (block_inputs, block_outputs)
-    stacks: Tuple[Deque[_AbstractValue], Deque[_AbstractValue]]
-    stack_conditional: Tuple[bool, _AbstractValues]
+    stacks: tuple[Deque[_AbstractValue], Deque[_AbstractValue]]
+    stack_conditional: tuple[bool, _AbstractValues]
 
     # Should not contain `VariableScope.CONST` or `VariableScope.STACK`
-    variables: Dict[ArgScope, _AbstractValues]
+    variables: dict[ArgScope, _AbstractValues]
 
     # Entries are indexed WRT block inputs. (This matters for `VariableScope.STACK`)
     uses: OrderedSet[ArgScope]
 
     # Instruction level value flow.
-    node_flow: Tuple[NodeFlow, ...]
+    node_flow: tuple[NodeFlow, ...]
 
     def __init__(self, instructions: Iterable[dis.Instruction]) -> None:
         self.raw_instructions = tuple(instructions)
@@ -169,8 +170,8 @@ class ProtoBlock:
         self.stack_conditional = (False, ())
         block_inputs: Deque[_AbstractValue] = collections.deque()
         stack: Deque[_AbstractValue] = collections.deque()
-        variables: Dict[ArgScope, List[_AbstractValue]] = {}
-        node_flow: List[NodeFlow] = []
+        variables: dict[ArgScope, list[_AbstractValue]] = {}
+        node_flow: list[NodeFlow] = []
 
         def peek_stack(pop: bool = False) -> _AbstractValue:
             # If the stack is empty we can infer that we are trying to reference
@@ -180,7 +181,7 @@ class ProtoBlock:
                 stack.append(inferred)
             return stack.pop() if pop else stack[-1]
 
-        def peek_variable(arg: Optional[int], scope: VariableScope) -> List[_AbstractValue]:
+        def peek_variable(arg: Optional[int], scope: VariableScope) -> list[_AbstractValue]:
             # The first value should always be an _AbstractRef; if a variable is
             # undefined a later pass will convert it to `ValueMissing`. However
             # local block parsing is too early to make that determination.
@@ -193,9 +194,9 @@ class ProtoBlock:
 
         assert self.raw_instructions
         for idx, instruction in enumerate(self.raw_instructions):
-            inputs: List[_AbstractValue] = []
-            outputs: List[_AbstractValue] = []
-            new_intermediates: List[IntermediateValue] = []
+            inputs: list[_AbstractValue] = []
+            outputs: list[_AbstractValue] = []
+            new_intermediates: list[IntermediateValue] = []
             pop, push, (extra_branch, extra) = stack_effects_comprehensive(instruction)
             assert (idx + 1) == len(self.raw_instructions) or not extra, "Branch instruction mid-block"
 
@@ -267,17 +268,17 @@ class ProtoBlock:
             parents.setdefault(block, [])
             for child, is_jump in block.jump_targets:
                 parents[child].append((block, is_jump))
-        (root,) = [block for block, block_parents in parents.items() if not block_parents]
+        (root,) = (block for block, block_parents in parents.items() if not block_parents)
         assert not root.stacks[0], "Root block should not have stack inputs"
         return root, {block: tuple(block_parents) for block, block_parents in parents.items()}
 
     @staticmethod
-    def stack_args(args: Iterable[ArgScope]) -> Tuple[int, ...]:
+    def stack_args(args: Iterable[ArgScope]) -> tuple[int, ...]:
         stack_args = tuple(sorted([i.arg for i in args if i.scope == VariableScope.STACK]))
         assert stack_args == tuple(range(-len(stack_args), 0)), stack_args
         return stack_args
 
-    def stack_effect(self, is_jump: bool) -> Tuple[int, int]:
+    def stack_effect(self, is_jump: bool) -> tuple[int, int]:
         return len(tuple(self.stack(0, None))), len(tuple(self.stack(-1, is_jump)))
 
     def stack(self, index: EdgeIndex, is_jump: Optional[bool]) -> Iterable[_AbstractValue]:
@@ -286,7 +287,7 @@ class ProtoBlock:
         if index == -1 and is_jump in (extra_branch, None):
             yield from extra_outputs
 
-    def state(self, index: EdgeIndex, is_jump: Optional[bool] = None) -> Iterator[Tuple[ArgScope, _AbstractValue]]:
+    def state(self, index: EdgeIndex, is_jump: Optional[bool] = None) -> Iterator[tuple[ArgScope, _AbstractValue]]:
         for k, values in sorted(self.variables.items(), key=lambda x: x[0]):
             v = values[index]
             assert k.scope not in (VariableScope.CONST, VariableScope.STACK) and isinstance(v, _AbstractValue), (k, v)
@@ -297,12 +298,12 @@ class ProtoBlock:
             assert isinstance(v, _AbstractValue), v
             yield ArgScope(idx - len(stack), VariableScope.STACK), v
 
-    def replace_values(self, replace_map: Dict[_AbstractValue, _AbstractValue]) -> None:
+    def replace_values(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> None:
         def make_replacement(values):
             cls = values.__class__
             assert cls in (list, tuple, collections.deque)
             assert all(isinstance(i, _AbstractValue) for i in values)
-            return cls((replace_map.get(i, i) for i in values))
+            return cls(replace_map.get(i, i) for i in values)
 
         self.stacks = tuple(make_replacement(stack) for stack in self.stacks)
         extra_branch, extra_outputs = self.stack_conditional
@@ -345,13 +346,13 @@ class ExternalRef(AbstractValue):
 class AbstractPhiValue(AbstractValue):
     """A value which aliases one of several inputs."""
 
-    constituents: Tuple[AbstractValue]
+    constituents: tuple[AbstractValue]
 
     def __post_init__(self) -> None:
         assert all(isinstance(i, AbstractValue) for i in self.constituents), self.constituents
 
 
-def _add_transitive(protoblocks: Tuple[ProtoBlock, ...]) -> None:
+def _add_transitive(protoblocks: tuple[ProtoBlock, ...]) -> None:
     """Extend abstract value flows to include those needed by downstream blocks.
 
     This pass effectively functionalizes the abstract value flow. Note that
@@ -402,7 +403,7 @@ def _add_transitive(protoblocks: Tuple[ProtoBlock, ...]) -> None:
                 block.variables.setdefault(key, (_AbstractRef(f"Transitive: {key}"),))
 
 
-def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
+def _condense_values(protoblocks: tuple[ProtoBlock, ...]) -> None:
     """Bind references to more tangible values.
 
     We make liberal use of `_AbstractRef`s when constructing value flow because
@@ -444,12 +445,12 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
     values = tuple(G.nodes)
     value_to_idx = {value: idx for idx, value in enumerate(values)}
     G = nx.DiGraph((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges)
-    index_alias_map: Dict[int, Set[int]] = {}
+    index_alias_map: dict[int, set[int]] = {}
 
     # We can decompose the graph into disjoint use-def chains and analyze them independently.
     for nodes in nx.connected_components(G.to_undirected()):
         subgraph = G.subgraph(nodes)
-        equality_edges: Set[Tuple[int, int]] = {(node, node) for node in subgraph.nodes}
+        equality_edges: set[tuple[int, int]] = {(node, node) for node in subgraph.nodes}
 
         while True:
             # Condense pairs in `equality_edges`. For example, given the
@@ -461,7 +462,7 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
             #
             # After grouping we're left with:
             #   {0, 1} → 2 → {3, 4} → 5
-            clusters: Dict[int, int] = {}
+            clusters: dict[int, int] = {}
             for cluster in nx.connected_components(nx.Graph(equality_edges)):
                 # The choice of "canonical" index is arbitrary as long as it is consistent.
                 clusters.update({i: min(cluster) for i in cluster})
@@ -499,13 +500,13 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
             ]
 
     # And finally update the block value flows to reflect the changes.
-    replace_map: Dict[_AbstractValue, _AbstractValue] = {}
+    replace_map: dict[_AbstractValue, _AbstractValue] = {}
     for idx, source_indices in index_alias_map.items():
         if source_indices == {idx}:
             assert not isinstance(v := values[idx], _AbstractRef), f"Unhandled reference: {idx} {v}"
         else:
             new_values = tuple(values[idy] for idy in sorted(source_indices))
-            constants: Tuple[ExternalRef] = tuple(
+            constants: tuple[ExternalRef] = tuple(
                 v for v in new_values if isinstance(v, ExternalRef) and v.scope == VariableScope.CONST
             )
             if len(constants) == len(new_values) and len({i.arg for i in constants}) == 1:
@@ -522,7 +523,7 @@ def _condense_values(protoblocks: Tuple[ProtoBlock, ...]) -> None:
 
 
 def _bind_to_graph(
-    protoblocks: Tuple[ProtoBlock, ...],
+    protoblocks: tuple[ProtoBlock, ...],
     func: Callable,
     method_self: Optional[object] = None,
     mro_klass: Optional[type] = None,

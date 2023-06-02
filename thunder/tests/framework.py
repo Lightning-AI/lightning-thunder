@@ -3,7 +3,8 @@ import os
 import sys
 from functools import wraps
 from itertools import product
-from typing import Sequence, Callable, List
+from typing import Callable, List
+from collections.abc import Sequence
 
 import pytest
 import torch
@@ -46,7 +47,7 @@ class Executor:
         return devicetype in self.supported_devicetypes
 
     # NOTE This method should be overridden by subclasses
-    def executors_list(self) -> List[executors.Executor]:
+    def executors_list(self) -> list[executors.Executor]:
         return []
 
     def make_callable(self, fn, **kwargs):
@@ -74,7 +75,7 @@ class nvFuser(Executor):
         datatypes.complex128,
     )
 
-    def executors_list(self) -> List[Executor]:
+    def executors_list(self) -> list[Executor]:
         return [executors.NVFUSER, executors.TORCH, executors.PYTHON]
 
     def version(self):
@@ -87,7 +88,7 @@ class TorchEx(Executor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
-    def executors_list(self) -> List[Executor]:
+    def executors_list(self) -> list[Executor]:
         return [executors.TORCH, executors.PYTHON]
 
     def version(self):

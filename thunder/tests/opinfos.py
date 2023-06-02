@@ -4,7 +4,8 @@ import operator
 from collections import namedtuple
 from functools import partial, wraps
 from numbers import Number
-from typing import Sequence, Union, Callable, Optional
+from typing import Union, Callable, Optional
+from collections.abc import Sequence
 
 import numpy as np
 import pytest

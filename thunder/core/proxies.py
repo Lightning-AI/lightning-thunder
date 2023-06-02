@@ -1,5 +1,6 @@
 from numbers import Number
-from typing import Type, Optional, Any, Sequence, Tuple, List, Union
+from typing import Type, Optional, Any, Tuple, List, Union
+from collections.abc import Sequence
 from functools import reduce, partial
 import operator
 import builtins
@@ -461,7 +462,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         name=None,
         *,
         like=None,
-        shape: Optional[Union[Tuple[int, ...], List[int]]] = None,
+        shape: Optional[Union[tuple[int, ...], list[int]]] = None,
         device=None,
         dtype=None,
     ):
@@ -766,7 +767,7 @@ _cls_to_number_proxy_map = {
 }
 
 
-def numberproxy(cls: Type, value: Optional[Number]) -> NumberProxy:
+def numberproxy(cls: type, value: Optional[Number]) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
     return pcls(value=value)
 

@@ -1,6 +1,7 @@
 from functools import wraps, partial
 from numbers import Number
-from typing import Sequence, Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from collections.abc import Sequence
 from collections import deque
 from enum import auto, Enum
 import os
@@ -126,7 +127,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
 
         return tracectx.track(x, name=name)
 
-    def _unpack(x: Any, *, name: str = None) -> List:
+    def _unpack(x: Any, *, name: str = None) -> list:
         unpacked = None
         colls = []
 
@@ -145,7 +146,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
             if isinstance(pot_collection, Sequence):
                 unpacked = prims.unpack_sequence(pot_collection, len(pot_collection))
                 items = unpacked
-            elif isinstance(pot_collection, Dict):
+            elif isinstance(pot_collection, dict):
                 # NOTE The use of tuple on the keys of the dictionary is important
                 #   keys() returns a dict_keys, which is a dictionary view object
                 #   (see https://docs.python.org/3/library/stdtypes.html#dictionary-view-objects)
@@ -210,7 +211,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
             items: Sequence
             if isinstance(x, Sequence):
                 items = prims.unpack_sequence(x, len(x))
-            elif isinstance(x, Dict):
+            elif isinstance(x, dict):
                 # NOTE See note above about why it's important to tuple the dict_keys object
                 d = prims.unpack_dict(x, tuple(x.keys()))
                 items = d.values()
@@ -319,7 +320,7 @@ def compile_with_info(
     fn: Callable,
     *,
     langctx: Optional[Any] = None,
-    executors_list: Optional[List[executors.Executor]] = None,
+    executors_list: Optional[list[executors.Executor]] = None,
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
     use_static_caching: bool = False,
@@ -336,7 +337,7 @@ def compile_with_info(
         pfn._cache = {}
 
     @wraps(fn)
-    def _fn(*args, **kwargs) -> Tuple[Any, List[TraceCtx]]:
+    def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         # TODO Return the previous traces when caching
         if use_last_executed and pfn._last_executed is not None:
             if pfn._last_executed is not None:
@@ -372,7 +373,7 @@ def compile_with_info(
             # TODO review this with nested traces
             trace.set_output(result)
 
-            traces: List[TraceCtx] = [trace]
+            traces: list[TraceCtx] = [trace]
 
             if started:
                 # TODO Add the capability to recover from pass failures

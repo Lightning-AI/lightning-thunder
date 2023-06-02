@@ -1,4 +1,5 @@
-from typing import Dict, Any, List, Callable, Sequence, Tuple
+from typing import Dict, Any, List, Callable, Tuple
+from collections.abc import Sequence
 from collections import deque
 from dataclasses import replace
 from itertools import chain
@@ -21,7 +22,7 @@ from thunder.core.proxies import Proxy
 #   element of the tuple is unused
 # TODO Consider tracking only proxy computations
 # TODO We could probably remove RETURN and the UNPACK prims from dont collect with better producer-consumer modeling
-def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
+def dce(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     producers: ProxyDict = utils.producers(trace)
 
     # NOTE Not an ordered set because we're just checking for membership
@@ -33,16 +34,14 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     flat_outputs, _ = tree_flatten(trace.output)
     q.extend(flat_outputs)
 
-    dont_collect = set(
-        (
-            prims.PrimIDs.RETURN,
-            prims.PrimIDs.COMMENT,
-            prims.PrimIDs.UNPACK_DICT,
-            prims.PrimIDs.UNPACK_SEQUENCE,
-            prims.PrimIDs.UNPACK_TRIVIAL,
-            prims.PrimIDs.PRINT,
-        )
-    )
+    dont_collect = {
+        prims.PrimIDs.RETURN,
+        prims.PrimIDs.COMMENT,
+        prims.PrimIDs.UNPACK_DICT,
+        prims.PrimIDs.UNPACK_SEQUENCE,
+        prims.PrimIDs.UNPACK_TRIVIAL,
+        prims.PrimIDs.PRINT,
+    }
 
     while True:
         try:
@@ -84,7 +83,7 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
 
 
 # TODO Review deleting non-proxies
-def del_last_used(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
+def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     """Mark last used intermediates to be deleted. This is necessary to avoid memory leaks.
 
     Args:
@@ -150,7 +149,7 @@ def del_last_used(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
 #   An error is thrown if none of the given executors can execute the operation
 # TODO Improve this to explain what couldn't be executed
 # TODO This could probably be done more efficiently
-def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False) -> Tuple[TraceCtx, List[TraceCtx]]:
+def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
     def _set_executor(bsym: BoundSymbol, ex):
         if len(bsym.subsymbols) == 0:
             return replace(bsym, _executor=ex)
@@ -188,9 +187,9 @@ def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False
     return trace, []
 
 
-def flatten(trace: TraceCtx, *, prims_only: bool = False) -> Tuple[TraceCtx, List[TraceCtx]]:
+def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
     flattenedtrace = from_trace(trace)
-    flattened: List[BoundSymbol] = []
+    flattened: list[BoundSymbol] = []
 
     # TODO Maybe make this nonrecursive
     def _flatten(bsym: BoundSymbol):
@@ -218,7 +217,7 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> Tuple[TraceCtx, Lis
     return flattenedtrace, [flattenedtrace]
 
 
-def fuse(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
+def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     fusedtrace = from_trace(trace)
     fused_bsyms = []
 

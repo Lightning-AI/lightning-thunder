@@ -107,10 +107,10 @@ class Benchmark:
 
     @classmethod
     @property
-    def args(cls) -> Tuple[BenchmarkArg, ...]:
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         raise NotImplementedError
 
-    def make_batch(self) -> Tuple[List, Dict]:  # args, kwargs
+    def make_batch(self) -> tuple[list, dict]:  # args, kwargs
         raise NotImplementedError
 
 
@@ -727,7 +727,7 @@ class StackedAddBenchmark(Benchmark):
             fn=_stacked_add_benchmark,
         )
 
-    def make_batch(self) -> Tuple[List, Dict]:
+    def make_batch(self) -> tuple[list, dict]:
         a = make_tensor(self.shape, device=self.device, dtype=self.tdtype)
         b = make_tensor(self.shape, device=self.device, dtype=self.tdtype)
         return (a, b), {"depth": self.depth}
@@ -821,10 +821,10 @@ class GPTBenchMarkBase(Benchmark):
     def args(cls):
         return cls._universal_args + cls.extra_args
 
-    def make_batch(self) -> Tuple[List, Dict]:
+    def make_batch(self) -> tuple[list, dict]:
         return self._make_batch(**self.ctor_kwargs)
 
-    def _make_batch(self) -> Tuple[List, Dict]:
+    def _make_batch(self) -> tuple[list, dict]:
         raise NotImplementedError
 
 
@@ -849,7 +849,7 @@ class NanoGPTBenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, inshape, device, indices_dtype, **_) -> Tuple[List, Dict]:
+    def _make_batch(self, inshape, device, indices_dtype, **_) -> tuple[list, dict]:
         x = make_tensor(inshape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
         return (x, None), {}
 
@@ -870,7 +870,7 @@ class NanoGPTBlockBenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> Tuple[List, Dict]:
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
         return (
             make_tensor(
                 batch_dims
@@ -900,7 +900,7 @@ class NanoGPTCSABenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> Tuple[List, Dict]:
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
         return (
             make_tensor(
                 batch_dims
@@ -930,7 +930,7 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> Tuple[List, Dict]:
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
         x = make_tensor(batch_dims + (gpt_config.n_embd,), device=device, dtype=tdtype)
         return (x,), {}
 
@@ -953,7 +953,7 @@ class NanoGPTGeLUBenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, shape, device, tdtype, **_) -> Tuple[List, Dict]:
+    def _make_batch(self, shape, device, tdtype, **_) -> tuple[list, dict]:
         return (make_tensor(shape, device=device, dtype=tdtype),), {}
 
 
@@ -1021,7 +1021,7 @@ class HuggingFaceSelfAttnBenchmark(Benchmark):
             ),
         )
 
-    def make_batch(self) -> Tuple[List, Dict]:
+    def make_batch(self) -> tuple[list, dict]:
         return (
             make_tensor(
                 (
@@ -1096,7 +1096,7 @@ class LLaMABlockBenchmark(Benchmark):
             ),
         )
 
-    def make_batch(self) -> Tuple[List, Dict]:
+    def make_batch(self) -> tuple[list, dict]:
         return (
             make_tensor(
                 (

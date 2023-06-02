@@ -4,7 +4,8 @@
 import collections
 import copy
 import inspect
-from typing import Any, Dict, List, Optional, Iterable, Iterator, Tuple, Type, TYPE_CHECKING, Sequence, Set, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TYPE_CHECKING, Set, Union
+from collections.abc import Iterable, Iterator, Sequence
 
 from thunder.core.script.python_ir_data import stack_effect_detail
 from thunder.core.utils import OrderedSet
@@ -38,7 +39,7 @@ class NULL:
 
 
 class MROAwareObjectRef:  # or as they call it super
-    def __init__(self, obj: Any, start_klass: Optional[Type] = None):
+    def __init__(self, obj: Any, start_klass: Optional[type] = None):
         self.obj = obj
         self.start_klass = start_klass
 
@@ -80,7 +81,7 @@ class Value:
         *,
         node: Optional["Node"] = None,
         nr: Optional[int] = None,
-        typ: Optional[Type] = None,
+        typ: Optional[type] = None,
         value: Any = None,
         name: Optional[str] = None,
         parent: Optional["Value"] = None,
@@ -97,9 +98,9 @@ class Value:
         self.is_global = is_global
         self.is_const = is_const
         self.is_function_arg = is_function_arg
-        self.phi_values: List["PhiValue"] = []
+        self.phi_values: list["PhiValue"] = []
 
-    def clone(self, translation_dict: Optional[Dict[GraphObject, GraphObject]] = None) -> "Value":
+    def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "Value":
         # clones a value, including (recursively) parent value
         # uses translation_dict to look up parent value
         # updates translation_dict
@@ -156,7 +157,7 @@ class PhiValue(Value):
     # node?
     def __init__(
         self,
-        values: List[Value],
+        values: list[Value],
         jump_sources: Sequence[Optional["Node"]],
         block: "Block",
         _unfinished_clone: bool = False,
@@ -166,7 +167,7 @@ class PhiValue(Value):
         self.block: Block = block
         self._set_values_jump_sourcess(values, jump_sources)
 
-    def _set_values_jump_sourcess(self, values: List[Value], jump_sources: Sequence[Optional["Node"]]) -> None:
+    def _set_values_jump_sourcess(self, values: list[Value], jump_sources: Sequence[Optional["Node"]]) -> None:
         assert len(values) == len(jump_sources)
         self.values = list(values)
         if not self._unfinished_clone:
@@ -175,7 +176,7 @@ class PhiValue(Value):
                     v.phi_values.append(self)
         self.jump_sources = list(jump_sources)
 
-    def clone(self, translation_dict: Optional[Dict[GraphObject, GraphObject]] = None) -> "PhiValue":
+    def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "PhiValue":
         # due to loops in the Graph, this is complicated:
         # we do not translate values or jump_sources here, but do
         # translate blocks.
@@ -189,7 +190,7 @@ class PhiValue(Value):
         translation_dict[self] = v
         return v
 
-    def post_process_clone(self, *, translation_dict: Dict[GraphObject, GraphObject]) -> None:
+    def post_process_clone(self, *, translation_dict: dict[GraphObject, GraphObject]) -> None:
         assert self._unfinished_clone
         self._unfinished_clone = False
         self._set_values_jump_sourcess(
@@ -226,18 +227,18 @@ class Node:
         self,
         *,
         i: "dis.Instruction",
-        inputs: Optional[List[Value]] = None,
-        outputs: Optional[List[Value]] = None,
+        inputs: Optional[list[Value]] = None,
+        outputs: Optional[list[Value]] = None,
         line_no: Optional[int] = None,
     ):
         self.i = i
-        self.inputs: List[Value] = inputs if inputs is not None else []
-        self.outputs: List[Value] = outputs if outputs is not None else []
-        self.jump_targets: List[Tuple[Tuple[int, int], Block]] = []
+        self.inputs: list[Value] = inputs if inputs is not None else []
+        self.outputs: list[Value] = outputs if outputs is not None else []
+        self.jump_targets: list[tuple[tuple[int, int], Block]] = []
         self.line_no = line_no
         self.block: Optional[Block] = None
 
-    def clone(self, translation_dict: Optional[Dict[GraphObject, GraphObject]] = None) -> "Node":
+    def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "Node":
         """.block of the clone will be None if block is not in translation dict."""
         if translation_dict is None:
             translation_dict = {}
@@ -290,9 +291,9 @@ class Node:
 # The jump targets are other blocks and are atributes of the jump instruction.
 class Block:
     def __init__(self):
-        self.jump_sources: List[Optional[Node]] = []
-        self.nodes: List[Node] = []
-        self.block_inputs: List[Value] = []
+        self.jump_sources: list[Optional[Node]] = []
+        self.nodes: list[Node] = []
+        self.block_inputs: list[Value] = []
         self.block_outputs = OrderedSet([])
 
     def __str__(self) -> str:
@@ -323,7 +324,7 @@ class Block:
 # The first block (.blocks[0]) is the entry point. Other blocks are connected
 # through jump instructions.
 class Graph:
-    def __init__(self, blocks: Optional[List[Block]] = None):
+    def __init__(self, blocks: Optional[list[Block]] = None):
         self.blocks = [] if blocks is None else blocks[:]
 
     def __str__(self) -> str:
@@ -349,7 +350,7 @@ class Graph:
             for i in bl.block_inputs:
                 i.block = bl
 
-    def clone(self) -> Tuple["Graph", Dict[GraphObject, GraphObject]]:
+    def clone(self) -> tuple["Graph", dict[GraphObject, GraphObject]]:
         bls2, translation_dict = clone_blocks(self.blocks)
         g2 = Graph(blocks=bls2)
         g2.local_variables_at_start = [v.clone() for v in self.local_variables_at_start]
@@ -419,10 +420,8 @@ class Graph:
                 )
             )
             graph_lines.extend(
-                (
-                    f"  {node.i.opname:<20} {[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}"
-                    for node in block.nodes
-                )
+                f"  {node.i.opname:<20} {[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}"
+                for node in block.nodes
             )
             graph_lines.append("")
 
@@ -436,7 +435,7 @@ class Graph:
         return tuple(graph_lines), tuple(legend_lines)
 
 
-def unify_values(values: List[Value], jump_sources: List[Node], bl: Block, all_predecessors_done: bool = True) -> Value:
+def unify_values(values: list[Value], jump_sources: list[Node], bl: Block, all_predecessors_done: bool = True) -> Value:
     if all_predecessors_done:
         if len(values) == 1:
             return values[0]
@@ -462,7 +461,7 @@ def insert_after(new_n: Node, n: Node) -> None:
 
 
 def replace_values(
-    gr_or_bl: Union[Graph, Block], value_map: Dict[Value, Value], follow_phi_values: bool = False
+    gr_or_bl: Union[Graph, Block], value_map: dict[Value, Value], follow_phi_values: bool = False
 ) -> None:
     ### Replacing a value:
     # - as inputs/outputs of nodes
@@ -523,7 +522,7 @@ def make_dot(gr: Graph, format: str = "png", add_names: bool = False) -> "graphv
 
     block_idxes = {}
 
-    value_idxes: Dict[Value, int] = {}
+    value_idxes: dict[Value, int] = {}
 
     for i_bl, bl in enumerate(gr.blocks):
         block_idxes[bl] = i_bl
@@ -584,8 +583,8 @@ def make_dot(gr: Graph, format: str = "png", add_names: bool = False) -> "graphv
 
 
 def clone_blocks(
-    blocks_to_clone: List[Block], translation_dict: Optional[Dict[GraphObject, GraphObject]] = None
-) -> Tuple[List[Block], Dict[GraphObject, GraphObject]]:
+    blocks_to_clone: list[Block], translation_dict: Optional[dict[GraphObject, GraphObject]] = None
+) -> tuple[list[Block], dict[GraphObject, GraphObject]]:
     if translation_dict is None:
         translation_dict = {}
 
@@ -613,10 +612,10 @@ def _check_graph(gr: Graph) -> None:
     # some sanity checks for the values
     import collections
 
-    phi_value_refs: Dict[PhiValue, List[Union[Value, Tuple[Value, Optional[Node]]]]] = collections.defaultdict(list)
+    phi_value_refs: dict[PhiValue, list[Union[Value, tuple[Value, Optional[Node]]]]] = collections.defaultdict(list)
     v: Value
     for bl in gr.blocks:
-        known_values: Set[Value] = set(bl.block_inputs)
+        known_values: set[Value] = set(bl.block_inputs)
         for i in bl.block_inputs:
             for v in i.phi_values:
                 phi_value_refs[v].append(i)
@@ -667,7 +666,7 @@ def _check_graph(gr: Graph) -> None:
 
     assert not phi_value_refs, f"phi_values not found {phi_value_refs}"
 
-    jump_targets: Dict[Optional[Node], Set[Block]] = {}
+    jump_targets: dict[Optional[Node], set[Block]] = {}
     jump_targets[None] = {gr.blocks[0]}  # function entry point
 
     for bl in gr.blocks:

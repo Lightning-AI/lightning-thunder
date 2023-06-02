@@ -8,9 +8,9 @@ from thunder.core.script.graph import Graph, MROAwareObjectRef, Node, Value, ins
 from thunder.core.script.python_ir_data import get_instruction
 
 
-def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]:
-    consts: List[Any] = []
-    names: List[str] = []
+def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]:
+    consts: list[Any] = []
+    names: list[str] = []
 
     def get_value(v: Value, n: Node, inpidx: Optional[int] = None) -> None:
         if n.i.opname == "CALL_METHOD" and inpidx == 1:
@@ -71,7 +71,7 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
         for n in bl.nodes:
             n.block = bl
 
-    local_vars: List[Value] = []
+    local_vars: list[Value] = []
     lv_names = []
 
     def get_or_add_lv(v: Value, name: Optional[str] = None) -> int:
@@ -191,12 +191,12 @@ def undo_ssa(gr: "Graph") -> Tuple[List[Value], List[str], List[str], List[Any]]
 
 # this function is taken from PyTorch Dynamo (c) 2022 by Facebook/Meta licensed
 # as per https://github.com/pytorch/pytorch/blob/master/LICENSE
-def linetable_writer(first_lineno: int) -> Tuple[List[int], Callable, Callable]:
+def linetable_writer(first_lineno: int) -> tuple[list[int], Callable, Callable]:
     """Used to create typing.CodeType.co_linetable See
     https://github.com/python/cpython/blob/main/Objects/lnotab_notes.txt This is the internal format of the line number
     table if Python >= 3.10."""
     assert sys.version_info >= (3, 9)
-    linetable: List[int] = []
+    linetable: list[int] = []
     lineno = first_lineno
     lineno_delta = 0
     byteno = 0
@@ -231,13 +231,13 @@ def generate_function(gr: "Graph") -> Callable:
     local_vars, lv_names, names, consts = undo_ssa(gr)
     assert len(local_vars) == len(lv_names)
 
-    NodeKey = Union[Node, Tuple[Node, bool]]
-    instruction_sizes: Dict[NodeKey, int] = {}
+    NodeKey = Union[Node, tuple[Node, bool]]
+    instruction_sizes: dict[NodeKey, int] = {}
 
-    def build_address_map() -> Dict[NodeKey, int]:
+    def build_address_map() -> dict[NodeKey, int]:
         # Key either <Node> (for jump nodes and jump=True)
         #     or (<Node>, False) for non-jump in conditional jump
-        address_map: Dict[NodeKey, int] = {}
+        address_map: dict[NodeKey, int] = {}
         ctr = 0
         for bl in gr.blocks:
             # assumes first block is function start
@@ -248,7 +248,7 @@ def generate_function(gr: "Graph") -> Callable:
                     ctr += instruction_sizes.get((n, False), 1)
         return address_map
 
-    def make_bc() -> Tuple[List[int], bool]:
+    def make_bc() -> tuple[list[int], bool]:
         bc = []
 
         def write_extended_args(node_key: NodeKey, arg: int) -> bool:

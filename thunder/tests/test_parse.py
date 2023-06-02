@@ -6,7 +6,8 @@ import itertools
 import re
 import sys
 import textwrap
-from typing import Callable, Iterator, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
+from collections.abc import Iterator
 
 import thunder.core.script.frontend as frontend
 import thunder.core.script.python_ir_data as python_ir_data
@@ -15,13 +16,13 @@ import pytest
 
 frontend.enable_debug_asserts()
 
-PARSE_SPECIFICATION = List[
-    Tuple[List[Tuple[str, str]], List[Tuple[int, bool]]]  # (opname, argrepr)  # (target_index, is_jump)
+PARSE_SPECIFICATION = list[
+    tuple[list[tuple[str, str]], list[tuple[int, bool]]]  # (opname, argrepr)  # (target_index, is_jump)
 ]
 
 # Block index (optional), opname, inputs, outputs
-FLOW_SPECIFICATION_ENTRY = Tuple[Optional[int], str, Tuple[Tuple[str, ...], ...], Tuple[str, ...]]
-FLOW_SPECIFICATION = Tuple[FLOW_SPECIFICATION_ENTRY, ...]
+FLOW_SPECIFICATION_ENTRY = tuple[Optional[int], str, tuple[tuple[str, ...], ...], tuple[str, ...]]
+FLOW_SPECIFICATION = tuple[FLOW_SPECIFICATION_ENTRY, ...]
 
 TEST_CASES = []
 DONT_CHECK_FLOW = "DONT_CHECK_FLOW"
@@ -463,8 +464,7 @@ def simple_generator(k, suffix):
     if k < 0:
         yield None
 
-    for i in range(k):
-        yield i
+    yield from range(k)
 
     yield from suffix
 
@@ -654,13 +654,13 @@ def try_finally(f):
 def try_except_finally(f, log):
     try:
         f.write("Test")
-    except IOError:
+    except OSError:
         log("Fail")
     finally:
         f.close()
 
 
-def assert_parse_matches_spec(protoblocks: Tuple[frontend.ProtoBlock, ...], expected: PARSE_SPECIFICATION) -> None:
+def assert_parse_matches_spec(protoblocks: tuple[frontend.ProtoBlock, ...], expected: PARSE_SPECIFICATION) -> None:
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
     assert len(protoblocks) == len(block_to_index)
     assert len(protoblocks) == len(expected)
@@ -676,7 +676,7 @@ def assert_parse_matches_spec(protoblocks: Tuple[frontend.ProtoBlock, ...], expe
         )
 
 
-def suggest_parse_spec(protoblocks: Tuple[frontend.ProtoBlock, ...]):
+def suggest_parse_spec(protoblocks: tuple[frontend.ProtoBlock, ...]):
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
 
     lines = []
@@ -820,7 +820,7 @@ def split_column_blocks(s: str, split_sequence: str):
     )
 
 
-def extract_parse_spec(spec_str: str) -> Tuple[str, PARSE_SPECIFICATION]:
+def extract_parse_spec(spec_str: str) -> tuple[str, PARSE_SPECIFICATION]:
     spec_lines = spec_str.splitlines(keepends=False)
     expected = [([], [])]
     instruction_pattern = re.compile(r"^([A-Z_]+)(.*)$")

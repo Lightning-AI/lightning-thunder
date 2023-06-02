@@ -1,4 +1,5 @@
-from typing import Optional, Any, List, Sequence, Tuple
+from typing import Optional, Any, List, Tuple
+from collections.abc import Sequence
 
 from thunder.core.trace import TraceCtx
 import thunder.executors.torch as torchex
@@ -43,10 +44,10 @@ def get_executor(ex: Executor) -> Any:
 #   appropriate error checks
 def transform_for_execution(
     trace: TraceCtx, executors_list: Optional[Sequence[Executor]] = None, *, only_execute_prims=False
-) -> Tuple[TraceCtx, List[TraceCtx]]:
+) -> tuple[TraceCtx, list[TraceCtx]]:
     # Acquires the executors
     if executors_list is None:
-        executors_list: List[Executor]
+        executors_list: list[Executor]
         if nvfuser_available():
             executors_list = [Executor.NVFUSER, Executor.TORCH, Executor.PYTHON]
         else:
@@ -59,7 +60,7 @@ def transform_for_execution(
     # Translates executor names to actual executors
     executors_list = tuple(_executor_map[ex] for ex in executors_list)
 
-    traces: List[TraceCtx] = []
+    traces: list[TraceCtx] = []
 
     try:
         dce_trace, dce_traces = passes.dce(trace)

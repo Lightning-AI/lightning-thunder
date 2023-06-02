@@ -30,7 +30,7 @@ def _uniform_random(t: torch.Tensor, low: float, high: float):
 
 
 def make_tensor(
-    *shape: Union[int, torch.Size, List[int], Tuple[int, ...]],
+    *shape: Union[int, torch.Size, list[int], tuple[int, ...]],
     dtype: torch.dtype,
     device: Union[str, torch.device],
     low: Optional[float] = None,
@@ -114,7 +114,7 @@ def make_tensor(
 
     if len(shape) == 1 and isinstance(shape[0], collections.abc.Sequence):
         shape = shape[0]  # type: ignore[assignment]
-    shape = cast(Tuple[int, ...], tuple(shape))
+    shape = cast(tuple[int, ...], tuple(shape))
 
     _integral_types = [torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64]
     _floating_types = [torch.float16, torch.bfloat16, torch.float32, torch.float64]
@@ -124,7 +124,7 @@ def make_tensor(
 
     if dtype is torch.bool:
         low, high = cast(
-            Tuple[int, int],
+            tuple[int, int],
             _modify_low_high(low, high, 0, 2, 0, 2, dtype),
         )
         if low == high:
@@ -133,7 +133,7 @@ def make_tensor(
     elif dtype is torch.uint8:
         ranges = (torch.iinfo(dtype).min, torch.iinfo(dtype).max)
         low, high = cast(
-            Tuple[int, int],
+            tuple[int, int],
             _modify_low_high(low, high, ranges[0], ranges[1], 0, 10, dtype),
         )
         if low == high:

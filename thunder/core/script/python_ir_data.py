@@ -3,7 +3,8 @@ import enum
 import logging
 import sys
 from types import CodeType
-from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple, Union
+from collections.abc import Iterable
 
 try:
     from types import EllipsisType
@@ -42,7 +43,7 @@ class ArgScope(NamedTuple):
         return (self.scope.value, self.arg) < (other.scope.value, other.arg)
 
 
-FixedEffect = Tuple[int, Tuple[int, ...]]
+FixedEffect = tuple[int, tuple[int, ...]]
 TOS = -1  # Top of stack.
 PushNew = (0,)
 NoBranchDependent = (False, ())
@@ -60,7 +61,7 @@ def format_value(oparg: int) -> FixedEffect:
     return (2 if ((oparg & 0x04) != 0) else 1), PushNew
 
 
-def function_detail(*args: List[int]):
+def function_detail(*args: list[int]):
     flags = tuple(args)
 
     def effect(oparg: int) -> FixedEffect:
@@ -69,7 +70,7 @@ def function_detail(*args: List[int]):
     return effect
 
 
-_STACK_EFFECTS_SPEC: Dict[str, Union[FixedEffect, EllipsisType, Callable[[int], FixedEffect]]] = {
+_STACK_EFFECTS_SPEC: dict[str, Union[FixedEffect, EllipsisType, Callable[[int], FixedEffect]]] = {
     "NOP": (0, ()),  #                                  ∅ -> ∅
     "EXTENDED_ARG": (0, ()),  #                         ∅ -> ∅
     # Stack manipulation
@@ -211,8 +212,8 @@ _STACK_EFFECTS_SPEC: Dict[str, Union[FixedEffect, EllipsisType, Callable[[int], 
     # "END_ASYNC_FOR": (7, 0),
 }
 
-FIXED_STACK_EFFECTS_DETAIL: Dict[str, FixedEffect] = {}
-SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL: Dict[str, Callable[[int], FixedEffect]] = {}
+FIXED_STACK_EFFECTS_DETAIL: dict[str, FixedEffect] = {}
+SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL: dict[str, Callable[[int], FixedEffect]] = {}
 
 # Unpack `_STACK_EFFECTS_SPEC` into constituent maps.
 __prior_effect = Ellipsis
@@ -234,10 +235,10 @@ del __prior_effect, __opname, __effect
 
 def stack_effects_comprehensive(
     instruction: dis.Instruction,
-) -> Tuple[
+) -> tuple[
     int,  #                             Number of values popped
-    Tuple[int, ...],  #                 Values pushed (unconditional)
-    Tuple[bool, Tuple[int, ...]],  #    (branch w/ extra, values)
+    tuple[int, ...],  #                 Values pushed (unconditional)
+    tuple[bool, tuple[int, ...]],  #    (branch w/ extra, values)
 ]:
     opname: str = instruction.opname
     oparg: Optional[int] = instruction.arg
@@ -272,7 +273,7 @@ def stack_effects_comprehensive(
     raise ValueError(f"Invalid opname {opname}")
 
 
-def stack_effect_detail(instruction: dis.Instruction, *, jump: bool = False) -> Tuple[int, int]:
+def stack_effect_detail(instruction: dis.Instruction, *, jump: bool = False) -> tuple[int, int]:
     pop, unconditional, (branch, conditional) = stack_effects_comprehensive(instruction)
     return pop, len(unconditional) + len(conditional if branch == jump else ())
 
@@ -363,7 +364,7 @@ del_opcodes = {
 }
 
 
-def make_name_map(bytecode: Iterable[dis.Instruction], code: CodeType) -> Dict[ArgScope, "str"]:
+def make_name_map(bytecode: Iterable[dis.Instruction], code: CodeType) -> dict[ArgScope, "str"]:
     name_sources = {
         VariableScope.LOCAL: code.co_varnames,
         VariableScope.NONLOCAL: code.co_freevars,

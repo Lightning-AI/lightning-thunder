@@ -7,7 +7,8 @@ from contextvars import ContextVar
 from itertools import chain
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, Sequence, List, Type, Tuple
+from typing import Any, Callable, Dict, Optional, List, Type, Tuple
+from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
@@ -45,7 +46,7 @@ def set_eagerctx(ctx):
 # NOTE Assumes the outputs of symbols are proxies or collections of proxies
 # TODO Review printing names of tracked objects
 def default_python_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: Dict[str, Printable]
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     arg_str = (
         ""
@@ -97,12 +98,12 @@ def default_python_printer(
 @dataclass(**baseutils.default_dataclass_params)
 class Symbol:
     name: str
-    meta: Optional[Callable]
-    python_impl: Optional[Callable] = None
-    id: Optional[Any] = None
+    meta: Callable | None
+    python_impl: Callable | None = None
+    id: Any | None = None
     is_prim: bool = False
     python_printer: Callable = default_python_printer
-    _module: Optional[Any] = None
+    _module: Any | None = None
 
     @property
     def __name__(self):
@@ -346,7 +347,7 @@ class BoundSymbol(BoundSymbolInterface):
 
         return lines
 
-    def python(self, indent: int, commented: bool = False, print_depth: int = 1) -> List[str]:
+    def python(self, indent: int, commented: bool = False, print_depth: int = 1) -> list[str]:
         lines = []
 
         # Checks if this symbol is too "deep" to be printed
