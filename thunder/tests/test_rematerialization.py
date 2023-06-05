@@ -1,13 +1,17 @@
-import pytest
 import torch
 
 import thunder
 from thunder import torch as ttorch
 
 from thunder.core import utils
+from thunder.core.rematerialization import (
+    apply_rematerialization_for_consumer,
+    apply_rematerialization_for_producer,
+    find_nvfuser_producer_consumer_pairs,
+)
 from thunder.core.transforms import inline, value_and_grad
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor
 from thunder.examine import get_fusions
 
 
@@ -27,7 +31,7 @@ def func(t0):
 )
 def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
-    t0 = torch.randn(2, 2, dtype=torch.float32, device="cuda")
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
     trace = traces[-1]
     fusions = get_fusions(trace)
@@ -67,3 +71,115 @@ def test_find_producer_symbols(executor, device, _):
     assert c_proxy.name in map(lambda x: x.output.name, recomputed_producers)
     assert d_proxy.name in map(lambda x: x.output.name, recomputed_producers)
     assert a_proxy.name in map(lambda x: x.args[0].name, recomputed_producers)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_apply_rematerialization_producer(executor, device, _):
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    # Let's consider a pair of the first and the last nvFuser regions
+    # We call them producer and consumer because the last region consumes some
+    # outputs of the first region
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[-1]
+
+    cut = ("__a", "__e")
+    assert cut[0] in map(lambda x: x.name, producer.args)
+    assert cut[1] in map(lambda x: x.name, producer.output)
+
+    external_producer_outputs = ("__b", "__e")
+    new_producer = apply_rematerialization_for_producer(trace, producer, consumer, cut)
+    assert new_producer.sym.name == producer.sym.name
+    assert new_producer.args == producer.args
+    assert new_producer.subsymbols == producer.subsymbols
+    assert len(new_producer.output) == 4
+    assert cut[1] in (x.name for x in new_producer.output)
+    assert external_producer_outputs[0] in (x.name for x in new_producer.output)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_apply_rematerialization_consumer(executor, device, _):
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    # Let's consider a pair of the first and the last nvFuser regions
+    # We call them producer and consumer because the last region consumes some
+    # outputs of the first region
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[-1]
+
+    cut = ("__a", "__e")
+    assert cut[0] in map(lambda x: x.name, producer.args)
+    assert cut[1] in map(lambda x: x.name, producer.output)
+    assert cut[1] in map(lambda x: x.name, consumer.args)
+
+    new_consumer = apply_rematerialization_for_consumer(producer, consumer, cut)
+    assert new_consumer.sym.name == consumer.sym.name
+    assert cut[0] in map(lambda x: x.name, new_consumer.args)
+    assert cut[1] in map(lambda x: x.name, new_consumer.args)
+    assert new_consumer.output == consumer.output
+    assert len(new_consumer.args) <= len(consumer.args)
+    assert len(new_consumer.subsymbols) > len(consumer.subsymbols)
+
+    # Check that the new consumer has the following structure:
+    assert new_consumer.subsymbols[0].sym.name == "exp"
+    assert new_consumer.subsymbols[0].args[0].name == cut[0]
+
+    assert new_consumer.subsymbols[1].sym.name == "exp"
+    assert new_consumer.subsymbols[1].args[0].name == new_consumer.subsymbols[0].output.name
+
+    # The rest of the subsymbols should be the same as in the original consumer
+    assert new_consumer.subsymbols[2:] == consumer.subsymbols
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
+    n_fusion_regions = 7
+
+    @inline
+    @value_and_grad
+    def func(t0):
+        for _ in range(n_fusion_regions):
+            t1 = ttorch.exp(t0)
+            t2 = ttorch.exp(t1)
+            t3 = ttorch.exp(t2)
+            t4 = ttorch.matmul(t3, t3)  # Fusion breaks here
+            t0 = t4
+        return t4
+
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    trace = traces[-1]
+    pairs = find_nvfuser_producer_consumer_pairs(trace)
+    assert len(pairs) == n_fusion_regions
+
+    # Test that each producer is unique
+    producers = set(map(lambda x: x[0], pairs))
+    assert len(producers) == n_fusion_regions
+
+    # Test that each consumer is unique
+    consumers = set(map(lambda x: x[1], pairs))
+    assert len(consumers) == n_fusion_regions
+
+    # Check that pairs are valid, i.e. the consumer really consumes the output
+    # of the producer
+    for producer, consumer in pairs:
+        producer_output_names = map(lambda x: x.name, producer.output)
+        consumer_input_names = map(lambda x: x.name, consumer.args)
+        assert set(producer_output_names).intersection(set(consumer_input_names))

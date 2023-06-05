@@ -1,0 +1,161 @@
+from dataclasses import replace
+from functools import partial
+from typing import Callable, Optional, Sequence, Tuple, Union
+
+from thunder.core import utils
+from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.trace import TraceCtx
+
+
+def find_external_producer_outputs(
+    trace: TraceCtx,
+    producer: BoundSymbolInterface,
+    consumer: BoundSymbolInterface,
+) -> Tuple[ProxyInterface, ...]:
+    """Find producer's outputs that must be included in the output of the
+    producer because they are used by other consumers.
+
+    Args:
+        trace (TraceCtx): Trace object.
+        producer (BoundSymbolInterface): Producer node.
+        consumer (BoundSymbolInterface): Consumer node.
+
+    Returns:
+        Tuple[ProxyInterface, ...]: Producer's outputs that must be included in
+        the output of the producer.
+    """
+    proxy_to_consumers = utils.consumers(trace)
+
+    def filter_func(out: ProxyInterface):
+        consumers = proxy_to_consumers.get(out, tuple())
+        consumers = tuple(filter(lambda x: x.sym.name != "del", consumers))
+        return len(consumers) == 1 and consumers[0] == consumer
+
+    rematerializable_producer_outputs = tuple(filter(filter_func, producer.output))
+
+    return tuple(x for x in producer.output if x.name not in (y.name for y in rematerializable_producer_outputs))
+
+
+def find_external_consumer_inputs(
+    producer: BoundSymbolInterface,
+    consumer: BoundSymbolInterface,
+) -> Tuple[ProxyInterface, ...]:
+    """Find consumer's inputs that must be included in the input of the
+    consumer because they are produced by other producers.
+
+    Args:
+        producer (BoundSymbolInterface): Producer node.
+        consumer (BoundSymbolInterface): Consumer node.
+
+    Returns:
+        Tuple[ProxyInterface, ...]: Consumer's inputs that must be included in
+        the input of the consumer.
+    """
+    external_consumer_inputs_names = tuple(
+        sorted(
+            set(x.name for x in consumer.args)
+            - set(x.name for x in producer.output)
+            - set(x.name for x in producer.args)
+        )
+    )
+    return tuple(x for x in consumer.args if x.name in external_consumer_inputs_names)
+
+
+def apply_rematerialization_for_producer(
+    trace: TraceCtx,
+    producer: BoundSymbolInterface,
+    consumer: BoundSymbolInterface,
+    cut: Sequence[Union[ProxyInterface, str]],
+) -> BoundSymbolInterface:
+    """Update the producer node with the cut information.
+
+    Args:
+        producer (BoundSymbolInterface): Producer node.
+        cut (Sequence[Union[ProxyInterface, str]]): Cut information.
+
+    Returns:
+        BoundSymbolInterface: Updated producer node.
+    """
+    # It's simple to update the producer node, all we need to do is to update
+    # the producer's output with the cut information and the external outputs.
+    cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
+    utils.check(isinstance(producer.output, Sequence), lambda: "Producer output must be a sequence")
+    external_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
+    new_producer_output_names = tuple(x.name for x in external_producer_outputs) + cut_names
+    new_producer_output = tuple(x for x in producer.output if x.name in new_producer_output_names)
+    new_producer = replace(producer, output=new_producer_output)
+    return new_producer
+
+
+def apply_rematerialization_for_consumer(
+    producer: BoundSymbolInterface,
+    consumer: BoundSymbolInterface,
+    cut: Sequence[Union[ProxyInterface, str]],
+) -> BoundSymbolInterface:
+    """Update the consumer node with the cut information.
+
+    Args:
+        producer (BoundSymbolInterface): Producer node.
+        consumer (BoundSymbolInterface): Consumer node.
+        cut (Sequence[Union[ProxyInterface, str]]): Cut information.
+
+    Returns:
+        BoundSymbolInterface: Updated consumer node.
+    """
+    # It's a bit more complicated to update the consumer node, we need to
+    # update the consumer's input with the cut information.
+    # We need to keep consumer's inputs that are not in the cut and are not
+    # produced by the producer. We call these inputs "external inputs".
+    cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
+    cut_inputs = tuple(filter(lambda x: x.name in cut_names, (*producer.output, *producer.args)))
+    external_inputs = find_external_consumer_inputs(producer, consumer)
+    new_consumer_args = cut_inputs + external_inputs
+
+    # We need to rematerialize the consumer's inputs that are not in the new consumer's inputs.
+    rematerialized_inputs = tuple(
+        filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
+    )
+
+    # Construct a temporary Trace object with subsymbols from both the producer and the consumer.
+    trace = TraceCtx(None)
+    trace.bound_symbols = (*producer.subsymbols, *consumer.subsymbols)
+
+    cut_proxies = tuple(filter(lambda x: x.name in cut_names, (*producer.output, *producer.args)))
+    recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_proxies)
+    new_subsymbols = recomputing_symbols + tuple(consumer.subsymbols)
+    new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
+    return new_consumer
+
+
+def find_filtered_producer_consumer_pairs(
+    trace: TraceCtx,
+    filter_func: Optional[Callable] = None,
+) -> Tuple[Tuple[BoundSymbolInterface, BoundSymbolInterface], ...]:
+    """Find producer-consumer pairs among the filtered symbols.
+
+    Args:
+        trace (TraceCtx): Trace object.
+        filter_func (Optional[Callable], optional): Filter function. Defaults to None.
+
+    Returns:
+        Tuple[Tuple[BoundSymbolInterface, BoundSymbolInterface], ...]: Producer-consumer bound symbol pairs.
+    """
+    filter_func = filter_func or (lambda x: True)
+    proxy_to_consumers = utils.consumers(trace)
+    producer_consumer_pairs = set()
+
+    # We are looking for special producer-consumer pairs among the filtered symbols
+    for producer in filter(filter_func, trace.bound_symbols):
+        for out in producer._flat_outs:
+            consumers = proxy_to_consumers.get(out, tuple())
+            # We only care about producer's outputs with a single fusion consumer
+            # prims.del is a special case that we don't care about
+            consumers = tuple(filter(lambda x: x.sym.name != "del", consumers))
+            if len(consumers) == 1 and filter_func(consumer := consumers[0]):
+                producer_consumer_pairs.add((producer, consumer))
+    return tuple(sorted(producer_consumer_pairs, key=lambda x: x[0].sym.name))
+
+
+find_nvfuser_producer_consumer_pairs = partial(
+    find_filtered_producer_consumer_pairs, filter_func=lambda x: x.sym.name.startswith("nvFusion")
+)
