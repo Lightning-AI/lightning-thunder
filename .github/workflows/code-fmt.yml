@@ -13,27 +13,21 @@ jobs:
     - name: Checkout 🛎️
       uses: actions/checkout@v3
       with:
-        fetch-depth: 0
-        submodules: recursive
+        token: ${{ secrets.PAT_GHOST }}
 
     - name: Set up Python 🐍
       uses: actions/setup-python@v4
       with:
         python-version: "3.10"
 
-    - name: Determine cache hash
-      run: echo "PY=$(python -VV | sha256sum | cut -d' ' -f1)" >> $GITHUB_ENV
+    - name: Run pre-commit 🤖
+      continue-on-error: true
+      run: |
+        pip install -q pre-commit
+        pre-commit run --all-files
 
-    - name: Cache 💽 pre-commit
-      uses: actions/cache@v3
+    - name: Commit changes ↩️
+      uses: EndBug/add-and-commit@v9
       with:
-        path: ~/.cache/pre-commit
-        key: pre-commit|${{ env.PY }}|${{ hashFiles('.pre-commit-config.yaml') }}
-
-    - name: Run pre-commit
-      uses: pre-commit/action@v3.0.0
-      # this action also provides an additional behaviour when used in private repositories
-      # when configured with a github token, the action will push back fixes to the pull request branch
-      with:
-        extra_args: --all-files
-        token: ${{ secrets.GITHUB_TOKEN }}
+        default_author: github_actions
+        message: "pre-commit: apply formatting"
