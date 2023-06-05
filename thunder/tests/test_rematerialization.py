@@ -8,6 +8,7 @@ from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
     find_nvfuser_producer_consumer_pairs,
+    find_cut,
 )
 from thunder.core.transforms import inline, value_and_grad
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor
@@ -183,3 +184,20 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
         producer_output_names = map(lambda x: x.name, producer.output)
         consumer_input_names = map(lambda x: x.name, consumer.args)
         assert set(producer_output_names).intersection(set(consumer_input_names))
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_find_cut(executor, device, _):
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[-1]
+    cut = find_cut(trace, producer, consumer)
+    assert cut == ("__a", "__e")

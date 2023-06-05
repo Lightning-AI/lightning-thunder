@@ -1,8 +1,11 @@
 from dataclasses import replace
 from functools import partial
+from itertools import chain
 from typing import Callable, Optional, Sequence, Tuple, Union
 
-from thunder.core import utils
+from igraph import Graph
+
+from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.trace import TraceCtx
 
@@ -159,3 +162,134 @@ def find_filtered_producer_consumer_pairs(
 find_nvfuser_producer_consumer_pairs = partial(
     find_filtered_producer_consumer_pairs, filter_func=lambda x: x.sym.name.startswith("nvFusion")
 )
+
+
+def find_cut(
+    trace: TraceCtx,
+    producer: BoundSymbolInterface,
+    consumer: BoundSymbolInterface,
+) -> Sequence[Union[ProxyInterface, str]]:
+    """Find the minimal cut between the producer and the consumer.
+
+    Args:
+        trace (TraceCtx): Trace object.
+        producer (BoundSymbolInterface): Producer node.
+        consumer (BoundSymbolInterface): Consumer node.
+
+    Returns:
+        Sequence[Union[ProxyInterface, str]]: Cut information.
+    """
+    # We are going to use the igraph library to find the minimal cut between the
+    # producer and the consumer. Minimum cut is a set of edges that, if removed,
+    # would disconnect the producer and the consumer. But we are not interested
+    # in the edges, we are interested in the nodes that are connected by the
+    # edges. These nodes are the cut nodes. So we need to reformulate our node
+    # graph into an edge graph.
+
+    # All the nodes from the producer that we connect to a "source" node will
+    # not be in the cut. Similarly, all the nodes from the consumer that we
+    # connect to a "sink" node will not be in the cut. So we need to add a
+    # "source" node and a "sink" node to our graph. We also disallow the cut to
+    # be in the consumer's part of the graph to avoid balancing the graph into
+    # the producer from the consumer.
+
+    # Determine which producer's outputs can be rematerialized
+    external_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
+
+    # Required producer variables. These are the variables that are required to
+    # be connected to the "source" node.
+    required_producer_vars = tuple(x.name for x in producer.args)
+    required_producer_vars += tuple(x.name for x in external_producer_outputs)
+
+    # Required consumer variables. These are the variables that are required to
+    # be connected to the "sink" node.
+    required_consumer_vars = tuple(x.name for x in consumer.output)
+    external_consumer_inputs = find_external_consumer_inputs(producer, consumer)
+    required_consumer_vars += tuple(x.name for x in external_consumer_inputs)
+
+    # To the required consumer variables we also need to add the path from the
+    # consumer's output to the external consumer's inputs. This is needed to
+    # avoid balancing the graph into the producer from the consumer.
+    consumer_trace = TraceCtx(None)
+    consumer_trace.bound_symbols = consumer.subsymbols
+    required_consumer_symbols = tuple(
+        utils.find_producer_symbols(consumer_trace, consumer.output, external_consumer_inputs)
+    )
+    required_consumer_vars += tuple(
+        chain.from_iterable((y.name for y in x._flat_outs) for x in required_consumer_symbols)
+    )
+
+    # TODO: Use TensorProxy properties to compute the weights
+    WEIGHT = 1.0
+
+    # Create a graph
+    edges = []
+    name_to_id = {}
+    capacities = []
+
+    def add_edge(src, dst, capacity):
+        if src not in name_to_id:
+            name_to_id[src] = len(name_to_id)
+        if dst not in name_to_id:
+            name_to_id[dst] = len(name_to_id)
+        src, dst = name_to_id[src], name_to_id[dst]
+        edges.append((src, dst))
+        capacities.append(capacity)
+
+    for var_name in required_consumer_vars:
+        add_edge(var_name + "_in", "sink", capacity=float("inf"))
+
+    sym_skip_list = (
+        prims.PrimIDs.UNPACK_SEQUENCE,
+        prims.PrimIDs.UNPACK_TRIVIAL,
+        prims.PrimIDs.UNPACK_DICT,
+        prims.PrimIDs.RETURN,
+    )
+
+    combined_trace = TraceCtx(None)
+    combined_trace.bound_symbols = (*producer.subsymbols, *consumer.subsymbols)
+    combined_consumers = utils.consumers(combined_trace)
+
+    def add_edges(var_name):
+        weight = WEIGHT / 2.0 if var_name in (x.name for x in producer.args) else WEIGHT
+        add_edge(var_name + "_in", var_name + "_out", capacity=weight)
+        for user in combined_consumers._dict.get(var_name, tuple()):
+            if user.sym.id in sym_skip_list:
+                continue
+            for out in user._flat_outs:
+                user_name = out.name
+                add_edge(var_name + "_out", user_name + "_in", capacity=float("inf"))
+
+    for var_name in required_producer_vars:
+        add_edge("source", var_name + "_in", capacity=float("inf"))
+        add_edges(var_name)
+
+    for symbol in chain(producer.subsymbols, consumer.subsymbols):
+        var_name = symbol.output.name
+        add_edges(var_name)
+
+    g = Graph(
+        n=len(name_to_id),
+        edges=edges,
+        directed=True,
+        edge_attrs={"capacity": capacities},
+    )
+    source = name_to_id["source"]
+    sink = name_to_id["sink"]
+    partition = g.mincut(source, sink, "capacity").partition
+
+    reachable, non_reachable = partition
+    cutset = set()
+    for u, nbrs in ((n, g.neighbors(n, mode="out")) for n in reachable):
+        cutset.update((u, v) for v in nbrs if v in non_reachable)
+
+    id_to_name = dict(map(reversed, name_to_id.items()))
+    cutset = ((id_to_name[u], id_to_name[v]) for u, v in cutset)
+    cut_nodes = set()
+    for node_in, node_out in cutset:
+        assert node_in.endswith("_in")
+        assert node_out.endswith("_out")
+        assert node_in[:-3] == node_out[:-4]
+        node_name = node_in[:-3]
+        cut_nodes.add(node_name)
+    return tuple(sorted(cut_nodes))
