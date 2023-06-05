@@ -1798,6 +1798,16 @@ true_divide_opinfo = OpInfo(
             "test_vjp_correctness",
             executors=("nvFuser",),
         ),
+        # This test sometimes fails in CI
+        #   Absolute difference: 12.348295743693598 (up to 1e-05 allowed)
+        #   Relative difference: 6.48032003869975e-05 (up to 1.3e-06 allowed)
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("TorchEx",),
+            devicetypes=(devices.DeviceType.CUDA,),
+            dtypes=(datatypes.float64,),
+        ),
     ),
 )
 elementwise_binary_ops.append(true_divide_opinfo)
