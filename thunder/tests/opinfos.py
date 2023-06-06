@@ -1805,7 +1805,6 @@ true_divide_opinfo = OpInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
             executors=("TorchEx",),
-            devicetypes=(devices.DeviceType.CUDA,),
             dtypes=(datatypes.float64,),
         ),
     ),
