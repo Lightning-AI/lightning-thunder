@@ -48,8 +48,4 @@ parsers:
   javascript:
     enable_partials: false
 
-comment:
-  layout: header, diff
-  require_changes: false
-  behavior: default  # update if exists else create new
-  # branches: *
+comment: false
