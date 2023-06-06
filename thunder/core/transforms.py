@@ -973,6 +973,11 @@ augmented_forward_impls = {
     prims.PrimIDs.EQ: lambda x, y: (prims.eq(x, y), (x, y)),
     prims.PrimIDs.GE: lambda x, y: (prims.ge(x, y), (x, y)),
     prims.PrimIDs.LT: lambda x, y: (prims.lt(x, y), (x, y)),
+    prims.PrimIDs.LOG: lambda x: (prims.log(x), (x,)),
+    prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),
+    prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
+    prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
+    prims.PrimIDs.NEG: lambda x: (prims.neg(x), tuple()),
 }
 
 # Mapping from symbols to backward functions used in VJP
@@ -999,6 +1004,11 @@ backward_impls = {
     prims.PrimIDs.EQ: ZeroBackward(num_args=2),
     prims.PrimIDs.GE: ZeroBackward(num_args=2),
     prims.PrimIDs.LT: ZeroBackward(num_args=2),
+    prims.PrimIDs.LOG: lambda x, g: g / x,
+    prims.PrimIDs.LOG10: lambda x, g: g / (x * 2.302585092994046),
+    prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
+    prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
+    prims.PrimIDs.NEG: lambda g: -g,
 }
 
 
