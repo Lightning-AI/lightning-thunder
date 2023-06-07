@@ -100,9 +100,7 @@ def arange(
     device = ltorch.to_torch_device(device)
     dtype = ltorch.to_torch_dtype(dtype)
 
-    kwargs = {"device": device, "dtype": dtype}
-
-    tbsym = BoundSymbol(sym, args=(start, end, step), kwargs=kwargs, output=bsym.output)
+    tbsym = sym.bind(start, end, step, device=device, dtype=dtype, output=bsym.output)
     return tbsym
 
 
@@ -111,12 +109,10 @@ def full(
 ) -> BoundSymbol:
     sym = Symbol(name="full", meta=None, _module=torch)
 
-    torch_device = str(device)
-    torch_dtype = ltorch.to_torch_dtype(dtype)
+    device = str(device)
+    dtype = ltorch.to_torch_dtype(dtype)
 
-    kwargs = {"device": torch_device, "dtype": torch_dtype}
-
-    tbsym = BoundSymbol(sym, args=(shape, fill_value), kwargs=kwargs, output=bsym.output)
+    tbsym = sym.bind(shape, fill_value, device=device, dtype=dtype, output=bsym.output)
     return tbsym
 
 

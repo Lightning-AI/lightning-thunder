@@ -100,7 +100,7 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             to_del.append(x)
 
         if len(to_del) > 0:
-            del_sym = prims.python_del.bind(to_del)
+            del_sym = prims.python_del.bind(to_del, output=None)
             bsyms.appendleft(del_sym)
 
         bsyms.appendleft(bsym)

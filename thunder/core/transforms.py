@@ -1404,6 +1404,7 @@ def embedding_aug_fwd(
     sparse: bool = False,
 ) -> VJPDual:
     from thunder.torch import embedding
+
     primal = embedding(
         a,
         weight,
@@ -1420,6 +1421,7 @@ def embedding_aug_fwd(
 @register_backward("torch.nn.functional.embedding")
 def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
     from thunder.torch import embedding_backward
+
     padding_idx = -1 if padding_idx is None else padding_idx
     gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return None, gweight

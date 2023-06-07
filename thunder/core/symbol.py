@@ -150,17 +150,6 @@ class Symbol:
     def __repr__(self) -> str:
         return f"[Symbol name={self.name}]"
 
-    def _symbolify(self, x):
-        # Preserves None
-        if x is None:
-            return x
-
-        if isinstance(x, Symbol):
-            return x
-
-        # NOTE: assumes x is a callable
-        return Symbol(name=x.__name__, meta=x)
-
     def name_with_module(self):
         # Short-circuits if the symbol has no associated module
         if self.module is None:
@@ -169,9 +158,8 @@ class Symbol:
         module_name = codeutils.module_shortname(self.module.__name__)
         return f"{module_name}.{self.name}"
 
-    # TODO: pick which function goes into the expression
-    def bind(self, args, kwargs={}, output=[], subsymbols=[]) -> BoundSymbol:
-        b = BoundSymbol(self, args, kwargs, output, tuple(subsymbols))
+    def bind(self, *args, output, subsymbols=(), **kwargs) -> BoundSymbol:
+        b = BoundSymbol(self, args=args, kwargs=kwargs, output=output, subsymbols=subsymbols)
         return b
 
     # TODO Restore eager dispatch by tracing and executing a trace
@@ -212,7 +200,7 @@ class Symbol:
             trace.pop_scope()
 
         # TODO Consider a way of expressing the name of the output here
-        bsym = self.bind(args, kwargs, result, subsymbols)
+        bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()
 
         baseutils.check(
