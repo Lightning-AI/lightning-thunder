@@ -12,6 +12,7 @@ from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
+from thunder.core.prims import PrimIDs
 
 # TODO Consider renaming this file to common.py?
 
@@ -108,6 +109,11 @@ class Region:
                     self.outputs.add(variableify(x))
                     break
 
+        # Set of shape operations to support determining if the region is composed of only shape operations
+        # TODO This should have more operations, and should handle symbols that decompose to shape primitives
+        # TODO Shape primitives should be programmatically queryable from prims
+        self._shape_ops = {PrimIDs.SLICE, PrimIDs.TRANSPOSE, PrimIDs.RESHAPE}
+
     def __repr__(self) -> str:
         s = f"[Region executor={self.executor}, bound symbols:"
 
@@ -117,6 +123,13 @@ class Region:
         s += "]"
 
         return s
+
+    def only_shape_operations(self) -> bool:
+        for bsym in self.bound_symbols:
+            if bsym.sym.id not in self._shape_ops:
+                return False
+
+        return True
 
 
 # A container for region nodes that supports multiple parentless

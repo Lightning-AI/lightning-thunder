@@ -4,8 +4,7 @@ from collections.abc import Sequence
 from thunder.core.trace import TraceCtx
 import thunder.executors.torch as torchex
 import thunder.executors.pythonex as pythonex
-import thunder.executors.utils as exutils
-from thunder.executors.utils import *
+from thunder.executors.utils import Executor, nvfuser_available, nvfuser_version
 import thunder.executors.passes as passes
 
 
@@ -13,6 +12,7 @@ import thunder.executors.passes as passes
 # TODO Should we throw a warning if nvFuser isn't available, possibly with instructions for how to install it?
 #   It is important we support CPU-only builds for development and debugging
 
+# TODO Properly expose functions using __all__
 __all__ = [
     "transform_for_execution",
 ]

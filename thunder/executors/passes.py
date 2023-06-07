@@ -11,6 +11,7 @@ from thunder.core.pytree import tree_flatten
 import thunder.core.prims as prims
 from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor
 from thunder.core.proxies import Proxy, variableify, unvariableify
+from thunder.executors import torch as TorchEx
 
 
 # TODO Review preserving return statements -- here they are arbitrarily preserved, which seems hacky
@@ -278,6 +279,14 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     while node is not None:
         region = node.node.region
         ex = region.executor
+
+        # Regions that would go to nvFuser but are entirely composed of shape operations
+        #   are sent to the torch executor instead
+        # TODO Think about being more clever about when this occurs
+        #   Today fusion happens after flattening, but we should toposort and do this
+        #   analysis before flattening occurs
+        if ex.name() == Executor.NVFUSER and region.only_shape_operations():
+            ex = TorchEx
 
         if ex not in executor_ctrs:
             executor_ctrs[ex] = 0
