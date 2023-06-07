@@ -579,7 +579,7 @@ def _bind_to_graph(
         if key.scope == VariableScope.GLOBAL:
             return Value(name=name, value=func_globals[name], is_global=True)
 
-        raise ValueError(f"Unhandled key: {key=}")
+        raise ValueError(f"Unhandled key: {key=}, name: {name=}")
 
     del func
     # End live inspection region.
