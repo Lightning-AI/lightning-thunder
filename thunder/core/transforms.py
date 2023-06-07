@@ -1392,7 +1392,7 @@ def convert_element_type_backward(a, g):
     return prims.convert_element_type(g, a.dtype), None
 
 
-@register_augmented_forward(torch.nn.functional.embedding)
+@register_augmented_forward("torch.nn.functional.embedding")
 def embedding_aug_fwd(
     a: Proxy,
     weight: Proxy,
@@ -1403,8 +1403,8 @@ def embedding_aug_fwd(
     scale_grad_by_freq: bool = False,
     sparse: bool = False,
 ) -> VJPDual:
-    # from thunder.langs.torch import embedding_backward
-    primal = prims.embedding(
+    from thunder.torch import embedding
+    primal = embedding(
         a,
         weight,
         padding_idx=padding_idx,
@@ -1417,10 +1417,11 @@ def embedding_aug_fwd(
     return VJPDual(primal, residuals)
 
 
-@register_backward(torch.nn.functional.embedding)
+@register_backward("torch.nn.functional.embedding")
 def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, g):
+    from thunder.torch import embedding_backward
     padding_idx = -1 if padding_idx is None else padding_idx
-    gweight = prims.embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
+    gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return None, gweight
 
 

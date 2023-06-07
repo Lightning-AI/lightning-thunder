@@ -420,8 +420,6 @@ def test_vjp_correctness(op, device, dtype, executor):
 # with finite differences
 @ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
-    # TODO: NotImplementedError: VJP for PrimIDs.TAKE is not implemented
-    pytest.xfail("Not fixed yet")
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         # Compute vjp result using PyTorch
         out = op.torch_reference(*sample.args, **sample.kwargs)
@@ -431,7 +429,7 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, (gindices, gweight) = executor.make_callable(vjp(filtered_op))(filtered_args, (v,))
+        actual_out, (gindices, gweight) = executor.make_callable(inline(vjp(filtered_op)))(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
         torch.testing.assert_close(gweight, expected[0])
         torch.testing.assert_close(actual_out, out)

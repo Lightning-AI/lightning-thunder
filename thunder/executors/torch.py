@@ -675,6 +675,25 @@ def embedding(
     return tbsym
 
 
+def embedding_backward(
+    bsym: BoundSymbol,
+    grad,
+    indices,
+    num_weights,
+    padding_idx,
+    scale_grad_by_freq,
+    sparse,
+) -> BoundSymbol:
+    sym = Symbol(name="embedding_backward", meta=None, _module=torch.ops.aten)
+    tbsym = BoundSymbol(
+        sym,
+        args=(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse),
+        kwargs={},
+        output=bsym.output,
+    )
+    return tbsym
+
+
 def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
     sym = Symbol(name="layer_norm", meta=None, _module=torch.nn.functional)
     tbsym = BoundSymbol(sym, args=(a, normalized_shape, weight, bias, eps), kwargs={}, output=bsym.output)
@@ -864,6 +883,7 @@ _ops_map.update(
         # NN operations
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.EMBEDDING: (_always_executable, embedding),
+        PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),
         "torch.nn.functional.embedding": (_always_executable, embedding),
         "torch.layer_norm": (_always_executable, layer_norm),
         "torch.masked_fill": (_always_executable, masked_fill),

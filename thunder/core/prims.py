@@ -126,6 +126,7 @@ class PrimIDs(Enum):
     MATMUL = auto()
     # NN prims (Experimental!)
     EMBEDDING = auto()
+    EMBEDDING_BACKWARD = auto()
 
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
@@ -1741,3 +1742,14 @@ def embedding_meta(a, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, s
 
 
 embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
+
+
+# TODO: Once we have fusable index_put we can implement it using primitives
+# For now we just use the PyTorch implementation
+def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
+    proxy_name = get_tracectx().make_name()
+    shape = (num_weights, grad.shape[-1])
+    return TensorProxy(name=proxy_name, shape=shape, device=grad.device, dtype=grad.dtype)
+
+
+embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
