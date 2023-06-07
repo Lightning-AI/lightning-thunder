@@ -2,6 +2,7 @@ from dataclasses import replace
 from functools import partial
 from itertools import chain
 from typing import Callable, Optional, Sequence, Tuple, Union
+import copy
 
 from igraph import Graph
 

@@ -183,7 +183,7 @@ def is_printable_type(typ: type) -> bool:
 
 # TODO Document this function and ensure it's used consistently
 # TODO Add more basic Python types
-def print_type(typ: type) -> str:
+def print_type(typ: type, with_quotes: bool = True) -> str:
     # Special cases basic Python types
 
     if typ in _type_to_str_map:
@@ -194,7 +194,11 @@ def print_type(typ: type) -> str:
     #   Does this by capturing the name in quotes with a regex
     s = str(typ)
     result = re.search(".+'(.+)'.*", s)
-    return f"'{result.group(1)}'"
+    if with_quotes:
+        return f"'{result.group(1)}'"
+
+    s = result.group(1).replace(".", "_")
+    return s
 
 
 #

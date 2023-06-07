@@ -10,7 +10,7 @@ from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten
 import thunder.core.prims as prims
 from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor
-from thunder.core.proxies import Proxy
+from thunder.core.proxies import Proxy, variableify, unvariableify
 
 
 # TODO Review preserving return statements -- here they are arbitrarily preserved, which seems hacky
@@ -24,14 +24,9 @@ from thunder.core.proxies import Proxy
 def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     producers: ProxyDict = cutils.producers(trace)
 
-    # NOTE Not an ordered set because we're just checking for membership
-    needed_nodes = set()
-
-    seen = set()
-    q = deque()
-
-    flat_outputs, _ = tree_flatten(trace.output)
-    q.extend(flat_outputs)
+    flat, _ = tree_flatten(trace.output)
+    needed_proxies = set(tuple(variableify(x) for x in flat if isinstance(x, Proxy)))
+    dced = []
 
     dont_collect = {
         prims.PrimIDs.RETURN,
@@ -42,40 +37,27 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
         prims.PrimIDs.PRINT,
     }
 
-    while True:
-        try:
-            x = q.popleft()
+    for bsym in reversed(trace.bound_symbols):
+        # Preserves symbols that should never be collected
+        if bsym.sym.id in dont_collect:
+            dced.append(bsym)
+            continue
 
-            # Skips constants, which aren't produced by other nodes
-            if not isinstance(x, Proxy):
-                continue
+        needed = False
+        outs = bsym._flat_outs
+        for out in outs:
+            if variableify(out) in needed_proxies and producers[out] == bsym:
+                needed = True
+                break
 
-            # TODO Consider modeling these objects as produced by a signature primitive
-            # Skips objects which have no producer
-            if x not in producers:
-                continue
-
-            producer: BoundSymbol = producers[x]
-
-            # Skips producers that have already been visited
-            if producer in needed_nodes:
-                continue
-
-            needed_nodes.add(producer)
-
-            flat_args = producer._flat_args
-            flat_kwargs = producer._flat_kwargs
-
-            new_proxies = [arg for arg in chain(flat_args, flat_kwargs)]
-
-            q.extend(new_proxies)
-        except IndexError:
-            break
+        if needed:
+            dced.append(bsym)
+            for x in chain(bsym._flat_args, bsym._flat_kwargs):
+                if isinstance(x, Proxy):
+                    needed_proxies.add(variableify(x))
 
     dcetrace = from_trace(trace)
-    dcetrace.bound_symbols = [
-        bsym for bsym in trace.bound_symbols if (bsym in needed_nodes or bsym.sym.id in dont_collect)
-    ]
+    dcetrace.bound_symbols = list(reversed(dced))
     dcetrace.set_provenance(TraceProvenance("Dead Code Elimination"))
 
     return dcetrace, [dcetrace]
@@ -149,39 +131,34 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 # TODO Improve this to explain what couldn't be executed
 # TODO This could probably be done more efficiently
 def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
-    def _set_executor(bsym: BoundSymbol, ex):
-        if len(bsym.subsymbols) == 0:
-            return replace(bsym, _executor=ex)
+    def _set_executor(bsym: BoundSymbol, ex) -> None:
+        bsym._executor = ex
 
-        bsym_subsymbols = list(bsym.subsymbols)
-        for i, sbsym in enumerate(bsym_subsymbols):
-            bsym_subsymbols[i] = _set_executor(sbsym, ex)
-        return replace(bsym, subsymbols=bsym_subsymbols)
+        for sbsym in bsym.subsymbols:
+            _set_executor(sbsym, ex)
 
-    def _find_executor(bsym: BoundSymbol):
+    def _find_executor(bsym: BoundSymbol) -> tuple[BoundSymbol, bool]:
         # Attempts to find an executor for the symbol
         for ex in executors_list:
             if ex.can_execute(bsym, prims_only=prims_only):
-                bsym = _set_executor(bsym, ex)
-                return bsym, True
+                _set_executor(bsym, ex)
+                return True
 
         # If no executors can execute the symbol directly, find
         #   executors for the sub-symbols
         if len(bsym.subsymbols) == 0:
-            return bsym, False
+            return False
 
-        bsym_subsymbols = list(bsym.subsymbols)
-        for i, sbsym in enumerate(bsym_subsymbols):
-            bsym_subsymbols[i], found = _find_executor(sbsym)
+        for sbsym in bsym.subsymbols:
+            found = _find_executor(sbsym)
             if not found:
                 return False
 
-        return replace(bsym, subsymbols=bsym_subsymbols), True
+        return True
 
-    for i, bsym in enumerate(trace.bound_symbols):
-        bsym, found = _find_executor(bsym)
+    for bsym in trace.bound_symbols:
+        found = _find_executor(bsym)
         cutils.check(found, lambda: f"Could not find executor for bound symbol {bsym}")
-        trace.bound_symbols[i] = bsym
 
     return trace, []
 

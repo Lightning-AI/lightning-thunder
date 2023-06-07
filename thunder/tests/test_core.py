@@ -18,10 +18,29 @@ from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuser
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
+from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 
 #
 # Tests related to running valid Python programs
 #
+
+
+# Tests that traces don't generate duplicate names
+#   (at least not within the first 10k names tested below)
+def test_name_generation():
+    # NOTE This function is just because trace's currently require a function to
+    #   construct them
+    def foo():
+        pass
+
+    trace = TraceCtx(foo)
+
+    names = set()
+    for ctr in range(10000):
+        name = trace._gen_name(ctr)
+        assert name not in names, f"Found duplicate name {name}"
+
+        names.add(name)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -321,7 +340,7 @@ def test_devices_in_and_out(executor, device, dtype):
     x, y = lc_result
 
     assert x == 1
-    assert y is dev
+    assert y == dev
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -366,6 +385,82 @@ def test_constant_creation(executor, device, dtype):
         fn = trace.python_callable()
         lc_result = fn(a)
         assert_close(lc_result, python_result)
+
+
+#
+# Tests related to printing signatures and bound symbols
+#
+
+
+def test_siginfo_printing():
+    def foo(a=object(), b=torch.float32, *, c=(object(), object())):
+        return a, b, c[0], a, c
+
+    siginfo = codeutils.get_siginfo(foo, (), {})
+
+    s0 = siginfo.prettyprint()
+    s1 = siginfo.prettyprint()
+
+    assert s0 == s1
+
+    trace = TraceCtx(foo)
+    with tracectx(trace):
+        s0 = trace.python()
+        s1 = trace.python()
+
+        assert s0 == s1
+
+
+def test_consistent_trace_and_boundsymbol_printing():
+    def foo(a=object(), b=(torch.float32, object())):
+        return a, b, b[1]
+
+    cfoo = thunder.compile_with_info(foo)
+    result, traces = cfoo()
+
+    # Tests consistent printing of traces
+    s0 = str(traces[0])
+    s1 = str(traces[0])
+
+    assert s0 == s1
+
+    # Tests consistent printing of bound symbols outside the trace context
+    for bsym in traces[0].bound_symbols:
+        s0 = str(bsym)
+        s1 = str(bsym)
+        assert s0 == s1
+
+
+def test_consistent_boundsymbol_collection_printing():
+    def foo(tup, d):
+        (a, b), c = tup
+        e = c + d["dict"]["val"]
+        return a + b, e
+
+    cfoo = thunder.compile_with_info(foo)
+    result, traces = cfoo(((2, 3), 4), {"dict": {"val": 2}})
+
+    # Tests consistent printing of bound symbols outside the trace context
+    for bsym in traces[0].bound_symbols:
+        s0 = str(bsym)
+        s1 = str(bsym)
+        assert s0 == s1
+
+
+def test_consistent_boundsymbol_collection_hard_printing():
+    def foo(tup):
+        (a, b), c = tup
+        d = b["dict"]["val"]
+        return a + d, c
+
+    cfoo = thunder.compile_with_info(foo)
+    result, traces = cfoo(((2, {"dict": {"val": 2}}), 4))
+
+    # Tests consistent printing of bound symbols outside the trace context
+    for bsym in traces[0].bound_symbols:
+        s0 = str(bsym)
+        s1 = str(bsym)
+        assert s0 == s1
 
 
 #

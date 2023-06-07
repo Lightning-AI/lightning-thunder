@@ -218,6 +218,7 @@ def unpack_sequence_printer(
         lambda: f"Expected no kwargs for unpack_sequence but got {kwarg_printables}",
         exception_type=AssertionError,
     )
+    utils.check_type(bsym.output, Sequence)
 
     call_str = f"{codeutils.prettyprint(arg_printables[0])}"
 
@@ -226,20 +227,9 @@ def unpack_sequence_printer(
         return f"# {call_str} (empty sequence)"
 
     trace = get_tracectx()
-
-    result_str: str
-    # Special-cases unpacking one item
-    if not codeutils.is_collection(bsym.output):
-        if trace is not None:
-            out = trace.get_tracked_object(bsym.output)
-        else:
-            out = bsym.output
-
-        return f"{codeutils.prettyprint(out)}, = {call_str}"
-
     lines = []
     for out in bsym.output:
-        out = trace.get_tracked_object(out)
+        out = out if trace is None else trace.get_tracked_object(out)
         line: str
         if codeutils.is_literal(out):
             line = f"_,  \\"
@@ -303,6 +293,7 @@ def unpack_dict_printer(
         lambda: f"Expected no kwargs for unpack_dict but got {kwarg_printables}",
         exception_type=AssertionError,
     )
+    utils.check_type(bsym.output, dict)
 
     lines = []
     d = bsym.output

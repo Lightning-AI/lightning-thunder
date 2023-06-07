@@ -44,7 +44,6 @@ def set_eagerctx(ctx):
 #   actual strings, which must be enclosed in quotes, and the placeholders pointing to the ctx, which are currently
 #   passed as strings.
 # NOTE Assumes the outputs of symbols are proxies or collections of proxies
-# TODO Review printing names of tracked objects
 def default_python_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
@@ -234,25 +233,69 @@ class Symbol:
 # _object_ctx can be provided to specify a name -> Python object binding required to compile
 #   the BoundSymbol
 # NOTE This could also provide an _import_ctx to specify the import context directly
-@dataclass(**baseutils.default_dataclass_params)
+# NOTE It is assumed that the properties of a BoundSymbol are immutable, except for the _executor annotation
+@dataclass
 class BoundSymbol(BoundSymbolInterface):
     sym: Symbol
     args: Sequence
     kwargs: dict
     output: Any
-    subsymbols: Sequence["BoundSymbol"] = ()
+    subsymbols: Sequence[BoundSymbol] = ()
     _call_ctx: Optional[Dict[str, Any]] = None
 
-    # NOTE _executor, being an implementation detail, must be set after
-    #   the BoundSymbol is constructed
-    # If you need to set it after construction, use dataclasses.replace
-    # to create a new BoundSymbol with the new executor
-    # TODO Maybe the _executor annotation should be modeled differently?
-    _executor: Optional = None
+    _import_ctx = {}
+    _object_ctx = {}
+    _executor = None
+
+    # BoundSymbols are hashable and comparable by identity
+    # This is necessary for using them as keys in a dict or set members
+    # See dce in thunder/executors/passes.py for the usage.
+    # TODO: if kwargs were hashable (frozendict), we could use a tuple of (sym, args, kwargs, output) as the key
+    #       and avoid the need for this.
+    def __hash__(self):
+        return id(self)
+
+    def __eq__(self, other):
+        return self is other
+
+    # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
+    #   are immutable
+
+    @functools.cached_property
+    def _flat_args(self):
+        return tree_flatten(self.args)[0]
+
+    @functools.cached_property
+    def _flat_kwargs(self):
+        return tree_flatten(self.kwargs)[0]
+
+    @functools.cached_property
+    def _flat_outs(self):
+        return tree_flatten(self.output)[0]
+
+    @property
+    def _out_printables(self):
+        trace = get_tracectx()
+        return codeutils.to_printable(trace, self.output, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
+
+    @property
+    def _arg_printables(self):
+        trace = get_tracectx()
+        return tuple(
+            codeutils.to_printable(trace, x, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
+            for x in self.args
+        )
+
+    @property
+    def _kwarg_printables(self):
+        trace = get_tracectx()
+        return codeutils.to_printable(trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
 
     # TODO Document contexts
-    @functools.cached_property
-    def _import_ctx(self):
+    def import_ctx(self):
+        # NOTE This initializes the context
+        self._out_printables, self._arg_printables, self._kwarg_printables
+
         # BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
         #   to not need any imports to run properly
         if self.sym is not None and self.sym.python_impl is not None:
@@ -271,54 +314,15 @@ class BoundSymbol(BoundSymbolInterface):
             if "." in module_name:
                 root_name = module_name.split(".")[0]
                 import_ctx[root_name] = sys.modules[root_name]
-        return import_ctx
 
-    @functools.cached_property
-    def _object_ctx(self):
-        # Constructs the object ctx and printables
-        # NOTE The object ctx may update the import ctx
-        return {}
+        self._import_ctx.update(import_ctx)
+        return self._import_ctx
 
-    @functools.cached_property
-    def _flat_args(self):
-        return tree_flatten(self.args)[0]
+    def object_ctx(self):
+        # NOTE This initializes the context
+        self._out_printables, self._arg_printables, self._kwarg_printables
 
-    @functools.cached_property
-    def _flat_kwargs(self):
-        return tree_flatten(self.kwargs)[0]
-
-    @functools.cached_property
-    def _flat_outs(self):
-        return tree_flatten(self.output)[0]
-
-    @functools.cached_property
-    def _out_printables(self):
-        trace = get_tracectx()
-        return codeutils.to_printable(trace, self.output, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
-
-    @functools.cached_property
-    def _arg_printables(self):
-        trace = get_tracectx()
-        return tuple(
-            codeutils.to_printable(trace, x, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
-            for x in self.args
-        )
-
-    @functools.cached_property
-    def _kwarg_printables(self):
-        trace = get_tracectx()
-        return codeutils.to_printable(trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
-
-    # BoundSymbols are hashable and comparable by identity
-    # This is necessary for using them as keys in a dict or set members
-    # See dce in thunder/executors/passes.py for the usage.
-    # TODO: if kwargs were hashable (frozendict), we could use a tuple of (sym, args, kwargs, output) as the key
-    #       and avoid the need for this.
-    def __hash__(self):
-        return id(self)
-
-    def __eq__(self, other):
-        return self is other
+        return self._object_ctx
 
     # def set_output(self, output: Any):
     #     self.output = output
@@ -332,8 +336,8 @@ class BoundSymbol(BoundSymbolInterface):
     # TODO Consider if this should gather contexts recursively
     #   Currently this means that imports required for the subsymbols won't
     #   be printed, even though they're used in the comments
-    def _gather_ctxs(self) -> Tuple[dict, dict, dict]:
-        return self._import_ctx, self._get_call_ctx(), self._object_ctx
+    def gather_ctxs(self) -> Tuple[dict, dict, dict]:
+        return self.import_ctx(), self._get_call_ctx(), self.object_ctx()
 
     def _get_lines(self, indent: int, commented: bool = False):
         lines = []
@@ -370,5 +374,5 @@ class BoundSymbol(BoundSymbolInterface):
         """Returns True if all arguments are constant (i.e. not Variables)."""
         return not any(isinstance(arg, VariableInterface) for arg in self._flat_args)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "\n".join(self.python(indent=0, print_depth=-1))

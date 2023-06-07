@@ -86,6 +86,26 @@ def device_put(bsym: BoundSymbol, a: TensorProxy, device: devices.Device) -> Bou
 #
 
 
+def arange(
+    bsym: BoundSymbol,
+    start: Number,
+    end: Optional[Number] = None,
+    step: Number = 1,
+    *,
+    device: Union[str, devices.Device, torch.device] = "cpu",
+    dtype: Optional[Union[dtypes.dtype, torch.dtype]] = None,
+):
+    sym = Symbol(name="arange", meta=None, _module=torch)
+
+    device = ltorch.to_torch_device(device)
+    dtype = ltorch.to_torch_dtype(dtype)
+
+    kwargs = {"device": device, "dtype": dtype}
+
+    tbsym = BoundSymbol(sym, args=(start, end, step), kwargs=kwargs, output=bsym.output)
+    return tbsym
+
+
 def full(
     bsym: BoundSymbol, shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> BoundSymbol:
@@ -161,37 +181,23 @@ def broadcast_in_dim(bsym: BoundSymbol, a, shape, broadcast_dims) -> BoundSymbol
     return tbsym
 
 
-def cat(bsym: BoundSymbol, tensors, dim=0):
+def cat(bsym: BoundSymbol, tensors, dim=0) -> BoundSymbol:
     sym = Symbol(name="cat", meta=None, _module=torch)
     tbsym = BoundSymbol(sym, args=(tensors, dim), kwargs={}, output=bsym.output)
 
     return tbsym
 
 
-def getitem(bsym: BoundSymbol, tensor, key):
+def contiguous(bsym: BoundSymbol, a) -> BoundSymbol:
+    sym = Symbol(name="contiguous", meta=None, _module=torch.Tensor)
+    tbsym = BoundSymbol(sym, args=(a,), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+def getitem(bsym: BoundSymbol, tensor, key) -> BoundSymbol:
     sym = Symbol(name="__getitem__", meta=None, _module=torch.Tensor)
     tbsym = BoundSymbol(sym, args=(tensor, key), kwargs={}, output=bsym.output)
-
-    return tbsym
-
-
-def split(bsym: BoundSymbol, a, size_or_sections, dim=0):
-    sym = Symbol(name="split", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, size_or_sections, dim), kwargs={}, output=bsym.output)
-
-    return tbsym
-
-
-def tensor_split(bsym: BoundSymbol, a, size_or_sections, dim=0):
-    sym = Symbol(name="tensor_split", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, size_or_sections, dim), kwargs={}, output=bsym.output)
-
-    return tbsym
-
-
-def transpose(bsym: BoundSymbol, a, dim0, dim1):
-    sym = Symbol(name="transpose", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, dim0, dim1), kwargs={}, output=bsym.output)
 
     return tbsym
 
@@ -278,6 +284,13 @@ def slice_prim(bsym: BoundSymbol, a, start_indices, end_indices, strides=None):
     return tbsym
 
 
+def split(bsym: BoundSymbol, a, size_or_sections, dim=0):
+    sym = Symbol(name="split", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, size_or_sections, dim), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
 # TODO We can probably depend on PyTorch 2.0
 # NOTE dim as a sequence is only supported on PyTorch 2.0 and greater
 def _squeeze_helper(a: torch.Tensor, dim: Optional[Union[int, Sequence[int]]]):
@@ -312,13 +325,6 @@ def squeeze(bsym: BoundSymbol, a, dim=None):
     return tbsym
 
 
-def prim_transpose(bsym: BoundSymbol, a, permutation):
-    sym = Symbol(name="permute", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, permutation), kwargs={}, output=bsym.output)
-
-    return tbsym
-
-
 # NOTE Order of index and dim changes
 def take(bsym: BoundSymbol, a, index, dim):
     sym = Symbol(name="index_select", meta=None, _module=torch)
@@ -335,7 +341,36 @@ def take_along_axis(bsym: BoundSymbol, a, index, dim):
     return tbsym
 
 
-def view(bsym: BoundSymbol, a, shape):
+def tensor_split(bsym: BoundSymbol, a, size_or_sections, dim=0):
+    sym = Symbol(name="tensor_split", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, size_or_sections, dim), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+def transpose(bsym: BoundSymbol, a, dim0, dim1):
+    sym = Symbol(name="transpose", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, dim0, dim1), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+# NOTE Alphabetized as "transpose"
+def prim_transpose(bsym: BoundSymbol, a, permutation):
+    sym = Symbol(name="permute", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, permutation), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+def unsqueeze(bsym: BoundSymbol, a, dim: int):
+    sym = Symbol(name="unsqueeze", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, dim), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+def view(bsym: BoundSymbol, a, *shape):
     sym = Symbol(name="view", meta=None, _module=torch.Tensor)
     tbsym = BoundSymbol(sym, args=(a, shape), kwargs={}, output=bsym.output)
 
@@ -620,7 +655,6 @@ def embedding(
     bsym: BoundSymbol,
     a,
     weight,
-    *,
     padding_idx=-1,
     max_norm=None,
     norm_type=2.0,
@@ -638,6 +672,20 @@ def embedding(
     }
 
     tbsym = BoundSymbol(sym, args=(a, weight), kwargs=kwargs, output=bsym.output)
+    return tbsym
+
+
+def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
+    sym = Symbol(name="layer_norm", meta=None, _module=torch.nn.functional)
+    tbsym = BoundSymbol(sym, args=(a, normalized_shape, weight, bias, eps), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+def masked_fill(bsym: BoundSymbol, a, mask, value):
+    sym = Symbol(name="masked_fill", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, mask, value), kwargs={}, output=bsym.output)
+
     return tbsym
 
 
@@ -664,11 +712,14 @@ _ops_map.update(
         PrimIDs.CONVERT_ELEMENT_TYPE: (_always_executable, convert_element_type),
         PrimIDs.DEVICE_PUT: (_always_executable, device_put),
         # Tensor creation operations
+        "torch.arange": (_always_executable, arange),
         PrimIDs.FULL: (_always_executable, full),
         PrimIDs.IOTA: (_always_executable, iota),
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_always_executable, broadcast_in_dim),
         PrimIDs.CAT: (_always_executable, cat),
+        "torch.Tensor.contiguous": (_always_executable, contiguous),
+        "torch.Tensor.__getitem__": (_always_executable, getitem),
         PrimIDs.PAD: (_always_executable, pad),
         PrimIDs.RESHAPE: (_always_executable, reshape),
         PrimIDs.SLICE: (_always_executable, slice_prim),
@@ -680,8 +731,12 @@ _ops_map.update(
         "torch.tensor_split": (_always_executable, tensor_split),
         "torch.transpose": (_always_executable, transpose),
         PrimIDs.TRANSPOSE: (_always_executable, prim_transpose),
+        "torch.unsqueeze": (_always_executable, unsqueeze),
         PrimIDs.VIEW: (_always_executable, view),
-        "torch.Tensor.__getitem__": (_always_executable, getitem),
+        # NOTE torch.Tensor.view is intentionally not lowered because
+        #   whether a view is possible depends on a tensor's strides, which
+        #   we do not enforce
+        # "torch.Tensor.view": (_always_executable, view),
         # Elementwise unary operations
         "torch.abs": (_elementwise_unary_check, torch_abs),
         PrimIDs.ABS: (_elementwise_unary_check, torch_abs),
@@ -795,6 +850,7 @@ _ops_map.update(
         PrimIDs.SUB: (_elementwise_binary_check, sub),
         # Elementwise ternary operations
         PrimIDs.WHERE: (_elementwise_ternary_check, where),
+        "torch.where": (_elementwise_ternary_check, where),
         # Reduction operators
         PrimIDs.AMAX: (_always_executable, amax_prim),
         PrimIDs.AMIN: (_always_executable, amin_prim),
@@ -808,6 +864,9 @@ _ops_map.update(
         # NN operations
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.EMBEDDING: (_always_executable, embedding),
+        "torch.nn.functional.embedding": (_always_executable, embedding),
+        "torch.layer_norm": (_always_executable, layer_norm),
+        "torch.masked_fill": (_always_executable, masked_fill),
         "torch.softmax": (_always_executable, softmax),
     }
 )
@@ -829,7 +888,6 @@ def is_supported(bsym: BoundSymbol, *, prims_only: bool = False) -> bool:
         return False
 
     is_fusible = fusible_check(*bsym.args, **bsym.kwargs)
-
     return is_fusible
 
 

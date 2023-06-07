@@ -97,10 +97,6 @@ from thunder.clang import *
 # Common UX functions
 
 
-# TODO Restore caching and ensure inputs are tracked symbolically and not as constants
-# https://github.com/Lightning-AI/lightning-thunder/issues/328
-#   Need to add arg, vararg, kwarg, and varkwargs names to trace names to avoid conflicts
-#   fix this when putting the unpacking into traces
 def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
     si = get_siginfo(fn, args, kwargs)
 
@@ -114,8 +110,13 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         # the name of the proxy, but that might require a lot of changes to the
         # codebase.
         name = name or tracectx.make_name()
-        if isinstance(x, Proxy) and name is not None:
-            return x.replace_name(name)
+        if isinstance(x, Proxy):
+            if name is not None:
+                return x.replace_name(name)
+            return x
+
+        if utils.is_collection(x):
+            return tracectx.track_for_unpacking(x, name=name)
 
         if is_proxyable(x):
             return proxy(x, name=name)
@@ -125,7 +126,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         if isinstance(x, pytorch.dtype):
             x = ltorch.to_thunder_dtype(x)
 
-        return tracectx.track(x, name=name)
+        return x
 
     def _unpack(x: Any, *, name: str = None) -> list:
         unpacked = None
@@ -136,11 +137,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         # TODO Consider reviewing dict values
         if is_collection(x):
             pot_collection = tree_map(proxy_or_track, x)
-
-            # NOTE It's important that the collection is tracked after the unflattening -- because it's now a different
-            #   collection that will actually be passed through the program!
-            # NOTE At this point the subcollections are still not tracked -- that's handled below
-            tracectx.track(pot_collection, name=name)
+            tracectx.track_for_unpacking(pot_collection, name=name)
 
             items: Sequence
             if isinstance(pot_collection, Sequence):
@@ -205,7 +202,8 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
     # NOTE This code is very similar to the above -- maybe they can be refactored together?
     def unpack_recursive(x, q):
         if is_collection(x):
-            # NOTE This proxy_or_track is required because the initial track above didn't include sub-collections
+            # NOTE This proxy_or_track is required because collections must be tracked during unpacking
+            #   to name them properly
             proxy_or_track(x)
 
             items: Sequence

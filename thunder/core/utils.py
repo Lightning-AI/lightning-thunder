@@ -848,7 +848,7 @@ class ProxyDict:
         return str(self._dict)
 
 
-# Returns a name -> producer mapping
+# Returns a proxy -> producer mapping
 def producers(trace: TraceCtx) -> ProxyDict:
     producers = ProxyDict(trace)
 

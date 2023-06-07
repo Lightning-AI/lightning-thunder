@@ -12,7 +12,7 @@ import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.codeutils import TrackedObject
+from thunder.core.codeutils import TrackedObject, ContextObject
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/327
@@ -51,10 +51,11 @@ class TraceCtx:
         self.scopes = [self.bound_symbols]
 
         self.name_ctr = 0
-        self.const_name_ctr = 0
+        self.obj_name_ctr = 0
         self.names = set()
 
         self._tracked_object_map: dict[tuple[int, type], TrackedObject] = {}
+        self._object_ctx: dict[int, ContextObject] = {}
 
         self._provenance: Optional[TraceProvenance] = None
 
@@ -106,30 +107,36 @@ class TraceCtx:
     def add_name(self, name: str) -> None:
         self.names.add(name)
 
-    def _make_name(self, is_const_name: bool) -> str:
-        chars = tuple(string.ascii_lowercase)
+    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/329
+    # NOTE The following algorithm does not work as desired (it produces duplicate names)
+    def _gen_name(self, ctr):
+        return ctr
+        # chars = tuple(string.ascii_lowercase)
 
-        def _gen_name(ctr):
-            place = 0
-            s = []
-            while ctr >= 0:
-                if place > 0:
-                    ctr = ctr // (place * len(chars))
-                idx = ctr % (len(chars))
-                s.append(chars[idx])
-                ctr = ctr - (idx + 1 + place * len(chars))
-                place += 1
-            return "".join(s)
+        # place = 0
+        # s = []
+        # while ctr >= 0:
+        #     if place > 0:
+        #         ctr = ctr // (place * len(chars))
+        #     idx = ctr % (len(chars))
+        #     s.append(chars[idx])
+        #     ctr = ctr - (idx + 1 + place * len(chars))
+        #     place += 1
+        # return "".join(s)
 
-        name = None
+    def _make_name(self, is_object_name: bool, obj: Optional = None) -> str:
+        name: str
         while True:
-            # NOTE: adds "__" in an attempt to avoid collisions
-            if is_const_name:
-                name = f"__const_{_gen_name(self.const_name_ctr)}"
-                self.const_name_ctr += 1
-
+            # NOTE Adds "__" in an attempt to avoid collisions
+            if is_object_name:
+                name = self._gen_name(self.obj_name_ctr)
+                self.obj_name_ctr += 1
+                if obj is None:
+                    name = f"__object_{name}"
+                else:
+                    name = f"__{baseutils.print_type(type(obj), with_quotes=False)}_{name}"
             else:
-                name = f"__{_gen_name(self.name_ctr)}"
+                name = f"__{self._gen_name(self.name_ctr)}"
                 self.name_ctr += 1
 
             if name not in self.names:
@@ -138,11 +145,17 @@ class TraceCtx:
         self.names.add(name)
         return name
 
-    def make_name(self) -> str:
-        return self._make_name(is_const_name=False)
+    # Constructs and records new name -- or, if name is not None --
+    #   just records the given name
+    def make_name(self, name: Optional[str] = None) -> str:
+        if name is not None:
+            self.names.add(name)
+            return name
 
-    def make_const_name(self) -> str:
-        return self._make_name(is_const_name=True)
+        return self._make_name(is_object_name=False)
+
+    def make_object_name(self, x: Any) -> str:
+        return self._make_name(is_object_name=True, obj=x)
 
     #
     # Methods related to adding inputs, outputs, bound symbols, and manipulating scopes
@@ -191,7 +204,6 @@ class TraceCtx:
     #
     # Methods for tracking and querying objects
     #
-    # TODO Review if proxies should be tracked, too
 
     # TODO Make the key a specific type
     def _tracked_object_key(self, x: Any) -> tuple[int, type]:
@@ -228,19 +240,14 @@ class TraceCtx:
         return False
 
     # NOTE This is a "fluid" interface that returns its input x
-    def track(
+    def track_for_unpacking(
         self,
         x: Any,
         *,
         name: str = None,
     ) -> Union[ProxyInterface, TrackedObject]:
-        # NOTE Proxies are not (currently) tracked
-        # NOTE Proxy names are recorded here, which may be redundant, but supports
-        #   proxies constructed outside traces being used as inputs to other traces
-        #   See https://github.com/Lightning-AI/lightning-thunder/issues/384
-        if isinstance(x, ProxyInterface):
-            self.add_name(x.name)
-            return x
+        baseutils.check(self._unpacking, lambda: f"Collections can only be tracked during unpacking")
+        baseutils.check(baseutils.is_collection(x), lambda: f"Only collections can be tracked, but was given {x}")
 
         # Short-circuits if already tracked
         if self.is_tracked(x):
@@ -249,13 +256,8 @@ class TraceCtx:
         if self._is_singleton(x):
             return x
 
-        # Tracks the object
-        if name is not None:
-            self.add_name(name)
-        else:
-            # NOTE make_name() automatically adds the name to the set of names
-            name = self.make_name()
-
+        # Tracks the collection
+        name = self.make_name(name)
         to = TrackedObject(name, x)
         key = self._tracked_object_key(x)
         self._tracked_object_map[key] = to
@@ -265,6 +267,18 @@ class TraceCtx:
     #
     # Methods related to constructing a Python program representing the trace
     #
+
+    def add_object(self, x: Any) -> ContextObject:
+        key = id(x)
+
+        prev = self._object_ctx.get(key, None)
+
+        if prev is None:
+            val = ContextObject(self.make_object_name(x), x)
+            self._object_ctx[key] = val
+            return val
+
+        return prev
 
     # TODO Ensure no names are clobbered with different values
     # Gathers the import and object contexts
@@ -280,7 +294,7 @@ class TraceCtx:
 
         # Gathers from BoundSymbols
         for bsym in self.bound_symbols:
-            bsym_import_ctx, bsym_call_ctx, bsym_object_ctx = bsym._gather_ctxs()
+            bsym_import_ctx, bsym_call_ctx, bsym_object_ctx = bsym.gather_ctxs()
             import_ctx.update(bsym_import_ctx)
             call_ctx.update(bsym_call_ctx)
             object_ctx.update(bsym_object_ctx)
@@ -309,17 +323,9 @@ class TraceCtx:
         return import_ctx
 
     # TODO Account for multi-line signatures
-    # TODO Review printing returning none
     # TODO https://github.com/Lightning-AI/lightning-thunder/issues/324
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
-    # NOTE Printing happens in the context of the trace
-    #   One scenario where this is important is if we're no longer tracing, but a practitioner
-    #   still wants to print the trace
-    #   TODO We can revisit this -- it seems natural, but an alternative would be to more aggressively
-    #   "inline" tracked objects into bound symbols
-    #   One consequence of printing being in the context of a trace is that a BoundSymbol cannot be printed
-    #   separate from a tracing context -- again, this seems natural, but may be limiting
     def python(self, *, print_depth: int = 1) -> str:
         token = set_tracectx(self)
 
@@ -410,7 +416,7 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.output = trace.output
 
     t.name_ctr = trace.name_ctr
-    t.const_name_ctr = trace.const_name_ctr
+    t.obj_name_ctr = trace.obj_name_ctr
     t.names = trace.names
 
     t._tracked_object_map = trace._tracked_object_map
@@ -465,6 +471,15 @@ def maybe_reset_trace(started: bool, tok: Any) -> None:
         return
 
     reset_tracectx(tok)
+
+
+@contextmanager
+def tracectx(trace: TraceCtx):
+    tok = set_tracectx(trace)
+    try:
+        yield
+    finally:
+        reset_tracectx(tok)
 
 
 @contextmanager

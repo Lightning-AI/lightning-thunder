@@ -175,7 +175,21 @@ class torchsymbol:
 
         id: str
         if self.id is None:
-            id = f"torch.{fn.__name__}"
+            name = fn.__name__
+            if hasattr(torch, name):
+                id = f"torch.{name}"
+            elif hasattr(torch.nn.functional, name):
+                id = f"torch.nn.functional.{name}"
+            elif hasattr(torch.Tensor, name):
+                id = f"torch.Tensor.{name}"
+            elif hasattr(torch.ops.aten, name):
+                id = f"torch.ops.aten.{name}"
+            else:
+                utils.check(
+                    False,
+                    lambda: f"Failed to infer an id for {name}, specify one explicitly",
+                    exception_type=AssertionError,
+                )
         else:
             id = self.id
 
@@ -602,7 +616,17 @@ def masked_fill(a, mask, value):
 
 
 @torchsymbol(torch.arange)
-def arange(start, end=None, step=1, *, device="cpu", dtype=None):
+def arange(
+    start: Number,
+    end: Optional[Number] = None,
+    step: Number = 1,
+    *,
+    device: Union[str, devices.Device, torch.device] = "cpu",
+    dtype: Optional[Union[dtypes.dtype, torch.dtype]] = None,
+):
+    device = to_thunder_device(device)
+    dtype = to_thunder_dtype(dtype)
+
     if end is None:
         end = start
         start = 0
@@ -619,7 +643,7 @@ def full_like(tensor, fill_value, *, device=None, dtype=None):
 # TODO: based on uniform_, check if Torch now has a functional uniform
 # NOTE: the uniform_ documentation suggests the interval is specified using "from" and "to",
 #   but from is a reserved keyword in Python
-@torchsymbol(torchfn=None, is_method=False)
+@torchsymbol(torchfn=None, is_method=False, id="torch.uniform")
 def uniform(
     shape: Sequence[int],
     minval: Number = 0.0,
@@ -634,7 +658,7 @@ def uniform(
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
 
 
-@torchsymbol(torchfn=None, is_method=False)
+@torchsymbol(torchfn=None, is_method=False, id="torch.uniform_like")
 def uniform_like(
     a: TensorProxy,
     minval: Number = 0.0,
@@ -987,7 +1011,7 @@ def matrix_transpose(a):
 
 # TODO Add type annotations
 @torchsymbol(torch.unsqueeze, is_method=True)
-def unsqueeze(a, dim):
+def unsqueeze(a, dim: int):
     return clang.unsqueeze(a, (dim,))
 
 
@@ -1380,8 +1404,8 @@ def _native_layer_norm(a: TensorProxy, normalized_shape, weight, bias, eps: Numb
 # TODO Add type annotations
 # TODO Move this to nn.functional
 @torchsymbol(torch.nn.functional.layer_norm)
-def layer_norm(input: TensorProxy, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
-    return _native_layer_norm(input, normalized_shape, weight, bias, eps)[0]
+def layer_norm(a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
+    return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
 
 
 #
@@ -1410,6 +1434,8 @@ def _dropout_helper(a, p):
 
 # TODO Is this a method?
 # TODO Move this to nn.functional
+# NOTE The id must be explicitly specified so as not to resolve to torch.dropout
+#   (Using torch.nn.functional.dropout is just for readability as it's the documented operator)
 @torchsymbol(torch.nn.functional.dropout, id="torch.nn.functional.dropout")
 def dropout(a: TensorProxy, p: Number = 0.5, training: bool = True, inplace: bool = False):
     if not training or inplace:
@@ -1460,7 +1486,7 @@ def matmul(a, b):
     return prims.matmul(a, b)
 
 
-@torchsymbol(torch.nn.functional.embedding)
+@torchsymbol(torch.nn.functional.embedding, id="torch.nn.functional.embedding")
 def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
     # TODO: add embedding_renorm_ so we can remove embedding prim
     if max_norm is not None:

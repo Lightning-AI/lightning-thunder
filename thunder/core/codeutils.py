@@ -86,6 +86,10 @@ def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
         return True, None
     if isinstance(x, Number):
         return True, None
+    if isinstance(x, torch.dtype):
+        return True, ("torch", torch)
+    if isinstance(x, slice):
+        return True, None
 
     return False, None
 
@@ -114,12 +118,12 @@ def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, 
 
     # NOTE Non-printable objects are serialized in the Python context, if a trace context is available
     if tracectx is not None:
-        name = tracectx.make_const_name()
-        co = ContextObject(name, x)
+        co = tracectx.add_object(x)
         return co, None
-    else:
-        # NOTE When printing outside a trace context we just print a placeholder description of the object
-        return f"[Non-serializable object of type {type(x)}]", None
+
+    # NOTE In this case we don't understand how to serialize the object as a string, and
+    #   there's no trace ctx, so this will be printed as an unknown object
+    return x, None
 
 
 # TODO Improve type annotations
@@ -131,12 +135,7 @@ def to_printable(
     object_ctx: Optional[dict] = None,
     allow_tracked_objects: bool = True,
 ) -> Any:
-    if allow_tracked_objects:
-        check(
-            trace is not None,
-            lambda: f"When printing tracked objects expect to be printing in a trace ctx",
-            exception_type=AssertionError,
-        )
+    if allow_tracked_objects and trace is not None:
         to = trace.get_tracked_object(x)
         is_tracked = isinstance(to, TrackedObject)
 
@@ -184,8 +183,25 @@ def _qm(s: str, quote_markers: bool) -> str:
     return f"{_quote_marker}{s}{_quote_marker}"
 
 
+_torch_dtype_to_str_map = {
+    torch.bool: "torch.bool",
+    torch.uint8: "torch.uint8",
+    torch.int8: "torch.int8",
+    torch.int16: "torch.int16",
+    torch.int32: "torch.int32",
+    torch.int64: "torch.int64",
+    torch.bfloat16: "torch.bfloat16",
+    torch.float16: "torch.float16",
+    torch.float32: "torch.float32",
+    torch.float64: "torch.float64",
+    torch.complex32: "torch.complex32",
+    torch.complex64: "torch.complex64",
+    torch.complex128: "torch.complex128",
+}
+
+
 # TODO Review prettyprinting other map types like dict -- these need to print strings in a particular way
-# TODO Add None support
+# TODO Make a passthrough for types known to be serializable using their __repr__
 def prettyprint(
     x: Any,
     *,
@@ -255,10 +271,13 @@ def prettyprint(
         else:
             s = m(str(x))
         return s
+    if isinstance(x, torch.dtype):
+        return m(_torch_dtype_to_str_map[x])
+    if isinstance(x, slice):
+        return m(str(x))
 
-    baseutils.check(
-        False, lambda: f"prettyprint doesn't support object {x} of type {type(x)}", exception_type=NotImplementedError
-    )
+    # Handles objects that this doesn't know how to serialize as a string
+    return m(f"(object of type {print_type(type(x), with_quotes=False)})")
 
 
 # TODO Make this a frozen dataclass?
@@ -270,52 +289,27 @@ class SigInfo:
         self.kwargs = {}
         self.varkwargs = None
         self.defaultdict = {}
-        self._import_ctx = None
-        self._object_ctx = None
 
     def __repr__(self):
         return f"[SigInfo args={self.args}, varargs={self.varargs}, kwargs={self.kwargs}, varkwargs={self.varkwargs}]"
 
     # NOTE This prints the original signature, not the bound signature
+    # TODO Print the original signature's type annotations
     # TODO Maybe be clear about what inputs are const and what aren't?
-    # TODO Improve this type annotation to take a TraceInterface and return the proper type(s)
-    def prettyprint(self, *, trace: Optional = None, import_ctx: Optional = None, object_ctx=None):
+    # TODO Improve this signature's type annotations
+    def prettyprint(self, *, trace: Optional = None, import_ctx: Optional = None, object_ctx=None) -> str:
         def _arg_printer(name: str, has_default: bool, default: Any = None) -> str:
+            # NOTE In this case the argument has a default value, like 'a' in foo(a=5)
             if has_default:
-                if trace is not None:
-                    # NOTE This may seem a little ridiculous, and there may be a better way to do it,
-                    #   but we only want to build the SigInfo's import and object contexts once
-                    #   This lazy initialization ensures we do that
-                    _import_ctx = None
-                    _object_ctx = None
-                    if self._import_ctx is None:
-                        self._import_ctx = {}
-                        self._object_ctx = {}
-                        _import_ctx = self._import_ctx
-                        _object_ctx = self._object_ctx
-
-                    # NOTE Arbitrary objects from the input will be tracked at this point, but this needs to print them
-                    #   as if they are just being constructed, so using the names of the tracked objects is disallowed here
-                    printable = to_printable(
-                        trace, default, import_ctx=_import_ctx, object_ctx=_object_ctx, allow_tracked_objects=False
-                    )
-                    s = f"{name}={prettyprint(printable)}"
-
-                    import_ctx.update(self._import_ctx)
-                    object_ctx.update(self._object_ctx)
-
-                    return s
-
-                # Trace is None case
-                # NOTE In this case the default value must be serializable as a string without an import or compile context
-                can_print, module_info = is_printable(default)
-
-                check(
-                    can_print and module_info is None,
-                    lambda: f"This signature has a default value {default=} that is not serializable as a string; it can only be printed in a trace context",
+                # NOTE Collections from the input will be tracked at this point, but this wants to print the
+                #   contents of the collections, so tracked objects are disabled
+                printable = to_printable(
+                    trace, default, import_ctx=import_ctx, object_ctx=object_ctx, allow_tracked_objects=False
                 )
 
-                return f"{name}={prettyprint(default)}"
+                return f"{name}={prettyprint(printable)}"
+
+            # NOTE In this case the value has no default, like 'a' in foo(a)
             return name
 
         args = []
@@ -363,10 +357,14 @@ class SigInfo:
 
 
 # TODO Review errors and improve message quality (ex. too many arguments error)
-def get_siginfo(fn, args, kwargs):
+def get_siginfo(fn: Callable, args, kwargs) -> SigInfo:
     # Unwraps partials and records their arguments
     partials = []
     partial_kwargs = {}
+
+    args = args if args is not None else ()
+    kwargs = kwargs if kwargs is not None else {}
+
     fn_ = fn
     while True:
         if not isinstance(fn_, functools.partial):

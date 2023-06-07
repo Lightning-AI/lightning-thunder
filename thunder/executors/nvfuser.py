@@ -373,6 +373,9 @@ def _slice_check(
     if nv_version < LooseVersion("0.0.6"):
         return False
 
+    if not is_supported_tensor(a):
+        return False
+
     # Checks that strides are not specified or all are explicitly set to 1
     if strides is not None:
         for stride in strides:
@@ -1174,7 +1177,7 @@ def can_execute(bsym: BoundSymbol, *, prims_only: bool = False) -> bool:
     for ssym in bsym.subsymbols:
         can_execute_ = can_execute(ssym, prims_only=prims_only)
         if not can_execute_:
-            break
+            return False
 
     return can_execute_
 

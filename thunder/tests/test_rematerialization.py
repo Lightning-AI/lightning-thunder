@@ -52,10 +52,10 @@ def test_find_producer_symbols(executor, device, _):
     # __n = prims.mul(__m, __c)
 
     # We will try to find a subgraph for rematerializing __c and __d
-    assert "__c" in map(lambda x: x.name, nvfuser_symbol.args)
-    assert "__d" in map(lambda x: x.name, nvfuser_symbol.args)
-    c_proxy = next(filter(lambda x: x.name == "__c", nvfuser_symbol.args))
-    d_proxy = next(filter(lambda x: x.name == "__d", nvfuser_symbol.args))
+    assert "__2" in map(lambda x: x.name, nvfuser_symbol.args)
+    assert "__3" in map(lambda x: x.name, nvfuser_symbol.args)
+    c_proxy = next(filter(lambda x: x.name == "__2", nvfuser_symbol.args))
+    d_proxy = next(filter(lambda x: x.name == "__3", nvfuser_symbol.args))
 
     # We need to find the producer of __c and __d that is not in subsymbols of nvfuser_symbol
     # We will search for the producer of __c and __d in the flattened trace
@@ -64,7 +64,7 @@ def test_find_producer_symbols(executor, device, _):
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region
     a_proxy = flattened_trace.bound_symbols[0].output[0]
-    assert a_proxy.name == "__a"
+    assert a_proxy.name == "__0"
     stop_proxies = [a_proxy]
 
     recomputed_producers = utils.find_producer_symbols(flattened_trace, (c_proxy, d_proxy), stop_proxies)
@@ -91,11 +91,11 @@ def test_apply_rematerialization_producer(executor, device, _):
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
 
-    cut = ("__a", "__e")
+    cut = ("__0", "__4")
     assert cut[0] in map(lambda x: x.name, producer.args)
     assert cut[1] in map(lambda x: x.name, producer.output)
 
-    external_producer_outputs = ("__b", "__e")
+    external_producer_outputs = ("__1", "__4")
     new_producer = apply_rematerialization_for_producer(trace, producer, consumer, cut)
     assert new_producer.sym.name == producer.sym.name
     assert new_producer.args == producer.args
@@ -122,7 +122,7 @@ def test_apply_rematerialization_consumer(executor, device, _):
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
 
-    cut = ("__a", "__e")
+    cut = ("__0", "__4")
     assert cut[0] in map(lambda x: x.name, producer.args)
     assert cut[1] in map(lambda x: x.name, producer.output)
     assert cut[1] in map(lambda x: x.name, consumer.args)
@@ -200,4 +200,4 @@ def test_find_cut(executor, device, _):
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
     cut = find_cut(trace, producer, consumer)
-    assert cut == ("__a", "__e")
+    assert cut == ("__0", "__4")
