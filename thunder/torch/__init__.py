@@ -633,11 +633,28 @@ def arange(
     return clang.arange(start=start, step=step, stop=end, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.full)
+def full(shape, fill_value, *, device=None, dtype=None):
+    device = to_thunder_device(device)
+    dtype = to_thunder_dtype(dtype)
+    return clang.full(shape, fill_value, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.full_like)
 def full_like(tensor, fill_value, *, device=None, dtype=None):
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
     return clang.full_like(tensor, fill_value, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.ones)
+def ones(shape, *, device=None, dtype=None):
+    return full(shape, 1, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.ones_like)
+def ones_like(tensor, *, device=None, dtype=None):
+    return full_like(tensor, 1, device=device, dtype=dtype)
 
 
 # TODO: based on uniform_, check if Torch now has a functional uniform
@@ -673,12 +690,14 @@ def uniform_like(
     return clang.uniform_like(a, minval, maxval, device=device, dtype=dtype)
 
 
-# TODO: maybe just make this a passthrough?
+@torchsymbol(torch.zeros)
+def zeros(shape, *, device=None, dtype=None):
+    return full(shape, 0, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.zeros_like)
 def zeros_like(tensor, *, device=None, dtype=None):
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
-    return full_like(tensor, 0.0, device=device, dtype=dtype)
+    return full_like(tensor, 0, device=device, dtype=dtype)
 
 
 #

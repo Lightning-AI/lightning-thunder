@@ -2979,6 +2979,27 @@ full_opinfo = OpInfo(
 tensor_creation_ops.append(full_opinfo)
 
 
+def ones_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # shape
+    cases = (
+        (()),
+        ((4, 4)),
+        ((8, 1, 6)),
+        ((8, 7, 5, 1)),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+ones_opinfo = OpInfo(
+    ltorch.ones,
+    sample_input_generator=ones_sample_generator,
+    torch_reference=torch.ones,
+)
+tensor_creation_ops.append(ones_opinfo)
+
+
 def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
     cases = (
         # (),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
