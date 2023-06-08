@@ -17,6 +17,7 @@ import thunder.core.utils as utils
 from thunder.executors.utils import Region, Executor
 
 import thunder.torch as ltorch
+from thunder.torch import DeviceLike, dtypeLike
 
 
 def name() -> Executor:
@@ -79,6 +80,27 @@ def device_put(bsym: BoundSymbol, a: TensorProxy, device: devices.Device) -> Bou
     tbsym = BoundSymbol(sym, args=(a, torch_device), kwargs={}, output=bsym.output)
 
     return tbsym
+
+
+# NOTE This is a direct lowering of torch.Tensor.to
+def to(
+    bsym: BoundSymbol,
+    a,
+    tensor_dtype_or_device: Optional = None,
+    optional_positional_dtype: Optional = None,
+    /,
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypeLike] = None,
+) -> BoundSymbol:
+    sym = Symbol(name="to", meta=None, _module=torch.Tensor)
+
+    device, dtype = ltorch._parse_to_device_and_dtype(
+        tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
+    )
+    device = ltorch.to_torch_device(device)
+    dtype = ltorch.to_torch_dtype(dtype)
+
+    return sym.bind(a, device=device, dtype=dtype, output=bsym.output)
 
 
 #
@@ -726,6 +748,7 @@ _ops_map.update(
         # Data movement operations
         PrimIDs.CONVERT_ELEMENT_TYPE: (_always_executable, convert_element_type),
         PrimIDs.DEVICE_PUT: (_always_executable, device_put),
+        "torch.Tensor.to": (_always_executable, to),
         # Tensor creation operations
         "torch.arange": (_always_executable, arange),
         PrimIDs.FULL: (_always_executable, full),

@@ -22,6 +22,10 @@ __all__ = [
 # NOTE torch is a requirement
 import torch
 
+# Type annotation helpers
+DeviceLike = Union[str, devices.Device, torch.device]
+dtypeLike = Union[dtypes.dtype, torch.dtype]
+
 
 #
 # default langctx interface: available devices
@@ -232,18 +236,65 @@ def to_float(a):
     return clang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
-# NOTE to's parsing is pretty whacky
+# NOTE to's parsing is a little whacky
+#   to supports five first positional arguments
+#   1) a tensor, in which case device and dtype cannot be specified (although we allow them to be)
+#   2) a dtype, in which case device cannot be specified (although we allow this)
+#   3) a device, in which case dtype can be specified,
+#   4) None, in which case device and dtype come from kwargs (which may also be None, a.to() is valid and just returns)
+#       a itself
+#   5) device and dtype
+def _parse_to_device_and_dtype(
+    tensor_dtype_or_device: Optional = None,
+    optional_positional_dtype: Optional = None,
+    /,
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypeLike] = None,
+):
+    # Case 3 and 5 -- device first
+    if isinstance(tensor_dtype_or_device, (torch.device, devices.Device, str)):
+        utils.check(device is None, lambda: f"to received both a positional and keyword device argument")
+        device = to_thunder_device(tensor_dtype_or_device)
+
+        if optional_positional_dtype is not None:
+            utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
+            dtype = to_thunder_dtype(optional_positional_dtype)
+        else:
+            dtype = to_thunder_dtype(dtype)
+    # Case 2 -- dtype first
+    elif isinstance(tensor_dtype_or_device, (torch.dtype, dtypes.dtype)):
+        utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
+        device = to_thunder_device(device)
+        dtype = to_thunder_dtype(tensor_dtype_or_device)
+    # Case 4 -- None first
+    elif tensor_dtype_or_device is None:
+        device = to_thunder_device(device)
+        dtype = to_thunder_dtype(dtype)
+    # Case 1 -- tensor first
+    else:
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/317
+        #   It'd be nice to write torch.Tensor here instead of TensorProxy
+        utils.check_type(tensor_dtype_or_device, TensorProxy)
+        device_ = tensor_dtype_or_device.device if device is None else to_thunder_device(device)
+        dtype_ = tensor_dtype_or_device.true_dtype if dtype is None else to_thunder_dtype(dtype)
+        device, dtype = device_, dtype_
+
+    return device, dtype
+
+
 # TODO Model non_blocking, copy, and memory_format (as kwargs)
-# TODO Below we'd like to write isinstance(tensor_device_or_dtype, torch.Tensor),
-#   because that's what a practitioner would write, but TensorProxies are not
-#   instances of torch.Tensor, and this check would fail when it should succeed
-#   https://github.com/Lightning-AI/lightning-thunder/issues/317
-# TODO Support positional tensor, device and dtype arguments (requires 317 to be solved)
-# https://pytorch.org/docs/master/generated/torch.Tensor.to.html
 @torchsymbol(torch.Tensor.to, is_method=True)
-def to(a, device=None, dtype=None):
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+def to(
+    a,
+    tensor_dtype_or_device: Optional = None,
+    optional_positional_dtype: Optional = None,
+    /,
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypeLike] = None,
+):
+    device, dtype = _parse_to_device_and_dtype(
+        tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
+    )
 
     # NOTE to() returns the tensor unmodified if the device and dtype requested are the same
     #   (and copy=False)
@@ -621,8 +672,8 @@ def arange(
     end: Optional[Number] = None,
     step: Number = 1,
     *,
-    device: Union[str, devices.Device, torch.device] = "cpu",
-    dtype: Optional[Union[dtypes.dtype, torch.dtype]] = None,
+    device: DeviceLike = "cpu",
+    dtype: Optional[dtypeLike] = None,
 ):
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
