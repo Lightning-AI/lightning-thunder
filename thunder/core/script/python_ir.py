@@ -1,10 +1,19 @@
+import collections
 import dis
 import inspect
 import sys
 import types
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 
-from thunder.core.script.graph import Graph, MROAwareObjectRef, Node, Value, insert_before, insert_after
+from thunder.core.script.graph import (
+    Graph,
+    GraphSummaryCallback,
+    MROAwareObjectRef,
+    Node,
+    Value,
+    insert_before,
+    insert_after,
+)
 from thunder.core.script.python_ir_data import get_instruction
 
 
@@ -19,6 +28,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
             idx = len(consts)
             consts.append(v.value)
             new_n = Node(i=get_instruction(opname="LOAD_CONST", arg=idx), outputs=[v], inputs=[])
+            new_n.inserted_for = n
             insert_before(new_n, n)
         elif isinstance(v.value, MROAwareObjectRef):
             # this works for attribs, but for methods? maybe have a pass eliminating/making explicit the super...
@@ -38,6 +48,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     outputs=[v, v.parent],
                     inputs=[v.parent],
                 )
+                new_n.inserted_for = n
                 insert_before(new_n, n)
             elif n.i.opname == "LOAD_ATTR":
                 # print("###load attr", n.outputs, n.i.argval)
@@ -54,17 +65,20 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     outputs=[v],
                     inputs=[v.parent],
                 )
+                new_n.inserted_for = n
                 insert_before(new_n, n)
         elif v.is_global:  # make binding the globals optional?
             if v.value not in consts:
                 consts.append(v.value)
             idx = consts.index(v.value)
             new_n = Node(i=get_instruction(opname="LOAD_CONST", arg=idx), outputs=[v], inputs=[])
+            new_n.inserted_for = n
             insert_before(new_n, n)
         else:
             idx = local_vars.index(v)
             # assert idx >= 0
             new_n = Node(i=get_instruction(opname="LOAD_FAST", arg=idx), outputs=[v], inputs=[])
+            new_n.inserted_for = n
             insert_before(new_n, n)
 
     for bl in gr.blocks:
@@ -101,7 +115,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
 
     nodes_to_skip = set()
 
-    def store_phi_values(o: Value, o_idx: int, last_n: Optional[Node]) -> Optional[Node]:
+    def store_phi_values(o: Value, o_idx: int, last_n: Optional[Node], cur_n: Optional[Node]) -> Optional[Node]:
         phi_values_in_processing = set()
 
         def store_phi_values_inner(o: Value, o_idx: int, last_n: Optional[Node]) -> Optional[Node]:
@@ -118,8 +132,10 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                         consts.append(o.value)
                     o_idx = consts.index(o.value)
                     new_n = Node(i=get_instruction(opname="LOAD_CONST", arg=o_idx), outputs=[o], inputs=[])
+                    new_n.inserted_for = cur_n
                 else:
                     new_n = Node(i=get_instruction(opname="LOAD_FAST", arg=o_idx), outputs=[o], inputs=[])
+                    new_n.inserted_for = cur_n
 
                 nodes_to_skip.add(new_n)
                 if last_n is None:
@@ -128,6 +144,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     insert_after(new_n, last_n)
                 last_n = new_n
                 new_n = Node(i=get_instruction(opname="STORE_FAST", arg=idx2), outputs=[], inputs=[o])
+                new_n.inserted_for = cur_n
                 nodes_to_skip.add(new_n)
                 insert_after(new_n, last_n)
                 last_n = new_n
@@ -143,11 +160,11 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
     last_n = None
     # need to make a copy of the list because we're adding items to the list
     for idx, i in enumerate(local_vars[:]):
-        last_n = store_phi_values(i, idx, last_n)
+        last_n = store_phi_values(i, idx, last_n, cur_n=None)
     for i in gr.blocks[0].block_inputs:  # inlined parameters (partial) will be here
         for v, js in zip(i.values, i.jump_sources):
             if js is None and v.is_const:
-                last_n = store_phi_values(v, None, last_n)
+                last_n = store_phi_values(v, None, last_n, cur_n=None)
                 # print(i.values, i.jump_sources)
 
     names = []
@@ -157,6 +174,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
         for n in bl.nodes[:]:
             processed_block_outputs = set()
             if n not in nodes_to_skip:
+                n.inserted_for = n
                 for inpidx, i in enumerate(n.inputs):
                     get_value(i, n=n, inpidx=inpidx)
                 last_n = n
@@ -167,12 +185,13 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                         outputs=[],
                         inputs=[o],
                     )
+                    new_n.inserted_for = n
                     assert last_n is not None
                     insert_after(new_n, last_n)
                     last_n = new_n
                     if o in bl.block_outputs:
                         processed_block_outputs.add(o)
-                        last_n = store_phi_values(o, idx, last_n)
+                        last_n = store_phi_values(o, idx, last_n, cur_n=n)
         if bl.nodes[-1].i.opname != "RETURN_VALUE":  # TODO Should the return block have outputs (probably not)
             for o in bl.block_outputs:
                 if o not in processed_block_outputs:
@@ -183,8 +202,9 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                         outputs=[],
                         inputs=[o],
                     )
+                    new_n.inserted_for = jump_node
                     insert_before(new_n, n=jump_node)
-                    store_phi_values(o, idx, new_n)
+                    store_phi_values(o, idx, new_n, cur_n=jump_node)
 
     return local_vars, lv_names, names, consts
 
@@ -226,7 +246,7 @@ def linetable_writer(first_lineno: int) -> tuple[list[int], Callable, Callable]:
 
 def generate_function(gr: "Graph") -> Callable:
     orig_gr = gr
-    gr, _ = gr.clone()
+    gr, map_from_orig = gr.clone()
 
     local_vars, lv_names, names, consts = undo_ssa(gr)
     assert len(local_vars) == len(lv_names)
@@ -234,7 +254,7 @@ def generate_function(gr: "Graph") -> Callable:
     NodeKey = Union[Node, tuple[Node, bool]]
     instruction_sizes: dict[NodeKey, int] = {}
 
-    def build_address_map() -> dict[NodeKey, int]:
+    def build_address_map(end=False) -> dict[NodeKey, int]:
         # Key either <Node> (for jump nodes and jump=True)
         #     or (<Node>, False) for non-jump in conditional jump
         address_map: dict[NodeKey, int] = {}
@@ -246,6 +266,8 @@ def generate_function(gr: "Graph") -> Callable:
                 ctr += instruction_sizes.get(n, 1)
                 if len(n.jump_targets) == 2:  # implicit unconditional jump
                     ctr += instruction_sizes.get((n, False), 1)
+                if end:
+                    address_map[n] = ctr - 1
         return address_map
 
     def make_bc() -> tuple[list[int], bool]:
@@ -320,6 +342,14 @@ def generate_function(gr: "Graph") -> Callable:
         address_map = build_address_map()
         bc, done = make_bc()
 
+    inserted_for = collections.defaultdict(list)
+    end_address_map = build_address_map(end=True)
+    for n in gr.nodes():
+        inserted_for[getattr(n, "inserted_for", None)].append(end_address_map[n])
+    for n in orig_gr.nodes():
+        info = inserted_for[map_from_orig[n]]
+        n.bytecode_range = (min(*info), max(*info)) if info else (None, None)
+
     linetable_end(len(bc))
     linetable_bytes = bytes(linetable)
     bc_bytes = bytes(bc)
@@ -374,3 +404,34 @@ def generate_function(gr: "Graph") -> Callable:
     inspect.linecache.cache[co_filename] = size, mtime, lines, co_filename
 
     return func
+
+
+def annotated_dis(thunder_fn, print_lines=True):
+    instructions = list(dis.get_instructions(thunder_fn))
+    cur_pos = 0
+
+    class Callback(GraphSummaryCallback):
+        def node(self, n):
+            nonlocal cur_pos
+            before = []
+            after = []
+            begin_offset, end_offset = n.bytecode_range
+            if begin_offset is not None:
+                # the * 2 here and below is from Instruction.offset containing byte offsets and each
+                # bytecode is 2 bytes (this is true at least for Python 3.8-3.12)
+                while cur_pos < len(instructions) and instructions[cur_pos].offset < begin_offset * 2:
+                    before.append(instructions[cur_pos]._disassemble())
+                    cur_pos += 1
+            if end_offset is not None:
+                while cur_pos < len(instructions) and instructions[cur_pos].offset <= end_offset * 2:
+                    after.append(instructions[cur_pos]._disassemble())
+                    cur_pos += 1
+            return before, after
+
+        def finish(self):
+            nonlocal cur_pos
+            l = [i._disassemble() for i in instructions[cur_pos:]]
+            cur_pos = len(instructions)
+            return l
+
+    return thunder_fn._gr.summary(print_lines=print_lines, callback=Callback())

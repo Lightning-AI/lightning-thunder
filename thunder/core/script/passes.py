@@ -21,7 +21,9 @@ from thunder.core.script.graph import (
     replace_values,
     Value,
 )
-from thunder.core.script.python_ir import get_instruction
+from thunder.core.script.python_ir_data import (
+    get_instruction,
+)
 from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.utils import OrderedSet
 
@@ -66,6 +68,10 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     )
     bl_jump_node = Node(i=jump_ins, inputs=[], outputs=[])
     bl_jump_node.jump_targets = [((0, 0), nbl)]
+    if bl.nodes:
+        bl_jump_node.line_no = bl.nodes[-1].line_no
+    else:
+        bl_jump_node.line_no = nbl.nodes[0].line_no
     bl.nodes.append(bl_jump_node)
     nbl.jump_sources.append(bl_jump_node)
     gr.blocks.insert(i + 1, nbl)

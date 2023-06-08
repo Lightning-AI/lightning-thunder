@@ -640,6 +640,9 @@ class OrderedSet(Generic[T]):
     def __contains__(self, x: T) -> bool:
         return x in self.d
 
+    def __bool__(self) -> bool:
+        return bool(self.d)
+
     def __iter__(self) -> Iterable[T]:
         return iter(self.d.keys())
 

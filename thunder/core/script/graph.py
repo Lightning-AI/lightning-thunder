@@ -32,6 +32,14 @@ def assert_block(bl: Union[GraphObject, None]) -> "Block":
     return bl
 
 
+class GraphSummaryCallback:
+    def node(self, n: "Node") -> Tuple[list[str], list[str]]:
+        return [], []
+
+    def finish(self) -> list[str]:
+        return []
+
+
 class NULL:
     """marker for non-existant object."""
 
@@ -392,7 +400,7 @@ class Graph:
                     ", ".join([i.print_name for i in n.inputs]) + ")",
                 )
 
-    def summary(self, print_lines: bool = False) -> None:
+    def summary(self, print_lines: bool = False, callback=GraphSummaryCallback()) -> None:
         type_count = collections.Counter()
         results = {}
 
@@ -419,11 +427,19 @@ class Graph:
                     f"Block outputs: {[get_name(i) for i in block.block_outputs]}",
                 )
             )
-            graph_lines.extend(
-                f"  {node.i.opname:<20} {[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}"
-                for node in block.nodes
-            )
+            for i, node in enumerate(block.nodes):
+                if (i == 0 or node.line_no != block.nodes[i - 1].line_no) and node.line_no is not None:
+                    line = f"# l{node.line_no + self.source_start_line:3d} {self.source_lines[node.line_no].rstrip()}"
+                else:
+                    line = ""
+                lines_before, lines_after = callback.node(node)
+                graph_lines.extend(lines_before)
+                graph_lines.append(
+                    f"  {node.i.opname:<20} {f'{[get_name(v) for v in node.inputs]} -> {[get_name(v) for v in node.outputs]}':<80}   {line}"
+                )
+                graph_lines.extend(lines_after)
             graph_lines.append("")
+        graph_lines.extend(callback.finish())
 
         for v, (prefix, idx) in sorted(results.items(), key=lambda x: x[1]):
             values = f"[{', '.join(get_name(vi) for vi in v.values)}]" if isinstance(v, PhiValue) else ""
@@ -620,6 +636,7 @@ def _check_graph(gr: Graph) -> None:
             for v in i.phi_values:
                 phi_value_refs[v].append(i)
         for n in bl.nodes:
+            assert n.line_no is not None, f"{n}({n.inputs}) does not have a line number"
             n.block = bl
             for i in n.inputs:
                 i_or_p = i
