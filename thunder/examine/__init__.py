@@ -3,6 +3,7 @@ from typing import Any, Callable
 import thunder
 import thunder.core.script as script
 from thunder.core.trace import TraceCtx
+from thunder.core.proxies import TensorProxy
 from thunder.torch import _torch_to_thunder_function_map
 
 import torch
@@ -32,25 +33,6 @@ class CollectFunctionsUsed(torch.overrides.TorchFunctionMode):
         super().__exit__(exc_type, exc_value, traceback)
 
 
-# TODO Refactor preprocessing function so there's one definition used by compile and this
-def preprocess(fn, is_module):
-    gr = script.frontend.acquire_method(fn.forward if is_module else fn)
-    script.passes.unroll_for_loops_and_inline_modules(gr)
-    if is_module:
-        additional_param_names, additional_param_values = script.passes.module_to_function(gr)
-    script.passes.strongly_inline_functions(gr)
-    script.passes.torch_to_thunder(gr)
-
-    thunder_fn = script.python_ir.generate_function(gr)
-    if is_module:
-        thunder_fn._additional_param_names = additional_param_names
-        thunder_fn._additional_param_values = additional_param_values
-    else:
-        thunder_fn._additional_param_names = None
-        thunder_fn._additional_param_values = None
-    return thunder_fn
-
-
 # TODO Maybe have this print additional information and return more metadata?
 # TODO Add option to disable attempted preprocessing
 # TODO Accept kwargs for compile_with_info (like langctx)
@@ -66,39 +48,57 @@ def examine(fn: Callable, *args, **kwargs):
             torch_result = fn(*args, **kwargs)
         except Exception as e:
             print("Found an issue running the function with torch tensors!")
-            raise e
+            print(e)
+            return
 
     # Step 1 Identifies supported (and unsupported) operations
     supported_ops = set()
     for name, op in collected_ops:
         if op in _torch_to_thunder_function_map:
             supported_ops.add((name, op))
+        elif name.startswith("_TensorBase"):
+            # Identifies properties
+            # NOTE The approach of testing if the name starts with "_TensorBase" seems a little hacky
+            _, attr = name.split(".")
+            print(f"{attr=}")
+            if hasattr(TensorProxy, attr):
+                supported_ops.add((name, op))
+
     unsupported_ops = set(collected_ops) - supported_ops
 
-    print(
-        f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100}%) are supported"
-    )
-
-    # Terminates early if there are unsupported operations
-    if len(unsupported_ops) > 0:
+    if len(collected_ops) == 0:
+        # NOTE This case avoids a division by zero error below
+        print("Found no operations")
+    else:
         print(
-            "Please file an issue requesting the following operators here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+            f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100}%) are supported"
         )
-
-        for name, op in unsupported_ops:
-            print(f"{name}")
-
-        return
 
     # Step 2 Attempts to preprocess the function
+    preprocessing_exception: Optional[Exception] = None
     try:
-        preprocess(fn, is_module=isinstance(fn, torch.nn.Module))
+        thunder.preprocess(fn, is_module=isinstance(fn, torch.nn.Module))
     except Exception as e:
-        print("Encountered an error while preprocessing the function")
-        print(
-            "Please file an issue with your function and this error here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
-        )
-        raise e
+        preprocessing_exception = e
+
+    # Terminates early if there are unsupported operations or there was a preprocessing exception
+    if len(unsupported_ops) > 0 or preprocessing_exception is not None:
+        if len(unsupported_ops) > 0:
+            print(
+                "Please file an issue requesting the following operators here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+            )
+
+            for name, op in unsupported_ops:
+                print(f"{name}")
+
+        if preprocessing_exception is not None:
+            print("Encountered an error while preprocessing the function")
+            print(
+                "Please file an issue with your function and this error here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+            )
+            print(preprocessing_exception)
+
+        return
 
     # Step 3 Attempts to compile the function using lightning.compile
     try:

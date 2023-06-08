@@ -2989,6 +2989,15 @@ def arange_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for start, end, step in itertools.chain(common_cases, extra_cases):
         yield SampleInput(start=start, end=end, step=step, dtype=dtype, device=device)
 
+    # arange only requires end be specified
+    partial_cases = (
+        (5,),
+        (3, 7),
+    )
+
+    for case in partial_cases:
+        yield SampleInput(*case)
+
 
 arange_opinfo = OpInfo(
     ltorch.arange,

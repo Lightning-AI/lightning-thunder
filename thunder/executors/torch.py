@@ -122,6 +122,10 @@ def arange(
     device = ltorch.to_torch_device(device)
     dtype = ltorch.to_torch_dtype(dtype)
 
+    if end is None:
+        end = start
+        start = 0
+
     tbsym = sym.bind(start, end, step, device=device, dtype=dtype, output=bsym.output)
     return tbsym
 

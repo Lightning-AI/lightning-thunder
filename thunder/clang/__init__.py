@@ -91,7 +91,7 @@ def device_put(a, device):
 def arange(*, start, step, stop, device: Union[str, devices.Device], dtype=None):
     # Validates inputs
     # Checks that start, step, and stop are finite
-    # TODO: semantically an infinite step seems fine?
+    # TODO Semantically an infinite step seems fine?
     utils.check(math.isfinite(start), lambda: f"start={start} was non-finite")
     utils.check(math.isfinite(step), lambda: f"step={step} was non-finite")
     utils.check(math.isfinite(stop), lambda: f"stop={stop} was non-finite")
@@ -145,8 +145,9 @@ def arange(*, start, step, stop, device: Union[str, devices.Device], dtype=None)
 
 @clang_ctx
 def full(shape, fill_value, *, device, dtype=None):
-    fill_value_dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
-    dtype = dtype if dtype is not None else fill_value_dtype
+    # Infers dtype from the fill_value when not explicitly provided
+    if dtype is None:
+        dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     device = devices.to_device(device)
 
     return prims.full(shape, fill_value, device=device, dtype=dtype)

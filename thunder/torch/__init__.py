@@ -191,7 +191,7 @@ class torchsymbol:
             else:
                 utils.check(
                     False,
-                    lambda: f"Failed to infer an id for {name}, specify one explicitly",
+                    lambda: f"The torchsymbol decorator failed to infer an id for {name}, specify one explicitly (with id=<your id>)",
                     exception_type=AssertionError,
                 )
         else:
@@ -686,8 +686,12 @@ def arange(
 
 @torchsymbol(torch.full)
 def full(shape, fill_value, *, device=None, dtype=None):
+    if device is None:
+        device = "cpu"
+
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
+
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 

@@ -468,20 +468,20 @@ class TensorProxy(Proxy, TensorProxyInterface):
     ):
         super().__init__(name)
 
-        self.device = None
-        self.dtype = None
-        self.shape = None
+        self._device = None
+        self._dtype = None
+        self._shape = None
 
         if like is not None:
             baseutils.check_type(like, TensorProxy)
-            self.shape = tuple(like.shape)
-            self.device = like.device
-            self.dtype = like.true_dtype
+            self._shape = tuple(like.shape)
+            self._device = like.device
+            self._dtype = like.true_dtype
 
-        self.shape = shape if shape is not None else self.shape
-        self.device = device if device is not None else self.device
-        self.dtype = dtype if dtype is not None else self.dtype
-        self.dtype = dtypes.numbertype_to_dtype(self.dtype) if dtypes.is_numbertype(self.dtype) else self.dtype
+        self._shape = shape if shape is not None else self._shape
+        self._device = device if device is not None else self._device
+        self._dtype = dtype if dtype is not None else self._dtype
+        self._dtype = dtypes.numbertype_to_dtype(self._dtype) if dtypes.is_numbertype(self._dtype) else self._dtype
 
         # Computes derived properties
         self.numel = reduce(operator.mul, self.shape, 1)
@@ -490,14 +490,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
         self.ndim = len(self.shape)
 
         # Validates inputs
-        baseutils.check_valid_shape(self.shape)
-        baseutils.check_type(self.device, devices.Device)
-        baseutils.check_type(self.dtype, dtypes.dtype)
+        baseutils.check_valid_shape(self._shape)
+        baseutils.check_type(self._device, devices.Device)
+        baseutils.check_type(self._dtype, dtypes.dtype)
 
         # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
         #   the true_dtype property
-        self.true_dtype = self.dtype
-        self.dtype = dtypes.to_strong_dtype(self.dtype)
+        self.true_dtype = self._dtype
+        self._dtype = dtypes.to_strong_dtype(self._dtype)
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @property
+    def device(self):
+        return self._device
+
+    @property
+    def dtype(self):
+        return self._dtype
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
