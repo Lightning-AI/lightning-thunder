@@ -4,7 +4,7 @@ import thunder
 import thunder.core.script as script
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
-from thunder.torch import _torch_to_thunder_function_map
+from thunder.torch import _torch_to_thunder_function_map, method_lookup
 
 import torch
 
@@ -33,6 +33,11 @@ class CollectFunctionsUsed(torch.overrides.TorchFunctionMode):
         super().__exit__(exc_type, exc_value, traceback)
 
 
+_method_name_remap_map = {
+    "div": "true_divide",
+}
+
+
 # TODO Maybe have this print additional information and return more metadata?
 # TODO Add option to disable attempted preprocessing
 # TODO Accept kwargs for compile_with_info (like langctx)
@@ -56,12 +61,26 @@ def examine(fn: Callable, *args, **kwargs):
     for name, op in collected_ops:
         if op in _torch_to_thunder_function_map:
             supported_ops.add((name, op))
-        elif name.startswith("_TensorBase"):
-            # Identifies properties
-            # NOTE The approach of testing if the name starts with "_TensorBase" seems a little hacky
-            _, attr = name.split(".")
-            print(f"{attr=}")
+        elif name.startswith("_TensorBase.") or name.startswith("Tensor."):
+            # Identifies properties and methods
+            # NOTE The approach of testing if the name starts with "_TensorBase." or "Tensor." seems a little hacky
+
+            # Checks if the name is a property
+            attr: str
+            if name.startswith("_TensorBase."):
+                _, attr = name.split(".")
+            elif name.startswith("Tensor."):
+                # Ex name 'Tensor.__rpow__ of torch._tensor'
+                _, attr = name.split(" ")[0].split(".")
+
             if hasattr(TensorProxy, attr):
+                supported_ops.add((name, op))
+
+            # Checks if the name is a method
+            # Remaps method names as appropriate
+            method_name = _method_name_remap_map.get(attr, attr)
+
+            if method_lookup(method_name) is not None:
                 supported_ops.add((name, op))
 
     unsupported_ops = set(collected_ops) - supported_ops
