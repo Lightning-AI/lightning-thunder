@@ -90,7 +90,7 @@ def examine(fn: Callable, *args, **kwargs):
         print("Found no operations")
     else:
         print(
-            f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100}%) are supported"
+            f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100:.1f}%) are supported"
         )
 
     # Step 2 Attempts to preprocess the function
