@@ -1821,9 +1821,9 @@ elementwise_binary_ops.append(true_divide_opinfo)
 opinfos.extend(elementwise_binary_ops)
 
 #
-# Elementwise Ternary OpInfos
+# Conditional and masking operations
 #
-elementwise_ternary_ops = []
+conditional_and_mask_ops = []
 
 
 # TODO: add number tensors for value
@@ -1849,7 +1849,7 @@ masked_fill_opinfo = OpInfo(
     sample_input_generator=masked_fill_sample_generator,
     torch_reference=torch.masked_fill,
 )
-elementwise_ternary_ops.append(masked_fill_opinfo)
+conditional_and_mask_ops.append(masked_fill_opinfo)
 
 
 def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -1873,10 +1873,44 @@ where_opinfo = OpInfo(
     sample_input_generator=where_sample_generator,
     torch_reference=torch.where,
 )
-elementwise_ternary_ops.append(where_opinfo)
+conditional_and_mask_ops.append(where_opinfo)
+
+
+def tril_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make_diagonal = partial(make_number, dtype=torch.long)
+
+    # shape
+    cases = (
+        (3, 5, 2),
+        (1, 0, 7, 9),
+        (6, 6),
+        (9, 1),
+        (1, 11),
+        (7, 2, 3, 5),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape), make_diagonal())
+
+
+tril_opinfo = OpInfo(
+    ltorch.tril,
+    sample_input_generator=tril_sample_generator,
+    torch_reference=torch.tril,
+    test_directives=(
+        # Not all PyTorch versions support complex32 tril
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+    ),
+)
+conditional_and_mask_ops.append(tril_opinfo)
 
 # Puts all elementwise ternary opinfos into the "opinfos" list
-opinfos.extend(elementwise_ternary_ops)
+opinfos.extend(conditional_and_mask_ops)
 
 #
 # Data movement ops

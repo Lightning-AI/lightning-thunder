@@ -524,7 +524,7 @@ remainder = _elementwise_binary_factory("remainder")
 sub = _elementwise_binary_factory("sub")
 
 #
-# Elementwise ternary operations
+# Conditional and masking operations
 #
 # TODO Review type promotion differences
 # TODO Review restricting torch implemenations of prims to not have additional functionality
@@ -554,6 +554,19 @@ def _elementwise_ternary_factory(name: str) -> Callable:
 
 
 where = _elementwise_ternary_factory("where")
+
+
+def masked_fill(bsym: BoundSymbol, a, mask, value):
+    sym = Symbol(name="masked_fill", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, mask, value), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+def tril(bsym: BoundSymbol, a, diagonal: int = 0):
+    sym = Symbol(name="tril", meta=None, _module=torch)
+    return sym.bind(a, diagonal, output=bsym.output)
+
 
 #
 # Reduction operations
@@ -727,13 +740,6 @@ def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, e
     return tbsym
 
 
-def masked_fill(bsym: BoundSymbol, a, mask, value):
-    sym = Symbol(name="masked_fill", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, mask, value), kwargs={}, output=bsym.output)
-
-    return tbsym
-
-
 def softmax(bsym: BoundSymbol, a, dim, dtype=None) -> BoundSymbol:
     torch_dtype = None
     if dtype is not None:
@@ -894,7 +900,9 @@ _ops_map.update(
         PrimIDs.REMAINDER: (_elementwise_binary_check, remainder),
         "torch.sub": (_elementwise_binary_check, sub),
         PrimIDs.SUB: (_elementwise_binary_check, sub),
-        # Elementwise ternary operations
+        # Conditional and masking operations
+        "torch.masked_fill": (_always_executable, masked_fill),
+        "torch.tril": (_always_executable, tril),
         PrimIDs.WHERE: (_elementwise_ternary_check, where),
         "torch.where": (_elementwise_ternary_check, where),
         # Reduction operators
@@ -913,7 +921,6 @@ _ops_map.update(
         PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),
         "torch.nn.functional.embedding": (_always_executable, embedding),
         "torch.layer_norm": (_always_executable, layer_norm),
-        "torch.masked_fill": (_always_executable, masked_fill),
         "torch.softmax": (_always_executable, softmax),
     }
 )

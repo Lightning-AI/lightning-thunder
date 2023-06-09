@@ -637,12 +637,23 @@ def true_divide(a, b):
 
 
 #
-# Conditional operations
+# Conditional operations and masknig operations
 #
 # TODO Can this be a method?
 @torchsymbol(torch.where, is_method=True)
 def where(pred, a, b):
     return clang.where(pred, a, b)
+
+
+def _mask_tensor(a, mask):
+    utils.check(
+        dtypes.is_boolean_dtype(mask.dtype), lambda: f"_mask_tensor: mask ({mask.dtype=}) must have a boolean dtype"
+    )
+
+    if dtypes.is_boolean_dtype(a.dtype):
+        return a & mask
+
+    return where(mask, a, 0)
 
 
 # NOTE: masked_fill is a strange wrapper around where, it probably exists only because of PyTorch's inplace pattern
@@ -659,6 +670,25 @@ def masked_fill(a, mask, value):
 
     result = where(mask, value, a)
     return result
+
+
+# NOTE The key to understanding tril is that it generates a mask
+#   which (by default) masks elements of a matrix (or batch of matrices)
+#   s.t. elements whose row number is greater than or equal to its column number
+#   are preserved (and other numbers are set to zero).
+#   When diagonal is specified, the mask computation changes so that
+#   elements with rownum + diagonal >= colnum are preserved.
+@torchsymbol(torch.tril, is_method=True)
+def tril(a, diagonal: int = 0):
+    utils.check(a.ndim >= 2, lambda: f"tril: a ({a.ndim=}) must have at least two dimensions")
+
+    nrows, ncols = a.shape[-2:]
+    row_numbers = arange(nrows, device=a.device).unsqueeze(-1)
+    col_numbers = arange(ncols, device=a.device).unsqueeze(-2)
+
+    mask = (row_numbers + diagonal) >= col_numbers
+
+    return _mask_tensor(a, mask)
 
 
 #

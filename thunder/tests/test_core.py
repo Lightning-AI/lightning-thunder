@@ -1496,9 +1496,7 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     assert_close(out_t, expected_out_t)
 
 
-@instantiate(
-    dtypes=NOTHING
-)
+@instantiate(dtypes=NOTHING)
 def test_torch_autocast_exception(executor, device, _):
     def f(a):
         return 2.0 * a
