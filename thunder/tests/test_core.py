@@ -1496,6 +1496,22 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     assert_close(out_t, expected_out_t)
 
 
+@instantiate(
+    dtypes=NOTHING
+)
+def test_torch_autocast_exception(executor, device, _):
+    def f(a):
+        return 2.0 * a
+
+    executors_list = executor.executors_list()
+    compiled_f = thunder.compile(f, executors_list=executors_list)
+    a = torch.ones((), device=device, dtype=torch.float32)
+    with pytest.raises(RuntimeError) as excinfo:
+        with torch.autocast(device_type=device):
+            compiled_f(a)
+    assert "A callable optimized" in str(excinfo.value)
+
+
 # @instantiate(
 #     dtypes=NOTHING,
 # )

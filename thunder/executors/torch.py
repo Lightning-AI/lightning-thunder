@@ -38,6 +38,10 @@ def _always_executable(*args, **kwargs) -> bool:
     return True
 
 
+def _is_autocast_enabled() -> bool:
+    return torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled()
+
+
 #
 # Data movement operations
 #

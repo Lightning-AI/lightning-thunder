@@ -57,6 +57,12 @@ def transform_for_execution(
     if PYTHON not in executors_list:
         executors_list.append(PYTHON)
 
+    if torchex._is_autocast_enabled():
+        raise RuntimeError(
+            "A callable optimized by thunder will not respect `torch.autocast`. "
+            "If your use case needs to use `torch.autocast`, file a feature request issue."
+        )
+
     # Translates executor names to actual executors
     executors_list = tuple(_executor_map[ex] for ex in executors_list)
 
