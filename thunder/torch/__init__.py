@@ -1131,16 +1131,24 @@ def stack(tensors, dim=0):
     return clang.stack(tensors, dim)
 
 
-# TODO Add type annotations
 @torchsymbol(torch.index_select)
-def index_select(a, dim, index):
+def index_select(a: TensorProxy, dim: int, index: TensorProxy) -> TensorProxy:
     return clang.take(a, index, dim)
 
 
-# TODO Add type annotations
+@torchsymbol(torch.index_add)
+def index_add(a: TensorProxy, dim: int, index: TensorProxy, source: TensorProxy) -> TensorProxy:
+    return clang.index_add(a, index, source, dim)
+
+
 @torchsymbol(torch.take_along_dim)
-def take_along_dim(input, indices, dim):
+def take_along_dim(input: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
     return clang.take_along_axis(input, indices, dim)
+
+
+@torchsymbol(torch.scatter_add)
+def scatter_add(a: TensorProxy, dim: int, index: TensorProxy, source: TensorProxy) -> TensorProxy:
+    return clang.scatter_add(a, index, source, dim)
 
 
 # TODO Add type annotations

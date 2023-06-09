@@ -310,16 +310,41 @@ def transpose(a, permutation):
     return prims.transpose(a, permutation)
 
 
-@clang_ctx
-def take(a, indices, axis):
-    axis = utils.canonicalize_dim(a.ndim, axis)
-    return prims.take(a, indices, axis)
+# expanding `a` to the shape of `ref` except dimension `exclude_dim`
+# This is basically broadcasting `a` to `ref`, while preserving the shape at dimension `exclude_dim`
+def _maybe_expand_exclude_dim(a: TensorProxy, ref: TensorProxy, exclude_dim: int) -> TensorProxy:
+    utils.check(a.ndim == ref.ndim, lambda: f"Expected a (rank={a.ndim}) to have the same rank as ref (rank={ref.ndim})")
+    target_shape = list(ref.shape)
+    target_shape[exclude_dim] = a.shape[exclude_dim]
+    if not utils.same_shape(a.shape, target_shape):
+        return expand(a, target_shape)
+
+    return a
 
 
 @clang_ctx
-def take_along_axis(arr, indices, axis):
-    axis = utils.canonicalize_dim(arr.ndim, axis)
-    return prims.take_along_axis(arr, indices, axis)
+def take(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.take(a, indices, dim)
+
+
+@clang_ctx
+def index_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.index_add(a, indices, value, dim)
+
+
+@clang_ctx
+def take_along_axis(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    indices = _maybe_expand_exclude_dim(indices, a, dim)
+    return prims.take_along_axis(a, indices, dim)
+
+
+@clang_ctx
+def scatter_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.scatter_add(a, indices, value, dim)
 
 
 # Unsqueezes a, adding zero or more dimensions of length 1

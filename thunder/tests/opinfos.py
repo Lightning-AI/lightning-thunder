@@ -2598,32 +2598,32 @@ transpose_opinfo = OpInfo(
 shape_ops.append(transpose_opinfo)
 
 
+# a.shape, dim, b.shape
+take_cases = (
+    ((4, 2, 3), 0, (8,)),
+    ((4, 2, 3), 1, (7,)),
+    ((4, 2, 3), 2, (2,)),
+    ((4, 2, 3), -1, (2,)),
+    ((4,), 0, (8,)),
+    ((4,), 0, (1,)),
+    ((4, 1), 0, (3,)),
+    ((4, 1), 1, (5,)),
+    ((1, 0, 3), 0, (8,)),
+    ((4, 2, 3), 0, (0,)),
+    ((4, 2, 3), 1, (0,)),
+    ((4, 2, 3), 2, (0,)),
+    ((4, 2, 3), 0, ()),
+    ((4, 2, 3), 1, ()),
+    ((4, 2, 3), 2, ()),
+)
+
+
 def take_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # Index is not differentiable! Marking requires_grad as False
     make_index = partial(make_tensor, device=device, requires_grad=False)
 
-    # a.shape, dim, b.shape
-    cases = (
-        ((4, 2, 3), 0, (8)),
-        ((4, 2, 3), 1, (7)),
-        ((4, 2, 3), 2, (2)),
-        ((4,), 0, (8)),
-        ((4,), 0, (1)),
-        ((4, 1), 0, (3)),
-        ((4, 1), 1, (5)),
-        ((1, 0, 3), 0, (8)),
-        # TODO: FIXME
-        # nvFuser: index array can't have zero elements
-        # ((4, 2, 3), 0, (0)),
-        # ((4, 2, 3), 1, (0)),
-        # ((4, 2, 3), 2, (0)),
-        # nvFuser: index array must be 1D
-        # ((4, 2, 3), 0, ()),
-        # ((4, 2, 3), 1, ()),
-        # ((4, 2, 3), 2, ()),
-    )
-
-    for shape_a, dim, shape_b in cases:
+    for shape_a, dim, shape_b in take_cases:
         for index_dtype in [torch.int, torch.long]:
             a = make(shape_a)
             b = make_index(shape_b, low=0, high=shape_a[dim], dtype=index_dtype)
@@ -2650,31 +2650,66 @@ take_opinfo = OpInfo(
 shape_ops.append(take_opinfo)
 
 
+def index_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, requires_grad=False)
+    # Not sure if we need to consider higher order gradient, marking requires_grad as False
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    for shape_a, dim, shape_b in take_cases:
+        for index_dtype in [torch.int, torch.long]:
+            canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
+            shape_source = list(shape_a)
+            shape_source[canonicalized_dim] = shape_b[0] if len(shape_b) != 0 else 1
+            a = make(shape_a)
+            b = make_index(shape_b, low=0, high=shape_a[dim], dtype=index_dtype)
+            c = make_source(shape_source)
+            yield SampleInput(a, b, c, dim)
+
+
+# signature order mismatch, use a wrapper to resolve
+def torch_index_add_wrapper(a, b, c, dim):
+    return torch.index_add(a, dim, b, c)
+
+
+# TODO: mapping jax.lax.gather for testing
+index_add_opinfo = OpInfo(
+    clang.index_add,
+    sample_input_generator=index_add_sample_generator,
+    torch_reference=torch_index_add_wrapper,
+)
+shape_ops.append(index_add_opinfo)
+
+
+# a.shape, dim, b.shape
+take_along_axis_cases = (
+    ((4, 2, 3), 0, (8, 2, 3)),
+    ((4, 2, 3), 1, (4, 1, 3)),
+    ((4, 2, 3), 2, (4, 2, 5)),
+    ((4, 2, 3), -1, (4, 2, 5)),
+    ((4,), 0, (8,)),
+    ((4,), 0, (1,)),
+    ((4, 1), 0, (3, 1)),
+    ((4, 1), 1, (4, 5)),
+    # broadcasting is supported by numpy.take_along_axis
+    ((4, 2, 3), 2, (1, 2, 7)),
+    ((4, 2, 3), -1, (1, 2, 7)),
+)
+
+    
 def take_along_axis_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     # torch.take_along_dim expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
 
-    # a.shape, dim, b.shape
-    cases = (
-        ((4, 2, 3), 0, (8, 2, 3)),
-        ((4, 2, 3), 1, (4, 1, 3)),
-        ((4, 2, 3), 2, (4, 2, 5)),
-        ((4,), 0, (8)),
-        ((4,), 0, (1)),
-        ((4, 1), 0, (3, 1)),
-        ((4, 1), 1, (4, 5)),
-        # broadcasting is supported by numpy
-        ((4, 2, 3), 2, (1, 2, 7)),
-    )
-
-    for shape_a, dim, shape_b in cases:
+    for shape_a, dim, shape_b in take_along_axis_cases:
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, b, dim)
 
 
-# TODO: mapping jax.lax.gather for testing
 take_along_axis_opinfo = OpInfo(
     clang.take_along_axis,
     sample_input_generator=take_along_axis_sample_generator,
@@ -2695,6 +2730,68 @@ take_along_axis_opinfo = OpInfo(
     ),
 )
 shape_ops.append(take_along_axis_opinfo)
+
+
+def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.scatter_add expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+    # Not sure if we need to consider higher order gradient, marking requires_grad as False
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    for shape_a, dim, shape_b in take_along_axis_cases:
+        canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
+        shape_source = list(shape_a)
+        shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        c = make_source(shape_source)
+        yield SampleInput(a, b, c, dim)
+
+    # Questionable use case. Do we want to support these?!
+    # Note that scatter_add doesn't have the broadcast requirement, it only requires
+    # 1. a.shape[i]      >= index.shape[i] for i != dim
+    # 2. source.shape[i] >= index.shape[i] for all i
+    #
+    # a.shape, dim, index.shape, source.shape
+    scatter_add_cases = (
+        ((4, 5, 3), 0, (3, 2, 3), (4, 3, 9)),
+        ((4, 5, 3), 1, (3, 5, 2), (3, 8, 8)),
+        ((4, 5, 3), 2, (3, 2, 8), (5, 8, 8)),
+    )
+    for shape_a, dim, shape_b, shape_source in scatter_add_cases:
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        c = make_source(shape_source)
+        yield SampleInput(a, b, c, dim)
+
+
+# signature order mismatch, use a wrapper to resolve
+def torch_scatter_add_wrapper(a, b, c, dim):
+    return torch.scatter_add(a, dim, b, c)
+
+
+scatter_add_opinfo = OpInfo(
+    clang.scatter_add,
+    sample_input_generator=scatter_add_sample_generator,
+    torch_reference=torch_scatter_add_wrapper,
+    test_directives=(
+        # Torch doesn't support complex half on scatter_add
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+        # float16 and bfloat16 has flaky accuracy fails
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+        ),
+    ),
+)
+shape_ops.append(scatter_add_opinfo)
 
 
 def unsqueeze_sample_generator(op, device, dtype, requires_grad, **kwargs):

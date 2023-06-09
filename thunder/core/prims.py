@@ -55,7 +55,9 @@ class PrimIDs(Enum):
     SQUEEZE = auto()
     TRANSPOSE = auto()
     TAKE = auto()
+    INDEX_ADD = auto()
     TAKE_ALONG_AXIS = auto()
+    SCATTER_ADD = auto()
     VIEW = auto()
     # Elementwise unary prims
     ABS = auto()
@@ -1468,11 +1470,13 @@ def squeeze_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
 squeeze = make_prim(PrimIDs.SQUEEZE, "squeeze", meta=squeeze_meta)
 
 
-def take_meta(a, index, dim):
-    utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
-    utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
+def take_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(dim, int)
+    utils.check_same_device(a, index)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
-    utils.check(index.ndim <= 1, lambda: f"Expected index={index} to a 1-D or number TensorProxy!")
+    utils.check(index.ndim <= 1, lambda: f"Expected index to a 1-D or 0-D tensor, but index.ndim={index.ndim}!")
     utils.validate_idx(a.ndim, dim)
 
     l = index.shape[0] if index.ndim == 1 else 1
@@ -1484,23 +1488,77 @@ def take_meta(a, index, dim):
 take = make_prim(PrimIDs.TAKE, "take", meta=take_meta)
 
 
-def take_along_axis_meta(a, index, dim):
-    utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
-    utils.check(isinstance(index, TensorProxy), lambda: f"Expected index={index} to be a TensorProxy!")
-    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
-    utils.check(index.ndim == a.ndim, lambda: f"Expected index={index} to a 1-D or scalar TensorProxy!")
+def index_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(value, TensorProxy)
+    utils.check_type(dim, int)
+    utils.check_same_device(a, index, value)
+    utils.check_same_dtype(a, value)
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
+    utils.check(value.ndim == a.ndim, lambda: f"Expected index (rank={value.ndim}) to have the same rank as a (rank={a.ndim})")
+    utils.check(index.ndim <= 1, lambda: f"Expected index to a 1-D or 0-D tensor, but index.ndim={index.ndim}!")
     utils.validate_idx(a.ndim, dim)
-    for idx, l in enumerate(a.shape):
-        if idx != dim:
-            utils.check(
-                index.shape[idx] == l or index.shape[idx] == 1,
-                lambda: f"take_along_axis 'index' size on all dimensions to be broadcast against 'a', except `dim`. Found incompatible sizes on dim {dim}, where 'a' has {l} and 'index' has {index.shape[idx]}",
-            )
+    utils.check(index.numel == value.shape[dim], lambda: f"Expected index={index} to have size equal to value.shape[dim]={value.shape[dim]}!")
+
+    utils.check(
+        utils.same_shape(a.shape[:dim] + a.shape[dim + 1 :], value.shape[:dim] + value.shape[dim + 1 :]),
+        lambda: f"Expected the all dimensions of a ({a.shape}) and value ({value.shape}) to be the same, except for dim ({dim})",
+    )
+
+    return TensorProxy(like=a)
+
+
+index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
+
+
+def take_along_axis_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(dim, int)
+    utils.check_same_device(a, index)
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})")
+    utils.validate_idx(a.ndim, dim)
+
+    utils.check(
+        utils.same_shape(a.shape[:dim] + a.shape[dim + 1 :], index.shape[:dim] + index.shape[dim + 1 :]),
+        lambda: f"Expected the all dimensions of a ({a.shape}) and index ({index.shape}) to be the same, except for dim ({dim})",
+    )
 
     return TensorProxy(like=a, shape=index.shape)
 
 
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
+
+
+def scatter_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(value, TensorProxy)
+    utils.check_type(dim, int)
+    utils.check_same_device(a, index, value)
+    utils.check_same_dtype(a, value)
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
+    utils.check(index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})")
+    utils.check(index.ndim == value.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as value (rank={value.ndim})")
+    utils.validate_idx(a.ndim, dim)
+
+    for idx, l in enumerate(index.shape):
+        if idx != dim:
+            utils.check(
+                index.shape[idx] <= a.shape[idx],
+                lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
+            )
+        utils.check(
+            index.shape[idx] <= value.shape[idx],
+            lambda: f"Expected 'index' size on all dimensions to be <= 'value'. Found dim {idx}, where 'index' has {index.shape[idx]} and 'value' has {value.shape[idx]}",
+        )
+
+    return TensorProxy(like=a)
+
+
+scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
 
 
 def transpose_meta(a: TensorProxy, permutation: Sequence[int]) -> TensorProxy:

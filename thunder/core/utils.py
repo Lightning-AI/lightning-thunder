@@ -41,8 +41,6 @@ __all__ = [
     "corresponding_complex_dtype",
     "dtype_to_numbertype",
     "are_same_dtypes",
-    "corresponding_real_dtype",
-    "corresponding_complex_dtype",
     "can_safe_cast_to",
     "check_same_dtype",
     "get_numberlike_type",

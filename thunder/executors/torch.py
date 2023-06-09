@@ -359,10 +359,25 @@ def take(bsym: BoundSymbol, a, index, dim):
     return tbsym
 
 
-# NOTE Order of index and dim changes
+# NOTE Order of index, value and dim changes
+def index_add(bsym: BoundSymbol, a, index, value, dim):
+    sym = Symbol(name="index_add", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, dim, index, value), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
 def take_along_axis(bsym: BoundSymbol, a, index, dim):
     sym = Symbol(name="take_along_dim", meta=None, _module=torch)
     tbsym = BoundSymbol(sym, args=(a, index, dim), kwargs={}, output=bsym.output)
+
+    return tbsym
+
+
+# NOTE Order of index, value and dim changes
+def scatter_add(bsym: BoundSymbol, a, index, value, dim):
+    sym = Symbol(name="scatter_add", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, dim, index, value), kwargs={}, output=bsym.output)
 
     return tbsym
 
@@ -779,7 +794,9 @@ _ops_map.update(
         "torch.squeeze": (_always_executable, squeeze),
         PrimIDs.SQUEEZE: (_always_executable, squeeze),
         PrimIDs.TAKE: (_always_executable, take),
+        PrimIDs.INDEX_ADD: (_always_executable, index_add),
         PrimIDs.TAKE_ALONG_AXIS: (_always_executable, take_along_axis),
+        PrimIDs.SCATTER_ADD: (_always_executable, scatter_add),
         "torch.tensor_split": (_always_executable, tensor_split),
         "torch.transpose": (_always_executable, transpose),
         PrimIDs.TRANSPOSE: (_always_executable, prim_transpose),
