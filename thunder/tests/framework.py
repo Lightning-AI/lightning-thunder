@@ -61,6 +61,12 @@ class Executor:
             fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
         )
 
+    def make_callable_with_info(self, fn, **kwargs):
+        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
+        return thunder.compile_with_info(
+            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
+        )
+
 
 # TODO Convert to singletons or just add to executor logic
 class nvFuser(Executor):

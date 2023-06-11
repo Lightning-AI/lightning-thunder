@@ -14,6 +14,8 @@ import thunder.core.dtypes as dtypes
 
 
 # TODO Document this class
+# Wraps a Proxy, and changes the hash
+# and equality to be based the name of the proxy.
 class Variable:
     def __init__(self, p: ProxyInterface):
         self.proxy = p

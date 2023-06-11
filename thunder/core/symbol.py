@@ -15,10 +15,10 @@ import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, TrackedObject
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import NumberProxy
+from thunder.core.proxies import NumberProxy, variableify
 
 from thunder.core.trace import (
     get_tracectx,
@@ -104,10 +104,30 @@ class Symbol:
     is_fusion: bool = False
     python_printer: Callable = default_python_printer
     _module: Any | None = None
+    _hash: Optional[int] = None
 
     @property
     def __name__(self):
         return self.name
+
+    # Relies on the assumption that symbols with the same non-None ids are equal.
+    # If both IDs are none, then symbols with the same name and module are equal.
+    def __hash__(self) -> int:
+        if self._hash is None:
+            object.__setattr__(self, "_hash", hash((self.name, self._module, self.id)))
+        return self._hash
+
+    # Symbols are equal if they have the same id (if present),
+    # or name and module if id is not present.
+    # Note: does not check if they have the same meta, impls,
+    # if they are prims, or have the same printer, etc.
+    # TODO Catch and warn when people construct symbols violating these assumptions
+    def __eq__(self, other: Symbol) -> int:
+        if not isinstance(other, Symbol):
+            return False
+        if self.id is None and other.id is None:
+            return (self.name, self._module) == (other.name, other._module)
+        return self.id == other.id
 
     @property
     def module(self):
@@ -221,11 +241,15 @@ class Symbol:
 # _object_ctx can be provided to specify a name -> Python object binding required to compile
 #   the BoundSymbol
 # NOTE This could also provide an _import_ctx to specify the import context directly
-# NOTE It is assumed that the properties of a BoundSymbol are immutable, except for the _executor annotation
+# TODO: We use @functools.cached_property extensively here, but it only works because
+# BoundSymbolInterface causes our dataclass to inherit a __dict__ property.
+# This gives us the additional flexibility, but probably isn't what we want, because it
+# sort of defeats the purpose of having a dataclass in the first place.
+# NOTE It is assumed that the (non-cached) properties of a BoundSymbol are immutable, except for the _executor annotation
 @dataclass
 class BoundSymbol(BoundSymbolInterface):
     sym: Symbol
-    args: Sequence
+    args: tuple
     kwargs: dict
     output: Any
     subsymbols: Sequence[BoundSymbol] = ()
@@ -235,16 +259,10 @@ class BoundSymbol(BoundSymbolInterface):
     _object_ctx = {}
     _executor = None
 
-    # BoundSymbols are hashable and comparable by identity
-    # This is necessary for using them as keys in a dict or set members
-    # See dce in thunder/executors/passes.py for the usage.
-    # TODO: if kwargs were hashable (frozendict), we could use a tuple of (sym, args, kwargs, output) as the key
-    #       and avoid the need for this.
-    def __hash__(self):
-        return id(self)
-
-    def __eq__(self, other):
-        return self is other
+    # TODO: Should we do input validation in post_init?
+    # For example, making sure kwargs is empty dict instead on None.
+    def __post_init__(self):
+        self.args = tuple(self.args)
 
     # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
     #   are immutable
@@ -278,6 +296,55 @@ class BoundSymbol(BoundSymbolInterface):
     def _kwarg_printables(self):
         trace = get_tracectx()
         return codeutils.to_printable(trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
+
+    # TODO self.args, self.kwargs, and self.output are flattened by
+    # _flat_args, etc, which is recomputed by the implementation of tree_map().
+    # This may be somewhat inefficient. We could cache the flattened sequence and the treespec.
+    # That way we wouldn't have to recompute them.
+    # Specifically, the implementation of tree_map() is:
+    # flat_args, spec = tree_flatten(pytree)
+    # return tree_unflatten([fn(i) for i in flat_args], spec)
+    @functools.cached_property
+    def _var_args(self):
+        return tree_map(variableify, self.args)
+
+    @functools.cached_property
+    def _var_output(self):
+        return tree_map(variableify, self.output)
+
+    @functools.cached_property
+    def _var_kwargs(self):
+        return tree_map(variableify, self.kwargs)
+
+    # BoundSymbols are hashable and comparable by identity
+    # This is necessary for using them as keys in a dict or set members
+    # See dce in thunder/executors/passes.py for the usage.
+    # TODO: if kwargs were hashable (frozendict), we could use a tuple of (sym, args, kwargs, output) as the key
+    #       and avoid the need for this. It would also mean we need to deep convert all the kwargs' contents to be hashable as well.
+    @functools.cached_property
+    def _hash(self) -> int:
+        try:
+            return hash((self.sym, self._var_args, self._var_output, len(self.kwargs)))
+        except:
+            # Since args / output may contain unhashable types
+            return id(self)
+
+    def __hash__(self):
+        return self._hash
+
+    # TODO: Deal with the contents of kwargs in __eq__ and __hash__.
+    def __eq__(self, other):
+        if not isinstance(other, BoundSymbol):
+            return False
+        if self is other:
+            return True
+        if len(self.kwargs) > 0 or len(other.kwargs) > 0:
+            return False
+
+        return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
+
+    def rhs(self):
+        return BoundSymbolRHS(self)
 
     # TODO Document contexts
     def import_ctx(self):
@@ -364,3 +431,36 @@ class BoundSymbol(BoundSymbolInterface):
 
     def __repr__(self) -> str:
         return "\n".join(self.python(indent=0, print_depth=-1))
+
+
+# NOTE: A wrapper class that hashes and equates only the right hand side of a BoundSymbol.
+# That is to say, its symbol, args, and kwargs, but not its output.
+# The intent is that this will be useful in writing a common subexpression elimination pass, beacuse
+# it will allow dictionary lookups to find equivalent BoundSymbols.
+@dataclass(**baseutils.default_dataclass_params)
+class BoundSymbolRHS:
+    parent: BoundSymbol
+    _hash: Optional[int] = None
+
+    def _do_hash(self) -> int:
+        if self.parent.kwargs and len(self.parent.kwargs) > 0:
+            return id(self)
+        try:
+            return hash((self.parent.sym, self.parent._var_args))
+        except:
+            return id(self)
+
+    def __hash__(self) -> int:
+        if not self._hash:
+            object.__setattr__(self, "_hash", self._do_hash())
+        return self._hash
+
+    # TODO: Deal with kwargs, in __eq__ and __hash__, just like with BoundSymbol.
+    def __eq__(self, other: BoundSymbolRHS) -> bool:
+        if not isinstance(other, BoundSymbolRHS):
+            return False
+        if self.parent is other.parent:
+            return True
+        if len(self.parent.kwargs) > 0 or len(other.parent.kwargs) > 0:
+            return False
+        return (self.parent.sym, self.parent._var_args) == (other.parent.sym, other.parent._var_args)

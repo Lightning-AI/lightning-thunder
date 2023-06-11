@@ -889,6 +889,116 @@ def test_torch_call_recording(executor, device: str, _):
     # assert actual.shape == (2, 3)
 
 
+# Asserts that all the elements of a collection are equal to each other.
+def all_eq(l):
+    for e1 in l:
+        for e2 in l:
+            assert e1 == e2
+
+
+# Asserts that all the elements of a collection are not equal to each other,
+# and that elements are equal to themselves.
+def all_neq(l):
+    el = enumerate(l)
+    for i, e1 in el:
+        for j, e2 in el:
+            assert e1 == e2 if i == j else e1 != e2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    # Returns the bound symbols for a function and args.
+    def compile_bsyms(fn, args):
+        fn = executor.make_callable_with_info(fn)
+        _, traces = fn(*args)
+        return traces[0].bound_symbols
+
+    # Extracts the bound symbols for the function with
+    # the given symbol names.
+    def extract_bsyms(fn, args, ops):
+        return [b for b in compile_bsyms(fn, args) if b.sym.name in ops]
+
+    # We want .rhs() for a + b and torch.add() to hash and compare
+    # the same for writing the CSE pass.
+    def add_rhs(a, b):
+        c = a + b
+        d = a + b
+        e = ltorch.add(a, b)
+        return c, d, e
+
+    bsyms = extract_bsyms(add_rhs, (a, b), ("add",))
+    all_eq([hash(b.rhs()) for b in bsyms])
+    all_eq([b.rhs() for b in bsyms])
+
+    # TODO: The current way BoundSymbols are compared treats args and kwargs
+    #       differently, so the same semantic call can be considered 'not equal'
+    #       if the arguments are passed differently. This is probably not the
+    #       behavior we want, and in the future we may change it, but for now
+    #       this test asserts the current behavior.
+    def add_rhs_kwargs(a, b):
+        c = a + b
+        d = ltorch.add(a=a, b=b)
+        return c, d
+
+    # Assert the current behavior.
+    # When the test case is supported, switch this to all_eq.
+    bsyms = extract_bsyms(add_rhs_kwargs, (a, b), ("add",))
+    all_neq([hash(b.rhs()) for b in bsyms])
+    all_neq([b.rhs() for b in bsyms])
+
+    # Also make sure the symbols are the same.
+    all_eq([b.sym for b in bsyms])
+    all_eq([hash(b.sym) for b in bsyms])
+
+    # TODO: We also currently cannot assert that the right hand side of
+    #       identical operators with kwargs are equal.
+    def same_kwargs(device, dtype):
+        a = ltorch.full((2, 2), 5, device=device, dtype=dtype)
+        b = ltorch.full((2, 2), 5, device=device, dtype=dtype)
+        return a + b
+
+    # Assert the current behavior.
+    # When the test case is supported, switch the all_neq below to all_eq.
+    bsyms = extract_bsyms(same_kwargs, (device, dtype), ("full",))
+    all_eq([hash(b.rhs()) for b in bsyms])
+    all_neq([b.rhs() for b in bsyms])
+
+    # Again, the symbols should be the same.
+    all_eq([b.sym for b in bsyms])
+    all_eq([hash(b.sym) for b in bsyms])
+
+    # We can, however, know when the number of kwargs are different,
+    # or the args are different.
+    def diff_kwargs(device, dtype):
+        a = ltorch.full((1, 2), 2, device=device, dtype=dtype)
+        b = ltorch.full((2, 3), 5, device=device, dtype=dtype)
+        c = ltorch.full((2, 3), 5, device=device)
+        return a, b, c
+
+    bsyms = extract_bsyms(diff_kwargs, (device, dtype), ("full",))
+    all_eq([hash(b.rhs()) for b in bsyms])
+    all_neq([b.rhs() for b in bsyms])
+
+    # Assert that boundsymbols for different ops hash/compare differently.
+    def different_ops(a, b):
+        c = a + b
+        d = a - b
+        return c, d
+
+    c, d = extract_bsyms(different_ops, (a, b), ("add", "sub"))
+    assert hash(c.sym) != hash(d.sym)
+    assert hash(c) != hash(d)
+    assert hash(c.rhs()) != hash(d.rhs())
+    assert c.sym != d.sym
+    assert c != d
+    assert c.rhs() != d.rhs()
+
+
 # @instantiate(dtypes=NOTHING)
 # @requiresCUDA
 # def test_torch_call_lowering_for_nvfuser(executor, device, _):

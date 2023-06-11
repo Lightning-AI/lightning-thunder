@@ -35,6 +35,7 @@ import thunder.core.script as script
 import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script as script
+import thunder.core.script.python_ir
 
 import thunder.torch as ltorch
 
@@ -241,7 +242,7 @@ def preprocess(fn, is_module):
     script.passes.strongly_inline_functions(gr)
     script.passes.torch_to_thunder(gr)
 
-    thunder_fn = script.python_ir.generate_function(gr)
+    thunder_fn = thunder.core.script.python_ir.generate_function(gr)
     if is_module:
         thunder_fn._additional_param_names = additional_param_names
         thunder_fn._additional_param_values = additional_param_values
