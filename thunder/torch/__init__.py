@@ -1601,9 +1601,10 @@ def matmul(a, b):
 @torchsymbol(torch.nn.functional.embedding, id="torch.nn.functional.embedding")
 def embedding(a, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
     # TODO: add embedding_renorm_ so we can remove embedding prim
-    if max_norm is not None:
+    # NOTE: padding_idx has impact on backward and is not supported by take
+    if max_norm is not None or padding_idx is not None:
         padding_idx = padding_idx if padding_idx is not None else -1
-        return clang.embedding(
+        return prims.embedding(
             a,
             weight,
             padding_idx=padding_idx,

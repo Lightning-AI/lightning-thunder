@@ -3383,8 +3383,12 @@ def embedding_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for indices_shape, weight_shape, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse in cases:
+        indices = make(indices_shape, low=0, high=N, dtype=torch.long, requires_grad=False)
+        if padding_idx is not None:
+            # ensure that padding_idx is present to ensure grad computation is correct
+            indices[0] = padding_idx
         yield SampleInput(
-            make(indices_shape, low=0, high=N, dtype=torch.long, requires_grad=False),
+            indices,
             make(weight_shape),
             padding_idx=padding_idx,
             max_norm=max_norm,
