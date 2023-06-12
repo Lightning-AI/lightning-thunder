@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from thunder import _make_trace as make_trace
 from thunder.core import dtypes, prims
 from thunder.clang import full, full_like, unsqueeze, squeeze
-from thunder.core.devices import cpu
+from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
@@ -1554,6 +1554,29 @@ def where_aug_fwd(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJP
 def where_backward(condition, g):
     return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
+
+@register_augmented_forward(prims.PrimIDs.TAKE)
+def take_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
+    primal = prims.take(x, index, dim)
+    residuals = (x.shape, x.device, x.dtype, index, dim,)
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.TAKE)
+def take_backward(shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy):
+   return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
+
+
+@register_augmented_forward(prims.PrimIDs.TAKE_ALONG_AXIS)
+def take_along_axis_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
+    primal = prims.take_along_axis(x, index, dim)
+    residuals = (x.shape, x.device, x.dtype, index, dim,)
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.TAKE_ALONG_AXIS)
+def take_along_axis_backward(shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy):
+    return prims.scatter_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     """Symbol mapper for the VJP transform.
