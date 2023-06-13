@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import datetime
 import functools
+from itertools import chain
 import math
 import operator
 import os
@@ -33,6 +34,42 @@ from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
 #   on how to further modify the benchmark can be obtained by running this script with "nanogpt -h", which will
 #   describe all possible kwargs that can be specified to control the benchmark. For example, to set the dtype,
 #   run "nanogpt --dtype float16".
+
+
+def get_grad(module_or_function, args):
+    if isinstance(module_or_function, torch.nn.Module):
+        return tuple(x.grad for x in chain.from_iterable((args, module_or_function.parameters())))
+    else:
+        return tuple(x.grad for x in args)
+
+
+def zero_grad(module_or_function, args):
+    if isinstance(module_or_function, torch.nn.Module):
+        module_or_function.zero_grad(set_to_none=True)
+    else:
+        for x in args:
+            x.grad = None
+
+
+def make_forward_and_backward_fn(postprocess_for_backward, forward_fn, get_grad=False):
+    """Returns a function that runs forward_fn and then backward_fn, and returns the output of forward_fn.
+
+    Args:
+        postprocess_for_backward: Function to run on the output of forward_fn before running .backward().
+        forward_fn: Function to run forward.
+        get_grad: If True, returns the output of forward_fn and the gradients of forward_fn's inputs.
+    """
+    def fn(*args, **kwargs):
+        out = forward_fn(*args, **kwargs)
+        out = postprocess_for_backward(out)
+        grad_out = torch.ones(out.shape, dtype=out.dtype, device=out.device)
+        zero_grad(forward_fn, args)
+        out.backward(grad_out)
+        # This option has high memory overhead, so it's disabled by default for now
+        if get_grad:
+            return out, get_grad(forward_fn, args)
+        return out
+    return fn
 
 
 @dataclasses.dataclass
@@ -77,15 +114,25 @@ class Benchmark:
         if executor == "torch-eager":
             if use_cudagraphs:
                 raise NotImplementedError("PyTorch eager + CUDA graphs is not supported")
+            if self.backward:
+                return (
+                    "fw+bw: " + f"{executor}",
+                    make_forward_and_backward_fn(self.postprocess_for_backward, self._fn),
+                    None,
+                )
             return executor, self._fn, None
 
         elif executor == "torch.compile":
             options = {"triton.cudagraphs": True} if use_cudagraphs else None
-            return (
-                f"{executor}{'_cuda_graphs' if use_cudagraphs else ''}",
-                torch.compile(self._fn, options=options),
-                None,
-            )
+            name = f"{executor}{'_cuda_graphs' if use_cudagraphs else ''}"
+            forward_fn = torch.compile(self._fn, options=options)
+            if self.backward:
+                return (
+                    "fw+bw: " + name,
+                    make_forward_and_backward_fn(self.postprocess_for_backward, forward_fn),
+                    None,
+                )
+            return name, forward_fn, None
 
         elif executor == "torch.compile_nvfuser_prims":
             assert not use_cudagraphs
@@ -95,6 +142,8 @@ class Benchmark:
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
             if use_cudagraphs:
                 raise NotImplementedError("thunder + CUDA graphs is currently disabled")
+            if self.backward:
+                raise NotImplementedError("thunder benchmarking does not currently support backward passes")
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
             tom = thunder.compile(
                 self._fn,
@@ -112,6 +161,11 @@ class Benchmark:
 
     def make_batch(self) -> tuple[list, dict]:  # args, kwargs
         raise NotImplementedError
+
+    @property
+    def postprocess_for_backward(self):
+        """Function to run on the output of forward_fn before running .backward()."""
+        return lambda x: x
 
 
 def median(l):
@@ -791,11 +845,12 @@ class GPTBenchMarkBase(Benchmark):
         ),
     )
 
-    def __init__(self, config, device, dtype, **kwargs) -> None:
+    def __init__(self, config, device, dtype, backward=False, **kwargs) -> None:
         cls = self.__class__
         gpt_config = GPTConfig()
         gpt_config.update(**cls._configs[config])
         gpt_config.update(**kwargs)
+        self.backward = backward
 
         assert cls.benchmark_factory is not None
         tdtype = ltorch.to_torch_dtype(dtype)
@@ -804,9 +859,9 @@ class GPTBenchMarkBase(Benchmark):
             model = model.to(device=device, dtype=tdtype)
 
             # Ensures no parameters require grad (suitable for forward testing)
-            # TODO Make this an option
-            for p in model.parameters():
-                p.requires_grad = False
+            if not backward:
+                for p in model.parameters():
+                    p.requires_grad = False
 
         kwargs.update({"config": config, "gpt_config": gpt_config, "device": device, "dtype": dtype, "tdtype": tdtype})
         self.ctor_kwargs = kwargs
@@ -851,7 +906,14 @@ class NanoGPTBenchmark(GPTBenchMarkBase):
 
     def _make_batch(self, inshape, device, indices_dtype, **_) -> tuple[list, dict]:
         x = make_tensor(inshape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
-        return (x, None), {}
+        targets = make_tensor(inshape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
+        return (x, targets), {}
+
+    @property
+    def postprocess_for_backward(self):
+        # nanogpt model returns a tuple of (logits, loss) for the forward pass
+        # and we only want to return the loss for the backward pass
+        return lambda nanogpt_model_output: nanogpt_model_output[1]
 
 
 class NanoGPTBlockBenchmark(GPTBenchMarkBase):
@@ -880,6 +942,7 @@ class NanoGPTBlockBenchmark(GPTBenchMarkBase):
                 ),
                 device=device,
                 dtype=tdtype,
+                requires_grad=self.backward,
             ),
         ), {}
 
@@ -910,6 +973,7 @@ class NanoGPTCSABenchmark(GPTBenchMarkBase):
                 ),
                 device=device,
                 dtype=tdtype,
+                requires_grad=self.backward,
             ),
         ), {}
 
@@ -931,7 +995,7 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
     )
 
     def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
-        x = make_tensor(batch_dims + (gpt_config.n_embd,), device=device, dtype=tdtype)
+        x = make_tensor(batch_dims + (gpt_config.n_embd,), device=device, dtype=tdtype, requires_grad=self.backward)
         return (x,), {}
 
 
@@ -954,7 +1018,7 @@ class NanoGPTGeLUBenchmark(GPTBenchMarkBase):
     )
 
     def _make_batch(self, shape, device, tdtype, **_) -> tuple[list, dict]:
-        return (make_tensor(shape, device=device, dtype=tdtype),), {}
+        return (make_tensor(shape, device=device, dtype=tdtype, requires_grad=self.backward),), {}
 
 
 class HuggingFaceSelfAttnBenchmark(Benchmark):
@@ -1288,6 +1352,11 @@ if __name__ == "__main__":
             action="store_true",
             help="Run a profiled region for nsight systems. (Requires `nsys python nvfuser_benchmarks.py ...`)",
         )
+        add_argument(
+            "--backward",
+            action="store_true",
+            help="Run forward+backward pass for benchmarks that support it.",
+        )
         return parser
 
     parser = argparse.ArgumentParser(
@@ -1330,7 +1399,7 @@ if __name__ == "__main__":
     # NOTE: in the future, if running multiple benchmarks from one process, the benchmarks
     #   should probably be run in a subprocess to minimize executor caching
     benchmark(
-        benchmark_constructor(**kwargs),
+        benchmark_constructor(backward=parsed.backward, **kwargs),
         executors=parsed.executors.split(","),
         use_tf32=not parsed.disable_tf32,
         iters=parsed.iters,
