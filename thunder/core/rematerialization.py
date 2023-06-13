@@ -1,14 +1,13 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from itertools import chain
 from typing import Callable, Optional, Sequence, Tuple, Union
-import copy
 
 from igraph import Graph
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 
 
 def find_external_producer_outputs(
@@ -33,7 +32,7 @@ def find_external_producer_outputs(
     def filter_func(out: ProxyInterface):
         consumers = proxy_to_consumers.get(out, tuple())
         consumers = tuple(filter(lambda x: x.sym.name != "del", consumers))
-        return len(consumers) == 1 and consumers[0] == consumer
+        return len(consumers) == 1 and out.name in (x.name for x in consumer.args)
 
     rematerializable_producer_outputs = tuple(filter(filter_func, producer.output))
 
@@ -126,6 +125,19 @@ def apply_rematerialization_for_consumer(
 
     cut_proxies = tuple(filter(lambda x: x.name in cut_names, (*producer.output, *producer.args)))
     recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_proxies)
+
+    # Some recomputing_symbols might require producer's inputs, so we need to
+    # add them to the consumer's inputs.
+    # Probably find_min_cut should have returned this information.
+    all_args = tuple(
+        chain.from_iterable(
+            (x.name for x in bsym._flat_args if isinstance(x, ProxyInterface)) for bsym in recomputing_symbols
+        )
+    )
+    new_consumer_args += tuple(
+        x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
+    )
+
     new_subsymbols = recomputing_symbols + tuple(consumer.subsymbols)
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
     return new_consumer
@@ -294,3 +306,94 @@ def find_cut(
         node_name = node_in[:-3]
         cut_nodes.add(node_name)
     return tuple(sorted(cut_nodes))
+
+
+# TODO: The following code is a temporary solution to update the call_ctx
+# information of the nvFusion BoundSymbol object. This is needed because the
+# nvFusion BoundSymbol object is created before the call_ctx information is
+# updated. See more details in
+# https://github.com/Lightning-AI/lightning-thunder/issues/515
+def _update_nvfusion_call_ctx(trace: TraceCtx, bsym: BoundSymbolInterface) -> BoundSymbolInterface:
+    """Update the call_ctx information of the nvFusion BoundSymbol object.
+
+    Args:
+        trace: The trace context.
+        bsym: The nvFusion BoundSymbol object.
+
+    Returns:
+        The updated nvFusion BoundSymbol object.
+    """
+    from thunder.executors.nvfuser import fuse
+
+    @dataclass
+    class BoundSymbolRegion:
+        trace: TraceCtx
+        inputs: tuple
+        outputs: tuple
+        bound_symbols: tuple
+        counter: int
+
+    def nvfusion_bsym_to_region(trace: TraceCtx, bsym: BoundSymbolInterface):
+        counter = int(tuple(bsym._call_ctx.keys())[0].split("nvFusion")[-1])
+        return BoundSymbolRegion(
+            trace=trace,
+            inputs=bsym.args,
+            outputs=bsym.output,
+            bound_symbols=bsym.subsymbols,
+            counter=counter,
+        )
+
+    # fuse returns a new BoundSymbol object with correct updated call_ctx
+    # information
+    return fuse(nvfusion_bsym_to_region(trace, bsym))[0]
+
+
+def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    """Rematerialize the trace.
+
+    Args:
+        trace (TraceCtx): Trace object.
+
+    Returns:
+        tuple[TraceCtx, list[TraceCtx]]: Rematerialized trace and the list of
+            rematerialized traces.
+    """
+    # Find all the producers and consumers
+    pairs = find_nvfuser_producer_consumer_pairs(trace)
+
+    # Find the minimal cut between the producer and the consumer
+    cuts = tuple(find_cut(trace, producer, consumer) for producer, consumer in pairs)
+
+    # Pairs of producer and consumer are not unique. Each update to the producer
+    # or consumer may affect the other. We need to update the producer and
+    # consumer sequentially.
+    producers = {producer for producer, _ in pairs}
+    consumers = {consumer for _, consumer in pairs}
+    new_bsyms = {bsym: bsym for bsym in producers | consumers}
+    for (producer, consumer), cut in zip(pairs, cuts):
+        current_producer = new_bsyms.get(producer, None) or producer
+        current_consumer = new_bsyms.get(consumer, None) or consumer
+        if cut:
+            updated_producer = apply_rematerialization_for_producer(trace, current_producer, current_consumer, cut)
+            updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
+            new_bsyms[producer] = updated_producer
+            new_bsyms[consumer] = updated_consumer
+        else:
+            new_bsyms[producer] = None
+            new_bsyms[consumer] = None
+
+    rematerialized_trace = from_trace(trace)
+    rematerialized_trace.set_provenance(TraceProvenance("Rematerialization"))
+
+    def replace_bound_symbol(bsym):
+        new_bsym = new_bsyms.get(bsym, None)
+        if new_bsym is not None:
+            return _update_nvfusion_call_ctx(trace, new_bsym)
+        return bsym
+
+    # TODO: New bound symbols are still incorrect. Its _ctx_call dict points
+    # to the old nvFuser fusion. We need to update it to use the new definition.
+
+    new_bound_symbols = tuple(replace_bound_symbol(bsym) for bsym in trace.bound_symbols)
+    rematerialized_trace.bound_symbols = new_bound_symbols
+    return rematerialized_trace, [rematerialized_trace]

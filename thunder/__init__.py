@@ -324,6 +324,7 @@ def compile_with_info(
     disable_preprocessing: bool = False,
     use_static_caching: bool = False,
     use_last_executed: bool = False,
+    use_rematerialization: bool = False,
 ) -> Callable:
     pfn: Callable
 
@@ -377,7 +378,10 @@ def compile_with_info(
             if started:
                 # TODO Add the capability to recover from pass failures
                 extrace, extraces = executors.transform_for_execution(
-                    trace, executors_list=executors_list, only_execute_prims=only_execute_prims
+                    trace,
+                    executors_list=executors_list,
+                    only_execute_prims=only_execute_prims,
+                    use_rematerialization=use_rematerialization,
                 )
                 traces.extend(extraces)
 

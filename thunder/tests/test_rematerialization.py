@@ -7,13 +7,14 @@ from thunder.core import utils
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
+    find_cut,
     find_nvfuser_producer_consumer_pairs,
     find_cut,
 )
 from thunder.core.transforms import inline, value_and_grad
+from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor
 from thunder.tests.make_tensor import make_tensor
-from thunder.examine import get_fusions
 
 
 @inline
@@ -201,3 +202,40 @@ def test_find_cut(executor, device, _):
     consumer = nvfuser_symbols[-1]
     cut = find_cut(trace, producer, consumer)
     assert cut == ("__0", "__4")
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_rematerialization(executor, device, _):
+    n_fusion_regions = 7
+
+    @inline
+    @value_and_grad
+    def func(t0):
+        for _ in range(n_fusion_regions):
+            t1 = ttorch.cos(t0)
+            t2 = ttorch.sin(t1)
+            t3 = ttorch.cos(t2)
+            t4 = ttorch.matmul(t3, t3)  # Fusion breaks here
+            t0 = t4
+        return t4
+
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+
+    # Result with rematerialization and without rematerialization should match
+    result_with_remat, _ = thunder.compile_with_info(
+        func,
+        disable_preprocessing=True,
+        use_rematerialization=True,
+    )(t0)
+    assert not isinstance(result_with_remat, Exception)
+
+    result_without_remat, _ = thunder.compile_with_info(
+        func,
+        disable_preprocessing=True,
+        use_rematerialization=False,
+    )(t0)
+
+    torch.testing.assert_close(result_with_remat, result_without_remat)

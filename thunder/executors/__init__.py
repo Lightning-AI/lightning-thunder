@@ -2,6 +2,7 @@ from typing import Optional, Any, List, Tuple
 from collections.abc import Sequence
 
 from thunder.core.trace import TraceCtx
+from thunder.core.rematerialization import rematerialize
 import thunder.executors.torch as torchex
 import thunder.executors.pythonex as pythonex
 from thunder.executors.utils import Executor, nvfuser_available, nvfuser_version
@@ -43,7 +44,11 @@ def get_executor(ex: Executor) -> Any:
 # TODO Create a general mechanism for running traces that produces reproducible provenance and the
 #   appropriate error checks
 def transform_for_execution(
-    trace: TraceCtx, executors_list: Optional[Sequence[Executor]] = None, *, only_execute_prims=False
+    trace: TraceCtx,
+    executors_list: Optional[Sequence[Executor]] = None,
+    *,
+    only_execute_prims=False,
+    use_rematerialization=False,
 ) -> tuple[TraceCtx, list[TraceCtx]]:
     # Acquires the executors
     if executors_list is None:
@@ -86,6 +91,11 @@ def transform_for_execution(
 
     fused_trace, fused_traces = passes.fuse(flattened_dce_trace)
     traces.extend(fused_traces)
+
+    if use_rematerialization:
+        remat_trace, remat_traces = rematerialize(fused_trace)
+        traces.extend(remat_traces)
+        fused_trace = remat_trace
 
     lifetime_trace, lifetime_traces = passes.del_last_used(fused_trace)
     traces.extend(lifetime_traces)
