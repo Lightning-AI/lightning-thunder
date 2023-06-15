@@ -537,6 +537,17 @@ def test_clone_graph():
     assert s == s2
 
 
+# Ref: https://github.com/lightning-AI/lightning-thunder/issues/386
+def test_raise_nonlocals():
+
+    def func(a):
+        return thunder.clang.abs(a)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        thunder.preprocess(func, is_module=False)
+    assert "nonlocal variables are not supported but" in str(excinfo.value)
+
+
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying
 # TODO: once this test works, also test acquiring the function from a collection
 # @instantiate(dtypes=(thunder.float32,))

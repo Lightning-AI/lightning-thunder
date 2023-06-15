@@ -576,6 +576,11 @@ def _bind_to_graph(
                 return Value(typ=p.annotation, name=name, is_function_arg=True)
             return Value(value=NULL, name=name)
 
+        if key.scope == VariableScope.NONLOCAL:
+            raise RuntimeError(
+                f"nonlocal variables are not supported but (key, name) = ({key}, {name}) found"
+            )
+
         if key.scope == VariableScope.GLOBAL:
             return Value(name=name, value=func_globals[name], is_global=True)
 
