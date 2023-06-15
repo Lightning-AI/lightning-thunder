@@ -1662,8 +1662,10 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     logits = query @ key.transpose(-2, -1) / (query.size(-1) ** 0.5)
     if attn_mask is None and is_causal:
         L, S = logits.shape[-2:]
-        attn_mask = arange(L, device=query.device)[:, None] >= arange(S, device=query.device)[None, :]
-        attn_mask = attn_mask.masked_fill(neg(attn_mask), -math.inf)
+        attn_mask = (arange(L, device=query.device)[:, None] >= arange(S, device=query.device)[None, :]).to(
+            dtype=logits.dtype
+        )
+        attn_mask = attn_mask.masked_fill(attn_mask == 0, -math.inf)
     if attn_mask is not None:
         logits = logits + attn_mask
     attn_weight = softmax(logits, dim=-1)

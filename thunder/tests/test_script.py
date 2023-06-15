@@ -216,6 +216,23 @@ def test_inline_submodule():
 
 
 @skipif_not_python_3_10
+def test_llama_block_compile():
+    m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
+    m2 = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
+    m2.load_state_dict(m.state_dict())
+    tom = thunder.compile(m2, executors_list=torchex)
+    thunder.core.script.python_ir.annotated_dis(tom._tfn)
+    inp = torch.randn(1, 8, 4096)
+    expected_result = m(inp)
+    thunder_result = tom(inp)
+    assert_close(expected_result, thunder_result)
+    assert_close(m.attn.rope_cache, m2.attn.rope_cache)
+    expected_result = m(inp)
+    thunder_result = tom(inp)
+    assert_close(expected_result, thunder_result)
+
+
+@skipif_not_python_3_10
 def test_llama_block_inlining():
     m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
 
@@ -539,7 +556,6 @@ def test_clone_graph():
 
 # Ref: https://github.com/lightning-AI/lightning-thunder/issues/386
 def test_raise_nonlocals():
-
     def func(a):
         return thunder.clang.abs(a)
 
