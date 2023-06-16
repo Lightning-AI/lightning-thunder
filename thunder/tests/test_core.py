@@ -1,4 +1,5 @@
 import operator
+import traceback
 from functools import partial, reduce
 from itertools import product
 
@@ -1618,6 +1619,19 @@ def test_torch_autocast_exception(executor, device, _):
         with torch.autocast(device_type=device):
             compiled_f(a)
     assert "A callable optimized" in str(excinfo.value)
+
+
+def test_traceback():
+    def f(a):
+        return -(a > 0)  # negating a bool tensor raises
+
+    compiled_f = thunder.compile(f)
+    a = torch.ones((), dtype=torch.float32)
+    with pytest.raises(RuntimeError) as excinfo:
+        compiled_f(a)
+    assert "on a bool tensor" in str(excinfo.value)
+    assert "torch.neg" in str(excinfo.traceback[-1].statement)
+    assert "LC.gen" in excinfo.traceback[-1].path
 
 
 # @instantiate(

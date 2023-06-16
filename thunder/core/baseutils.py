@@ -10,6 +10,7 @@ from typing import Any, Callable, Type, Union, Optional, Tuple, List
 from collections.abc import Sequence
 from types import MappingProxyType
 import re
+import inspect
 
 #
 # Common utils importable by any other file
@@ -205,8 +206,20 @@ def print_type(typ: type, with_quotes: bool = True) -> str:
 # Functions related to constructing callables from Python strings
 #
 
+_exec_ctr = 0
+
 
 def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict) -> Callable:
+    global _exec_ctr
+
+    program_name = f"{program_name}_{_exec_ctr}"
+
+    # simple cache hack
+    mtime = None  # this signals that the cache should not be invalidated(!)
+    lines = python_str.splitlines(keepends=True)
+    size = len(python_str)
+    inspect.linecache.cache[program_name] = size, mtime, lines, program_name
+
     try:
         code = compile(python_str, program_name, mode="exec")
         exec(code, ctx)
@@ -215,3 +228,5 @@ def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict
         print("Encountered an exception while trying to compile the following program:")
         print(python_str)
         raise e
+    finally:
+        _exec_ctr += 1

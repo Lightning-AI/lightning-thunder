@@ -391,21 +391,7 @@ def compile_with_info(
                 if use_static_caching:
                     cache_put(pfn._cache, c, args[pfn._num_constant_args :], kwargs)
 
-                # Attempts to execute the trace, returning the traces
-                # TODO Review the pattern of returning the exception
-                result: Any
-                try:
-                    result = c(*args, **kwargs)
-                except Exception as e:
-
-                    def print_traces(traces):
-                        for trace in traces:
-                            print(trace)
-                            print("\n\n")
-
-                    print_traces(traces)
-                    traceback.print_exception(e)
-                    return e, traces
+                result : Any = c(*args, **kwargs)
         finally:
             # Ensures the language and tracing contexts are reset
             maybe_reset_trace(started, tok)
