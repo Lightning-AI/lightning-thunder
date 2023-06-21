@@ -221,6 +221,11 @@ def contiguous(bsym: BoundSymbol, a) -> BoundSymbol:
     return tbsym
 
 
+def expand(bsym: BoundSymbol, tensor, *shape):
+    sym = Symbol(name="expand", meta=None, _module=torch.Tensor)
+    return sym.bind(args=(tensor, utils.extract_shape_from_varargs(shape)), output=bsym.output)
+
+
 def getitem(bsym: BoundSymbol, tensor, key) -> BoundSymbol:
     sym = Symbol(name="__getitem__", meta=None, _module=torch.Tensor)
     tbsym = BoundSymbol(sym, args=(tensor, key), kwargs={}, output=bsym.output)
@@ -786,6 +791,7 @@ _ops_map.update(
         PrimIDs.BROADCAST_IN_DIM: (_always_executable, broadcast_in_dim),
         PrimIDs.CAT: (_always_executable, cat),
         "torch.Tensor.contiguous": (_always_executable, contiguous),
+        "torch.Tensor.expand": (_always_executable, expand),
         "torch.Tensor.__getitem__": (_always_executable, getitem),
         PrimIDs.PAD: (_always_executable, pad),
         PrimIDs.RESHAPE: (_always_executable, reshape),

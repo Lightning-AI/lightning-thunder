@@ -917,6 +917,11 @@ def basic_indexing(a, key):
     return result
 
 
+@torchsymbol(torch.Tensor.expand, is_method=True)
+def expand(a, *shape):
+    return clang.expand(a, *shape)
+
+
 def get_item(a, key):
     return basic_indexing(a, key)
 

@@ -2154,6 +2154,65 @@ stack_opinfo = OpInfo(
 shape_ops.append(stack_opinfo)
 
 
+def expand_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Input shape, arg shape
+    cases = (
+        ((), ()),  # Scalar identity
+        ((), (3, 4, 5)),  # Broadcast scalar tensor, adding dims
+        ((0,), (0,)),  # Zero dim tensor identity
+        ((0,), (-1,)),  # Scalar wildcard
+        ((1, 0), (1, 0)),  # Nonleading zero dim
+        ((1, 0), (0, -1)),
+        ((1, 0), (0, 0)),
+        ((1, 3), (1, 1, 3)),  # Add dim
+        ((1, 1), (1, 2)),  # Broadcast trailing dim
+        ((1, 1), (2, 1)),  # Broadcast leading dim
+        ((2, 2), (-1, 2)),  # Wildcard leading dim
+        ((1, 1), (1, 2, -1)),  # Broadcast trailing dim, wildcard, add dim
+        ((1, 1), (3, -1, -1)),  # Broadcast leading dim, wildcard, add dim
+    )
+
+    # Yield both, to make sure the arguments get packed/unpacked correctly.
+    # expand(tensor, args...) and expand(tensor, (args...)) should be equivalent.
+    for ishape, argshape in cases:
+        yield SampleInput(make(ishape), argshape)
+        if argshape != ():
+            yield SampleInput(make(ishape), *argshape)
+
+
+def expand_error_generator(op, device, *, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # Input shape, arg shape, exception type
+    cases = [
+        ((0,), (1,), RuntimeError),  # Expand scalar tensor
+        ((0,), (2,), RuntimeError),  # Expand scalar tensor
+        ((1,), (-1, 2), RuntimeError),  # Expand nonexisting dim
+        ((2, 2), (2, 4), RuntimeError),  # Expand non-singleton dim
+        ((1, 1), (-1, 3, -1), RuntimeError),  # Leading wildcard, expand, add dim with trailing wildcard
+    ]
+
+    for ishape, argshape, exc_type in cases:
+        yield SampleInput(make(ishape), argshape), exc_type
+        yield SampleInput(make(ishape), *argshape), exc_type
+
+
+expand_opinfo = OpInfo(
+    clang.expand,
+    sample_input_generator=expand_sample_generator,
+    error_input_generator=expand_error_generator,
+    torch_reference=torch.Tensor.expand,
+    test_directives=(
+        # vjp and jvp not yet implemented
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
+    ),
+)
+shape_ops.append(expand_opinfo)
+
+
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
