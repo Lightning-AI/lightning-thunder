@@ -124,7 +124,7 @@ def to_torch_dtype(dtype: Optional[Union[torch.dtype, dtypes.dtype]]) -> Optiona
 tensor_cls = torch.Tensor
 
 
-def tensorproxy(name: str, t: torch.Tensor) -> TensorProxy:
+def tensorproxy(name: Optional[str], t: torch.Tensor) -> TensorProxy:
     device = devices.device_from_string(str(t.device))
     dtype = to_thunder_dtype(t.dtype)
 

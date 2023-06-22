@@ -486,9 +486,8 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0):
         TensorProxy: Tensor with the batch dimension removed.
     """
     trace = get_tracectx()
-    name = trace.make_name()
     new_shape = tensor.shape[:batch_dim] + tensor.shape[batch_dim + 1 :]
-    return TensorProxy(name=name, shape=new_shape, dtype=tensor.dtype, device=tensor.device)
+    return TensorProxy(shape=new_shape, dtype=tensor.dtype, device=tensor.device)
 
 
 # TODO: in JAX args, in_dims are flattened the same way
@@ -1558,25 +1557,42 @@ def where_backward(condition, g):
 @register_augmented_forward(prims.PrimIDs.TAKE)
 def take_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
     primal = prims.take(x, index, dim)
-    residuals = (x.shape, x.device, x.dtype, index, dim,)
+    residuals = (
+        x.shape,
+        x.device,
+        x.dtype,
+        index,
+        dim,
+    )
     return VJPDual(primal, residuals)
 
 
 @register_backward(prims.PrimIDs.TAKE)
-def take_backward(shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy):
-   return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
+def take_backward(
+    shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy
+):
+    return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
 
 
 @register_augmented_forward(prims.PrimIDs.TAKE_ALONG_AXIS)
 def take_along_axis_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
     primal = prims.take_along_axis(x, index, dim)
-    residuals = (x.shape, x.device, x.dtype, index, dim,)
+    residuals = (
+        x.shape,
+        x.device,
+        x.dtype,
+        index,
+        dim,
+    )
     return VJPDual(primal, residuals)
 
 
 @register_backward(prims.PrimIDs.TAKE_ALONG_AXIS)
-def take_along_axis_backward(shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy):
+def take_along_axis_backward(
+    shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy
+):
     return prims.scatter_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
+
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     """Symbol mapper for the VJP transform.

@@ -49,47 +49,65 @@ def unvariableify(x: Any) -> Any:
 
 # TODO Document this class
 class Proxy(VariableInterface, ProxyInterface):
-    def __init__(self, name=None):
+    def __init__(self, name: Optional[str] = None):
         trace = get_tracectx()
         if name is None:
-            name = trace.make_name()
+            prefix: Optional[str] = None
+            if isinstance(self, FloatProxy):
+                prefix = "f"
+            elif isinstance(self, ComplexProxy):
+                prefix = "c"
+            elif isinstance(self, IntegerProxy):
+                if self.python_type is int:
+                    prefix = "i"
+                elif self.python_type is bool:
+                    prefix = "b"
+                else:
+                    baseutils.check(False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}")
+            elif isinstance(self, NumberProxy):
+                prefix = "n"
+            elif isinstance(self, TensorProxy):
+                prefix = "t"
+
+            name = trace.make_name(prefix=prefix)
         else:
             trace.add_name(name)
 
         self._name = name
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name
 
-    def replace_name(self, name):
+    def replace_name(self, name: Optional[str] = None):
         """Return a copy of this proxy with the given name."""
         return self.__class__(name=name)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self._name}"
 
-    def type_string(self):
+    def type_string(self) -> str:
         return "Any"
 
 
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
-    def __init__(self, name=None, value=None, *, python_type):
-        super().__init__(name)
+    def __init__(self, name: Optional[str] = None, value: Optional[Number] = None, *, python_type: type):
         self.value = value
         self.python_type = python_type
 
+        Proxy.__init__(self, name)
+
     # NOTE: Python numbers hash to themselves, and this mimics that behavior
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.value)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
         return self.__class__(name=name, value=self.value, python_type=self.python_type)
 
-    def known_value(self):
+    def known_value(self) -> bool:
         return self.value is not None
 
     #
@@ -203,6 +221,15 @@ def pyval(x: Union[NumberProxy, Number]) -> Number:
     return x
 
 
+def pytype(x: Union[NumberProxy, Number]) -> type:
+    baseutils.check_type(x, (NumberProxy, Number))
+
+    if isinstance(x, NumberProxy):
+        return x.python_type
+
+    return type(x)
+
+
 class ComplexProxy(NumberProxy, complex):
     def __new__(cls, *, name=None, value):
         if value is None:
@@ -287,13 +314,13 @@ class ComplexProxy(NumberProxy, complex):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy, int):
-    def __new__(cls, *, name=None, value):
+    def __new__(cls, *, name: Optional[str] = None, value: Number):
         if value is None:
             value = -9999
 
         return int.__new__(cls, value)
 
-    def __init__(self, name=None, value=None):
+    def __init__(self, name: Optional[str] = None, value=None):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
         NumberProxy.__init__(self, name=name, value=value, python_type=python_type)
@@ -804,7 +831,7 @@ def is_proxyable(x: Any) -> bool:
 # TODO defer to langctx for tensor type -- consider all possible langctxs
 # TODO maybe consider what happens when a proxy is passed to this
 # TODO handle complex number type
-def proxy(x: Any, *, name=None) -> Any:
+def proxy(x: Any, *, name: Optional[str] = None) -> Any:
     langctx = langctx_for(x)
 
     try:

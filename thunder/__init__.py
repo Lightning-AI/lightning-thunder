@@ -110,11 +110,8 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
         # One alternative would be to modify the function's signature to include
         # the name of the proxy, but that might require a lot of changes to the
         # codebase.
-        name = name or tracectx.make_name()
         if isinstance(x, Proxy):
-            if name is not None:
-                return x.replace_name(name)
-            return x
+            return x.replace_name(name)
 
         if utils.is_collection(x):
             return tracectx.track_for_unpacking(x, name=name)
@@ -391,7 +388,7 @@ def compile_with_info(
                 if use_static_caching:
                     cache_put(pfn._cache, c, args[pfn._num_constant_args :], kwargs)
 
-                result : Any = c(*args, **kwargs)
+                result: Any = c(*args, **kwargs)
         finally:
             # Ensures the language and tracing contexts are reset
             maybe_reset_trace(started, tok)

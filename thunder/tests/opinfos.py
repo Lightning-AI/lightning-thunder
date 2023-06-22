@@ -2756,7 +2756,7 @@ take_along_axis_cases = (
     ((4, 2, 3), -1, (1, 2, 7)),
 )
 
-    
+
 def take_along_axis_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     # torch.take_along_dim expects index to be long but not int

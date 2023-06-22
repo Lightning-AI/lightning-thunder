@@ -1496,10 +1496,15 @@ def index_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim: 
     utils.check_same_device(a, index, value)
     utils.check_same_dtype(a, value)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
-    utils.check(value.ndim == a.ndim, lambda: f"Expected index (rank={value.ndim}) to have the same rank as a (rank={a.ndim})")
+    utils.check(
+        value.ndim == a.ndim, lambda: f"Expected index (rank={value.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
     utils.check(index.ndim <= 1, lambda: f"Expected index to a 1-D or 0-D tensor, but index.ndim={index.ndim}!")
     utils.validate_idx(a.ndim, dim)
-    utils.check(index.numel == value.shape[dim], lambda: f"Expected index={index} to have size equal to value.shape[dim]={value.shape[dim]}!")
+    utils.check(
+        index.numel == value.shape[dim],
+        lambda: f"Expected index={index} to have size equal to value.shape[dim]={value.shape[dim]}!",
+    )
 
     utils.check(
         utils.same_shape(a.shape[:dim] + a.shape[dim + 1 :], value.shape[:dim] + value.shape[dim + 1 :]),
@@ -1518,7 +1523,9 @@ def take_along_axis_meta(a: TensorProxy, index: TensorProxy, dim: int) -> Tensor
     utils.check_type(dim, int)
     utils.check_same_device(a, index)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
-    utils.check(index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})")
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
     utils.validate_idx(a.ndim, dim)
 
     utils.check(
@@ -1540,8 +1547,13 @@ def scatter_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim
     utils.check_same_device(a, index, value)
     utils.check_same_dtype(a, value)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
-    utils.check(index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})")
-    utils.check(index.ndim == value.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as value (rank={value.ndim})")
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+    utils.check(
+        index.ndim == value.ndim,
+        lambda: f"Expected index (rank={index.ndim}) to have the same rank as value (rank={value.ndim})",
+    )
     utils.validate_idx(a.ndim, dim)
 
     for idx, l in enumerate(index.shape):
@@ -1805,9 +1817,8 @@ embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
 # TODO: Once we have fusable index_put we can implement it using primitives
 # For now we just use the PyTorch implementation
 def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
-    proxy_name = get_tracectx().make_name()
     shape = (num_weights, grad.shape[-1])
-    return TensorProxy(name=proxy_name, shape=shape, device=grad.device, dtype=grad.dtype)
+    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype)
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)

@@ -577,9 +577,7 @@ def _bind_to_graph(
             return Value(value=NULL, name=name)
 
         if key.scope == VariableScope.NONLOCAL:
-            raise RuntimeError(
-                f"nonlocal variables are not supported but (key, name) = ({key}, {name}) found"
-            )
+            raise RuntimeError(f"nonlocal variables are not supported but (key, name) = ({key}, {name}) found")
 
         if key.scope == VariableScope.GLOBAL:
             return Value(name=name, value=func_globals[name], is_global=True)

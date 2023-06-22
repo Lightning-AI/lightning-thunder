@@ -313,7 +313,9 @@ def transpose(a, permutation):
 # expanding `a` to the shape of `ref` except dimension `exclude_dim`
 # This is basically broadcasting `a` to `ref`, while preserving the shape at dimension `exclude_dim`
 def _maybe_expand_exclude_dim(a: TensorProxy, ref: TensorProxy, exclude_dim: int) -> TensorProxy:
-    utils.check(a.ndim == ref.ndim, lambda: f"Expected a (rank={a.ndim}) to have the same rank as ref (rank={ref.ndim})")
+    utils.check(
+        a.ndim == ref.ndim, lambda: f"Expected a (rank={a.ndim}) to have the same rank as ref (rank={ref.ndim})"
+    )
     target_shape = list(ref.shape)
     target_shape[exclude_dim] = a.shape[exclude_dim]
     if not utils.same_shape(a.shape, target_shape):

@@ -257,7 +257,7 @@ def _numberclass_to_numbertype(cls):
     raise ValueError(f"Trying to convert unknown type {cls} to a numbertype!")
 
 
-def to_dtype(x, *, true_dtype=False):
+def to_dtype(x, *, true_dtype: bool = False):
     """Exctracts a dtype from an object or class."""
 
     if isinstance(x, TensorProxyInterface):

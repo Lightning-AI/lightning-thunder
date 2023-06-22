@@ -105,6 +105,10 @@ class TraceCtx:
     #   Improve variable naming for readable and to avoid collisions with other names
 
     def add_name(self, name: str) -> None:
+        baseutils.check(
+            name not in self.names,
+            lambda: f"Trying to add the name {name} to a trace, but that name is already tracked",
+        )
         self.names.add(name)
 
     # TODO https://github.com/Lightning-AI/lightning-thunder/issues/329
@@ -124,19 +128,26 @@ class TraceCtx:
         #     place += 1
         # return "".join(s)
 
-    def _make_name(self, is_object_name: bool, obj: Optional = None) -> str:
+    def _make_name(
+        self, *, prefix: Optional[str] = None, is_object_name: bool = False, obj: Optional[Any] = None
+    ) -> str:
         name: str
         while True:
-            # NOTE Adds "__" in an attempt to avoid collisions
             if is_object_name:
+                baseutils.check(
+                    prefix is None,
+                    lambda: f"prefix was {prefix}, but prefixes are not supported when {is_object_name=}",
+                )
                 name = self._gen_name(self.obj_name_ctr)
                 self.obj_name_ctr += 1
                 if obj is None:
-                    name = f"__object_{name}"
+                    name = f"_object_{name}"
                 else:
-                    name = f"__{baseutils.print_type(type(obj), with_quotes=False)}_{name}"
+                    name = f"_{baseutils.print_type(type(obj), with_quotes=False)}_{name}"
             else:
-                name = f"__{self._gen_name(self.name_ctr)}"
+                ctr = self._gen_name(self.name_ctr)
+                prefix = "_" if prefix is None else prefix
+                name = f"{prefix}{ctr}"
                 self.name_ctr += 1
 
             if name not in self.names:
@@ -147,12 +158,12 @@ class TraceCtx:
 
     # Constructs and records new name -- or, if name is not None --
     #   just records the given name
-    def make_name(self, name: Optional[str] = None) -> str:
+    def make_name(self, name: Optional[str] = None, *, prefix: Optional[str] = None) -> str:
         if name is not None:
             self.names.add(name)
             return name
 
-        return self._make_name(is_object_name=False)
+        return self._make_name(prefix=prefix)
 
     def make_object_name(self, x: Any) -> str:
         return self._make_name(is_object_name=True, obj=x)
