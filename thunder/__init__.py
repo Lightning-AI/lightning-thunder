@@ -10,7 +10,7 @@ import traceback
 
 from looseversion import LooseVersion
 
-from thunder.core.proxies import is_proxyable, proxy, Proxy
+from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy
 from thunder.core.trace import (
     TraceCtx,
     from_trace,
@@ -99,129 +99,82 @@ from thunder.clang import *
 
 
 def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
-    si = get_siginfo(fn, args, kwargs)
+    tracectx.unpacking()
 
-    def proxy_or_track(x: Any, *, name: Optional[str] = None):
+    # Translates tensors, arrays, and dtypes to lightning.compile types
+    # TODO Translate NumPy dtypes
+    def translate(x: Any, *, name: Optional[str] = None) -> Any:
+        # NOTE Unpacking proxies
         # When we encounter a proxy, we need to make sure that it's name is the
         # same as the name that the unpack is requesting. If it's not, we need to
         # create a new proxy with the requested name.
         # TODO: There might be better ways to do this, but this is the simplest
-        # way to get it working correctly now.
-        # One alternative would be to modify the function's signature to include
-        # the name of the proxy, but that might require a lot of changes to the
-        # codebase.
-        if isinstance(x, Proxy):
-            return x.replace_name(name)
-
-        if utils.is_collection(x):
-            return tracectx.track_for_unpacking(x, name=name)
-
+        #   way to get it working correctly now.
+        #   One alternative would be to modify the function's signature to include
+        #   the name of the proxy, but that might require a lot of changes to the
+        #   codebase.
         if is_proxyable(x):
             return proxy(x, name=name)
 
-        # Translates torch dtypes to lightning.compile dtypes
-        # TODO Translate NumPy dtypes
+        if isinstance(x, Proxy):
+            return x.replace_name(name)
         if isinstance(x, pytorch.dtype):
-            x = ltorch.to_thunder_dtype(x)
+            return ltorch.to_thunder_dtype(x)
+        if utils.is_collection(x):
+            return tree_map(translate, x)
 
         return x
 
-    def _unpack(x: Any, *, name: str = None) -> list:
-        unpacked = None
-        colls = []
-
-        # TODO Probably kill collection proxies in favor of tracking
-        # TODO Add support for dicts and sets
-        # TODO Consider reviewing dict values
-        if is_collection(x):
-            pot_collection = tree_map(proxy_or_track, x)
-            tracectx.track_for_unpacking(pot_collection, name=name)
-
-            items: Sequence
-            if isinstance(pot_collection, Sequence):
-                unpacked = prims.unpack_sequence(pot_collection, len(pot_collection))
-                items = unpacked
-            elif isinstance(pot_collection, dict):
-                # NOTE The use of tuple on the keys of the dictionary is important
-                #   keys() returns a dict_keys, which is a dictionary view object
-                #   (see https://docs.python.org/3/library/stdtypes.html#dictionary-view-objects)
-                #   This object is a collection, but treemap will not properly flatten it, resulting
-                #   in an infinite recursion when attempting to flatten collections
-                # TODO We could consider extending treemap to properly flatten dictionary views
-                # TODO We should definitely improve our use of tree_flatten to avoid infinite recursion
-                #   when trying to flatten collections recursively
-                unpacked = prims.unpack_dict(pot_collection, tuple(pot_collection.keys()))
-                items = unpacked.values()
-            else:
-                utils.check(
-                    False,
-                    lambda: f"Found an unsupported collection {x} of type {type(x)}",
-                    exception_type=NotImplementedError,
-                )
-
-            for o in items:
-                if is_collection(o):
-                    colls.append(o)
-        else:
-            pot = proxy_or_track(x, name=name)
-            unpacked = prims.unpack_trivial(pot)
-
-        return unpacked, colls
-
-    tracectx.unpacking()
+    # Construct proxy args and kwargs by parsing signature and analyzing inputs
+    si = get_siginfo(fn, args, kwargs)
 
     # Constructs args
+    cq = deque()
     proxyargs = []
-    collection_queue = deque()
     for name, x in si.args:
-        unpacked, colls = _unpack(x, name=name)
-        proxyargs.append(unpacked)
-        collection_queue.extend(colls)
+        translated = translate(x, name=name)
+        proxyargs.append(translated)
+
+        unpacked = prims.unpack_trivial(translated, name=name)
+        if isinstance(unpacked, CollectionProxy):
+            cq.append(unpacked)
 
     # Handles varargs
     if si.varargs is not None:
         varargs_name, x = si.varargs
-        unpacked, colls = _unpack(x, name=varargs_name)
-        proxyargs.extend(unpacked)
-        collection_queue.extend(colls)
+
+        translated = translate(x)
+        proxyargs.extend(translated)
+
+        unpacked = prims.unpack_trivial(translated, name=varargs_name)
+        cq.append(unpacked)
 
     proxykwargs = {}
     for name, x in si.kwargs.items():
-        unpacked, colls = _unpack(x, name=name)
-        proxykwargs[name] = unpacked
-        collection_queue.extend(colls)
+        translated = translate(x, name=name)
+        proxykwargs[name] = translated
+
+        unpacked = prims.unpack_trivial(translated, name=name)
+        if isinstance(unpacked, CollectionProxy):
+            cq.append(unpacked)
 
     if si.varkwargs is not None:
         varkwargs_name, x = si.varkwargs
-        unpacked, colls = _unpack(x, name=varkwargs_name)
-        proxykwargs.update(unpacked)
-        collection_queue.extend(colls)
 
-    # NOTE This code is very similar to the above -- maybe they can be refactored together?
-    def unpack_recursive(x, q):
-        if is_collection(x):
-            # NOTE This proxy_or_track is required because collections must be tracked during unpacking
-            #   to name them properly
-            proxy_or_track(x)
+        translated = translate(x)
+        proxykwargs.update(translated)
 
-            items: Sequence
-            if isinstance(x, Sequence):
-                items = prims.unpack_sequence(x, len(x))
-            elif isinstance(x, dict):
-                # NOTE See note above about why it's important to tuple the dict_keys object
-                d = prims.unpack_dict(x, tuple(x.keys()))
-                items = d.values()
-            else:
-                raise NotImplementedError
+        unpacked = prims.unpack_trivial(translated, name=varkwargs_name)
+        cq.append(unpacked)
 
-            for o in items:
-                if is_collection(o):
-                    q.append(o)
-
+    # Unpacks collections to introduce proxy names to the trace
     while True:
         try:
-            x = collection_queue.popleft()
-            unpack_recursive(x, collection_queue)
+            c = cq.popleft()
+            unpacked = prims.unpack(c)
+            for u in unpacked:
+                if isinstance(u, CollectionProxy):
+                    cq.append(u)
         except IndexError:
             break
 

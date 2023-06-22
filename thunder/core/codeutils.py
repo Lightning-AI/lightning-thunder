@@ -20,19 +20,6 @@ from thunder.core.baseutils import *
 #
 
 
-# TODO Document this class
-# TODO This could probably be a frozen dataclass
-# TODO Add an is_printable check to not construct an object_ctx in that case
-# TODO Maybe merge TrackedObject and ContextObject? But they are conceptually distinct...
-class TrackedObject:
-    def __init__(self, name: str, obj: Any):
-        self.name = name
-        self.obj = obj
-
-    def __repr__(self):
-        return f"[TrackedObject name={self.name} obj={self.obj}]"
-
-
 # TODO This can be a frozen dataclass
 class ContextObject:
     def __init__(self, name: str, obj: Any):
@@ -66,8 +53,6 @@ def indent_string(indent):
 def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
     if x is None:
         return True, None
-    if isinstance(x, TrackedObject):
-        return True, None
     if isinstance(x, ContextObject):
         return True, None
     if isinstance(x, ProxyInterface):
@@ -95,7 +80,7 @@ def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
 
 
 def is_literal(x: Any) -> bool:
-    if isinstance(x, (TrackedObject, ContextObject, ProxyInterface)):
+    if isinstance(x, (ContextObject, ProxyInterface)):
         return False
 
     if is_collection(x):
@@ -133,15 +118,7 @@ def to_printable(
     *,
     import_ctx: Optional[dict] = None,
     object_ctx: Optional[dict] = None,
-    allow_tracked_objects: bool = True,
 ) -> Any:
-    if allow_tracked_objects and trace is not None:
-        to = trace.get_tracked_object(x)
-        is_tracked = isinstance(to, TrackedObject)
-
-        if is_tracked:
-            return to
-
     if is_collection(x):
         flat, spec = tree_flatten(x)
 
@@ -155,7 +132,7 @@ def to_printable(
         printable = tree_unflatten(printables, spec)
         return printable
 
-    # NOTE In this case the object is not tracked nor a collection, and
+    # NOTE In this case the object is not a collection, and
     #   it may require an import or additional context to print
 
     # TODO Instead of constant names, maybe "context names"?
@@ -223,8 +200,6 @@ def prettyprint(
 
     if x is None:
         return m("None")
-    if isinstance(x, TrackedObject):
-        return m(x.name)
     if isinstance(x, ContextObject):
         return m(x.name)
     if isinstance(x, ProxyInterface):
@@ -301,11 +276,7 @@ class SigInfo:
         def _arg_printer(name: str, has_default: bool, default: Any = None) -> str:
             # NOTE In this case the argument has a default value, like 'a' in foo(a=5)
             if has_default:
-                # NOTE Collections from the input will be tracked at this point, but this wants to print the
-                #   contents of the collections, so tracked objects are disabled
-                printable = to_printable(
-                    trace, default, import_ctx=import_ctx, object_ctx=object_ctx, allow_tracked_objects=False
-                )
+                printable = to_printable(trace, default, import_ctx=import_ctx, object_ctx=object_ctx)
 
                 return f"{name}={prettyprint(printable)}"
 

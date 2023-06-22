@@ -66,6 +66,12 @@ def nvfuser_available() -> bool:
     return v is not None and v >= required_nvfuser_version()
 
 
+comment_symbols = {
+    PrimIDs.COMMENT,
+    PrimIDs.UNPACK_TRIVIAL,
+}
+
+
 # TODO Document this better
 # TODO Review non-proxy inputs as being consumed -- currently only proxies can be inputs and outputs of these regions
 class Region:
@@ -88,6 +94,12 @@ class Region:
                 variableify(x) for x in flatouts if isinstance(x, Proxy) and producers[x] in self.bound_symbols
             )
 
+            # Short-circuits if the symbol is a comment, because comments don't consume anything
+            #   Note that comments may produce things
+            if bsym.sym.id in comment_symbols:
+                continue
+
+            # Updates what this region consumes, skipping symbols that never consume anything
             consumes.update(variableify(x) for x in bsym._flat_args if isinstance(x, Proxy))
             consumes.update(variableify(x) for x in bsym._flat_kwargs if isinstance(x, Proxy))
 
@@ -97,6 +109,7 @@ class Region:
         # Inputs are things which this consumes which are produced before it
         for x in consumes:
             x = unvariableify(x)
+
             if producers[x] not in self.bound_symbols:
                 self.inputs.add(variableify(x))
 

@@ -4,21 +4,21 @@ from functools import partial, reduce
 import operator
 import builtins
 import math
-from typing import Union, Type, Any, List, Dict, Tuple, Optional, Callable
+from typing import Union, Type, Any, List, Dict, Tuple, Optional, Callable, Hashable
 from collections.abc import Sequence
 
 import torch
 import numpy as np
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy
+from thunder.core.proxies import CollectionProxy, TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 import thunder.core.utils as utils
 import thunder.core.baseutils as baseutils
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
 from thunder.core.langctx import langctx
 
@@ -29,9 +29,10 @@ from thunder.core.langctx import langctx
 
 class PrimIDs(Enum):
     # Unpacking prims
-    UNPACK_TRIVIAL = auto()
+    UNPACK_EMPTY_DICT = auto()
+    UNPACK_KEY = auto()
     UNPACK_SEQUENCE = auto()
-    UNPACK_DICT = auto()
+    UNPACK_TRIVIAL = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -158,12 +159,19 @@ def make_prim(
 #
 
 
-def unpack_trivial_impl(x: Any) -> Any:
+def _collectify(x: Any, *, name: Optional[str] = None) -> Any:
+    if baseutils.is_collection(x):
+        return CollectionProxy(x, name=name)
+
     return x
 
 
-def unpack_trivial_meta(x: Any) -> Any:
+def unpack_trivial_impl(x: Any, *, name: Optional[str] = None) -> Any:
     return x
+
+
+def unpack_trivial_meta(x: Any, *, name: Optional[str] = None) -> Any:
+    return _collectify(x, name=name)
 
 
 def unpack_trivial_printer(
@@ -171,17 +179,17 @@ def unpack_trivial_printer(
 ) -> str:
     utils.check(
         len(arg_printables) == 1,
-        lambda: f"Expected one argument for unpack_trivial but got {arg_strings}",
+        lambda: f"Expected one argument for unpack_trivial but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
-        len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for unpack_trivial but got {kwarg_strings}",
+        len(kwarg_printables) <= 1,
+        lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
-    result_str = "" if bsym.output is None else f"{codeutils.prettyprint(out_printables)} = "
-    arg_str = codeutils.prettyprint(arg_printables)
+    result_str = "" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)} = "
+    arg_str = codeutils.prettyprint(arg_printables[0])
 
     s = f"# {result_str} {arg_str}  (trivial unpack)"
     return s
@@ -197,13 +205,15 @@ unpack_trivial = make_prim(
 
 
 # TODO Restore const criteria
-def unpack_sequence_meta(x, l):
+def unpack_sequence_meta(x: Union[Sequence, CollectionProxy], l: int) -> list:
+    if isinstance(x, CollectionProxy):
+        x = x.collection()
+
     utils.check_type(x, Sequence)
+    utils.check_type(l, int)
+    baseutils.check(len(x) == l, lambda x=x, l=l: f"Expected the length of {x=} to be {l=}")
 
-    assert len(x) == l
-    # _ensure_const(l)
-
-    return x
+    return list(_collectify(y) for y in x)
 
 
 # TODO Review using multi-line unpacks more cleverly
@@ -223,30 +233,24 @@ def unpack_sequence_printer(
     )
     utils.check_type(bsym.output, Sequence)
 
-    call_str = f"{codeutils.prettyprint(arg_printables[0])}"
+    x, l = arg_printables
+    call_str = f"{codeutils.prettyprint(x)}"
 
     # Short-circuits if there's nothing to unpack:
     if len(bsym.output) == 0:
         return f"# {call_str} (empty sequence)"
 
-    trace = get_tracectx()
     lines = []
-    for out in bsym.output:
-        out = out if trace is None else trace.get_tracked_object(out)
-        line: str
-        if codeutils.is_literal(out):
-            line = f"_,  \\"
-        else:
-            line = f"{codeutils.prettyprint(out)}, \\"
+    for out in out_printables:
+        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
         lines.append(line)
 
     lines.append(f"= {call_str}")
     return lines
 
 
-def unpack_sequence_impl(x, l):
-    assert len(x) == l
-    return x
+def unpack_sequence_impl(x: Sequence, l: int) -> list:
+    return list(x)
 
 
 unpack_sequence = make_prim(
@@ -258,77 +262,125 @@ unpack_sequence = make_prim(
 )
 
 
-def unpack_dict_impl(d: dict, keys):
-    return d
+def unpack_key_meta(d: Union[dict, CollectionProxy], key: Hashable) -> Any:
+    if isinstance(d, CollectionProxy):
+        d = d.collection()
+    baseutils.check_type(d, dict)
+
+    return _collectify(d[key])
 
 
-# TODO: instead of sorting the keys, should this return the key->value mapping? Or set it privately for printing?
-# TODO: is sorting sufficient?
-def unpack_dict_meta(d: dict, keys: tuple) -> dict:
-    utils.check_type(d, dict)
-    utils.check_type(keys, tuple)
-    utils.check(
-        tuple(d.keys()) == keys,
-        lambda: f"unpack_dict received a dict {d} and nonmatching keys {keys}",
-        exception_type=AssertionError,
-    )
-
-    for k in d.keys():
-        is_printable, _ = codeutils.is_printable(k)
-        utils.check(
-            is_printable,
-            lambda: f"Trying to unpack a dict with unprintable key {k}, but currently only dicts with printable keys are supported",
-        )
-
-    return d
-
-
-def unpack_dict_printer(
+def unpack_key_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
     utils.check(
         len(arg_printables) == 2,
-        lambda: f"Expected two arguments for unpack_dict but got {arg_printables}",
+        lambda: f"Expected two arguments for unpack_key but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for unpack_dict but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for unpack_key but got {kwarg_printables}",
         exception_type=AssertionError,
     )
-    utils.check_type(bsym.output, dict)
 
-    lines = []
-    d = bsym.output
-    dprintable, keyprintables = arg_printables
-    dname = codeutils.prettyprint(dprintable)
+    # Converts printables to strings
+    d, key = arg_printables
+    dstr = codeutils.prettyprint(d)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
 
-    trace = get_tracectx()
-    for key in utils.sequencify(keyprintables):
-        out = d[key]
-
-        if trace is not None:
-            out = trace.get_tracked_object(out)
-
-        keystr = codeutils.prettyprint(key)
-
-        s: str
-        if codeutils.is_literal(out):
-            s = f"_ = {dname}[{keystr}]"
-        else:
-            s = f"{codeutils.prettyprint(out, with_type=True)} = {dname}[{keystr}]"
-        lines.append(s)
-
-    return lines
+    return f"{outstr} = {dstr}[{keystr}]"
 
 
-unpack_dict = make_prim(
-    PrimIDs.UNPACK_DICT,
-    "unpack_dict",
-    meta=unpack_dict_meta,
-    python_printer=unpack_dict_printer,
-    python_impl=unpack_dict_impl,
+def unpack_key_impl(d: dict, key: Hashable) -> Any:
+    return d[key]
+
+
+unpack_key = make_prim(
+    PrimIDs.UNPACK_KEY,
+    "unpack_key",
+    meta=unpack_key_meta,
+    python_printer=unpack_key_printer,
+    python_impl=unpack_key_impl,
 )
+
+
+def unpack_empty_dict_meta(d: Union[dict, CollectionProxy]) -> tuple:
+    baseutils.check_type(d, (dict, CollectionProxy))
+    if isinstance(d, CollectionProxy):
+        baseutils.check_type(d.collection(), dict)
+
+    d = d if isinstance(d, dict) else d.collection()
+
+    baseutils.check(len(d) == 0, lambda: f"unpack_empty_dict_meta expected an empty dict but received {d=}")
+    return ()
+
+
+def unpack_empty_dict_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_empty_dict but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_empty_dict but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    arg_str = codeutils.prettyprint(arg_printables[0])
+    return f"# {arg_str} (empty dict)"
+
+
+def unpack_empty_dict_impl(d: Union[dict, CollectionProxy]) -> tuple:
+    assert len(d) == 0
+    return ()
+
+
+unpack_empty_dict = make_prim(
+    PrimIDs.UNPACK_EMPTY_DICT,
+    "unpack_empty_dict",
+    meta=unpack_empty_dict_meta,
+    python_printer=unpack_empty_dict_printer,
+    python_impl=unpack_empty_dict_impl,
+)
+
+
+def unpack_dict(d: Union[dict, CollectionProxy]) -> tuple[Any, ...]:
+    l = []
+
+    baseutils.check_type(d, (dict, CollectionProxy))
+    if isinstance(d, CollectionProxy):
+        baseutils.check_type(d.collection(), dict)
+
+    keys = d.keys if isinstance(d, dict) else d.collection().keys()
+
+    # Short-circuits if the dict is empty
+    # TODO We may want to make an explicit "unpack empty dict"
+    if len(keys) == 0:
+        return unpack_empty_dict(d)
+
+    for k in keys:
+        v = unpack_key(d, k)
+        l.append(v)
+
+    return tuple(l)
+
+
+def unpack(x: Any) -> Any:
+    if baseutils.is_collection(x) or isinstance(x, CollectionProxy):
+        coll = x.collection() if isinstance(x, CollectionProxy) else x
+        if isinstance(coll, Sequence):
+            return unpack_sequence(x, len(coll))
+        if isinstance(coll, dict):
+            return unpack_dict(x)
+        baseutils.check(False, lambda: f"unpack encountered an unsupported collection type {type(coll)}")
+
+    return unpack_trivial(x)
+
 
 #
 # Utility prims

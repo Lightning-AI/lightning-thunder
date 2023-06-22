@@ -12,7 +12,7 @@ import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.codeutils import TrackedObject, ContextObject
+from thunder.core.codeutils import ContextObject
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/327
@@ -54,7 +54,6 @@ class TraceCtx:
         self.obj_name_ctr = 0
         self.names = set()
 
-        self._tracked_object_map: dict[tuple[int, type], TrackedObject] = {}
         self._object_ctx: dict[int, ContextObject] = {}
 
         self._provenance: Optional[TraceProvenance] = None
@@ -99,7 +98,7 @@ class TraceCtx:
         self._provenance = provenance
 
     #
-    # Methods related to name construction and tracking
+    # Methods related to name construction
     #
     # TODO https://github.com/Lightning-AI/lightning-thunder/issues/329
     #   Improve variable naming for readable and to avoid collisions with other names
@@ -107,7 +106,7 @@ class TraceCtx:
     def add_name(self, name: str) -> None:
         baseutils.check(
             name not in self.names,
-            lambda: f"Trying to add the name {name} to a trace, but that name is already tracked",
+            lambda: f"Trying to add the name {name} to a trace, but that name is already used",
         )
         self.names.add(name)
 
@@ -213,21 +212,8 @@ class TraceCtx:
             self._post_unpack.append(fn)
 
     #
-    # Methods for tracking and querying objects
+    # Methods for querying objects
     #
-
-    # TODO Make the key a specific type
-    def _tracked_object_key(self, x: Any) -> tuple[int, type]:
-        return id(x), type(x)
-
-    def is_tracked(self, x: Any) -> bool:
-        key = self._tracked_object_key(x)
-        return key in self._tracked_object_map
-
-    # TODO Type annotate that this may return an object of the same type as x or a TrackedObject
-    def get_tracked_object(self, x: Any) -> Union[Any, TrackedObject]:
-        key = self._tracked_object_key(x)
-        return self._tracked_object_map.get(key, x)
 
     # TODO Revise this -- currently all non-proxies are considered const
     def is_constant(self, x: Any) -> bool:
@@ -235,45 +221,6 @@ class TraceCtx:
             return False
 
         return True
-
-    # NOTE Empty tuples () and None are all the same object
-    #   This means that tracking one of them would cause all of them to
-    #   be tracked, even if others are constants
-    #   For now, this disables tracking of all such singletons
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/460
-    #   for the issue tracking this
-    def _is_singleton(self, x: Any) -> bool:
-        if x == ():
-            return True
-        if x is None:
-            return True
-
-        return False
-
-    # NOTE This is a "fluid" interface that returns its input x
-    def track_for_unpacking(
-        self,
-        x: Any,
-        *,
-        name: str = None,
-    ) -> Union[ProxyInterface, TrackedObject]:
-        baseutils.check(self._unpacking, lambda: f"Collections can only be tracked during unpacking")
-        baseutils.check(baseutils.is_collection(x), lambda: f"Only collections can be tracked, but was given {x}")
-
-        # Short-circuits if already tracked
-        if self.is_tracked(x):
-            return x
-
-        if self._is_singleton(x):
-            return x
-
-        # Tracks the collection
-        name = self.make_name(name)
-        to = TrackedObject(name, x)
-        key = self._tracked_object_key(x)
-        self._tracked_object_map[key] = to
-
-        return x
 
     #
     # Methods related to constructing a Python program representing the trace
@@ -429,8 +376,6 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.name_ctr = trace.name_ctr
     t.obj_name_ctr = trace.obj_name_ctr
     t.names = trace.names
-
-    t._tracked_object_map = trace._tracked_object_map
 
     t._siginfo = trace._siginfo
 

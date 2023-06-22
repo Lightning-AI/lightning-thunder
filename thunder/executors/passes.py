@@ -7,21 +7,16 @@ from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableIn
 import thunder.core.utils as cutils
 from thunder.core.utils import ProxyDict
 from thunder.core.symbol import BoundSymbol
-from thunder.core.pytree import tree_flatten
+from thunder.core.pytree import tree_flatten, tree_unflatten
 import thunder.core.prims as prims
 from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor
 from thunder.core.proxies import Proxy, variableify, unvariableify
 from thunder.executors import torch as TorchEx
 
 
-# TODO Review preserving return statements -- here they are arbitrarily preserved, which seems hacky
 # NOTE Runs a Dead Code Elimination (DCE) pass
 #   Technically this could be a "transform", because it is semantic-preserving.
-# TODO Remove unused constants
-# TODO Review DCE for unpacking operations -- a, _ = tup would be nice when the second
-#   element of the tuple is unused
-# TODO Consider tracking only proxy computations
-# TODO We could probably remove RETURN and the UNPACK prims from dont collect with better producer-consumer modeling
+# TODO We could look at reconciling the ideas of what a trace produces and the return prim
 def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     producers: ProxyDict = cutils.producers(trace)
 
@@ -29,14 +24,9 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     needed_proxies = set(tuple(variableify(x) for x in flat if isinstance(x, Proxy)))
     dced = []
 
-    dont_collect = {
-        prims.PrimIDs.RETURN,
-        prims.PrimIDs.COMMENT,
-        prims.PrimIDs.UNPACK_DICT,
-        prims.PrimIDs.UNPACK_SEQUENCE,
-        prims.PrimIDs.UNPACK_TRIVIAL,
-        prims.PrimIDs.PRINT,
-    }
+    # NOTE These primitives are marked to not be collected because they dictate the function's output
+    #   (return) or have side-effects (comment, print)
+    dont_collect = {prims.PrimIDs.RETURN, prims.PrimIDs.COMMENT, prims.PrimIDs.PRINT}
 
     for bsym in reversed(trace.bound_symbols):
         # Preserves symbols that should never be collected
@@ -45,11 +35,32 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
             continue
 
         needed = False
+        some_unused = False
+        nouts = []
         outs = bsym._flat_outs
         for out in outs:
-            if variableify(out) in needed_proxies and producers[out] == bsym:
-                needed = True
-                break
+            if isinstance(out, Proxy):
+                if variableify(out) in needed_proxies and producers[out] == bsym:
+                    needed = True
+                    nouts.append(out)
+                else:
+                    some_unused = True
+                    nouts.append(None)
+            else:
+                nouts.append(out)
+
+        # Replaces unused Proxy outputs with None
+        # TODO Refactor this into an output update function
+        if some_unused:
+            _, out_spec = tree_flatten(bsym.output)
+            bsym.output = tree_unflatten(nouts, out_spec)
+            # Deletes caches that rely on output
+            if hasattr(bsym, "_flat_outs"):
+                del bsym._flat_outs
+            if hasattr(bsym, "_var_output"):
+                del bsym._var_output
+            if hasattr(bsym, "_hash"):
+                del bsym._hash
 
         if needed:
             dced.append(bsym)
@@ -62,6 +73,9 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     dcetrace.set_provenance(TraceProvenance("Dead Code Elimination"))
 
     return dcetrace, [dcetrace]
+
+
+comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 
 # TODO Review deleting non-proxies
@@ -87,6 +101,9 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             handled[out] = None
 
     for bsym in reversed(trace.bound_symbols):
+        if bsym.sym.id in comment_symbols:
+            continue
+
         flat_outs, _ = tree_flatten(bsym.output)
         flat_args, _ = tree_flatten(bsym.args)
         flat_kwargs, _ = tree_flatten(bsym.kwargs)

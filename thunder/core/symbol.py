@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable, TrackedObject
+from thunder.core.codeutils import Printable
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map

@@ -255,7 +255,7 @@ def find_cut(
     sym_skip_list = (
         prims.PrimIDs.UNPACK_SEQUENCE,
         prims.PrimIDs.UNPACK_TRIVIAL,
-        prims.PrimIDs.UNPACK_DICT,
+        prims.PrimIDs.UNPACK_KEY,
         prims.PrimIDs.RETURN,
     )
 

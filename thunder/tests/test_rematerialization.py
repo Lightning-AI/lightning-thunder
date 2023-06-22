@@ -64,7 +64,7 @@ def test_find_producer_symbols(executor, device, _):
 
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region
-    a_proxy = flattened_trace.bound_symbols[0].output[0]
+    a_proxy = flattened_trace.bound_symbols[0].output.collection()[0]
     assert a_proxy.name == "t0"
     stop_proxies = [a_proxy]
 

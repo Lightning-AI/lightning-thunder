@@ -15,6 +15,7 @@ from thunder.core.proxies import Proxy, NumberProxy, TensorProxy
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
+import thunder.core.prims as prims
 
 # This file defines utilities that can be used when defining primitive operations.
 
@@ -853,7 +854,16 @@ class ProxyDict:
 def producers(trace: TraceCtx) -> ProxyDict:
     producers = ProxyDict(trace)
 
+    # Skips symbols that never produce anything
+    skip = {
+        prims.PrimIDs.COMMENT,
+        prims.PrimIDs.PRINT,
+    }
+
     for bsym in trace.bound_symbols:
+        if bsym.sym in skip:
+            continue
+
         flat = bsym._flat_outs
         for out in flat:
             if not isinstance(out, Proxy):
@@ -871,7 +881,16 @@ def producers(trace: TraceCtx) -> ProxyDict:
 def consumers(trace: TraceCtx) -> ProxyDict:
     consumers = ProxyDict(trace)
 
+    # Skips symbols that never consume anything
+    skip = {
+        prims.PrimIDs.COMMENT,
+        prims.PrimIDs.UNPACK_TRIVIAL,
+    }
+
     for bsym in trace.bound_symbols:
+        if bsym.sym in skip:
+            continue
+
         flatargs = bsym._flat_args
         flatkwargs = bsym._flat_kwargs
 

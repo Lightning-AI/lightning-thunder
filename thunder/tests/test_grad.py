@@ -488,10 +488,10 @@ def test_multiple_output_vjp(executor, device, _):
     assert len(trace.output[0]) == 2
     # Length of the second output should match the length of primal args
     assert len(trace.output[1]) == len(trace.args[0])
-    # The fourth symbol is sincos
-    assert trace.bound_symbols[3].sym.name == "sincos"
+    # The fifth symbol is sincos
+    assert trace.bound_symbols[4].sym.name == "sincos"
     # The first output should be from sincos
-    assert trace.output[0] == trace.bound_symbols[3].output
+    assert trace.output[0] == trace.bound_symbols[4].output
 
 
 @instantiate(

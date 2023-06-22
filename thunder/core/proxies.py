@@ -68,6 +68,8 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "n"
             elif isinstance(self, TensorProxy):
                 prefix = "t"
+            elif isinstance(self, CollectionProxy):
+                prefix = "C"
 
             name = trace.make_name(prefix=prefix)
         else:
@@ -88,6 +90,18 @@ class Proxy(VariableInterface, ProxyInterface):
 
     def type_string(self) -> str:
         return "Any"
+
+
+class CollectionProxy(Proxy):
+    def __init__(self, coll: Any, *, name: Optional[str] = None):
+        Proxy.__init__(self, name=name)
+        self.coll = coll
+
+    def collection(self) -> Any:
+        return self.coll
+
+    def type_string(self) -> str:
+        return "Collection"
 
 
 # NOTE NumberProxies are NOT Numbers

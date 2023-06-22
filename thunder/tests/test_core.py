@@ -1065,16 +1065,6 @@ def test_nested_make_trace(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_nested_make_trace_no_name_collision(executor, device, _):
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/145
-    # for the original issue.
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/384
-    # for the new issue.
-    pytest.xfail(
-        "NotImplementedError: An existing proxy __a is being passed"
-        "as an input, but its name is not the same"
-        "name (a) as the unpack is requesting"
-    )
-
     def foo(a, b):
         return clang.add(a, b)
 
@@ -1159,7 +1149,7 @@ def test_eval_trace(executor, device, _):
     foo_trace2 = thunder._make_trace(eval_trace_as_function(foo_trace))(a, b, c=c)
     # How to test that two traces are equal?
     # Two operators and others are do-nothing annotations
-    assert len(foo_trace2.bound_symbols) == 4
+    assert len(foo_trace2.bound_symbols) == 6
     assert foo_trace2.bound_symbols[-2].sym.name == "add"
     assert foo_trace2.bound_symbols[-1].sym.name == "mul"
 
@@ -1202,7 +1192,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
 
     for foo in [foo1, foo2]:
         foo_trace = thunder._make_trace(identity(foo))(a)
-        assert len(foo_trace.bound_symbols) == 2
+        assert len(foo_trace.bound_symbols) == 3
         assert len(foo_trace.output) == 2
         assert foo_trace.output[0].name == foo_trace.output[1].name
 
@@ -1237,12 +1227,12 @@ def test_transforms_identity(executor, device, _):
 
     nested_id_trace = thunder._make_trace(nested_id_func)(a, b, c=c)
     # one annotating symbol per input and one actual symbol
-    assert len(nested_id_trace.bound_symbols) == 3
+    assert len(nested_id_trace.bound_symbols) == 5
     assert nested_id_trace.bound_symbols[-1].sym.id == Transforms.IdentityOp
 
     trace = nested_id_trace.bound_symbols[-1].kwargs.get("trace", None)
     for _ in range(2):
-        assert len(trace.bound_symbols) == 3
+        assert len(trace.bound_symbols) == 5
         assert trace.bound_symbols[-1].sym.id == Transforms.IdentityOp
         trace = trace.bound_symbols[-1].kwargs.get("trace", None)
     assert len(trace.bound_symbols) == 7
@@ -1281,7 +1271,7 @@ def test_transforms_inline(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
     inlined_nested_id_trace = thunder._make_trace(inline(nested_id_func))(a, b)
-    assert len(inlined_nested_id_trace.bound_symbols) == 4
+    assert len(inlined_nested_id_trace.bound_symbols) == 5
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in inlined_nested_id_trace.bound_symbols)
     assert inlined_nested_id_trace.bound_symbols[-3].sym.name == "add"
     assert inlined_nested_id_trace.bound_symbols[-2].sym.name == "convert_element_type"
@@ -1294,7 +1284,7 @@ def test_transforms_inline(executor, device, _):
     # Since the outer-most transform is inline, the trace should not contain
     # any identity transforms.
     transformed_trace = thunder._make_trace(transformed_func)(a, b)
-    assert len(transformed_trace.bound_symbols) == 4
+    assert len(transformed_trace.bound_symbols) == 5
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
 
 
