@@ -69,6 +69,7 @@ def nvfuser_available() -> bool:
 comment_symbols = {
     PrimIDs.COMMENT,
     PrimIDs.UNPACK_TRIVIAL,
+    PrimIDs.UNPACK_EMPTY_DICT,
 }
 
 

@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from thunder.core.trace import TraceCtx
 from thunder.core.rematerialization import rematerialize
-import thunder.executors.torch as torchex
+import thunder.executors.torchex as torchex
 import thunder.executors.pythonex as pythonex
 from thunder.executors.utils import Executor, nvfuser_available, nvfuser_version
 import thunder.executors.passes as passes
@@ -29,9 +29,9 @@ _executor_map = {
 }
 
 if nvfuser_available():
-    import thunder.executors.nvfuser as nvfuser
+    import thunder.executors.nvfuserex as nvfuserex
 
-    _executor_map[Executor.NVFUSER] = nvfuser
+    _executor_map[Executor.NVFUSER] = nvfuserex
 
 
 # TODO Improve on the "Any" annotation here

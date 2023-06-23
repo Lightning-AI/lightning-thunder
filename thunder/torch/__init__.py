@@ -541,6 +541,11 @@ def bitwise_and(a, b):
     return clang.bitwise_and(a, b)
 
 
+@torchsymbol(torch.bitwise_or, is_method=True)
+def bitwise_or(a, b):
+    return clang.bitwise_or(a, b)
+
+
 @torchsymbol(torch.bitwise_xor, is_method=True)
 def bitwise_xor(a, b):
     return clang.bitwise_xor(a, b)
@@ -581,6 +586,11 @@ def logical_and(a, b):
     return clang.logical_and(a, b)
 
 
+@torchsymbol(torch.le, is_method=True)
+def le(a, b):
+    return clang.le(a, b)
+
+
 @torchsymbol(torch.lt, is_method=True)
 def lt(a, b):
     return clang.lt(a, b)
@@ -599,13 +609,8 @@ def mul(a, b):
 
 
 @torchsymbol(torch.ne, is_method=True)
-def ne(a):
-    return clang.ne(a)
-
-
-@torchsymbol(torch.neg, is_method=True)
-def neg(a):
-    return clang.neg(a)
+def ne(a, b):
+    return clang.ne(a, b)
 
 
 @torchsymbol(torch.nextafter, is_method=True)

@@ -499,7 +499,7 @@ def test_multiple_output_vjp(executor, device, _):
 )
 def test_torch_autograd_function(executor, device, _):
     from thunder.clang import cos, sin
-    from thunder.executors.torch import thunder_backward
+    from thunder.executors.torchex import thunder_backward
     import thunder.torch as ltorch
 
     @thunder_backward(executors_list=executor.executors_list())

@@ -850,6 +850,13 @@ def bitwise_and(a, b):
 
 
 @clang_ctx
+def bitwise_or(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.bitwise_or, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+
+@clang_ctx
 def bitwise_xor(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.bitwise_xor, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
@@ -997,6 +1004,13 @@ def logical_and(a, b):
         b = b != 0
 
     return a & b
+
+
+@clang_ctx
+def le(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.le, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+    )
 
 
 @clang_ctx

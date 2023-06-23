@@ -497,6 +497,8 @@ trunc = _elementwise_unary_factory("trunc")
 # TODO Review restricting torch implemenations of prims to not have additional functionality
 
 
+# NOTE Most PyTorch elementwise binary operations do not support number x number inputs, and the few that do
+#   (like add, mul, sub, and div) return tensors instead of numbers
 def _elementwise_binary_check(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> bool:
     return not (isinstance(a, Number) and isinstance(b, Number))
 
@@ -525,6 +527,7 @@ def div_prim(bsym: BoundSymbol, a: Union[TensorProxy, Number], b: Union[TensorPr
 add = _elementwise_binary_factory("add")
 atan2 = _elementwise_binary_factory("atan2")
 bitwise_and = _elementwise_binary_factory("bitwise_and")
+bitwise_or = _elementwise_binary_factory("bitwise_or")
 bitwise_xor = _elementwise_binary_factory("bitwise_xor")
 copysign = _elementwise_binary_factory("copysign")
 div = _elementwise_binary_factory("div")
@@ -534,6 +537,7 @@ fmod = _elementwise_binary_factory("fmod")
 ge = _elementwise_binary_factory("ge")
 gt = _elementwise_binary_factory("gt")
 logical_and = _elementwise_binary_factory("logical_and")
+le = _elementwise_binary_factory("le")
 lt = _elementwise_binary_factory("lt")
 mul = _elementwise_binary_factory("mul")
 ne = _elementwise_binary_factory("ne")
@@ -894,6 +898,8 @@ _ops_map.update(
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),
         "torch.bitwise_and": (_elementwise_binary_check, bitwise_and),
         PrimIDs.BITWISE_AND: (_elementwise_binary_check, bitwise_and),
+        "torch.bitwise_or": (_elementwise_binary_check, bitwise_or),
+        PrimIDs.BITWISE_OR: (_elementwise_binary_check, bitwise_or),
         "torch.bitwise_xor": (_elementwise_binary_check, bitwise_xor),
         PrimIDs.BITWISE_XOR: (_elementwise_binary_check, bitwise_xor),
         "torch.copysign": (_elementwise_binary_check, copysign),
@@ -909,6 +915,8 @@ _ops_map.update(
         "torch.gt": (_elementwise_binary_check, gt),
         PrimIDs.GT: (_elementwise_binary_check, gt),
         "torch.logical_and": (_elementwise_binary_check, logical_and),
+        "torch.le": (_elementwise_binary_check, le),
+        PrimIDs.LE: (_elementwise_binary_check, le),
         "torch.lt": (_elementwise_binary_check, lt),
         PrimIDs.LT: (_elementwise_binary_check, lt),
         "torch.mul": (_elementwise_binary_check, mul),

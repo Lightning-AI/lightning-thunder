@@ -1488,6 +1488,14 @@ bitwise_and_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(bitwise_and_opinfo)
 
+bitwise_or_opinfo = OpInfo(
+    clang.bitwise_or,
+    dtypes=(datatypes.exact,),
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.bitwise_or,
+)
+elementwise_binary_ops.append(bitwise_or_opinfo)
+
 bitwise_xor_opinfo = OpInfo(
     clang.bitwise_xor,
     dtypes=(datatypes.exact,),
@@ -1621,6 +1629,24 @@ logical_and_opinfo = OpInfo(
     torch_reference=torch._refs.logical_and,
 )
 elementwise_binary_ops.append(logical_and_opinfo)
+
+le_opinfo = OpInfo(
+    clang.le,
+    # NOTE Comparison operations are only defined for real numbers
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=elementwise_comparison_generator,
+    torch_reference=torch.le,
+    test_directives=(
+        # There's a problem of reducing a tensor produced by full op
+        # See https://github.com/NVIDIA/Fuser/issues/132
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvFuser",),
+        ),
+    ),
+)
+elementwise_binary_ops.append(le_opinfo)
 
 lt_opinfo = OpInfo(
     clang.lt,

@@ -323,7 +323,7 @@ def _update_nvfusion_call_ctx(trace: TraceCtx, bsym: BoundSymbolInterface) -> Bo
     Returns:
         The updated nvFusion BoundSymbol object.
     """
-    from thunder.executors.nvfuser import fuse
+    from thunder.executors.nvfuserex import fuse
 
     @dataclass
     class BoundSymbolRegion:

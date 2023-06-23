@@ -128,9 +128,18 @@ def _elementwise_binary_factory(name: str, module) -> Callable:
 
 
 add = _elementwise_binary_factory("add", operator)
-sub = _elementwise_binary_factory("sub", operator)
 atan2 = _elementwise_binary_factory("atan2", math)
+bitwise_and = _elementwise_binary_factory("and_", operator)
+bitwise_or = _elementwise_binary_factory("or_", operator)
+bitwise_xor = _elementwise_binary_factory("xor", operator)
+eq = _elementwise_binary_factory("eq", operator)
+ge = _elementwise_binary_factory("ge", operator)
+gt = _elementwise_binary_factory("gt", operator)
+le = _elementwise_binary_factory("le", operator)
+lt = _elementwise_binary_factory("lt", operator)
+sub = _elementwise_binary_factory("sub", operator)
 mul = _elementwise_binary_factory("mul", operator)
+ne = _elementwise_binary_factory("ne", operator)
 truediv = _elementwise_binary_factory("truediv", operator)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
 pythonex_pow = _elementwise_binary_factory("pow", operator)
@@ -181,10 +190,19 @@ _ops_map.update(
         PrimIDs.TRUNC: (_elementwise_unary_check, trunc),
         # Elementwise binary prims
         PrimIDs.ADD: (_elementwise_binary_check, add),
-        PrimIDs.SUB: (_elementwise_binary_check, sub),
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),
-        PrimIDs.MUL: (_elementwise_binary_check, mul),
+        PrimIDs.BITWISE_AND: (_elementwise_binary_check, bitwise_and),
+        PrimIDs.BITWISE_OR: (_elementwise_binary_check, bitwise_or),
+        PrimIDs.BITWISE_XOR: (_elementwise_binary_check, bitwise_xor),
         PrimIDs.DIV: (_elementwise_binary_check, truediv),
+        PrimIDs.EQ: (_elementwise_binary_check, eq),
+        PrimIDs.GE: (_elementwise_binary_check, ge),
+        PrimIDs.GT: (_elementwise_binary_check, gt),
+        PrimIDs.LE: (_elementwise_binary_check, le),
+        PrimIDs.LT: (_elementwise_binary_check, lt),
+        PrimIDs.MUL: (_elementwise_binary_check, mul),
+        PrimIDs.NE: (_elementwise_binary_check, ne),
+        PrimIDs.SUB: (_elementwise_binary_check, sub),
         PrimIDs.POW: (_elementwise_binary_check, pythonex_pow),
     }
 )

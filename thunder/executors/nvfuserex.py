@@ -19,7 +19,7 @@ from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.devices import Device, DeviceType
 from thunder.executors.utils import *
-import thunder.executors.torch as torchex
+import thunder.executors.torchex as torchex
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 
@@ -720,6 +720,15 @@ def bitwise_and(
     return fd.ops.bitwise_and(nva, nvb)
 
 
+def bitwise_or(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.bitwise_or(nva, nvb)
+
+
 def bitwise_xor(
     a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
@@ -780,6 +789,15 @@ def gt(
     nvb = getnv(b, fd, lc_to_nv_map)
 
     return fd.ops.gt(nva, nvb)
+
+
+def le(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+
+    return fd.ops.le(nva, nvb)
 
 
 def lt(
@@ -1112,12 +1130,14 @@ _ops_map.update(
         PrimIDs.ADD: (_elementwise_binary_check, add),
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),
         PrimIDs.BITWISE_AND: (_elementwise_binary_check, bitwise_and),
+        PrimIDs.BITWISE_OR: (_elementwise_binary_check, bitwise_or),
         PrimIDs.BITWISE_XOR: (_elementwise_binary_check, bitwise_xor),
         PrimIDs.DIV: (_elementwise_binary_check, div),
         PrimIDs.EQ: (_elementwise_binary_check, eq),
         PrimIDs.FMOD: (_elementwise_binary_check, fmod),
         PrimIDs.GE: (_elementwise_binary_check, ge),
         PrimIDs.GT: (_elementwise_binary_check, gt),
+        PrimIDs.LE: (_elementwise_binary_check, le),
         PrimIDs.LT: (_elementwise_binary_check, lt),
         PrimIDs.MUL: (_elementwise_binary_check, mul),
         PrimIDs.NE: (_elementwise_binary_check, ne),

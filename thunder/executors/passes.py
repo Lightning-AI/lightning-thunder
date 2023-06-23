@@ -11,7 +11,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten
 import thunder.core.prims as prims
 from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor
 from thunder.core.proxies import Proxy, variableify, unvariableify
-from thunder.executors import torch as TorchEx
+from thunder.executors import torchex as TorchEx
 
 
 # NOTE Runs a Dead Code Elimination (DCE) pass

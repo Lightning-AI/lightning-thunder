@@ -103,12 +103,14 @@ class PrimIDs(Enum):
     ADD = auto()
     ATAN2 = auto()
     BITWISE_AND = auto()
+    BITWISE_OR = auto()
     BITWISE_XOR = auto()
     DIV = auto()
     EQ = auto()
     FMOD = auto()
     GE = auto()
     GT = auto()
+    LE = auto()
     LT = auto()
     MUL = auto()
     NE = auto()
@@ -1008,6 +1010,12 @@ bitwise_and = _make_elementwise_binary_prim(
     supported_input_dtypes=dtypes.exact_dtypes,
 )
 
+bitwise_or = _make_elementwise_binary_prim(
+    PrimIDs.BITWISE_OR,
+    "bitwise_or",
+    supported_input_dtypes=dtypes.exact_dtypes,
+)
+
 bitwise_xor = _make_elementwise_binary_prim(
     PrimIDs.BITWISE_XOR,
     "bitwise_xor",
@@ -1067,6 +1075,14 @@ gt = _make_elementwise_binary_prim(
     supported_input_dtypes=comparison_dtypes,
 )
 
+le = _make_elementwise_binary_prim(
+    PrimIDs.LE,
+    "le",
+    number_fn=operator.le,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
+    supported_input_dtypes=comparison_dtypes,
+)
+
 lt = _make_elementwise_binary_prim(
     PrimIDs.LT,
     "lt",
@@ -1085,6 +1101,7 @@ mul = _make_elementwise_binary_prim(
 ne = _make_elementwise_binary_prim(
     PrimIDs.NE,
     "ne",
+    number_fn=operator.ne,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
 
