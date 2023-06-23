@@ -18,6 +18,7 @@ from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx
 from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as, sequencify
+from thunder.executors.passes import dce
 
 # from thunder.executors.torch import ops_to_torch_ops_map
 
@@ -946,8 +947,10 @@ class ZeroBackward:
                 return full_like(x, fill_value=0)
             elif isinstance(x, NumberProxy):
                 return type(x.value)(0)
+            elif isinstance(x, Number):
+                return type(x)(0)
             else:
-                raise ValueError(f"zeros_like inside JVP got an unsupported type {type(x)}")
+                raise ValueError(f"zeros_like inside ZeroBackward got an unsupported type {type(x)}")
 
         return tuple(zeros_like(arg) for arg in forward_args)
 
@@ -1514,6 +1517,10 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     """
     trace = make_trace(decomposed_fn)(*args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
+    # There may be a dead node like "_ = prims.convert_element_type(0, float)"
+    # in the trace. We need to remove it before we can use the trace for
+    # augmented_forward_pass.
+    trace = dce(trace)[0]
     result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
     # We cannot save the trace object in the residuals because executors may not
     # be able to return it for the splitted forward/backward passes. Instead, we
@@ -1532,6 +1539,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
 def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
     trace = make_trace(decomposed_fn)(*args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
+    trace = dce(trace)[0]
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
     reconstructed_env = {
         sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
@@ -1698,8 +1706,10 @@ def backward_pass(forward_env, trace, init_cotangents):
     def write(v: Variable, val: Any) -> None:
         if isinstance(v, Variable):
             if v.name in env:
+                if val is None:
+                    return
                 # Accumulate cotangents
-                env[v.name] = prims.add(env[v.name], val)
+                env[v.name] = prims.add(env[v.name], val) if env[v.name] is not None else val
                 return
             env[v.name] = val
         elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
@@ -1729,6 +1739,11 @@ def backward_pass(forward_env, trace, init_cotangents):
         if symbol.are_all_args_constant:
             # We can skip the pullback if all the arguments are constant
             continue
+
+        if len(cotangents) == 1 and cotangents[0] is None:
+            # We can skip the pullback if the cotangent is None
+            continue
+
         pullback = backward_impls[symbol.sym.id]
         result = pullback(*residuals, *cotangents)
         if not isinstance(result, Sequence):

@@ -3528,7 +3528,7 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
             make(shape[0]),
             make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
             if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=False),
+            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
             make(C) if weight_flag else None,
             None,
             ignore_index,
