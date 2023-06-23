@@ -1084,7 +1084,9 @@ _ops_map.update(
         PrimIDs.SLICE: (_slice_check, nv_slice),
         PrimIDs.SQUEEZE: (_squeeze_check, squeeze),
         PrimIDs.TAKE: (_take_check, take),
-        PrimIDs.TAKE_ALONG_AXIS: (_take_check, take_along_axis),
+        # TAKE_ALONG_AXIS is currently disabled
+        #   See https://github.com/NVIDIA/Fuser/issues/458
+        # PrimIDs.TAKE_ALONG_AXIS: (_take_check, take_along_axis),
         PrimIDs.TRANSPOSE: (_tranpose_check, transpose),
         # Elementwise unary operations
         PrimIDs.ABS: (_elementwise_unary_check, nv_abs),

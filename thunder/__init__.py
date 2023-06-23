@@ -1,6 +1,6 @@
 from functools import wraps, partial
 from numbers import Number
-from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type, Hashable
 from collections.abc import Sequence
 from collections import deque
 from enum import auto, Enum
@@ -219,28 +219,30 @@ class ThunderOptimizedModule(pytorch.nn.Module):  # TOM
         return res
 
 
-# TODO Improve type annotation
-# TODO Add additional cache options
+#
+# Caching objects and functions
+#
+# TODO We could look at supporting non-hashable inputs, like dicts
+
+
+class CACHE_MODES(Enum):
+    STATIC = auto()
+    DYNAMIC = auto()
+    LAST_EXECUTED = auto()
+
+
+def _make_subkey_for(x: Any) -> Any:
+    if isinstance(x, pytorch.Tensor):
+        return (pytorch.Tensor, x.shape, x.device, x.dtype)
+
+    return type(x), x
+
+
 def _make_cache_key(args, kwargs) -> Any:
-    def _cache_argkey_helper(x: Any) -> Any:
-        if isinstance(x, pytorch.Tensor):
-            return (pytorch.Tensor, x.shape, x.stride(), x.device, x.dtype)
-        if isinstance(x, Number):
-            return (type(x), x)
+    def _cache_kwargkey_helper(x: Any, *, key: Hashable) -> Any:
+        return type(key), key, _make_subkey_for(x)
 
-        # TODO Review these types more closely
-        return x
-
-    def _cache_kwargkey_helper(x: Any, *, key: str) -> Any:
-        if isinstance(x, pytorch.Tensor):
-            return (key, pytorch.Tensor, x.shape, x.stride(), x.device, x.dtype)
-        if isinstance(x, Number):
-            return (key, type(x), x)
-
-        # TODO Review these types more closely
-        return key, x
-
-    arg_key = tuple(_cache_argkey_helper(arg) for arg in args)
+    arg_key = tuple(_make_subkey_for(arg) for arg in args)
     kwarg_key = tuple(_cache_kwargkey_helper(v, key=key) for key, v in kwargs.items())
     return arg_key + kwarg_key
 
