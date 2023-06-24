@@ -17,7 +17,7 @@ import thunder.core.utils as utils
 from thunder.executors.utils import Region, Executor
 
 import thunder.torch as ltorch
-from thunder.torch import DeviceLike, dtypeLike
+from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
 
 def name() -> Executor:
@@ -139,23 +139,40 @@ def full(
 ) -> BoundSymbol:
     sym = Symbol(name="full", meta=None, _module=torch)
 
-    device = str(device)
+    device = ltorch.to_torch_device(device)
     dtype = ltorch.to_torch_dtype(dtype)
 
     tbsym = sym.bind(shape, fill_value, device=device, dtype=dtype, output=bsym.output)
     return tbsym
 
 
+def full_like(
+    bsym: BoundSymbol,
+    a: TensorLike,
+    fill_value: Number,
+    *,
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypeLike] = None,
+) -> BoundSymbol:
+    sym = Symbol(name="full_like", meta=None, _module=torch)
+
+    device = ltorch.to_torch_device(device)
+    dtype = ltorch.to_torch_dtype(dtype)
+
+    return sym.bind(a, fill_value, device=device, dtype=dtype, output=bsym.output)
+
+
+# TODO Review whether this helper is required (and if it is, document why better)
 def _iota_helper(length, *, start, step, device, dtype):
     end = start + length * step
-    torch_device = str(device)
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    return torch.arange(start=start, step=step, end=end, device=torch_device, dtype=torch_dtype)
+    device = ltorch.to_torch_device(device)
+    dtype = ltorch.to_torch_dtype(dtype)
+    return torch.arange(start=start, step=step, end=end, device=device, dtype=dtype)
 
 
 def iota(bsym: BoundSymbol, length, *, start, step, device, dtype) -> BoundSymbol:
     sym = Symbol(name="iota_helper", meta=None)
-    ctx: Dict[str, Any] = {"iota_helper": _iota_helper}
+    ctx: dict[str, Any] = {"iota_helper": _iota_helper}
 
     kwargs = {
         "start": start,
@@ -700,6 +717,21 @@ def matmul(bsym: BoundSymbol, a: TensorProxy, b: TensorProxy) -> BoundSymbol:
 #
 # NN operations
 #
+def cross_entropy(
+    bsym: BoundSymbol,
+    input,
+    target,
+    weight=None,
+    size_average=None,
+    ignore_index=-100,
+    reduce=None,
+    reduction="mean",
+    label_smoothing=0.0,
+):
+    sym = Symbol(name="cross_entropy", _module=torch.nn.functional)
+    return sym.bind(
+        input, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing, output=bsym.output
+    )
 
 
 def dropout(bsym: BoundSymbol, a: TensorProxy, p: Number = 0.5, training=True, inplace=False) -> BoundSymbol:
@@ -790,9 +822,11 @@ _ops_map.update(
         # Tensor creation operations
         "torch.arange": (_always_executable, arange),
         PrimIDs.FULL: (_always_executable, full),
+        "torch.full_like": (_always_executable, full_like),
         PrimIDs.IOTA: (_always_executable, iota),
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_always_executable, broadcast_in_dim),
+        "torch.cat": (_always_executable, cat),
         PrimIDs.CAT: (_always_executable, cat),
         "torch.Tensor.contiguous": (_always_executable, contiguous),
         "torch.Tensor.expand": (_always_executable, expand),
@@ -947,6 +981,7 @@ _ops_map.update(
         PrimIDs.LINEAR: (_always_executable, linear),
         PrimIDs.MATMUL: (_always_executable, matmul),
         # NN operations
+        "torch.nn.functional.cross_entropy": (_always_executable, cross_entropy),
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.EMBEDDING: (_always_executable, embedding),
         PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),

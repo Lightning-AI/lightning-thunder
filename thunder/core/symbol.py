@@ -86,18 +86,10 @@ def default_python_printer(
 
 
 # TODO Improve annotations
-# TODO: add the method define_grad_transform(grad_fwd, grad_bwd)
-#   which will accept functions or symbols (and translate functions to symbols automatically)
-# TODO: consider other forwards, like number forward and NumPy forward
-#   think about how to support those things without importing torch or NumPy
-#   --> define eager transform to do this? -- won't faciliate debugging clang or prims, but
-#   maybe that's fine? -- Could faciliate debugging prims because invoking a symbol
-#   outside a tracing ctx query for the appropriate torch or NumPy operation to run?
-#   Maybe expose torch.prims and numpy.prims to deal with this?
 @dataclass(**baseutils.default_dataclass_params)
 class Symbol:
     name: str
-    meta: Callable | None
+    meta: Callable | None = None
     python_impl: Callable | None = None
     id: Any | None = None
     is_prim: bool = False

@@ -3225,9 +3225,9 @@ tensor_creation_ops.append(arange_opinfo)
 
 
 def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    # shape, fill_value
     make_fv = partial(make_number, dtype=dtype)
 
+    # shape, fill_value
     cases = (
         ((), make_fv()),
         ((4, 4), make_fv()),
@@ -3245,6 +3245,30 @@ full_opinfo = OpInfo(
     torch_reference=torch.full,
 )
 tensor_creation_ops.append(full_opinfo)
+
+
+def full_like_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    make_fv = partial(make_number, dtype=dtype)
+
+    # shape, fill_value
+    cases = (
+        ((), make_fv()),
+        ((4, 4), make_fv()),
+        ((8, 1, 6), make_fv()),
+        ((8, 7, 5, 1), make_fv()),
+    )
+
+    for shape, fill_value in cases:
+        yield SampleInput(make(shape), fill_value)
+
+
+full_like_opinfo = OpInfo(
+    ltorch.full_like,
+    sample_input_generator=full_like_sample_generator,
+    torch_reference=torch.full_like,
+)
+tensor_creation_ops.append(full_like_opinfo)
 
 
 def ones_sample_generator(op, device, dtype, requires_grad, **kwargs):

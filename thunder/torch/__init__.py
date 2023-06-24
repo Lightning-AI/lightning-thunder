@@ -23,6 +23,7 @@ __all__ = [
 import torch
 
 # Type annotation helpers
+TensorLike = TensorProxy
 DeviceLike = Union[str, devices.Device, torch.device]
 dtypeLike = Union[dtypes.dtype, torch.dtype]
 
@@ -637,7 +638,7 @@ def sub(a, b, *, alpha=None):
 
 
 @torchsymbol(torch.true_divide, is_method=True)
-def true_divide(a, b):
+def true_divide(a: Number | TensorLike, b: Number | TensorLike) -> Number | TensorLike:
     return clang.true_divide(a, b)
 
 
@@ -646,7 +647,7 @@ def true_divide(a, b):
 #
 # TODO Can this be a method?
 @torchsymbol(torch.where, is_method=True)
-def where(pred, a, b):
+def where(pred: TensorLike, /, a: Number | TensorLike, b: Number | TensorLike) -> TensorLike:
     return clang.where(pred, a, b)
 
 
@@ -669,10 +670,7 @@ def _mask_tensor(a, mask):
 # TODO: PyTorch's masked_fill always returns a contiguous tensor
 # TODO: add number tensor support
 @torchsymbol(torch.masked_fill, is_method=True)
-def masked_fill(a, mask, value):
-    if isinstance(value, TensorProxy):
-        raise NotImplementedError
-
+def masked_fill(a: TensorLike, /, mask: TensorLike, value: Number | TensorLike) -> TensorLike:
     result = where(mask, value, a)
     return result
 
@@ -684,7 +682,7 @@ def masked_fill(a, mask, value):
 #   When diagonal is specified, the mask computation changes so that
 #   elements with rownum + diagonal >= colnum are preserved.
 @torchsymbol(torch.tril, is_method=True)
-def tril(a, diagonal: int = 0):
+def tril(a: TensorLike, /, diagonal: int = 0) -> TensorLike:
     utils.check(a.ndim >= 2, lambda: f"tril: a ({a.ndim=}) must have at least two dimensions")
 
     nrows, ncols = a.shape[-2:]
@@ -707,9 +705,12 @@ def arange(
     end: Optional[Number] = None,
     step: Number = 1,
     *,
-    device: DeviceLike = "cpu",
+    device: Optional[DeviceLike] = None,
     dtype: Optional[dtypeLike] = None,
-):
+) -> TensorLike:
+    if device is None:
+        device = "cpu"
+
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
 
@@ -720,7 +721,9 @@ def arange(
 
 
 @torchsymbol(torch.full)
-def full(shape, fill_value, *, device=None, dtype=None):
+def full(
+    shape: Sequence[int], fill_value: Number, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+) -> TensorLike:
     if device is None:
         device = "cpu"
 
@@ -731,20 +734,26 @@ def full(shape, fill_value, *, device=None, dtype=None):
 
 
 @torchsymbol(torch.full_like)
-def full_like(tensor, fill_value, *, device=None, dtype=None):
+def full_like(
+    a: TensorLike, /, fill_value: Number, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+) -> TensorLike:
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
-    return clang.full_like(tensor, fill_value, device=device, dtype=dtype)
+    return clang.full_like(a, fill_value, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.ones)
-def ones(shape, *, device=None, dtype=None):
+def ones(
+    shape: Sequence[int], /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+) -> TensorLike:
     return full(shape, 1, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.ones_like)
-def ones_like(tensor, *, device=None, dtype=None):
-    return full_like(tensor, 1, device=device, dtype=dtype)
+def ones_like(
+    a: TensorLike, /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+) -> TensorLike:
+    return full_like(a, 1, device=device, dtype=dtype)
 
 
 # TODO: based on uniform_, check if Torch now has a functional uniform
@@ -756,9 +765,9 @@ def uniform(
     minval: Number = 0.0,
     maxval: Number = 1.0,
     *,
-    device: Union[str, torch.device, devices.Device],
-    dtype: Union[torch.dtype, dtypes.dtype],
-) -> TensorProxy:
+    device: Union[DeviceLike],
+    dtype: Union[dtypeLike],
+) -> TensorLike:
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
 
@@ -767,13 +776,14 @@ def uniform(
 
 @torchsymbol(torchfn=None, is_method=False, id="torch.uniform_like")
 def uniform_like(
-    a: TensorProxy,
+    a: TensorLike,
+    /,
     minval: Number = 0.0,
     maxval: Number = 1.0,
     *,
-    device: Optional[Union[str, torch.device, devices.Device]] = None,
-    dtype: Optional[Union[torch.dtype, dtypes.dtype]] = None,
-) -> TensorProxy:
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypeLike] = None,
+) -> TensorLike:
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
 
@@ -781,13 +791,13 @@ def uniform_like(
 
 
 @torchsymbol(torch.zeros)
-def zeros(shape, *, device=None, dtype=None):
+def zeros(shape: Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None):
     return full(shape, 0, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.zeros_like)
-def zeros_like(tensor, *, device=None, dtype=None):
-    return full_like(tensor, 0, device=device, dtype=dtype)
+def zeros_like(a, /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None):
+    return full_like(a, 0, device=device, dtype=dtype)
 
 
 #
@@ -797,7 +807,7 @@ def zeros_like(tensor, *, device=None, dtype=None):
 
 # TODO Create proper contiguous with memory format support
 @torchsymbol(torch.Tensor.contiguous, is_method=True)
-def contiguous(a):
+def contiguous(a: TensorLike, /) -> TensorLike:
     return a
 
 
@@ -805,7 +815,7 @@ def contiguous(a):
 # TODO: we should probably be consistent about start/stop/step vs. start/end/stride language
 # TODO Add type annotations
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__")
-def basic_indexing(a, key):
+def basic_indexing(a: TensorLike, /, key):
     start_indices = []
     end_indices = []
     strides = []
@@ -923,30 +933,29 @@ def basic_indexing(a, key):
 
 
 @torchsymbol(torch.Tensor.expand, is_method=True)
-def expand(a, *shape):
+def expand(a: TensorLike, /, *shape) -> TensorLike:
     return clang.expand(a, *shape)
 
 
-def get_item(a, key):
+# TODO Add type annotations
+def get_item(a: TensorLike, /, key):
     return basic_indexing(a, key)
 
 
-# TODO Add type annotations
 @torchsymbol(torch.reshape, is_method=True)
-def reshape(a, *shape):
+def reshape(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
 
     return clang.reshape(a, shape)
 
 
-# TODO Add type annotations
 # TODO consider revising this to just call _split_indices
 # Splits a tensor along a split dimension dim into n tensors
 # If input is divisible by n then every tensor will have the same length along the split dimension
 # If input is not divisible by n, then the first int(input.size(dim) % n) tensors will have length
 #   int(input.size(dim) / n) + 1 along the split dimension, and the remaining tensors will have
 #   length int(input.size(dim) / n) along the split dimension
-def _split_n(a, n, dim=0):
+def _split_n(a: TensorLike, n: int, dim: int = 0) -> Tuple[TensorLike, ...]:
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     splits = []
@@ -963,10 +972,9 @@ def _split_n(a, n, dim=0):
     return tuple(splits)
 
 
-# TODO Add type annotations
 # TODO could this (and other things) be revised to combine the slice_in_dim calls?
 # Splits a tensor along a split dimension dim at the indices in indices
-def _split_indices(a, indices, dim=0):
+def _split_indices(a: TensorLike, indices: int, dim: int = 0) -> Tuple[TensorLike, ...]:
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     splits = []
@@ -1053,14 +1061,15 @@ def split(a, size_or_sections, dim=0):
 # TODO Add type annotations
 # See https://pytorch.org/docs/master/generated/torch.squeeze.html
 @torchsymbol(torch.squeeze, is_method=True)
-def squeeze(a, dim=None):
+def squeeze(a: TensorLike, /, dim: Optional[Tuple[int, ...] | int] = None) -> TensorLike:
+    # Converts dim to a tuple of numbers
     dims = dim
     if dim is None:
         dims = []
         for idx, l in enumerate(a.shape):
             if l == 1:
                 dims.append(idx)
-    if isinstance(dim, Number):
+    elif isinstance(dim, Number):
         dims = (dim,)
 
     return clang.squeeze(a, dims)
@@ -1069,7 +1078,7 @@ def squeeze(a, dim=None):
 # TODO Add type annotations
 # See https://pytorch.org/docs/master/generated/torch.tensor_split.html
 @torchsymbol(torch.tensor_split, is_method=True)
-def tensor_split(a, indices_or_sections, dim=0):
+def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
     # TODO: consider if we even should support this, it could introduce data-dependent control flow
     # NOTE: this will also catch number tensors
     if isinstance(indices_or_sections, TensorProxy):
@@ -1089,9 +1098,8 @@ def tensor_split(a, indices_or_sections, dim=0):
     return _split_indices(a, indices_or_sections, dim)
 
 
-# TODO Add type annotations
 @torchsymbol(torch.transpose, is_method=True)
-def transpose(a, dim0, dim1):
+def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
 
     permutation = list(range(0, a.ndim))
@@ -1100,7 +1108,7 @@ def transpose(a, dim0, dim1):
     return clang.transpose(a, permutation)
 
 
-def matrix_transpose(a):
+def matrix_transpose(a: TensorLike, /) -> TensorLike:
     """Transposes the last two dimensions of a tensor.
 
     This function is used to implement the `.mT` attribute.
@@ -1123,61 +1131,59 @@ def matrix_transpose(a):
     return clang.matrix_transpose(a)
 
 
-# TODO Add type annotations
 @torchsymbol(torch.unsqueeze, is_method=True)
-def unsqueeze(a, dim: int):
+def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, (dim,))
 
 
-# TODO Add type annotations
 @torchsymbol(torch.cat)
-def cat(tensors, dim=0):
+def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
 
 # TODO Add type annotations
 @torchsymbol(torch.stack)
-def stack(tensors, dim=0):
+def stack(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.stack(tensors, dim)
 
 
 @torchsymbol(torch.index_select)
-def index_select(a: TensorProxy, dim: int, index: TensorProxy) -> TensorProxy:
+def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
 
 @torchsymbol(torch.index_add)
-def index_add(a: TensorProxy, dim: int, index: TensorProxy, source: TensorProxy) -> TensorProxy:
+def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return clang.index_add(a, index, source, dim)
 
 
 @torchsymbol(torch.take_along_dim)
-def take_along_dim(input: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
+def take_along_dim(input: TensorLike, indices: TensorLike, dim: int) -> TensorLike:
     return clang.take_along_axis(input, indices, dim)
 
 
 @torchsymbol(torch.scatter_add)
-def scatter_add(a: TensorProxy, dim: int, index: TensorProxy, source: TensorProxy) -> TensorProxy:
+def scatter_add(a: TensorLike, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return clang.scatter_add(a, index, source, dim)
 
 
 # TODO Add type annotations
 @torchsymbol(torch.flatten, is_method=True)
-def flatten(input, start_dim=0, end_dim=-1):
-    s = input.shape
+def flatten(a: TensorLike, /, start_dim=0, end_dim=-1) -> TensorLike:
+    s = a.shape
     if end_dim < 0:
         # end_dim is inclusive in flatten(!)
         end_dim = len(s) + end_dim + 1
     if start_dim + 1 >= end_dim:
-        return input
+        return a
     s_new = tuple(s[:start_dim]) + (-1,) + tuple(s[end_dim:])
-    return reshape(input, s_new)
+    return reshape(a, s_new)
 
 
 # TODO Review view functionalization
 # TODO Add type annotations
 @torchsymbol(torch.Tensor.view, is_method=True)
-def view(a, *shape):
+def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
 
@@ -1683,6 +1689,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     return attn_weight @ value
 
 
+# TODO Add type annotations, change the name "input" to "a", require "a" be specified positionally
 @torchsymbol(torch.nn.functional.cross_entropy)
 def cross_entropy(
     input, target, weight=None, size_average=None, ignore_index=-100, reduce=None, reduction="mean", label_smoothing=0.0

@@ -13,6 +13,7 @@ import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
 import thunder.torch as ltorch
+import thunder.executors.torchex as torchex
 import thunder.core.codeutils as codeutils
 from thunder.core.pytree import tree_flatten_only, tree_unflatten
 from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor
@@ -462,6 +463,64 @@ def test_consistent_boundsymbol_collection_hard_printing():
         s0 = str(bsym)
         s1 = str(bsym)
         assert s0 == s1
+
+
+#
+# Tests of operator -> executor bindings
+#
+
+
+# This test verifies that all torch operators have direct lowerings to the torch executor
+#   (or it's OK that they don't)
+def test_direct_torch_lowerings():
+    torch_symbols = set(sym.id for sym in ltorch._torch_to_thunder_function_map.values())
+    direct_torchex_lowerings = set(torchex._ops_map.keys())
+
+    # These operators need additional scrutiny for how to directly lower them or have been
+    #   grandfathered in and just need straightforward lowerings added
+    # This is tracked by https://github.com/Lightning-AI/lightning-thunder/issues/581
+    allowed_exceptions = {
+        # These reduction operators need additional scrutiny because PyTorch has not always been
+        #   consistent in handling dims
+        "torch.amax",
+        "torch.amin",
+        "torch.mean",
+        "torch.prod",
+        "torch.sum",
+        "torch.var_mean",
+        # These operators just need their lowerings added
+        "torch.nn.functional.silu",
+        "torch.true_divide",
+        "torch.bmm",
+        "torch.nn.functional.scaled_dot_product_attention",
+        "torch.matmul",
+        "torch.ones_like",
+        "torch.nn.functional.linear",
+        "torch.Tensor.view",
+        "torch.Tensor.type_as",
+        "torch.ops.aten.embedding_backward",
+        "torch.index_select",
+        "torch.stack",
+        "torch.reshape",
+        "torch.index_add",
+        "torch.scatter_add",
+        "torch.full",
+        "torch.flatten",
+        "torch.zeros",
+        "torch.ones",
+        "torch.outer",
+        "torch.zeros_like",
+        "torch.take_along_dim",
+    }
+
+    missing_lowerings = torch_symbols - direct_torchex_lowerings - allowed_exceptions
+
+    assert (
+        len(missing_lowerings) == 0
+    ), f"the following torch symbols are missing direct torchex lowerings {missing_lowerings}"
+
+    mislabeled = allowed_exceptions & direct_torchex_lowerings
+    assert len(mislabeled) == 0, f"the following allowed exceptions actually have direct lowerings {mislabeled}"
 
 
 #
