@@ -9,6 +9,7 @@ from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
 
 import thunder
+from thunder import last_traces, cache_mode, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
@@ -640,6 +641,177 @@ def test_int_to_float_type_promotion(executor, device, _):
     # int64 x float16 -- float16 result dtype
     result = cfoo(i64, f16)
     assert result.dtype is torch.float16
+
+
+#
+# Caching tests
+#
+
+
+def test_static_caching_errors():
+    def foo():
+        pass
+
+    # Verifies that multiple cache types cannot be specified simultaneously
+    with pytest.raises(RuntimeError):
+        thunder.compile(foo, use_static_caching=True, use_last_executed=True)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_static_caching(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    c = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    d = make_tensor((2, 1), device=device, dtype=torch_dtype)
+    e = make_tensor((2, 2), device=device, dtype=torch.bool)
+
+    for disable_preprocessing in (True, False):
+
+        def foo(a, b):
+            return a + b
+
+        cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, use_static_caching=True)
+
+        assert cache_mode(cfoo) == thunder.CACHE_MODES.STATIC
+
+        # Tensor x tensor
+        result = cfoo(a, b)
+        assert cache_misses(cfoo) == 1
+        assert cache_hits(cfoo) == 0
+        assert_close(result, a + b)
+
+        # Same tensors -- cache hit
+        result = cfoo(a, b)
+        assert cache_misses(cfoo) == 1
+        assert cache_hits(cfoo) == 1
+        assert_close(result, a + b)
+
+        # Different tensor, same metadata -- cache hit
+        result = cfoo(a, c)
+        assert cache_misses(cfoo) == 1
+        assert cache_hits(cfoo) == 2
+        assert_close(result, a + c)
+
+        # Different tensor, different shape -- cache miss
+        result = cfoo(a, d)
+        assert cache_misses(cfoo) == 2
+        assert cache_hits(cfoo) == 2
+        assert_close(result, a + d)
+
+        # Different tensor, different dtype -- cache miss
+        result = cfoo(a, e)
+        assert cache_misses(cfoo) == 3
+        assert cache_hits(cfoo) == 2
+        assert_close(result, a + e)
+
+        # Tensor x float number -- cache miss
+        result = cfoo(a, 1.0)
+        assert cache_misses(cfoo) == 4
+        assert cache_hits(cfoo) == 2
+        assert_close(result, a + 1.0)
+
+        # Tensor x float number, different tensor data -- cache hit
+        result = cfoo(b, 1.0)
+        assert cache_misses(cfoo) == 4
+        assert cache_hits(cfoo) == 3
+        assert_close(result, b + 1.0)
+
+        # Tensor x float number, different number value -- cache miss
+        result = cfoo(b, 3.0)
+        assert cache_misses(cfoo) == 5
+        assert cache_hits(cfoo) == 3
+        assert_close(result, b + 3.0)
+
+        # Tensor x int number, different number type -- cache miss
+        result = cfoo(b, 3)
+        assert cache_misses(cfoo) == 6
+        assert cache_hits(cfoo) == 3
+        assert_close(result, b + 3)
+
+        # Tensor x int number -- cache hit
+        result = cfoo(b, 3)
+        assert cache_misses(cfoo) == 6
+        assert cache_hits(cfoo) == 4
+        assert_close(result, b + 3)
+
+    def bar(a, b):
+        return a, b
+
+    cbar = thunder.compile(bar, use_static_caching=True)
+
+    astr = "a"
+    bstr = "b"
+
+    # String x string -- cache miss
+    cbar(astr, bstr)
+    assert cache_misses(cbar) == 1
+    assert cache_hits(cbar) == 0
+
+    # Same strings -- cache hit
+    cbar(astr, bstr)
+    assert cache_misses(cbar) == 1
+    assert cache_hits(cbar) == 1
+
+    # Same string values -- different strings
+    bother_str = "b"
+    cbar(astr, bother_str)
+    assert cache_misses(cbar) == 1
+    assert cache_hits(cbar) == 2
+
+    # Object x string -- cache miss
+    cbar(object(), bother_str)
+    assert cache_misses(cbar) == 2
+    assert cache_hits(cbar) == 2
+
+    # object() != object() -- cache miss
+    cbar(object(), bother_str)
+    assert cache_misses(cbar) == 3
+    assert cache_hits(cbar) == 2
+
+    # Module tests
+    m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
+    cm = thunder.compile(m, use_static_caching=True)
+
+    inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
+
+    result = cm(inp)
+    torch_result = m(inp)
+
+    assert_close(result, torch_result)
+
+    assert cache_misses(cm) == 1
+    assert cache_hits(cm) == 0
+
+    # Same input -- cache hit
+
+    result = cm(inp)
+    torch_result = m(inp)
+
+    assert_close(result, torch_result)
+
+    assert cache_misses(cm) == 1
+    assert cache_hits(cm) == 1
+
+    # Different input, same metadata -- cache hit
+    inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
+    result = cm(inp)
+    torch_result = m(inp)
+
+    assert_close(result, torch_result)
+
+    assert cache_misses(cm) == 1
+    assert cache_hits(cm) == 2
+
+    # Different input, different metadata -- cache miss
+    inp = make_tensor((6, 5), device=device, dtype=torch_dtype)
+    result = cm(inp)
+    torch_result = m(inp)
+
+    assert_close(result, torch_result)
+
+    assert cache_misses(cm) == 2
+    assert cache_hits(cm) == 2
 
 
 #

@@ -226,6 +226,7 @@ class ThunderOptimizedModule(pytorch.nn.Module):  # TOM
 
 
 class CACHE_MODES(Enum):
+    NONE = auto()
     STATIC = auto()
     DYNAMIC = auto()
     LAST_EXECUTED = auto()
@@ -247,14 +248,14 @@ def _make_cache_key(args, kwargs) -> Any:
     return arg_key + kwarg_key
 
 
-def cache_put(cache, fn, args, kwargs) -> None:
+def cache_put(cache, fn, traces, args, kwargs) -> None:
     key = _make_cache_key(args, kwargs)
-    cache[key] = fn
+    cache[key] = (fn, traces)
 
 
 def cache_get(cache, args, kwargs) -> Optional[Callable]:
     key = _make_cache_key(args, kwargs)
-    return cache.get(key, None)
+    return cache.get(key, (None, None))
 
 
 # Constructs a function that returns its output + the trace for further analysis
@@ -267,39 +268,76 @@ def cache_get(cache, args, kwargs) -> Optional[Callable]:
 #   provided in the NumPy language ctx -- what should the outputs be?  Should we provide
 #   a helper to convert torch tensors to NumPy arrays on output?
 # TODO Provide an option to not preprocess (for debugging)
-def compile_with_info(
+def compile(
     fn: Callable,
     *,
     langctx: Optional[Any] = None,
     executors_list: Optional[list[executors.Executor]] = None,
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
-    use_static_caching: bool = False,
-    use_last_executed: bool = False,
+    always_trace: Optional[bool] = None,
+    use_dynamic_caching: Optional[bool] = None,
+    use_static_caching: Optional[bool] = None,
+    use_last_executed: Optional[bool] = None,
     use_rematerialization: bool = False,
 ) -> Callable:
     pfn: Callable
 
-    # TODO Disentangle caching from preprocessing
+    # Sets a default tracing mode if one wasn't specified
+    if (always_trace, use_dynamic_caching, use_static_caching, use_last_executed) == ((None,) * 4):
+        always_trace = True
+
+    # Checks that only one tracing mode is set
+    always_trace = always_trace if always_trace is not None else False
+    use_dynamic_caching = use_dynamic_caching if use_dynamic_caching is not None else False
+    use_static_caching = use_static_caching if use_static_caching is not None else False
+    use_last_executed = use_last_executed if use_last_executed is not None else False
+    utils.check(
+        always_trace ^ use_static_caching ^ use_last_executed ^ use_dynamic_caching,
+        lambda: f"Only one caching mode can be specified, but more than one of {always_trace=} (default), {use_static_caching=}, and {use_last_executed=} was set",
+    )
+
+    # (Optionally) preprocesses
     if disable_preprocessing:
         pfn = fn
     else:
         pfn = preprocess(fn, is_module=isinstance(fn, pytorch.nn.Module))
-        pfn._last_executed = None
-        pfn._cache = {}
+
+    # Constructs function metadata
+    # Identifies cache mode
+    cache_mode: CACHE_MODES
+    if always_trace:
+        cache_mode = CACHE_MODES.NONE
+    elif use_dynamic_caching:
+        cache_mode = CACHE_MODES.DYNAMIC
+    elif use_static_caching:
+        cache_mode = CACHE_MODES.STATIC
+    elif use_last_executed:
+        cache_mode = CACHE_MODES.DYNAMIC
+
+    # TODO Implement dynamic caching
+    if cache_mode is CACHE_MODES.DYNAMIC:
+        raise NotImplementedError
 
     @wraps(fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         # TODO Return the previous traces when caching
-        if use_last_executed and pfn._last_executed is not None:
-            if pfn._last_executed is not None:
-                c = pfn._last_executed
+        if use_last_executed and _fn._last_executed is not None:
+            if _fn._last_executed is not None:
                 result = c(*args, **kwargs)
-                return result, None
+                # TODO Update _last_traces
+                _fn._cache_hits += 1
+                return result
         if use_static_caching:
-            c = cache_get(pfn._cache, args[pfn._num_constant_args :], kwargs)
+            c, traces = cache_get(_fn._cache, args[_fn._num_constant_args :], kwargs)
             if c is not None:
-                return c(*args, **kwargs), None
+                # TODO Update _last_traces
+                _fn._cache_hits += 1
+                _fn._last_executed = c
+                _fn._last_traces = traces
+                return c(*args, **kwargs)
+
+        _fn._cache_misses += 1
 
         # Sets the language and tracing context
         nonlocal langctx
@@ -337,11 +375,13 @@ def compile_with_info(
                 )
                 traces.extend(extraces)
 
+                # Constructs callable and updates cache data
+                _fn._last_traces = traces
                 c = extrace.python_callable()
-                if not disable_preprocessing:
-                    pfn._last_executed = c
+                _fn._last_executed = c
+
                 if use_static_caching:
-                    cache_put(pfn._cache, c, args[pfn._num_constant_args :], kwargs)
+                    cache_put(_fn._cache, c, traces, args[_fn._num_constant_args :], kwargs)
 
                 result: Any = c(*args, **kwargs)
         finally:
@@ -350,29 +390,50 @@ def compile_with_info(
             if langctx_tok is not None:
                 reset_langctx(langctx_tok)
 
-        return result, traces
-
-    _fn._pfn = pfn
+        return result
 
     if isinstance(fn, pytorch.nn.Module):
         _fn = ThunderOptimizedModule(fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values)
         # TODO Revisit assuming these are const
-        pfn._num_constant_args = len(pfn._additional_param_values)
-    elif not disable_preprocessing:
-        # this is used for static caching
-        pfn._num_constant_args = 0
+        _fn._num_constant_args = len(pfn._additional_param_values)
+
+    _fn._pfn = pfn
+    if not hasattr(_fn, "_num_constant_args"):
+        _fn._num_constant_args = 0
+    _fn._cache_mode = cache_mode
+    _fn._last_executed = None
+    _fn._last_traces = None
+    _fn._cache_hits = 0
+    _fn._cache_misses = 0
+    _fn._cache = {}
 
     return _fn
 
 
+def last_traces(fn) -> Optional[List[TraceCtx]]:
+    return fn._last_traces
+
+
+def cache_mode(fn) -> CACHE_MODES:
+    return fn._cache_mode
+
+
+def cache_hits(fn) -> int:
+    return fn._cache_hits
+
+
+def cache_misses(fn) -> int:
+    return fn._cache_misses
+
+
 # NOTE A sugar for compile_with_info that just returns the output of the program
-def compile(fn, **compile_kwargs) -> Callable:
-    cfn = compile_with_info(fn, **compile_kwargs)
+def compile_with_info(fn, **compile_kwargs) -> Callable:
+    cfn = compile(fn, **compile_kwargs)
 
     @wraps(cfn)
     def _fn(*args, **kwargs):
-        result, _ = cfn(*args, **kwargs)
-        return result
+        result = cfn(*args, **kwargs)
+        return result, last_traces(cfn)
 
     return _fn
 

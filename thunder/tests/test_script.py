@@ -110,7 +110,7 @@ def test_sequential():
 
 
 @skipif_not_python_3_10
-@pytest.mark.parametrize("use_static_caching", (True, False))
+@pytest.mark.parametrize("use_static_caching", (True, None))
 def test_thunder_compile(use_static_caching):
     model = torch.nn.Sequential(
         torch.nn.Linear(3, 5),
