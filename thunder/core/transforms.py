@@ -1462,27 +1462,25 @@ def matmul_backward(a, b, g):
     return g @ b.mT, a.mT @ g
 
 
-# TODO: Remove registration against torch.nn.functional.linear once we have a
-#       better way to handle VJPs for composite functions that are not in the prims/corelang
-@register_augmented_forward(torch.nn.functional.linear)
-def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy] = None) -> VJPDual:
+@register_augmented_forward(prims.PrimIDs.LINEAR)
+def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy]) -> VJPDual:
     primal = prims.linear(a, b, c)
     residuals = (a, b, c)
     return VJPDual(primal, residuals)
 
 
-@register_backward(torch.nn.functional.linear)
+@register_backward(prims.PrimIDs.LINEAR)
 def linear_backward(a, b, c, g):
-    from thunder.langs.torch import matmul
+    from thunder.torch import matmul
 
     first_dim = (-2,)
     ga = matmul(g, b)
     if a.ndim == 1:
-        gb = matmul(unsqueeze(a, first_dim).mT, unsqueeze(g, first_dim)).mT
+        gb = matmul(unsqueeze(g, first_dim).mT, unsqueeze(a, first_dim))
     else:
-        gb = matmul(a.mT, g).mT
+        gb = matmul(g.mT, a)
     if c is None:
-        return ga, gb
+        return ga, gb, None
     gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
     return ga, gb, gc
 

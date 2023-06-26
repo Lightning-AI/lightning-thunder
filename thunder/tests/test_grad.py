@@ -37,6 +37,8 @@ op_skip = {
 vjp_op_force = {
     "cross_entropy",
     "softmax",
+    "linear",
+    "matmul",
     # "var_mean",
 }
 
