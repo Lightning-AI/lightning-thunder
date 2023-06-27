@@ -1554,14 +1554,7 @@ def _dropout_helper(a, p):
     Returns the masked tensor of the boolean values.
     """
 
-    # TODO: uniform_like doesn't work correctly with the grad transform
-    # Because min and max are not constants in the decomposition of uniform_like,
-    # the grad transform requires the backward rule for uniform to be implemented wrt min and max.
-    # This is not implemented in the backend, so we use uniform instead.
-    # With uniform directly there's no problem because all the arguments are constants.
-    device = to_thunder_device(a.device)
-    dtype = to_thunder_dtype(a.dtype)
-    r = uniform(a.shape, 0.0, 1.0, device=device, dtype=dtype)
+    r = uniform_like(a, 0.0, 1.0)
     result = r < p
 
     return result

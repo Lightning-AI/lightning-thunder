@@ -1601,6 +1601,21 @@ def take_along_axis_backward(
     return prims.scatter_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
 
 
+@register_augmented_forward(prims.PrimIDs.UNIFORM)
+def uniform_aug_fwd(shape, minval, maxval, *, device, dtype):
+    primal = prims.uniform(shape, minval, maxval, device=device, dtype=dtype)
+    return VJPDual(primal, (primal, minval, maxval))
+
+
+@register_backward(prims.PrimIDs.UNIFORM)
+def uniform_backward(primal, minval, maxval, g):
+    # uniform is implemented as (maxval - minval) * uniform(shape, 0, 1) + minval
+    unscaled_primal = (primal - minval) / (maxval - minval)
+    reduce_all_dims = tuple(range(g.ndim))
+    sum = partial(prims.sum, dims=reduce_all_dims)
+    return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
+
+
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     """Symbol mapper for the VJP transform.
 
