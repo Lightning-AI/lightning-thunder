@@ -126,6 +126,7 @@ class PrimIDs(Enum):
     PROD = auto()
     SUM = auto()
     VAR = auto()
+    VAR_MEAN = auto()
     # Matmul prims (Experimental!)
     LINEAR = auto()
     MATMUL = auto()
@@ -1731,7 +1732,19 @@ def _var_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> Ten
     return _reduction_meta(a, dims, output_dtype=output_dtype)
 
 
+def _var_mean_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    output_dtype = None
+    if utils.is_complex_dtype(a.dtype):
+        output_dtype = utils.corresponding_real_dtype(a.true_dtype)
+    else:
+        output_dtype = a.true_dtype
+    var = _reduction_meta(a, dims, output_dtype=output_dtype)
+    mean = _reduction_meta(a, dims, output_dtype=a.true_dtype)
+    return (var, mean)
+
+
 var = make_prim(PrimIDs.VAR, "var", meta=_var_meta)
+var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta)
 
 #
 # Matmul prims

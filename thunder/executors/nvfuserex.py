@@ -992,8 +992,6 @@ def var(a: TensorProxy, dims: Sequence[int], *, correction: Number, fd: FusionDe
 def _var_mean_check(
     a: TensorProxy,
     dim=None,
-    unbiased: Optional[bool] = None,
-    keepdim: bool = False,
     *,
     correction: Optional[int] = None,
 ) -> bool:
@@ -1015,57 +1013,15 @@ def _var_mean_check(
 # NOTE nvFuser's var_mean op has the signature (tensor, dims, correction, keepdim)
 def var_mean(
     a: TensorProxy,
-    dim=None,
-    unbiased: Optional[bool] = None,
-    keepdim: bool = False,
+    dim,
     *,
-    correction: Optional[int] = None,
+    correction: int,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
-
-    # Reduces over all dimensions if dim=() is passed
-    if dim == () or dim == []:
-        dim = None
-    dim = ltorch._reduction_dims(a.shape, dim)
     nvdims = list(dim)
-
-    correction = ltorch._set_correction(unbiased, correction)
-
-    return fd.ops.var_mean(nva, nvdims, correction, keepdim)
-
-
-# @register_augmented_forward(nvOps.VAR_MEAN)
-def _var_mean_aug_fwd(a, dim, *, correction):
-    v, m = var_mean(a, dim, correction=correction)
-
-    return (v, m), (a, dim, correction, m)
-
-
-# @register_backward(nvOps.VAR_MEAN)
-def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
-    def n_elem_reduced(a, dims):
-        dims = utils.canonicalize_dims(a.ndim, dims)
-        reduction_size = 1
-        for idx, size in enumerate(a.size()):
-            if idx in dims:
-                reduction_size *= size
-        return reduction_size
-
-    def mean_backward(a, dims, grad):
-        mean_local_grad = 1.0 / n_elem_reduced(a, dims)
-        return restore_reduced_dims(grad, dims, a.shape) * mean_local_grad
-
-    def var_backward(a, dims, correction, mean, grad):
-        # Doing first the multiplication to avoid Python's float division
-        var_local_grad = (2.0 * restore_reduced_dims(grad, dims, a.shape)) / (n_elem_reduced(a, dims) - correction)
-        return var_local_grad * (a - restore_reduced_dims(mean, dims, a.shape))
-
-    return (
-        var_backward(a, dim, correction, mean, grad_v) + mean_backward(a, dim, grad_m),
-        None,
-    )
+    return fd.ops.var_mean(nva, nvdims, correction)
 
 
 _ops_map.update(
@@ -1155,7 +1111,7 @@ _ops_map.update(
         PrimIDs.PROD: (_reduction_check, prod),
         PrimIDs.SUM: (_reduction_check, sum),
         PrimIDs.VAR: (_var_check, var),
-        "torch.var_mean": (_var_mean_check, var_mean),
+        PrimIDs.VAR_MEAN: (_var_mean_check, var_mean),
     }
 )
 

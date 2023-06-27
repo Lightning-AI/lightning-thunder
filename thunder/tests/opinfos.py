@@ -3168,12 +3168,6 @@ var_mean_opinfo = OpInfo(
             dtypes=(datatypes.float16, datatypes.bfloat16),
             devicetypes=(devices.DeviceType.CUDA,),
         ),
-        # NotImplementedError: VJP for Ops.VAR is not implemented
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("TorchEx",),
-        ),
     ),
 )
 reduction_ops.append(var_mean_opinfo)

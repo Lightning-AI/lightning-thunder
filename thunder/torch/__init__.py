@@ -12,6 +12,7 @@ import thunder.core.utils as utils
 import thunder.core.dtypes as dtypes
 from thunder.core.langctx import langctx
 from thunder.core.symbol import Symbol
+from thunder.core.pytree import tree_map
 import thunder.clang as clang
 import thunder.core.devices as devices
 
@@ -1285,10 +1286,10 @@ def _reduction(
     if keepdims:
         output_shape = [a.shape[i] if i not in dims else 1 for i in range(a.ndim)]
         broadcast_dims = [i for i in range(a.ndim) if i not in dims]
-        result = prims.broadcast_in_dim(result, output_shape, broadcast_dims)
+        result = tree_map(lambda x: prims.broadcast_in_dim(x, output_shape, broadcast_dims), result)
 
     if result_dtype is not None:
-        result = clang.maybe_convert_to_dtype(result, result_dtype)
+        result = tree_map(lambda x: clang.maybe_convert_to_dtype(x, result_dtype), result)
 
     return result
 
@@ -1453,9 +1454,18 @@ def var_mean(
     correction: Optional[int] = None,
 ) -> tuple[TensorProxy, TensorProxy]:
     dim, unbiased = _dim_var_dispatch(dim, unbiased)
-    v = var(a, dim, unbiased, keepdim, correction=correction)
-    m = mean(a, dim, keepdim)
-    return v, m
+    correction = _set_correction(unbiased, correction)
+
+    result = _reduction(
+        a,
+        partial(prims.var_mean, correction=correction),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
 
 
 #

@@ -654,46 +654,57 @@ def var_prim(bsym: BoundSymbol, a: TensorProxy, dims, *, correction: int) -> Bou
     return tbsym
 
 
-# NOTE var does not allow keepdim to be specified if dim is not specified
-# NOTE This is the direct translation of torch.var
-def var(
-    bsym: BoundSymbol,
-    a,
-    dim=None,
-    unbiased: Optional[bool] = None,
-    keepdim: bool = False,
-    *,
-    correction: Optional[int] = None,
-) -> BoundSymbol:
-    utils.check(
-        correction is None or unbiased is None,
-        lambda: f"Cannot specify both {unbiased=} and {correction=} when calling var",
-    )
-
-    sym = Symbol(name="var", meta=None, _module=torch)
-
-    # Explicitly specifies dimensions (if unspecified) if keepdim or correction must be specified
-    if dim is None and (keepdim is not None or correction is not None):
-        dim = tuple(range(a.ndim))
-
-    args = tuple(x for x in (a, dim) if x is not None)
-    kwargs = {
-        "correction": correction,
-    }
-
-    # Adds keepdim
-    if keepdim:
-        kwargs["keepdim"] = keepdim
-
-    # NOTE PyTorch does not allow both correction and unbiased to be specified
-    if unbiased is not None:
-        kwargs["unbiased"] = unbiased
-        del kwargs["correction"]
-
-    tbsym = BoundSymbol(sym, args=args, kwargs=kwargs, output=bsym.output)
+def var_mean_prim(bsym: BoundSymbol, a: TensorProxy, dims, *, correction: int) -> BoundSymbol:
+    sym = Symbol(name="var_mean", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, dims), kwargs={"correction": correction}, output=bsym.output)
 
     return tbsym
 
+
+# NOTE var does not allow keepdim to be specified if dim is not specified
+# NOTE This is the direct translation of torch.var
+def _var_factory(name: str) -> Callable:
+    def fn(
+        bsym: BoundSymbol,
+        a,
+        dim=None,
+        unbiased: Optional[bool] = None,
+        keepdim: bool = False,
+        *,
+        correction: Optional[int] = None,
+    ) -> BoundSymbol:
+        utils.check(
+            correction is None or unbiased is None,
+            lambda: f"Cannot specify both {unbiased=} and {correction=} when calling var",
+        )
+
+        sym = Symbol(name=name, meta=None, _module=torch)
+
+        # Explicitly specifies dimensions (if unspecified) if keepdim or correction must be specified
+        if dim is None and (keepdim is not None or correction is not None):
+            dim = tuple(range(a.ndim))
+
+        args = tuple(x for x in (a, dim) if x is not None)
+        kwargs = {
+            "correction": correction,
+        }
+
+        # Adds keepdim
+        if keepdim:
+            kwargs["keepdim"] = keepdim
+
+        # NOTE PyTorch does not allow both correction and unbiased to be specified
+        if unbiased is not None:
+            kwargs["unbiased"] = unbiased
+            del kwargs["correction"]
+
+        tbsym = BoundSymbol(sym, args=args, kwargs=kwargs, output=bsym.output)
+
+        return tbsym
+    return fn
+
+var = _var_factory("var")
+var_mean = _var_factory("var_mean")
 
 #
 # Matmul operations
@@ -977,6 +988,7 @@ _ops_map.update(
         PrimIDs.SUM: (_always_executable, sum_prim),
         "torch.var": (_always_executable, var),
         PrimIDs.VAR: (_always_executable, var_prim),
+        PrimIDs.VAR_MEAN: (_always_executable, var_mean_prim),
         # Matmul operations
         PrimIDs.LINEAR: (_always_executable, linear),
         PrimIDs.MATMUL: (_always_executable, matmul),

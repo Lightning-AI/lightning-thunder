@@ -39,7 +39,7 @@ vjp_op_force = {
     "softmax",
     "linear",
     "matmul",
-    # "var_mean",
+    "var_mean",
 }
 
 

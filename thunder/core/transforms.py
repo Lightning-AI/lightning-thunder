@@ -17,7 +17,7 @@ from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx
-from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as, sequencify
+from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as, sequencify, canonicalize_dims
 from thunder.executors.passes import dce
 
 # from thunder.executors.torch import ops_to_torch_ops_map
@@ -1117,6 +1117,38 @@ def sum_aug_fwd(x, dims, output_dtype=None):
 def sum_backward(x_shape, reduced_dims, g):
     # One return per positional argument of prims.sum
     return restore_reduced_dims(g, reduced_dims, x_shape), None
+
+
+@register_augmented_forward(prims.PrimIDs.VAR_MEAN)
+def _var_mean_aug_fwd(a, dim, *, correction):
+    v, m = prims.var_mean(a, dim, correction=correction)
+
+    return (v, m), (a, dim, correction, m)
+
+
+@register_backward(prims.PrimIDs.VAR_MEAN)
+def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
+    def n_elem_reduced(a, dims):
+        dims = canonicalize_dims(a.ndim, dims)
+        reduction_size = 1
+        for idx, size in enumerate(a.size()):
+            if idx in dims:
+                reduction_size *= size
+        return reduction_size
+
+    def mean_backward(a, dims, grad):
+        mean_local_grad = 1.0 / n_elem_reduced(a, dims)
+        return restore_reduced_dims(grad, dims, a.shape) * mean_local_grad
+
+    def var_backward(a, dims, correction, mean, grad):
+        # Doing first the multiplication to avoid Python's float division
+        var_local_grad = (2.0 * restore_reduced_dims(grad, dims, a.shape)) / (n_elem_reduced(a, dims) - correction)
+        return var_local_grad * (a - restore_reduced_dims(mean, dims, a.shape))
+
+    return (
+        var_backward(a, dim, correction, mean, grad_v) + mean_backward(a, dim, grad_m),
+        None,
+    )
 
 
 @register_augmented_forward(prims.PrimIDs.PROD)
