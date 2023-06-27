@@ -4,16 +4,17 @@ from enum import auto, Enum
 from itertools import chain
 from functools import lru_cache, partial, wraps
 from numbers import Number
-from typing import Any, Callable, Dict, Tuple, Union, Optional
+from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
 
 from thunder import _make_trace as make_trace
 from thunder.core import dtypes, prims
-from thunder.clang import full, full_like, unsqueeze, squeeze
+from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.symbol import BoundSymbolInterface
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx
@@ -219,7 +220,6 @@ def _identity_call_pytorch(*args, trace: Trace, **kwargs):
 
     with detached_trace():
         return eval_trace(trace, *args, **kwargs, symbol_mapper=symbol_mapper)
-
 
 # Register the identity call for PyTorch executor.
 # ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
@@ -1872,3 +1872,83 @@ def value_and_grad(func):
         return vjp(func)(args, cotangents, **kwargs)
 
     return _value_and_grad
+
+
+# do we happen to want to register `ltorch` ops such as `ltorch.layer_norm` as well?
+autocast_impls: dict[prims.PrimIDs, Callable] = {}
+
+
+def register_autocast_rule(op):
+
+    def decorator(func):
+        autocast_impls[op] = func
+        return func
+
+    return decorator
+
+
+def maybe_downcast_to(dtype, args):
+    allowed_downcast_types = (dtypes.float16, dtypes.bfloat16, dtypes.float32)
+    if all(tree_map(lambda a: a.dtype in allowed_downcast_types, args)):
+        return tree_map(lambda a: maybe_convert_to_dtype(a, dtype), args)
+    else:
+        return args
+
+
+@register_autocast_rule(prims.PrimIDs.MATMUL)
+def autocast_matmul_rule(a, b, dtype):
+    """Autocast rule for matmul"""
+    return prims.matmul(*(maybe_downcast_to(dtype, (a, b))))
+
+
+@register_autocast_rule(prims.PrimIDs.LINEAR)
+def autocast_linear_rule(a, w, bias, dtype):
+    return prims.linear(*maybe_downcast_to(dtype, (a, w, bias)))
+
+
+def decomposed_fn_autocast_rule(*args, fn, dtype, **kwargs):
+    trace = make_trace(fn)(*args, **kwargs)
+    trace = unwrap_one_level_of_subsymbols(trace)
+    return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
+
+
+def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dtype):
+    """Return the callable implementing the autocast rule for the symbol.
+
+    Args:
+        bound_symbol: Mapped to its autocast rule.
+
+    Returns:
+        Callable: The callable implementing the autocast rule for the symbol.
+    """
+    autocast_impl: Optional[Callable] = autocast_impls.get(bound_symbol.sym.id)
+    if autocast_impl is None and bound_symbol.subsymbols:
+        return partial(decomposed_fn_autocast_rule, fn=bound_symbol.sym.__call__, dtype=dtype)
+    return bound_symbol.sym.__call__ if autocast_impl is None else partial(autocast_impl, dtype=dtype)
+
+
+def autocast(func: Callable, dtype: dtypes.dtype):
+    """Transforms a function to autocast certain operations.
+
+    Args:
+        func: The function to be transformed.
+        dtype: The data type to which arguments of the function or sub functions could get cast if
+            they are `dtypes.float32`.
+
+    Returns:
+        Callable: The transformed function
+    """
+
+    if not isinstance(dtype, dtypes.dtype):
+        raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
+    if dtype not in {dtypes.float16, dtypes.bfloat16}:
+        raise ValueError(
+            f"`dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}"
+        )
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        trace = make_trace(func)(*args, **kwargs)
+        return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
+
+    return wrapper

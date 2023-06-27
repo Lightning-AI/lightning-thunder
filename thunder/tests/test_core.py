@@ -1855,6 +1855,40 @@ def test_traceback():
     assert "LC.gen" in excinfo.traceback[-1].path
 
 
+@instantiate(dtypes=NOTHING)
+def test_thunder_autocast_transform(executor, device, _):
+    from thunder.core.transforms import autocast
+
+    def f(a, b, c):
+        return a @ (b + c)
+
+    # The following functions needs to be updated as autocast_impls grows.
+    def g(a, b, c):
+        return a + b - c
+
+    def h(a, b, c):
+        return (a @ b) + c
+
+    for func, should_autocast in ((f, True), (g, False), (h, False)):
+        dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
+        torch_dtype = ltorch.to_torch_dtype(dtype)
+        x, y, z = [torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3)]
+        compiled = thunder.compile_with_info(
+            autocast(func, dtype=dtype),
+            executors_list=executor.executors_list(),
+            # NOTE(crcrpar): preprocessing needs to be disabled as this transform would introduce
+            # nonlocals that are not supported.
+            disable_preprocessing=True,
+        )
+        out, traces = compiled(x, y, z)
+        assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
+
+        # note(crcrpar): This test could be broken in the future as thunder autocast develops.
+        with torch.autocast(device_type=device, dtype=torch_dtype):
+            torch_output = func(x, y, z)
+        assert out.dtype == torch_output.dtype
+
+
 # @instantiate(
 #     dtypes=NOTHING,
 # )
