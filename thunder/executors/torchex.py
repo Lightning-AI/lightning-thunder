@@ -701,7 +701,9 @@ def _var_factory(name: str) -> Callable:
         tbsym = BoundSymbol(sym, args=args, kwargs=kwargs, output=bsym.output)
 
         return tbsym
+
     return fn
+
 
 var = _var_factory("var")
 var_mean = _var_factory("var_mean")

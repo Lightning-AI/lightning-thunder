@@ -752,7 +752,9 @@ def div(
     if isinstance(b, Number):
         return fd.ops.mul(nva, fd.ops.reciprocal(nvb))
 
-    return fd.ops.div(nva, nvb)
+    # NOTE It's currently significantly faster for nvFuser to multiply the reciprocal than divide
+    # return fd.ops.div(nva, nvb)
+    return fd.ops.mul(nva, fd.ops.reciprocal(nvb))
 
 
 def eq(

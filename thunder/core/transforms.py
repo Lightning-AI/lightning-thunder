@@ -18,7 +18,17 @@ from thunder.core.symbol import BoundSymbolInterface
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx
-from thunder.core.utils import check, flatten_func, safe_map, safe_map_flat, safe_zip, unzip2, const_as, sequencify, canonicalize_dims
+from thunder.core.utils import (
+    check,
+    flatten_func,
+    safe_map,
+    safe_map_flat,
+    safe_zip,
+    unzip2,
+    const_as,
+    sequencify,
+    canonicalize_dims,
+)
 from thunder.executors.passes import dce
 
 # from thunder.executors.torch import ops_to_torch_ops_map
@@ -220,6 +230,7 @@ def _identity_call_pytorch(*args, trace: Trace, **kwargs):
 
     with detached_trace():
         return eval_trace(trace, *args, **kwargs, symbol_mapper=symbol_mapper)
+
 
 # Register the identity call for PyTorch executor.
 # ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
@@ -1879,7 +1890,6 @@ autocast_impls: dict[prims.PrimIDs, Callable] = {}
 
 
 def register_autocast_rule(op):
-
     def decorator(func):
         autocast_impls[op] = func
         return func
@@ -1942,9 +1952,7 @@ def autocast(func: Callable, dtype: dtypes.dtype):
     if not isinstance(dtype, dtypes.dtype):
         raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
     if dtype not in {dtypes.float16, dtypes.bfloat16}:
-        raise ValueError(
-            f"`dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}"
-        )
+        raise ValueError(f"`dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}")
 
     @wraps(func)
     def wrapper(*args, **kwargs):
