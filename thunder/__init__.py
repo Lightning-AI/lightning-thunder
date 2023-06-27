@@ -30,6 +30,7 @@ import thunder.executors as executors
 import thunder.core.symbol as symbol
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.cudagraphs import CUDAGraphExecutor
 
 import thunder.core.script as script
 import thunder.core.script.frontend
@@ -280,6 +281,7 @@ def compile(
     use_static_caching: Optional[bool] = None,
     use_last_executed: Optional[bool] = None,
     use_rematerialization: bool = False,
+    use_cudagraphs: bool = False,
 ) -> Callable:
     pfn: Callable
 
@@ -378,6 +380,10 @@ def compile(
                 # Constructs callable and updates cache data
                 _fn._last_traces = traces
                 c = extrace.python_callable()
+
+                if use_cudagraphs and not isinstance(fn, pytorch.nn.Module):
+                    c = CUDAGraphExecutor(c)
+
                 _fn._last_executed = c
 
                 if use_static_caching:
@@ -393,6 +399,8 @@ def compile(
         return result
 
     if isinstance(fn, pytorch.nn.Module):
+        if use_cudagraphs:
+            _fn = CUDAGraphExecutor(_fn, num_constant_args=len(pfn._additional_param_values))
         _fn = ThunderOptimizedModule(fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values)
         # TODO Revisit assuming these are const
         _fn._num_constant_args = len(pfn._additional_param_values)

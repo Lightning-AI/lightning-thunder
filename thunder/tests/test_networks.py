@@ -9,7 +9,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate
+from thunder.tests.framework import instantiate, requiresCUDA
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -31,6 +31,25 @@ def test_nanogpt_complete(executor, device, dtype):
     torch_result = gpt(idx)
 
     tom = executor.make_callable(gpt, disable_preprocessing=False)
+    thunder_result = tom(idx)
+
+    assert_close(torch_result, thunder_result)
+
+
+@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
+@requiresCUDA
+def test_nanogpt_complete_cudagraphs(executor, device, dtype):
+    tdtype = ttorch.to_torch_dtype(dtype)
+    make = partial(make_tensor, dtype=torch.int64, device=device)
+
+    # NOTE: currently setting dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
+
+    idx = make((8, 64), dtype=torch.int64, low=0, high=255)
+    torch_result = gpt(idx)
+
+    tom = executor.make_callable(gpt, disable_preprocessing=False, use_cudagraphs=True)
     thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)

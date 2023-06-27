@@ -24,6 +24,7 @@ import thunder
 import thunder.torch as ltorch
 from thunder.tests import nanogpt_model
 import thunder.core.proxies as proxies
+from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
 
 
@@ -112,12 +113,15 @@ class Benchmark:
         executor = executor.replace("_cuda_graphs", "")
 
         if executor == "torch-eager":
-            if use_cudagraphs:
-                raise NotImplementedError("PyTorch eager + CUDA graphs is not supported")
+            if use_cudagraphs and not self.backward:
+                return executor, CUDAGraphExecutor(self._fn), None
+
             if self.backward:
+                compiled_fn = make_forward_and_backward_fn(self.postprocess_for_backward, self._fn)
+                compiled_fn = CUDAGraphExecutor(compiled_fn) if use_cudagraphs else compiled_fn
                 return (
                     "fw+bw: " + f"{executor}",
-                    make_forward_and_backward_fn(self.postprocess_for_backward, self._fn),
+                    compiled_fn,
                     None,
                 )
             return executor, self._fn, None
@@ -140,14 +144,13 @@ class Benchmark:
 
         # TODO Add an option to use different kinds of caching
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
-            if use_cudagraphs:
-                raise NotImplementedError("thunder + CUDA graphs is currently disabled")
             if self.backward:
                 raise NotImplementedError("thunder benchmarking does not currently support backward passes")
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
             tom = thunder.compile(
                 self._fn,
                 use_static_caching=True,
+                use_cudagraphs=use_cudagraphs,
             )
 
             return (name, tom, None)
