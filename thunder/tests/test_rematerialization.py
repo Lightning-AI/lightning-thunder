@@ -27,6 +27,17 @@ def func(t0):
     return t4
 
 
+@inline
+@value_and_grad
+def func_with_dropout(t0):
+    t1 = ttorch.exp(t0)
+    t2 = ttorch.exp(t1)
+    t3 = ttorch.dropout(t2, p=0.1)
+    t4 = ttorch.exp(t3)
+    t5 = ttorch.matmul(t4, t4)  # Fusion breaks here
+    return t5
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
@@ -202,6 +213,23 @@ def test_find_cut(executor, device, _):
     consumer = nvfuser_symbols[-1]
     cut = find_cut(trace, producer, consumer)
     assert cut == ("t0", "t4")
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_find_cut_dropout(executor, device, _):
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    _, traces = thunder.compile_with_info(func_with_dropout, disable_preprocessing=True)(t0)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[-1]
+    cut = find_cut(trace, producer, consumer)
+    assert cut == ("t0", "t6", "t9")
 
 
 @instantiate(

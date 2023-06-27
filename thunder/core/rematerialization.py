@@ -177,6 +177,21 @@ find_nvfuser_producer_consumer_pairs = partial(
 )
 
 
+# TODO: Consider moving this to the prims attribute
+REMATERIALIZATION_BLOCK_LIST = {
+    # We don't want to rematerialize the following primitives
+    # Random primitives
+    prims.PrimIDs.UNIFORM,
+    # Reduction primitives
+    prims.PrimIDs.SUM,
+    prims.PrimIDs.VAR,
+    prims.PrimIDs.AMAX,
+    prims.PrimIDs.AMIN,
+    prims.PrimIDs.PROD,
+    "torch.var_mean",
+}
+
+
 def find_cut(
     trace: TraceCtx,
     producer: BoundSymbolInterface,
@@ -213,6 +228,13 @@ def find_cut(
     # be connected to the "source" node.
     required_producer_vars = tuple(x.name for x in producer.args)
     required_producer_vars += tuple(x.name for x in external_producer_outputs)
+
+    # This is needed to avoid rematerializing random or reduction primitives.
+    required_producer_vars += tuple(
+        chain.from_iterable(
+            (y.name for y in x._flat_outs) for x in producer.subsymbols if x.sym.id in REMATERIALIZATION_BLOCK_LIST
+        )
+    )
 
     # Required consumer variables. These are the variables that are required to
     # be connected to the "sink" node.
@@ -278,8 +300,8 @@ def find_cut(
         add_edges(var_name)
 
     for symbol in chain(producer.subsymbols, consumer.subsymbols):
-        var_name = symbol.output.name
-        add_edges(var_name)
+        for var_name in (x.name for x in symbol._flat_outs):
+            add_edges(var_name)
 
     g = Graph(
         n=len(name_to_id),

@@ -955,11 +955,6 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
                 arg_name = arg.name if isinstance(arg, Proxy) else None
                 if arg_name not in map(lambda x: x.name, stop_proxies):
                     queue.append(arg)
-    # Sequence output is not supported at the moment
-    check(
-        all(map(lambda x: not isinstance(x.output, Sequence), result)),
-        lambda: "Tuple output is not supported",
-    )
     original_order = {bsym: i for i, bsym in enumerate(trace.bound_symbols)}
     return tuple(sorted(result, key=lambda x: original_order[x]))
 
