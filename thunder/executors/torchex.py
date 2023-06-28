@@ -297,11 +297,10 @@ def pad(bsym: BoundSymbol, a, padding_value, padding_config):
     return tbsym
 
 
-def reshape(bsym: BoundSymbol, a, shape):
+def reshape(bsym: BoundSymbol, a, *shape):
+    shape = utils.extract_shape_from_varargs(shape)
     sym = Symbol(name="reshape", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, shape), kwargs={}, output=bsym.output)
-
-    return tbsym
+    return sym.bind(a, shape, output=bsym.output)
 
 
 # TODO Review if nvFuser can handle striding
@@ -846,6 +845,7 @@ _ops_map.update(
         "torch.Tensor.__getitem__": (_always_executable, getitem),
         PrimIDs.PAD: (_always_executable, pad),
         PrimIDs.RESHAPE: (_always_executable, reshape),
+        "torch.reshape": (_always_executable, reshape),
         PrimIDs.SLICE: (_always_executable, slice_prim),
         "torch.split": (_always_executable, split),
         "torch.squeeze": (_always_executable, squeeze),

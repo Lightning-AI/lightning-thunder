@@ -6,47 +6,14 @@ from torch.testing import assert_close, make_tensor
 import thunder
 import thunder.clang as tlang
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, NOTHING
+from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
+from thunder.tests.opinfos import elementwise_binary_ops
 
 
 # Tests for elementwise binary operators
 
 # TODO: test that the operator variant works properly
 # TODO: generate the following tests using opinfos (more number sample inputs needed)
-
-
-@instantiate(dtypes=(thunder.float32,))
-def test_abs_integer(executor, device, dtype):
-    def foo(a, b):
-        a_abs = tlang.abs(a)
-        return tlang.add(a_abs, b)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = -3
-    b = make_tensor((1, 8), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, b)
-    torch_result = 3 + b
-    assert_close(thunder_result, torch_result)
-
-
-@instantiate(dtypes=(thunder.float32,))
-def test_abs_float(executor, device, dtype):
-    def foo(a, b):
-        a_abs = tlang.abs(a)
-        return tlang.add(a_abs, b)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = -2.7
-    b = make_tensor((1, 8), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, b)
-    torch_result = abs(a) + b
-    assert_close(thunder_result, torch_result)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -68,56 +35,6 @@ def test_core_tensor_methods(executor, device, dtype):
 
 
 @instantiate(dtypes=(thunder.float32,))
-def test_add_integer_constant(executor, device, dtype):
-    def foo(a, b):
-        c = tlang.add(a, 2)
-        return tlang.add(c, b)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 1), device=device, dtype=tdtype)
-    b = make_tensor((1, 2), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, b)
-    torch_result = (a + 2) + b
-
-    assert_close(thunder_result, torch_result)
-
-
-@instantiate(dtypes=(thunder.float32,))
-def test_add_integer_input(executor, device, dtype):
-    def foo(a, b):
-        return tlang.add(a, b)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 1), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a, 3)
-    torch_result = a + 3
-
-    assert_close(thunder_result, torch_result)
-
-
-@instantiate(dtypes=(thunder.float32,))
-def test_add_integer_inputs(executor, device, dtype):
-    def foo(a, b, c):
-        d = tlang.add(a, b)
-        return tlang.add(c, d)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((3, 2), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(3, 4, a)
-    torch_result = 3 + 4 + a
-    assert_close(thunder_result, torch_result)
-
-
-@instantiate(dtypes=(thunder.float32,))
 def test_add_integer_constants(executor, device, dtype):
     def foo(a):
         b = tlang.add(2, 3)
@@ -133,23 +50,7 @@ def test_add_integer_constants(executor, device, dtype):
     assert_close(thunder_result, torch_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
-def test_add_floats(executor, device, dtype):
-    def foo(a, b):
-        c = tlang.add(2.0, a)
-        return tlang.add(b, c)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 4), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(0.7, a)
-    torch_result = 2.0 + 0.7 + a
-    assert_close(thunder_result, torch_result)
-
-
-# TODO: this test can be replaced with OpInfo generated tests (dtype None tests and error inputs tests)
+# TODO This coule be replaced with OpInfo generated tests, but would require "dtype=None" test generators for them
 @instantiate(dtypes=NOTHING)
 def test_where(executor, device, dtype):
     # Tests where type promotion and number support

@@ -503,7 +503,6 @@ def test_direct_torch_lowerings():
         "torch.ops.aten.embedding_backward",
         "torch.index_select",
         "torch.stack",
-        "torch.reshape",
         "torch.index_add",
         "torch.scatter_add",
         "torch.full",

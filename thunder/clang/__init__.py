@@ -9,7 +9,7 @@ import thunder.core.dtypes as dtypes
 # TODO: remove prims import
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, pyval
+from thunder.core.proxies import TensorProxy, pyval, pytype
 from thunder.core.langctx import langctx
 import thunder.core.devices as devices
 
@@ -19,6 +19,9 @@ import thunder.core.devices as devices
 # languages.
 
 __all__ = []
+
+TensorLike = TensorProxy
+DeviceLike = Union[str, devices.Device]
 
 
 def _module_extractor() -> None:
@@ -88,7 +91,7 @@ def device_put(a, device):
 
 
 # TODO Add type annotations
-def arange(*, start, step, stop, device: Union[str, devices.Device], dtype=None):
+def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dtype: Optional[dtypes.dtype] = None):
     # Validates inputs
     # Checks that start, step, and stop are finite
     # TODO Semantically an infinite step seems fine?
@@ -153,16 +156,21 @@ def full(shape, fill_value, *, device, dtype=None):
     return prims.full(shape, fill_value, device=device, dtype=dtype)
 
 
-# TODO Handle a being a number
 @clang_ctx
-def full_like(a, fill_value, *, device=None, dtype=None):
-    # if isinstance(a, Number):
-    #     dtype = type(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
-    #     utils.check(
-    #         device is None or device == "cpu",
-    #         "Numbers can only be created on the CPU, but found a request for device={device}",
-    #     )
-    #     return dtype(fill_value)
+def full_like(
+    a: TensorLike | Number,
+    fill_value: Number,
+    *,
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypes.dtype] = None,
+):
+    if isinstance(a, Number):
+        dtype = pytype(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
+        utils.check(
+            device is None or devices.to_device(device).devicetype is devices.DeviceType.CPU,
+            lambda: f"Numbers can only be created on the CPU, but found a request for device={device}",
+        )
+        return maybe_convert_to_dtype(fill_value, dtype)
 
     device = devices.to_device(device) if device is not None else a.device
     dtype = dtype if dtype is not None else a.true_dtype
@@ -486,8 +494,17 @@ def maybe_broadcast(*args):
 
 
 # TODO Add supported dtypes
-def _elementwise_unary_wrapper(a, *, prim, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
+def _elementwise_unary_wrapper(
+    a,
+    *,
+    prim,
+    type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    number_outputs_are_always_integers: bool = False,
+):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
+
+    if number_outputs_are_always_integers and isinstance(a, Number):
+        result_dtype = int
 
     a = maybe_convert_to_dtype(a, computation_dtype)
 
@@ -569,6 +586,7 @@ def ceil(a):
         a,
         prim=prims.ceil,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        number_outputs_are_always_integers=True,
     )
 
 
@@ -644,6 +662,7 @@ def floor(a):
         a,
         prim=prims.floor,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        number_outputs_are_always_integers=True,
     )
 
 
@@ -807,7 +826,10 @@ def trunc(a):
         return a
 
     return _elementwise_unary_wrapper(
-        a, prim=prims.trunc, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+        a,
+        prim=prims.trunc,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        number_outputs_are_always_integers=True,
     )
 
 
@@ -1079,5 +1101,11 @@ def where(pred, a, b):
 
     # Broadcasts
     pred, a, b = maybe_broadcast(pred, a, b)
+
+    # Short circuits in the case that the predicate is a number
+    if isinstance(pred, Number) and pytype(pred) is bool:
+        if pyval(pred):
+            return a
+        return b
 
     return prims.where(pred, a, b)

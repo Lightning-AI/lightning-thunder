@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from functools import reduce, partial
 import operator
 import builtins
+import math
 
 from thunder.core.trace import VariableInterface, get_tracectx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
@@ -173,32 +174,51 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
     # Elementwise unary operators
     #
-    # TODO Track these elementwise operations by adding explicit calls to
-    #   the appropriate prims
+
+    @staticmethod
+    def _elementwise_unary_helper(a, name, fn):
+        vala = pyval(a)
+        baseutils.check(
+            vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
+        )
+
+        # TODO Track these operations by uncommenting this
+        # langctx = get_langctx()
+        # if langctx is not None:
+        #     fn = getattr(langctx, name)
+        #     return fn(a)
+
+        # NOTE langctx is None
+        # In this case the operation is (conceptually) run eagerly
+        return fn(vala)
 
     def __abs__(self):
-        return pyval(self).__abs__()
+        return self._elementwise_unary_helper(self, "abs", builtins.abs)
 
+    # See https://docs.python.org/3/reference/datamodel.html#object.__ceil__
     def __ceil__(self):
-        return pyval(self).__ceil__()
+        return self._elementwise_unary_helper(self, "ceil", math.ceil)
 
+    # See https://docs.python.org/3/reference/datamodel.html#object.__floor__
     def __floor__(self):
-        return pyval(self).__floor__()
+        return self._elementwise_unary_helper(self, "floor", math.floor)
 
     def __invert__(self):
-        return pyval(self).__invert__()
+        return self._elementwise_unary_helper(self, "invert", operator.inv)
 
     def __neg__(self):
-        return pyval(self).__neg__()
+        return self._elementwise_unary_helper(self, "neg", operator.neg)
 
     def __pos__(self):
-        return pyval(self).__pos__()
+        return self._elementwise_unary_helper(self, "pos", operator.pos)
 
+    # See https://docs.python.org/3/reference/datamodel.html#object.__round__
     def __round__(self):
-        return pyval(self).__round__()
+        return self._elementwise_unary_helper(self, "round", builtins.round)
 
+    # See https://docs.python.org/3/reference/datamodel.html#object.__trunc__
     def __trunc__(self):
-        return pyval(self).__trunc__()
+        return self._elementwise_unary_helper(self, "trunc", math.trunc)
 
     #
     # Elementwise binary operators
@@ -208,18 +228,34 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def _elementwise_binary_helper(a, b, name, fn):
         baseutils.check_type(b, (TensorProxy, Number))
 
+        vala = pyval(a)
+        baseutils.check(
+            vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
+        )
+
+        langctx = get_langctx()
         if isinstance(b, TensorProxy):
-            langctx = get_langctx()
+            baseutils.check(
+                langctx is not None,
+                lambda: f"Cannot use an operator to {name} a number and a tensor outside of a language context",
+            )
             tensor_fn = getattr(langctx, name)
             return tensor_fn(a, b)
 
-        a, b = pyval(a), pyval(b)
-        baseutils.check(a is not None, lambda: f"Trying to {name} an unknown int", exception_type=AssertionError)
+        # NOTE isinstance(b, Number)
+        valb = pyval(b)
         baseutils.check(
-            b is not None, lambda: f"Trying to {name} with an unknown number", exception_type=AssertionError
+            valb is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
         )
 
-        return fn(a, b)
+        # TODO Track these operations by uncommenting this
+        # if langctx is not None:
+        #     fn = getattr(langctx, name)
+        #     return fn(a, b)
+
+        # NOTE langctx is None
+        # In this case the operation is (conceptually) run eagerly
+        return fn(vala, valb)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)
@@ -269,6 +305,108 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __rtruediv__(self, other):
         return self._elementwise_binary_helper(other, self, "true_divide", operator.truediv)
 
+    #
+    # Logical operations
+    #
+
+    # NOTE This is a bitwise and and triggered by the & operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__and__
+    def __and__(self, other):
+        return self._elementwise_binary_helper(self, other, "bitwise_and", operator.and_)
+
+    def __rand__(self, other):
+        return self._elementwise_binary_helper(other, self, "bitwise_and", operator.and_)
+
+    def __eq__(self, other):
+        # NOTE This short-circuit allows queries like a == (), which is a valid comparison
+        #   for a number in Python
+        if not isinstance(other, Number):
+            return False
+
+        return self._elementwise_binary_helper(self, other, "eq", operator.eq)
+
+    def __ge__(self, other):
+        return self._elementwise_binary_helper(self, other, "ge", operator.ge)
+
+    def __gt__(self, other):
+        return self._elementwise_binary_helper(self, other, "gt", operator.gt)
+
+    def __le__(self, other):
+        return self._elementwise_binary_helper(self, other, "le", operator.le)
+
+    def __lt__(self, other):
+        return self._elementwise_binary_helper(self, other, "lt", operator.lt)
+
+    def __ne__(self, other):
+        # NOTE This short-circuit allows queries like a != (), which is a valid comparison
+        #   for a number in Python
+        if not isinstance(other, Number):
+            return True
+
+        return self._elementwise_binary_helper(self, other, "ne", operator.ne)
+
+    # NOTE This is a bitwise or triggered by the | operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__or__
+    def __or__(self, other):
+        return self._elementwise_binary_helper(self, other, "bitwise_or", operator.or_)
+
+    def __ror__(self, other):
+        return self._elementwise_binary_helper(other, self, "bitwise_or", operator.or_)
+
+    # The ^ operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__xor__
+    def __xor__(self, other):
+        return self._elementwise_binary_helper(self, other, "bitwise_xor", operator.xor)
+
+    def __rxor__(self, other):
+        return self._elementwise_binary_helper(other, self, "bitwise_xor", operator.xor)
+
+    #
+    # Shift operations
+    #
+    # Issue https://github.com/Lightning-AI/lightning-thunder/issues/594
+    #   tracks implementing these
+
+    def __lshift__(self, other):
+        raise NotImplementedError
+
+    def __rlshift__(self, other):
+        raise NotImplementedError
+
+    def __rshift__(self, other):
+        raise NotImplementedError
+
+    def __rrshift__(self, other):
+        raise NotImplementedError
+
+    #
+    # Casts to Python numbers
+    #
+    # NOTE These casts must return actual Python numbers, Python itself does not
+    #   permit returning a subclass like an IntegerProxy.
+
+    def __complex__(self):
+        return complex(self.value)
+
+    def __float__(self):
+        return float(self.value)
+
+    def __int__(self):
+        return int(self.value)
+
+    def __bool__(self):
+        return bool(self.value)
+
+    #
+    # Matmul operators (not implemented for numbers)
+    #
+
+    def __matmul__(self, other):
+        raise NotImplementedError
+
+    def __rmatmul__(self, other):
+        raise NotImplementedError
+
 
 def pyval(x: Union[NumberProxy, Number]) -> Number:
     baseutils.check_type(x, (NumberProxy, Number))
@@ -308,68 +446,6 @@ class ComplexProxy(NumberProxy, complex):
         value_str = f"{self.value}" if self.value is not None else "?"
         return f"complex {value_str}"
 
-    #
-    # dtype conversion operators
-    #
-
-    def __complex__(self):
-        return self.value
-
-    def __float__(self):
-        return self.value.__float__()
-
-    def __int__(self):
-        return self.value.__int__()
-
-    def __bool__(self):
-        raise self.value.__bool__()
-
-    #
-    # Shift operations
-    #
-
-    def __lshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__lshift__(pyval(other))
-
-        return langctx.lshift(self, other)
-
-    def __rlshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rlshift__(pyval(other))
-
-        return langctx.lshift(other, self)
-
-    def __rshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rshift__(pyval(other))
-
-        return langctx.rshift(self, other)
-
-    def __rrshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rrshift__(pyval(other))
-
-        return langctx.rshift(other, self)
-
-    #
-    # Matmul
-    #
-
-    def __matmul__(self, other):
-        raise NotImplementedError
-
-    def __rmatmul__(self, other):
-        raise NotImplementedError
-
 
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
@@ -394,69 +470,9 @@ class IntegerProxy(NumberProxy, int):
         return f"int {value_str}"
 
     def __repr__(self):
+        if self.python_type is bool:
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
         return f"[IntegerProxy name={self.name}, value={self.value}]"
-
-    #
-    # dtype conversion operators
-    #
-
-    def __complex__(self):
-        return self.value.__complex__()
-
-    def __float__(self):
-        return self.value.__float__()
-
-    def __int__(self):
-        return self.value
-
-    def __bool__(self):
-        return self.value.__bool__()
-
-    #
-    # Shift operations
-    #
-
-    def __lshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__lshift__", int.__lshift__, self.value, pyval(other))
-
-        return langctx.lshift(self, other)
-
-    def __rlshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rlshift__", int.__rlshift__, self.value, pyval(other))
-
-        return langctx.lshift(other, self)
-
-    def __rshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rshift__", int.__rshift__, self.value, pyval(other))
-
-        return langctx.rshift(self, other)
-
-    def __rrshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return self._elementwise_binary_no_ctx("__rrshift__", int.__rrshift__, self.value, pyval(other))
-
-        return langctx.rshift(other, self)
-
-    #
-    # Matmul
-    #
-
-    def __matmul__(self, other):
-        raise NotImplementedError
-
-    def __rmatmul__(self, other):
-        raise NotImplementedError
 
 
 # TODO Review dtype conversions
@@ -480,68 +496,6 @@ class FloatProxy(NumberProxy, float):
 
     def __repr__(self):
         return f"[FloatProxy name={self.name}, value={self.value}]"
-
-    #
-    # dtype conversion operators
-    #
-
-    def __complex__(self):
-        return self.value.__complex__()
-
-    def __float__(self):
-        return self.value
-
-    def __int__(self):
-        return self.value.__int__()
-
-    def __bool__(self):
-        return self.value.__bool__()
-
-    #
-    # Shift operations
-    #
-
-    def __lshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__lshift__(pyval(other))
-
-        return langctx.lshift(self, other)
-
-    def __rlshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rlshift__(pyval(other))
-
-        return langctx.lshift(other, self)
-
-    def __rshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rshift__(pyval(other))
-
-        return langctx.rshift(self, other)
-
-    def __rrshift__(self, other):
-        langctx = get_langctx()
-
-        if langctx is None:
-            return pyval(self).__rrshift__(pyval(other))
-
-        return langctx.rshift(other, self)
-
-    #
-    # Matmul
-    #
-
-    def __matmul__(self, other):
-        raise NotImplementedError
-
-    def __rmatmul__(self, other):
-        raise NotImplementedError
 
 
 # TODO Add remaining dunders

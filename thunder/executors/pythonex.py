@@ -6,6 +6,7 @@ import operator
 import builtins
 import cmath
 
+import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol, BoundSymbol
@@ -108,6 +109,13 @@ tan = _elementwise_unary_factory("tan", math)
 tanh = _elementwise_unary_factory("tanh", math)
 trunc = _elementwise_unary_factory("trunc", math)
 
+
+# NOTE Python doens't define a signbit operation
+def signbit(bsym: BoundSymbol, a: Number) -> BoundSymbol:
+    sym = Symbol(name="_signbit_number", meta=None, _module=prims)
+    return sym.bind(a, output=bsym.output)
+
+
 #
 # Elementwise binary operations
 #
@@ -133,6 +141,7 @@ bitwise_and = _elementwise_binary_factory("and_", operator)
 bitwise_or = _elementwise_binary_factory("or_", operator)
 bitwise_xor = _elementwise_binary_factory("xor", operator)
 eq = _elementwise_binary_factory("eq", operator)
+fmod = _elementwise_binary_factory("fmod", math)
 ge = _elementwise_binary_factory("ge", operator)
 gt = _elementwise_binary_factory("gt", operator)
 le = _elementwise_binary_factory("le", operator)
@@ -182,6 +191,7 @@ _ops_map.update(
         PrimIDs.ROUND: (_elementwise_unary_check, pythonex_round),
         PrimIDs.RSQRT: (_never_executable, rsqrt),
         PrimIDs.SIGN: (_never_executable, sign),
+        PrimIDs.SIGNBIT: (_elementwise_unary_check, signbit),
         PrimIDs.SIN: (_elementwise_unary_check, sin),
         PrimIDs.SINH: (_elementwise_unary_check, sinh),
         PrimIDs.SQRT: (_elementwise_unary_check, sqrt),
@@ -196,6 +206,7 @@ _ops_map.update(
         PrimIDs.BITWISE_XOR: (_elementwise_binary_check, bitwise_xor),
         PrimIDs.DIV: (_elementwise_binary_check, truediv),
         PrimIDs.EQ: (_elementwise_binary_check, eq),
+        PrimIDs.FMOD: (_elementwise_binary_check, fmod),
         PrimIDs.GE: (_elementwise_binary_check, ge),
         PrimIDs.GT: (_elementwise_binary_check, gt),
         PrimIDs.LE: (_elementwise_binary_check, le),

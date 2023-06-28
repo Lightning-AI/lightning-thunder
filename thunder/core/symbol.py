@@ -18,7 +18,7 @@ from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import NumberProxy, variableify
+from thunder.core.proxies import Proxy, NumberProxy, variableify
 
 from thunder.core.trace import (
     get_tracectx,
@@ -65,7 +65,12 @@ def default_python_printer(
     else:
         result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
 
-    s = f"{result_str}{bsym.name_with_module()}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str})"
+    # Creates a comment describing the output
+    comment_str = ""
+    if isinstance(bsym.output, Proxy):
+        comment_str = f"  # {codeutils.prettyprint(out_printables, with_type=True)}"
+
+    s = f"{result_str}{bsym.name_with_module()}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
     return s
 
 

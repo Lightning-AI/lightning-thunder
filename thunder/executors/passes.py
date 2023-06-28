@@ -26,15 +26,15 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
 
     # NOTE These primitives are marked to not be collected because they dictate the function's output
     #   (return) or have side-effects (comment, print)
-    dont_collect = {prims.PrimIDs.RETURN, prims.PrimIDs.COMMENT, prims.PrimIDs.PRINT}
+    dont_collect = {prims.PrimIDs.RETURN, prims.PrimIDs.COMMENT, prims.PrimIDs.PRINT, prims.PrimIDs.UNPACK_TRIVIAL}
 
     for bsym in reversed(trace.bound_symbols):
         # Preserves symbols that should never be collected
         if bsym.sym.id in dont_collect:
-            dced.append(bsym)
-            continue
+            needed = True
+        else:
+            needed = False
 
-        needed = False
         some_unused = False
         nouts = []
         outs = bsym._flat_outs
@@ -71,7 +71,6 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
     dcetrace.set_provenance(TraceProvenance("Dead Code Elimination"))
-
     return dcetrace, [dcetrace]
 
 
@@ -87,7 +86,6 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     Returns:
         list: transformed trace
     """
-
     del_trace = from_trace(trace)
     bsyms = deque()
 
@@ -102,6 +100,7 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
     for bsym in reversed(trace.bound_symbols):
         if bsym.sym.id in comment_symbols:
+            bsyms.appendleft(bsym)
             continue
 
         flat_outs, _ = tree_flatten(bsym.output)

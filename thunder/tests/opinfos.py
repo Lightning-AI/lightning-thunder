@@ -1448,14 +1448,22 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
 
 # TODO Extend this generator
-def elementwise_binary_generator(op, device, dtype, requires_grad, **kwargs):
+def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
     yield from elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs)
 
-    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
-    b = make_tensor((4, 1), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    number = partial(make_number, dtype=dtype)
 
     # Tests broadcasting
+    a = make((4, 4), **kwargs)
+    b = make((4, 1), **kwargs)
     yield SampleInput(a, b)
+
+    if not no_rhs_numbers:
+        # Tests tensor x number
+        c = make((2, 2), **kwargs)
+        d = number(**kwargs)
+        yield SampleInput(c, d)
 
 
 # TODO: update dtypes with Thunder dtypes (when they exist)
@@ -1623,9 +1631,10 @@ elementwise_binary_ops.append(gt_opinfo)
 
 # NOTE Comparing to the reference implementation is important because torch.logical_and
 #   doesn't support complexhalf inputs on CPU or CUDA devices
+# NOTE Unfortunately, refs.logical_and does not support RHS numbers
 logical_and_opinfo = OpInfo(
     clang.logical_and,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch._refs.logical_and,
 )
 elementwise_binary_ops.append(logical_and_opinfo)
@@ -1704,9 +1713,10 @@ ne_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(ne_opinfo)
 
+# NOTE torch.nextafter doens't support RHS numbers
 nextafter_opinfo = OpInfo(
     clang.nextafter,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.nextafter,
     # NOTE: nextafter is supported by PyTorch only for bfloat16, float32,
     # and float64 arguments (after normal promotion rules) and by NVFuser
@@ -1727,9 +1737,12 @@ nextafter_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(nextafter_opinfo)
 
+# TODO pow can accept RHS numbers, but not negative RHS numbers when the LHS is an exact tensor
+#   we could extend the kwargs on elementwise_binary_generator to account for this when
+#   generating the RHS values
 pow_opinfo = OpInfo(
     clang.pow,
-    sample_input_generator=elementwise_binary_generator,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=None if LooseVersion(torch.__version__) < "1.13" else torch._refs.pow,
     test_directives=(
         # NOTE: PyTorch doesn't support bool pow

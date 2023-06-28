@@ -11,7 +11,7 @@ import torch
 import numpy as np
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import CollectionProxy, TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy
+from thunder.core.proxies import CollectionProxy, TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy, pytype
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 import thunder.core.utils as utils
@@ -529,7 +529,7 @@ def _convert_element_type_meta(
         utils.check(utils.is_numbertype(dtype), lambda: f"Trying to convert a number to non-numbertype object {dtype}")
 
         if isinstance(a, NumberProxy):
-            return numberproxy(dtype, utils.get_numberlike_value(a))
+            return numberproxy(dtype, dtype(utils.get_numberlike_value(a)))
 
         number_result = dtype(a)
         return number_result
@@ -600,7 +600,7 @@ def _elementwise_unary_meta(
     a: Union[TensorProxy, Number],
     *,
     name=None,
-    number_handler=None,
+    number_fn=None,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
 ):
@@ -612,12 +612,12 @@ def _elementwise_unary_meta(
         typ = utils.get_numberlike_type(a)
         val = utils.get_numberlike_value(a)
 
-        if val is None or number_handler is None:
+        if val is None or number_fn is None:
             return numberproxy(typ, None)
 
         utils.check(typ in supported_input_dtypes, lambda: f"Unsupported input dtype {typ}")
 
-        value = number_handler(a)
+        value = number_fn(a)
         result = numberproxy(type(value), value)
         return result
 
@@ -650,7 +650,7 @@ def _make_elementwise_unary_prim(
         meta=partial(
             _elementwise_unary_meta,
             name=name,
-            number_handler=number_fn,
+            number_fn=number_fn,
             output_dtype_kind=output_dtype_kind,
             supported_input_dtypes=supported_input_dtypes,
         ),
@@ -665,49 +665,49 @@ abs = _make_elementwise_unary_prim(
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT,
 )
 
-acos = make_prim(
+acos = _make_elementwise_unary_prim(
     PrimIDs.ACOS,
     "acos",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-acosh = make_prim(
-    PrimIDs.ACOSH,
-    "acosh",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
-)
+acosh = _make_elementwise_unary_prim(PrimIDs.ACOSH, "acosh", supported_input_dtypes=fp_math_dtypes)
 
-asin = make_prim(
+asin = _make_elementwise_unary_prim(
     PrimIDs.ASIN,
     "asin",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-asinh = make_prim(
+asinh = _make_elementwise_unary_prim(
     PrimIDs.ASINH,
     "asinh",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-atan = make_prim(
+atan = _make_elementwise_unary_prim(
     PrimIDs.ATAN,
     "atan",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-atanh = make_prim(
+atanh = _make_elementwise_unary_prim(
     PrimIDs.ATANH,
     "atanh",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-bitwise_not = make_prim(
+bitwise_not = _make_elementwise_unary_prim(
     PrimIDs.BITWISE_NOT,
     "bitwise_not",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=dtypes.exact_dtypes),
+    number_fn=operator.inv,
+    supported_input_dtypes=dtypes.exact_dtypes,
 )
 
 # TODO Should ceil accept float16 and bfloat16 types?
+# NOTE This primitive preserves the input's dtype for tensors
+#   but returns numbers as integers to be consistent with
+#   Python's math.ceil
 ceil = _make_elementwise_unary_prim(
     PrimIDs.CEIL,
     "ceil",
@@ -715,61 +715,63 @@ ceil = _make_elementwise_unary_prim(
     supported_input_dtypes=dtypes.float_dtypes,
 )
 
-cos = make_prim(
+cos = _make_elementwise_unary_prim(
     PrimIDs.COS,
     "cos",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-cosh = make_prim(
+cosh = _make_elementwise_unary_prim(
     PrimIDs.COSH,
     "cosh",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-erf = make_prim(
+erf = _make_elementwise_unary_prim(
     PrimIDs.ERF,
     "erf",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-erfc = make_prim(
+erfc = _make_elementwise_unary_prim(
     PrimIDs.ERFC,
     "erfc",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-erfcinv = make_prim(
+erfcinv = _make_elementwise_unary_prim(
     PrimIDs.ERFCINV,
     "erfcinv",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-erfinv = make_prim(
+erfinv = _make_elementwise_unary_prim(
     PrimIDs.ERFINV,
     "erfinv",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-exp = make_prim(
+exp = _make_elementwise_unary_prim(
     PrimIDs.EXP,
     "exp",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-exp2 = make_prim(
+exp2 = _make_elementwise_unary_prim(
     PrimIDs.EXP2,
     "exp2",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-expm1 = make_prim(
+expm1 = _make_elementwise_unary_prim(
     PrimIDs.EXPM1,
     "expm1",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
 # TODO Should floor accept float16 and bfloat16 types?
+# NOTE This preserves the input's dtype for tensors, but is consistent
+#   with math.floor for numbers (always returning an integer)
 floor = _make_elementwise_unary_prim(
     PrimIDs.FLOOR,
     "floor",
@@ -777,71 +779,72 @@ floor = _make_elementwise_unary_prim(
     supported_input_dtypes=dtypes.float_dtypes,
 )
 
-isfinite = make_prim(
+isfinite = _make_elementwise_unary_prim(
     PrimIDs.ISFINITE,
     "isfinite",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=dtypes.inexact_dtypes),
+    supported_input_dtypes=dtypes.inexact_dtypes,
 )
 
-lgamma = make_prim(
+lgamma = _make_elementwise_unary_prim(
     PrimIDs.LGAMMA,
     "lgamma",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-log = make_prim(
+log = _make_elementwise_unary_prim(
     PrimIDs.LOG,
     "log",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-log10 = make_prim(
+log10 = _make_elementwise_unary_prim(
     PrimIDs.LOG10,
     "log10",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-log1p = make_prim(
+log1p = _make_elementwise_unary_prim(
     PrimIDs.LOG1P,
     "log1p",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-log2 = make_prim(
+log2 = _make_elementwise_unary_prim(
     PrimIDs.LOG2,
     "log2",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-ndtri = make_prim(
+ndtri = _make_elementwise_unary_prim(
     PrimIDs.NDTRI,
     "ndtri",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-neg = make_prim(
+neg = _make_elementwise_unary_prim(
     PrimIDs.NEG,
     "neg",
-    meta=_elementwise_unary_meta,
+    number_fn=operator.neg,
 )
 
-reciprocal = make_prim(
+reciprocal = _make_elementwise_unary_prim(
     PrimIDs.RECIPROCAL,
     "reciprocal",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
 # TODO Review dtypes for round
-round = make_prim(
+round = _make_elementwise_unary_prim(
     PrimIDs.ROUND,
     "round",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    number_fn=builtins.round,
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-rsqrt = make_prim(
+rsqrt = _make_elementwise_unary_prim(
     PrimIDs.RSQRT,
     "rsqrt",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
 # NOTE jax.lax.sign and torch.sgn differ from numpy.sign in complex support
@@ -853,53 +856,61 @@ rsqrt = make_prim(
 # numpy.sign: https://numpy.org/doc/stable/reference/generated/numpy.sign.html
 # torch.sgn: https://pytorch.org/docs/stable/generated/torch.sgn.html
 # torch.sign: https://pytorch.org/docs/stable/generated/torch.sign.html
-sign = make_prim(
+sign = _make_elementwise_unary_prim(
     PrimIDs.SIGN,
     "sign",
-    meta=_elementwise_unary_meta,
 )
 
-signbit = make_prim(
+
+def _signbit_number(a: Number) -> bool:
+    return a < 0
+
+
+signbit = _make_elementwise_unary_prim(
     PrimIDs.SIGNBIT,
     "signbit",
-    meta=partial(_elementwise_unary_meta, output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL),
+    number_fn=_signbit_number,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
 
-sin = make_prim(
+sin = _make_elementwise_unary_prim(
     PrimIDs.SIN,
     "sin",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-sinh = make_prim(
+sinh = _make_elementwise_unary_prim(
     PrimIDs.SINH,
     "sinh",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-sqrt = make_prim(
+sqrt = _make_elementwise_unary_prim(
     PrimIDs.SQRT,
     "sqrt",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-tan = make_prim(
+tan = _make_elementwise_unary_prim(
     PrimIDs.TAN,
     "tan",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
-tanh = make_prim(
+tanh = _make_elementwise_unary_prim(
     PrimIDs.TANH,
     "tanh",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
 )
 
 # TODO Review dtypes for trunc (with round and ceil and floor)
-trunc = make_prim(
+# NOTE trunc preserves the dtype of input tensors, but is consistent
+#   with Python's trunc for numbers and always returns an integer
+trunc = _make_elementwise_unary_prim(
     PrimIDs.TRUNC,
     "trunc",
-    meta=partial(_elementwise_unary_meta, supported_input_dtypes=fp_math_dtypes),
+    supported_input_dtypes=fp_math_dtypes,
+    number_fn=math.trunc,
 )
 
 #
@@ -914,7 +925,7 @@ def _elementwise_binary_meta(
     b: Union[TensorProxy, Number],
     *,
     name=None,
-    number_handler=None,
+    number_fn=None,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
 ) -> Union[TensorProxy, Number]:
@@ -937,10 +948,10 @@ def _elementwise_binary_meta(
 
         # Handles the case where a number has an indeterminate value, or the operation has
         #   no number handler, by returning another indeterminate value
-        if aval is None or bval is None or number_handler is None:
+        if aval is None or bval is None or number_fn is None:
             return numberproxy(numbertype, None)
 
-        value = number_handler(aval, bval)
+        value = number_fn(aval, bval)
         return numberproxy(type(value), value)
 
     # Checks same shape
@@ -983,7 +994,7 @@ def _make_elementwise_binary_prim(
         meta=partial(
             _elementwise_binary_meta,
             name=name,
-            number_handler=number_fn,
+            number_fn=number_fn,
             output_dtype_kind=output_dtype_kind,
             supported_input_dtypes=supported_input_dtypes,
         ),
@@ -1008,24 +1019,26 @@ atan2 = _make_elementwise_binary_prim(
 bitwise_and = _make_elementwise_binary_prim(
     PrimIDs.BITWISE_AND,
     "bitwise_and",
+    number_fn=operator.and_,
     supported_input_dtypes=dtypes.exact_dtypes,
 )
 
 bitwise_or = _make_elementwise_binary_prim(
     PrimIDs.BITWISE_OR,
     "bitwise_or",
+    number_fn=operator.or_,
     supported_input_dtypes=dtypes.exact_dtypes,
 )
 
 bitwise_xor = _make_elementwise_binary_prim(
     PrimIDs.BITWISE_XOR,
     "bitwise_xor",
+    number_fn=operator.xor,
     supported_input_dtypes=dtypes.exact_dtypes,
 )
 
 
 def _div_numbers(a: Number, b: Number) -> Number:
-    print("_div_numbers!")
     if dtypes.is_exact_dtype(type(a)) and dtypes.is_exact_dtype(type(b)):
         # Accounts for rounding towards zero instead of flooring
         if (a >= 0) != (b >= 0) and a % b:
@@ -1036,6 +1049,10 @@ def _div_numbers(a: Number, b: Number) -> Number:
     return a / b
 
 
+# NOTE This div is defined as equivalent to C-style division,
+#   which is true division when computed for floating inputs
+#   and rtz division for exact inputs
+# See https://en.cppreference.com/w/cpp/numeric/math/div
 div = _make_elementwise_binary_prim(
     PrimIDs.DIV,
     "div",
@@ -1054,9 +1071,14 @@ eq = _make_elementwise_binary_prim(
 #   fmod is defined as fmod(a, b) == a - trunc_div(a, b) * b
 #   It is the complement to truncation dividing a and b, unlike
 #   remainder, which is the complement to floor dividing a and b
+# NOTE This definition of fmod is consistent with C++'s std::fmod
+#   See https://en.cppreference.com/w/cpp/numeric/math/fmod
+# NOTE This definition of fmod is consistent with Python's
+#   See https://docs.python.org/3/library/math.html#math.fmod
 fmod = _make_elementwise_binary_prim(
     PrimIDs.FMOD,
     "fmod",
+    number_fn=math.fmod,
     supported_input_dtypes=math_dtypes,
 )
 
@@ -1164,10 +1186,16 @@ sub = _make_elementwise_binary_prim(
 # TODO use device properly
 def _where_meta(pred, a, b):
     # Checks types
-    # NOTE pred must be a tensor or bool
-    utils.check_type(pred, (TensorProxy, bool))
+    # NOTE pred must be a bool tensor or bool (this is checked later)
+    utils.check_type(pred, (TensorProxy, Number))
     utils.check_type(a, (TensorProxy, Number))
     utils.check_type(b, (TensorProxy, Number))
+
+    if isinstance(pred, Number):
+        utils.check(
+            pytype(pred) is bool,
+            lambda: f"Expected pred to be a boolean number, but found a number of type {pytype(pred)}",
+        )
 
     # Checks devices and determines result device
     utils.check_same_device(pred, a, b)
