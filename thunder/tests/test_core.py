@@ -1855,6 +1855,211 @@ def test_traceback():
     assert "LC.gen" in excinfo.traceback[-1].path
 
 
+@instantiate(
+    dtypes=NOTHING,
+    executors=(
+        nvFuserExecutor,
+        # NOTE torch executor does not have bookend optimization.
+        # See comment: https://github.com/Lightning-AI/lightning-thunder/issues/571#issuecomment-1610778432
+    ),
+)
+def test_bookend_meta_optimization(executor, device, _):
+    test_cases = list()
+
+    a = torch.ones(2, 3, 5, device=device, dtype=torch.float32)
+
+    # one transpose at the beginning
+    # should be moved out of fusion
+    def func_0(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.tanh()
+        t2 = t1.sin()
+        return t2
+
+    test_cases.append((func_0, 1))
+
+    # one transpose at the end
+    # should be moved out of fusion
+    def func_1(t):
+        t0 = t.tanh()
+        t1 = t0.sin()
+        t2 = t1.transpose(0, 1)
+        return t2
+
+    test_cases.append((func_1, 1))
+
+    # one transpose at the beginning and another at the end
+    # both should be moved out of fusion
+    def func_2(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.tanh()
+        t2 = t1.sin()
+        t3 = t2.transpose(0, 2)
+        return t3
+
+    test_cases.append((func_2, 2))
+
+    # a couple independent transposes at the beginning
+    # both should be moved out of fusion
+    def func_3(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.tanh()
+        t2 = t1.sin()
+
+        t3 = t.transpose(0, 2)
+        t4 = t3.sin()
+        t5 = t4.tanh()
+        return t2, t5
+
+    test_cases.append((func_3, 2))
+
+    # a couple independent transposes at the end
+    # both should be moved out of fusion
+    def func_4(t):
+        t0 = t.tanh()
+        t1 = t0.sin()
+        t2 = t1.transpose(0, 1)
+
+        t3 = t.sin()
+        t4 = t3.tanh()
+        t5 = t4.transpose(0, 2)
+        return t2, t5
+
+    test_cases.append((func_4, 2))
+
+    # a couple chained transposes at the beginning
+    # both should be moved out of fusion
+    def func_5(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.transpose(0, 2)
+        t2 = t1.tanh()
+        t3 = t2.sin()
+        return t3
+
+    test_cases.append((func_5, 2))
+
+    # a couple chained transposes at the end
+    # both should be moved out of fusion
+    def func_6(t):
+        t0 = t.tanh()
+        t1 = t0.sin()
+        t2 = t1.transpose(0, 1)
+        t3 = t2.transpose(0, 2)
+        return t3
+
+    test_cases.append((func_6, 2))
+
+    # a couple chained transposes at the beginning and end
+    # both should be moved out of fusion
+    def func_7(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.transpose(0, 2)
+        t2 = t1.tanh()
+        t3 = t2.sin()
+        t4 = t3.transpose(0, 1)
+        t5 = t4.transpose(0, 2)
+        return t5
+
+    test_cases.append((func_7, 4))
+
+    # complicated case, where two non-meta ops are each sandwiched by transpose
+    # the two transposes on the edge should be moved out of fusion
+    def func_8(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.tanh()
+        # transpose in the middle should stay
+        t2 = t1.transpose(0, 1)
+        t3 = t2.sin()
+        t4 = t3.transpose(0, 2)
+        return t4
+
+    test_cases.append((func_8, 2))
+
+    # NOTE func_9 and func_10 are symmetrical, this is designed to double check our toposort based approach can break
+    # ties
+
+    # complicated case, where two branches have transpose ops towards the end
+    # the two transposes on the edge should be moved out of fusion
+    def func_9(t):
+        t0 = t.tanh()
+        t1 = t0.sin()
+        t2 = t1.transpose(0, 1)
+        t3 = t2.transpose(2, 1)
+
+        t4 = t.sin()
+        t5 = t4.tanh()
+        t6 = t5.transpose(0, 2)
+        t7 = t6.sin()
+        return t3, t7
+
+    test_cases.append((func_9, 2))
+
+    # complicated case, where two branches have transpose ops towards the end
+    # the two transposes on the edge should be moved out of fusion
+    def func_10(t):
+        t0 = t.tanh()
+        t1 = t0.sin()
+        t2 = t1.transpose(0, 1)
+        t3 = t2.sin()
+
+        t4 = t.sin()
+        t5 = t4.tanh()
+        t6 = t5.transpose(0, 2)
+        t7 = t6.transpose(2, 1)
+        return t3, t7
+
+    test_cases.append((func_10, 2))
+
+    # complicated case, where a chain of transposed operations is both an output and consumed as an intermediate
+    # no transposes should be removed
+    def func_11(t):
+        t0 = t.tanh()
+        t1 = t0.sin()
+        t2 = t1.transpose(0, 1)
+        t3 = t2.transpose(0, 2)
+
+        t4 = t3.sin()
+        return t3, t4
+
+    test_cases.append((func_11, 0))
+
+    # complicated case
+    def func_12(t):
+        t0 = t.transpose(0, 1)
+        t1 = t0.transpose(0, 2)
+        t2 = t1.tanh()
+        t3 = t2 + 1.0
+        t4 = t3.transpose(2, 1)
+        t4 = t4.transpose(0, 1)
+
+        t5 = t * 0.5
+        # this is the only transpose that should stay in fusion, because it is surrounded by non-meta ops
+        t6 = t5.transpose(0, 2)
+        t7 = t6.tanh()
+
+        t8 = t1.transpose(1, 2)
+
+        t9 = t.transpose(2, 1)
+        t10 = t9.tanh()
+
+        t11 = t.transpose(1, 2)
+        t12 = t11.transpose(0, 2)
+        t13 = t12.transpose(0, 1)
+
+        return t4, t6, t7, t8, t10, t13
+
+    test_cases.append((func_12, 9))
+
+    for func, num_permute in test_cases:
+        cfoo = thunder.compile(func)
+
+        _ = cfoo(a)
+        traces = thunder.last_traces(cfoo)
+        exposed_permute = list(filter(lambda x: x.sym.name == "permute", traces[-1].bound_symbols))
+
+        assert len(exposed_permute) == num_permute
+
+
 @instantiate(dtypes=NOTHING)
 def test_inplace(executor, device, _):
     # Usually in this scenario we would make a big list of

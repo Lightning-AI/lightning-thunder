@@ -112,7 +112,7 @@ def test_apply_rematerialization_producer(executor, device, _):
     assert new_producer.sym.name == producer.sym.name
     assert new_producer.args == producer.args
     assert new_producer.subsymbols == producer.subsymbols
-    assert len(new_producer.output) == 4
+    assert len(new_producer.output) == 2
     assert cut[1] in (x.name for x in new_producer.output)
     assert external_producer_outputs[0] in (x.name for x in new_producer.output)
 

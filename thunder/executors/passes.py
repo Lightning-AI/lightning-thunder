@@ -9,7 +9,7 @@ from thunder.core.utils import ProxyDict
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten
 import thunder.core.prims as prims
-from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor
+from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor, group_bookend_meta_ops
 from thunder.core.proxies import Proxy, variableify, unvariableify
 from thunder.executors import torchex as TorchEx
 
@@ -296,21 +296,30 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         region = node.node.region
         ex = region.executor
 
+        def _fuse_region_with_executor(executor, region_fuse):
+            if executor not in executor_ctrs:
+                executor_ctrs[executor] = 0
+            counter = executor_ctrs[executor]
+            executor_ctrs[executor] += 1
+
+            region_fuse.counter = counter
+            fused_bsyms.extend(executor.fuse(region_fuse))
+
         # Regions that would go to nvFuser but are entirely composed of shape operations
         #   are sent to the torch executor instead
         # TODO Think about being more clever about when this occurs
         #   Today fusion happens after flattening, but we should toposort and do this
         #   analysis before flattening occurs
-        if ex.name() == Executor.NVFUSER and region.only_shape_operations():
-            ex = TorchEx
+        if ex.name() == Executor.NVFUSER:
+            if region.only_shape_operations():
+                _fuse_region_with_executor(TorchEx, region)
+            else:
+                list_region = group_bookend_meta_ops(region, producers, consumers)
+                for sub_region in list_region:
+                    _fuse_region_with_executor(sub_region.executor, sub_region)
+        else:
+            _fuse_region_with_executor(ex, region)
 
-        if ex not in executor_ctrs:
-            executor_ctrs[ex] = 0
-        counter = executor_ctrs[ex]
-        executor_ctrs[ex] += 1
-
-        region.counter = counter
-        fused_bsyms.extend(ex.fuse(region))
         node = toposorted.next()
 
     # Constructs the new trace
