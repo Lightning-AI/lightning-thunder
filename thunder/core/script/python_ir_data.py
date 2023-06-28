@@ -307,8 +307,8 @@ def make_return(is_jump_target: bool) -> dis.Instruction:
     )
 
 
-def get_instruction(opname: str, arg: Optional[int]) -> dis.Instruction:
-    i = dis.Instruction(
+def get_instruction(opname: str, arg: Optional[int], **kwargs) -> dis.Instruction:
+    ctor_kwargs = dict(
         opname=opname,
         opcode=dis.opmap.get(opname, -1),
         arg=arg,
@@ -318,7 +318,8 @@ def get_instruction(opname: str, arg: Optional[int]) -> dis.Instruction:
         starts_line=None,
         is_jump_target=False,
     )
-    return i
+    ctor_kwargs.update(kwargs)
+    return dis.Instruction(**ctor_kwargs)
 
 
 def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:
@@ -339,6 +340,58 @@ def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:
         return position + 1 + instruction.arg
 
     return None
+
+
+def debug_compare_functions_print(diffs: dict[str, Tuple[list, list]]):
+    for k, (v1, v2) in diffs.items():
+        if not (v1 == None and v2 == None):
+            print(f"Differences in: {k}")
+            print(f"  CodeObject 1: {v1}")
+            print(f"  CodeObject 2: {v2}")
+
+
+def debug_compare_functions(
+    code1: Union[CodeType, Callable], code2: Union[CodeType, Callable], *, show=False
+) -> dict[str, Tuple[list, list]]:
+    if not isinstance(code1, CodeType):
+        code1 = code1.__code__
+    if not isinstance(code2, CodeType):
+        code2 = code2.__code__
+
+    attrs = [
+        "co_argcount",
+        "co_kwonlyargcount",
+        "co_nlocals",
+        "co_stacksize",
+        "co_flags",
+        "co_consts",
+        "co_names",
+        "co_varnames",
+        "co_filename",
+        "co_name",
+        "co_freevars",
+        "co_cellvars",
+    ]
+
+    diffs = {}
+    for attr in attrs:
+        v1 = getattr(code1, attr)
+        v2 = getattr(code2, attr)
+
+        if v1 != v2:
+            if isinstance(v1, dict) and isinstance(v2, dict):
+                diffs[attr] = (v1 - v2, v2 - v1)
+            if isinstance(v1, str) and isinstance(v2, str):
+                diffs[attr] = (v1, v2)
+            elif isinstance(v1, Iterable) and isinstance(v2, Iterable):
+                diffs[attr] = (set(v1) - set(v2), set(v2) - set(v1))
+            else:
+                diffs[attr] = (v1, v2)
+
+    if show:
+        debug_compare_functions_print(diffs)
+
+    return diffs
 
 
 return_instructions = {dis.opmap[name] for name in ("RETURN_VALUE", "RAISE_VARARGS", "RERAISE") if name in dis.opmap}

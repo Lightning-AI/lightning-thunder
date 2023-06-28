@@ -67,6 +67,19 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                 )
                 new_n.inserted_for = n
                 insert_before(new_n, n)
+        elif v.is_global and v.value in __builtins__:
+            # Builtins are unmarshallable and meant to be loaded globally. If they are
+            # included in co_consts, the resulting function cannot go into a .pyc file.
+            # Originally, the plan was to check if the value is a builtin by checking
+            # if its type is "<class 'builtin_function_or_method'>". However, this
+            # turned out not to work since torch for some reason decided to set the
+            # type of `torch.nn.functional.has_torch_function` to also be a builtin.
+            if v.name not in names:
+                names.append(v.name)
+            idx = names.index(v.name)
+            new_n = Node(i=get_instruction(opname="LOAD_GLOBAL", arg=idx), outputs=[v], inputs=[])
+            new_n.inserted_for = n
+            insert_before(new_n, n)
         elif v.is_global:  # make binding the globals optional?
             if v.value not in consts:
                 consts.append(v.value)
@@ -393,7 +406,13 @@ def generate_function(gr: "Graph") -> Callable:
     )
 
     # types.FunctionType(code, globals, name=None, argdefs=None, closure=None)
-    func = types.FunctionType(c, {}, argdefs=tuple(gr.func_defaults))
+    func = types.FunctionType(
+        c,
+        {
+            "__builtins__": __builtins__,
+        },
+        argdefs=tuple(gr.func_defaults),
+    )
     func.__kwdefaults__ = gr.func_kwdefaults
     func._gr = orig_gr
 

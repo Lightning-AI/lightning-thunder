@@ -434,6 +434,20 @@ def test_inlining_function_and_convert_to_thunder():
 
     assert_close(torch_result, thunder_result)
 
+@skipif_not_python_3_10
+@instantiate(dtypes=(thunder.float32,))
+def test_builtin_convert_to_thunder(executor, device, dtype):
+    def foo(a, b):
+        return sorted(a), b
+    
+    a = []
+    b = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    thunder_fn = executor.make_callable(foo, disable_preprocessing=False)
+
+    thunder_result = thunder_fn(a, b)
+    torch_result = foo(a, b)
+    assert_close(thunder_result, torch_result)
+    
 
 @skipif_not_python_3_10
 @instantiate(dtypes=(thunder.float32,))
@@ -746,6 +760,25 @@ def test_partial():
     actual = thunder_fn(b=1)
     assert expected == actual
 
+
+@skipif_not_python_3_10
+def test_codeobject_debug():
+    def f1(x):
+        return torch.sin(x), x
+    def f2(y):
+        return torch.sin(y), y
+
+    cf1 = thunder.compile(f1)
+    cf2 = thunder.compile(f2)
+
+    d1 = thunder.core.script.python_ir_data.debug_compare_functions(f1, f2, show=True)
+    d2 = thunder.core.script.python_ir_data.debug_compare_functions(cf1, cf2, show=True)
+
+    # Asserting the current behavior.
+    # Copying over the co_varnames seems like a bit much.
+    # Do we want to enforce the co_name to match? Currently it's always "_fn".
+    assert d1 == {'co_varnames': ({'x'}, {'y'}), 'co_name': ('f1', 'f2')}
+    assert d2 == {}
 
 # @instantiate(dtypes=(thunder.float32,))
 # def test_local_acquired_translation(executor, device, dtype):
