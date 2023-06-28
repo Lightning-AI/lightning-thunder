@@ -7,6 +7,7 @@ import pytest
 import torch
 from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
+from types import FunctionType
 
 import thunder
 from thunder import last_traces, cache_mode, cache_hits, cache_misses
@@ -1853,6 +1854,101 @@ def test_traceback():
     assert "on a bool tensor" in str(excinfo.value)
     assert "torch.neg" in str(excinfo.traceback[-1].statement)
     assert "LC.gen" in excinfo.traceback[-1].path
+
+
+@instantiate(dtypes=NOTHING)
+def test_inplace(executor, device, _):
+    # Usually in this scenario we would make a big list of
+    # the names of methods to test, then use getattr() to call
+    # them in the trace. However, this would not also test that
+    # the syntax wouldn't get broken by preprocessing.
+
+    def test_add(s, o):
+        s += o
+        return s
+
+    def test_and(s, o):
+        s &= o
+        return s
+
+    def test_concat(s, o):
+        s.__iconcat__(o)
+        return s
+
+    def test_floordiv(s, o):
+        s //= o
+        return s
+
+    def test_lshift(s, o):
+        s <<= o
+        return s
+
+    def test_matmul(s, o):
+        s @= o
+        return s
+
+    def test_mod(s, o):
+        s %= o
+        return s
+
+    def test_mul(s, o):
+        s *= o
+        return s
+
+    def test_or(s, o):
+        s |= o
+        return s
+
+    def test_pow(s, o):
+        s **= o
+        return s
+
+    def test_rshift(s, o):
+        s >>= o
+        return s
+
+    def test_sub(s, o):
+        s -= o
+        return s
+
+    def test_truediv(s, o):
+        s /= o
+        return s
+
+    def test_xor(s, o):
+        s ^= o
+        return s
+
+    t1 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    t2 = make_tensor((1, 2), device=device, dtype=torch.float32)
+
+    tests = (
+        test_add,
+        test_and,
+        test_concat,
+        test_floordiv,
+        test_lshift,
+        test_matmul,
+        test_mod,
+        test_mul,
+        test_or,
+        test_pow,
+        test_rshift,
+        test_sub,
+        test_truediv,
+        test_xor,
+    )
+
+    for t in tests:
+        cfn = thunder.compile(t)
+        with pytest.raises(RuntimeError, match="not supported"):
+            cfn(t1, t2)
+        with pytest.raises(RuntimeError, match="not supported"):
+            cfn(5, 6)
+        with pytest.raises(RuntimeError, match="not supported"):
+            cfn(1.2, 2.4)
+        with pytest.raises(RuntimeError, match="not supported"):
+            cfn(1.2j, 2.4j)
 
 
 @instantiate(dtypes=NOTHING)

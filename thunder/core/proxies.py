@@ -91,6 +91,52 @@ class Proxy(VariableInterface, ProxyInterface):
     def type_string(self) -> str:
         return "Any"
 
+    #
+    # Inplace Operations
+    #
+
+    def __iadd__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __iand__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __iconcat__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __ifloordiv__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __ilshift__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __imatmul__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __imod__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __imul__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __ior__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __ipow__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __irshift__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __isub__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __itruediv__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
+    def __ixor__(self, other):
+        raise RuntimeError("Inplace operators are not supported.")
+
 
 class CollectionProxy(Proxy):
     def __init__(self, coll: Any, *, name: Optional[str] = None):
