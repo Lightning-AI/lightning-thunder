@@ -169,8 +169,8 @@ def method_lookup(name: str) -> Optional[Symbol]:
 #   above
 # NOTE Functions that set is_method=True must be able to accept a tensor as their first positional input
 class torchsymbol:
-    def __init__(self, torchfn: Callable, *, is_method: bool = False, id: Optional[str] = None):
-        self.torchfn = torchfn
+    def __init__(self, *torchfns, is_method: bool = False, id: Optional[str] = None):
+        self.torchfns = torchfns
         self.is_method = is_method
         self.id = id
 
@@ -206,8 +206,9 @@ class torchsymbol:
             torch_method = getattr(torch.Tensor, fn.__name__)
             _torch_to_thunder_function_map[torch_method] = sym
 
-        if self.torchfn is not None:
-            _torch_to_thunder_function_map[self.torchfn] = sym
+        if self.torchfns is not None:
+            for torchfn in self.torchfns:
+                _torch_to_thunder_function_map[torchfn] = sym
 
         return sym
 
@@ -760,7 +761,7 @@ def ones_like(
 # TODO: based on uniform_, check if Torch now has a functional uniform
 # NOTE: the uniform_ documentation suggests the interval is specified using "from" and "to",
 #   but from is a reserved keyword in Python
-@torchsymbol(torchfn=None, is_method=False, id="torch.uniform")
+@torchsymbol(is_method=False, id="torch.uniform")
 def uniform(
     shape: Sequence[int],
     minval: Number = 0.0,
@@ -775,7 +776,7 @@ def uniform(
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
 
 
-@torchsymbol(torchfn=None, is_method=False, id="torch.uniform_like")
+@torchsymbol(is_method=False, id="torch.uniform_like")
 def uniform_like(
     a: TensorLike,
     /,
@@ -1658,7 +1659,7 @@ def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_fr
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, is_method=True)
+@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
 def softmax(a, dim, dtype=None):
     result_dtype = dtype or a.dtype
     computation_dtype = utils.get_computation_dtype(result_dtype)
