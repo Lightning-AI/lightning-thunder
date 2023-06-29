@@ -271,6 +271,10 @@ def find_cut(
         edges.append((src, dst))
         capacities.append(capacity)
 
+    utils.check(
+        len(required_consumer_vars) > 0,
+        "The consumer has no outputs. This is not supported by the cut finding algorithm.",
+    )
     for var_name in required_consumer_vars:
         add_edge(var_name + "_in", "sink", capacity=float("inf"))
 
@@ -294,6 +298,11 @@ def find_cut(
             for out in user._flat_outs:
                 user_name = out.name
                 add_edge(var_name + "_out", user_name + "_in", capacity=float("inf"))
+
+    if not required_producer_vars:
+        # If there are no required producer variables, we need to make sure that
+        # the source node is added to the graph.
+        add_edge("source", "source", capacity=float("inf"))
 
     for var_name in required_producer_vars:
         add_edge("source", var_name + "_in", capacity=float("inf"))

@@ -236,6 +236,34 @@ def test_find_cut_dropout(executor, device, _):
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
 )
+def test_find_cut_one_producer_op_no_args(executor, device, _):
+    # TODO: This test will fail once
+    # https://github.com/Lightning-AI/lightning-thunder/issues/601 is fixed
+    # You can remove this test once the issue is fixed
+    # This test would fail on the first assert statement
+    def func(x, device):
+        t1 = torch.full((3, 3), 1.0, device=device)
+        t2 = x @ x.transpose(-2, -1)
+        t3 = torch.cos(t2 + t1)
+        t4 = torch.sin(t3)
+        return t4
+
+    t0 = make_tensor(3, 3, dtype=torch.float32, device=device)
+    _, traces = thunder.compile_with_info(func)(t0, device)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[-1]
+    cut = find_cut(trace, producer, consumer)
+    assert not cut
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
 def test_rematerialization(executor, device, _):
     n_fusion_regions = 7
 
