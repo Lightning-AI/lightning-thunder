@@ -444,7 +444,7 @@ def _condense_values(protoblocks: tuple[ProtoBlock, ...]) -> None:
     # graph logic if we first convert all values to indices.
     values = tuple(G.nodes)
     value_to_idx = {value: idx for idx, value in enumerate(values)}
-    G = nx.DiGraph((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges)
+    G = nx.from_edgelist(((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges), nx.DiGraph)
     index_alias_map: dict[int, set[int]] = {}
 
     # We can decompose the graph into disjoint use-def chains and analyze them independently.
@@ -463,11 +463,11 @@ def _condense_values(protoblocks: tuple[ProtoBlock, ...]) -> None:
             # After grouping we're left with:
             #   {0, 1} → 2 → {3, 4} → 5
             clusters: dict[int, int] = {}
-            for cluster in nx.connected_components(nx.Graph(equality_edges)):
+            for cluster in nx.connected_components(nx.from_edgelist(equality_edges, nx.Graph)):
                 # The choice of "canonical" index is arbitrary as long as it is consistent.
                 clusters.update({i: min(cluster) for i in cluster})
             assert len(clusters) == len(subgraph)
-            reduced_subgraph = nx.DiGraph((clusters.get(i, i), clusters.get(j, j)) for i, j in subgraph.edges)
+            reduced_subgraph = nx.from_edgelist(((clusters.get(i, i), clusters.get(j, j)) for i, j in subgraph.edges), nx.DiGraph)
             reduced_subgraph.remove_edges_from(nx.selfloop_edges(reduced_subgraph))
             num_equality_edges = len(equality_edges)
 
@@ -486,7 +486,7 @@ def _condense_values(protoblocks: tuple[ProtoBlock, ...]) -> None:
 
         # Once we isolate the irreducible values we can flood them through the
         # graph to resolve the `_AbstractRef`s.
-        for cluster in nx.connected_components(nx.Graph(equality_edges)):
+        for cluster in nx.connected_components(nx.from_edgelist(equality_edges, nx.Graph)):
             cluster_subgraph = subgraph.subgraph(cluster)
             cluster_roots = {idx for idx in cluster if not isinstance(values[idx], _AbstractRef)}
             assert cluster_roots, [values[idx] for idx in cluster]
@@ -907,6 +907,15 @@ def acquire_partial(
     return gr
 
 
+@functools.cache
+def _construct_protoblocks(func):
+    """Protoblocks are parse level constructs, so it is safe to reuse them."""
+    protoblocks = parse_bytecode(func)
+    _add_transitive(protoblocks)
+    _condense_values(protoblocks)
+    return protoblocks
+
+
 def acquire_method(
     method: Callable,
     module: Optional[object] = None,
@@ -925,11 +934,7 @@ def acquire_method(
     if mro_klass is None and module is not None:
         mro_klass = type(module)
 
-    protoblocks = parse_bytecode(func)
-    _add_transitive(protoblocks)
-    _condense_values(protoblocks)
-    gr = _bind_to_graph(protoblocks, func, method_self, mro_klass)
-
+    gr = _bind_to_graph(_construct_protoblocks(func), func, method_self, mro_klass)
     gr.source_start_line = 1
     try:
         gr.source_lines, _ = inspect.getsourcelines(method)

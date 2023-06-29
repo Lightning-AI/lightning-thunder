@@ -227,6 +227,18 @@ class PhiValue(Value):
         del self.values[idx]
         del self.jump_sources[idx]
 
+    def replace_value(self, v_old: Value, v_new: Value) -> None:
+        if v_old is v_new:
+            return
+
+        assert v_new not in self.values
+        idx = self.values.index(v_old)
+        self.values[idx] = v_new
+        self.jump_sources[idx] = None
+
+        v_old.phi_values.remove(self)
+        v_new.phi_values.append(self)
+
 
 # A node corresponds to one Python bytecode instruction given in .i
 # it has Values as .inputs and .outputs
@@ -484,34 +496,30 @@ def replace_values(
     # - value.parent for other values
     # - phi nodes
     # - graph input (?) / initial vars
-    values_currently_processed = set()
+    processed = set()
 
     def map_values(v: Value) -> Value:
         # do not call map_values without guarding for infinite recursion
+        if v in processed:
+            return value_map.get(v, v)
+        processed.add(v)
+
         if v in value_map:
             if follow_phi_values:
                 for pv in v.phi_values[:]:
-                    assert len(pv.values) == len(pv.jump_sources)
-                    pv.remove_value(v)
-                    pv.add_missing_value(value_map[v])
+                    pv.replace_value(v, value_map[v])
                     assert len(pv.values) == len(pv.jump_sources)
             return value_map[v]
-        # guard from infinite recursion in loops (the abvoe does not call map_values)...
-        if v in values_currently_processed:
-            return value_map.get(v, v)
-        values_currently_processed.add(v)
+
         if isinstance(v.value, MROAwareObjectRef):
             v.value.obj = map_values(v.value.obj)
         if v.parent is not None:
             v.parent = map_values(v.parent)
         if isinstance(v, PhiValue):
-            assert len(v.values) == len(v.jump_sources)
             for ov in v.values:
                 nv = map_values(ov)
-                v.remove_value(ov)
-                v.add_missing_value(nv)
+                v.replace_value(ov, nv)
             assert len(v.values) == len(v.jump_sources)
-        values_currently_processed.remove(v)
         return v
 
     def process_block(bl: Block) -> None:

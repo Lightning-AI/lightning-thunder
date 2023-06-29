@@ -429,6 +429,7 @@ def _prettyprint_stats(name, stats):
         textwrap.dedent(
             f"""\
         {name} results:
+            The static init time is: {ns_to_us(stats.get('static_init', 'N/A'))}{us}
             The median time of {stats['iters']} post-warmup iterations was {ns_to_us(stats['median'])}{us}
             The initial iteration took {ns_to_us(stats['initial'])}{us}
             The final iteration took {ns_to_us(stats['final'])}{us}
@@ -1213,8 +1214,17 @@ def benchmark(
         except:
             pass
 
+        t0 = time.time()
+        x = torch.mm(x := torch.ones((1024, 1024), device="cuda"), x)
+        del x
+        cuda_init_time = time.time() - t0
+
+        t0 = time.time()
         name, fn, _ = benchmark.compiled_fn(executor)
+        static_init_time = time.time() - t0
+
         stats = time_ns(fn, benchmark.make_batch, warmup_iters=warmup_iters, iters=iters)
+        stats["static_init"] = static_init_time * 1e9
         _prettyprint_stats(name, stats)
 
         if profile:

@@ -15,6 +15,7 @@ from thunder.core.script.graph import (
     insert_after,
 )
 from thunder.core.script.python_ir_data import get_instruction
+from thunder.core.utils import OrderedSet
 
 
 def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]:
@@ -88,7 +89,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
             new_n.inserted_for = n
             insert_before(new_n, n)
         else:
-            idx = local_vars.index(v)
+            idx = local_vars[v]
             # assert idx >= 0
             new_n = Node(i=get_instruction(opname="LOAD_FAST", arg=idx), outputs=[v], inputs=[])
             new_n.inserted_for = n
@@ -98,22 +99,24 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
         for n in bl.nodes:
             n.block = bl
 
-    local_vars: list[Value] = []
-    lv_names = []
+    local_vars: dict[Value, int] = {}
+    lv_names: OrderedSet[str] = OrderedSet()
 
     def get_or_add_lv(v: Value, name: Optional[str] = None) -> int:
-        try:
-            idx = local_vars.index(v)
-        except ValueError:
+        idx = local_vars.get(v)
+        if idx is None:
             idx = len(local_vars)
-            local_vars.append(v)
+            local_vars[v] = idx
+
             # handle name collisions...
             if name is None:
                 name = v.name
+
             if name is None:
                 name = f"_tmp_{idx}"
             else:
                 name = name.replace(".", "_").replace("[", "").replace("]", "")
+
             if not name[:1].isalpha():
                 name = "_" + name
             fullname = name
@@ -121,7 +124,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
             while fullname in lv_names:
                 suffix += 1
                 fullname = f"{name}_{suffix}"
-            lv_names.append(fullname)
+            lv_names.add(fullname)
             if v.name is None:  # TODO: or do this always?
                 v.name = fullname
         return idx
@@ -172,7 +175,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
     # inputs in phi values
     last_n = None
     # need to make a copy of the list because we're adding items to the list
-    for idx, i in enumerate(local_vars[:]):
+    for idx, i in enumerate(tuple(local_vars.keys())):
         last_n = store_phi_values(i, idx, last_n, cur_n=None)
     for i in gr.blocks[0].block_inputs:  # inlined parameters (partial) will be here
         for v, js in zip(i.values, i.jump_sources):
@@ -219,7 +222,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     insert_before(new_n, n=jump_node)
                     store_phi_values(o, idx, new_n, cur_n=jump_node)
 
-    return local_vars, lv_names, names, consts
+    return list(local_vars.keys()), list(lv_names), names, consts
 
 
 # this function is taken from PyTorch Dynamo (c) 2022 by Facebook/Meta licensed
