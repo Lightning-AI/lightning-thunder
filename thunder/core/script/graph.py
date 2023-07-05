@@ -626,7 +626,12 @@ def clone_blocks(
         bl.nodes = [n.clone(translation_dict=translation_dict) for n in obl.nodes]
     for obl in blocks_todo:
         bl = assert_block(translation_dict[obl])
-        bl.jump_sources = [assert_node(translation_dict[js]) for js in obl.jump_sources if js in translation_dict]
+        for js in obl.jump_sources:
+            if js is None:
+                bl.jump_sources.append(None)
+            elif js in translation_dict:
+                bl.jump_sources.append(assert_node(translation_dict[js]))
+
         for i in bl.block_inputs:
             i.post_process_clone(translation_dict=translation_dict)
     return [assert_block(translation_dict[bl]) for bl in blocks_to_clone], translation_dict
@@ -711,11 +716,14 @@ def _check_graph(gr: Graph) -> None:
             js_jt.remove(bl)
 
     assert not any(jump_targets.values()), f"{jump_targets} should be all empty"
+    assert tuple(gr.blocks[0].jump_sources) == (None,), gr.blocks[0].jump_sources
 
 
 def check_graph(gr: Graph) -> None:
     try:
         _check_graph(gr)
+        cloned, _ = gr.clone()
+        _check_graph(cloned)
     except BaseException:
         print()
         gr.summary(print_lines=True)

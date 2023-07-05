@@ -142,11 +142,12 @@ for line in textwrap.dedent(RAW_EFFECTS).strip().splitlines(keepends=False):
     if opname == "LOAD_GLOBAL":
         continue
 
-    inputs = tuple(j for i in pop.split(",") if (j := i.strip()))
-    idx_map = {name: idx - len(inputs) for idx, name in enumerate(inputs)}
-    assert len(inputs) == len(idx_map), (opname, inputs)
-    push_values = tuple(idx_map.setdefault(j, len(idx_map) - len(inputs)) for i in push.split(",") if (j := i.strip()))
-    EXPECTED[opname] = (len(inputs), push_values)
+    if opname in OPNAMES_TO_TEST:
+        inputs = tuple(j for i in pop.split(",") if (j := i.strip()))
+        idx_map = {name: idx - len(inputs) for idx, name in enumerate(inputs)}
+        assert len(inputs) == len(idx_map), (opname, inputs)
+        push_values = tuple(idx_map.setdefault(j, len(idx_map) - len(inputs)) for i in push.split(",") if (j := i.strip()))
+        EXPECTED[opname] = (len(inputs), push_values)
 
 
 # TODO(robieta): Investigate

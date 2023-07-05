@@ -12,7 +12,7 @@ except ImportError:
     # EllipsisType was introduced in 3.10
     EllipsisType = type(...)
 
-from thunder.core.utils import dict_join
+from thunder.core.utils import OrderedSet
 
 logger = logging.getLogger(__name__)
 SUPPORTS_PREPROCESSING = (3, 9) <= sys.version_info < (3, 11)
@@ -23,7 +23,6 @@ SUPPORTS_PREPROCESSING = (3, 9) <= sys.version_info < (3, 11)
 #  *  1 -- when jump
 #  * -1 -- maximal
 
-
 class VariableScope(enum.Enum):
     CONST = enum.auto()
     LOCAL = enum.auto()
@@ -32,16 +31,8 @@ class VariableScope(enum.Enum):
     STACK = enum.auto()
 
 
-class ArgScope(NamedTuple):
-    arg: int
-    scope: VariableScope
-
-    def __repr__(self) -> str:
-        return f"ArgScope(arg={self.arg}, scope={self.scope.name})"
-
-    def __lt__(self, other: "ArgScope") -> bool:
-        return (self.scope.value, self.arg) < (other.scope.value, other.arg)
-
+JUMP_ABSOLUTE = "JUMP_ABSOLUTE"
+RETURN_VALUE = "RETURN_VALUE"
 
 FixedEffect = tuple[int, tuple[int, ...]]
 TOS = -1  # Top of stack.
@@ -84,10 +75,10 @@ _STACK_EFFECTS_SPEC: dict[str, Union[FixedEffect, EllipsisType, Callable[[int], 
     "UNPACK_SEQUENCE": unpack_N,  #                     A           -> B,C,...
     # Jumps & return
     "JUMP_FORWARD": (0, ()),  #                         ∅           -> ∅
-    "JUMP_ABSOLUTE": ...,
+    JUMP_ABSOLUTE: ...,
     "POP_JUMP_IF_FALSE": (1, ()),  #                    A           -> ∅
     "POP_JUMP_IF_TRUE": ...,
-    "RETURN_VALUE": ...,
+    RETURN_VALUE: ...,
     "JUMP_IF_NOT_EXC_MATCH": (2, ()),  #                A,B         -> ∅
     # Exceptions and context managers:
     "POP_BLOCK": (0, ()),  #                            ∅           -> ∅
@@ -278,13 +269,34 @@ def stack_effect_detail(instruction: dis.Instruction, *, jump: bool = False) -> 
     return pop, len(unconditional) + len(conditional if branch == jump else ())
 
 
-jump_instructions = set(dis.hasjabs) | set(dis.hasjrel)
+class InstructionSet(OrderedSet[str]):
+    """Convenience class for checking opcode properties."""
+
+    def canonicalize(self, i: str | int | dis.Instruction) -> str:
+        if isinstance(i, str):
+            return i
+
+        elif isinstance(i, int):
+            return dis.opname[i]
+
+        else:
+            assert isinstance(i, dis.Instruction)
+            return i.opname
+
+
+UNCONDITIONAL_JUMP_INSTRUCTIONS = InstructionSet(
+    (JUMP_ABSOLUTE, "JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT")
+)
+JUMP_INSTRUCTIONS = InstructionSet((*dis.hasjabs, *dis.hasjrel, *UNCONDITIONAL_JUMP_INSTRUCTIONS))
+
+RAISE_RETURN_INSTRUCTIONS = InstructionSet(("RAISE_VARARGS", "RERAISE"))
+RETURN_INSTRUCTIONS = InstructionSet((RETURN_VALUE, *RAISE_RETURN_INSTRUCTIONS))
 
 
 def make_jump_absolute(arg: int) -> dis.Instruction:
     return dis.Instruction(
-        opname="JUMP_ABSOLUTE",
-        opcode=dis.opmap.get("JUMP_ABSOLUTE", -1),
+        opname=JUMP_ABSOLUTE,
+        opcode=dis.opmap.get(JUMP_ABSOLUTE, -1),
         arg=arg,
         argval=None,
         argrepr=f"{arg}",
@@ -296,8 +308,8 @@ def make_jump_absolute(arg: int) -> dis.Instruction:
 
 def make_return(is_jump_target: bool) -> dis.Instruction:
     return dis.Instruction(
-        opname="RETURN_VALUE",
-        opcode=dis.opmap["RETURN_VALUE"],
+        opname=RETURN_VALUE,
+        opcode=dis.opmap[RETURN_VALUE],
         arg=None,
         argval=None,
         argrepr="",
@@ -399,9 +411,6 @@ def debug_compare_functions(
     return diffs
 
 
-return_instructions = {dis.opmap[name] for name in ("RETURN_VALUE", "RAISE_VARARGS", "RERAISE") if name in dis.opmap}
-unconditional_jump_names = {"JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT"}
-
 load_opcodes = {
     "LOAD_CONST": VariableScope.CONST,
     "LOAD_FAST": VariableScope.LOCAL,
@@ -420,16 +429,3 @@ del_opcodes = {
     "DELETE_DEREF": VariableScope.NONLOCAL,
     "DELETE_GLOBAL": VariableScope.GLOBAL,
 }
-
-
-def make_name_map(bytecode: Iterable[dis.Instruction], code: CodeType) -> dict[ArgScope, "str"]:
-    name_sources = {
-        VariableScope.LOCAL: code.co_varnames,
-        VariableScope.NONLOCAL: code.co_freevars,
-        VariableScope.GLOBAL: code.co_names,
-    }
-    scope_map = dict_join(store_opcodes, load_opcodes, del_opcodes)
-    keys = [ArgScope(i.arg, scope) for i in bytecode if (scope := scope_map.get(i.opname)) in name_sources]
-    assert not any(arg is None for arg, _ in keys)
-
-    return {key: name_sources[key.scope][key.arg] for key in sorted(keys)}

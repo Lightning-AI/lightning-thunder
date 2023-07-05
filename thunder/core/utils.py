@@ -630,14 +630,18 @@ def check_same_device(*args):
 class OrderedSet(Generic[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
     def __init__(self, args: Optional[Iterable[T]] = None):
-        self.d = {k: None for k in args or ()}
+        self.d = {self.canonicalize(k): None for k in args or ()}
+
+    def canonicalize(self, v: T) -> T:
+        """Subclasses can override to coerce to a common type."""
+        return v
 
     def __repr__(self) -> str:
         contents = ", ".join(repr(i) for i in self)
-        return f"OrderedSet{{ {contents} }}"
+        return f"{self.__class__.__name__}{{ {contents} }}"
 
     def __contains__(self, x: T) -> bool:
-        return x in self.d
+        return self.canonicalize(x) in self.d
 
     def __bool__(self) -> bool:
         return bool(self.d)
@@ -649,25 +653,31 @@ class OrderedSet(Generic[T]):
         return len(self.d)
 
     # -
-    def __sub__(self, other):
-        return OrderedSet(k for k in self if k not in other)
+    def __sub__(self, other: "OrderedSet") -> "OrderedSet":
+        return self.__class__(k for k in self if k not in other)
 
-    def __and__(self, other):
-        return OrderedSet(k for k in self if k in other)
+    def __and__(self, other: "OrderedSet") -> "OrderedSet":
+        return self.__class__(k for k in self if k in other)
+
+    def __or__(self, other: "OrderedSet") -> "OrderedSet":
+        return self.__class__(itertools.chain(self, other))
 
     # NOTE: actual set signature is (self, *others)
     def difference(self, other):
         return self - other
 
     def add(self, x):
-        self.d[x] = None
+        self.d[self.canonicalize(x)] = None
 
     def update(self, x):
         for i in x:
-            self.d.setdefault(i, None)
+            self.d.setdefault(self.canonicalize(i), None)
 
     def remove(self, x):
-        del self.d[x]
+        del self.d[self.canonicalize(x)]
+
+    def copy(self) -> "OrderedSet":
+        return self.__class__(self)
 
 
 #

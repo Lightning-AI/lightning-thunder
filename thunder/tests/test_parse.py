@@ -10,6 +10,7 @@ from typing import Callable, List, Optional, Tuple
 from collections.abc import Iterator
 
 import thunder.core.script.frontend as frontend
+from thunder.core.script.protograph import ProtoGraph
 import thunder.core.script.python_ir_data as python_ir_data
 
 import pytest
@@ -416,50 +417,8 @@ def context_manager(x, ctx):
         x += 1
 
 
-@add_parse_test(
-    """
-        GEN_START                0                    ║    GEN_START
-        LOAD_FAST                0 (k)                ║    LOAD_FAST                   k
-        LOAD_CONST               1 (0)                ║    LOAD_CONST                  0
-        COMPARE_OP               0 (<)                ║    COMPARE_OP                  <
-        POP_JUMP_IF_FALSE        8 (to 16)            ║    POP_JUMP_IF_FALSE
-        LOAD_CONST               0 (None)             ║        -> 1(False)
-        YIELD_VALUE                                   ║        -> 2(True)
-        POP_TOP                                       ║
-                                                      ║    LOAD_CONST                  None
->>   16 LOAD_GLOBAL              0 (range)            ║    YIELD_VALUE
-        LOAD_FAST                0 (k)                ║    POP_TOP
-        CALL_FUNCTION            1                    ║    JUMP_ABSOLUTE               8
-        GET_ITER                                      ║        -> 2(True)
-                                                      ║
->>   24 FOR_ITER                 5 (to 36)            ║    LOAD_GLOBAL                 range
-        STORE_FAST               2 (i)                ║    LOAD_FAST                   k
-        LOAD_FAST                2 (i)                ║    CALL_FUNCTION
-        YIELD_VALUE                                   ║    GET_ITER
-        POP_TOP                                       ║    JUMP_ABSOLUTE
-        JUMP_ABSOLUTE           12 (to 24)            ║        -> 3(True)
-                                                      ║
->>   36 LOAD_FAST                1 (suffix)           ║    FOR_ITER
-        GET_YIELD_FROM_ITER                           ║        -> 4(False)
-        LOAD_CONST               0 (None)             ║        -> 5(True)
-        YIELD_FROM                                    ║
-        POP_TOP                                       ║    STORE_FAST                  i
-        LOAD_CONST               0 (None)             ║    LOAD_FAST                   i
-        RETURN_VALUE                                  ║    YIELD_VALUE
-                                                      ║    POP_TOP
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 3(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   suffix
-                                                      ║    GET_YIELD_FROM_ITER
-                                                      ║    LOAD_CONST                  None
-                                                      ║    YIELD_FROM
-                                                      ║    POP_TOP
-                                                      ║    LOAD_CONST                  None
-                                                      ║    RETURN_VALUE
-""",
-    flow_spec=DONT_CHECK_FLOW,
-)
+# TODO(robieta): re-enable when we can support generators
+# @add_parse_test()
 def simple_generator(k, suffix):
     if k < 0:
         yield None
@@ -598,14 +557,14 @@ def try_finally(f):
         JUMP_FORWARD            13 (to 44)            ║    LOAD_FAST                   f
                                                       ║    LOAD_METHOD                 write
 >>   18 DUP_TOP                                       ║    LOAD_CONST                  'Test'
-        LOAD_GLOBAL              1 (IOError)          ║    CALL_METHOD
+        LOAD_GLOBAL              1 (OSError)          ║    CALL_METHOD
         JUMP_IF_NOT_EXC_MATCH    21 (to 42)           ║    POP_TOP
         POP_TOP                                       ║    POP_BLOCK
         POP_TOP                                       ║    JUMP_FORWARD
         POP_TOP                                       ║        -> 6(True)
         LOAD_FAST                1 (log)              ║
         LOAD_CONST               2 ('Fail')           ║    DUP_TOP
-        CALL_FUNCTION            1                    ║    LOAD_GLOBAL                 IOError
+        CALL_FUNCTION            1                    ║    LOAD_GLOBAL                 OSError
         POP_TOP                                       ║    JUMP_IF_NOT_EXC_MATCH
         POP_EXCEPT                                    ║        -> 4(False)
         JUMP_FORWARD             8 (to 58)            ║        -> 5(True)
@@ -660,11 +619,11 @@ def try_except_finally(f, log):
         f.close()
 
 
-def assert_parse_matches_spec(protoblocks: tuple[frontend.ProtoBlock, ...], expected: PARSE_SPECIFICATION) -> None:
-    block_to_index = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
-    assert len(protoblocks) == len(block_to_index)
-    assert len(protoblocks) == len(expected)
-    for protoblock, (expected_instructions, expected_jumps) in zip(protoblocks, expected):
+def assert_parse_matches_spec(proto_graph: ProtoGraph, expected: PARSE_SPECIFICATION) -> None:
+    block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
+    assert len(tuple(proto_graph)) == len(block_to_index)
+    assert len(block_to_index) == len(expected)
+    for protoblock, (expected_instructions, expected_jumps) in zip(proto_graph, expected):
         # It's tedious to include every arg in the spec (particularly since a
         # lot of them are just indicies that distract from visual inspection),
         # so we allow them to be omitted.
@@ -676,11 +635,11 @@ def assert_parse_matches_spec(protoblocks: tuple[frontend.ProtoBlock, ...], expe
         )
 
 
-def suggest_parse_spec(protoblocks: tuple[frontend.ProtoBlock, ...]):
-    block_to_index = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
+def suggest_parse_spec(proto_graph: ProtoGraph):
+    block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
 
     lines = []
-    for protoblock in protoblocks:
+    for protoblock in proto_graph:
         lines.extend(f"{i.opname:<28}{i.argrepr}" for i in protoblock.raw_instructions)
         lines.extend(f"    -> {block_to_index[target]}({is_jump})" for target, is_jump in protoblock.jump_targets)
         lines.append("")
@@ -716,26 +675,24 @@ def assert_flow_matches_spec(
 
 def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     fn = fn.__func__ if inspect.ismethod(fn) else fn
-    names = python_ir_data.make_name_map(dis.get_instructions(fn), fn.__code__)
-    num_parameters = len(inspect.signature(fn).parameters)
+    signature = inspect.signature(fn)
 
-    protoblocks = frontend.parse_bytecode(fn)
-    frontend._add_transitive(protoblocks)
-    frontend._condense_values(protoblocks)
+    proto_graph = frontend.parse_bytecode(fn)
+    frontend._add_transitive(proto_graph)
+    proto_graph = frontend._condense_values(proto_graph)
 
     flat_node_flow = []
-    for block_idx, protoblock in enumerate(protoblocks):
+    for block_idx, protoblock in enumerate(proto_graph):
         for instruction, inputs, outputs in protoblock.node_flow:
             new_outputs = [o for o in outputs if isinstance(o, frontend.IntermediateValue) and o not in inputs]
             flat_node_flow.append((block_idx, instruction, inputs, new_outputs))
 
     # Map function arguments to string names.
-    root, _ = frontend.ProtoBlock.topology(protoblocks)
     num_args = len(inspect.signature(fn).parameters)
     arg_map = {
-        v: fn.__code__.co_varnames[arg]
-        for (arg, scope), (v, *_) in root.variables.items()
-        if scope == python_ir_data.VariableScope.LOCAL and arg < num_args
+        v: name
+        for (name, scope), (v, *_) in proto_graph.root.variables.items()
+        if scope == python_ir_data.VariableScope.LOCAL and name in signature.parameters
     }
     assert all(isinstance(v, frontend.ExternalRef) for v in arg_map)
 
@@ -761,11 +718,11 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
             return tuple(i[0] for i in constituents)
 
         elif isinstance(v, frontend.ExternalRef):
-            if v.scope == python_ir_data.VariableScope.CONST:
-                return (str(fn.__code__.co_consts[v.arg]),)
-            elif v.scope == python_ir_data.VariableScope.LOCAL and v.arg >= num_parameters:
+            if v.key.scope == python_ir_data.VariableScope.CONST:
+                return (str(v.key.identifier),)
+            elif v.key.scope == python_ir_data.VariableScope.LOCAL and v.key.identifier not in signature.parameters:
                 return ("MISSING",)
-            return (names[python_ir_data.ArgScope(v.arg, v.scope)],)
+            return (v.key.identifier,)
 
         elif isinstance(v, frontend.ValueMissing):
             return ("MISSING",)

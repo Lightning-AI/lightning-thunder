@@ -571,8 +571,10 @@ def test_clone_graph():
 
 # Ref: https://github.com/lightning-AI/lightning-thunder/issues/386
 def test_raise_nonlocals():
+    f = lambda x: x
+
     def func(a):
-        return thunder.clang.abs(a)
+        return f(a)
 
     with pytest.raises(RuntimeError) as excinfo:
         thunder.preprocess(func, is_module=False)
