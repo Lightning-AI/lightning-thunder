@@ -1283,13 +1283,13 @@ def thunder_backward(executors_list=(Executor.NVFUSER,)):
 
     Example:
     >>> import torch
-    >>> import thunder.core.lang as tlang
-    >>> from thunder.executors.torch import thunder_backward
+    >>> import thunder.clang as clang
+    >>> from thunder.executors.torchex import thunder_backward
     >>> @thunder_backward()
     ... def func(a, b):
     ...     c = a + b
     ...     d = c * b
-    ...     e = tlang.sin(d) + tlang.cos(c)
+    ...     e = clang.sin(d) + clang.cos(c)
     ...     return e
     >>> a = torch.randn(3, device="cuda", requires_grad=True)
     >>> b = torch.randn(3, device="cuda", requires_grad=True)
@@ -1301,7 +1301,7 @@ def thunder_backward(executors_list=(Executor.NVFUSER,)):
     """
 
     def flat_wrapper(flat_func, *flat_args):
-        return ThunderFunction.apply(flat_func, executors_list, *flat_args)
+        return ThunderFunction.apply(flat_func, list(executors_list), *flat_args)
 
     def decorator(thunder_func):
         @wraps(thunder_func)
