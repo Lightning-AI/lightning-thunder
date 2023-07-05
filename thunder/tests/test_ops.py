@@ -2,15 +2,13 @@ import numpy as np
 import pytest
 import torch
 from looseversion import LooseVersion
-from numbers import Number
-
 from torch.testing import assert_close
 
+import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.tests.framework import ops, run_snippet, requiresJAX
 from thunder.tests.opinfos import opinfos
-import thunder.core.devices as devices
-from thunder import compile
+
 
 #
 # Generic test templates for all operators
@@ -42,8 +40,12 @@ def test_errors(op, device, _, executor):
 # TODO: should snippets be able to access the original opinfo? -- No?
 # TODO: revisit atol/rtol, maybe be more selective about which ops need a more permissive check
 def snippet_torch_consistency(op, torch_op, sample):
-    thunder_result = op(*sample.args, **sample.kwargs)
-    torch_result = torch_op(*sample.args, **sample.kwargs)
+    # Fork the RNG in case the op relies on randomness
+    rng_devices = [0] if torch.cuda.is_available() else None
+    with torch.random.fork_rng(devices=rng_devices):
+        thunder_result = op(*sample.args, **sample.kwargs)
+    with torch.random.fork_rng(devices=rng_devices):
+        torch_result = torch_op(*sample.args, **sample.kwargs)
 
     # TODO Review how lightning.compile returns Exception information
     if isinstance(thunder_result, Exception):
