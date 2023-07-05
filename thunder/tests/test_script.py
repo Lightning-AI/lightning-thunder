@@ -762,6 +762,20 @@ def test_partial():
     assert expected == actual
 
 
+def test_foreign_store_attr():
+    @skipif_not_python_3_10
+    def fn(o):
+        o.hi = "hello"
+        return 2
+
+    class A:
+        pass
+
+    o = A()
+    tfn = thunder.compile(fn)
+    tfn(o)
+
+
 @skipif_not_python_3_10
 def test_codeobject_debug():
     def f1(x):

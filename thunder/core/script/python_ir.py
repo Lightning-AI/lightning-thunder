@@ -14,7 +14,7 @@ from thunder.core.script.graph import (
     insert_before,
     insert_after,
 )
-from thunder.core.script.python_ir_data import get_instruction
+from thunder.core.script.python_ir_data import get_instruction, modify_copy_instruction
 from thunder.core.utils import OrderedSet
 
 
@@ -208,6 +208,15 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     if o in bl.block_outputs:
                         processed_block_outputs.add(o)
                         last_n = store_phi_values(o, idx, last_n, cur_n=n)
+                if n.i.opname == "STORE_ATTR":  # STORE_ATTR for unknown objs
+                    # have a utility for this?
+                    try:
+                        idx = names.index(n.i.argval)
+                    except ValueError:
+                        idx = len(names)
+                        names.append(n.i.argval)
+                    n.i = modify_copy_instruction(n.i, arg=idx)
+
         if bl.nodes[-1].i.opname != "RETURN_VALUE":  # TODO Should the return block have outputs (probably not)
             for o in bl.block_outputs:
                 if o not in processed_block_outputs:

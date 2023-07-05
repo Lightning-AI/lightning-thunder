@@ -322,6 +322,11 @@ def get_instruction(opname: str, arg: Optional[int], **kwargs) -> dis.Instructio
     return dis.Instruction(**ctor_kwargs)
 
 
+def modify_copy_instruction(i: dis.Instruction, **kwargs) -> dis.Instruction:
+    # todo: or make a mutuable Instruction?
+    return dis.Instruction(**{**i._asdict(), **kwargs})
+
+
 def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:
     if instruction.opcode in dis.hasjabs:
         assert instruction.arg is not None
