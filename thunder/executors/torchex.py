@@ -4,6 +4,7 @@ from numbers import Number
 from typing import Union, Callable, Any, Tuple, Sequence, Optional
 
 import torch
+from looseversion import LooseVersion
 
 import thunder.core.dtypes as dtypes
 from thunder.core.prims import PrimIDs
@@ -828,6 +829,51 @@ def softmax(bsym: BoundSymbol, a, dim, dtype=None) -> BoundSymbol:
     return tbsym
 
 
+def _scaled_dot_product_attention_check(
+    query,
+    key,
+    value,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
+    scale=None,
+) -> bool:
+    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
+        return False
+    return True
+
+
+def scaled_dot_product_attention(
+    bsym: BoundSymbol,
+    query,
+    key,
+    value,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
+    scale=None,
+) -> BoundSymbol:
+    sym = Symbol(name="scaled_dot_product_attention", meta=None, _module=torch.nn.functional, id=bsym.sym.id)
+
+    kwargs = {
+        "attn_mask": attn_mask,
+        "dropout_p": dropout_p,
+        "is_causal": bool(is_causal),
+    }
+    if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
+        kwargs["scale"] = scale
+    else:
+        utils.check(
+            scale is None,
+            lambda: f"scaled_dot_product_attention with scale argument requires PyTorch >= 2.1.0",
+        )
+
+    tbsym = BoundSymbol(sym, args=(query, key, value), kwargs=kwargs, output=bsym.output)
+    return tbsym
+
+
 # TODO Refine prim ops to have less functionality to better debug errors
 # Maps from symbol ids to a tuple of (is_fusable, translate) callables
 _ops_map.update(
@@ -1008,6 +1054,10 @@ _ops_map.update(
         "torch.nn.functional.embedding": (_always_executable, embedding),
         "torch.layer_norm": (_always_executable, layer_norm),
         "torch.softmax": (_always_executable, softmax),
+        "torch.nn.functional.scaled_dot_product_attention": (
+            _scaled_dot_product_attention_check,
+            scaled_dot_product_attention,
+        )
     }
 )
 

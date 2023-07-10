@@ -494,7 +494,6 @@ def test_direct_torch_lowerings():
         "torch.nn.functional.silu",
         "torch.true_divide",
         "torch.bmm",
-        "torch.nn.functional.scaled_dot_product_attention",
         "torch.matmul",
         "torch.ones_like",
         "torch.nn.functional.linear",
@@ -2187,6 +2186,36 @@ def test_thunder_autocast_transform(executor, device, _):
         with torch.autocast(device_type=device, dtype=torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype
+
+
+@instantiate(dtypes=NOTHING)
+def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
+    n_embd = 32
+    B = 2
+    qkv = make_tensor(B, n_embd, 3 * n_embd, device=device, dtype=torch.float32)
+
+    def func(qkv):
+        # Preprocessing doesn't support nonlocal variables yet, so
+        # we need to define the constants here.
+        n_embd = 32
+        n_head = 16
+        B = 2
+        T = 32
+        C = n_embd
+        q, k, v = qkv.split(n_embd, dim=2)  # Results in 3 non-contiguous but "viewable" tensors
+        k = k.view(B, T, n_head, C // n_head).transpose(1, 2)  # (B, nh, T, hs)
+        q = q.view(B, T, n_head, C // n_head).transpose(1, 2)  # (B, nh, T, hs)
+        v = v.view(B, T, n_head, C // n_head).transpose(1, 2)  # (B, nh, T, hs)
+        y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0, is_causal=True)
+        return y
+
+    compiled = thunder.compile(func, executors_list=executor.executors_list())
+    out = compiled(qkv)
+    history = thunder.last_traces(compiled)
+    torch.testing.assert_close(out, func(qkv))
+    assert "torch.nn.functional.scaled_dot_product_attention" in tuple(
+        bsym.sym.id for bsym in history[-1].bound_symbols
+    )
 
 
 # @instantiate(
