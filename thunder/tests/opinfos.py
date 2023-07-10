@@ -2675,6 +2675,49 @@ transpose_opinfo = OpInfo(
 shape_ops.append(transpose_opinfo)
 
 
+def permute_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # `Tensor.permute` (method) supports varargs and list, whereas `torch.permute` (function) only list
+    is_method = op.torch_reference is torch.Tensor.permute
+
+    t = make(2, 3, 4)
+    for perm in ((0, 1, 2), (1, 2, 0), (2, 1, 0), (0, 2, 1), (0, -1, 1)):
+        yield SampleInput(t, perm)
+        if is_method:
+            yield SampleInput(t, *perm)
+    t = make(4, 7)
+    yield SampleInput(t, (1, 0))
+    if is_method:
+        yield SampleInput(t, 1, 0)
+
+
+def permute_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    is_method = op.torch_reference is torch.Tensor.permute
+
+    t = make(2, 3, 4)
+    yield SampleInput(t, (0, 1)), ValueError
+    if is_method:
+        yield SampleInput(t, 0, 1), ValueError
+
+
+permute_opinfo = OpInfo(
+    ltorch.permute,
+    sample_input_generator=permute_sample_generator,
+    error_input_generator=permute_error_generator,
+    torch_reference=torch.permute,
+)
+shape_ops.append(permute_opinfo)
+permute_method_opinfo = OpInfo(
+    ltorch.permute,
+    name="permute_method",  # avoid collision with the above opinfo
+    sample_input_generator=permute_sample_generator,
+    error_input_generator=permute_error_generator,
+    torch_reference=torch.Tensor.permute,
+)
+shape_ops.append(permute_method_opinfo)
+
+
 def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

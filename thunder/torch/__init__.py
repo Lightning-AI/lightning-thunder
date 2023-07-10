@@ -645,7 +645,7 @@ def true_divide(a: Number | TensorLike, b: Number | TensorLike) -> Number | Tens
 
 
 #
-# Conditional operations and masknig operations
+# Conditional operations and masking operations
 #
 # TODO Can this be a method?
 @torchsymbol(torch.where, is_method=True)
@@ -1131,6 +1131,17 @@ def matrix_transpose(a: TensorLike, /) -> TensorLike:
                 [3, 6]])
     """
     return clang.matrix_transpose(a)
+
+
+@torchsymbol(torch.permute, is_method=True)
+def permute(a: TensorLike, /, *dims: int) -> TensorLike:
+    dims = utils.extract_shape_from_varargs(dims)
+    if a.ndim != len(dims):
+        raise ValueError(
+            f"Number of dimensions in the tensor input ({a.ndim}) does not match the length of the desired ordering of"
+            f" dimensions ({len(dims)})"
+        )
+    return clang.transpose(a, dims)
 
 
 @torchsymbol(torch.unsqueeze, is_method=True)

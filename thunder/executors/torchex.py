@@ -425,6 +425,11 @@ def prim_transpose(bsym: BoundSymbol, a, permutation):
     return tbsym
 
 
+def permute(bsym: BoundSymbol, a, *dims):
+    dims = utils.extract_shape_from_varargs(dims)
+    return prim_transpose(bsym, a, dims)
+
+
 def unsqueeze(bsym: BoundSymbol, a, dim: int):
     sym = Symbol(name="unsqueeze", meta=None, _module=torch)
     tbsym = BoundSymbol(sym, args=(a, dim), kwargs={}, output=bsym.output)
@@ -857,6 +862,7 @@ _ops_map.update(
         "torch.tensor_split": (_always_executable, tensor_split),
         "torch.transpose": (_always_executable, transpose),
         PrimIDs.TRANSPOSE: (_always_executable, prim_transpose),
+        "torch.permute": (_always_executable, permute),
         "torch.unsqueeze": (_always_executable, unsqueeze),
         PrimIDs.VIEW: (_always_executable, view),
         # NOTE torch.Tensor.view is intentionally not lowered because
