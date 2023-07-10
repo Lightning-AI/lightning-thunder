@@ -78,9 +78,10 @@ def symbol_to_eval(bound_symbol):
         symbol: symbol to map
     """
     symbol = bound_symbol.sym
-    prim_func = getattr(prims, symbol.name, None)
-    if prim_func is not None:
-        return prim_func
+    if isinstance(symbol.id, prims.PrimIDs):
+        prim_func = getattr(prims, symbol.name, None)
+        if prim_func is not None:
+            return prim_func
 
     # meta_func = prims.ops_to_meta_functions_map[symbol.op]
     # return prims.eval_meta_and_record_symbol_fn(meta_func, symbol.op, symbol.name)
@@ -132,7 +133,7 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
 
     # Duplicates are allowed for jvp_call symbols
     # Because the transformed trace is empty in this case and it's no-op
-    allow_duplicates_list = (Transforms.JvpOp, Transforms.VjpOp)
+    allow_duplicates_list = (Transforms.JvpOp, Transforms.VjpOp, "torch.contiguous", "torch.Tensor.contiguous")
     write_with_duplicates = partial(write, allow_duplicates=True)
 
     for symbol in trace.bound_symbols:
@@ -1428,26 +1429,25 @@ def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
 @register_augmented_forward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
 def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
     primal = prims.convert_element_type(a, dtype)
-    residuals = (primal,)
+    residuals = (a.dtype if isinstance(a, TensorProxy) else type(a),)
     return VJPDual(primal, residuals)
 
 
 @register_backward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
-def convert_element_type_backward(a, g):
+def convert_element_type_backward(a_dtype, g):
     # perform cast back to input type during backward
-    return prims.convert_element_type(g, a.dtype), None
+    return prims.convert_element_type(g, a_dtype), None
 
 
 @register_augmented_forward("torch.nn.functional.embedding")
 def embedding_aug_fwd(
     a: Proxy,
     weight: Proxy,
-    *,
-    padding_idx: Optional[int] = None,
-    max_norm: Optional[float] = None,
-    norm_type: float = 2.0,
-    scale_grad_by_freq: bool = False,
-    sparse: bool = False,
+    padding_idx: Optional[int],
+    max_norm: Optional[float],
+    norm_type: float,
+    scale_grad_by_freq: bool,
+    sparse: bool,
 ) -> VJPDual:
     from thunder.torch import embedding
 
@@ -1470,7 +1470,7 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
 
     padding_idx = -1 if padding_idx is None else padding_idx
     gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
-    return None, gweight
+    return None, gweight, None, None, None, None, None
 
 
 @register_augmented_forward(prims.PrimIDs.MATMUL)
@@ -1521,7 +1521,8 @@ def linear_backward(a, b, c, g):
     if a.ndim == 1:
         gb = matmul(unsqueeze(g, first_dim).mT, unsqueeze(a, first_dim))
     else:
-        gb = matmul(g.mT, a)
+        gb = matmul(g.reshape(-1, g.shape[-1]).mT, a.reshape(-1, a.shape[-1]))
+        assert list(gb.shape) == list(b.shape), f"linear_backward: {gb.shape} != {b.shape}"
     if c is None:
         return ga, gb, None
     gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
@@ -1590,6 +1591,21 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     if len(args) == 1:
         return result[0]
     return result
+
+
+@register_augmented_forward("torch.Tensor.contiguous")
+@register_augmented_forward("torch.contiguous")
+def contiguous_aug_fwd(x: TensorProxy) -> VJPDual:
+    from thunder.torch import contiguous
+    return VJPDual(contiguous(x), tuple())
+
+
+@register_backward("torch.Tensor.contiguous")
+@register_backward("torch.contiguous")
+def contiguous_backward(*residuals_and_grad) -> TensorProxy:
+    # Residuals is not empty because contiguous symbol has the same output as its input
+    g = residuals_and_grad[-1]
+    return g * 1.0
 
 
 @register_augmented_forward(prims.PrimIDs.WHERE)
@@ -1798,6 +1814,7 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         if len(cotangents) == 1 and cotangents[0] is None:
             # We can skip the pullback if the cotangent is None
+            safe_map(write, symbol.args, (None,) * len(symbol.args))
             continue
 
         pullback = backward_impls[symbol.sym.id]

@@ -84,6 +84,13 @@ class BenchmarkArg:
     default: Any
 
 
+def thunder_trace(fn, disable_preprocessing: bool = False):
+    return thunder._make_trace(
+        fn,
+        disable_preprocessing=disable_preprocessing,
+    )
+
+
 # TODO Restore CUDA graphs
 # TODO Restore lightning.compile profile info
 # TODO Add lightning.compile with the Torch executor as the principal executor (as lc+torch?)
@@ -143,9 +150,7 @@ class Benchmark:
             return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
 
         # TODO Add an option to use different kinds of caching
-        elif executor in ("thunder+nvfuser", "thunder", "nvfuser"):
-            if self.backward:
-                raise NotImplementedError("thunder benchmarking does not currently support backward passes")
+        elif executor in ("thunder+nvfuser", "thunder", "nvfuser") and not self.backward:
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
             tom = thunder.compile(
                 self._fn,
@@ -154,6 +159,52 @@ class Benchmark:
             )
 
             return (name, tom, None)
+
+        elif executor in ("thunder+nvfuser", "thunder", "nvfuser") and self.backward:
+            if use_cudagraphs:
+                raise NotImplementedError("thunder backward + CUDA graphs is currently disabled")
+            from thunder import ThunderOptimizedModule
+            from thunder.core.transforms import eval_trace, value_and_grad, inline
+            from functools import partial
+            name = f"fw+bw: thunder+nvfuser"
+            args, kwargs = self.make_batch()
+            trace_producing_fn = thunder_trace(self._fn)
+            primal_trace = trace_producing_fn(*args, **kwargs)
+            primal_fn = partial(eval_trace, primal_trace)
+
+            def _primal_fn(*args, **kwargs):
+                res = primal_fn(*args, **kwargs)
+                return self.postprocess_for_backward(res)
+
+            # NOTE: Must have "kwargs" in the signature without
+            # packing it (i.e. no **kwargs) for the current cache implementation to work
+            def value_and_grad_fn(*args, kwargs = {}):
+                return inline(value_and_grad(_primal_fn))(*args, **kwargs)
+
+            compiled_fn = thunder.compile(
+                value_and_grad_fn,
+                use_static_caching=True,
+                disable_preprocessing=True,
+                use_rematerialization=True,
+            )
+
+            if isinstance(trace_producing_fn, ThunderOptimizedModule):
+
+                def fn_with_param(*args, **kwargs):
+                    all_args = (*trace_producing_fn._additional_param_values, *args)
+                    return compiled_fn(*all_args, **kwargs)
+
+                return (
+                    name,
+                    fn_with_param,
+                    None,
+                )
+
+            return (
+                name,
+                compiled_fn,
+                None,
+            )
 
         raise ValueError(f"Unknown executor {executor} requested")
 
@@ -198,6 +249,8 @@ def time_ns(fn, gen, *, warmup_iters=5, iters=20):
 
     # First run
     initial_time, initial_result = _helper()
+    # TODO: saving the initial_result has high memory cost
+    initial_result = None
 
     for _ in range(warmup_iters):
         _helper()

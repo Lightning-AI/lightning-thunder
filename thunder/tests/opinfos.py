@@ -3549,11 +3549,11 @@ def embedding_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(
             indices,
             make(weight_shape),
-            padding_idx=padding_idx,
-            max_norm=max_norm,
-            norm_type=norm_type,
-            scale_grad_by_freq=scale_grad_by_freq,
-            sparse=sparse,
+            padding_idx,
+            max_norm,
+            norm_type,
+            scale_grad_by_freq,
+            sparse,
         )
 
 

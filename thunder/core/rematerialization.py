@@ -185,6 +185,7 @@ REMATERIALIZATION_BLOCK_LIST = {
     # Reduction primitives
     prims.PrimIDs.SUM,
     prims.PrimIDs.VAR,
+    prims.PrimIDs.VAR_MEAN,
     prims.PrimIDs.AMAX,
     prims.PrimIDs.AMIN,
     prims.PrimIDs.PROD,

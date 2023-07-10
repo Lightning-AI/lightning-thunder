@@ -649,12 +649,18 @@ def construct_trace(fn, trace, proxyargs, proxykwargs):
 
 
 # TODO TEMPORARY TEST FUNCTION -- NEEDS UX REVIEW
-def _make_trace(fn: Callable, *, langctx=None) -> Callable:
+def _make_trace(
+    fn: Callable,
+    *,
+    langctx=None,
+    disable_preprocessing=True,
+) -> Callable:
     """Converts a callable into a callable that will be traced and the trace returned.
 
     Args:
         fn: The callable to be traced.
         langctx: The language context to use for the trace. If None, the default language context is used.
+        disable_preprocessing: If True, preprocessing is disabled. If False, preprocessing is enabled. Defaults to True.
 
     Example:
         >>> import torch
@@ -668,6 +674,11 @@ def _make_trace(fn: Callable, *, langctx=None) -> Callable:
         >>> trace = tracing_func(a, b)
     """
 
+    if disable_preprocessing:
+        pfn = fn
+    else:
+        pfn = preprocess(fn, is_module=isinstance(fn, pytorch.nn.Module))
+
     @wraps(fn)
     def wrapped(*args, **kwargs):
         try:
@@ -676,14 +687,17 @@ def _make_trace(fn: Callable, *, langctx=None) -> Callable:
                 langctx_tok = set_langctx(langctx)
             trace = TraceCtx(fn)
             trace_token = set_tracectx(trace)
-            proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs)
-            trace = construct_trace(fn, trace, proxyargs, proxykwargs)
+            proxyargs, proxykwargs = _unpack_inputs(pfn, trace, args, kwargs)
+            trace = construct_trace(pfn, trace, proxyargs, proxykwargs)
         finally:
             # Resets the tracing context
             reset_tracectx(trace_token)
             if langctx is not None:
                 reset_langctx(langctx_tok)
         return trace
+
+    if isinstance(fn, pytorch.nn.Module):
+        wrapped = ThunderOptimizedModule(fn, wrapped, pfn, pfn._additional_param_names, pfn._additional_param_values)
 
     return wrapped
 
