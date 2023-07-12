@@ -441,6 +441,25 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_convert_element_type_with_float(executor, device, _):
+    # Verifies a fix for https://github.com/Lightning-AI/lightning-thunder/issues/537
+    from thunder.core.transforms import inline, value_and_grad
+
+    a = make_tensor([5], dtype=torch.float32, device=device)
+
+    @inline
+    @value_and_grad
+    def fn(t0):
+        return t0 / 2
+
+    out, (grad,) = executor.make_callable(fn)(a)
+    torch.testing.assert_close(out, a / 2)
+    torch.testing.assert_close(grad, torch.ones_like(a) / 2)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_multiple_output_vjp(executor, device, _):
     from thunder.core.prims import cos, make_prim, sin
     from thunder.core.transforms import inline, register_augmented_forward, register_backward, vjp
