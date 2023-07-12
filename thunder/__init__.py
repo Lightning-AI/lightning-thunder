@@ -31,6 +31,7 @@ import thunder.core.symbol as symbol
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
+from thunder.executors.torchex import thunder_backward
 
 import thunder.core.script as script
 import thunder.core.script.frontend
@@ -282,6 +283,7 @@ def compile(
     use_last_executed: Optional[bool] = None,
     use_rematerialization: bool = False,
     use_cudagraphs: bool = False,
+    use_generated_backward: bool = False,
 ) -> Callable:
     pfn: Callable
 
@@ -398,9 +400,31 @@ def compile(
 
         return result
 
+    if not isinstance(fn, pytorch.nn.Module) and use_generated_backward:
+        raise NotImplementedError(
+            "Generated backward is only supported for nn.Modules for now. ",
+            "Please wrap your function in a nn.Module and try again. ",
+            "Alternatively, you can use the @thunder_backward decorator instead of thunder.compile."
+        )
+
     if isinstance(fn, pytorch.nn.Module):
         if use_cudagraphs:
             _fn = CUDAGraphExecutor(_fn, num_constant_args=len(pfn._additional_param_values))
+
+        if use_generated_backward:
+            compile_config = {
+                "langctx": langctx,
+                "executors_list": executors_list,
+                "only_execute_prims": only_execute_prims,
+                "always_trace": always_trace,
+                "use_dynamic_caching": use_dynamic_caching,
+                "use_static_caching": use_static_caching,
+                "use_last_executed": use_last_executed,
+                "use_rematerialization": use_rematerialization,
+                "use_cudagraphs": use_cudagraphs,
+            }
+            _fn = thunder_backward(**compile_config)(pfn)
+
         _fn = ThunderOptimizedModule(fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values)
         # TODO Revisit assuming these are const
         _fn._num_constant_args = len(pfn._additional_param_values)

@@ -1282,7 +1282,7 @@ class ThunderFunction(torch.autograd.Function):
         return out
 
     @staticmethod
-    def forward(ctx, thunder_func, executors_list, *flat_args):
+    def forward(ctx, thunder_func, compile_config, *flat_args):
         from thunder import _make_trace as make_trace
         from thunder import compile
 
@@ -1291,10 +1291,9 @@ class ThunderFunction(torch.autograd.Function):
         augmented_trace_fn.__name__ = "augmented_trace_fn"  # compile doesn't like lambdas
         out, saved_info = compile(
             augmented_trace_fn,
-            executors_list=executors_list,
-            disable_preprocessing=True,
+            **compile_config,
         )(*flat_args)
-        ctx.executors_list = executors_list
+        ctx.compile_config = compile_config
         ctx.trace = trace
 
         # We must save tensors using ctx.save_for_backward
@@ -1322,13 +1321,12 @@ class ThunderFunction(torch.autograd.Function):
         backward.__name__ = "backward"  # compile doesn't like lambdas
         grads = compile(
             backward,
-            executors_list=ctx.executors_list,
-            disable_preprocessing=True,
+            **ctx.compile_config,
         )(saved_info, *args)
         return (None, None, *grads)
 
 
-def thunder_backward(executors_list=(Executor.NVFUSER,)):
+def thunder_backward(**compile_config):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
 
     Args:
@@ -1356,8 +1354,10 @@ def thunder_backward(executors_list=(Executor.NVFUSER,)):
     >>> print(f"b.grad: {b.grad}")
     """
 
+    compile_config = compile_config | {"disable_preprocessing": True}
+
     def flat_wrapper(flat_func, *flat_args):
-        return ThunderFunction.apply(flat_func, list(executors_list), *flat_args)
+        return ThunderFunction.apply(flat_func, compile_config, *flat_args)
 
     def decorator(thunder_func):
         @wraps(thunder_func)

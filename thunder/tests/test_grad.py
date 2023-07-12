@@ -535,3 +535,20 @@ def test_torch_autograd_function(executor, device, _):
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
 
     assert torch.autograd.gradcheck(lambda a, b, c: func(a, b, c=c), (a, b, c))
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_torch_autograd_module(executor, device, _):
+    l = torch.nn.Linear(3, 4, bias=False, device=device)
+    a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
+    g = make_tensor((2, 4), device=device, dtype=torch.float32)
+
+    lc = executor.make_callable(l, disable_preprocessing=False, use_generated_backward=True)
+    lc.zero_grad()
+    out = lc(a)
+    out.backward(g)
+    l_grad = l.weight.grad
+    torch.testing.assert_close(l_grad, g.mT @ a)
+    torch.testing.assert_close(a.grad, g @ l.weight)
