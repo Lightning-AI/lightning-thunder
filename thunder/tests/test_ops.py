@@ -25,7 +25,7 @@ def snippet_errors(op, sample, ex_type):
         ex = e
 
     assert ex is not None, f"Expected an exception"
-    assert ex_type is type(ex), f"Expected an exception with type {ex_type}, but found ex={ex}"
+    assert ex_type is type(ex), f"Expected an exception with type {ex_type}, but found ex={ex} with type {type(ex)}"
 
 
 @ops(tuple(op for op in opinfos if op.error_input_generator is not None))

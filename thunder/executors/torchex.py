@@ -427,9 +427,9 @@ def prim_transpose(bsym: BoundSymbol, a, permutation):
 
 
 def permute(bsym: BoundSymbol, a, *dims):
-    dims = utils.extract_shape_from_varargs(dims)
-    return prim_transpose(bsym, a, dims)
-
+    sym = Symbol(name="permute", meta=None, _module=torch)
+    return sym.bind(a, *dims, output=bsym.output)
+    
 
 def unsqueeze(bsym: BoundSymbol, a, dim: int):
     sym = Symbol(name="unsqueeze", meta=None, _module=torch)

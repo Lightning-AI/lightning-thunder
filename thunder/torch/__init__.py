@@ -1134,13 +1134,8 @@ def matrix_transpose(a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.permute, is_method=True)
-def permute(a: TensorLike, /, *dims: int) -> TensorLike:
+def permute(a: TensorLike, /, *dims: tuple[int, ...]) -> TensorLike:
     dims = utils.extract_shape_from_varargs(dims)
-    if a.ndim != len(dims):
-        raise ValueError(
-            f"Number of dimensions in the tensor input ({a.ndim}) does not match the length of the desired ordering of"
-            f" dimensions ({len(dims)})"
-        )
     return clang.transpose(a, dims)
 
 
