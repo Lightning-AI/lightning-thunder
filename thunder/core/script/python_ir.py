@@ -373,7 +373,7 @@ def generate_function(gr: "Graph") -> Callable:
         inserted_for[getattr(n, "inserted_for", None)].append(end_address_map[n])
     for n in orig_gr.nodes():
         info = inserted_for[map_from_orig[n]]
-        n.bytecode_range = (min(*info), max(*info)) if info else (None, None)
+        n.bytecode_range = (min(info), max(info)) if info else (None, None)
 
     linetable_end(len(bc))
     linetable_bytes = bytes(linetable)

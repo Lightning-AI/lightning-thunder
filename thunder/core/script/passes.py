@@ -109,7 +109,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
         # for inplace ops, we also check the outputs (e.g. FOR_ITER)
         for idx_o, o in enumerate(n.outputs):
             if o in potential_bl_outputs:
-                o.outputs[idx_o] = get_or_create_phi(o)
+                n.outputs[idx_o] = get_or_create_phi(o)
                 bl.block_outputs.add(o)
 
     bl.block_outputs.update(nbl.block_outputs & potential_bl_outputs)
