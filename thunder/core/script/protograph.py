@@ -13,8 +13,7 @@ from thunder.core.script.python_ir_data import (
     del_opcodes,
     load_opcodes,
     store_opcodes,
-    stack_effects_comprehensive,
-    NoBranchDependent,
+    stack_effect_adjusted,
     PushNew,
     VariableScope,
     RETURN_VALUE,
@@ -23,10 +22,10 @@ from thunder.core.utils import OrderedSet
 
 
 # Aliases to make type annotations more expressive.
-IsJump = bool
-EdgeIndex = Literal[0, -1]
+JumpTarget = tuple["ProtoBlock", bool]
 _AbstractValues = tuple["_AbstractValue", ...]
 NodeFlow = tuple[dis.Instruction, _AbstractValues, _AbstractValues]
+EdgeIndex = Literal[0, -1]
 
 
 class VariableKey(NamedTuple):
@@ -70,13 +69,20 @@ class AbstractValue(_AbstractValue):
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class ProtoBlock:
-    raw_instructions: tuple[dis.Instruction]
-    stacks: tuple[Deque[_AbstractValue], Deque[_AbstractValue]]
-    stack_conditional: tuple[bool, _AbstractValues]
+    """Stores abstract data flow for a code block.
+
+    Notes:
+        `variables` should not contain `VariableScope.CONST` or `VariableScope.STACK`
+        `uses` is indexed WRT block inputs. (This matters for `VariableScope.STACK`)
+    """
+
+    raw_instructions: tuple[dis.Instruction, ...]
+    begin_stack: Deque[_AbstractValue]
+    stack_effect: tuple[int, _AbstractValues]
     variables: dict[VariableKey, _AbstractValues]
     node_flow: tuple[NodeFlow, ...]
 
-    jump_targets: tuple[tuple["ProtoBlock", IsJump]] = ()
+    jump_targets: tuple[JumpTarget, ...] = ()
     uses: OrderedSet[VariableKey] = dataclasses.field(default_factory=OrderedSet)
 
     def __repr__(self) -> str:
@@ -87,7 +93,7 @@ class ProtoBlock:
 
     def __post_init__(self) -> None:
         values_used = set(itertools.chain(*(inputs for _, inputs, _ in self.node_flow)))
-        self.uses.update(k for k, v in self.state(index=0) if v in values_used)
+        self.uses.update(k for k, v in self.variable_state(index=0) if v in values_used)
 
     def add_jump_target(self, other: "ProtoBlock", jump: bool) -> None:
         """We need to add jump targets after all ProtoBlocks are initialized."""
@@ -101,7 +107,6 @@ class ProtoBlock:
 
         # Parse abstract flow. The inital pass is built using only instructions
         # in the ProtoBlock. Later passes will extend for block connectivity.
-        stack_conditional = (False, ())
         block_inputs: Deque[_AbstractValue] = collections.deque()
         stack: Deque[_AbstractValue] = collections.deque()
         variables: dict[VariableKey, list[_AbstractValue]] = {}
@@ -111,16 +116,12 @@ class ProtoBlock:
             # If the stack is empty we can infer that we are trying to reference
             # a value was already on the stack at the start of the block.
             if not stack:
-                block_inputs.appendleft(
-                    inferred := _AbstractRef(f"Inferred stack input: {len(block_inputs)}")
-                )
+                inferred = _AbstractRef(f"Inferred stack input: {len(block_inputs)}")
                 stack.append(inferred)
+                block_inputs.appendleft(inferred)
             return stack.pop() if pop else stack[-1]
 
         def peek_variable(arg: Optional[int], scope: VariableScope) -> list[_AbstractValue]:
-            # The first value should always be an _AbstractRef; if a variable is
-            # undefined a later pass will convert it to `ValueMissing`. However
-            # local block parsing is too early to make that determination.
             assert arg is not None
             if scope == VariableScope.CONST:
                 return [ExternalRef(VariableKey(code.co_consts[arg], scope))]
@@ -138,30 +139,26 @@ class ProtoBlock:
             return variables.setdefault(VariableKey(identifier, scope), [default])
 
         assert raw_instructions
-        for idx, instruction in enumerate(raw_instructions):
-            inputs: list[_AbstractValue] = []
-            outputs: list[_AbstractValue] = []
-            new_intermediates: list[IntermediateValue] = []
-            pop, push, (extra_branch, extra) = stack_effects_comprehensive(instruction)
-            assert (idx + 1) == len(raw_instructions) or not extra, "Branch instruction mid-block"
+        for instruction in raw_instructions:
+            assert hasattr(instruction, "line_no"), instruction
+            pop, push = stack_effect_adjusted(instruction)
 
             def assert_expected_stack_effects(*expected) -> None:
-                assert (pop, push, (extra_branch, extra)) == tuple(
-                    expected
-                ), f"{instruction=} {pop=} {push=} {(extra_branch, extra)=}"
+                assert (pop, push) == tuple(expected), f"{instruction=} {pop=} {push=}"
 
             # Peek at the stack to track variable mutations.
             if (store_scope := store_opcodes.get(instruction.opname)) is not None:
-                assert_expected_stack_effects(1, (), NoBranchDependent)
+                assert_expected_stack_effects(1, ())
                 peek_variable(instruction.arg, store_scope).append(peek_stack(pop=False))
 
             elif (del_scope := del_opcodes.get(instruction.opname)) is not None:
-                assert_expected_stack_effects(1, (), NoBranchDependent)
+                assert_expected_stack_effects(1, ())
                 peek_variable(instruction.arg, del_scope).append(ValueMissing())
 
-            # Handle stack inputs.
-            for _ in range(pop):
-                inputs.append(peek_stack(pop=True))
+            # Handle stack inputs and outputs.
+            inputs: list[_AbstractValue] = [peek_stack(pop=True) for _ in range(pop)]
+            outputs: list[_AbstractValue]
+            new_intermediates: list[IntermediateValue] = []
 
             def lookup(index: int) -> _AbstractValue:
                 """Handle alias resolution and new outputs."""
@@ -174,30 +171,27 @@ class ProtoBlock:
 
                 return new_intermediates[index]
 
-            # Handle outputs.
             if (load_scope := load_opcodes.get(instruction.opname)) is not None:
-                assert_expected_stack_effects(0, PushNew, NoBranchDependent)
-                outputs.append(peek_variable(instruction.arg, load_scope)[-1])
+                assert_expected_stack_effects(0, PushNew)
+                outputs = [peek_variable(instruction.arg, load_scope)[-1]]
 
             else:
-                outputs.extend(lookup(index) for index in push)
-                stack_conditional = (extra_branch, tuple(lookup(index) for index in extra))
+                outputs = [lookup(index) for index in push]
 
-                # Nodes on node flow:
-                #   1) We have already functionalized variable accesses, so we can prune loads and stores.
-                #   2) Inputs are consumed from the stack so we reverse them to get argument order.
-                #   3) Conditional outputs are a block level concept. They are always added to node outputs.
-                extra_outputs = tuple(lookup(index) for index in extra)
-                stack_conditional = (extra_branch, extra_outputs)
-                if not (store_scope or del_scope):
-                    node_flow.append(
-                        (instruction, tuple(reversed(inputs)), tuple((*outputs, *extra_outputs)))
-                    )
+            # We have already functionalized variable accesses, so we can prune loads and stores.
+            # Inputs are consumed from the stack so we reverse them to get argument order.
+            if not (store_scope or del_scope or load_scope):
+                node_flow.append((instruction, tuple(reversed(inputs)), tuple(outputs)))
 
             stack.extend(outputs)
 
-        stacks = (block_inputs, stack)
-        return ProtoBlock(raw_instructions, stacks, stack_conditional, variables, tuple(node_flow))
+        return ProtoBlock(
+            raw_instructions=instructions,
+            begin_stack=block_inputs,
+            stack_effect=(len(block_inputs), tuple(stack)),
+            variables={k: tuple(v) for k, v in variables.items()},
+            node_flow=tuple(node_flow),
+        )
 
     @staticmethod
     def stack_args(args: Iterable[VariableKey]) -> tuple[int, ...]:
@@ -205,26 +199,20 @@ class ProtoBlock:
         assert stack_args == tuple(range(-len(stack_args), 0)), stack_args
         return stack_args
 
-    def stack_effect(self, is_jump: bool) -> tuple[int, int]:
-        return len(tuple(self.stack(0, None))), len(tuple(self.stack(-1, is_jump)))
+    @property
+    def end_stack(self) -> Iterable[_AbstractValue]:
+        pop, push = self.stack_effect
+        yield from itertools.islice(self.begin_stack, 0, len(self.begin_stack) - pop)
+        yield from push
 
-    def stack(self, index: EdgeIndex, is_jump: Optional[bool]) -> Iterable[_AbstractValue]:
-        yield from self.stacks[index]
-        extra_branch, extra_outputs = self.stack_conditional
-        if index == -1 and is_jump in (extra_branch, None):
-            yield from extra_outputs
-
-    def state(
-        self, index: EdgeIndex, is_jump: Optional[bool] = None
-    ) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+    def variable_state(self, *, index: EdgeIndex) -> Iterator[tuple[VariableKey, _AbstractValue]]:
         for k, values in sorted(self.variables.items(), key=lambda x: x[0]):
             v = values[index]
-            assert k.scope not in (VariableScope.CONST, VariableScope.STACK) and isinstance(
-                v, _AbstractValue
-            ), (k, v)
+            assert k.scope not in (VariableScope.CONST, VariableScope.STACK), k
+            assert isinstance(v, _AbstractValue), v
             yield k, v
 
-        stack = tuple(self.stack(index, is_jump))
+        stack = tuple(self.begin_stack if index == 0 else self.end_stack)
         for idx, v in enumerate(stack):
             assert isinstance(v, _AbstractValue), v
             yield VariableKey(idx - len(stack), VariableScope.STACK), v
@@ -238,18 +226,18 @@ class ProtoBlock:
             assert all(isinstance(i, _AbstractValue) for i in values)
             return cls((replace_map.get(i, i) for i in values))
 
-        extra_branch, extra_outputs = self.stack_conditional
-        node_flow = [
+        pop, push = self.stack_effect
+        node_flow = tuple(
             (instruction, make_replacement(inputs), make_replacement(outputs))
             for instruction, inputs, outputs in self.node_flow
-        ]
+        )
 
         transformed = ProtoBlock(
-            self.raw_instructions,
-            tuple(make_replacement(stack) for stack in self.stacks),
-            (extra_branch, make_replacement(extra_outputs)),
-            {k: make_replacement(v) for k, v in self.variables.items()},
-            tuple(node_flow),
+            raw_instructions=self.raw_instructions,
+            begin_stack=make_replacement(self.begin_stack),
+            stack_effect=(pop, make_replacement(push)),
+            variables={k: make_replacement(v) for k, v in self.variables.items()},
+            node_flow=node_flow,
         )
         transformed.uses.update(replace_map.get(i, i) for i in self.uses)
 
@@ -277,15 +265,8 @@ class ProtoGraph:
 
         # Compute some basic topological features.
         (self.root,) = [protoblock for protoblock in protoblocks if not G.in_degree(protoblock)]
-        assert not self.root.stacks[0], "Root block should not have stack inputs"
-
-        # self.parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in protoblocks}
-        parents = collections.defaultdict(list)
-        for protoblock in protoblocks:
-            parents.setdefault(protoblock, [])
-            for child, is_jump in protoblock.jump_targets:
-                parents[child].append((protoblock, is_jump))
-        self.parents = {block: tuple(block_parents) for block, block_parents in parents.items()}
+        assert not self.root.begin_stack, "Root block should not have stack inputs"
+        self.parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in protoblocks}
 
         # Sort the nodes.
         #   Topological sort is not defined for cyclic graphs, however we don't

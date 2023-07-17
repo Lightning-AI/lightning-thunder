@@ -157,25 +157,31 @@ def cse_candidate(x, mask, layer_0, layer_1):
         STORE_FAST               2 (_)                ║
         LOAD_FAST                0 (x)                ║    FOR_ITER
         LOAD_FAST                1 (y)                ║        -> 2(False)
-        INPLACE_ADD                                   ║        -> 3(True)
+        INPLACE_ADD                                   ║        -> 4(True)
         STORE_FAST               0 (x)                ║
-        JUMP_ABSOLUTE            4 (to 8)             ║    STORE_FAST                  _
+        JUMP_ABSOLUTE            4 (to 8)             ║    FOR_ITER__NoJumpEpilogue
+                                                      ║        -> 3(False)
+>>   22 LOAD_FAST                0 (x)                ║
+        RETURN_VALUE                                  ║    STORE_FAST                  _
                                                       ║    LOAD_FAST                   x
->>   22 LOAD_FAST                0 (x)                ║    LOAD_FAST                   y
-        RETURN_VALUE                                  ║    INPLACE_ADD
+                                                      ║    LOAD_FAST                   y
+                                                      ║    INPLACE_ADD
                                                       ║    STORE_FAST                  x
                                                       ║    JUMP_ABSOLUTE
                                                       ║        -> 1(True)
+                                                      ║
+                                                      ║    FOR_ITER__JumpEpilogue
+                                                      ║        -> 5(True)
                                                       ║
                                                       ║    LOAD_FAST                   x
                                                       ║    RETURN_VALUE
 """,
     r"""
-    0)  CALL_FUNCTION:   (range, 4) -> range_generator
-    0)  GET_ITER:        (range_generator) -> range_iter
-    1)  FOR_ITER:        (range_iter) -> _
-    2)  INPLACE_ADD:     (U[x_1, x], y) -> x_1
-    3)  RETURN_VALUE:    (U[x_1, x]) ->
+    0)  CALL_FUNCTION:              (range, 4) -> range_generator
+    0)  GET_ITER:                   (range_generator) -> range_iter
+    2)  FOR_ITER__NoJumpEpilogue:   (range_iter) -> _
+    3)  INPLACE_ADD:                (U[x_1, x], y) -> x_1
+    5)  RETURN_VALUE:               (U[x_1, x]) ->
 """,
 )
 def simple_loop_fn(x, y):
@@ -201,34 +207,40 @@ def simple_loop_fn(x, y):
         LOAD_FAST                0 (x)                ║        -> 2(False)
         COMPARE_OP               4 (>)                ║        -> 5(True)
         POP_JUMP_IF_FALSE       13 (to 26)            ║
-        POP_TOP                                       ║    STORE_FAST                  i
-        LOAD_FAST                1 (i)                ║    LOAD_FAST                   i
-        RETURN_VALUE                                  ║    LOAD_FAST                   x
-                                                      ║    COMPARE_OP                  >
->>   26 JUMP_ABSOLUTE            4 (to 8)             ║    POP_JUMP_IF_FALSE
-                                                      ║        -> 3(False)
->>   28 LOAD_FAST                1 (i)                ║        -> 4(True)
+        POP_TOP                                       ║    FOR_ITER__NoJumpEpilogue
+        LOAD_FAST                1 (i)                ║        -> 3(False)
         RETURN_VALUE                                  ║
+                                                      ║    STORE_FAST                  i
+>>   26 JUMP_ABSOLUTE            4 (to 8)             ║    LOAD_FAST                   i
+                                                      ║    LOAD_FAST                   x
+>>   28 LOAD_FAST                1 (i)                ║    COMPARE_OP                  >
+        RETURN_VALUE                                  ║    POP_JUMP_IF_FALSE
+                                                      ║        -> 4(False)
+                                                      ║        -> 6(True)
+                                                      ║
                                                       ║    POP_TOP
                                                       ║    LOAD_FAST                   i
                                                       ║    JUMP_ABSOLUTE
-                                                      ║        -> 6(True)
+                                                      ║        -> 8(True)
+                                                      ║
+                                                      ║    FOR_ITER__JumpEpilogue
+                                                      ║        -> 7(True)
                                                       ║
                                                       ║    JUMP_ABSOLUTE
                                                       ║        -> 1(True)
                                                       ║
                                                       ║    LOAD_FAST                   i
                                                       ║    JUMP_ABSOLUTE
-                                                      ║        -> 6(True)
+                                                      ║        -> 8(True)
                                                       ║
                                                       ║    RETURN_VALUE
 """,
     r"""
-    0)  CALL_FUNCTION:   (range, 10) -> range_generator
-    0)  GET_ITER:        (range_generator) -> range_iter
-    1)  FOR_ITER:        (range_iter) -> i
-    2)  COMPARE_OP:      (i, x) -> cmp
-    6)  RETURN_VALUE:    (U[i, MISSING]) ->
+    0)  CALL_FUNCTION:              (range, 10) -> range_generator
+    0)  GET_ITER:                   (range_generator) -> range_iter
+    2)  FOR_ITER__NoJumpEpilogue:   (range_iter) -> i
+    3)  COMPARE_OP:                 (i, x) -> cmp
+    8)  RETURN_VALUE:               (U[MISSING, i]) ->
 """,
 )
 def loop_with_break(x):
@@ -249,26 +261,32 @@ def loop_with_break(x):
         LOAD_CONST               1 (1)                ║        -> 2(False)
         INPLACE_ADD                                   ║        -> 5(True)
         STORE_FAST               0 (x)                ║
-        LOAD_GLOBAL              0 (done_fn)          ║    STORE_FAST                  _
-        LOAD_FAST                1 (k)                ║    LOAD_FAST                   x
-        CALL_FUNCTION            1                    ║    LOAD_CONST                  1
-        POP_JUMP_IF_FALSE       19 (to 38)            ║    INPLACE_ADD
+        LOAD_GLOBAL              0 (done_fn)          ║    FOR_ITER__NoJumpEpilogue
+        LOAD_FAST                1 (k)                ║        -> 3(False)
+        CALL_FUNCTION            1                    ║
+        POP_JUMP_IF_FALSE       19 (to 38)            ║    STORE_FAST                  _
+        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
+        LOAD_CONST               2 (2)                ║    LOAD_CONST                  1
+        INPLACE_MULTIPLY                              ║    INPLACE_ADD
+        STORE_FAST               0 (x)                ║    STORE_FAST                  x
+        POP_TOP                                       ║    LOAD_GLOBAL                 done_fn
+        LOAD_FAST                0 (x)                ║    LOAD_FAST                   k
+        RETURN_VALUE                                  ║    CALL_FUNCTION
+                                                      ║    POP_JUMP_IF_FALSE
+>>   38 JUMP_ABSOLUTE            2 (to 4)             ║        -> 4(False)
+                                                      ║        -> 6(True)
+>>   40 LOAD_FAST                0 (x)                ║
+        LOAD_CONST               1 (1)                ║    LOAD_FAST                   x
+        INPLACE_SUBTRACT                              ║    LOAD_CONST                  2
+        STORE_FAST               0 (x)                ║    INPLACE_MULTIPLY
         LOAD_FAST                0 (x)                ║    STORE_FAST                  x
-        LOAD_CONST               2 (2)                ║    LOAD_GLOBAL                 done_fn
-        INPLACE_MULTIPLY                              ║    LOAD_FAST                   k
-        STORE_FAST               0 (x)                ║    CALL_FUNCTION
-        POP_TOP                                       ║    POP_JUMP_IF_FALSE
-        LOAD_FAST                0 (x)                ║        -> 3(False)
-        RETURN_VALUE                                  ║        -> 4(True)
+        RETURN_VALUE                                  ║    POP_TOP
+                                                      ║    LOAD_FAST                   x
+                                                      ║    JUMP_ABSOLUTE               27
+                                                      ║        -> 8(True)
                                                       ║
->>   38 JUMP_ABSOLUTE            2 (to 4)             ║    LOAD_FAST                   x
-                                                      ║    LOAD_CONST                  2
->>   40 LOAD_FAST                0 (x)                ║    INPLACE_MULTIPLY
-        LOAD_CONST               1 (1)                ║    STORE_FAST                  x
-        INPLACE_SUBTRACT                              ║    POP_TOP
-        STORE_FAST               0 (x)                ║    LOAD_FAST                   x
-        LOAD_FAST                0 (x)                ║    JUMP_ABSOLUTE
-        RETURN_VALUE                                  ║        -> 6(True)
+                                                      ║    FOR_ITER__JumpEpilogue
+                                                      ║        -> 7(True)
                                                       ║
                                                       ║    JUMP_ABSOLUTE
                                                       ║        -> 1(True)
@@ -279,18 +297,18 @@ def loop_with_break(x):
                                                       ║    STORE_FAST                  x
                                                       ║    LOAD_FAST                   x
                                                       ║    JUMP_ABSOLUTE
-                                                      ║        -> 6(True)
+                                                      ║        -> 8(True)
                                                       ║
                                                       ║    RETURN_VALUE
 """,
     r"""
-    0)  GET_ITER:           (k) -> k_iter
-    1)  FOR_ITER:           (k_iter) -> _
-    2)  INPLACE_ADD:        (U[x_1, x], 1) -> x_1
-    2)  CALL_FUNCTION:      (done_fn, k) -> break_cnd
-    3)  INPLACE_MULTIPLY:   (x_1, 2) -> x_break_path
-    5)  INPLACE_SUBTRACT:   (U[x_1, x], 1) -> x_normal_path
-    6)  RETURN_VALUE:       (U[x_break_path, x_normal_path]) ->
+    0)  GET_ITER:                   (k) -> k_iter
+    2)  FOR_ITER__NoJumpEpilogue:   (k_iter) -> _
+    3)  INPLACE_ADD:                (U[x, x_1], 1) -> x_1
+    3)  CALL_FUNCTION:              (done_fn, k) -> break_cnd
+    4)  INPLACE_MULTIPLY:           (x_1, 2) -> x_break_path
+    7)  INPLACE_SUBTRACT:           (U[x, x_1], 1) -> x_normal_path
+    8)  RETURN_VALUE:               (U[x_break_path, x_normal_path]) ->
 """,
 )
 def loop_with_else(x, k):
@@ -320,7 +338,7 @@ def done_fn(_):
         LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
         POP_JUMP_IF_FALSE       17 (to 34)            ║    POP_JUMP_IF_FALSE
                                                       ║        -> 1(False)
->>    4 LOAD_FAST                1 (inner)            ║        -> 5(True)
+>>    4 LOAD_FAST                1 (inner)            ║        -> 7(True)
         GET_ITER                                      ║
                                                       ║    LOAD_FAST                   inner
 >>    8 FOR_ITER                 6 (to 22)            ║    GET_ITER
@@ -329,23 +347,29 @@ def done_fn(_):
         LOAD_CONST               1 (2)                ║
         INPLACE_TRUE_DIVIDE                           ║    FOR_ITER
         STORE_FAST               0 (x)                ║        -> 3(False)
-        JUMP_ABSOLUTE            4 (to 8)             ║        -> 4(True)
+        JUMP_ABSOLUTE            4 (to 8)             ║        -> 5(True)
                                                       ║
->>   22 LOAD_FAST                0 (x)                ║    STORE_FAST                  _
-        LOAD_CONST               2 (1)                ║    LOAD_FAST                   x
-        INPLACE_FLOOR_DIVIDE                          ║    LOAD_CONST                  2
-        STORE_FAST               0 (x)                ║    INPLACE_TRUE_DIVIDE
-        LOAD_FAST                0 (x)                ║    STORE_FAST                  x
-        POP_JUMP_IF_TRUE         2 (to 4)             ║    JUMP_ABSOLUTE
-                                                      ║        -> 2(True)
->>   34 LOAD_FAST                1 (inner)            ║
-        LOAD_ATTR                0 (count)            ║    LOAD_FAST                   x
-        RETURN_VALUE                                  ║    LOAD_CONST                  1
+>>   22 LOAD_FAST                0 (x)                ║    FOR_ITER__NoJumpEpilogue
+        LOAD_CONST               2 (1)                ║        -> 4(False)
+        INPLACE_FLOOR_DIVIDE                          ║
+        STORE_FAST               0 (x)                ║    STORE_FAST                  _
+        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
+        POP_JUMP_IF_TRUE         2 (to 4)             ║    LOAD_CONST                  2
+                                                      ║    INPLACE_TRUE_DIVIDE
+>>   34 LOAD_FAST                1 (inner)            ║    STORE_FAST                  x
+        LOAD_ATTR                0 (count)            ║    JUMP_ABSOLUTE               to 8
+        RETURN_VALUE                                  ║        -> 2(True)
+                                                      ║
+                                                      ║    FOR_ITER__JumpEpilogue
+                                                      ║        -> 6(True)
+                                                      ║
+                                                      ║    LOAD_FAST                   x
+                                                      ║    LOAD_CONST                  1
                                                       ║    INPLACE_FLOOR_DIVIDE
                                                       ║    STORE_FAST                  x
                                                       ║    LOAD_FAST                   x
                                                       ║    POP_JUMP_IF_TRUE
-                                                      ║        -> 5(False)
+                                                      ║        -> 7(False)
                                                       ║        -> 1(True)
                                                       ║
                                                       ║    LOAD_FAST                   inner
@@ -353,12 +377,12 @@ def done_fn(_):
                                                       ║    RETURN_VALUE
 """,
     r"""
-    GET_ITER:               (inner) -> inner_iter
-    FOR_ITER:               (inner_iter) -> _
-    INPLACE_TRUE_DIVIDE:    (U[x_1, x_2, x], 2) -> x_1
-    INPLACE_FLOOR_DIVIDE:   (U[x_1, x_2, x], 1) -> x_2
-    LOAD_ATTR:              (inner) -> inner_count
-    RETURN_VALUE:           (inner_count) ->
+    GET_ITER:                   (inner) -> inner_iter
+    FOR_ITER__NoJumpEpilogue:   (inner_iter) -> _
+    INPLACE_TRUE_DIVIDE:        (U[x_2, x_1, x], 2) -> x_1
+    INPLACE_FLOOR_DIVIDE:       (U[x_2, x_1, x], 1) -> x_2
+    LOAD_ATTR:                  (inner) -> inner_count
+    RETURN_VALUE:               (inner_count) ->
 """,
 )
 def nested_loop_fn(x, inner):
@@ -375,30 +399,36 @@ def nested_loop_fn(x, inner):
         CALL_FUNCTION            0                    ║    CALL_FUNCTION
         SETUP_WITH              13 (to 32)            ║    SETUP_WITH
         STORE_FAST               2 (c)                ║        -> 1(False)
-        LOAD_FAST                0 (x)                ║        -> 2(True)
+        LOAD_FAST                0 (x)                ║        -> 3(True)
         LOAD_CONST               1 (1)                ║
-        INPLACE_ADD                                   ║    STORE_FAST                  c
-        STORE_FAST               0 (x)                ║    LOAD_FAST                   x
-        POP_BLOCK                                     ║    LOAD_CONST                  1
-        LOAD_CONST               0 (None)             ║    INPLACE_ADD
-        DUP_TOP                                       ║    STORE_FAST                  x
-        DUP_TOP                                       ║    POP_BLOCK
-        CALL_FUNCTION            3                    ║    LOAD_CONST                  None
-        POP_TOP                                       ║    DUP_TOP
-        LOAD_CONST               0 (None)             ║    DUP_TOP
-        RETURN_VALUE                                  ║    CALL_FUNCTION
-                                                      ║    POP_TOP
->>   32 WITH_EXCEPT_START                             ║    LOAD_CONST                  None
-        POP_JUMP_IF_TRUE        19 (to 38)            ║    JUMP_ABSOLUTE
-        RERAISE                  1                    ║        -> 5(True)
-                                                      ║
->>   38 POP_TOP                                       ║    WITH_EXCEPT_START
-        POP_TOP                                       ║    POP_JUMP_IF_TRUE
-        POP_TOP                                       ║        -> 3(False)
-        POP_EXCEPT                                    ║        -> 4(True)
+        INPLACE_ADD                                   ║    SETUP_WITH__NoJumpEpilogue
+        STORE_FAST               0 (x)                ║        -> 2(False)
+        POP_BLOCK                                     ║
+        LOAD_CONST               0 (None)             ║    STORE_FAST                  c
+        DUP_TOP                                       ║    LOAD_FAST                   x
+        DUP_TOP                                       ║    LOAD_CONST                  1
+        CALL_FUNCTION            3                    ║    INPLACE_ADD
+        POP_TOP                                       ║    STORE_FAST                  x
+        LOAD_CONST               0 (None)             ║    POP_BLOCK
+        RETURN_VALUE                                  ║    LOAD_CONST                  None
+                                                      ║    DUP_TOP
+>>   32 WITH_EXCEPT_START                             ║    DUP_TOP
+        POP_JUMP_IF_TRUE        19 (to 38)            ║    CALL_FUNCTION
+        RERAISE                  1                    ║    POP_TOP
+                                                      ║    LOAD_CONST                  None
+>>   38 POP_TOP                                       ║    JUMP_ABSOLUTE
+        POP_TOP                                       ║        -> 7(True)
         POP_TOP                                       ║
-        LOAD_CONST               0 (None)             ║    RERAISE
-        RETURN_VALUE                                  ║
+        POP_EXCEPT                                    ║    SETUP_WITH__JumpEpilogue
+        POP_TOP                                       ║        -> 4(True)
+        LOAD_CONST               0 (None)             ║
+        RETURN_VALUE                                  ║    WITH_EXCEPT_START
+                                                      ║    POP_JUMP_IF_TRUE
+                                                      ║        -> 5(False)
+                                                      ║        -> 6(True)
+                                                      ║
+                                                      ║    RERAISE
+                                                      ║
                                                       ║    POP_TOP
                                                       ║    POP_TOP
                                                       ║    POP_TOP
@@ -406,7 +436,7 @@ def nested_loop_fn(x, inner):
                                                       ║    POP_TOP
                                                       ║    LOAD_CONST                  None
                                                       ║    JUMP_ABSOLUTE
-                                                      ║        -> 5(True)
+                                                      ║        -> 7(True)
                                                       ║
                                                       ║    RETURN_VALUE
 """,
@@ -503,38 +533,44 @@ make_nonlocal_test()
 
 @add_parse_test(
     """
-        SETUP_FINALLY           12 (to 26)            ║    SETUP_FINALLY               to 26
+        SETUP_FINALLY           12 (to 26)            ║    SETUP_FINALLY
         LOAD_FAST                0 (f)                ║        -> 1(False)
-        LOAD_METHOD              0 (write)            ║        -> 2(True)
+        LOAD_METHOD              0 (write)            ║        -> 3(True)
         LOAD_CONST               1 ('Test')           ║
-        CALL_METHOD              1                    ║    LOAD_FAST                   f
-        POP_TOP                                       ║    LOAD_METHOD                 write
-        POP_BLOCK                                     ║    LOAD_CONST                  'Test'
-        LOAD_FAST                0 (f)                ║    CALL_METHOD
-        LOAD_METHOD              1 (close)            ║    POP_TOP
-        CALL_METHOD              0                    ║    POP_BLOCK
-        POP_TOP                                       ║    LOAD_FAST                   f
-        LOAD_CONST               0 (None)             ║    LOAD_METHOD                 close
-        RETURN_VALUE                                  ║    CALL_METHOD
-                                                      ║    POP_TOP
->>   26 LOAD_FAST                0 (f)                ║    LOAD_CONST                  None
-        LOAD_METHOD              1 (close)            ║    RETURN_VALUE
-        CALL_METHOD              0                    ║
-        POP_TOP                                       ║    LOAD_FAST                   f
-        RERAISE                  0                    ║    LOAD_METHOD                 close
+        CALL_METHOD              1                    ║    SETUP_FINALLY__NoJumpEpilogue
+        POP_TOP                                       ║        -> 2(False)
+        POP_BLOCK                                     ║
+        LOAD_FAST                0 (f)                ║    LOAD_FAST                   f
+        LOAD_METHOD              1 (close)            ║    LOAD_METHOD                 write
+        CALL_METHOD              0                    ║    LOAD_CONST                  'Test'
+        POP_TOP                                       ║    CALL_METHOD
+        LOAD_CONST               0 (None)             ║    POP_TOP
+        RETURN_VALUE                                  ║    POP_BLOCK
+                                                      ║    LOAD_FAST                   f
+>>   26 LOAD_FAST                0 (f)                ║    LOAD_METHOD                 close
+        LOAD_METHOD              1 (close)            ║    CALL_METHOD
+        CALL_METHOD              0                    ║    POP_TOP
+        POP_TOP                                       ║    LOAD_CONST                  None
+        RERAISE                  0                    ║    RETURN_VALUE
+                                                      ║
+                                                      ║    SETUP_FINALLY__JumpEpilogue
+                                                      ║        -> 4(True)
+                                                      ║
+                                                      ║    LOAD_FAST                   f
+                                                      ║    LOAD_METHOD                 close
                                                       ║    CALL_METHOD
                                                       ║    POP_TOP
                                                       ║    RERAISE
 """,
     r"""
-0)  SETUP_FINALLY:   () -> __unused_0, __unused_1, __unused_2, __unused_3, __unused_4, __unused_5
-1)  LOAD_METHOD:     (f) -> f_write
-1)  CALL_METHOD:     (f_write, f, Test) -> write_result
-1)  LOAD_METHOD:     (f) -> f_close
-1)  CALL_METHOD:     (f_close, f) -> close_result
-1)  RETURN_VALUE:    (None) ->
-2)  LOAD_METHOD:     (f) -> f_close_finally_branch
-2)  CALL_METHOD:     (f_close_finally_branch, f) -> close_result_finally_branch
+2)  LOAD_METHOD:                    (f) -> f_write
+2)  CALL_METHOD:                    (f_write, f, Test) -> write_result
+2)  LOAD_METHOD:                    (f) -> f_close
+2)  CALL_METHOD:                    (f_close, f) -> close_result
+2)  RETURN_VALUE:                   (None) ->
+3)  SETUP_FINALLY__JumpEpilogue:    () -> __unused_0, __unused_1, __unused_2, __unused_3, __unused_4, __unused_5
+4)  LOAD_METHOD:                    (f) -> f_close_finally_branch
+4)  CALL_METHOD:                    (f_close_finally_branch, f) -> close_result_finally_branch
 """,
 )
 def try_finally(f):
@@ -548,63 +584,75 @@ def try_finally(f):
     """
         SETUP_FINALLY           35 (to 72)            ║    SETUP_FINALLY
         SETUP_FINALLY            7 (to 18)            ║        -> 1(False)
-        LOAD_FAST                0 (f)                ║        -> 8(True)
+        LOAD_FAST                0 (f)                ║        -> 5(True)
         LOAD_METHOD              0 (write)            ║
-        LOAD_CONST               1 ('Test')           ║    SETUP_FINALLY
+        LOAD_CONST               1 ('Test')           ║    SETUP_FINALLY__NoJumpEpilogue
         CALL_METHOD              1                    ║        -> 2(False)
-        POP_TOP                                       ║        -> 3(True)
-        POP_BLOCK                                     ║
-        JUMP_FORWARD            13 (to 44)            ║    LOAD_FAST                   f
-                                                      ║    LOAD_METHOD                 write
->>   18 DUP_TOP                                       ║    LOAD_CONST                  'Test'
-        LOAD_GLOBAL              1 (OSError)          ║    CALL_METHOD
-        JUMP_IF_NOT_EXC_MATCH    21 (to 42)           ║    POP_TOP
-        POP_TOP                                       ║    POP_BLOCK
-        POP_TOP                                       ║    JUMP_FORWARD
-        POP_TOP                                       ║        -> 6(True)
-        LOAD_FAST                1 (log)              ║
-        LOAD_CONST               2 ('Fail')           ║    DUP_TOP
-        CALL_FUNCTION            1                    ║    LOAD_GLOBAL                 OSError
-        POP_TOP                                       ║    JUMP_IF_NOT_EXC_MATCH
-        POP_EXCEPT                                    ║        -> 4(False)
-        JUMP_FORWARD             8 (to 58)            ║        -> 5(True)
-                                                      ║
->>   42 RERAISE                  0                    ║    POP_TOP
-                                                      ║    POP_TOP
->>   44 POP_BLOCK                                     ║    POP_TOP
-        LOAD_FAST                0 (f)                ║    LOAD_FAST                   log
-        LOAD_METHOD              2 (close)            ║    LOAD_CONST                  'Fail'
-        CALL_METHOD              0                    ║    CALL_FUNCTION
-        POP_TOP                                       ║    POP_TOP
-        LOAD_CONST               0 (None)             ║    POP_EXCEPT
-        RETURN_VALUE                                  ║    JUMP_FORWARD
-                                                      ║        -> 7(True)
->>   58 POP_BLOCK                                     ║
-        LOAD_FAST                0 (f)                ║    RERAISE
-        LOAD_METHOD              2 (close)            ║
-        CALL_METHOD              0                    ║    POP_BLOCK
-        POP_TOP                                       ║    LOAD_FAST                   f
-        LOAD_CONST               0 (None)             ║    LOAD_METHOD                 close
-        RETURN_VALUE                                  ║    CALL_METHOD
-                                                      ║    POP_TOP
->>   72 LOAD_FAST                0 (f)                ║    LOAD_CONST                  None
-        LOAD_METHOD              2 (close)            ║    JUMP_ABSOLUTE
-        CALL_METHOD              0                    ║        -> 9(True)
         POP_TOP                                       ║
-        RERAISE                  0                    ║    POP_BLOCK
+        POP_BLOCK                                     ║    SETUP_FINALLY
+        JUMP_FORWARD            13 (to 44)            ║        -> 3(False)
+                                                      ║        -> 6(True)
+>>   18 DUP_TOP                                       ║
+        LOAD_GLOBAL              1 (OSError)          ║    SETUP_FINALLY__NoJumpEpilogue
+        JUMP_IF_NOT_EXC_MATCH    21 (to 42)           ║        -> 4(False)
+        POP_TOP                                       ║
+        POP_TOP                                       ║    LOAD_FAST                   f
+        POP_TOP                                       ║    LOAD_METHOD                 write
+        LOAD_FAST                1 (log)              ║    LOAD_CONST                  'Test'
+        LOAD_CONST               2 ('Fail')           ║    CALL_METHOD
+        CALL_FUNCTION            1                    ║    POP_TOP
+        POP_TOP                                       ║    POP_BLOCK
+        POP_EXCEPT                                    ║    JUMP_FORWARD                to 44
+        JUMP_FORWARD             8 (to 58)            ║        -> 12(True)
+                                                      ║
+>>   42 RERAISE                  0                    ║    SETUP_FINALLY__JumpEpilogue
+                                                      ║        -> 11(True)
+>>   44 POP_BLOCK                                     ║
+        LOAD_FAST                0 (f)                ║    SETUP_FINALLY__JumpEpilogue
+        LOAD_METHOD              2 (close)            ║        -> 7(True)
+        CALL_METHOD              0                    ║
+        POP_TOP                                       ║    DUP_TOP
+        LOAD_CONST               0 (None)             ║    LOAD_GLOBAL                 OSError
+        RETURN_VALUE                                  ║    JUMP_IF_NOT_EXC_MATCH
+                                                      ║        -> 8(False)
+>>   58 POP_BLOCK                                     ║        -> 9(True)
+        LOAD_FAST                0 (f)                ║
+        LOAD_METHOD              2 (close)            ║    POP_TOP
+        CALL_METHOD              0                    ║    POP_TOP
+        POP_TOP                                       ║    POP_TOP
+        LOAD_CONST               0 (None)             ║    LOAD_FAST                   log
+        RETURN_VALUE                                  ║    LOAD_CONST                  'Fail'
+                                                      ║    CALL_FUNCTION
+>>   72 LOAD_FAST                0 (f)                ║    POP_TOP
+        LOAD_METHOD              2 (close)            ║    POP_EXCEPT
+        CALL_METHOD              0                    ║    JUMP_FORWARD
+        POP_TOP                                       ║        -> 10(True)
+        RERAISE                  0                    ║
+                                                      ║    RERAISE
+                                                      ║
+                                                      ║    POP_BLOCK
                                                       ║    LOAD_FAST                   f
                                                       ║    LOAD_METHOD                 close
                                                       ║    CALL_METHOD
                                                       ║    POP_TOP
                                                       ║    LOAD_CONST                  None
                                                       ║    JUMP_ABSOLUTE
-                                                      ║        -> 9(True)
+                                                      ║        -> 13(True)
                                                       ║
                                                       ║    LOAD_FAST                   f
                                                       ║    LOAD_METHOD                 close
                                                       ║    CALL_METHOD
                                                       ║    POP_TOP
                                                       ║    RERAISE
+                                                      ║
+                                                      ║    POP_BLOCK
+                                                      ║    LOAD_FAST                   f
+                                                      ║    LOAD_METHOD                 close
+                                                      ║    CALL_METHOD
+                                                      ║    POP_TOP
+                                                      ║    LOAD_CONST                  None
+                                                      ║    JUMP_ABSOLUTE
+                                                      ║        -> 13(True)
                                                       ║
                                                       ║    RETURN_VALUE
 """,
@@ -640,7 +688,7 @@ def suggest_parse_spec(proto_graph: ProtoGraph):
 
     lines = []
     for protoblock in proto_graph:
-        lines.extend(f"{i.opname:<28}{i.argrepr}" for i in protoblock.raw_instructions)
+        lines.extend(f"{i.opname:<27} {i.argrepr}" for i in protoblock.raw_instructions)
         lines.extend(f"    -> {block_to_index[target]}({is_jump})" for target, is_jump in protoblock.jump_targets)
         lines.append("")
 
@@ -780,7 +828,7 @@ def split_column_blocks(s: str, split_sequence: str):
 def extract_parse_spec(spec_str: str) -> tuple[str, PARSE_SPECIFICATION]:
     spec_lines = spec_str.splitlines(keepends=False)
     expected = [([], [])]
-    instruction_pattern = re.compile(r"^([A-Z_]+)(.*)$")
+    instruction_pattern = re.compile(r"^([a-zA-Z_]+)(.*)$")
     jump_pattern = re.compile(r"^\s*-> ([0-9]+)\((True|False)\)\s*$")
     for line in textwrap.dedent("\n".join(spec_lines)).strip().splitlines(keepends=False):
         instructions, jumps = expected[-1]
@@ -802,7 +850,7 @@ def extract_parse_spec(spec_str: str) -> tuple[str, PARSE_SPECIFICATION]:
 
 
 def extract_flow_spec(spec_str: str) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
-    line_pattern = re.compile(r"^([0-9]+\))?\s*([A-Z_]+):\s+\((.*)\)\s+->\s+(.*)$")
+    line_pattern = re.compile(r"^([0-9]+\))?\s*([a-zA-Z_]+):\s+\((.*)\)\s+->\s+(.*)$")
     for line in textwrap.dedent(spec_str).strip().splitlines(keepends=False):
         if match := line_pattern.search(line.strip()):
             block, opname, inputs, outputs = match.groups()
