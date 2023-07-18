@@ -30,6 +30,7 @@ from thunder.core.utils import (
     canonicalize_dims,
 )
 from thunder.executors.passes import dce
+from thunder import clang
 
 # from thunder.executors.torch import ops_to_torch_ops_map
 
@@ -1072,8 +1073,6 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
     Returns:
         Variable: Tensor with the reduced dimensions restored.
     """
-    from thunder import clang
-
     if original_shape == ():  # scalar
         return x
 
@@ -1413,6 +1412,7 @@ def broadcast_in_dim_aug_fwd(a: Proxy, shape: Sequence[int], broadcast_dimension
 
 @register_backward(prims.PrimIDs.BROADCAST_IN_DIM)
 def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
+    from thunder.torch import sum
     # If g is None, then the primal was a constant and the pullback is zero.
     # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
     if g is None:
@@ -1420,7 +1420,7 @@ def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
     unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
     bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
     reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
-    g = prims.sum(g, reduce_dims)
+    g = sum(g, reduce_dims)
     g = unsqueeze(g, unit_dims)
     # One return per positional argument of prims.broadcast_in_dim
     return g, None, None
@@ -1482,6 +1482,7 @@ def matmul_aug_fwd(a: TensorProxy, b: TensorProxy) -> VJPDual:
 
 @register_backward(prims.PrimIDs.MATMUL)
 def matmul_backward(a, b, g):
+    from thunder.torch import sum
     last_dim = (-1,)
     first_dim = (-2,)
     if a.ndim == 1 and b.ndim == 1:
@@ -1492,13 +1493,13 @@ def matmul_backward(a, b, g):
         gb = a.mT @ unsqueeze(g, last_dim)
         if g.ndim > 1:
             gb = squeeze(gb, last_dim)
-            gb = prims.sum(gb, tuple(range(gb.ndim - 1)))
+            gb = sum(gb, tuple(range(gb.ndim - 1)))
         return ga, gb
 
     if a.ndim == 1:
         ga = unsqueeze(g, first_dim) @ b.mT
         if g.ndim > 1:
-            ga = prims.sum(ga, tuple(range(ga.ndim - 1)))
+            ga = sum(ga, tuple(range(ga.ndim - 1)))
         gb = unsqueeze(a, first_dim).mT @ unsqueeze(g, first_dim)
         return ga, gb
 
@@ -1514,7 +1515,7 @@ def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy]) -> 
 
 @register_backward(prims.PrimIDs.LINEAR)
 def linear_backward(a, b, c, g):
-    from thunder.torch import matmul
+    from thunder.torch import matmul, sum
 
     first_dim = (-2,)
     ga = matmul(g, b)
@@ -1525,7 +1526,7 @@ def linear_backward(a, b, c, g):
         assert list(gb.shape) == list(b.shape), f"linear_backward: {gb.shape} != {b.shape}"
     if c is None:
         return ga, gb, None
-    gc = prims.sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
+    gc = sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
     return ga, gb, gc
 
 
@@ -1782,7 +1783,7 @@ def backward_pass(forward_env, trace, init_cotangents):
                 if val is None:
                     return
                 # Accumulate cotangents
-                env[v.name] = prims.add(env[v.name], val) if env[v.name] is not None else val
+                env[v.name] = clang.add(env[v.name], val) if env[v.name] is not None else val
                 return
             env[v.name] = val
         elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
