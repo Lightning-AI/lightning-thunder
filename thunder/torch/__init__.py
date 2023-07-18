@@ -1134,7 +1134,7 @@ def matrix_transpose(a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.permute, is_method=True)
-def permute(a: TensorLike, /, *dims: tuple[int, ...]) -> TensorLike:
+def permute(a: TensorLike, /, *dims: int) -> TensorLike:
     dims = utils.extract_shape_from_varargs(dims)
     return clang.transpose(a, dims)
 

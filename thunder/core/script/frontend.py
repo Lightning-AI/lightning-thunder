@@ -257,9 +257,7 @@ def _condense_values(proto_graph: ProtoGraph) -> ProtoGraph:
     # graph logic if we first convert all values to indices.
     values = tuple(G.nodes)
     value_to_idx = {value: idx for idx, value in enumerate(values)}
-    G = nx.from_edgelist(
-        ((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges), nx.DiGraph
-    )
+    G = nx.from_edgelist(((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges), nx.DiGraph)
     index_alias_map: dict[int, set[int]] = {}
 
     # We can decompose the graph into disjoint use-def chains and analyze them independently.
@@ -282,9 +280,7 @@ def _condense_values(proto_graph: ProtoGraph) -> ProtoGraph:
                 # The choice of "canonical" index is arbitrary as long as it is consistent.
                 clusters.update({i: min(cluster) for i in cluster})
             assert len(clusters) == len(subgraph)
-            reduced_subgraph = nx.from_edgelist(
-                ((clusters[i], clusters[j]) for i, j in subgraph.edges), nx.DiGraph
-            )
+            reduced_subgraph = nx.from_edgelist(((clusters[i], clusters[j]) for i, j in subgraph.edges), nx.DiGraph)
             reduced_subgraph.remove_edges_from(nx.selfloop_edges(reduced_subgraph))
             num_equality_edges = len(equality_edges)
 
@@ -473,9 +469,7 @@ def _bind_to_graph(
         elif isinstance(value, ExternalRef) and value.key.scope == VariableScope.CONST:
             return get_initial_value(value.key)
 
-        raise ValueError(
-            f"Cannot convert abstract value: {value}, {protoblock} {protoblock is proto_graph.root=}"
-        )
+        raise ValueError(f"Cannot convert abstract value: {value}, {protoblock} {protoblock is proto_graph.root=}")
 
     def iter_node_flow(protoblock: ProtoBlock) -> Iterable[Node]:
         yield from protoblock.node_flow[:-1]
@@ -483,8 +477,7 @@ def _bind_to_graph(
         if any(_is_epilogue(jump_target) for jump_target, _ in protoblock.jump_targets):
             assert all(_is_epilogue(target) for target, _ in protoblock.jump_targets)
             outputs_by_branch = tuple(
-                fold_epilogue_stack(protoblock, jump_target)[1]
-                for jump_target, _ in protoblock.jump_targets
+                fold_epilogue_stack(protoblock, jump_target)[1] for jump_target, _ in protoblock.jump_targets
             )
 
             merged_outputs = []
@@ -644,9 +637,7 @@ def acquire_partial(
     # first we shuffle positional args to kw only if they are in the kwargs of the partial
     pos_param_names = [v.name for v in gr.local_variables_at_start[: gr.co_argcount]]
     pos_param_names_to_idx = {n: i for i, n in enumerate(pos_param_names)}
-    kw_pos_param_idx = [
-        pos_param_names_to_idx[k] for k in pfunc.keywords if k in pos_param_names_to_idx
-    ]
+    kw_pos_param_idx = [pos_param_names_to_idx[k] for k in pfunc.keywords if k in pos_param_names_to_idx]
     if kw_pos_param_idx:
         # convert positional default args to kw ones
         kw_pos_param_min = min(kw_pos_param_idx)
@@ -696,8 +687,7 @@ def acquire_partial(
 
     # handle keyword arguments to concrete parameters, collect in kwargs those for kw-varargs (**kwargs)
     param_names_to_idx = {
-        v.name: i
-        for i, v in enumerate(gr.local_variables_at_start[: gr.co_argcount + gr.co_kwonlyargcount])
+        v.name: i for i, v in enumerate(gr.local_variables_at_start[: gr.co_argcount + gr.co_kwonlyargcount])
     }
     kwargs = {}
     for argname, argvalue in pfunc.keywords.items():
@@ -743,9 +733,7 @@ def acquire_partial(
             )
         # the variable for varargs is at gr.co_argcount + gr.co_kwonlyargcount
         v_vararg_param = gr.local_variables_at_start[gr.co_argcount + gr.co_kwonlyargcount]
-        v_partial_varargs = Value(
-            name="partial_varargs", value=tuple(args_for_varargs), is_const=True
-        )
+        v_partial_varargs = Value(name="partial_varargs", value=tuple(args_for_varargs), is_const=True)
         v_varargs_new = Value(name="varargs_with_partial")  # type is tuple
         pv = PhiValue([v_vararg_param], [None], block=prelude)
         new_n = Node(
@@ -811,9 +799,7 @@ def acquire_method(
     if callable(method) and not inspect.ismethod(method) and not inspect.isfunction(method):
         method = method.__call__
 
-    method_self, func = (
-        (method.__self__, method.__func__) if inspect.ismethod(method) else (None, method)
-    )
+    method_self, func = (method.__self__, method.__func__) if inspect.ismethod(method) else (None, method)
     assert not inspect.ismethod(func)
 
     module = module or method_self
@@ -852,9 +838,7 @@ def remove_unused_values(gr: Graph) -> None:
         if len(i.values) == 1 and i.values[0] is None:
             remove_value(i)
 
-    gr.blocks[0].block_inputs = [
-        i for i in gr.blocks[0].block_inputs if len(i.values) != 1 or i.values[0] is not None
-    ]
+    gr.blocks[0].block_inputs = [i for i in gr.blocks[0].block_inputs if len(i.values) != 1 or i.values[0] is not None]
 
     values_used = set()
 

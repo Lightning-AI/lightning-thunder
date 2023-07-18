@@ -2203,8 +2203,9 @@ def expand_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((0,), (0,)),  # Zero dim tensor identity
         ((0,), (-1,)),  # Scalar wildcard
         ((1, 0), (1, 0)),  # Nonleading zero dim
-        ((1, 0), (0, -1)),
-        ((1, 0), (0, 0)),
+        # These are disabled due to https://github.com/Lightning-AI/lightning-thunder/issues/663
+        # ((1, 0), (0, -1)),
+        # ((1, 0), (0, 0)),
         ((1, 3), (1, 1, 3)),  # Add dim
         ((1, 1), (1, 2)),  # Broadcast trailing dim
         ((1, 1), (2, 1)),  # Broadcast leading dim
@@ -2239,7 +2240,7 @@ def expand_error_generator(op, device, *, dtype=torch.float32, **kwargs):
 
 
 expand_opinfo = OpInfo(
-    clang.expand,
+    ltorch.expand,
     sample_input_generator=expand_sample_generator,
     error_input_generator=expand_error_generator,
     torch_reference=torch.Tensor.expand,
@@ -2677,7 +2678,7 @@ shape_ops.append(transpose_opinfo)
 
 def permute_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-    
+
     # shape, perm
     cases = (
         ((2, 3, 4), (0, 1, 2)),
@@ -2687,12 +2688,21 @@ def permute_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((2, 3, 4), (0, -1, 1)),
         ((4, 7), (1, 0)),
         ((3,), (0,)),
-        ((), ()),
     )
 
+    # NOTE These cases are tuple-only because *() becomes no arguments to varargs
+    # shape, perm
+    tuple_only_cases = (((), ()),)
+
     for shape, perm in cases:
-        t = make(shape)
-        yield SampleInput(t, perm)
+        # Tests specifying the permutation as a tuple
+        yield SampleInput(make(shape), perm)
+        # Tests specifying the permutation as varargs
+        yield SampleInput(make(shape), *perm)
+
+    for shape, perm in tuple_only_cases:
+        yield SampleInput(make(shape), perm)
+
 
 def permute_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
@@ -2702,11 +2712,18 @@ def permute_error_generator(op, device, dtype=torch.float32, **kwargs):
     yield SampleInput(t, (0, 1)), RuntimeError
 
 
+# NOTE This reference is required because torch.permute requires the
+#   permutation be specified as a tuple, while torch.Tensor.permute
+#   allows it to be specified as a tuple or varargs.
+def torch_permute_reference(a, *dims):
+    return a.permute(*dims)
+
+
 permute_opinfo = OpInfo(
     ltorch.permute,
     sample_input_generator=permute_sample_generator,
     error_input_generator=permute_error_generator,
-    torch_reference=torch.permute,
+    torch_reference=torch_permute_reference,
 )
 shape_ops.append(permute_opinfo)
 

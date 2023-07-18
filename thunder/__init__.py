@@ -404,7 +404,7 @@ def compile(
         raise NotImplementedError(
             "Generated backward is only supported for nn.Modules for now. ",
             "Please wrap your function in a nn.Module and try again. ",
-            "Alternatively, you can use the @thunder_backward decorator instead of thunder.compile."
+            "Alternatively, you can use the @thunder_backward decorator instead of thunder.compile.",
         )
 
     if isinstance(fn, pytorch.nn.Module):

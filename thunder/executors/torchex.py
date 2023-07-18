@@ -241,7 +241,7 @@ def contiguous(bsym: BoundSymbol, a) -> BoundSymbol:
 
 def expand(bsym: BoundSymbol, tensor, *shape):
     sym = Symbol(name="expand", meta=None, _module=torch.Tensor)
-    return sym.bind(args=(tensor, utils.extract_shape_from_varargs(shape)), output=bsym.output)
+    return sym.bind(tensor, *shape, output=bsym.output)
 
 
 def getitem(bsym: BoundSymbol, tensor, key) -> BoundSymbol:
@@ -426,10 +426,13 @@ def prim_transpose(bsym: BoundSymbol, a, permutation):
     return tbsym
 
 
-def permute(bsym: BoundSymbol, a, *dims):
+def permute(bsym: BoundSymbol, a, *dims: int):
+    # NOTE This is necessary because torch.permute() requires the permutation be
+    #   specified as a tuple, not varargs
+    dims = utils.extract_shape_from_varargs(dims)
     sym = Symbol(name="permute", meta=None, _module=torch)
-    return sym.bind(a, *dims, output=bsym.output)
-    
+    return sym.bind(a, dims, output=bsym.output)
+
 
 def unsqueeze(bsym: BoundSymbol, a, dim: int):
     sym = Symbol(name="unsqueeze", meta=None, _module=torch)
@@ -1057,7 +1060,7 @@ _ops_map.update(
         "torch.nn.functional.scaled_dot_product_attention": (
             _scaled_dot_product_attention_check,
             scaled_dot_product_attention,
-        )
+        ),
     }
 )
 
