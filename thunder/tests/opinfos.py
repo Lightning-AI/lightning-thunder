@@ -1737,12 +1737,27 @@ nextafter_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(nextafter_opinfo)
 
+
+def pow_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
+    default_generator = partial(elementwise_binary_generator, no_rhs_numbers=True)
+    yield from default_generator(op, device, dtype, requires_grad, **kwargs)
+
+    # For backward of pow, we need to make sure that when the base is zero, the
+    # backward result is not nan.
+    yield (
+        SampleInput(
+            torch.tensor([0.0], device=device, dtype=dtype, requires_grad=requires_grad),
+            3.0,
+        )
+    )
+
+
 # TODO pow can accept RHS numbers, but not negative RHS numbers when the LHS is an exact tensor
 #   we could extend the kwargs on elementwise_binary_generator to account for this when
 #   generating the RHS values
 pow_opinfo = OpInfo(
     clang.pow,
-    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    sample_input_generator=pow_sample_input_generator,
     torch_reference=None if LooseVersion(torch.__version__) < "1.13" else torch._refs.pow,
     test_directives=(
         # NOTE: PyTorch doesn't support bool pow

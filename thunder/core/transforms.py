@@ -1302,7 +1302,7 @@ def pow_backward(result, x, y, g):
     import thunder.clang as tlang
 
     gresult = g * result  # reuse common factor
-    dx = gresult * y / x
+    dx = g * y * x ** (y - 1)
     dy = gresult * tlang.log(x)
     return dx, dy
 
