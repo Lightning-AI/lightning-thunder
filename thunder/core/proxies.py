@@ -819,6 +819,7 @@ _cls_to_number_proxy_map = {
     float: FloatProxy,
     int: IntegerProxy,
     bool: IntegerProxy,
+    complex: ComplexProxy,
 }
 
 
