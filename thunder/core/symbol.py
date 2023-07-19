@@ -175,8 +175,8 @@ class Symbol:
         module_name = codeutils.module_shortname(self.module.__name__)
         return f"{module_name}.{self.name}"
 
-    def bind(self, *args, output, subsymbols=(), **kwargs) -> BoundSymbol:
-        b = BoundSymbol(self, args=args, kwargs=kwargs, output=output, subsymbols=subsymbols)
+    def bind(self, *args, output, subsymbols=(), _call_ctx=None, **kwargs) -> BoundSymbol:
+        b = BoundSymbol(self, args=args, kwargs=kwargs, output=output, subsymbols=subsymbols, _call_ctx=_call_ctx)
         return b
 
     # TODO Restore eager dispatch by tracing and executing a trace

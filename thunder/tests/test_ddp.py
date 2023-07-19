@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import thunder
+
 try:
     import expecttest  # noqa: F401
     import hypothesis  # noqa: F401
@@ -43,6 +44,7 @@ class ToyModel(nn.Module):
 # If you force a test to be run with >2 GPUs for a test, you might want to inherit `CompileDDPTest`
 # and modify `world_size` to e.g. `max(torch.cuda.device_count(), 2)`.
 
+
 # note(crcrpar): Why inheriting `common_distributed.MultiProcessTestCase`?
 # When we're quite sure that we would only use `pytest` instead of `unittest`,
 # IIUC it's possible to run a test that is dependent on `DistributedDataParallel` and/or
@@ -58,7 +60,6 @@ class ToyModel(nn.Module):
     "DDP test requires CUDA and NCCL `torch.distributed` backend",
 )
 class CompileDDPTest(common_distributed.MultiProcessTestCase):
-
     DISTRIBUTED_BACKEND = "nccl"
 
     def __init__(self, *args, **kwargs) -> None:

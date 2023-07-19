@@ -758,8 +758,8 @@ def ones_like(
     return full_like(a, 1, device=device, dtype=dtype)
 
 
-# TODO: based on uniform_, check if Torch now has a functional uniform
-# NOTE: the uniform_ documentation suggests the interval is specified using "from" and "to",
+# TODO based on uniform_, check if Torch now has a functional uniform
+# NOTE the uniform_ documentation suggests the interval is specified using "from" and "to",
 #   but from is a reserved keyword in Python
 @torchsymbol(is_method=False, id="torch.uniform")
 def uniform(

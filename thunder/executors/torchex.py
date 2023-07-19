@@ -192,6 +192,31 @@ def iota(bsym: BoundSymbol, length, *, start, step, device, dtype) -> BoundSymbo
     return tbsym
 
 
+# NOTE This helper is necessary because PyTorch doesn't define a uniform operation
+def uniform_helper(shape: Sequence[int], minval: Number, maxval: Number, *, device: torch.device, dtype: torch.dtype):
+    t = torch.empty(shape, device=device, dtype=dtype)
+    t.uniform_(minval, maxval)
+    return t
+
+
+def uniform_prim(
+    bsym: BoundSymbol,
+    shape: Sequence[int],
+    minval: Number,
+    maxval: Number,
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> BoundSymbol:
+    sym = Symbol(name="uniform_helper", meta=None)
+    ctx: dict[str, Any] = {"uniform_helper": uniform_helper}
+
+    torch_device = ltorch.to_torch_device(device)
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    return sym.bind(shape, minval, maxval, device=torch_device, dtype=torch_dtype, output=bsym.output, _call_ctx=ctx)
+
+
 #
 # Shape operations
 #
@@ -890,6 +915,7 @@ _ops_map.update(
         PrimIDs.FULL: (_always_executable, full),
         "torch.full_like": (_always_executable, full_like),
         PrimIDs.IOTA: (_always_executable, iota),
+        PrimIDs.UNIFORM: (_always_executable, uniform_prim),
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_always_executable, broadcast_in_dim),
         "torch.cat": (_always_executable, cat),
@@ -1221,12 +1247,6 @@ def fuse(region: Region) -> list[BoundSymbol]:
 
 # def is_tensor(a):
 #     return isinstance(a, torch.Tensor)
-
-
-# def uniform_helper(shape, minval=0.0, maxval=1.0, *, device, dtype):
-#     t = torch.empty(shape, device=device, dtype=dtype)
-#     t.uniform_(minval, maxval)
-#     return t
 
 
 # # NOTE: many PyTorch operations don't accept numbers as inputs,
