@@ -1474,6 +1474,20 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     return None, gweight, None, None, None, None, None
 
 
+@register_augmented_forward("torch.softmax")
+def softmax_aug_fwd(a: Proxy, *, dim: int, dtype: Optional[dtypes.dtype] = None) -> VJPDual:
+    from thunder.torch import softmax
+
+    primal = softmax(a, dim, dtype=dtype)
+    residuals = (primal, dim)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.softmax")
+def softmax_backward(primal, dim, g):
+    return primal * (g - (primal * g).sum(dim, keepdim=True))
+
+
 @register_augmented_forward(prims.PrimIDs.MATMUL)
 def matmul_aug_fwd(a: TensorProxy, b: TensorProxy) -> VJPDual:
     primal = prims.matmul(a, b)

@@ -3514,7 +3514,7 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for shape, dim in cases:
-        yield SampleInput(make(shape), dim)
+        yield SampleInput(make(shape), dim=dim)
 
 
 softmax_opinfo = OpInfo(
@@ -3536,13 +3536,6 @@ softmax_opinfo = OpInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bfloat16,),
-        ),
-        # TypeError: sum(): incompatible function arguments.
-        # See: https://github.com/Lightning-AI/lightning-thunder/issues/269
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvFuser",),
         ),
     ),
 )
