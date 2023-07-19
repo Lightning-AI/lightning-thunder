@@ -120,7 +120,7 @@ class Region:
         # Outputs are things this produces that are consumed after it
         for x in produces:
             x = unvariableify(x)
-            consumed_by = consumers[x]
+            consumed_by = consumers.get(x, ())
             for bsym in consumed_by:
                 if bsym not in self.bound_symbols:
                     self.outputs.add(variableify(x))

@@ -252,14 +252,33 @@ class BoundSymbol(BoundSymbolInterface):
     subsymbols: Sequence[BoundSymbol] = ()
     _call_ctx: Optional[Dict[str, Any]] = None
 
-    _import_ctx = {}
-    _object_ctx = {}
-    _executor = None
+    _import_ctx: dict = field(default_factory=dict)
+    _object_ctx: dict = field(default_factory=dict)
+    _executor: Optional[Any] = None
 
     # TODO: Should we do input validation in post_init?
     # For example, making sure kwargs is empty dict instead on None.
     def __post_init__(self):
         self.args = tuple(self.args)
+
+    # Constructs a new BoundSymbol with default values taken from this BoundSymbol
+    #   Override values can be specified as kwargs
+    def from_bsym(self, **kwargs):
+        self_kwargs = {
+            "sym": self.sym,
+            "args": self.args,
+            "kwargs": self.kwargs,
+            "output": self.output,
+            "subsymbols": self.subsymbols,
+            "_call_ctx": self._call_ctx,
+            "_import_ctx": self._import_ctx,
+            "_object_ctx": self._object_ctx,
+            "_executor": self._executor,
+        }
+
+        self_kwargs.update(kwargs)
+
+        return BoundSymbol(**self_kwargs)
 
     # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
     #   are immutable

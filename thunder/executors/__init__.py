@@ -86,10 +86,10 @@ def transform_for_execution(
     flattened_trace, flattened_traces = passes.flatten(claimed_trace, prims_only=only_execute_prims)
     traces.extend(flattened_traces)
 
-    flattened_dce_trace, flattened_dce_traces = passes.dce(flattened_trace)
-    traces.extend(flattened_dce_traces)
+    postflatten_dce_trace, postflatten_dce_traces = passes.dce(flattened_trace)
+    traces.extend(postflatten_dce_traces)
 
-    fused_trace, fused_traces = passes.fuse(flattened_dce_trace)
+    fused_trace, fused_traces = passes.fuse(postflatten_dce_trace)
     traces.extend(fused_traces)
 
     if use_rematerialization:

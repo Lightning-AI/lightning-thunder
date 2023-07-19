@@ -868,6 +868,7 @@ def producers(trace: TraceCtx) -> ProxyDict:
     skip = {
         prims.PrimIDs.COMMENT,
         prims.PrimIDs.PRINT,
+        prims.PrimIDs.RETURN,
     }
 
     for bsym in trace.bound_symbols:

@@ -1413,6 +1413,7 @@ def broadcast_in_dim_aug_fwd(a: Proxy, shape: Sequence[int], broadcast_dimension
 @register_backward(prims.PrimIDs.BROADCAST_IN_DIM)
 def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
     from thunder.torch import sum
+
     # If g is None, then the primal was a constant and the pullback is zero.
     # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
     if g is None:
@@ -1483,6 +1484,7 @@ def matmul_aug_fwd(a: TensorProxy, b: TensorProxy) -> VJPDual:
 @register_backward(prims.PrimIDs.MATMUL)
 def matmul_backward(a, b, g):
     from thunder.torch import sum
+
     last_dim = (-1,)
     first_dim = (-2,)
     if a.ndim == 1 and b.ndim == 1:

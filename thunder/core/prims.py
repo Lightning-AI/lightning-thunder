@@ -191,10 +191,10 @@ def unpack_trivial_printer(
         exception_type=AssertionError,
     )
 
-    result_str = "" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)} = "
+    result_str = "_ =" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)} = "
     arg_str = codeutils.prettyprint(arg_printables[0])
 
-    s = f"# {result_str} {arg_str}  (trivial unpack)"
+    s = f"# {result_str} {arg_str}  (trivial unpack{', unused' if bsym.output is None else ''})"
     return s
 
 

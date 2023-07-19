@@ -7,7 +7,7 @@ from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableIn
 import thunder.core.utils as cutils
 from thunder.core.utils import ProxyDict
 from thunder.core.symbol import BoundSymbol
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
 from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor, group_bookend_meta_ops
 from thunder.core.proxies import Proxy, variableify, unvariableify
@@ -20,12 +20,12 @@ from thunder.executors import torchex as TorchEx
 def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     producers: ProxyDict = cutils.producers(trace)
 
-    flat, _ = tree_flatten(trace.output)
-    needed_proxies = set(tuple(variableify(x) for x in flat if isinstance(x, Proxy)))
+    flat_trace_outputs, _ = tree_flatten(trace.output)
+    needed_proxies = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
     # NOTE These primitives are marked to not be collected because they dictate the function's output
-    #   (return) or have side-effects (comment, print)
+    #   (RETURN), have side effects (PRINT), or are comments (COMMENT, UNPACK_TRIVIAL)
     dont_collect = {prims.PrimIDs.RETURN, prims.PrimIDs.COMMENT, prims.PrimIDs.PRINT, prims.PrimIDs.UNPACK_TRIVIAL}
 
     for bsym in reversed(trace.bound_symbols):
@@ -35,42 +35,39 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
         else:
             needed = False
 
+        # NOTE This block is run even if we know we're preserving the operation, because it
+        #   may mark some of the operation's outputs as unused
         some_unused = False
-        nouts = []
-        outs = bsym._flat_outs
-        for out in outs:
+        for out in bsym._flat_outs:
             if isinstance(out, Proxy):
                 if variableify(out) in needed_proxies and producers[out] == bsym:
                     needed = True
-                    nouts.append(out)
                 else:
                     some_unused = True
-                    nouts.append(None)
-            else:
-                nouts.append(out)
-
-        # Replaces unused Proxy outputs with None
-        # TODO Refactor this into an output update function
-        if some_unused:
-            _, out_spec = tree_flatten(bsym.output)
-            bsym.output = tree_unflatten(nouts, out_spec)
-            # Deletes caches that rely on output
-            if hasattr(bsym, "_flat_outs"):
-                del bsym._flat_outs
-            if hasattr(bsym, "_var_output"):
-                del bsym._var_output
-            if hasattr(bsym, "_hash"):
-                del bsym._hash
 
         if needed:
-            dced.append(bsym)
-            for x in chain(bsym._flat_args, bsym._flat_kwargs):
+            nbsym = bsym
+
+            # Replaces unused Proxy outputs with None
+            if some_unused:
+
+                def _helper(x):
+                    if isinstance(x, Proxy) and (variableify(x) not in needed_proxies or producers[x] != bsym):
+                        return None
+                    return x
+
+                nbsym_output = tree_map(_helper, bsym.output)
+                nbsym = bsym.from_bsym(output=nbsym_output)
+
+            dced.append(nbsym)
+            for x in chain(nbsym._flat_args, nbsym._flat_kwargs):
                 if isinstance(x, Proxy):
                     needed_proxies.add(variableify(x))
 
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
     dcetrace.set_provenance(TraceProvenance("Dead Code Elimination"))
+
     return dcetrace, [dcetrace]
 
 

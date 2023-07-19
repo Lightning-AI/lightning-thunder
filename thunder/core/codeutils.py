@@ -195,7 +195,7 @@ def prettyprint(
 
     m = partial(_qm, quote_markers=_quote_markers)
 
-    if literals_as_underscores and is_literal(x):
+    if literals_as_underscores and is_literal(x) and not is_collection(x):
         return m("_")
 
     if x is None:
@@ -211,7 +211,10 @@ def prettyprint(
         return m(x.name)
     if is_collection(x):
         flat, spec = tree_flatten(x)
-        printed = tuple(prettyprint(x, with_type=False, _quote_markers=True) for x in flat)
+        printed = tuple(
+            prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
+            for x in flat
+        )
         unflattened = tree_unflatten(printed, spec)
         unflattened_str = str(unflattened)
         # NOTE Collections of strings (so collections of names) print like this --
