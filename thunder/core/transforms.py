@@ -1534,7 +1534,7 @@ def linear_backward(a, b, c, g):
     from thunder.torch import matmul, sum
 
     first_dim = (-2,)
-    ga = matmul(g, b)
+    ga = matmul(g.reshape(-1, g.shape[-1]), b).reshape(a.shape)
     if a.ndim == 1:
         gb = matmul(unsqueeze(g, first_dim).mT, unsqueeze(a, first_dim))
     else:
