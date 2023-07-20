@@ -484,14 +484,16 @@ def _extract_forward_from_vjp_trace(
     # note(crcrpar): Cotangents are required for unsplittable joint trace. Otherwise, infinite loop.
     # https://github.com/Lightning-AI/lightning-thunder/commit/20505d9772786ac43b1a47811a6846c166f87022
     # seems to fix the infinite loop.
-    forward_bsyms = list({
-        v: v for v in utils.find_producer_symbols(
-            trace, fwd_outputs, tree_flatten((fwd_trace.args, fwd_trace.kwargs))[0])
-    }.keys())
+    forward_bsyms = list(
+        {
+            v: v
+            for v in utils.find_producer_symbols(
+                trace, fwd_outputs, tree_flatten((fwd_trace.args, fwd_trace.kwargs))[0]
+            )
+        }.keys()
+    )
     # now that we have collected bound symbols of forward computation, make sure they don't depend on any cotangents
-    all_tensor_arg_names = {
-        t.name for bsym in forward_bsyms for t in bsym._flat_args if isinstance(t, TensorProxy)
-    }
+    all_tensor_arg_names = {t.name for bsym in forward_bsyms for t in bsym._flat_args if isinstance(t, TensorProxy)}
     used_cotangent_args = tuple(a for a in cotangent_args if a in all_tensor_arg_names)
     if used_cotangent_args:
         raise RuntimeError(
@@ -539,9 +541,7 @@ def _extract_backward_from_vjp_trace(trace: TraceCtx) -> tuple[TraceCtx, list[Te
     forward_args, cotangents = bwd_trace.args
     flat_args, _ = tree_flatten((bwd_trace.args, bwd_trace.kwargs))
 
-    forward_bsyms = list({
-        v: v for v in utils.find_producer_symbols(bwd_trace, result, flat_args)
-    }.keys())
+    forward_bsyms = list({v: v for v in utils.find_producer_symbols(bwd_trace, result, flat_args)}.keys())
     forward_intermediate_map = {out.name: out for bsym in forward_bsyms for out in bsym._flat_outs}
     for r in result:
         if r.name not in forward_intermediate_map:
@@ -554,8 +554,7 @@ def _extract_backward_from_vjp_trace(trace: TraceCtx) -> tuple[TraceCtx, list[Te
     return_bsym = bwd_trace.bound_symbols[-1]
     return_bsym.args = grads
     bound_symbols_for_backward = [
-        bsym for bsym in utils.find_producer_symbols(trace, grads, stop_proxies=flat_args)
-        if bsym not in forward_bsyms
+        bsym for bsym in utils.find_producer_symbols(trace, grads, stop_proxies=flat_args) if bsym not in forward_bsyms
     ] + [return_bsym]
     backward_trace = from_trace(trace)
     backward_trace._siginfo = None
@@ -567,7 +566,9 @@ def _extract_backward_from_vjp_trace(trace: TraceCtx) -> tuple[TraceCtx, list[Te
         if a.name in consumed_vars
     )
     # Remove duplicates
-    used_forward_intermediate_results = tuple(sorted({x.name: x for x in used_forward_intermediate_results}.values(), key=lambda a: a.name))
+    used_forward_intermediate_results = tuple(
+        sorted({x.name: x for x in used_forward_intermediate_results}.values(), key=lambda a: a.name)
+    )
     backward_trace.args = tuple(used_forward_intermediate_results + bwd_trace.args[1])
     backward_trace.kwargs = None
     backward_trace.output = grads

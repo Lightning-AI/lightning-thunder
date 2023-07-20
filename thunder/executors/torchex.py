@@ -21,6 +21,7 @@ import thunder.torch as ltorch
 from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
 
+# NOTE This is part of the executor interface
 def name() -> Executor:
     return Executor.TORCH
 
@@ -574,7 +575,33 @@ def div_prim(bsym: BoundSymbol, a: Union[TensorProxy, Number], b: Union[TensorPr
     return tbsym
 
 
-add = _elementwise_binary_factory("add")
+# NOTE add and sub have special check and factory functions to support alpha
+def _add_sub_check(
+    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, alpha: Optional[Number] = None
+) -> bool:
+    return not (isinstance(a, Number) and isinstance(b, Number))
+
+
+def _add_sub_factory(name: str) -> Callable:
+    def fn(
+        bsym: BoundSymbol,
+        a: Union[TensorProxy, Number],
+        b: Union[TensorProxy, Number],
+        *,
+        alpha: Optional[Number] = None,
+    ) -> BoundSymbol:
+        sym = Symbol(name=name, meta=None, _module=torch)
+        # NOTE The alpha kwarg can ONLY be specified to PyTorch if it's not None
+        if alpha is not None:
+            tbsym = sym.bind(a, b, alpha=alpha, output=bsym.output)
+        else:
+            tbsym = sym.bind(a, b, output=bsym.output)
+        return tbsym
+
+    return fn
+
+
+add = _add_sub_factory("add")
 atan2 = _elementwise_binary_factory("atan2")
 bitwise_and = _elementwise_binary_factory("bitwise_and")
 bitwise_or = _elementwise_binary_factory("bitwise_or")
@@ -595,7 +622,7 @@ nextafter = _elementwise_binary_factory("nextafter")
 pow = _elementwise_binary_factory("pow")
 # TODO Remainder bool isn't implement, so mark it as non-fusible
 remainder = _elementwise_binary_factory("remainder")
-sub = _elementwise_binary_factory("sub")
+sub = _add_sub_factory("sub")
 
 #
 # Conditional and masking operations
@@ -1020,7 +1047,7 @@ _ops_map.update(
         "torch.trunc": (_elementwise_unary_check, trunc),
         PrimIDs.TRUNC: (_elementwise_unary_check, trunc),
         # Elementwise binary operations
-        "torch.add": (_elementwise_binary_check, add),
+        "torch.add": (_add_sub_check, add),
         PrimIDs.ADD: (_elementwise_binary_check, add),
         "torch.atan2": (_elementwise_binary_check, atan2),
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),
@@ -1057,7 +1084,7 @@ _ops_map.update(
         PrimIDs.POW: (_elementwise_binary_check, pow),
         "torch.remainder": (_elementwise_binary_check, remainder),
         PrimIDs.REMAINDER: (_elementwise_binary_check, remainder),
-        "torch.sub": (_elementwise_binary_check, sub),
+        "torch.sub": (_add_sub_check, sub),
         PrimIDs.SUB: (_elementwise_binary_check, sub),
         # Conditional and masking operations
         "torch.masked_fill": (_always_executable, masked_fill),

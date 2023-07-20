@@ -14,6 +14,7 @@ import thunder.core.dtypes as dtypes
 from thunder.executors.utils import Region, Executor
 
 
+# NOTE This is part of the executor interface
 def name() -> Executor:
     return Executor.PYTHON
 

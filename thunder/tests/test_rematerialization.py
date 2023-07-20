@@ -325,7 +325,7 @@ def test_split_trace_of_inline_vjp(executor, device, _):
     g = torch.randn(3, 3, device=device)
 
     primals = a, b, c
-    cotangents = g,
+    cotangents = (g,)
 
     for func in (func1, func2):
         func_compiled = thunder.compile(inline(vjp(func)), use_rematerialization=True, disable_preprocessing=True)

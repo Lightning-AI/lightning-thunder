@@ -1,5 +1,6 @@
 from typing import Optional, Any, List, Tuple
 from collections.abc import Sequence
+from contextvars import ContextVar
 
 from thunder.core.trace import TraceCtx
 from thunder.core.rematerialization import rematerialize
@@ -22,16 +23,79 @@ NVFUSER = Executor.NVFUSER
 TORCH = Executor.TORCH
 PYTHON = Executor.PYTHON
 
-
 _executor_map = {
     Executor.TORCH: torchex,
     Executor.PYTHON: pythonex,
 }
 
+_default_executors = [Executor.TORCH, Executor.PYTHON]
+
 if nvfuser_available():
     import thunder.executors.nvfuserex as nvfuserex
 
     _executor_map[Executor.NVFUSER] = nvfuserex
+    _default_executors = [Executor.NVFUSER] + _default_executors
+
+
+# Creates ContextVar
+_executorsctx = ContextVar("executors", default=_executor_map)
+_default_executorsctx = ContextVar("default_executors", default=_default_executors)
+
+
+def set_executorsctx(ctx):
+    """Sets the executors mapping"""
+
+    return _executorsctx.set(ctx)
+
+
+# NOTE The executorsctx is expected to always have a value, because it has a
+#   default value (set above)
+def get_executorsctx():
+    return _executorsctx.get()
+
+
+def set_default_executorsctx(ctx):
+    """Sets the executors mapping"""
+
+    return _default_executorsctx.set(ctx)
+
+
+# NOTE The default_executorsctx is expected to always have a value, because it has a
+#   default value (set above)
+def get_default_executorsctx():
+    return _default_executorsctx.get()
+
+
+def add_executor(id, executor, *, add_to_default_executors: bool = True):
+    executor_map = get_executorsctx()
+
+    executor_map[id] = executor
+    set_executorsctx(executor_map)
+
+    if add_to_default_executors:
+        defaults = list_default_executors()
+        defaults = (id,) + tuple(defaults)
+        set_default_executors(defaults)
+
+
+def list_executors() -> tuple:
+    executor_map = get_executorsctx()
+    return tuple(executor_map.keys())
+
+
+def list_default_executors() -> tuple:
+    return tuple(get_default_executorsctx())
+
+
+def set_default_executors(new_defaults: Sequence):
+    executor_map = get_executorsctx()
+
+    # Validates each entry in the sequence is an executor
+    for x in new_defaults:
+        if x not in executor_map:
+            raise ValueError(f"Trying to set an unknown executor {x} as a default executor!")
+
+    set_default_executorsctx(new_defaults)
 
 
 # TODO Improve on the "Any" annotation here
@@ -52,11 +116,7 @@ def transform_for_execution(
 ) -> tuple[TraceCtx, list[TraceCtx]]:
     # Acquires the executors
     if executors_list is None:
-        executors_list: list[Executor]
-        if nvfuser_available():
-            executors_list = [Executor.NVFUSER, Executor.TORCH, Executor.PYTHON]
-        else:
-            executors_list = [Executor.TORCH, Executor.PYTHON]
+        executors_list = list_default_executors()
 
     # NOTE The Python executor is required to execute any nontrivial program
     if PYTHON not in executors_list:
@@ -104,3 +164,70 @@ def transform_for_execution(
     traces.extend(lifetime_traces)
 
     return lifetime_trace, traces
+
+
+from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.executors.utils import Region
+
+
+# Defines an executor that can take over individual operations
+class OpExecutor:
+    def __init__(self, name, op_map):
+        self._name = name
+        self.op_map = op_map
+
+    def name(self) -> Any:
+        return self._name
+
+    def is_supported(self, bsym: BoundSymbol, *, prims_only: bool = False) -> bool:
+        sym = bsym.sym
+
+        if prims_only and not sym.is_prim:
+            return False
+
+        _, check, _ = self.op_map.get(sym.id, (None, None, None))
+        if check is None:
+            return False
+        return check(*bsym.args, **bsym.kwargs)
+
+    def can_execute(self, bsym: BoundSymbol, *, prims_only: bool = False) -> bool:
+        sym = bsym.sym
+
+        if self.is_supported(bsym, prims_only=prims_only):
+            return True
+
+        if len(bsym.subsymbols) == 0:
+            return False
+
+        # Checks if all the operations this calls are executable
+        can_execute_ = True
+        for ssym in bsym.subsymbols:
+            if not self.can_execute(ssym, prims_only=prims_only):
+                can_execute_ = False
+                break
+
+        return can_execute_
+
+    def fuse(self, region: Region) -> list[BoundSymbol]:
+        bsyms: List[BoundSymbol] = []
+
+        for bsym in region.bound_symbols:
+            name, _, impl = self.op_map[bsym.sym.id]
+            ctx = {name: impl}
+            sym = Symbol(name=name, meta=None)
+            bsym = BoundSymbol(
+                sym,
+                args=bsym.args,
+                kwargs=bsym.kwargs,
+                output=bsym.output,
+                subsymbols=(),
+                _call_ctx=ctx,
+            )
+            bsyms.append(bsym)
+
+        return bsyms
+
+
+def add_operator_executor(name, op_map, *, add_to_default_executors: bool = True):
+    opex = OpExecutor(name, op_map)
+    add_executor(name, opex, add_to_default_executors=add_to_default_executors)

@@ -32,6 +32,7 @@ import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.executors.torchex import thunder_backward
+import thunder.executors as executors
 
 import thunder.core.script as script
 import thunder.core.script.frontend
@@ -96,6 +97,16 @@ complex128 = dtypes.complex128
 
 # NOTE this allows clang.foo() to be called directly as thunder.foo()
 from thunder.clang import *
+
+#
+# Promoted executor-related functions
+#
+
+list_executors = executors.list_executors
+list_default_executors = executors.list_default_executors
+set_default_executors = executors.set_default_executors
+add_operator_executor = executors.add_operator_executor
+
 
 # Common UX functions
 
