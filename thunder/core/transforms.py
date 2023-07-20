@@ -1564,6 +1564,31 @@ def iter_bound_symbols(bound_symbols):
             yield symbol
 
 
+def deconstruct_forward_env_for_backward(trace, env):
+    # Note [Saving the forward environment in the backward rule]
+    # We cannot save the trace object in the residuals because executors may not
+    # be able to return it for the splitted forward/backward passes. Instead, we
+    # save args and kwargs of the original function call and reconstruct the
+    # trace object and its environment dict in the backward rule. Here we rely
+    # on the fact that the order of the symbols in the trace is deterministic
+    # and always the same for the same function call and the same set of
+    # arguments. See test_grad.py:test_torch_autograd_function for an example
+    # where this is tested.
+    bound_symbols = iter_bound_symbols(trace.bound_symbols)
+    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
+    is_any_dict = any(isinstance(x, dict) for x in saved_for_backward)
+    return saved_for_backward
+
+
+def reconstruct_forward_env_for_backward(trace, saved_for_backward):
+    bound_symbols = iter_bound_symbols(trace.bound_symbols)
+    reconstructed_env = {
+        sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
+        for i, symbol in enumerate(bound_symbols)
+    }
+    return reconstructed_env
+
+
 def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     """Augmented forward rule for composite functions implemented in terms of other functions that are
     supposed to be supported by the VJP infrastructure.
@@ -1581,29 +1606,25 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     # augmented_forward_pass.
     trace = dce(trace)[0]
     result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
-    # We cannot save the trace object in the residuals because executors may not
-    # be able to return it for the splitted forward/backward passes. Instead, we
-    # save args and kwargs of the original function call and reconstruct the
-    # trace object and its environment dict in the backward rule. Here we rely
-    # on the fact that the order of the symbols in the trace is deterministic
-    # and always the same for the same function call and the same set of
-    # arguments. See test_grad.py:test_torch_autograd_function for an example
-    # where this is tested.
-    bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
+    saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
+    # Static caching does not with with kwargs dicts, so we're converting them
+    # to None for now when possible.
+    kwargs = None if not kwargs else kwargs
     residuals = (args, kwargs, saved_for_backward)
     return VJPDual(result, residuals)
 
 
 def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
+    kwargs = {} if kwargs is None else kwargs
     trace = make_trace(decomposed_fn)(*args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     trace = dce(trace)[0]
-    bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    reconstructed_env = {
-        sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
-        for i, symbol in enumerate(bound_symbols)
-    }
+    # bound_symbols = iter_bound_symbols(trace.bound_symbols)
+    # reconstructed_env = {
+    #     sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
+    #     for i, symbol in enumerate(bound_symbols)
+    # }
+    reconstructed_env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
     result = backward_pass(reconstructed_env, trace, grads)
     if len(args) == 1:
         return result[0]

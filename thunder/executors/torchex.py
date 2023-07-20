@@ -1291,33 +1291,39 @@ class ThunderFunction(torch.autograd.Function):
     @staticmethod
     def augmented_forward_pass_wrapper(trace, *args):
         from thunder.core.transforms import augmented_forward_pass
+        from thunder.core.transforms import deconstruct_forward_env_for_backward
 
         result, env = augmented_forward_pass(*args, trace=trace)
-        saved_for_backward = {key: tuple(value) for key, value in env.items()}
+        saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
         return result, saved_for_backward
 
     @staticmethod
     def backward_pass_wrapper(trace, saved_for_backward, cotangents):
-        from thunder.core.transforms import backward_pass, VJPDual
+        from thunder.core.transforms import backward_pass, reconstruct_forward_env_for_backward
 
-        env = {key: VJPDual(*value) for key, value in saved_for_backward.items()}
+        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
         out = backward_pass(env, trace, cotangents)
         return out
 
     @staticmethod
-    def forward(ctx, thunder_func, compile_config, *flat_args):
-        from thunder import _make_trace as make_trace
-        from thunder import compile
+    def thunder_augmented_forward_backward(func, compile_config):
+        from thunder import _make_trace as make_trace, compile
 
-        trace = make_trace(thunder_func)(*flat_args)
-        augmented_trace_fn = lambda *args: ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
-        augmented_trace_fn.__name__ = "augmented_trace_fn"  # compile doesn't like lambdas
-        out, saved_info = compile(
-            augmented_trace_fn,
-            **compile_config,
-        )(*flat_args)
-        ctx.compile_config = compile_config
-        ctx.trace = trace
+        def augmented_forward(*args):
+            trace = make_trace(func)(*args)
+            result, saved_for_backward = ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
+
+            def backward_fn(saved_info, *args):
+                return ThunderFunction.backward_pass_wrapper(trace, saved_info, args)
+
+            return result, saved_for_backward, compile(backward_fn, **compile_config)
+
+        return augmented_forward
+
+    @staticmethod
+    def forward(ctx, compiled_forward, *flat_args):
+        out, saved_info, compiled_backward = compiled_forward(*flat_args)
+        ctx.compiled_backward = compiled_backward
 
         # We must save tensors using ctx.save_for_backward
         flat_env, ctx.env_spec = tree_flatten(saved_info)
@@ -1330,8 +1336,6 @@ class ThunderFunction(torch.autograd.Function):
     @staticmethod
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):
-        from thunder import compile
-
         # Restore saved_info from ctx.saved_non_tensors and ctx.saved_tensors
         saved_tensors = iter(ctx.saved_tensors)
         saved_non_tensors = iter(ctx.saved_non_tensors)
@@ -1339,15 +1343,8 @@ class ThunderFunction(torch.autograd.Function):
             next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
         )
         saved_info = tree_unflatten(flat_saved_info, ctx.env_spec)
-
-        backward = lambda saved_info, *args: ThunderFunction.backward_pass_wrapper(ctx.trace, saved_info, args)
-        backward.__name__ = "backward"  # compile doesn't like lambdas
-        grads = compile(
-            backward,
-            **ctx.compile_config,
-        )(saved_info, *args)
-        return (None, None, *grads)
-
+        grads = ctx.compiled_backward(saved_info, *args)
+        return (None, *grads)
 
 def thunder_backward(**compile_config):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
@@ -1379,14 +1376,31 @@ def thunder_backward(**compile_config):
 
     compile_config = compile_config | {"disable_preprocessing": True}
 
-    def flat_wrapper(flat_func, *flat_args):
-        return ThunderFunction.apply(flat_func, compile_config, *flat_args)
-
     def decorator(thunder_func):
+        from thunder import compile
+
+        # We must save the spec of the args to be able to unflatten them later
+        spec = None
+
+        # torch.autograd.Functions support only flat arguments
+        def flat_func(*flat_args):
+            fn_args, fn_kwargs = tree_unflatten(flat_args, spec)
+            return thunder_func(*fn_args, **fn_kwargs)
+
+        # Compile's caching only works for many calls to the same compiled function
+        # It does not work if the same function is compiled many times, so we must
+        # decorate the augmented forward pass once with compile once and reuse it
+        augmented_forward = ThunderFunction.thunder_augmented_forward_backward(flat_func, compile_config)
+        compiled_forward = compile(
+            augmented_forward,
+            **compile_config,
+        )
+
         @wraps(thunder_func)
         def wrapper(*args, **kwargs):
-            flat_func, flat_args, _ = utils.flatten_func(thunder_func, args, kwargs)
-            return flat_wrapper(flat_func, *flat_args)
+            nonlocal spec
+            flat_args, spec = tree_flatten((args, kwargs))
+            return ThunderFunction.apply(compiled_forward, *flat_args)
 
         return wrapper
 

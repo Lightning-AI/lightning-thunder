@@ -545,10 +545,17 @@ def test_torch_autograd_module(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    lc = executor.make_callable(l, disable_preprocessing=False, use_generated_backward=True)
-    lc.zero_grad()
-    out = lc(a)
-    out.backward(g)
-    l_grad = l.weight.grad
-    torch.testing.assert_close(l_grad, g.mT @ a)
-    torch.testing.assert_close(a.grad, g @ l.weight)
+    for use_static_caching in (True, None):
+        lc = executor.make_callable(
+            l,
+            disable_preprocessing=False,
+            use_generated_backward=True,
+            use_static_caching=use_static_caching,
+        )
+        lc.zero_grad()
+        a.grad = None
+        out = lc(a)
+        out.backward(g)
+        l_grad = l.weight.grad
+        torch.testing.assert_close(l_grad, g.mT @ a)
+        torch.testing.assert_close(a.grad, g @ l.weight)
