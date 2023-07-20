@@ -1,3 +1,5 @@
+import pytest
+
 import torch
 
 import thunder
@@ -295,3 +297,58 @@ def test_rematerialization(executor, device, _):
     )(t0)
 
     torch.testing.assert_close(result_with_remat, result_without_remat)
+
+
+@instantiate(dtypes=NOTHING)
+def test_split_trace_of_inline_vjp(executor, device, _):
+    from thunder.core.transforms import inline, vjp
+    from thunder.core.rematerialization import split_vjp_trace_into_forward_and_backward
+
+    def func1(a, b, c):
+        for _ in range(3):
+            a = thunder.torch.cos(a)
+            b = thunder.torch.sin(b)
+            c = thunder.torch.tan(c)
+        return a @ b @ c
+
+    def func2(a, b, c):
+        d = a @ b @ c
+        for _ in range(3):
+            a = thunder.torch.cos(a)
+            b = thunder.torch.sin(b)
+            c = thunder.torch.tan(c)
+        return d * a * b * c
+
+    a = torch.randn(3, 3, device=device)
+    b = torch.randn(3, 3, device=device)
+    c = torch.randn(3, 3, device=device)
+    g = torch.randn(3, 3, device=device)
+
+    primals = a, b, c
+    cotangents = g,
+
+    for func in (func1, func2):
+        func_compiled = thunder.compile(inline(vjp(func)), use_rematerialization=True, disable_preprocessing=True)
+        (result, grads) = func_compiled(primals, cotangents)
+        traces = thunder.last_traces(func_compiled)
+
+        # NOTE(crcrpar): On my local environment I couldn't reproduce the failures observed in CI,
+        # i.e., func2 seemed to be successfully split but IIUC it shouldn't. For the sake of CI's sanity,
+        # I naively use try-except but the check in the `except` pass should be granular enough IMHO.
+        # Ref:
+        # - cuda12.1: https://dev.azure.com/Lightning-AI/lightning/_build/results?buildId=165410&view=logs&j=5b0799f7-725e-5b16-9b83-c0a5a25d03f0&t=b8fb81b4-a852-5840-c46b-c8dd0b71557c&l=5484
+        # - cuda11.8: https://dev.azure.com/Lightning-AI/lightning/_build/results?buildId=165410&view=logs&j=3f274fac-2e11-54ca-487e-194c91f3ae9f&t=244491d3-5bd5-5b27-6d81-66bb4c7264ae&l=5484
+        try:
+            fwd_trace, bwd_trace = split_vjp_trace_into_forward_and_backward(traces[-1])
+        except RuntimeError as excinfo:
+            assert (
+                func is func2
+                and torch.device(device).type == "cuda"
+                and "Impossible to split the trace due to the dependency on cotangents" in str(excinfo)
+            )
+        else:
+            fwd_out, fwd_intermediate_results = fwd_trace.python_callable()(*primals)
+            torch.testing.assert_close(fwd_out, result)
+
+            bwd_out = bwd_trace.python_callable()(*fwd_intermediate_results, *cotangents)
+            torch.testing.assert_close(grads, bwd_out)

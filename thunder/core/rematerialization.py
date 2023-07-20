@@ -8,6 +8,8 @@ from igraph import Graph
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.proxies import TensorProxy
+from thunder.core.pytree import tree_flatten, tree_unflatten
 
 
 def find_external_producer_outputs(
@@ -429,3 +431,155 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     new_bound_symbols = tuple(replace_bound_symbol(bsym) for bsym in trace.bound_symbols)
     rematerialized_trace.bound_symbols = new_bound_symbols
     return rematerialized_trace, [rematerialized_trace]
+
+
+def split_vjp_trace_into_forward_and_backward(
+    trace: TraceCtx,
+) -> tuple[TraceCtx, TraceCtx]:
+    """Split VJP transform applied trace into forward and backward.
+
+    The input trace is supposed to follow the signature of ``func(inputs0, inputs1) -> (outputs0, outputs1)``,
+    where
+        - ``inputs0``: the inputs for the forward computation (a.k.a. primals)
+        - ``inputs1``: the inputs for the backward computation (a.k.a. cotangents)
+        - ``outputs0``: the results of the forward
+        - ``outputs1``: the results of the backward, i.e. gradients
+
+    This function splits the trace into the forward and the backward. This is feasible only when
+    the extracted forward is independent from any of ``inputs1``. This function returns the following
+    two functions:
+        1. ``forward(*inputs0) -> (outputs0, saved_tensors_for_backward)``
+        2. ``backward(*saved_tensors_for_backward, *inputs1) -> outputs1``
+
+    Note that the two traces do not include :class:``BoundSymbols`` of ``prims.PrimIDs.del``.
+
+    Args:
+        trace: Trace of a function with VJP transform applied
+
+    Returns:
+        Two :class:``TraceCtx``s, one representing forward and the other backward.
+        The forward trace has the signature of `forward_trace` with primals spelled out.
+        The backward trace's arguments consist of ``*intermediate_values_of_forward`` and ``*cotangents``.
+    """
+    bwd_trace, tensors_to_save_for_backward = _extract_backward_from_vjp_trace(trace)
+    fwd_trace = _extract_forward_from_vjp_trace(trace, tensors_to_save_for_backward)
+    return fwd_trace, bwd_trace
+
+
+def _extract_forward_from_vjp_trace(
+    trace: TraceCtx,
+    tensors_to_save_for_backward: list[TensorProxy],
+) -> TraceCtx:
+    """Extract bound symbols defining forward computation from joint trace.
+
+    The generated trace takes ``primals`` as its positional arguments and kwargs, if exists.
+    This raises an exception if the trace is not splittable without the forward depending on any of cotangents.
+    """
+    fwd_trace = from_trace(trace)
+
+    cotangent_args = (a.name for a in trace.args[1])
+
+    fwd_outputs, _ = tree_flatten(fwd_trace.output[0])
+    fwd_trace.output = fwd_outputs
+    # note(crcrpar): Cotangents are required for unsplittable joint trace. Otherwise, infinite loop.
+    # https://github.com/Lightning-AI/lightning-thunder/commit/20505d9772786ac43b1a47811a6846c166f87022
+    # seems to fix the infinite loop.
+    forward_bsyms = list({
+        v: v for v in utils.find_producer_symbols(
+            trace, fwd_outputs, tree_flatten((fwd_trace.args, fwd_trace.kwargs))[0])
+    }.keys())
+    # now that we have collected bound symbols of forward computation, make sure they don't depend on any cotangents
+    all_tensor_arg_names = {
+        t.name for bsym in forward_bsyms for t in bsym._flat_args if isinstance(t, TensorProxy)
+    }
+    used_cotangent_args = tuple(a for a in cotangent_args if a in all_tensor_arg_names)
+    if used_cotangent_args:
+        raise RuntimeError(
+            f"Impossible to split the trace due to the dependency on cotangents of {used_cotangent_args}"
+        )
+
+    fwd_trace.args = tree_flatten((fwd_trace.args[0], fwd_trace.kwargs))[0]
+    fwd_trace.kwargs = {}
+    fwd_trace.bound_symbols = forward_bsyms + [prims.python_return.bind(*fwd_outputs, output=())]
+
+    fwd_trace._siginfo = None
+
+    def forward_fn(*args):
+        pass
+
+    fwd_trace.fn = forward_fn
+    fwd_siginfo = fwd_trace.siginfo()
+    fwd_siginfo.args = [(a.name, a) for a in fwd_trace.args]
+    fwd_siginfo.varargs = None
+    fwd_siginfo.kwargs = {}
+
+    fwd_outputs, fwd_outputs_spec = tree_flatten(trace.output[0])
+    fwd_trace.output = fwd_trace.output, tensors_to_save_for_backward
+    fwd_trace.bound_symbols[-1].args = (
+        tree_unflatten(fwd_trace.bound_symbols[-1].args, fwd_outputs_spec),
+        tensors_to_save_for_backward,
+    )
+    return fwd_trace
+
+
+def _extract_backward_from_vjp_trace(trace: TraceCtx) -> tuple[TraceCtx, list[TensorProxy]]:
+    """Extract backward definition from joint trace.
+
+    The generated trace, the first of two return values, defines the backward computation.
+    Its arguments follow the structure of ``*saved_for_backward, *cotangents`` for the sake of
+    easy embedding into :class:``torch.autograd.Function``.
+    The second return value, a list of :class:``TensorProxy``s, is a list of intermediate and output
+    ``Tensor``s that will be used in the backward.
+    """
+    bwd_trace = from_trace(trace)
+    bwd_trace.bound_symbols = trace.bound_symbols
+    result, grads = bwd_trace.output
+    result, _ = tree_flatten(result)
+
+    forward_args, cotangents = bwd_trace.args
+    flat_args, _ = tree_flatten((bwd_trace.args, bwd_trace.kwargs))
+
+    forward_bsyms = list({
+        v: v for v in utils.find_producer_symbols(bwd_trace, result, flat_args)
+    }.keys())
+    forward_intermediate_map = {out.name: out for bsym in forward_bsyms for out in bsym._flat_outs}
+    for r in result:
+        if r.name not in forward_intermediate_map:
+            forward_intermediate_map[r.name] = r
+    for a in tree_flatten((bwd_trace.args[1]))[0]:
+        if a.name in forward_intermediate_map:
+            del forward_intermediate_map[a.name]
+    forward_intermediates = list(forward_intermediate_map.values())
+
+    return_bsym = bwd_trace.bound_symbols[-1]
+    return_bsym.args = grads
+    bound_symbols_for_backward = [
+        bsym for bsym in utils.find_producer_symbols(trace, grads, stop_proxies=flat_args)
+        if bsym not in forward_bsyms
+    ] + [return_bsym]
+    backward_trace = from_trace(trace)
+    backward_trace._siginfo = None
+    backward_trace.bound_symbols = bound_symbols_for_backward
+    consumed_vars = set(utils.consumers(backward_trace)._dict.keys())
+    used_forward_intermediate_results = tuple(
+        a
+        for a in (forward_intermediates + tree_flatten((bwd_trace.args[0], bwd_trace.kwargs))[0])
+        if a.name in consumed_vars
+    )
+    # Remove duplicates
+    used_forward_intermediate_results = tuple(sorted({x.name: x for x in used_forward_intermediate_results}.values(), key=lambda a: a.name))
+    backward_trace.args = tuple(used_forward_intermediate_results + bwd_trace.args[1])
+    backward_trace.kwargs = None
+    backward_trace.output = grads
+
+    # N.B.(crcrpar): Override `siginfo` so that the trace would spell out arguments.
+    # Otherwise, it'd end up `backward_trace(*args)`.
+    def backward_fn(*args):
+        pass
+
+    backward_trace.fn = backward_fn
+    bwd_siginfo = backward_trace.siginfo()
+    bwd_siginfo.args = [(a.name, a) for a in bwd_siginfo.varargs[1]]
+    bwd_siginfo.varargs = None
+    backward_trace._siginfo = bwd_siginfo
+    return backward_trace, used_forward_intermediate_results

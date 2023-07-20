@@ -945,8 +945,9 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         >>> y = torch.randn(3, 4)
         >>> def f(x, y):
         ...     return (x + y) * (x - y)
-        >>> _, traces = thunder.compile_with_info(f)(x, y)
-        >>> trace = traces[0]
+        >>> compiled_f = thunder.compile(f)
+        >>> _ = compiled_f(x, y)
+        >>> trace = thunder.last_traces(compiled_f)[0]
         >>> x_proxy = trace.args[0]
         >>> y_proxy = trace.args[1]
         >>> intermediate = trace.bound_symbols[-3].output
