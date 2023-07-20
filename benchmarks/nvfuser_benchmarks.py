@@ -855,7 +855,9 @@ class StackedAddBenchmark(Benchmark):
 class GPTConfig:
     name: str = ""
     block_size: int = 1024
-    vocab_size: int = 50257
+    # GPT-2 vocab_size is 50257 but recent nanoGPT uses 50304 for GPU performance
+    # https://github.com/karpathy/nanoGPT/blob/eba36e84649f3c6d840a93092cb779a260544d08/model.py#L111
+    vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
