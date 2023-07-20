@@ -86,7 +86,10 @@ def transform_for_execution(
     flattened_trace, flattened_traces = passes.flatten(claimed_trace, prims_only=only_execute_prims)
     traces.extend(flattened_traces)
 
-    postflatten_dce_trace, postflatten_dce_traces = passes.dce(flattened_trace)
+    redundant_removed, redundant_removed_traces = passes.remove_redundant_casts(flattened_trace)
+    traces.extend(redundant_removed_traces)
+
+    postflatten_dce_trace, postflatten_dce_traces = passes.dce(redundant_removed)
     traces.extend(postflatten_dce_traces)
 
     fused_trace, fused_traces = passes.fuse(postflatten_dce_trace)

@@ -4,6 +4,7 @@ import thunder
 import thunder.core.script as script
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
+from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map, method_lookup
 
 import torch
@@ -161,5 +162,17 @@ def get_fusions(trace: TraceCtx) -> list[tuple[str, Callable]]:
         sym = bsym.sym
         if sym.is_fusion:
             fusions.append((sym.name, ctx[sym.name]))
+
+    return fusions
+
+
+# Acquires all the fusion BoundSymbols in the trace
+def get_fusion_symbols(trace: TraceCtx) -> list[BoundSymbol]:
+    fusions = []
+
+    for bsym in trace.bound_symbols:
+        sym = bsym.sym
+        if sym.is_fusion:
+            fusions.append(bsym)
 
     return fusions

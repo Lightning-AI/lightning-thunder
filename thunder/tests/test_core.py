@@ -819,6 +819,124 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 # TODO Maybe move to test_passes.py? test_nvfuser.py?
 
 
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_redundant_cast_basic(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a):
+        b = a.to(torch.float16)
+        c = b.to(torch.float64)
+        return c
+
+    cfoo = thunder.compile(foo)
+    cfoo(a)
+
+    traces = thunder.last_traces(cfoo)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+
+    # Verifies that there is a single fusion with only one operation
+    assert len(fusions) == 1
+    fusion = fusions[0]
+    assert len(fusion.subsymbols) == 1
+
+    # Tests a longer chain of operations
+    def bar(a):
+        b = a.to(torch.float16)
+        c = b.to(torch.float64)
+        d = c.to(torch.float32)
+        e = d.to(torch.float16)
+        return e
+
+    cbar = thunder.compile(bar)
+    cbar(a)
+
+    traces = thunder.last_traces(cbar)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+
+    # Verifies that there is a single fusion with only one operation
+    assert len(fusions) == 1
+    fusion = fusions[0]
+    assert len(fusion.subsymbols) == 1
+
+
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a):
+        b = a.to(torch.float64)
+        c = b + 5
+        d = b.to(torch.float16)
+        return c, d
+
+    cfoo = thunder.compile(foo)
+    cfoo(a)
+
+    traces = thunder.last_traces(cfoo)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+
+    # Verifies that there is a single fusion with three each operation
+    assert len(fusions) == 1
+    fusion = fusions[0]
+    assert len(fusion.subsymbols) == 3
+
+    # Verifies that the second conversion consumes the output of the first conversion
+    #   (because the first conversion's output is used in an intermediate operation)
+    assert fusion.subsymbols[-1].args[0].name == "a"
+
+
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a):
+        return a.to(torch.float32)
+
+    cfoo = thunder.compile(foo)
+    cfoo(a)
+
+    traces = thunder.last_traces(cfoo)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+
+    # Verifies that no operations are performed
+    assert len(fusions) == 0
+
+    def bar(a):
+        b = a.to(torch.float32)
+        c = b.to(torch.float64)
+        d = c.to(torch.float16)
+        e = c.to(torch.float16)
+        f = b.to(torch.float32)
+        g = d.to(torch.float32)
+        return d, e, f, g
+
+    cbar = thunder.compile(bar)
+    cbar(a)
+
+    traces = thunder.last_traces(cbar)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+
+    # Verifies a single fusion of two operations
+    # TODO After CSE this will become one operation
+    assert len(fusions) == 1
+    fusion = fusions[0]
+    assert len(fusion.subsymbols) == 2
+
+    # Verifies that the trace outputs are updated properly
+    t1, t2, a0, a1 = extrace.output
+    assert t1.name == "t1"
+    assert t2.name == "t2"
+    assert a0.name == a1.name == "a"
+
+
 # Tests that two separated nvFuser regions can be merged when they don't depend
 #   on an intermediate PyTorch region
 # TODO Create a testing operator that can only be executed by PyTorch so that

@@ -2220,8 +2220,8 @@ def expand_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((1, 0), (1, 0)),  # Nonleading zero dim
         # Empty output cases
         ((1, 0), (0, -1)),
-        ((1, 0), (0, 0)), # Empty input (one broadcast, one zero)
-        ((1, 1), (0, 0)), # Non-empty fully broadcast input
+        ((1, 0), (0, 0)),  # Empty input (one broadcast, one zero)
+        ((1, 1), (0, 0)),  # Non-empty fully broadcast input
         ((1, 3), (1, 1, 3)),  # Add dim
         ((1, 1), (1, 2)),  # Broadcast trailing dim
         ((1, 1), (2, 1)),  # Broadcast leading dim

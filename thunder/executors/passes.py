@@ -4,6 +4,7 @@ from dataclasses import replace
 from itertools import chain
 
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
+import thunder.core.dtypes as dtypes
 import thunder.core.utils as cutils
 from thunder.core.utils import ProxyDict
 from thunder.core.symbol import BoundSymbol
@@ -324,3 +325,137 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     fusedtrace.set_provenance(TraceProvenance("Fusion"))
 
     return fusedtrace, [fusedtrace]
+
+
+# Removes excessive float casts, like those that occur when autocasting
+# NOTE This passes actually changes a program's semantics, because it will take a sequence like
+#   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can
+#   changes the values (because most fp32 values are not representable in fp16)
+# NOTE This only handles conversions performed by CONVERT_ELEMENT_TYPE, and not conversions caused
+#   by other Symbols, like torch.to, which may be unflattened
+# TODO This could be extended to non-float conversions, like complex -> complex conversions
+def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    rrctrace = from_trace(trace)
+
+    # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)
+    def is_eligible_cast(bsym: BoundSymbol) -> tuple[bool, Any, Any]:
+        # Ignores operations other than CONVERT_ELEMENT_TYPE
+        if bsym.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
+            return False, None, None
+
+        # Parses arguments
+        # TODO We should consider canonicalizing how BoundSymbols express their arguments
+        a: Any
+        dtyp: dtypes.dtype
+
+        if len(bsym.args) == 2:
+            a, dtyp = bsym.args
+        elif len(bsym.args) == 1:
+            cutils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            (a,) = bsym.args
+            dtyp = bsym.kwargs["dtype"]
+        else:
+            a = bsym.kwargs["a"]
+            dtyp = bsym.kwargs["dtype"]
+
+        if not isinstance(a, Proxy):
+            return False, None, None
+
+        adtyp = dtypes.to_dtype(a)
+        is_float_to_float_conversion = dtypes.is_float_dtype(dtypes.to_dtype(a)) and dtypes.is_float_dtype(dtyp)
+
+        return is_float_to_float_conversion, a, dtyp
+
+    # Updates intermediate conversions, identifies no-ops, and updates no-op consumers
+    # NOTE These are separate maps. A no-op in this context is a cast from the
+    #   input's dtype to itself, like the following:
+    #
+    #   b = prims.convert_element_type(a, float32)  # a: f32
+    #
+    #   For these operations, everywhere b is consumed can be replaced with a.
+    #
+    #   When there is an intermediate conversion, however, we don't want to replace all uses
+    #   of its output with its input. For example, the dtype modified output could
+    #   actually be consumed by non-cast operations.
+
+    # TODO This is intentionally commented out. See TODO below on consumer analysis.
+    # consumers = cutils.consumers(trace)
+    replacement_map = {}
+    intermediate_map = {}
+    nbsyms = []
+    for bsym in trace.bound_symbols:
+        is_proxy_f2f_conversion, a, dtyp = is_eligible_cast(bsym)
+
+        # Replaces inputs due to no-op casts for all operations
+        if not is_proxy_f2f_conversion:
+            nbsym = bsym
+            if bsym.has_input(replacement_map):
+                nbsym = bsym.from_bsym_swap_inputs(replacement_map)
+            nbsyms.append(nbsym)
+            continue
+
+        # NOTE is_proxy_f2f_conversion is True
+        va = variableify(a)
+        vo = variableify(bsym.output)
+
+        # Identifies updated input
+        orig = intermediate_map.get(va, a)
+        orig_dtype = dtypes.to_dtype(orig)
+
+        # Elides no-ops, marking their outputs for replacement
+        if orig_dtype == dtyp:
+            replacement_map[vo] = orig
+            intermediate_map[vo] = orig
+            continue
+
+        # NOTE In this case there is a more original input
+
+        # Only marks this output for replacement with the more original input if it's
+        #   not consumed by a non-cast operation
+        has_non_cast_consumer = False
+        # TODO (mruberry) I'm not sure whether the following is worthwhile, although
+        #   I'm leaving it as a comment because we may want to revive it in the future.
+        #   Essentially, this would be a heuristic that says: "if x is being consumed,
+        #   don't bother finding the precursor of x to cast, just cast x itself."
+        #   That may improve data locality, but it could also lead to excessive
+        #   casts.
+        # for consumer in consumers.get(bsym.output, ()):
+        #     if consumer.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
+        #         has_non_cast_consumer = True
+        #         break
+
+        # When this operation has non-cast consumers, later conversion operations
+        #   might as well consume its output to try and improve data locality and
+        #   not have to preserve the original tensor for so long
+        if has_non_cast_consumer:
+            intermediate_map[vo] = bsym.output
+        else:
+            intermediate_map[vo] = orig
+
+        # Possibly creates a new BoundSymbol consuming the original instead of the current input
+        if orig is a:
+            nbsyms.append(bsym)
+        else:
+            # NOTE This is faster than using from_bsym_swap_inputs, and relies on us only working
+            #   with prims.convert_element_type
+            nbsym = bsym.from_bsym(args=(orig, dtyp), kwargs={})
+            nbsyms.append(nbsym)
+            cutils.check(
+                nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
+                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                exception_type=AssertionError,
+            )
+
+    rrctrace.bound_symbols = nbsyms
+
+    # Updates the trace's output
+    def map_redundant(x: Any) -> Any:
+        if isinstance(x, Proxy):
+            return replacement_map.get(variableify(x), x)
+        return x
+
+    new_trace_output = tree_map(map_redundant, trace.output)
+    rrctrace.output = new_trace_output
+
+    rrctrace.set_provenance(TraceProvenance("Remove redundant casts"))
+    return rrctrace, [rrctrace]

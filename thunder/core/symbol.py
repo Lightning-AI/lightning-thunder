@@ -263,7 +263,11 @@ class BoundSymbol(BoundSymbolInterface):
 
     # Constructs a new BoundSymbol with default values taken from this BoundSymbol
     #   Override values can be specified as kwargs
-    def from_bsym(self, **kwargs):
+    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/680
+    # Issue -- Provide a pattern for updating subsymbols when swapping outputs
+    #   Maybe this can also just swap one set of symbols for another?
+    #   Consider adding verification that the new and old output have the same metadata
+    def from_bsym(self, **kwargs) -> BoundSymbol:
         self_kwargs = {
             "sym": self.sym,
             "args": self.args,
@@ -279,6 +283,54 @@ class BoundSymbol(BoundSymbolInterface):
         self_kwargs.update(kwargs)
 
         return BoundSymbol(**self_kwargs)
+
+    # NOTE coll must be a Container of "variableified" proxies
+    def has_input(self, coll) -> bool:
+        for x in chain(self._flat_args, self._flat_kwargs):
+            if not isinstance(x, Proxy):
+                continue
+
+            vx = variableify(x)
+            if vx in coll:
+                return True
+
+        return False
+
+    # Produces a new BoundSymbol with the inputs swapped as described by swap_map,
+    #   which maps from variablified inputs to swap to the proxies to swap them with
+    # NOTE This does not modify the output. When calling this on operations that return one or
+    #   more of their inputs a DCE pass must have already marked those outputs as None
+    #   for this operation to be valid
+    # TODO Consider adding a check that the swap is to another proxy with the same metadata
+    # TODO Consider adding a check that the output is not one of the swapped inputs
+    def from_bsym_swap_inputs(self, swap_map: dict[VariableInterface, Proxy]) -> BoundSymbol:
+        def swap(c):
+            flats, spec = tree_flatten(c)
+
+            swapped = []
+            for fa in flats:
+                if isinstance(fa, Proxy):
+                    vfa = variableify(fa)
+                    to_swap = swap_map.get(vfa, None)
+                    if to_swap is not None:
+                        swapped.append(to_swap)
+                        continue
+
+                swapped.append(fa)
+
+            return tree_unflatten(swapped, spec)
+
+        nargs = swap(self.args)
+        nkwargs = swap(self.kwargs)
+
+        nsubsymbols = []
+        for bsym in self.subsymbols:
+            if bsym.has_input(swap_map):
+                nsubsymbols.append(bsym.from_bsym_swap_inputs(swap_map))
+            else:
+                nsubsymbols.append(bsym)
+
+        return self.from_bsym(args=nargs, kwargs=nkwargs, subsymbols=nsubsymbols)
 
     # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
     #   are immutable
