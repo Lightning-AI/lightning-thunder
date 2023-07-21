@@ -296,6 +296,7 @@ class ProtoGraph:
         self.protoblocks = tuple(sorted(protoblocks, key=lambda x: sort_map[x]))
 
     def transform(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> "ProtoGraph":
+        assert (v := replace_map.get(ValueMissing())) is None, v
         transformed = {protoblock: protoblock.transform(replace_map) for protoblock in self}
         for old_protoblock, new_protoblock in transformed.items():
             for old_target, is_jump in old_protoblock.jump_targets:
@@ -314,6 +315,7 @@ class _AbstractRef(_AbstractValue):
     _debug_info: str = "N/A"
 
 
+@dataclasses.dataclass(frozen=True, eq=True)
 class ValueMissing(AbstractValue):
     """Models `del` and similar operations. (But NOT `= None`)"""
 
@@ -342,6 +344,18 @@ class AbstractPhiValue(AbstractValue):
     def __post_init__(self) -> None:
         assert all(isinstance(i, AbstractValue) for i in self.constituents), self.constituents
 
+        # Flatten nested PhiValues. e.g.
+        #   𝜙[𝜙[A, B], 𝜙[A, C]] -> 𝜙[A, B, C]
+        constituents = itertools.chain(*[self.flatten(i) for i in self.constituents])
+
         # Ensure a consistent order.
-        constituents = tuple(v for _, v in sorted({id(v): v for v in self.constituents}.items()))
+        constituents = tuple(v for _, v in sorted({id(v): v for v in constituents}.items()))
         object.__setattr__(self, "constituents", constituents)
+
+    @classmethod
+    def flatten(cls, v: AbstractValue):
+        if isinstance(v, AbstractPhiValue):
+            for i in v.constituents:
+                yield from cls.flatten(i)
+        else:
+            yield v

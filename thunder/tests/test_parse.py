@@ -726,8 +726,8 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     signature = inspect.signature(fn)
 
     proto_graph = frontend.parse_bytecode(fn)
-    frontend._add_transitive(proto_graph)
-    proto_graph = frontend._condense_values(proto_graph)
+    proto_graph, _ = frontend._add_transitive(proto_graph)
+    proto_graph, _ = frontend._condense_values(proto_graph)
 
     flat_node_flow = []
     for block_idx, protoblock in enumerate(proto_graph):

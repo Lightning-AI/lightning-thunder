@@ -147,6 +147,20 @@ def parse_bytecode(method: Callable) -> ProtoGraph:
     return ProtoGraph(iter_protoblocks())
 
 
+def check_idempotent(f: Callable[[ProtoGraph], tuple[ProtoGraph, bool]]):
+
+    @functools.wraps(f)
+    def wrapped(protograph: ProtoGraph):
+        protograph, had_effect = f(protograph)
+        if DEBUG_ASSERTS:
+            _, had_effect_on_rerun = f(protograph)
+            assert not had_effect_on_rerun
+
+        return protograph, had_effect
+    return wrapped
+
+
+
 def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedSet[VariableKey]]:
     """Identify new transitive value dependencies.
 
@@ -189,7 +203,8 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
     return {i: new_uses_i for i, new_uses_i in new_uses.items() if new_uses_i}
 
 
-def _add_transitive(protograph: ProtoGraph) -> None:
+@check_idempotent
+def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     """Extend abstract value flows to include those needed by downstream blocks.
 
     This pass effectively functionalizes the abstract value flow by plumbing
@@ -200,7 +215,9 @@ def _add_transitive(protograph: ProtoGraph) -> None:
     not, however, pose an overall soundness problem because we can check for
     state mutations during inlining and rerun flow analysis.
     """
-    for protoblock, new_uses in _get_missing_transitive(protograph).items():
+    protograph = protograph.transform({})
+    missing_transitive = _get_missing_transitive(protograph)
+    for protoblock, new_uses in missing_transitive.items():
         protoblock.uses.update(new_uses)
         for key in new_uses:
             if key.scope == VariableScope.STACK:
@@ -214,10 +231,11 @@ def _add_transitive(protograph: ProtoGraph) -> None:
         # Ensure the new transitive dependencies are reflected in the variable state.
         assert not (delta := new_uses.difference(initial_keys)), delta
 
-    assert not (missing := _get_missing_transitive(protograph)), missing
+    return protograph, bool(missing_transitive)
 
 
-def _condense_values(proto_graph: ProtoGraph) -> ProtoGraph:
+@check_idempotent
+def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     """Bind references to more tangible values.
 
     We make liberal use of `_AbstractRef`s when constructing value flow because
@@ -249,9 +267,13 @@ def _condense_values(proto_graph: ProtoGraph) -> ProtoGraph:
     # `ExternalRef` which will automatically take precidence over the
     # `_AbstractRef` during the chain folding pass.
     for key, (initial_ref, *_) in proto_graph.root.variables.items():
-        assert isinstance(initial_ref, _AbstractRef)
+        if isinstance(initial_ref, ExternalRef):
+            continue
+
+        assert isinstance(initial_ref, _AbstractRef), initial_ref
         assert key.scope not in (VariableScope.CONST, VariableScope.STACK)
         G.add_edge(ExternalRef(key), initial_ref)
+    G.remove_edges_from(nx.selfloop_edges(G))
 
     # While not strictly necessary, it's much easier to debug the intermediate
     # graph logic if we first convert all values to indices.
@@ -304,9 +326,14 @@ def _condense_values(proto_graph: ProtoGraph) -> ProtoGraph:
 
         # By definition anything that isn't an `_AbstractRef` should not alias another value.
         for idx in nodes:
-            is_ref = isinstance(values[idx], _AbstractRef)
-            invariants = (idx in roots, index_alias_map[idx] == {idx}, not is_ref)
-            assert all(invariants) or not any(invariants), (idx, values[idx], invariants)
+            if isinstance(values[idx], AbstractPhiValue):
+                known_constituents = {value_to_idx[v] for v in values[idx].constituents}
+                index_alias_map[idx] = {i for i in index_alias_map[idx] if i not in known_constituents} | {idx}
+
+            else:
+                is_ref = isinstance(values[idx], _AbstractRef)
+                invariants = (idx in roots, index_alias_map[idx] == {idx}, not is_ref)
+                assert all(invariants) or not any(invariants), (idx, values[idx], invariants)
 
     # And finally update the block value flows to reflect the changes.
     replace_map: dict[_AbstractValue, _AbstractValue] = {}
@@ -320,7 +347,7 @@ def _condense_values(proto_graph: ProtoGraph) -> ProtoGraph:
         new_values = tuple(OrderedSet(values[idy] for idy in sorted(source_indices)))
         replace_map[v] = AbstractPhiValue(new_values) if len(new_values) > 1 else new_values[0]
 
-    return proto_graph.transform(replace_map)
+    return proto_graph.transform(replace_map), any(v != {k} for k, v in index_alias_map.items())
 
 
 def _is_epilogue(protoblock: ProtoBlock) -> bool:
@@ -783,8 +810,8 @@ def acquire_partial(
 def _construct_protograph(func):
     """Protoblocks are parse level constructs, so it is safe to reuse them."""
     proto_graph = parse_bytecode(func)
-    _add_transitive(proto_graph)
-    proto_graph = _condense_values(proto_graph)
+    proto_graph, _ = _add_transitive(proto_graph)
+    proto_graph, _ = _condense_values(proto_graph)
     return proto_graph
 
 
