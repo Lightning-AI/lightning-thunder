@@ -3585,6 +3585,80 @@ embedding_opinfo = OpInfo(
 nn_ops.append(embedding_opinfo)
 
 
+def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # 3-dim causal cases. dropout_p is not parametrized because we don't have a way to control for rng
+    for N, (L, S), (E, Ev) in itertools.product((1, 2), ((2, 2), (2, 3)), ((2, 2), (2, 3))):
+        q, k, v = make(N, L, E), make(N, S, E), make(N, S, Ev)
+        yield SampleInput(q, k, v, dropout_p=0.0, is_causal=True)
+
+    # 4-dim (multiheaded) causal case
+    n_head = 3
+    N, L, S, E, Ev = 2, 2, 3, 2, 3
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    yield SampleInput(q, k, v, None, 0.0, True)
+
+    # test the scale factor which was added in torch 2.1
+    if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
+        q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+        yield SampleInput(q, k, v, is_causal=True, scale=0.123)
+
+    # mask cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1).tril()
+    yield SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=False)
+
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    additive_attn_mask = make((L, S), dtype=q.dtype).tril()
+    yield SampleInput(q, k, v, attn_mask=additive_attn_mask, is_causal=False)
+
+    # mask with extra padding: this case will raise if https://github.com/pytorch/pytorch/issues/103749 is fixed
+    # when that happens, update the SDPA impl and remove this comment
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1).tril()
+    bool_attn_mask[-1, :] = False
+    yield SampleInput(q, k, v, attn_mask=bool_attn_mask, dropout_p=0.0, is_causal=False)
+
+
+def scaled_dot_product_attention_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    # passing an attention mask and `is_causal` should error out, they are redundant
+    q, k, v = make(1, 1, 1), make(1, 1, 1), make(1, 1, 1, 1)
+    bool_attn_mask = make((1, 1), dtype=torch.bool, low=1, high=1).tril()
+    yield SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=True), ValueError
+
+
+sdpa_opinfo = OpInfo(
+    ltorch.scaled_dot_product_attention,
+    sample_input_generator=scaled_dot_product_attention_sample_generator,
+    error_input_generator=scaled_dot_product_attention_error_generator,
+    torch_reference=torch.nn.functional.scaled_dot_product_attention,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch CPU doesn't support float16 matmul
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(
+                # Numerical issue with bfloat16: skipped since CPU is not a priority
+                devices.DeviceType.CPU,
+                # RuntimeError: "triu_tril_cuda_template" not implemented for 'BFloat16'
+                devices.DeviceType.CUDA
+            ),
+        ),
+    )
+)
+nn_ops.append(sdpa_opinfo)
+
+
 def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

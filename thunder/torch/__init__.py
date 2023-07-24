@@ -1692,14 +1692,28 @@ def outer(a, b):
 
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention)
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
-    logits = query @ key.transpose(-2, -1) / (query.size(-1) ** 0.5)
-    if attn_mask is None and is_causal:
-        L, S = logits.shape[-2:]
-        attn_mask = (arange(L, device=query.device)[:, None] >= arange(S, device=query.device)[None, :]).to(
-            dtype=logits.dtype
+    # Reference implementation:
+    # https://github.com/pytorch/pytorch/blob/d62a80a/aten/src/ATen/native/transformers/attention.cpp#L639-L697
+    if scale is None:
+        scale = 1 / query.size(-1) ** 0.5
+    # This implementation doesn't match your usual attention textbook formula, but it's meant to be more stable
+    # https://github.com/bigscience-workshop/Megatron-DeepSpeed/pull/118
+    scale = scale ** 0.5
+    logits = (query * scale) @ (key.transpose(-2, -1) * scale)
+    if is_causal:
+        utils.check(
+            attn_mask is None,
+            lambda: "scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True",
+            ValueError
         )
-        attn_mask = attn_mask.masked_fill(attn_mask == 0, -math.inf)
+        L, S = logits.shape[-2:]
+        attn_mask = ones((L, S), device=query.device, dtype=torch.bool).tril()
     if attn_mask is not None:
+        # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
+        # with a very negative value that should become ~0 after softmax
+        if dtypes.is_boolean_dtype(attn_mask.dtype):
+            attn_mask = masked_fill(zeros_like(attn_mask, dtype=query.dtype), attn_mask == 0, -math.inf)
+        # Otherwise, attn_mask represents an additive attention tensor
         logits = logits + attn_mask
     attn_weight = softmax(logits, dim=-1)
     attn_weight = dropout(attn_weight, dropout_p)
