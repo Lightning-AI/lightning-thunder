@@ -527,8 +527,8 @@ def make_nonlocal_test():
         y, x = x, 1
         return y
 
-
-make_nonlocal_test()
+# Re-enable when nonlocal variables are supported.
+# make_nonlocal_test()
 
 
 @add_parse_test(

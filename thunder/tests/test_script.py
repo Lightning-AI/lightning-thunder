@@ -580,6 +580,20 @@ def test_raise_nonlocals():
         thunder.preprocess(func, is_module=False)
     assert "nonlocal variables are not supported but" in str(excinfo.value)
 
+# Ref: https://github.com/Lightning-AI/lightning-thunder/issues/667
+def test_nonlocal_closure():
+    def func():
+        x = 0
+        def inner():
+            return x
+        return inner
+
+    # Once we support nonlocal variables, this should work.
+    # This is a regression test to make sure it doesn't crash instead.
+    with pytest.raises(RuntimeError) as excinfo:
+        thunder.preprocess(func, is_module=False)
+    assert "nonlocal variables are not supported but" in str(excinfo.value)
+
 
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying
 # TODO: once this test works, also test acquiring the function from a collection

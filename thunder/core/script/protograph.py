@@ -121,22 +121,45 @@ class ProtoBlock:
                 block_inputs.appendleft(inferred)
             return stack.pop() if pop else stack[-1]
 
-        def peek_variable(arg: Optional[int], scope: VariableScope) -> list[_AbstractValue]:
+        def peek_variable(instr: dis.Instruction, scope: VariableScope) -> list[_AbstractValue]:
+            """
+            Get the _AbstractValue of the variable given by the instruction and variable scope.
+
+            Returns the list of _AbstractValues associated with the variable.
+
+            The first value of the list is created here and should always be an _AbstractRef;
+            if a variable is undefined a later pass will convert it to `ValueMissing`.
+            Local block parsing is too early to make that determination.
+
+            The last value is the current (abstract) value of the variable.
+            """
+            arg = instr.arg
             assert arg is not None
             if scope == VariableScope.CONST:
-                return [ExternalRef(VariableKey(code.co_consts[arg], scope))]
+                identifier = code.co_consts[arg]
+                return [ExternalRef(VariableKey(identifier, scope))]
+            elif scope == VariableScope.LOCAL:
+                identifier = code.co_varnames[arg]
+                default = _AbstractRef(f"Variable initial value: ({identifier} {scope})")
+                return variables.setdefault(VariableKey(identifier, scope), [default])
+            elif scope == VariableScope.NONLOCAL:
+                # TODO: Support nonlocal variables.
+                # Nonlocal variables load (LOAD_DEREF) from frame->localsplus.
+                # We cannot model or access the content of stack frames here.
+                # We will have to emit some nonlocal _AbstractValue and resolve it later, once we can prove
+                # See https://github.com/python/cpython/blob/0ba07b2108d4763273f3fb85544dde34c5acd40a/Include/internal/pycore_code.h#L119-L133
+                # for more explanation of localsplus.
+                msg = f"nonlocal variables are not supported but instruction = {instr} found"
+                raise RuntimeError(msg)
+            elif scope == VariableScope.GLOBAL:
+                identifier = code.co_names[arg]
+                default = _AbstractRef(f"Variable initial value: ({identifier} {scope})")
+                return variables.setdefault(VariableKey(identifier, scope), [default])
+            elif scope == VariableScope.STACK:
+                raise RuntimeError("Peeking stack variables is not supported.")
+            else:
+                raise NotImplementedError("Unknown variable scope: {scope}")
 
-            identifier = {
-                VariableScope.LOCAL: code.co_varnames,
-                VariableScope.NONLOCAL: code.co_freevars,
-                VariableScope.GLOBAL: code.co_names,
-            }[scope][arg]
-
-            # The first value should always be an _AbstractRef; if a variable is
-            # undefined a later pass will convert it to `ValueMissing`. However
-            # local block parsing is too early to make that determination.
-            default = _AbstractRef(f"Variable initial value: ({identifier} {scope})")
-            return variables.setdefault(VariableKey(identifier, scope), [default])
 
         assert raw_instructions
         for instruction in raw_instructions:
@@ -149,11 +172,11 @@ class ProtoBlock:
             # Peek at the stack to track variable mutations.
             if (store_scope := store_opcodes.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(1, ())
-                peek_variable(instruction.arg, store_scope).append(peek_stack(pop=False))
+                peek_variable(instruction, store_scope).append(peek_stack(pop=False))
 
             elif (del_scope := del_opcodes.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(1, ())
-                peek_variable(instruction.arg, del_scope).append(ValueMissing())
+                peek_variable(instruction, del_scope).append(ValueMissing())
 
             # Handle stack inputs and outputs.
             inputs: list[_AbstractValue] = [peek_stack(pop=True) for _ in range(pop)]
@@ -173,7 +196,7 @@ class ProtoBlock:
 
             if (load_scope := load_opcodes.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(0, PushNew)
-                outputs = [peek_variable(instruction.arg, load_scope)[-1]]
+                outputs = [peek_variable(instruction, load_scope)[-1]]
 
             else:
                 outputs = [lookup(index) for index in push]
