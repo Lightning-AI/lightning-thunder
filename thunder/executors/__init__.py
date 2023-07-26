@@ -152,7 +152,10 @@ def transform_for_execution(
     postflatten_dce_trace, postflatten_dce_traces = passes.dce(redundant_removed)
     traces.extend(postflatten_dce_traces)
 
-    fused_trace, fused_traces = passes.fuse(postflatten_dce_trace)
+    flattened_dcs_cse_trace, flattened_dcs_cse_traces = passes.cse(postflatten_dce_trace)
+    traces.extend(flattened_dcs_cse_traces)
+
+    fused_trace, fused_traces = passes.fuse(flattened_dcs_cse_trace)
     traces.extend(fused_traces)
 
     if use_rematerialization:

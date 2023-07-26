@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Callable, Sequence, Tuple, Optional
 from collections import deque
 from dataclasses import replace
 from itertools import chain
+from functools import partial
 
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
@@ -213,6 +214,163 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, lis
     return flattenedtrace, [flattenedtrace]
 
 
+#
+# Functions related to the Common Subexpression Elimination (CSE) pass
+#
+def replace_redundant_inputs(
+    redundant_map: dict[VariableInterface, Proxy],
+    bsyms: Sequence[BoundSymbol]
+) -> Sequence[BoundSymbol]:
+
+    new_bsyms = []
+    for bsym in bsyms:
+
+        # Checks if the bound symbol has redundant inputs (that need to be replaced)
+        has_redundant_inputs: bool = False
+        for x in chain(bsym._flat_args, bsym._flat_kwargs):
+            if isinstance(x, Proxy) and variableify(x) in redundant_map:
+                has_redundant_inputs = True
+                break
+
+        # Bound symbols without redundant inputs need no modification
+        if not has_redundant_inputs:
+            new_bsyms.append(bsym)
+            continue
+
+        # Bound symbols with redundant inputs have to remap those inputs, and the
+        #   inputs of their subsymbols, to the original computations
+        new_bsym = bsym.from_bsym_swap_proxies(
+            redundant_map,
+            skip_inputs=False,
+            skip_output=False,
+            skip_subsymbols=False,
+        )
+        new_bsyms.append(new_bsym)
+
+    return new_bsyms
+
+
+# TODO(crcrpar): Implement a mechanism to keep track of supported ops that cannot be CSE'd.
+# For example, `uniform`, `dropout`, and `scaled_dot_product_attention`.
+# See: https://github.com/Lightning-AI/lightning-thunder/issues/671
+NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
+    prims.PrimIDs.UNIFORM,
+    "torch.uniform",  # this doesn't exist as of the PR
+    "torch.uniform_like",  # this doesn't exist as of the PR
+    # thunder.core.prims doesn't support. See https://pytorch.org/docs/stable/generated/torch.rand.html.
+    # "torch.rand",
+    # "torch.rand_like",
+    "torch.nn.functional.dropout",
+    "torch.nn.functional.scaled_dot_product_attention",
+}
+
+
+# TODO Update the replacement of redundant proxies to use a visitor pattern
+#   when that architecture is added in the future
+def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    """Remove bound symbols whose right hand side is common expression.
+
+    This does two things:
+        1. Removes bound symbols if their right hand side expression is already seen.
+        2. Replaces variables of arguments and keyword arguments of the bound symbols to use and
+           their subsymbols with the preceding ones using the map of a variable to another with
+           the same right hand side expression.
+
+    Say we have `foo` defined in the below code snippet.
+
+    .. code::
+
+        def foo(x, y):
+            a = x + y
+            b = y - x
+            c = x + y  # Expected to be removed in favor of `a`.
+            d = y - x  # Expected to be removed in favor of `b`.
+            z = a + b  # Expected to be intact.
+            w = c + d  # Expected to be converted to `w = a + b` and then removed in favor of `z`.
+            m = w + 1  # Expected to be updated to `m = z + 1`.
+            return z, w, m  # Expected to be (z, z, z + 1)
+
+        # CPU tensors
+        @torch.no_grad()
+        def thunder_140374621612752(x, y):
+          # x: "cpu f32[2, 2]" =  x  (trivial unpack)
+          # y: "cpu f32[2, 2]" =  y  (trivial unpack)
+          t0 = torch.add(x, y)  # t0: "cpu f32[2, 2]"
+          t1 = torch.sub(y, x)  # t1: "cpu f32[2, 2]"
+          del [y, x]
+          t4 = torch.add(t0, t1)  # t4: "cpu f32[2, 2]"
+          del [t0, t1]
+          t6 = torch.add(t4, 1)  # t6: "cpu f32[2, 2]"
+          return (t4, t4, t6)
+
+        # CUDA tensors & nvFuser
+        @torch.no_grad()
+        def thunder_140410131706304(x, y):
+          # x: "cuda:0 f32[2, 2]" =  x  (trivial unpack)
+          # y: "cuda:0 f32[2, 2]" =  y  (trivial unpack)
+          (t4, t6) = nvFusion0(x, y)
+            # t0 = prims.add(x, y)  # t0: "cuda:0 f32[2, 2]"
+            # t1 = prims.sub(y, x)  # t1: "cuda:0 f32[2, 2]"
+            # t4 = prims.add(t0, t1)  # t4: "cuda:0 f32[2, 2]"
+            # t6 = prims.add(t4, 1.0)  # t6: "cuda:0 f32[2, 2]"
+          del [x, y]
+          return (t4, t4, t6)
+
+    Args:
+        trace:
+
+    Returns:
+        :class:`TraceCtx` with common subexpression eliminated.
+    """
+    cse_trace = from_trace(trace)
+
+    cse_trace_bound_symbols = []
+    rhs_to_bsym_map = {}
+    redundant_map = {}
+
+    # Identifies redundant operations and maps redundant proxies to originally
+    #   computed proxies
+    for bsym in trace.bound_symbols:
+        # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
+        # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
+        if bsym.sym.id in NON_FUNCTIONAL_OPS:
+            cse_trace_bound_symbols.append(bsym)
+            continue
+
+        # From the second bsym, we have opportunities to replace `bsym.args` and `bsym.kwargs`.
+        rhs = (bsym.from_bsym_swap_proxies(
+            swap_map=redundant_map,
+            skip_inputs=False,
+            skip_output=True,
+            skip_subsymbols=True,
+        )).rhs()
+        if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None:
+            # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
+            for src, dst in zip(bsym._flat_outs, prior_bsym._flat_outs):
+                redundant_map[variableify(src)] = dst
+        else:
+            rhs_to_bsym_map[rhs] = bsym
+            cse_trace_bound_symbols.append(bsym)
+
+    # Updates the bound symbols in the trace
+    # NOTE This uses the cse_trace_bound_symbols list, which has filtered
+    #   redundant symbols
+    new_bsyms = replace_redundant_inputs(redundant_map, cse_trace_bound_symbols)
+    cse_trace.bound_symbols = new_bsyms
+
+    # Updates the trace's output
+    def map_redundant(x: Any) -> Any:
+        if isinstance(x, Proxy):
+            return redundant_map.get(variableify(x), x)
+        return x
+
+    new_trace_output = tree_map(map_redundant, trace.output)
+    cse_trace.output = new_trace_output
+
+    cse_trace.set_provenance(TraceProvenance("Common Subexpression Elimination"))
+    return cse_trace, [cse_trace]
+
+
 def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     fusedtrace = from_trace(trace)
     fused_bsyms = []
@@ -395,7 +553,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if not is_proxy_f2f_conversion:
             nbsym = bsym
             if bsym.has_input(replacement_map):
-                nbsym = bsym.from_bsym_swap_inputs(replacement_map)
+                nbsym = bsym.from_bsym_swap_proxies(replacement_map, skip_inputs=False, skip_output=True)
             nbsyms.append(nbsym)
             continue
 
@@ -441,7 +599,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if orig is a:
             nbsyms.append(bsym)
         else:
-            # NOTE This is faster than using from_bsym_swap_inputs, and relies on us only working
+            # NOTE This is faster than using from_bsym_swap_proxies, and relies on us only working
             #   with prims.convert_element_type
             nbsym = bsym.from_bsym(args=(orig, dtyp), kwargs={})
             nbsyms.append(nbsym)

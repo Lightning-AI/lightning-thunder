@@ -18,7 +18,7 @@ import thunder.torch as ltorch
 import thunder.executors.torchex as torchex
 import thunder.core.codeutils as codeutils
 from thunder.core.pytree import tree_flatten_only, tree_unflatten
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor
+from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
@@ -925,15 +925,14 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     fusions = examine.get_fusion_symbols(extrace)
 
     # Verifies a single fusion of two operations
-    # TODO After CSE this will become one operation
     assert len(fusions) == 1
     fusion = fusions[0]
-    assert len(fusion.subsymbols) == 2
+    assert len(fusion.subsymbols) == 1
 
     # Verifies that the trace outputs are updated properly
     t1, t2, a0, a1 = extrace.output
     assert t1.name == "t1"
-    assert t2.name == "t2"
+    assert t2.name == "t1"
     assert a0.name == a1.name == "a"
 
 
@@ -2165,7 +2164,7 @@ def test_bookend_meta_optimization(executor, device, _):
 
         return t4, t6, t7, t8, t10, t13
 
-    test_cases.append((func_12, 9))
+    test_cases.append((func_12, 8))
 
     for func, num_permute in test_cases:
         cfoo = thunder.compile(func)
@@ -2334,6 +2333,51 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     assert "torch.nn.functional.scaled_dot_product_attention" in tuple(
         bsym.sym.id for bsym in history[-1].bound_symbols
     )
+
+
+@instantiate(dtypes=NOTHING)
+def test_cse(executor, device, _):
+    from thunder.core.pytree import tree_flatten
+
+    def func(x, y, device):
+        a = x + y
+        b = y - x
+        c = x + y  # Expected to be removed in favor of `a`.
+        d = y - x  # Expected to be removed in favor of `b`.
+        z = a + b  # Expected to be intact.
+        w = c + d  # Expected to be converted to `w = a + b` and then removed in favor of `z`.
+        m = w + 1  # Expected to be updated to `m = z + 1`.
+        a = clang.uniform(w.shape, device=device, dtype=thunder.float16)
+        b = clang.uniform(w.shape, device=device, dtype=thunder.float16)
+        c = clang.uniform(z.shape, device=device, dtype=thunder.float16)
+        d = clang.uniform(z.shape, device=device, dtype=thunder.float16)
+        return z, w, m, (a, b, c, d)
+
+    x, y = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
+    compiled_func = thunder.compile(
+        func,
+        disable_preprocessing=True,
+        executors_list=executor.executors_list(),
+    )
+    compiled_func(x, y, device)
+    traces = thunder.last_traces(compiled_func)
+    flatten_dce_trace = [
+        t for t in traces
+        if t._provenance is not None and t._provenance.pss.startswith("Dead Code Elimination")
+    ][1]
+    flatten_cse_trace = [
+        t for t in traces
+        if t._provenance is not None and t._provenance.pss.startswith("Common Subexpression Elimination")
+    ][0]
+    # CSE is supposed to remove `c`, `d`, and `w`.
+    assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
+    assert len([
+        bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM
+    ]) == 4
+
+    assert ([
+        t.name for t in tree_flatten(flatten_cse_trace.output)[0]
+    ] == ['t4', 't4', 't6', 't7', 't8', 't9', 't10'])
 
 
 # @instantiate(
