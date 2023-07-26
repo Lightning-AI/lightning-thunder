@@ -1,4 +1,7 @@
 from functools import partial
+import builtins
+import math
+import operator
 
 import torch
 from torch.testing import assert_close, make_tensor
@@ -6,16 +9,64 @@ from torch.testing import assert_close, make_tensor
 import thunder
 import thunder.clang as tlang
 import thunder.torch as ttorch
+import thunder.core.devices as devices
 from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
 from thunder.tests.opinfos import elementwise_binary_ops
 
 
-# Tests for elementwise binary operators
+# TODO Enable the remaining elementwise unary operations (following the pattern of abs)
+# TODO Expand testing to elementwise binary operations (following a similar pattern)
+@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CPU,))
+def test_elementwise_dunder_operations_on_numbers(executor, device, dtype):
+    # op, allowed types
+    elementwise_unary_ops = (
+        (builtins.abs, (bool, int, float, complex)),
+        # (math.ceil, (bool, int, float)),
+        # (math.floor, (bool, int, float)),
+        # (operator.inv, (bool, int)),
+        # (operator.neg, (bool, int, float, complex)),
+        # # TODO https://github.com/Lightning-AI/lightning-thunder/issues/713
+        # # operator.pos,
+        # (builtins.round, (bool, int, float)),
+        # (math.trunc, (bool, int, float)),
+    )
 
-# TODO: test that the operator variant works properly
-# TODO: generate the following tests using opinfos (more number sample inputs needed)
+    bool_inps = [False, True]
+    int_inps = [-1, 0, 2]
+    float_inps = [-0.7, 0, 0.3, 1.1]
+    complex_inps = [complex(1, 0.3), complex(-4.1, 0.9)]
+
+    _type_to_input_map = {
+        bool: bool_inps,
+        int: int_inps,
+        float: float_inps,
+        complex: complex_inps,
+    }
+
+    def gather_inputs(allowed_types):
+        inps = []
+
+        for typ in allowed_types:
+            inps.extend(_type_to_input_map[typ])
+
+        return inps
+
+    for op, allowed_types in elementwise_unary_ops:
+
+        def foo(a):
+            return op(a)
+
+        cfoo = executor.make_callable(foo)
+
+        for a in gather_inputs(allowed_types):
+            actual = cfoo(a)
+            expected = foo(a)
+
+            assert_close(actual, expected)
 
 
+# TODO Test operator and method variants using OpInfos
+#   See https://github.com/Lightning-AI/lightning-thunder/issues/710
 @instantiate(dtypes=(thunder.float32,))
 def test_core_tensor_methods(executor, device, dtype):
     def foo(a, b, c, d):
@@ -34,23 +85,8 @@ def test_core_tensor_methods(executor, device, dtype):
     assert_close(thunder_result, torch_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
-def test_add_integer_constants(executor, device, dtype):
-    def foo(a):
-        b = tlang.add(2, 3)
-        return tlang.add(a, b)
-
-    traced_foo = executor.make_callable(foo)
-
-    tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 4), device=device, dtype=tdtype)
-
-    thunder_result = traced_foo(a)
-    torch_result = 5 + a
-    assert_close(thunder_result, torch_result)
-
-
-# TODO This coule be replaced with OpInfo generated tests, but would require "dtype=None" test generators for them
+# NOTE This cannot be an OpInfo test (as OpInfos work today, anyway)
+#   because it tests multiple dtypes for correct promotion behavior
 @instantiate(dtypes=NOTHING)
 def test_where(executor, device, dtype):
     # Tests where type promotion and number support
@@ -90,7 +126,7 @@ def test_where(executor, device, dtype):
     torch_result = torch_fn(pred, i64, -2.3)
     assert_close(thunder_result, torch_result)
 
-    # FIXME: https://github.com/csarofeen/pytorch/issues/2380
+    # TODO Fix https://github.com/Lightning-AI/lightning-thunder/issues/711
     # float x int
     # thunder_result = thunder_fn(pred, 3., 5)
     # torch_result = torch_fn(pred, 3., 5)

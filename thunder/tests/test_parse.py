@@ -527,6 +527,7 @@ def make_nonlocal_test():
         y, x = x, 1
         return y
 
+
 # Re-enable when nonlocal variables are supported.
 # make_nonlocal_test()
 

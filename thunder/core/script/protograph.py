@@ -160,7 +160,6 @@ class ProtoBlock:
             else:
                 raise NotImplementedError("Unknown variable scope: {scope}")
 
-
         assert raw_instructions
         for instruction in raw_instructions:
             assert hasattr(instruction, "line_no"), instruction

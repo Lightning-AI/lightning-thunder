@@ -217,6 +217,8 @@ boolean_dtypes = {bool8, bool8_, bool}
 
 integer_dtypes = {d for d in all_dtypes if isinstance(d, exact)} | {bool, int}
 
+nonboolean_integer_dtypes = {d for d in integer_dtypes if (not isinstance(d, bool_) and d is not bool)}
+
 # NOTE alias for the above
 exact_dtypes = integer_dtypes
 
@@ -405,6 +407,10 @@ def is_integer_dtype(dtype) -> bool:
 
 # Alias for is_integer_dtype
 is_exact_dtype = is_integer_dtype
+
+
+def is_nonboolean_integer_dtype(dtype) -> bool:
+    return dtype in nonboolean_integer_dtypes
 
 
 def is_low_precision_dtype(dtype) -> bool:

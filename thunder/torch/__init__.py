@@ -1707,13 +1707,13 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
         scale = 1 / query.size(-1) ** 0.5
     # This implementation doesn't match your usual attention textbook formula, but it's meant to be more stable
     # https://github.com/bigscience-workshop/Megatron-DeepSpeed/pull/118
-    scale = scale ** 0.5
+    scale = scale**0.5
     logits = (query * scale) @ (key.transpose(-2, -1) * scale)
     if is_causal:
         utils.check(
             attn_mask is None,
             lambda: "scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True",
-            ValueError
+            ValueError,
         )
         L, S = logits.shape[-2:]
         attn_mask = ones((L, S), device=query.device, dtype=torch.bool).tril()

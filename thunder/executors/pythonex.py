@@ -56,7 +56,7 @@ def _elementwise_unary_check(a: Union[TensorProxy, Number]) -> bool:
 
 
 def _elementwise_unary_factory(name: str, module) -> Callable:
-    def fn(bsym: BoundSymbol, a: Union[TensorProxy, Number]) -> BoundSymbol:
+    def fn(bsym: BoundSymbol, a: Number) -> BoundSymbol:
         sym = Symbol(name=name, meta=None, _module=module)
         tbsym = BoundSymbol(sym, args=(a,), kwargs={}, output=bsym.output)
 
@@ -71,7 +71,23 @@ def _elementwise_unary_factory(name: str, module) -> Callable:
 # TODO Review differences in type promotion (for example round(2.3))
 
 # NOTE pythonex_abs to avoid a name conflict with the builtin abs
-pythonex_abs = _elementwise_unary_factory("abs", builtins)
+number_abs = _elementwise_unary_factory("abs", builtins)
+
+
+def abs_helper(a: Number) -> Number:
+    if type(a) is bool:
+        return a
+
+    return abs(a)
+
+
+def tensor_abs(bsym: BoundSymbol, a: Number) -> BoundSymbol:
+    sym = Symbol(name="abs_helper", meta=None)
+    ctx: dict[str, Any] = {"abs_helper": abs_helper}
+
+    return sym.bind(a, output=bsym.output, _call_ctx=ctx)
+
+
 acos = _elementwise_unary_factory("acos", math)
 acosh = _elementwise_unary_factory("acosh", math)
 asin = _elementwise_unary_factory("asin", math)
@@ -161,7 +177,8 @@ _ops_map.update(
         # Data movement and transformation prims
         PrimIDs.CONVERT_ELEMENT_TYPE: (_convert_element_type_check, convert_element_type),
         # Elementwise unary prims
-        PrimIDs.ABS: (_elementwise_unary_check, pythonex_abs),
+        PrimIDs.PY_ABS: (_elementwise_unary_check, number_abs),
+        PrimIDs.ABS: (_elementwise_unary_check, tensor_abs),
         PrimIDs.ACOS: (_elementwise_unary_check, acos),
         PrimIDs.ACOSH: (_elementwise_unary_check, acosh),
         PrimIDs.ASIN: (_elementwise_unary_check, asin),

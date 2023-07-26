@@ -392,13 +392,6 @@ def elementwise_unary_generator(
         ).as_strided(shape, strides, offset)
         yield SampleInput(a)
 
-    # TODO Reenable
-    # # Scalar case
-    # # FIXME: see https://github.com/Lightning-AI/lightning-thunder/issues/169
-    # if supports_numbers and not datatypes.is_complex_dtype(ltorch.to_thunder_dtype(dtype)):
-    #     a = make_number(dtype=dtype, low=low, high=high, **kwargs)
-    #     yield SampleInput(a)
-
 
 def elementwise_unary_benchmarks(op, device, dtype, requires_grad, **kwargs):
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -3651,10 +3644,10 @@ sdpa_opinfo = OpInfo(
                 # Numerical issue with bfloat16: skipped since CPU is not a priority
                 devices.DeviceType.CPU,
                 # RuntimeError: "triu_tril_cuda_template" not implemented for 'BFloat16'
-                devices.DeviceType.CUDA
+                devices.DeviceType.CUDA,
             ),
         ),
-    )
+    ),
 )
 nn_ops.append(sdpa_opinfo)
 

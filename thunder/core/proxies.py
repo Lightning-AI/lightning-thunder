@@ -9,7 +9,7 @@ import math
 from thunder.core.trace import VariableInterface, get_tracectx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctx import langctx_for, get_langctx
+from thunder.core.langctx import langctx_for, get_langctx, get_numberctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -175,6 +175,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # Elementwise unary operators
     #
 
+    # name is the name of the operation in the number language context to perform
+    # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn):
         vala = pyval(a)
@@ -182,18 +184,21 @@ class NumberProxy(Proxy, NumberProxyInterface):
             vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
         )
 
-        # TODO Track these operations by uncommenting this
-        # langctx = get_langctx()
-        # if langctx is not None:
-        #     fn = getattr(langctx, name)
-        #     return fn(a)
+        # TODO Make it so failing to find the operation is a failure
+        # Records the operation (on a number) if in a language context
+        langctx = get_langctx()
+        if langctx is not None:
+            numberctx = get_numberctx()
+            fn = getattr(numberctx, name, None)
+            if fn is not None:
+                return fn(a)
 
         # NOTE langctx is None
         # In this case the operation is (conceptually) run eagerly
         return fn(vala)
 
     def __abs__(self):
-        return self._elementwise_unary_helper(self, "abs", builtins.abs)
+        return self._elementwise_unary_helper(self, "py_abs", builtins.abs)
 
     # See https://docs.python.org/3/reference/datamodel.html#object.__ceil__
     def __ceil__(self):
@@ -204,7 +209,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self._elementwise_unary_helper(self, "floor", math.floor)
 
     def __invert__(self):
-        return self._elementwise_unary_helper(self, "invert", operator.inv)
+        return self._elementwise_unary_helper(self, "bitwise_not", operator.inv)
 
     def __neg__(self):
         return self._elementwise_unary_helper(self, "neg", operator.neg)
@@ -248,7 +253,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
             valb is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
         )
 
-        # TODO Track these operations by uncommenting this
+        # TODO Enable this
+        # Records the operation (on two numbers) if in a language context
         # if langctx is not None:
         #     fn = getattr(langctx, name)
         #     return fn(a, b)
@@ -467,7 +473,8 @@ class IntegerProxy(NumberProxy, int):
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
-        return f"int {value_str}"
+        type_str = "int" if self.python_type is int else "bool"
+        return f"{type_str} {value_str}"
 
     def __repr__(self):
         if self.python_type is bool:
@@ -614,7 +621,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     def __invert__(self):
         langctx = get_langctx()
-        return langctx.invert(self)
+        return langctx.bitwise_not(self)
 
     def __neg__(self):
         langctx = get_langctx()

@@ -499,15 +499,10 @@ def _elementwise_unary_wrapper(
     *,
     prim,
     type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
-    number_outputs_are_always_integers: bool = False,
 ):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
 
-    if number_outputs_are_always_integers and isinstance(a, Number):
-        result_dtype = int
-
     a = maybe_convert_to_dtype(a, computation_dtype)
-
     result = prim(a)
     result = maybe_convert_to_dtype(result, result_dtype)
 
@@ -522,7 +517,9 @@ def abs(a: Union[TensorProxy, Number]):
         return a
 
     return _elementwise_unary_wrapper(
-        a, prim=prims.abs, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT
+        a,
+        prim=prims.abs,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT,
     )
 
 
@@ -569,7 +566,7 @@ def atanh(a):
 
 
 @clang_ctx
-def bitwise_not(a):
+def bitwise_not(a: TensorLike | Number) -> TensorLike | Number:
     return _elementwise_unary_wrapper(
         a,
         prim=prims.bitwise_not,
@@ -578,7 +575,8 @@ def bitwise_not(a):
 
 
 @clang_ctx
-def ceil(a):
+def ceil(a: TensorLike | Number) -> TensorLike | Number:
+    # Short-circuits on unsigned inputs
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
         return a
 
@@ -586,7 +584,6 @@ def ceil(a):
         a,
         prim=prims.ceil,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
-        number_outputs_are_always_integers=True,
     )
 
 
@@ -654,15 +651,15 @@ def expm1(a):
 
 
 @clang_ctx
-def floor(a):
-    if utils.is_exact_dtype(utils.to_dtype(a)):
+def floor(a: TensorLike | Number) -> TensorLike | Number:
+    # Short-circuits on unsigned inputs
+    if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
         return a
 
     return _elementwise_unary_wrapper(
         a,
         prim=prims.floor,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
-        number_outputs_are_always_integers=True,
     )
 
 
@@ -724,7 +721,9 @@ def ndtri(a):
 @clang_ctx
 def neg(a):
     return _elementwise_unary_wrapper(
-        a, prim=prims.neg, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+        a,
+        prim=prims.neg,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
     )
 
 
@@ -736,12 +735,15 @@ def reciprocal(a):
 
 
 @clang_ctx
-def round(a):
+def round(a: TensorLike | Number) -> TensorLike | Number:
+    # Short-circuits on inputs with exact dtypes
     if utils.is_exact_dtype(utils.to_dtype(a)):
         return a
 
     return _elementwise_unary_wrapper(
-        a, prim=prims.round, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+        a,
+        prim=prims.round,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
     )
 
 
@@ -821,15 +823,15 @@ def tanh(a):
     )
 
 
-def trunc(a):
-    if utils.is_exact_dtype(utils.to_dtype(a)):
+def trunc(a: TensorLike | Number) -> TensorLike | Number:
+    # Short-circuits on unsigned inputs (which are already trivially truncated)
+    if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
         return a
 
     return _elementwise_unary_wrapper(
         a,
         prim=prims.trunc,
         type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
-        number_outputs_are_always_integers=True,
     )
 
 

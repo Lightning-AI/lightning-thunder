@@ -71,6 +71,12 @@ def get_prim_fwd_langctx() -> Any:
     return torchlangctx
 
 
+def get_numberctx() -> Any:
+    import thunder.core.prims as numberctx
+
+    return numberctx
+
+
 # Decorator for setting the language context local to a function
 #   Ex. @langctx(torchlangctx)
 class langctx:

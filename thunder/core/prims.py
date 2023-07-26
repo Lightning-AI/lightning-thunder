@@ -61,6 +61,7 @@ class PrimIDs(Enum):
     SCATTER_ADD = auto()
     VIEW = auto()
     # Elementwise unary prims
+    PY_ABS = auto()
     ABS = auto()
     ACOS = auto()
     ACOSH = auto()
@@ -603,8 +604,10 @@ def _elementwise_unary_meta(
     *,
     name=None,
     number_fn=None,
-    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
+    numbers_only: bool = False,
+    number_type_map: Optional[dict[Type, Type]] = None,
 ):
     # Checks that inputs have an expected type
     utils.check_type(a, (TensorProxy, Number))
@@ -614,14 +617,40 @@ def _elementwise_unary_meta(
         typ = utils.get_numberlike_type(a)
         val = utils.get_numberlike_value(a)
 
-        if val is None or number_fn is None:
-            return numberproxy(typ, None)
+        allowed_types = number_type_map.keys() if number_type_map is not None else supported_input_dtypes
 
-        utils.check(typ in supported_input_dtypes, lambda: f"Unsupported input dtype {typ}")
+        utils.check(typ in allowed_types, lambda: f"Unsupported input dtype {typ}")
+
+        output_type = None
+        if number_type_map is not None:
+            output_type = number_type_map[typ]
+        elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
+            output_type = typ
+        elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
+            output_type = bool
+        elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT:
+            if dtypes.is_complex_dtype(typ):
+                output_type = float
+            else:
+                output_type = typ
+        else:
+            utils.check(False, lambda: f"Unknown {output_dtype_kind=}")
+
+        if val is None or number_fn is None:
+            return numberproxy(output_typ, None)
 
         value = number_fn(a)
         result = numberproxy(type(value), value)
+        utils.check(
+            type(value) is output_type,
+            lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
+        )
         return result
+
+    # NOTE a is a TensorProxy
+    utils.check(
+        not numbers_only, lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input"
+    )
 
     # Checks that dtype is supported
     utils.check(a.dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {a.dtype}")
@@ -642,9 +671,11 @@ def _make_elementwise_unary_prim(
     id: PrimIDs,
     name: str,
     number_fn: Optional[Callable] = None,
-    python_printer=default_python_printer,
-    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
+    python_printer: Callable = default_python_printer,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
+    output_dtype_kind: ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND = ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
+    numbers_only: bool = False,
+    number_type_map: Optional[dict[Type, Type]] = None,
 ):
     return make_prim(
         id,
@@ -653,12 +684,27 @@ def _make_elementwise_unary_prim(
             _elementwise_unary_meta,
             name=name,
             number_fn=number_fn,
-            output_dtype_kind=output_dtype_kind,
             supported_input_dtypes=supported_input_dtypes,
+            output_dtype_kind=output_dtype_kind,
+            numbers_only=numbers_only,
+            number_type_map=number_type_map,
         ),
         python_printer=python_printer,
     )
 
+
+py_abs = _make_elementwise_unary_prim(
+    PrimIDs.PY_ABS,
+    "py_abs",
+    number_fn=operator.abs,
+    numbers_only=True,
+    number_type_map={
+        bool: int,
+        int: int,
+        float: float,
+        complex: float,
+    },
+)
 
 abs = _make_elementwise_unary_prim(
     PrimIDs.ABS,
@@ -785,6 +831,7 @@ isfinite = _make_elementwise_unary_prim(
     PrimIDs.ISFINITE,
     "isfinite",
     supported_input_dtypes=dtypes.inexact_dtypes,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
 
 lgamma = _make_elementwise_unary_prim(
@@ -835,7 +882,8 @@ reciprocal = _make_elementwise_unary_prim(
     supported_input_dtypes=fp_math_dtypes,
 )
 
-# TODO Review dtypes for round
+# Rounds to nearest even
+# NOTE This round produces an output with the same dtype as its input
 round = _make_elementwise_unary_prim(
     PrimIDs.ROUND,
     "round",
@@ -905,9 +953,7 @@ tanh = _make_elementwise_unary_prim(
     supported_input_dtypes=fp_math_dtypes,
 )
 
-# TODO Review dtypes for trunc (with round and ceil and floor)
-# NOTE trunc preserves the dtype of input tensors, but is consistent
-#   with Python's trunc for numbers and always returns an integer
+# NOTE This trunc preserves the dtype of its input
 trunc = _make_elementwise_unary_prim(
     PrimIDs.TRUNC,
     "trunc",
