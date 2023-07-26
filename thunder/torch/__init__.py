@@ -22,6 +22,7 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
+import torch.distributed as tdist
 
 # Type annotation helpers
 TensorLike = TensorProxy
@@ -1955,6 +1956,65 @@ def cross_entropy(
             return clang.add(clang.mul(out, 1 - label_smoothing), clang.mul(ret, (label_smoothing / C)))
         else:
             return out
+
+
+#
+# Distributed operations
+#
+
+DistributedReduceOpLike = str | torch.distributed.ReduceOp | prims.DistributedReduceOps
+
+# string name, PyTorch enum value, lightning.compile enum value
+_reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, prims.DistributedReduceOps.SUM),)
+
+
+def to_thunder_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
+    if isinstance(op, str):
+        for s, top, pop in _reduceop_triples:
+            if op == s:
+                return pop
+
+        utils.check(False, lambda: f"Unknown distributed reduce op string {op}")
+
+    if isinstance(op, torch.distributed.ReduceOp):
+        for s, top, pop in _reduceop_triples:
+            if op is top:
+                return pop
+
+        utils.check(False, lambda: f"Unknown distributed reduce op {op}")
+
+    return op
+
+
+def to_torch_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
+    if isinstance(op, prims.DistributedReduceOps):
+        for s, top, pop in _reduceop_triples:
+            if op is pop:
+                return top
+
+        utils.check(False, lambda: f"Couldn't map the distributed reduce op {op} to a PyTorch reduce op")
+
+    return op
+
+
+# NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
+#   call does not need to be inplace). This, however, is modeled as an out-of-place functional
+#   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch
+#   calls directly to this.
+# This operation is based on torch.distributed.all_reduce, see:
+#   https://pytorch.org/docs/master/distributed.html#torch.distributed.all_reduce
+@torchsymbol(
+    is_method=False,
+    id="torch.distributed.functional_all_reduce",
+)
+def all_reduce(
+    a: TensorLike,
+    op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+    group: Optional[torch.distributed.ProcessGroup] = None,
+    async_op: bool = False,
+) -> TensorLike:
+    op = to_thunder_distributed_reduce_op(op)
+    return prims.all_reduce(a, op, group, async_op)
 
 
 #

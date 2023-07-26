@@ -27,7 +27,12 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
 
     # NOTE These primitives are marked to not be collected because they dictate the function's output
     #   (RETURN), have side effects (PRINT), or are comments (COMMENT, UNPACK_TRIVIAL)
-    dont_collect = {prims.PrimIDs.RETURN, prims.PrimIDs.COMMENT, prims.PrimIDs.PRINT, prims.PrimIDs.UNPACK_TRIVIAL}
+    dont_collect = {
+        prims.PrimIDs.RETURN,
+        prims.PrimIDs.COMMENT,
+        prims.PrimIDs.PRINT,
+        prims.PrimIDs.UNPACK_TRIVIAL,
+    }
 
     for bsym in reversed(trace.bound_symbols):
         # Preserves symbols that should never be collected

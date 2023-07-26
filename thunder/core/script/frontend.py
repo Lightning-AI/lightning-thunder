@@ -148,7 +148,6 @@ def parse_bytecode(method: Callable) -> ProtoGraph:
 
 
 def check_idempotent(f: Callable[[ProtoGraph], tuple[ProtoGraph, bool]]):
-
     @functools.wraps(f)
     def wrapped(protograph: ProtoGraph):
         protograph, had_effect = f(protograph)
@@ -157,8 +156,8 @@ def check_idempotent(f: Callable[[ProtoGraph], tuple[ProtoGraph, bool]]):
             assert not had_effect_on_rerun
 
         return protograph, had_effect
-    return wrapped
 
+    return wrapped
 
 
 def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedSet[VariableKey]]:

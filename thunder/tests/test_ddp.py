@@ -1,12 +1,17 @@
 import math
 import sys
 import unittest
+from typing import Optional
 
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import distributed_c10d as c10d
+from torch.testing import assert_close, make_tensor
 
 import thunder
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor
+import thunder.torch as ltorch
 
 try:
     import expecttest  # noqa: F401
@@ -17,6 +22,13 @@ except ImportError:
         "Install them with `pip install expecttest hypothesis`"
     )
 from torch.testing._internal import common_distributed, common_utils
+
+
+executors_map = {
+    TorchExecutor.name: TorchExecutor,
+}
+if nvFuserExecutor is not None:
+    executors_map[nvFuserExecutor.name] = nvFuserExecutor
 
 
 # Compile - DDP tests
@@ -135,6 +147,49 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             "maximum recursion depth exceeded while calling a Python object",
         ):
             thunder.compile(DDP(model, device_ids=[self.rank]), use_generated_backward=True)
+
+    # TODO(crcrpar): Mandate multiple GPUs so that the timing of collectives matters especially for
+    # nvfuser executor.
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_all_reduce(self, executor):
+        _executor = executors_map[executor]
+
+        # NOTE torch.distributed.all_reduce is an inplace operation
+        def foo(a, b, op: Optional[torch.distributed.ReduceOp], process_group: torch.distributed.ProcessGroup):
+            c = a + b
+            if op is not None:
+                torch.distributed.all_reduce(c, op, group=process_group)
+            else:
+                torch.distributed.all_reduce(c, group=process_group)
+            e = c + 1
+            return a, e
+
+        # NOTE lightning.compiles all_reduce is a functional operation
+        def lc_foo(a, b, op: Optional[torch.distributed.ReduceOp], process_group: torch.distributed.ProcessGroup):
+            c = a + b
+            if op is not None:
+                d = ltorch.all_reduce(c, op, group=process_group)
+            else:
+                d = ltorch.all_reduce(c, group=process_group)
+            e = d + 1
+            return a, e
+
+        device = f"cuda:{self.rank}"
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        process_group = c10d.new_group()
+
+        # NOTE Preprocessing is disabled because we call thunder.torch operations directly
+        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+
+        for op in (None, torch.distributed.ReduceOp.SUM):
+            expected = foo(a, b, op, process_group)
+            actual = cfoo(a, b, op, process_group)
+
+            self.assertEqual(actual, expected)
+
+
+common_utils.instantiate_parametrized_tests(CompileDDPTest)
 
 
 if __name__ == "__main__":

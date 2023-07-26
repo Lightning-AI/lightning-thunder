@@ -133,6 +133,8 @@ class PrimIDs(Enum):
     # NN prims (Experimental!)
     EMBEDDING = auto()
     EMBEDDING_BACKWARD = auto()
+    # Distributed prims (Experimental!)
+    ALL_REDUCE = auto()
 
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
@@ -1932,3 +1934,46 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
+
+#
+# Distributed prims
+#
+import torch.distributed
+
+
+# This enum describes what all_reduce (below) will actually do
+#   These operations are performed elementwise on all the "versions" of
+#   the tensor across processes.
+class DistributedReduceOps(Enum):
+    SUM = auto()
+    # AVG = auto()
+    # PRODUCT = auto()
+    # MIN = auto()
+    # MAX = auto()
+    # BAND = auto()
+    # BOR = auto()
+    # BXOR = auto()
+    # PREMUL_SUM = auto()
+
+
+# NOTE This is essentially a wrapper around
+#   https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce
+#   that models the operation as a functional one.
+# TODO Support additional reduction operations
+# TODO Support do_async=True (maybe by adding the idea of a TensorProxy being a future?)
+# TODO Consider our own distributed calls that don't just wrap PyTorch's
+def all_reduce_meta(
+    a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
+) -> TensorProxy:
+    # Checks types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(op, DistributedReduceOps)
+    utils.check_type(group, torch.distributed.ProcessGroup)
+    utils.check_type(do_async, bool)
+
+    utils.check(not do_async, lambda: f"{do_async=} is not yet supported")
+
+    return TensorProxy(like=a)
+
+
+all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)

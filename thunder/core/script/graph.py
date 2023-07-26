@@ -665,8 +665,6 @@ def _check_graph(gr: Graph) -> None:
                 if o not in n.inputs:
                     for v in o.phi_values:
                         phi_value_refs[v].append((o, n))
-                # else:
-                #     print("inplace")
         for o in bl.block_outputs:
             is_attr = False
             o_or_parent = o

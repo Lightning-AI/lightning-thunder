@@ -7,7 +7,7 @@ import torch
 from looseversion import LooseVersion
 
 import thunder.core.dtypes as dtypes
-from thunder.core.prims import PrimIDs
+from thunder.core.prims import PrimIDs, DistributedReduceOps
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
@@ -929,6 +929,33 @@ def scaled_dot_product_attention(
     return tbsym
 
 
+#
+# Distributed Operations
+#
+
+
+def all_reduce_prim_helper(
+    a: torch.Tensor,
+    op: torch.distributed.ReduceOp,
+    group: torch.distributed.ProcessGroup,
+    do_async: bool,
+) -> torch.tensor:
+    c = a.clone()
+    torch.distributed.all_reduce(c, op, group, do_async)
+    return c
+
+
+def all_reduce_prim(
+    bsym: BoundSymbol, a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
+) -> BoundSymbol:
+    sym = Symbol(name="all_reduce_prim_helper", meta=None)
+    ctx: dict[str, Any] = {"all_reduce_prim_helper": all_reduce_prim_helper}
+
+    op = ltorch.to_torch_distributed_reduce_op(op)
+
+    return sym.bind(a, op, group, do_async, output=bsym.output, _call_ctx=ctx)
+
+
 # TODO Refine prim ops to have less functionality to better debug errors
 # Maps from symbol ids to a tuple of (is_fusable, translate) callables
 _ops_map.update(
@@ -1114,6 +1141,7 @@ _ops_map.update(
             _scaled_dot_product_attention_check,
             scaled_dot_product_attention,
         ),
+        PrimIDs.ALL_REDUCE: (_always_executable, all_reduce_prim),
     }
 )
 
@@ -1372,6 +1400,7 @@ class ThunderFunction(torch.autograd.Function):
         saved_info = tree_unflatten(flat_saved_info, ctx.env_spec)
         grads = ctx.compiled_backward(saved_info, *args)
         return (None, *grads)
+
 
 def thunder_backward(**compile_config):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
