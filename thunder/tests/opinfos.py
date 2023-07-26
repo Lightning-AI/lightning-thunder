@@ -3662,21 +3662,26 @@ nn_ops.append(sdpa_opinfo)
 def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    # TODO Enable test cases after adding support nll_loss_nd, weight tensor, and label_smoothing options.
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/704
     # input_shape, target_shape
     shapes = (
         ((7, 18), (7,)),
-        ((7, 18), (7, 18)),
-        ((3, 4, 2, 3), (3, 4, 2, 3)),
-        ((3, 4, 2, 3), (3, 2, 3)),
+        #((7, 18), (7, 18)),
+        #((3, 4, 2, 3), (3, 4, 2, 3)),
+        #((3, 4, 2, 3), (3, 2, 3)),
         ((5,), ()),
-        ((3, 4, 0), (3, 0)),
-        ((3, 4, 0), (3, 4, 0)),
+        #((3, 4, 0), (3, 0)),
+        #((3, 4, 0), (3, 4, 0)),
     )
 
-    weight_options = (True, False)
+    #weight_options = (True, False)
     reduction_options = ("none", "mean", "sum")
-    label_smoothing_options = (0.0, 0.5)
+    #label_smoothing_options = (0.0, 0.5)
     ignore_index_options = (-1, 3)
+
+    weight_options = (False,)
+    label_smoothing_options = (0.0,)
     for shape, weight_flag, reduction_str, label_smoothing, ignore_index in itertools.product(
         shapes, weight_options, reduction_options, label_smoothing_options, ignore_index_options
     ):
@@ -3696,10 +3701,10 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
             make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
             if not probability_target
             else make(shape[1], low=0.0, high=1.0, requires_grad=True),
-            make(C) if weight_flag else None,
-            None,
-            ignore_index,
-            None,
+            weight=make(C) if weight_flag else None,
+            size_average=None,
+            ignore_index=ignore_index,
+            reduce=None,
             # NOTE: I have to use kwargs, otherwise tracing on string seems to return a tuple of char.
             reduction=reduction_str,
             label_smoothing=label_smoothing,

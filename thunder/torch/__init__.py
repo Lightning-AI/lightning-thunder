@@ -13,6 +13,7 @@ import thunder.core.dtypes as dtypes
 from thunder.core.langctx import langctx
 from thunder.core.symbol import Symbol
 from thunder.core.pytree import tree_map
+from thunder.core.prims import prim_ctx
 import thunder.clang as clang
 import thunder.core.devices as devices
 
@@ -170,10 +171,14 @@ def method_lookup(name: str) -> Optional[Symbol]:
 #   above
 # NOTE Functions that set is_method=True must be able to accept a tensor as their first positional input
 class torchsymbol:
-    def __init__(self, *torchfns, is_method: bool = False, id: Optional[str] = None):
+    def __init__(self, *torchfns, is_method: bool = False, id: Optional[str] = None, is_prim: bool = False):
         self.torchfns = torchfns
         self.is_method = is_method
         self.id = id
+        # When is_prim is True, the function is treated as a primitive, so that
+        # executors must execute it directly without decomposition.
+        self.is_prim = is_prim
+
 
     def __call__(self, fn: Callable) -> Symbol:
         module_name = torchsymbol.__module__
@@ -200,7 +205,10 @@ class torchsymbol:
         else:
             id = self.id
 
-        sym = Symbol(name=fn.__name__, meta=_fn, id=id)
+        if self.is_prim:
+            sym = Symbol(name=fn.__name__, meta=prim_ctx(_fn), id=id, is_prim=self.is_prim)
+        else:
+            sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim)
 
         if self.is_method:
             _torch_methods[sym.name] = sym
@@ -1719,6 +1727,14 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     attn_weight = softmax(logits, dim=-1)
     attn_weight = dropout(attn_weight, dropout_p)
     return attn_weight @ value
+
+
+# The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward
+# primitive. Executors can override the primitive using internal implementations.
+# See https://github.com/Lightning-AI/lightning-thunder/issues/660
+@torchsymbol("cross_entropy_backward", id="cross_entropy_backward", is_prim=True)
+def cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing):
+    return TensorProxy(shape=input.shape, device=g.device, dtype=g.dtype)
 
 
 # TODO Add type annotations, change the name "input" to "a", require "a" be specified positionally

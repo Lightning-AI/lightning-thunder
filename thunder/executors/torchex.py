@@ -807,6 +807,82 @@ def cross_entropy(
     )
 
 
+def _cross_entropy_backward_helper(g: torch.Tensor,
+                          input: torch.Tensor,
+                          target: torch.Tensor,
+                          weight: torch.Tensor,
+                          reduction: str,
+                          ignore_index: int,
+                          label_smoothing: int) -> torch.Tensor:
+    # forward - given input and target
+    # a = log_softmax(input, dim)
+    # return cross_entropy(a, target, weight, reduction, ignore_index, label_smoothing)
+
+    # backward - given grad_cross_entropy and saved_tensors
+    # grad_a = torch.ops.aten.nll_loss_backward(grad, a, target, weight, reduction, ignore_index, total_weight)
+    # return torch.ops.aten._log_softmax_backward_data(grad_a, a, dim, a.scalar_type())
+
+    if reduction == "none":
+        reduction_idx = 0
+    elif reduction == "mean":
+        reduction_idx = 1
+    elif reduction == "sum":
+        reduction_idx = 2
+    else:
+        reduction_idx = -1
+
+    utils.check(
+        reduction_idx > -1 and reduction_idx < 3,
+        lambda: f"{reduction} is not a valid value for reduction parameter.",
+    )
+
+    # TODO Add support nll_loss_nd, weight tensor, and label_smoothing options.
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/704
+    utils.check(
+        input.ndim <= 2 and target.ndim <= 1,
+        lambda: f"multi-dimension cross-entropy is not supported."
+    )
+
+    utils.check(
+        weight is None,
+        lambda: f"weight tensor argument is not supported."
+    )
+
+    utils.check(
+        label_smoothing == 0.0,
+        lambda: f"label smoothing values not equal to zero are not supported."
+    )
+
+    batch_size = 0 if input.dim() <= 1 else input.shape[1]
+    dim = 0 if input.dim() == 1 else 1
+    a = torch.log_softmax(input, dim, input.dtype)
+
+    if weight is not None:
+        total_weight = torch.sum(weight)
+    elif reduction == "none":
+        total_weight = torch.tensor(0., dtype=input.dtype, device=input.device)
+    elif reduction == "sum" or reduction == "mean":
+        total_weight = torch.sum(torch.ne(target, ignore_index)).to(dtype=input.dtype, device=input.device)
+
+    g_a = torch.ops.aten.nll_loss_backward(g, a, target, weight, reduction_idx, ignore_index, total_weight)
+    return torch.ops.aten._log_softmax_backward_data(g_a, a, dim, input.dtype)
+
+
+def cross_entropy_backward(
+    bsym: BoundSymbol,
+    grad: TensorProxy,
+    input: TensorProxy,
+    target: TensorProxy,
+    weight: TensorProxy = None,
+    reduction:str = "mean",
+    ignore_index:Number = -100,
+    label_smoothing: Number = 0.0,
+) -> BoundSymbol:
+    sym = Symbol(name="cross_entropy_backward", meta=None)
+    ctx: Dict[str, Any] = {"cross_entropy_backward": _cross_entropy_backward_helper}
+    return sym.bind(grad, input, target, weight, reduction, ignore_index, label_smoothing, output=bsym.output, _call_ctx=ctx)
+
+
 def dropout(bsym: BoundSymbol, a: TensorProxy, p: Number = 0.5, training=True, inplace=False) -> BoundSymbol:
     sym = Symbol(name="dropout", meta=None, _module=torch.nn.functional)
 
@@ -1131,6 +1207,7 @@ _ops_map.update(
         PrimIDs.MATMUL: (_always_executable, matmul),
         # NN operations
         "torch.nn.functional.cross_entropy": (_always_executable, cross_entropy),
+        "cross_entropy_backward": (_always_executable, cross_entropy_backward),
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.EMBEDDING: (_always_executable, embedding),
         PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),

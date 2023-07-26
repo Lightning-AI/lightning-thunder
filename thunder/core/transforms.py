@@ -1440,6 +1440,40 @@ def convert_element_type_backward(a_dtype, g):
     return prims.convert_element_type(g, a_dtype), None
 
 
+@register_augmented_forward("torch.nn.functional.cross_entropy")
+def cross_entropy_aug_fwd(
+    input: Proxy,
+    target: Proxy,
+    *,
+    weight=None,
+    size_average=None,
+    ignore_index=-100,
+    reduce=None,
+    reduction="mean",
+    label_smoothing=0.0
+) -> VJPDual:
+    from thunder.torch import cross_entropy
+
+    primal = cross_entropy(
+        input,
+        target,
+        weight,
+        size_average,
+        ignore_index,
+        reduce,
+        reduction,
+        label_smoothing
+    )
+    residuals = (input, target, weight, reduction, ignore_index, label_smoothing)
+    return VJPDual(primal, residuals)
+
+@register_backward("torch.nn.functional.cross_entropy")
+def cross_entropy_backward(input, target, weight, reduction, ignore_index, label_smoothing, g):
+    from thunder.torch import cross_entropy_backward
+
+    ginput = cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing)
+    return ginput, None
+
 @register_augmented_forward("torch.nn.functional.embedding")
 def embedding_aug_fwd(
     a: Proxy,
