@@ -11,7 +11,16 @@ import torch
 import numpy as np
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import CollectionProxy, TensorProxy, NumberProxy, is_proxyable, proxy, numberproxy, pytype
+from thunder.core.proxies import (
+    CollectionProxy,
+    TensorProxy,
+    NumberProxy,
+    is_proxyable,
+    proxy,
+    numberproxy,
+    pytype,
+    FutureTensorProxy,
+)
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 import thunder.core.utils as utils
@@ -136,6 +145,7 @@ class PrimIDs(Enum):
     EMBEDDING_BACKWARD = auto()
     # Distributed prims (Experimental!)
     ALL_REDUCE = auto()
+    WAIT = auto()
 
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
@@ -2013,8 +2023,11 @@ class DistributedReduceOps(Enum):
 if not torch.distributed.is_available():
 
     def all_reduce_meta(
-        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
+        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
     ) -> None:
+        utils.check(False, lambda: f"PyTorch distributed is not available, {torch.distributed.is_available()=}")
+
+    def wait_meta(a: FutureTensorProxy) -> None:
         utils.check(False, lambda: f"PyTorch distributed is not available, {torch.distributed.is_available()=}")
 
 else:
@@ -2025,17 +2038,27 @@ else:
     # TODO Support do_async=True (maybe by adding the idea of a TensorProxy being a future?)
     # TODO Consider our own distributed calls that don't just wrap PyTorch's
     def all_reduce_meta(
-        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
-    ) -> TensorProxy:
+        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+    ) -> TensorProxy | FutureTensorProxy:
         # Checks types
         utils.check_type(a, TensorProxy)
         utils.check_type(op, DistributedReduceOps)
         utils.check_type(group, torch.distributed.ProcessGroup)
-        utils.check_type(do_async, bool)
+        utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
 
-        utils.check(not do_async, lambda: f"{do_async=} is not yet supported")
+        if do_async:
+            return FutureTensorProxy(like=a)
+
+        return TensorProxy(like=a)
+
+    # NOTE This is a very particular implementation of wait that may need to be
+    #   generalized in the future
+    def wait_meta(a: FutureTensorProxy) -> TensorProxy:
+        # Checks types
+        utils.check_type(a, FutureTensorProxy)
 
         return TensorProxy(like=a)
 
 
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
+wait = make_prim(PrimIDs.WAIT, "wait", meta=wait_meta)

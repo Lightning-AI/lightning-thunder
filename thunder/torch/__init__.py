@@ -6,7 +6,7 @@ import math
 import operator
 from enum import Enum, auto
 
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import TensorProxy, FutureTensorProxy
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.core.dtypes as dtypes
@@ -27,6 +27,7 @@ import torch.distributed as tdist
 
 # Type annotation helpers
 TensorLike = TensorProxy
+FutureTensorLike = FutureTensorProxy
 DeviceLike = Union[str, devices.Device, torch.device]
 dtypeLike = Union[dtypes.dtype, torch.dtype]
 
@@ -2030,8 +2031,10 @@ if torch.distributed.is_available():
         op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
         group: Optional[torch.distributed.ProcessGroup] = None,
         async_op: bool = False,
-    ) -> TensorLike:
+    ) -> TensorLike | FutureTensorLike:
         op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+
         return prims.all_reduce(a, op, group, async_op)
 
 else:

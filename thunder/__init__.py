@@ -328,7 +328,7 @@ def compile(
     elif use_static_caching:
         cache_mode = CACHE_MODES.STATIC
     elif use_last_executed:
-        cache_mode = CACHE_MODES.DYNAMIC
+        cache_mode = CACHE_MODES.LAST_EXECUTED
 
     # TODO Implement dynamic caching
     if cache_mode is CACHE_MODES.DYNAMIC:

@@ -2,6 +2,7 @@ import math
 import sys
 import unittest
 from typing import Optional
+from itertools import product
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ from torch.testing import assert_close, make_tensor
 import thunder
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 import thunder.torch as ltorch
+from thunder.core import prims
 
 try:
     import expecttest  # noqa: F401
@@ -155,22 +157,46 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_reduce is an inplace operation
-        def foo(a, b, op: Optional[torch.distributed.ReduceOp], process_group: torch.distributed.ProcessGroup):
+        def foo(
+            a,
+            b,
+            op: Optional[torch.distributed.ReduceOp],
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
             c = a + b
+
+            handle = None
             if op is not None:
-                torch.distributed.all_reduce(c, op, group=process_group)
+                handle = torch.distributed.all_reduce(c, op, group=process_group, async_op=async_op)
             else:
-                torch.distributed.all_reduce(c, group=process_group)
+                handle = torch.distributed.all_reduce(c, group=process_group, async_op=async_op)
+
+            if async_op:
+                handle.wait()
+
             e = c + 1
             return a, e
 
         # NOTE lightning.compiles all_reduce is a functional operation
-        def lc_foo(a, b, op: Optional[torch.distributed.ReduceOp], process_group: torch.distributed.ProcessGroup):
+        def lc_foo(
+            a,
+            b,
+            op: Optional[torch.distributed.ReduceOp],
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
             c = a + b
+
+            d = None
             if op is not None:
-                d = ltorch.all_reduce(c, op, group=process_group)
+                d = ltorch.all_reduce(c, op, group=process_group, async_op=async_op)
             else:
-                d = ltorch.all_reduce(c, group=process_group)
+                d = ltorch.all_reduce(c, group=process_group, async_op=async_op)
+
+            if async_op:
+                d = prims.wait(d)
+
             e = d + 1
             return a, e
 
@@ -182,9 +208,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
         cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
 
-        for op in (None, torch.distributed.ReduceOp.SUM):
-            expected = foo(a, b, op, process_group)
-            actual = cfoo(a, b, op, process_group)
+        for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
+            expected = foo(a, b, op, process_group, async_op)
+            actual = cfoo(a, b, op, process_group, async_op)
 
             self.assertEqual(actual, expected)
 

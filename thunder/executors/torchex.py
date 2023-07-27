@@ -9,7 +9,7 @@ from looseversion import LooseVersion
 import thunder.core.dtypes as dtypes
 from thunder.core.prims import PrimIDs, DistributedReduceOps
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.proxies import Proxy, TensorProxy
+from thunder.core.proxies import Proxy, TensorProxy, FutureTensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
@@ -1016,26 +1016,55 @@ if torch.distributed.is_available():
         op: torch.distributed.ReduceOp,
         group: torch.distributed.ProcessGroup,
         do_async: bool,
-    ) -> torch.tensor:
+    ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
         c = a.clone()
-        torch.distributed.all_reduce(c, op, group, do_async)
+
+        handle = torch.distributed.all_reduce(c, op, group, do_async)
+
+        # NOTE This returns (handle, tensor reference), which is how FutureTensorProxies
+        #   are currently modeled by executors
+        if do_async:
+            return handle, c
+
+        # NOTE do_async is False
         return c
+
+    def all_reduce_prim(
+        bsym: BoundSymbol,
+        a: TensorProxy,
+        op: DistributedReduceOps,
+        group: torch.distributed.ProcessGroup,
+        do_async: Number,
+    ) -> BoundSymbol:
+        sym = Symbol(name="all_reduce_prim_helper", meta=None)
+        ctx: dict[str, Any] = {"all_reduce_prim_helper": all_reduce_prim_helper}
+        do_async = bool(do_async)
+
+        op = ltorch.to_torch_distributed_reduce_op(op)
+
+        return sym.bind(a, op, group, do_async, output=bsym.output, _call_ctx=ctx)
+
+    # NOTE This is a very particular implementation of wait that may need to be
+    #   generalized in the future
+    # NOTE The implementation of wait actually models the FutureTensorProxy as a tuple
+    #   of (handle, tensor reference), there's no conflict with the trace representation
+    #   with doing this, as the trace representation treates FutureTensorProxy as opaque
+    # NOTE This way of representing FutureTensorProxies may need to change in the future
+    def wait_helper(a: tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]) -> torch.Tensor:
+        handle, tensor_ref = a
+        handle.wait()
+        return tensor_ref
+
+    def wait_prim(bsym: BoundSymbol, a: FutureTensorProxy) -> BoundSymbol:
+        sym = Symbol(name="wait_helper", meta=None)
+        ctx: dict[str, Any] = {"wait_helper": wait_helper}
+
+        return sym.bind(a, output=bsym.output, _call_ctx=ctx)
 
 else:
 
-    def all_reduce_prim_helper(a, op, group, do_async) -> None:
+    def all_reduce_prim(bsym: BoundSymbol, a: TensorProxy, op: Any, group: Any, do_async: bool) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
-
-
-def all_reduce_prim(
-    bsym: BoundSymbol, a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
-) -> BoundSymbol:
-    sym = Symbol(name="all_reduce_prim_helper", meta=None)
-    ctx: dict[str, Any] = {"all_reduce_prim_helper": all_reduce_prim_helper}
-
-    op = ltorch.to_torch_distributed_reduce_op(op)
-
-    return sym.bind(a, op, group, do_async, output=bsym.output, _call_ctx=ctx)
 
 
 # TODO Refine prim ops to have less functionality to better debug errors
@@ -1224,7 +1253,9 @@ _ops_map.update(
             _scaled_dot_product_attention_check,
             scaled_dot_product_attention,
         ),
+        # Distributed operations
         PrimIDs.ALL_REDUCE: (_always_executable, all_reduce_prim),
+        PrimIDs.WAIT: (_always_executable, wait_prim),
     }
 )
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Sequence
@@ -12,6 +14,8 @@ import thunder.core.baseutils as baseutils
 from thunder.core.langctx import langctx_for, get_langctx, get_numberctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+
+ShapeLike = Sequence[int]
 
 
 # TODO Document this class
@@ -505,49 +509,100 @@ class FloatProxy(NumberProxy, float):
         return f"[FloatProxy name={self.name}, value={self.value}]"
 
 
-# TODO Add remaining dunders
-class TensorProxy(Proxy, TensorProxyInterface):
+def _infer_tensor_properties(
+    like: Optional[TensorProxy | FutureTensorProxy] = None,
+    shape: Optional[ShapeLike] = None,
+    device: Optional[devices.Device] = None,
+    dtype: Optional[dtypes.dtype] = None,
+):
+    _shape = None
+    _device = None
+    _dtype = None
+
+    if like is not None:
+        baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
+        _shape = tuple(like.shape)
+        _device = like.device
+        _dtype = like.true_dtype
+
+    _shape = shape if shape is not None else _shape
+    _device = device if device is not None else _device
+    _dtype = dtype if dtype is not None else _dtype
+    _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
+
+    # Computes derived properties
+    _numel = reduce(operator.mul, _shape, 1)
+
+    # TODO Alias rank to ndim?
+    _ndim = len(_shape)
+
+    # Validates inputs
+    baseutils.check_valid_shape(_shape)
+    baseutils.check_type(_device, devices.Device)
+    baseutils.check_type(_dtype, dtypes.dtype)
+
+    # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
+    #   the true_dtype property
+    _true_dtype = _dtype
+    _dtype = dtypes.to_strong_dtype(_dtype)
+
+    return _shape, _device, _dtype, _true_dtype, _numel, _ndim
+
+
+# NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
+class FutureTensorProxy(Proxy):
     def __init__(
         self,
-        name=None,
+        name: Optional[str] = None,
         *,
-        like=None,
-        shape: Optional[Union[tuple[int, ...], list[int]]] = None,
-        device=None,
-        dtype=None,
+        like: Optional[TensorProxy | FutureTensorProxy] = None,
+        shape: Optional[ShapeLike] = None,
+        device: Optional[devices.Device] = None,
+        dtype: Optional[dtypes.dtype] = None,
     ):
         super().__init__(name)
 
-        self._device = None
-        self._dtype = None
-        self._shape = None
+        self._shape, self._device, self._dtype, self.true_dtype, self.numel, self.ndim = _infer_tensor_properties(
+            like, shape, device, dtype
+        )
 
-        if like is not None:
-            baseutils.check_type(like, TensorProxy)
-            self._shape = tuple(like.shape)
-            self._device = like.device
-            self._dtype = like.true_dtype
+    @property
+    def shape(self):
+        return self._shape
 
-        self._shape = shape if shape is not None else self._shape
-        self._device = device if device is not None else self._device
-        self._dtype = dtype if dtype is not None else self._dtype
-        self._dtype = dtypes.numbertype_to_dtype(self._dtype) if dtypes.is_numbertype(self._dtype) else self._dtype
+    @property
+    def device(self):
+        return self._device
 
-        # Computes derived properties
-        self.numel = reduce(operator.mul, self.shape, 1)
+    @property
+    def dtype(self):
+        return self._dtype
 
-        # TODO Alias rank to ndim?
-        self.ndim = len(self.shape)
+    def type_string(self):
+        return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
-        # Validates inputs
-        baseutils.check_valid_shape(self._shape)
-        baseutils.check_type(self._device, devices.Device)
-        baseutils.check_type(self._dtype, dtypes.dtype)
+    @property
+    def size(self):
+        langctx = get_langctx()
+        return langctx.size(self)
 
-        # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
-        #   the true_dtype property
-        self.true_dtype = self._dtype
-        self._dtype = dtypes.to_strong_dtype(self._dtype)
+
+# TODO Review dunders -- any remaining?
+class TensorProxy(Proxy, TensorProxyInterface):
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        *,
+        like: Optional[TensorProxy | FutureTensorProxy] = None,
+        shape: Optional[ShapeLike] = None,
+        device: Optional[devices.Device] = None,
+        dtype: Optional[dtypes.dtype] = None,
+    ):
+        super().__init__(name)
+
+        self._shape, self._device, self._dtype, self.true_dtype, self.numel, self.ndim = _infer_tensor_properties(
+            like, shape, device, dtype
+        )
 
     @property
     def shape(self):
