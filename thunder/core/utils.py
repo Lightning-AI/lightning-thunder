@@ -23,7 +23,8 @@ import thunder.core.prims as prims
 
 __all__ = [
     # Error checking helpers
-    "check",
+    "enable_debug_asserts",
+    "debug_asserts_enabled",
     # dtype and Python type-related functions
     "to_dtype",
     "is_boolean_dtype",
@@ -75,6 +76,14 @@ T1 = TypeVar("T1")
 #
 # Error checking helpers
 #
+_DEBUG_ASSERTS = False
+
+def enable_debug_asserts():
+    global _DEBUG_ASSERTS
+    _DEBUG_ASSERTS = True
+
+def debug_asserts_enabled():
+    return _DEBUG_ASSERTS
 
 # This file defines utilities that can be used when defining primitive operations.
 

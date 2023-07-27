@@ -12,10 +12,11 @@ from collections.abc import Iterator
 import thunder.core.script.frontend as frontend
 from thunder.core.script.protograph import ProtoGraph
 import thunder.core.script.python_ir_data as python_ir_data
+from thunder.core.utils import enable_debug_asserts
 
 import pytest
 
-frontend.enable_debug_asserts()
+enable_debug_asserts()
 
 PARSE_SPECIFICATION = list[
     tuple[list[tuple[str, str]], list[tuple[int, bool]]]  # (opname, argrepr)  # (target_index, is_jump)

@@ -13,16 +13,17 @@ import thunder.core.script.frontend
 import thunder.core.script.passes
 import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
+from thunder.core.utils import enable_debug_asserts
 import thunder.torch as ltorch
 from thunder.tests import nanogpt_model, lit_llama_model
 from thunder.tests.framework import instantiate, requiresNVFuser
-
-thunder.core.script.frontend.enable_debug_asserts()
 
 from thunder.executors.utils import Executor
 
 torchex = [Executor.TORCH]
 nvfuserex = [Executor.NVFUSER, Executor.TORCH]
+
+enable_debug_asserts()
 
 
 def skipif_not_python_3_10(f):
