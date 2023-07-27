@@ -1450,22 +1450,14 @@ def cross_entropy_aug_fwd(
     ignore_index=-100,
     reduce=None,
     reduction="mean",
-    label_smoothing=0.0
+    label_smoothing=0.0,
 ) -> VJPDual:
     from thunder.torch import cross_entropy
 
-    primal = cross_entropy(
-        input,
-        target,
-        weight,
-        size_average,
-        ignore_index,
-        reduce,
-        reduction,
-        label_smoothing
-    )
+    primal = cross_entropy(input, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing)
     residuals = (input, target, weight, reduction, ignore_index, label_smoothing)
     return VJPDual(primal, residuals)
+
 
 @register_backward("torch.nn.functional.cross_entropy")
 def cross_entropy_backward(input, target, weight, reduction, ignore_index, label_smoothing, g):
@@ -1473,6 +1465,7 @@ def cross_entropy_backward(input, target, weight, reduction, ignore_index, label
 
     ginput = cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing)
     return ginput, None
+
 
 @register_augmented_forward("torch.nn.functional.embedding")
 def embedding_aug_fwd(

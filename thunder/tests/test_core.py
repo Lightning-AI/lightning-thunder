@@ -2362,22 +2362,18 @@ def test_cse(executor, device, _):
     compiled_func(x, y, device)
     traces = thunder.last_traces(compiled_func)
     flatten_dce_trace = [
-        t for t in traces
-        if t._provenance is not None and t._provenance.pss.startswith("Dead Code Elimination")
+        t for t in traces if t._provenance is not None and t._provenance.pss.startswith("Dead Code Elimination")
     ][1]
     flatten_cse_trace = [
-        t for t in traces
+        t
+        for t in traces
         if t._provenance is not None and t._provenance.pss.startswith("Common Subexpression Elimination")
     ][0]
     # CSE is supposed to remove `c`, `d`, and `w`.
     assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
-    assert len([
-        bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM
-    ]) == 4
+    assert len([bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM]) == 4
 
-    assert ([
-        t.name for t in tree_flatten(flatten_cse_trace.output)[0]
-    ] == ['t4', 't4', 't6', 't7', 't8', 't9', 't10'])
+    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t7", "t8", "t9", "t10"]
 
 
 # @instantiate(

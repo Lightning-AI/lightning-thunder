@@ -3660,17 +3660,17 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input_shape, target_shape
     shapes = (
         ((7, 18), (7,)),
-        #((7, 18), (7, 18)),
-        #((3, 4, 2, 3), (3, 4, 2, 3)),
-        #((3, 4, 2, 3), (3, 2, 3)),
+        # ((7, 18), (7, 18)),
+        # ((3, 4, 2, 3), (3, 4, 2, 3)),
+        # ((3, 4, 2, 3), (3, 2, 3)),
         ((5,), ()),
-        #((3, 4, 0), (3, 0)),
-        #((3, 4, 0), (3, 4, 0)),
+        # ((3, 4, 0), (3, 0)),
+        # ((3, 4, 0), (3, 4, 0)),
     )
 
-    #weight_options = (True, False)
+    # weight_options = (True, False)
     reduction_options = ("none", "mean", "sum")
-    #label_smoothing_options = (0.0, 0.5)
+    # label_smoothing_options = (0.0, 0.5)
     ignore_index_options = (-1, 3)
 
     weight_options = (False,)

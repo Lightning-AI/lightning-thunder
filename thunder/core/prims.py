@@ -2002,24 +2002,40 @@ class DistributedReduceOps(Enum):
     # PREMUL_SUM = auto()
 
 
-# NOTE This is essentially a wrapper around
-#   https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce
-#   that models the operation as a functional one.
-# TODO Support additional reduction operations
-# TODO Support do_async=True (maybe by adding the idea of a TensorProxy being a future?)
-# TODO Consider our own distributed calls that don't just wrap PyTorch's
-def all_reduce_meta(
-    a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
-) -> TensorProxy:
-    # Checks types
-    utils.check_type(a, TensorProxy)
-    utils.check_type(op, DistributedReduceOps)
-    utils.check_type(group, torch.distributed.ProcessGroup)
-    utils.check_type(do_async, bool)
+# NOTE DISTRIBUTED AVAILABILITY
+# PyTorch is often built without distributed support, which can be queried for using
+#   torch.distributed.is_available(). When PyTorch is built without distributed then we
+#   want to avoid accessing any parts of the torch.distributed module except
+#   the is_available() function. Prims that depend on torch.distributed should
+#   define stubs that throw unsupported errors here, and the actual prim implementations
+#   in the else branch below.
 
-    utils.check(not do_async, lambda: f"{do_async=} is not yet supported")
+if not torch.distributed.is_available():
 
-    return TensorProxy(like=a)
+    def all_reduce_meta(
+        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
+    ) -> None:
+        utils.check(False, lambda: f"PyTorch distributed is not available, {torch.distributed.is_available()=}")
+
+else:
+    # NOTE This is essentially a wrapper around
+    #   https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce
+    #   that models the operation as a functional one.
+    # TODO Support additional reduction operations
+    # TODO Support do_async=True (maybe by adding the idea of a TensorProxy being a future?)
+    # TODO Consider our own distributed calls that don't just wrap PyTorch's
+    def all_reduce_meta(
+        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: bool
+    ) -> TensorProxy:
+        # Checks types
+        utils.check_type(a, TensorProxy)
+        utils.check_type(op, DistributedReduceOps)
+        utils.check_type(group, torch.distributed.ProcessGroup)
+        utils.check_type(do_async, bool)
+
+        utils.check(not do_async, lambda: f"{do_async=} is not yet supported")
+
+        return TensorProxy(like=a)
 
 
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)

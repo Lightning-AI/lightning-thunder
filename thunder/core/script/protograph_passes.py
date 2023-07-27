@@ -64,9 +64,7 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
         # Otherwise we must determine what the appropriate input key is.
         # (Recall that `uses` is indexed to `.variable_state(index=0)`)
         edge_values = {v for k, v in final_state.items() if k in child_keys_used}
-        uses[protoblock].update(
-            k for k, v in protoblock.variable_state(index=0) if v in edge_values
-        )
+        uses[protoblock].update(k for k, v in protoblock.variable_state(index=0) if v in edge_values)
 
         # If new uses are added then add parents to the queue.
         if len(uses[protoblock]) > initial_use_count:
@@ -152,9 +150,7 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     # graph logic if we first convert all values to indices.
     values = tuple(G.nodes)
     value_to_idx = {value: idx for idx, value in enumerate(values)}
-    G = nx.from_edgelist(
-        ((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges), nx.DiGraph
-    )
+    G = nx.from_edgelist(((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges), nx.DiGraph)
     index_alias_map: dict[int, set[int]] = {}
 
     # We can decompose the graph into disjoint use-def chains and analyze them independently.
@@ -177,9 +173,7 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
                 # The choice of "canonical" index is arbitrary as long as it is consistent.
                 clusters.update({i: min(cluster) for i in cluster})
             assert len(clusters) == len(subgraph)
-            reduced_subgraph = nx.from_edgelist(
-                ((clusters[i], clusters[j]) for i, j in subgraph.edges), nx.DiGraph
-            )
+            reduced_subgraph = nx.from_edgelist(((clusters[i], clusters[j]) for i, j in subgraph.edges), nx.DiGraph)
             reduced_subgraph.remove_edges_from(nx.selfloop_edges(reduced_subgraph))
             num_equality_edges = len(equality_edges)
 
@@ -205,9 +199,7 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
         for idx in nodes:
             if isinstance(values[idx], AbstractPhiValue):
                 known_constituents = {value_to_idx[v] for v in values[idx].constituents}
-                index_alias_map[idx] = {
-                    i for i in index_alias_map[idx] if i not in known_constituents
-                } | {idx}
+                index_alias_map[idx] = {i for i in index_alias_map[idx] if i not in known_constituents} | {idx}
 
             else:
                 is_ref = isinstance(values[idx], _AbstractRef)

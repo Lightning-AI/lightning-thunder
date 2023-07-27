@@ -78,12 +78,15 @@ T1 = TypeVar("T1")
 #
 _DEBUG_ASSERTS = False
 
+
 def enable_debug_asserts():
     global _DEBUG_ASSERTS
     _DEBUG_ASSERTS = True
 
+
 def debug_asserts_enabled():
     return _DEBUG_ASSERTS
+
 
 # This file defines utilities that can be used when defining primitive operations.
 

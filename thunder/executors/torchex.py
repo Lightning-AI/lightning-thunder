@@ -807,13 +807,15 @@ def cross_entropy(
     )
 
 
-def _cross_entropy_backward_helper(g: torch.Tensor,
-                          input: torch.Tensor,
-                          target: torch.Tensor,
-                          weight: torch.Tensor,
-                          reduction: str,
-                          ignore_index: int,
-                          label_smoothing: int) -> torch.Tensor:
+def _cross_entropy_backward_helper(
+    g: torch.Tensor,
+    input: torch.Tensor,
+    target: torch.Tensor,
+    weight: torch.Tensor,
+    reduction: str,
+    ignore_index: int,
+    label_smoothing: int,
+) -> torch.Tensor:
     # forward - given input and target
     # a = log_softmax(input, dim)
     # return cross_entropy(a, target, weight, reduction, ignore_index, label_smoothing)
@@ -838,20 +840,11 @@ def _cross_entropy_backward_helper(g: torch.Tensor,
 
     # TODO Add support nll_loss_nd, weight tensor, and label_smoothing options.
     # See https://github.com/Lightning-AI/lightning-thunder/issues/704
-    utils.check(
-        input.ndim <= 2 and target.ndim <= 1,
-        lambda: f"multi-dimension cross-entropy is not supported."
-    )
+    utils.check(input.ndim <= 2 and target.ndim <= 1, lambda: f"multi-dimension cross-entropy is not supported.")
 
-    utils.check(
-        weight is None,
-        lambda: f"weight tensor argument is not supported."
-    )
+    utils.check(weight is None, lambda: f"weight tensor argument is not supported.")
 
-    utils.check(
-        label_smoothing == 0.0,
-        lambda: f"label smoothing values not equal to zero are not supported."
-    )
+    utils.check(label_smoothing == 0.0, lambda: f"label smoothing values not equal to zero are not supported.")
 
     batch_size = 0 if input.dim() <= 1 else input.shape[1]
     dim = 0 if input.dim() == 1 else 1
@@ -860,7 +853,7 @@ def _cross_entropy_backward_helper(g: torch.Tensor,
     if weight is not None:
         total_weight = torch.sum(weight)
     elif reduction == "none":
-        total_weight = torch.tensor(0., dtype=input.dtype, device=input.device)
+        total_weight = torch.tensor(0.0, dtype=input.dtype, device=input.device)
     elif reduction == "sum" or reduction == "mean":
         total_weight = torch.sum(torch.ne(target, ignore_index)).to(dtype=input.dtype, device=input.device)
 
@@ -874,13 +867,15 @@ def cross_entropy_backward(
     input: TensorProxy,
     target: TensorProxy,
     weight: TensorProxy = None,
-    reduction:str = "mean",
-    ignore_index:Number = -100,
+    reduction: str = "mean",
+    ignore_index: Number = -100,
     label_smoothing: Number = 0.0,
 ) -> BoundSymbol:
     sym = Symbol(name="cross_entropy_backward", meta=None)
     ctx: Dict[str, Any] = {"cross_entropy_backward": _cross_entropy_backward_helper}
-    return sym.bind(grad, input, target, weight, reduction, ignore_index, label_smoothing, output=bsym.output, _call_ctx=ctx)
+    return sym.bind(
+        grad, input, target, weight, reduction, ignore_index, label_smoothing, output=bsym.output, _call_ctx=ctx
+    )
 
 
 def dropout(bsym: BoundSymbol, a: TensorProxy, p: Number = 0.5, training=True, inplace=False) -> BoundSymbol:
@@ -1008,17 +1003,28 @@ def scaled_dot_product_attention(
 #
 # Distributed Operations
 #
+# NOTE DISTRIBUTED AVAILABILITY
+# PyTorch is often built without distributed support, which can be queried for using
+#   torch.distributed.is_available(). When PyTorch is built without distributed then we
+#   want to avoid accessing any parts of the torch.distributed module except
+#   the is_available() function.
 
+if torch.distributed.is_available():
 
-def all_reduce_prim_helper(
-    a: torch.Tensor,
-    op: torch.distributed.ReduceOp,
-    group: torch.distributed.ProcessGroup,
-    do_async: bool,
-) -> torch.tensor:
-    c = a.clone()
-    torch.distributed.all_reduce(c, op, group, do_async)
-    return c
+    def all_reduce_prim_helper(
+        a: torch.Tensor,
+        op: torch.distributed.ReduceOp,
+        group: torch.distributed.ProcessGroup,
+        do_async: bool,
+    ) -> torch.tensor:
+        c = a.clone()
+        torch.distributed.all_reduce(c, op, group, do_async)
+        return c
+
+else:
+
+    def all_reduce_prim_helper(a, op, group, do_async) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
 
 
 def all_reduce_prim(

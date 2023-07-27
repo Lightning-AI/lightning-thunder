@@ -179,7 +179,6 @@ class torchsymbol:
         # executors must execute it directly without decomposition.
         self.is_prim = is_prim
 
-
     def __call__(self, fn: Callable) -> Symbol:
         module_name = torchsymbol.__module__
         module = utils.get_module(module_name)
@@ -1977,60 +1976,73 @@ def cross_entropy(
 #
 # Distributed operations
 #
+# NOTE DISTRIBUTED AVAILABILITY
+# PyTorch is often built without distributed support, which can be queried for using
+#   torch.distributed.is_available(). When PyTorch is built without distributed then we
+#   want to avoid accessing any parts of the torch.distributed module except
+#   the is_available() function.
 
-DistributedReduceOpLike = str | torch.distributed.ReduceOp | prims.DistributedReduceOps
+if torch.distributed.is_available():
+    DistributedReduceOpLike = str | torch.distributed.ReduceOp | prims.DistributedReduceOps
 
-# string name, PyTorch enum value, lightning.compile enum value
-_reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, prims.DistributedReduceOps.SUM),)
+    # string name, PyTorch enum value, lightning.compile enum value
+    _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, prims.DistributedReduceOps.SUM),)
 
+    def to_thunder_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
+        if isinstance(op, str):
+            for s, top, pop in _reduceop_triples:
+                if op == s:
+                    return pop
 
-def to_thunder_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
-    if isinstance(op, str):
-        for s, top, pop in _reduceop_triples:
-            if op == s:
-                return pop
+            utils.check(False, lambda: f"Unknown distributed reduce op string {op}")
 
-        utils.check(False, lambda: f"Unknown distributed reduce op string {op}")
+        if isinstance(op, torch.distributed.ReduceOp):
+            for s, top, pop in _reduceop_triples:
+                if op is top:
+                    return pop
 
-    if isinstance(op, torch.distributed.ReduceOp):
-        for s, top, pop in _reduceop_triples:
-            if op is top:
-                return pop
+            utils.check(False, lambda: f"Unknown distributed reduce op {op}")
 
-        utils.check(False, lambda: f"Unknown distributed reduce op {op}")
+        return op
 
-    return op
+    def to_torch_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
+        if isinstance(op, prims.DistributedReduceOps):
+            for s, top, pop in _reduceop_triples:
+                if op is pop:
+                    return top
 
+            utils.check(False, lambda: f"Couldn't map the distributed reduce op {op} to a PyTorch reduce op")
 
-def to_torch_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
-    if isinstance(op, prims.DistributedReduceOps):
-        for s, top, pop in _reduceop_triples:
-            if op is pop:
-                return top
+        return op
 
-        utils.check(False, lambda: f"Couldn't map the distributed reduce op {op} to a PyTorch reduce op")
+    # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
+    #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
+    #   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch
+    #   calls directly to this.
+    # This operation is based on torch.distributed.all_reduce, see:
+    #   https://pytorch.org/docs/master/distributed.html#torch.distributed.all_reduce
+    @torchsymbol(
+        is_method=False,
+        id="torch.distributed.functional_all_reduce",
+    )
+    def all_reduce(
+        a: TensorLike,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: Optional[torch.distributed.ProcessGroup] = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        op = to_thunder_distributed_reduce_op(op)
+        return prims.all_reduce(a, op, group, async_op)
 
-    return op
-
-
-# NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
-#   call does not need to be inplace). This, however, is modeled as an out-of-place functional
-#   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch
-#   calls directly to this.
-# This operation is based on torch.distributed.all_reduce, see:
-#   https://pytorch.org/docs/master/distributed.html#torch.distributed.all_reduce
-@torchsymbol(
-    is_method=False,
-    id="torch.distributed.functional_all_reduce",
-)
-def all_reduce(
-    a: TensorLike,
-    op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
-    group: Optional[torch.distributed.ProcessGroup] = None,
-    async_op: bool = False,
-) -> TensorLike:
-    op = to_thunder_distributed_reduce_op(op)
-    return prims.all_reduce(a, op, group, async_op)
+else:
+    # NOTE torch.distributed is not available
+    def all_reduce(
+        a: TensorLike,
+        op: Any,
+        group: Optional[Any] = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
 
 
 #

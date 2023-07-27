@@ -218,13 +218,10 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, lis
 # Functions related to the Common Subexpression Elimination (CSE) pass
 #
 def replace_redundant_inputs(
-    redundant_map: dict[VariableInterface, Proxy],
-    bsyms: Sequence[BoundSymbol]
+    redundant_map: dict[VariableInterface, Proxy], bsyms: Sequence[BoundSymbol]
 ) -> Sequence[BoundSymbol]:
-
     new_bsyms = []
     for bsym in bsyms:
-
         # Checks if the bound symbol has redundant inputs (that need to be replaced)
         has_redundant_inputs: bool = False
         for x in chain(bsym._flat_args, bsym._flat_kwargs):
@@ -338,12 +335,14 @@ def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             continue
 
         # From the second bsym, we have opportunities to replace `bsym.args` and `bsym.kwargs`.
-        rhs = (bsym.from_bsym_swap_proxies(
-            swap_map=redundant_map,
-            skip_inputs=False,
-            skip_output=True,
-            skip_subsymbols=True,
-        )).rhs()
+        rhs = (
+            bsym.from_bsym_swap_proxies(
+                swap_map=redundant_map,
+                skip_inputs=False,
+                skip_output=True,
+                skip_subsymbols=True,
+            )
+        ).rhs()
         if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None:
             # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
             for src, dst in zip(bsym._flat_outs, prior_bsym._flat_outs):
