@@ -1066,6 +1066,9 @@ else:
     def all_reduce_prim(bsym: BoundSymbol, a: TensorProxy, op: Any, group: Any, do_async: bool) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
+    def wait_prim(bsym: BoundSymbol, a: FutureTensorProxy) -> BoundSymbol:
+        utils.check(False, lambda: f"torch.distributed is not available")
+
 
 # TODO Refine prim ops to have less functionality to better debug errors
 # Maps from symbol ids to a tuple of (is_fusable, translate) callables
