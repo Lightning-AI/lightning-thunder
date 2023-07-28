@@ -120,17 +120,17 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, head_size).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, head_size).transpose(1, 2)  # (B, nh, T, hs)
 
-        # if self.rope_cache is None:
-        # cache for future forward calls
-        rope_cache = build_rope_cache(
-            seq_len=self.block_size,
-            n_elem=self.n_embd // self.n_head,
-            dtype=x.dtype,
-            device=x.device,
-        )
+        if self.rope_cache is None:
+            # cache for future forward calls
+            self.rope_cache = build_rope_cache(
+                seq_len=self.block_size,
+                n_elem=self.n_embd // self.n_head,
+                dtype=x.dtype,
+                device=x.device,
+            )
 
-        q = apply_rope(q, rope_cache)
-        k = apply_rope(k, rope_cache)
+        q = apply_rope(q, self.rope_cache)
+        k = apply_rope(k, self.rope_cache)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         #  att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))

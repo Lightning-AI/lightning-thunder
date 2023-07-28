@@ -355,7 +355,7 @@ def test_nanogpt_functionalization():
 
     gr = thunder.core.script.frontend.acquire_method(m.forward)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
-    additional_param_names, additional_param_values = thunder.core.script.passes.module_to_function(gr)
+    additional_param_names, additional_param_values, _ = thunder.core.script.passes.module_to_function(gr)
     thunder.core.script.graph.check_graph(gr)
 
     fn = thunder.core.script.python_ir.generate_function(gr)
@@ -782,8 +782,8 @@ def test_partial():
     assert expected == actual
 
 
+@skipif_not_python_3_10
 def test_foreign_store_attr():
-    @skipif_not_python_3_10
     def fn(o):
         o.hi = "hello"
         return 2
@@ -794,6 +794,50 @@ def test_foreign_store_attr():
     o = A()
     tfn = thunder.compile(fn)
     tfn(o)
+
+
+class TestStoreAttr1(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.first_x = None
+
+    def forward(self, x):
+        if self.first_x is None:
+            self.first_x = x
+        return 2 * x
+
+
+@skipif_not_python_3_10
+def test_store_attr_mod1():
+    m = TestStoreAttr1()
+
+    tom = thunder.compile(m)
+    x = torch.randn(5, 5)
+    m(x)
+    tom(x)
+    m(x * 2)
+    tom(x * 2)
+    assert_close(m.first_x, tom._model.first_x)
+
+
+class TestStoreAttr2(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.first_x = None
+
+    def forward(self, x):
+        if self.first_x is None:
+            # this is not allowed (we don't want to deal with the ordering issues)
+            self.first_x = x
+            self.first_x.xx = x
+        return 2 * x
+
+
+@skipif_not_python_3_10
+def test_store_attr_mod2():
+    m = TestStoreAttr2()
+    with pytest.raises(RuntimeError, match="members of.*members"):
+        tom = thunder.compile(m)
 
 
 @skipif_not_python_3_10

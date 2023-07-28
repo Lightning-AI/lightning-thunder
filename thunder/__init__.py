@@ -201,7 +201,11 @@ def preprocess(fn, is_module):
     gr = script.frontend.acquire_method(fn.forward if is_module else fn)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
     if is_module:
-        additional_param_names, additional_param_values = thunder.core.script.passes.module_to_function(gr)
+        (
+            additional_param_names,
+            additional_param_values,
+            additional_return_names,
+        ) = thunder.core.script.passes.module_to_function(gr)
     script.passes.strongly_inline_functions(gr)
     script.passes.torch_to_thunder(gr)
 
@@ -209,26 +213,45 @@ def preprocess(fn, is_module):
     if is_module:
         thunder_fn._additional_param_names = additional_param_names
         thunder_fn._additional_param_values = additional_param_values
+        thunder_fn._additional_return_names = additional_return_names
     else:
         thunder_fn._additional_param_names = None
         thunder_fn._additional_param_values = None
+        thunder_fn._additional_return_names = None
     return thunder_fn
 
 
 class ThunderOptimizedModule(pytorch.nn.Module):  # TOM
     # todo: subclass nn.Module or forward things like .state_dict() to the
     #       model
-    def __init__(self, model, fn, tfn, additional_param_names, additional_param_values):
+    def __init__(self, model, fn, tfn, additional_param_names, additional_param_values, additional_return_names):
         super().__init__()
         self._model = model
         self._forward_fn = fn
         self._tfn = tfn
         self._additional_param_values = additional_param_values
         self._additional_param_names = additional_param_names
+        self._additional_return_names = additional_return_names
+        d = {k: i for i, k in enumerate(additional_param_names)}
+        self._additional_return_param_idxes = [d[k] for k in additional_return_names]
 
     def __call__(self, *args, **kwargs):
         all_args = (*self._additional_param_values, *args)
         res = self._forward_fn(*all_args, **kwargs)
+        if self._additional_return_names:
+            res, *additional_returns = res
+            assert len(self._additional_return_names) == len(
+                additional_returns
+            ), f"Number of expected additional return args {len(self._additional_return_names)=} does not match the actual number {len(additional_returns)=}"
+            for k, v, idx in zip(
+                self._additional_return_names, additional_returns, self._additional_return_param_idxes
+            ):
+                m = self._model
+                parts = k.split(".")
+                for p in parts[:-1]:
+                    m = getattr(m, p)
+                setattr(m, parts[-1], v)
+                self._additional_param_values[idx] = v
         return res
 
 
@@ -436,7 +459,9 @@ def compile(
             }
             _fn = thunder_backward(**compile_config)(pfn)
 
-        _fn = ThunderOptimizedModule(fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values)
+        _fn = ThunderOptimizedModule(
+            fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values, pfn._additional_return_names
+        )
         # TODO Revisit assuming these are const
         _fn._num_constant_args = len(pfn._additional_param_values)
 
@@ -478,6 +503,7 @@ def compile_with_info(fn, **compile_kwargs) -> Callable:
         result = cfn(*args, **kwargs)
         return result, last_traces(cfn)
 
+    _fn._fn = cfn
     return _fn
 
 

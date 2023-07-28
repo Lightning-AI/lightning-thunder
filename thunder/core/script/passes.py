@@ -23,6 +23,8 @@ from thunder.core.script.graph import (
 )
 from thunder.core.script.python_ir_data import (
     get_instruction,
+    modify_copy_instruction,
+    X_THUNDER_STORE_ATTR,
 )
 from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.utils import OrderedSet
@@ -665,6 +667,36 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     attr_dict: dict[str, int] = {}
     attr_list: list[str] = []
     attr_values = []
+    return_values: Dict[str, Value] = {}  # PhiValues in the return block
+
+    return_block = None
+    for bl in gr.blocks:
+        if bl.nodes[-1].i.opname == "RETURN_VALUE":
+            assert return_block is None, "multiple return statements should not happen here"
+            return_block = bl
+    assert return_block is not None, "could not find return block"
+
+    for bl in gr.blocks:
+        for n in bl.nodes:
+            if n.i.opname == "STORE_ATTR":
+                v = find_and_evaluate_method_through_phi_parent(n.inputs[1])
+                maybe_self, attrs = find_method_through_phi_parent(n.inputs[1])
+                attrs.append(n.i.argval)
+                if maybe_self.value is gr.module:
+                    attr_string = ".".join(attrs)
+                    n.i = modify_copy_instruction(n.i, opname=X_THUNDER_STORE_ATTR, opcode=None, argval=attr_string)
+                    pv = return_values.get(attr_string)
+                    if pv is None:
+                        pv = PhiValue([], [], return_block)
+                        pv.name = attr_string
+                        return_values[attr_string] = pv
+                        return_block.block_inputs.append(pv)
+                    v = Value(node=n, name=attr_string)  # disambiguate?
+                    pv.add_missing_value(v, jump_source=bl.nodes[-1])
+                    n.outputs = [v]
+                    bl.block_outputs.add(v)
+                    del n.inputs[1]
+
     for bl in gr.blocks:
         for n in bl.nodes:
             for idx_i, i in enumerate(n.inputs):
@@ -672,8 +704,8 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
                 v = find_and_evaluate_method_through_phi_parent(i)
                 maybe_self, attrs = find_method_through_phi_parent(i)
 
-                if maybe_self.value is gr.module and isinstance(v, torch.Tensor):
-                    attr_string = ".".join(attrs)
+                attr_string = ".".join(attrs)
+                if maybe_self.value is gr.module and (isinstance(v, torch.Tensor) or (attr_string in return_values)):
                     # the new attributes come directly after the self argument
                     idx = attr_dict.setdefault(attr_string, len(attr_list) + 1)
                     if idx == len(attr_list) + 1:
@@ -684,6 +716,8 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
                         gr.co_argcount += 1
                         # we need a default argument to be able to put the things at the end (but this will have to change for *args, **kwargs anyway...
                         # gr.func_defaults.append(None)
+                        if attr_string in return_values:
+                            return_values[attr_string].add_missing_value(func_arg)
                     else:
                         func_arg = gr.local_variables_at_start[idx]
 
@@ -706,6 +740,17 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
                     i.is_const = True
                     i.is_global = False
 
+    if return_values:
+        bt_extra = Node(
+            i=get_instruction(opname="BUILD_TUPLE", arg=1 + len(return_values)), line_no=return_block.nodes[-1].line_no
+        )
+        bt_extra.inputs = return_block.nodes[-1].inputs + list(return_values.values())
+        v_tuple_extra = Value(node=bt_extra)
+        bt_extra.outputs = [v_tuple_extra]
+        return_block.nodes.insert(-1, bt_extra)
+        return_block.nodes[-1].inputs = [v_tuple_extra]
+    # gr.summary(print_lines=True)
+
     remove_unused_values(gr)
     if gr.local_variables_at_start[0].phi_values:
         raise RuntimeError(
@@ -713,6 +758,22 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     this most likely means that you are setting attributes in forward or using them
     in an unexpected way that thunder does not yet support."""
         )
+
+    # check to avoid assignments for both a.b and a.b.c
+    sorted_keys = sorted(return_values.keys())  # this uses that '.' sorts before other things
+    for i in range(len(sorted_keys) - 1):
+        kbase = sorted_keys[i]
+        knext = sorted_keys[i + 1]
+        if knext.startswith(kbase) and knext[len(kbase)] == ".":
+            # N.B. we know that knext is longer if kbase is a prefix so the knext[len(kbase)] above will not be out of bounds.
+            raise RuntimeError(f"Assigning to members of assigned members ('{kbase}' and '{knext}') is not supported.")
+
     del gr.local_variables_at_start[0]
     gr.co_argcount -= 1
-    return attr_list, attr_values
+    if gr.co_posonlyargcount > 0:
+        gr.co_posonlyargcount -= 1
+
+    # thunder.core.script.graph.check_graph(gr)
+    # gr.summary(print_lines=True)
+
+    return attr_list, attr_values, list(return_values.keys())

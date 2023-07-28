@@ -14,7 +14,7 @@ from thunder.core.script.graph import (
     insert_before,
     insert_after,
 )
-from thunder.core.script.python_ir_data import get_instruction, modify_copy_instruction
+from thunder.core.script.python_ir_data import get_instruction, modify_copy_instruction, RETURN_VALUE, X_THUNDER_STORE_ATTR
 from thunder.core.utils import OrderedSet
 
 
@@ -216,8 +216,9 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                         idx = len(names)
                         names.append(n.i.argval)
                     n.i = modify_copy_instruction(n.i, arg=idx)
-
-        if bl.nodes[-1].i.opname != "RETURN_VALUE":  # TODO Should the return block have outputs (probably not)
+                if n.i.opname == X_THUNDER_STORE_ATTR:
+                    bl.nodes.remove(n)
+        if bl.nodes[-1].i.opname != RETURN_VALUE:  # TODO Should the return block have outputs (probably not)
             for o in bl.block_outputs:
                 if o not in processed_block_outputs:
                     get_value(o, n=jump_node)  # before the jump
