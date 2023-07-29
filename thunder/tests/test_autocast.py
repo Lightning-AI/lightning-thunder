@@ -9,6 +9,7 @@ from thunder.core import devices, dtypes
 from thunder.tests.framework import instantiate
 
 
+# TODO This test currently ignores the "should_autocast" argument enumerated in it
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
 )
@@ -40,7 +41,8 @@ def test_thunder_autocast_transform(executor, device, dtype):
         compiled = executor.make_callable(autocast(func, dtype=autocast_dtype))
         out = compiled(x, y, z)
 
+        devicetype = torch.device(device).type
         # note(crcrpar): This test could be broken in the future as thunder autocast develops.
-        with torch.autocast(device_type=device, dtype=autocast_torch_dtype):
+        with torch.autocast(device_type=devicetype, dtype=autocast_torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype

@@ -4,6 +4,8 @@ import unittest
 from typing import Optional
 from itertools import product
 
+import pytest
+
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -216,6 +218,256 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
+
+from thunder.tests.framework import instantiate
+from thunder.core import dtypes
+from thunder.core import devices
+from thunder.distributed import thunder_ddp
+
+import torch.distributed as tdist
+import torch.utils.data as tudata
+
+import os
+import copy
+from typing import Sequence
+from functools import partial, wraps
+import tempfile
+import multiprocessing as mp
+
+
+# Configures PyTorch's default process group, must be called at the start of each
+#   distributed process
+def init_per_process_distributed(
+    init_method: str, devicetype: devices.DeviceType, world_size: int, pid: int
+) -> tdist.ProcessGroup:
+    backend: str
+    if devicetype is devices.DeviceType.CUDA:
+        backend = "nccl"
+    elif devicetype is devices.DeviceType.CPU:
+        backend = "gloo"
+    else:
+        raise ValueError("Unknown devicetype {devicetype}")
+
+    tdist.init_process_group(init_method=init_method, backend=backend, world_size=world_size, rank=pid)
+
+    # NOTE _get_default_group is not a public PyTorch function, but there is no
+    #   public mechanism to acquire the default process group, which is specified
+    #   in operations by setting process_group=None.
+    #   Actually acquiring the default ProcessGroup is not typically necessary, but
+    #   lightning.compile doesn't like to model primitives with implicit defaults,
+    #   so we want to pass the ProcessGroup explicitly
+    return tdist.distributed_c10d._get_default_group()
+
+
+# A simple map-style dataset design to support multiprocess testing
+#   Creates a series of tensors on the CPU, and accepts a seed to ensure
+#   tensor generation is consistent across processes
+# See PyTorch's definition of a Dataset here:
+#   https://github.com/pytorch/pytorch/blob/main/torch/utils/data/dataset.py#L41
+# See the documentation for constructing a Dataset here:
+#   https://pytorch.org/docs/master/data.html#torch.utils.data.Dataset
+# TODO Maybe in the future consider creating tensors on a device other than the CPU,
+#   like the CUDA device associated with the process
+# TODO Maybe a better name for this would something like SimpleSeededDataset?
+class PerProcessDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        num_samples: int,
+        tensor_shape: Sequence[int],
+        tensor_dtype: torch.dtype,
+        sample_seed: Optional[int] = None,
+    ):
+        self._tensors = []
+
+        device = torch.device("cpu")
+        make = partial(make_tensor, tensor_shape, device=device, dtype=tensor_dtype, requires_grad=False)
+
+        if sample_seed is not None:
+            torch.manual_seed(sample_seed)
+
+        for _ in range(num_samples):
+            self._tensors.append(make())
+
+        # Restores a random seed so that further random communications aren't synchronized
+        #   across processes
+        if sample_seed is not None:
+            torch.seed()
+
+    # __getitem__() and __len__() are the two methods required of PyTorch's
+    #   Dataset interface
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        return self._tensors[idx]
+
+    def __len__(self) -> int:
+        return len(self._tensors)
+
+
+# Creates a dataloader for a process
+#   If sample_seed is specified then the dataloader will load tensors with the same values
+#   on each process.
+#   If devicetype is specified and is CUDA, then the loaded tensors are placed on
+#   the CUDA device corresponding to the process id (pid)
+def create_per_process_dataloader(
+    pid: int,
+    num_samples: int,
+    tensor_shape: Sequence[int],
+    tensor_dtype: torch.dtype,
+    sample_seed: Optional[int] = None,
+    *,
+    devicetype: devices.DeviceType,
+) -> tudata.DataLoader:
+    dataset = PerProcessDataset(num_samples, tensor_shape, tensor_dtype, sample_seed=sample_seed)
+    sampler = tudata.SequentialSampler(dataset)
+
+    collate_fn = None
+
+    if devicetype is not devices.DeviceType.CPU:
+        assert devicetype is devices.DeviceType.CUDA, f"Unknown devicetype {devicetype}"
+        device = torch.device("cuda", pid)
+
+        def to_device(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
+            return list([t.to(device) for t in tensors])
+
+        collate_fn = to_device
+
+    dataloader = tudata.DataLoader(dataset, sampler=sampler, collate_fn=collate_fn)
+
+    return dataloader
+
+
+# TODO Update this to accept input shape and output shape parameters
+class SmallModel(nn.Module):
+    def __init__(self, device, dtype):
+        super().__init__()
+        self.net1 = nn.Linear(2, 2, device=device, dtype=dtype)
+        self.net2 = nn.Linear(2, 2, device=device, dtype=dtype)
+
+    def forward(self, x):
+        return self.net2(new_gelu(self.net1(x)))
+
+
+# Wraps a function so that it becomes one process of several executing the test
+#   See test_native_ddp and its helper _test_native_ddp_helper below for an example
+#   of how to use this wrapper.
+# NOTE This actually requires wrapping a stub, because the test framework manipulates
+#   functions in a way that does not allow them to be pickled.
+#   The actual logic must be implemented in a helper that can be pickled.
+# NOTE Tests wrapped with ddp_wrapper can be invoked directly, but you must invoke them
+#   like:
+#   if __name__ == '__main__':
+#       test_ddp.test_native_ddp_TorchEx_cpu_float32()
+class ddp_wrapper:
+    def __init__(self, name, fn):
+        self.fn = fn
+        self.__name__ = name
+
+    def __call__(self, test_stub):
+        if not tdist.is_available():
+            pytest.skip("This test requires torch.distributed be available")
+
+        # Creates a temporary file for process group discovery
+        FILE_SCHEMA: str = "file://"
+        if sys.platform == "win32":
+            FILE_SCHEMA = "file:///"
+        file_name = tempfile.NamedTemporaryFile(delete=False).name
+        init_method = f"{FILE_SCHEMA}{file_name}"
+
+        @wraps(test_stub)
+        def test_fn(executor, devices, dtype):
+            world_size = len(devices)
+            input_data = []
+
+            for pid in range(world_size):
+                process_data = (init_method, world_size, pid, executor, devices[pid], dtype)
+                input_data.append(process_data)
+
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(world_size) as p:
+                results = p.map(self.fn, input_data)
+
+            # Raises the first assertion if any occurred
+            root_results = results[0]
+            if len(root_results) > 0:
+                raise (root_results[0])
+
+        return test_fn
+
+
+# NOTE This assumes that one process will have pid=0 -- could generalize that to root
+# TODO Test training, this test just currently tests forward
+def _test_native_ddp_helper(input_data):
+    init_method, world_size, pid, executor, device, dtype = input_data
+
+    num_samples = 2
+    tensor_shape = (2, 2)
+    sample_seed = 3456
+    num_epochs = 1
+    devicetype = devices.device_from_string(device).devicetype
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    pg = init_per_process_distributed(init_method, devicetype, world_size, pid)
+    tdist.barrier(pg)
+
+    dataloader = create_per_process_dataloader(
+        pid,
+        num_samples=num_samples,
+        tensor_shape=tensor_shape,
+        tensor_dtype=torch_dtype,
+        sample_seed=sample_seed,
+        devicetype=devicetype,
+    )
+
+    # Creates, compiles, and DDPs the model
+    model = SmallModel(device, torch_dtype)
+    cmodel = thunder.compile(model, executors_list=executor.executors_list())
+    cmodel = thunder_ddp(
+        cmodel,
+        pid=pid,
+        broadcast_from=0,
+        process_group=pg,
+    )
+
+    comparison_exceptions = []
+    for epoch in range(num_epochs):
+        for step, data in enumerate(dataloader):
+            (inp,) = data
+            pred = cmodel(inp)
+
+            # Validates that each process got the same result by gathering all the tensors
+            #   on pid 0 and comparing them
+            # NOTE Exceptions thrown during the comparison process are recorded and returned
+            #   to the spawning process for analysis
+            gather_list = None
+            if pid == 0:
+                gather_list = []
+                for _ in range(world_size):
+                    gather_list.append(torch.empty_like(pred))
+
+            tdist.gather(pred, gather_list, dst=0, group=pg, async_op=False)
+
+            if pid == 0:
+                for other in gather_list:
+                    try:
+                        assert_close(pred, other)
+                    except Exception as e:
+                        comparison_exceptions.append(e)
+
+    # NOTE This function is undocumented; its definition is here:
+    #   https://github.com/pytorch/pytorch/blob/main/torch/distributed/distributed_c10d.py#L1359
+    tdist.barrier(pg)
+    tdist.destroy_process_group(pg)
+
+    if pid == 0:
+        return comparison_exceptions
+
+    return None
+
+
+# NOTE This is just a stub, see the NOTE for ddp_wrapper
+@instantiate(dtypes=(thunder.float32,), num_devices=2)
+@ddp_wrapper("test_native_ddp", _test_native_ddp_helper)
+def test_native_ddp():
+    pass
 
 
 if __name__ == "__main__":

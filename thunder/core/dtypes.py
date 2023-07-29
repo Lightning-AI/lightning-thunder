@@ -86,6 +86,15 @@ class dtype:
     def __str__(self):
         return self.__repr__()
 
+    def __hash__(self) -> int:
+        return hash((self._name, self._bytes, self._is_weak))
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, dtype):
+            return False
+
+        return self._name == other._name and self._bytes == other._bytes and self._is_weak == other._is_weak
+
 
 class exact(dtype):
     """Abstract base class for the signedinteger, unsignedinteger and bool_ dtypes."""

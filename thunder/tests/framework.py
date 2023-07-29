@@ -3,7 +3,7 @@ import os
 import sys
 from functools import wraps
 from itertools import product
-from typing import Callable, List
+from typing import Callable, List, Optional
 from collections.abc import Sequence
 
 import pytest
@@ -14,6 +14,7 @@ from lightning_utilities.core.imports import package_available
 import thunder.core.dtypes as datatypes
 import thunder.core.devices as devices
 import thunder.executors as executors
+import thunder.core.utils as utils
 
 import thunder
 
@@ -126,10 +127,28 @@ def _all_executors():
 # TODO Should the device str include the actual device number, or just the device type like now?
 # TODO Support multiple devices
 def _instantiate_executor_test_template(
-    template: Callable, scope, *, executor: Executor, device: devices.Device, dtype: datatypes.dtype
+    template: Callable,
+    scope,
+    *,
+    executor: Executor,
+    device_or_devices: devices.Device | Sequence[devices.Device],
+    dtype: datatypes.dtype,
+    as_name: Optional[str] = None,
 ) -> Callable:
-    device_str = devices.devicetype_string(device.devicetype)
-    test_name = "_".join((template.__name__, executor.name, device_str, str(dtype)))
+    devicetype: devices.DeviceType
+    device_str: str | list[str]
+    if isinstance(device_or_devices, devices.Device):
+        devicetype = device_or_devices.devicetype
+        device_str = str(device_or_devices)
+    else:
+        devicetype = device_or_devices[0].devicetype
+        device_str = []
+        for device in device_or_devices:
+            device_str.append(str(device))
+
+    devicetype_str = devices.devicetype_string(devicetype)
+    template_name = as_name if as_name is not None else template.__name__
+    test_name = "_".join((template_name, executor.name, devicetype_str, str(dtype)))
 
     def test():
         result = template(executor, device_str, dtype)
@@ -238,11 +257,20 @@ class ops:
                     self.scope[test.__name__] = test
 
 
-# TODO Don't pass the device type to the test, select an actual device
+# TODO Allow executing the test suite on different devices (not just always cuda:0)
 # TODO Example uses, note this must be the LAST decorator applied
 class instantiate:
     # TODO: support other kinds of dtype specifications
-    def __init__(self, *, executors=None, devicetypes=None, dtypes=None, scope=None):
+    def __init__(
+        self,
+        *,
+        executors=None,
+        devicetypes=None,
+        dtypes=None,
+        num_devices: int = 1,
+        scope=None,
+        as_name: Optional[str] = None,
+    ):
         self.executors = set(executors) if executors is not None else set(_all_executors())
         self.devicetypes = set(devicetypes) if devicetypes is not None else set(available_devicetypes())
 
@@ -251,11 +279,15 @@ class instantiate:
         else:
             self.dtypes = datatypes.resolve_dtypes(dtypes) if dtypes is not None else datatypes.all_dtypes
 
+        self.num_devices = num_devices
+
         # Acquires the caller's global scope
         if scope is None:
             previous_frame = inspect.currentframe().f_back
             scope = previous_frame.f_globals
         self.scope = scope
+
+        self.as_name = as_name
 
     # TODO: refactor with the ops class above
     def __call__(self, test_template):
@@ -273,7 +305,22 @@ class instantiate:
             if not executor.supports_devicetype(devicetype):
                 continue
 
-            device = devices.Device(devicetype, 0)
+            # Identifies devices to run the test on
+            available_devices = devices.available_devices()
+            filtered_devices = list([x for x in available_devices if x.devicetype is devicetype])
+            utils.check(self.num_devices > 0, lambda: f"Received an invalid request for {self.num_devices} devices")
+
+            if devicetype is not devices.DeviceType.CPU and len(filtered_devices) < self.num_devices:
+                continue
+
+            device_or_devices = None
+            if self.num_devices == 1:
+                device_or_devices = devices.Device(devicetype, 0)
+            else:
+                device_or_devices = []
+                for idx in range(self.num_devices):
+                    dev = devices.Device(devicetype, idx)
+                    device_or_devices.append(dev)
 
             for dtype in sorted(self.dtypes, key=lambda t: repr(t)):
                 if dtype is not None and not executor.supports_dtype(dtype):
@@ -283,8 +330,9 @@ class instantiate:
                     test_template,
                     self.scope,
                     executor=executor,
-                    device=device,
+                    device_or_devices=device_or_devices,
                     dtype=dtype,
+                    as_name=self.as_name,
                 )
                 # Adds the instantiated test to the requested scope
                 self.scope[test.__name__] = test

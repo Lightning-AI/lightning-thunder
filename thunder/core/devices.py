@@ -43,6 +43,11 @@ class Device:
             baseutils.check_type(string_or_devicetype, str)
             self.devicetype, self.number = _device_from_string_helper(string_or_devicetype)
 
+        # NOTE While we don't consider it an error to request CPU:1, we also don't pretend
+        #   like there are multiple CPU devices.
+        if self.devicetype is DeviceType.CPU:
+            self.number = 0
+
     # NOTE This representation is a valid PyTorch device string, which is currently relied upon when
     #   converting Thunder devices to PyTorch devices
     def __repr__(self) -> str:

@@ -1952,8 +1952,10 @@ def test_torch_autocast_exception(executor, device, _):
     executors_list = executor.executors_list()
     compiled_f = thunder.compile(f, executors_list=executors_list)
     a = torch.ones((), device=device, dtype=torch.float32)
+    devicetype = torch.device(device).type
+
     with pytest.raises(RuntimeError) as excinfo:
-        with torch.autocast(device_type=device):
+        with torch.autocast(device_type=devicetype):
             compiled_f(a)
     assert "A callable optimized" in str(excinfo.value)
 
@@ -2300,7 +2302,8 @@ def test_thunder_autocast_transform(executor, device, _):
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
 
         # note(crcrpar): This test could be broken in the future as thunder autocast develops.
-        with torch.autocast(device_type=device, dtype=torch_dtype):
+        devicetype = torch.device(device).type
+        with torch.autocast(device_type=devicetype, dtype=torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype
 
