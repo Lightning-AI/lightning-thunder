@@ -222,7 +222,7 @@ common_utils.instantiate_parametrized_tests(CompileDDPTest)
 from thunder.tests.framework import instantiate
 from thunder.core import dtypes
 from thunder.core import devices
-from thunder.distributed import thunder_ddp
+from thunder.distributed import ddp
 
 import torch.distributed as tdist
 import torch.utils.data as tudata
@@ -238,7 +238,7 @@ import multiprocessing as mp
 # Configures PyTorch's default process group, must be called at the start of each
 #   distributed process
 def init_per_process_distributed(
-    init_method: str, devicetype: devices.DeviceType, world_size: int, pid: int
+    init_method: str, devicetype: devices.DeviceType, world_size: int, rank: int
 ) -> tdist.ProcessGroup:
     backend: str
     if devicetype is devices.DeviceType.CUDA:
@@ -246,9 +246,9 @@ def init_per_process_distributed(
     elif devicetype is devices.DeviceType.CPU:
         backend = "gloo"
     else:
-        raise ValueError("Unknown devicetype {devicetype}")
+        raise ValueError(f"Unknown devicetype {devicetype}")
 
-    tdist.init_process_group(init_method=init_method, backend=backend, world_size=world_size, rank=pid)
+    tdist.init_process_group(init_method=init_method, backend=backend, world_size=world_size, rank=rank)
 
     # NOTE _get_default_group is not a public PyTorch function, but there is no
     #   public mechanism to acquire the default process group, which is specified
@@ -306,9 +306,9 @@ class PerProcessDataset(torch.utils.data.Dataset):
 #   If sample_seed is specified then the dataloader will load tensors with the same values
 #   on each process.
 #   If devicetype is specified and is CUDA, then the loaded tensors are placed on
-#   the CUDA device corresponding to the process id (pid)
+#   the CUDA device corresponding to the process's "rank"
 def create_per_process_dataloader(
-    pid: int,
+    rank: int,
     num_samples: int,
     tensor_shape: Sequence[int],
     tensor_dtype: torch.dtype,
@@ -323,7 +323,7 @@ def create_per_process_dataloader(
 
     if devicetype is not devices.DeviceType.CPU:
         assert devicetype is devices.DeviceType.CUDA, f"Unknown devicetype {devicetype}"
-        device = torch.device("cuda", pid)
+        device = torch.device("cuda", rank)
 
         def to_device(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
             return list([t.to(device) for t in tensors])
@@ -377,8 +377,8 @@ class ddp_wrapper:
             world_size = len(devices)
             input_data = []
 
-            for pid in range(world_size):
-                process_data = (init_method, world_size, pid, executor, devices[pid], dtype)
+            for rank in range(world_size):
+                process_data = (init_method, world_size, rank, executor, devices[rank], dtype)
                 input_data.append(process_data)
 
             ctx = mp.get_context("spawn")
@@ -393,10 +393,10 @@ class ddp_wrapper:
         return test_fn
 
 
-# NOTE This assumes that one process will have pid=0 -- could generalize that to root
+# NOTE This assumes that one process will have rank=0 -- could generalize that to root
 # TODO Test training, this test just currently tests forward
 def _test_native_ddp_helper(input_data):
-    init_method, world_size, pid, executor, device, dtype = input_data
+    init_method, world_size, rank, executor, device, dtype = input_data
 
     num_samples = 2
     tensor_shape = (2, 2)
@@ -405,11 +405,11 @@ def _test_native_ddp_helper(input_data):
     devicetype = devices.device_from_string(device).devicetype
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    pg = init_per_process_distributed(init_method, devicetype, world_size, pid)
+    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
     tdist.barrier(pg)
 
     dataloader = create_per_process_dataloader(
-        pid,
+        rank,
         num_samples=num_samples,
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
@@ -420,9 +420,9 @@ def _test_native_ddp_helper(input_data):
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
     cmodel = thunder.compile(model, executors_list=executor.executors_list())
-    cmodel = thunder_ddp(
+    cmodel = ddp(
         cmodel,
-        pid=pid,
+        rank=rank,
         broadcast_from=0,
         process_group=pg,
     )
@@ -434,18 +434,18 @@ def _test_native_ddp_helper(input_data):
             pred = cmodel(inp)
 
             # Validates that each process got the same result by gathering all the tensors
-            #   on pid 0 and comparing them
+            #   on rank 0 and comparing them
             # NOTE Exceptions thrown during the comparison process are recorded and returned
             #   to the spawning process for analysis
             gather_list = None
-            if pid == 0:
+            if rank == 0:
                 gather_list = []
                 for _ in range(world_size):
                     gather_list.append(torch.empty_like(pred))
 
             tdist.gather(pred, gather_list, dst=0, group=pg, async_op=False)
 
-            if pid == 0:
+            if rank == 0:
                 for other in gather_list:
                     try:
                         assert_close(pred, other)
@@ -457,7 +457,7 @@ def _test_native_ddp_helper(input_data):
     tdist.barrier(pg)
     tdist.destroy_process_group(pg)
 
-    if pid == 0:
+    if rank == 0:
         return comparison_exceptions
 
     return None

@@ -14,7 +14,12 @@ from thunder.core.script.graph import (
     insert_before,
     insert_after,
 )
-from thunder.core.script.python_ir_data import get_instruction, modify_copy_instruction, RETURN_VALUE, X_THUNDER_STORE_ATTR
+from thunder.core.script.python_ir_data import (
+    get_instruction,
+    modify_copy_instruction,
+    RETURN_VALUE,
+    X_THUNDER_STORE_ATTR,
+)
 from thunder.core.utils import OrderedSet
 
 
