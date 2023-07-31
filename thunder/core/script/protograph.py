@@ -10,6 +10,7 @@ from collections.abc import Iterable, Iterator
 import networkx as nx
 
 from thunder.core.script.python_ir_data import (
+    RAISE_RETURN_INSTRUCTIONS,
     del_opcodes,
     load_opcodes,
     store_opcodes,
@@ -56,9 +57,6 @@ class VariableKey(NamedTuple):
 
 class _AbstractValue:
     """Represents a value during instruction parsing. (Prior to type binding.)"""
-
-    def __hash__(self) -> int:
-        return hash(id(self))
 
 
 class AbstractValue(_AbstractValue):
@@ -328,6 +326,32 @@ class ProtoGraph:
 
     def __iter__(self) -> Iterator[ProtoBlock]:
         yield from self.protoblocks
+
+    def debug_print_protoflows(self):
+        """
+        Print out the node_flow for each protoblock in the
+        protograph, in a way that's nice to read and debug with.
+        """
+
+        counter = 0
+        idxes = {}
+        for pb in self:
+            for _, ivals, ovals in pb.node_flow:
+                for val in itertools.chain(ivals, ovals):
+                    if not val in idxes.keys():
+                        idxes[val] = counter
+                        counter += 1
+
+        def to_index_str(values):
+            indices = (idxes[v] for v in values)
+            return f"({', '.join(indices)})"
+
+        for i, pb in enumerate(self):
+            print(f"Protoblock {i}:")
+            print(f"{'':>22}Inputs, Outputs")
+            for instr, ivals, ovals in pb.node_flow:
+                print(f" {instr.opname:>20}, {to_index_str(ivals)} -> {to_index_str(ovals)}")
+            print("\n")
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

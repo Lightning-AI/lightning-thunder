@@ -11,6 +11,7 @@ from collections.abc import Iterator
 
 import thunder.core.script.frontend as frontend
 from thunder.core.script.protograph import ProtoGraph
+from thunder.core.script.protograph_passes import apply_protograph_passes
 import thunder.core.script.python_ir_data as python_ir_data
 from thunder.core.utils import enable_debug_asserts
 
@@ -332,6 +333,58 @@ def loop_with_else(x, k):
 
 def done_fn(_):
     return True
+
+
+@add_parse_test(
+    """
+        LOAD_FAST                   0 (x)    ║
+        LOAD_CONST                  1 (2)    ║
+        BUILD_TUPLE                 2        ║
+        STORE_FAST                  1 (t)    ║
+                                             ║
+        LOAD_FAST                   1 (t)    ║
+        UNPACK_TUPLE                2        ║
+        STORE_FAST                  2 (a)    ║
+        STORE_FAST                  3 (_)    ║
+        LOAD_FAST                   2 (a)    ║
+        RETURN_VALUE                         ║
+        """,
+    """
+        0)  BUILD_TUPLE:  (0, 1) -> (2)
+        1)  UNPACK_TUPLE: (2) -> (0, 1)
+        2)  RETURN_VALUE: (1) -> ()
+        """,
+)
+def tuple_fold(x):
+    t = (x, 2)
+    a, _ = t
+    return a
+
+
+@add_parse_test(
+    """
+        LOAD_FAST                   0 (x)    ║
+        LOAD_CONST                  1 (2)    ║
+        BUILD_TUPLE                 2        ║
+        STORE_FAST                  1 (t)    ║
+                                             ║
+        LOAD_FAST                   1 (t)    ║
+        UNPACK_EX                   2        ║
+        STORE_FAST                  2 (a)    ║
+        STORE_FAST                  3 (_)    ║
+        LOAD_FAST                   2 (a)    ║
+        RETURN_VALUE                         ║
+        """,
+    """
+        0)  BUILD_TUPLE:  (0, 1) -> (2)
+        1)  UNPACK_EX:    (2) -> (3, 0)
+        2)  RETURN_VALUE: (0) -> ()
+        """,
+)
+def tuple_fold_ex(x):
+    t = (x, 2)
+    a, *_ = t
+    return a
 
 
 @add_parse_test(
@@ -727,9 +780,7 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     fn = fn.__func__ if inspect.ismethod(fn) else fn
     signature = inspect.signature(fn)
 
-    proto_graph = frontend.parse_bytecode(fn)
-    proto_graph, _ = frontend._add_transitive(proto_graph)
-    proto_graph, _ = frontend._condense_values(proto_graph)
+    proto_graph = apply_protograph_passes(frontend.parse_bytecode(fn))
 
     flat_node_flow = []
     for block_idx, protoblock in enumerate(proto_graph):

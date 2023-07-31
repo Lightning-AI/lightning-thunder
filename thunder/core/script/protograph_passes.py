@@ -1,4 +1,5 @@
 import collections
+import dataclasses
 import functools
 import itertools
 from typing import Callable
@@ -219,3 +220,70 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
         replace_map[v] = AbstractPhiValue(new_values) if len(new_values) > 1 else new_values[0]
 
     return proto_graph.transform(replace_map), any(v != {k} for k, v in index_alias_map.items())
+
+def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
+    """Replace tuple accesses (`BINARY_SUBSCR`, `UNPACK_SEQUENCE` instructions) with their members, if known.
+
+    Note: The pass, as it is currently written, only folds one layer of tuples, from one known source, the
+    `BUILD_TUPLE` instruction. This should be enough for our needs. However, it's easy enough to imagine a world
+    where we would want to call this in a loop with other operations that fold values. In other words, tuple folding
+    would be more powerful the more `_AbstractValue`s we can prove to be tuples with a known source.
+    """
+
+    @dataclasses.dataclass(slots=True, unsafe_hash=True, eq=True)
+    class TupleKey:
+        tup_value: _AbstractValue
+        idx: int
+
+        def __lt__(self, other):
+            return self.__hash__() < other.__hash__()
+
+    # {(tup, idx): val}
+    tuple_sources: collections.defaultdict[TupleKey] = collections.defaultdict()
+    queries: collections.defaultdict[TupleKey] = collections.defaultdict()
+
+    for pb in protograph:
+        for instr, ivals, ovals in pb.node_flow:
+            if instr.opname == "BUILD_TUPLE":
+                assert ivals is not None  # The elements of the tuple
+                assert len(ovals) == 1  # The output tuple
+                tuple_sources.update({TupleKey(ovals[0], _i): i for _i, i in enumerate(ivals)})
+            elif instr.opname == "BINARY_SUBSCR":
+                assert len(ivals) == 2  # The tuple, and the index
+                assert len(ovals) == 1  # The result of tup[idx]
+                ref = ivals[1]
+                if isinstance(ref, ExternalRef):
+                    if ref.key.scope == VariableScope.CONST and isinstance(ref.key.identifier, int):
+                        queries.update({TupleKey(ivals[0], ref.key.identifier): ovals[0]})
+            elif instr.opname == "UNPACK_SEQUENCE":
+                assert len(ivals) == 1  # The tuple to unpack
+                assert len(ovals)  # The elements of the tuple, unpacked
+                queries.update({TupleKey(ivals[0], _i): o for _i, o in enumerate(ovals)})
+            elif instr.opname == "UNPACK_EX":
+                assert len(ivals) == 1  # The tuple to unpack
+                assert len(ovals) >= 2  # [remaining, unpack...]
+                # Note: The remaining elements are a list, not a tuple.
+                # That makes this pass technically unsound, as even if an element is updated,
+                # this pass will fold the old value. It's unclear if there's any reason in the language
+                # why unpacking this way returns a list, but it's unlikely to come up in practice,
+                # and editing this list can be made an error in the future.
+                # Another note: It should be possible to fold the remaining elements as well,
+                # but as it is actually a list, let's not track that for now.
+                queries.update({TupleKey(ivals[0], _i): o for _i, o in enumerate(ovals[1:])})
+
+    if not queries or not tuple_sources:
+        return (protograph, False)
+
+    transform_replacements: dict[_AbstractValue, _AbstractValue] = {}
+    for query_key, query_value in queries.items():
+        if source_value := tuple_sources.get(query_key):
+            transform_replacements[query_value] = source_value
+
+    return (protograph.transform(transform_replacements), True)
+
+
+def apply_protograph_passes(protograph: "ProtoGraph") -> "ProtoGraph":
+    protograph, _ = _add_transitive(protograph)
+    protograph, _ = _condense_values(protograph)
+    protograph, _ = _tuple_fold(protograph)
+    return protograph

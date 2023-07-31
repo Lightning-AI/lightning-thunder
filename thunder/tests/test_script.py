@@ -708,6 +708,14 @@ def test_unused_arg():
     actual = thunder_fn(1)
     assert_close(actual, expected)
 
+@skipif_not_python_3_10
+def test_unresolved_global_error():
+    def f():
+        return unresolved_global_variable  # pyright: ignore
+
+    with pytest.raises(ValueError, match="global variable"):
+        thunder.compile(f)
+
 
 @skipif_not_python_3_10
 def test_partial():

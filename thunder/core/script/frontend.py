@@ -30,11 +30,7 @@ from thunder.core.script.protograph import (
     ValueMissing,
     VariableKey,
 )
-from thunder.core.script.protograph_passes import (
-    _add_transitive,
-    _condense_values,
-    _get_missing_transitive,
-)
+from thunder.core.script.protograph_passes import _get_missing_transitive, apply_protograph_passes
 from thunder.core.script.python_ir_data import (
     compute_jump,
     get_epilogue,
@@ -219,7 +215,11 @@ def _bind_to_graph(
             raise RuntimeError(msg)
 
         if key.scope == VariableScope.GLOBAL:
-            return Value(name=name, value=func_globals[name], is_global=True)
+            try:
+                val = func_globals[name]
+            except:
+                raise ValueError(f"Could not resolve global variable: {name=}.")
+            return Value(name=name, value=val, is_global=True)
 
         raise ValueError(f"Unhandled key: {key=}, name: {name=}")
 
@@ -599,10 +599,7 @@ def acquire_partial(
 @functools.cache
 def _construct_protograph(func):
     """Protoblocks are parse level constructs, so it is safe to reuse them."""
-    proto_graph = parse_bytecode(func)
-    proto_graph, _ = _add_transitive(proto_graph)
-    proto_graph, _ = _condense_values(proto_graph)
-    return proto_graph
+    return apply_protograph_passes(parse_bytecode(func))
 
 
 def acquire_method(
