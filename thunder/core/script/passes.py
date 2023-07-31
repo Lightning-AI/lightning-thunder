@@ -21,6 +21,7 @@ from thunder.core.script.graph import (
     replace_values,
     Value,
 )
+from thunder.core.script.instrumentation import verbose_error, record
 from thunder.core.script.python_ir_data import (
     get_instruction,
     modify_copy_instruction,
@@ -122,29 +123,34 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     return nbl
 
 
-def find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
+def _find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
     # for inlining, we need to (reverse) traverse PhiValues and attribute
     # lookups to find the actual function we want to inline
     while isinstance(fn_value, PhiValue) and len(fn_value.values) == 1:
         fn_value = fn_value.values[0]
     if isinstance(fn_value, PhiValue):  # so len(fn_value.values) is not 1
         # if all different phi-value paths resolve to the same thing, we can continue
-        parent_value, attr_lookups = find_method_through_phi_parent(fn_value.values[0])
+        parent_value, attr_lookups = _find_method_through_phi_parent(fn_value.values[0])
         for v in fn_value.values[1:]:
-            pv2, al2 = find_method_through_phi_parent(v)
+            pv2, al2 = _find_method_through_phi_parent(v)
             if not (pv2 is parent_value and al2 == attr_lookups):
                 return fn_value, []
             return parent_value, attr_lookups
     if fn_value.parent is not None and fn_value.name is not None:
-        parent_value, attr_lookups = find_method_through_phi_parent(fn_value.parent)
+        parent_value, attr_lookups = _find_method_through_phi_parent(fn_value.parent)
         attr_lookups.append(fn_value.name)
         return parent_value, attr_lookups
     if fn_value.node is not None and fn_value.node.i.opname == "BINARY_SUBSCR" and fn_value.node.inputs[1].is_const:
-        parent_value, attr_lookups = find_method_through_phi_parent(fn_value.node.inputs[0])
+        parent_value, attr_lookups = _find_method_through_phi_parent(fn_value.node.inputs[0])
         attr_lookups.append(f"[{fn_value.node.inputs[1].value}]")
         return parent_value, attr_lookups
 
     return fn_value, []
+
+
+@verbose_error
+def find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
+    return _find_method_through_phi_parent(fn_value)
 
 
 def find_and_evaluate_method_through_phi_parent(v: Value) -> Union[object, Callable]:
@@ -164,6 +170,7 @@ class SkipInlineError(NotImplementedError):
     pass
 
 
+@record(delegate_to="n")
 def inline_method_call(gr: "Graph", n: "Node") -> None:
     found_block = False
     for i_bl, bl in enumerate(gr.blocks):

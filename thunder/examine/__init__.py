@@ -1,7 +1,7 @@
 from typing import Any, Callable
 
 import thunder
-import thunder.core.script as script
+import thunder.core.script.instrumentation as script_instrumentation
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
@@ -96,13 +96,14 @@ def examine(fn: Callable, *args, **kwargs):
 
     # Step 2 Attempts to preprocess the function
     preprocessing_exception: Optional[Exception] = None
-    try:
-        thunder.preprocess(fn, is_module=isinstance(fn, torch.nn.Module))
-    except Exception as e:
-        preprocessing_exception = e
+    with script_instrumentation.intercept_errors() as preprocessing_errors:
+        try:
+            thunder.preprocess(fn, is_module=isinstance(fn, torch.nn.Module))
+        except Exception as e:
+            preprocessing_exception = e
 
     # Terminates early if there are unsupported operations or there was a preprocessing exception
-    if len(unsupported_ops) > 0 or preprocessing_exception is not None:
+    if len(unsupported_ops) > 0 or preprocessing_exception is not None or preprocessing_errors:
         if len(unsupported_ops) > 0:
             print(
                 "Please file an issue requesting the following operators here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
@@ -116,6 +117,7 @@ def examine(fn: Callable, *args, **kwargs):
             print(
                 "Please file an issue with your function and this error here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
             )
+            print("\n".join(preprocessing_errors))
             print(preprocessing_exception)
 
         return

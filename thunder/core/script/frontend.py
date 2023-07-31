@@ -20,6 +20,7 @@ from thunder.core.script.graph import (
     PhiValue,
     Value,
 )
+from thunder.core.script.instrumentation import record
 from thunder.core.script.protograph import (
     AbstractPhiValue,
     AbstractValue,
@@ -315,6 +316,10 @@ def _bind_to_graph(
                 line_no=instruction.line_no,
             )
 
+            for output in OrderedSet(node.outputs).difference(node.inputs):
+                assert output.node is None, (node, output.node)
+                output.node = node
+
             if node.i.opname in ("LOAD_ATTR", "LOAD_METHOD"):
                 # Once we set `parent` (so PhiValue can traverse through it)
                 # we can prune these just like all other load instructions.
@@ -602,6 +607,7 @@ def _construct_protograph(func):
     return apply_protograph_passes(parse_bytecode(func))
 
 
+@record
 def acquire_method(
     method: Callable,
     module: Optional[object] = None,

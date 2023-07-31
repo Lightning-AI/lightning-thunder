@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 
 import networkx as nx
 
+from thunder.core.script.instrumentation import InstrumentingBase
 from thunder.core.script.python_ir_data import (
     RAISE_RETURN_INSTRUCTIONS,
     del_opcodes,
@@ -66,7 +67,7 @@ class AbstractValue(_AbstractValue):
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
-class ProtoBlock:
+class ProtoBlock(InstrumentingBase):
     """Stores abstract data flow for a code block.
 
     Notes:

@@ -7,6 +7,7 @@ import inspect
 from typing import Any, Dict, List, Optional, Tuple, Type, TYPE_CHECKING, Set, Union
 from collections.abc import Iterable, Iterator, Sequence
 
+from thunder.core.script.instrumentation import InstrumentingBase
 from thunder.core.script.python_ir_data import stack_effect_detail
 from thunder.core.utils import OrderedSet
 
@@ -83,7 +84,7 @@ class MROAwareObjectRef:  # or as they call it super
 # All block_inputs (at least before an optimization pass towards the un-ssa-ing)
 # are expected to be PhiValues and all PhiValues are expected to show up as
 # block_inputs.
-class Value:
+class Value(InstrumentingBase):
     def __init__(
         self,
         *,
@@ -242,7 +243,7 @@ class PhiValue(Value):
 
 # A node corresponds to one Python bytecode instruction given in .i
 # it has Values as .inputs and .outputs
-class Node:
+class Node(InstrumentingBase):
     def __init__(
         self,
         *,
@@ -343,7 +344,7 @@ class Block:
 # A graph contains Blocks.
 # The first block (.blocks[0]) is the entry point. Other blocks are connected
 # through jump instructions.
-class Graph:
+class Graph(InstrumentingBase):
     def __init__(self, blocks: Optional[list[Block]] = None):
         self.blocks = [] if blocks is None else blocks[:]
 

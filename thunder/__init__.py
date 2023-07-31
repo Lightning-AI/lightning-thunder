@@ -36,6 +36,7 @@ import thunder.executors as executors
 
 import thunder.core.script as script
 import thunder.core.script.frontend
+import thunder.core.script.instrumentation
 import thunder.core.script.passes
 import thunder.core.script as script
 import thunder.core.script.python_ir
@@ -197,6 +198,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
 
 # Preprocesses function
 # Currently tries to map torch.foo lookups to thunder.torch.foo lookups
+@thunder.core.script.instrumentation.record
 def preprocess(fn, is_module):
     gr = script.frontend.acquire_method(fn.forward if is_module else fn)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
