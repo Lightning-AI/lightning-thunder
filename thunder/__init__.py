@@ -760,7 +760,9 @@ def _make_trace(
         return trace
 
     if isinstance(fn, pytorch.nn.Module):
-        wrapped = ThunderOptimizedModule(fn, wrapped, pfn, pfn._additional_param_names, pfn._additional_param_values)
+        wrapped = ThunderOptimizedModule(
+            fn, wrapped, pfn, pfn._additional_param_names, pfn._additional_param_values, pfn._additional_return_names
+        )
 
     return wrapped
 

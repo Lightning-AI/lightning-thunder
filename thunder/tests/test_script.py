@@ -228,9 +228,18 @@ def test_llama_block_compile():
     thunder_result = tom(inp)
     assert_close(expected_result, thunder_result)
     assert_close(m.attn.rope_cache, m2.attn.rope_cache)
+
+    # TODO: enable:
+    # inp = torch.randn(1, 8, 4096, requires_grad=True)
     expected_result = m(inp)
     thunder_result = tom(inp)
     assert_close(expected_result, thunder_result)
+
+    # go = torch.ones(expected_result.shape, dtype=expected_result.dtype, device=expected_result.device)
+
+    # expected_gr, = torch.autograd.grad(expected_result, inp, go)
+    # thunder_gr, = torch.autograd.grad(thunder_result, inp, go)
+    # assert_close(expected_result, thunder_result)
 
 
 @skipif_not_python_3_10
