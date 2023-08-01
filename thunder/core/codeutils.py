@@ -366,19 +366,16 @@ def get_siginfo(fn: Callable, args, kwargs) -> SigInfo:
 
     # Binds args and kwargs to signature
     sig = inspect.signature(fn_)
-
     kwargs.update(partial_kwargs)
     ba = sig.bind(*args, **kwargs)
 
     # Augments arguments with default values
-    # NOTE: for example, alpha=1., if alpha is not specified
-    #   explicitly then ba above will not contain it
-    default_dict = partial_kwargs
-
-    args_dict = {k: v.default for k, v in sig.parameters.items() if v.default is not Parameter.empty}
-
-    default_dict.update(args_dict)
-    args_dict.update(ba.arguments)
+    # NOTE A default value is, for example alpha=1. in a function's signature
+    #   These default values are not included in ba.arguments
+    # NOTE Partial kwargs take precedence as defaults
+    default_dict = {k: v.default for k, v in sig.parameters.items() if v.default is not Parameter.empty}
+    default_dict.update(partial_kwargs)
+    args_dict = default_dict | ba.arguments
 
     # Augments the parameters with positional information
     params_with_indices = {k: (v, idx) for idx, (k, v) in enumerate(sig.parameters.items())}

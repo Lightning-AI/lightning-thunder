@@ -21,7 +21,7 @@ from thunder.core.trace import (
     maybe_start_trace,
     maybe_reset_trace,
 )
-from thunder.core.langctx import get_langctx, set_langctx, reset_langctx
+from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 import thunder.core.utils as utils
 from thunder.core.codeutils import get_siginfo, is_collection
 import thunder.core.prims as prims
@@ -42,6 +42,8 @@ import thunder.core.script as script
 import thunder.core.script.python_ir
 
 import thunder.torch as ltorch
+
+torchlangctx = ltorch
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -326,6 +328,64 @@ class CompiledData:
         self.num_constant_args = num_constant_args
 
 
+# Produces a trace of the given function with the given args and kwargs
+# If trace_recursively is True and this is called while tracing then
+#   the trace will be inlined into the current trace, and instead of a trace
+#   the results of the function will be returned
+# If trace_recursively is False then this will always produce a new trace.
+#   If this is called while already tracing then the tracing context that
+#   calls this will not observe those calls
+# If proxify_inputs is True then inputs are proxied before the function is called.
+# If proxify_inputs is False then inputs are passed to the function unmodified.
+#   This can be useful when trace() is called in a context where proxies have already
+#   been constructed.
+# If include_return_statement is True then the trace will terminate with a RETURN operation
+# If include_return_statement is False then the trace will end without an explicit RETURN
+# TODO Consider modeling additional calls to trace()
+def trace(
+    fn,
+    *args,
+    langctx: Optional[Any] = None,
+    trace_recursively: bool = True,
+    proxify_inputs: bool = True,
+    include_return_statement: bool = True,
+    **kwargs,
+) -> Any | TraceCtx:
+    langctx = langctx if langctx is not None else get_default_langctx()
+
+    try:
+        langctx_tok = set_langctx(langctx)
+        current_trace = get_tracectx()
+        tracectx_tok = None
+
+        if current_trace is not None and trace_recursively:
+            return fn(*args, **kwargs)
+
+        trace = TraceCtx(fn)
+        tracectx_tok = set_tracectx(trace)
+
+        proxyargs, proxykwargs = args, kwargs
+        if proxify_inputs:
+            proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs)
+        trace.args, trace.kwargs = proxyargs, proxykwargs
+
+        result = fn(*proxyargs, **proxykwargs)
+
+        if include_return_statement:
+            prims.python_return(result)
+
+        trace.set_output(result)
+
+    finally:
+        # Resets contexts
+        reset_langctx(langctx_tok)
+
+        if tracectx_tok is not None:
+            reset_tracectx(tracectx_tok)
+
+    return trace
+
+
 # Constructs a function that returns its output + the trace for further analysis
 # TODO probably a better name for this?
 # TODO review functions which compute large objects unrelated to tensors and how
@@ -417,6 +477,7 @@ def compile(
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cd.calls += 1
 
+        # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
         if use_last_executed and cd.last_executed is not None:
             if cd.last_executed is not None:
@@ -431,63 +492,57 @@ def compile(
                 cd.last_executed = c
                 cd.last_traces = traces
                 return c(*args, **kwargs)
-
         cd.cache_misses += 1
 
-        # Sets the language and tracing context
-        nonlocal langctx
-        langctx_tok = None
-        if langctx is not None:
-            langctx_tok = set_langctx(langctx)
+        # TODO Revisit compile() behavior when hit in a trace ctx
+        #   This will inline the invocation of compile into the current
+        #   trace (UNLESS there was a cache hit, per above)
+        #   This interaction between the cache and tracing seems odd
+        # TODO Support a practitioner who wants to explicitly and separately compile
+        #   part of the program
 
-        started, tok, trace = maybe_start_trace(pfn)
+        # Acquires the trace OR inlines the trace into an existing trace and
+        #   returns the (proxied) result of the operation
+        trc_or_result = trace(pfn, *args, langctx=langctx, trace_recursively=True, **kwargs)
 
-        try:
-            proxyargs = args
-            proxykwargs = kwargs
-            if started:
-                proxyargs, proxykwargs = _unpack_inputs(pfn, trace, args, kwargs)
-                trace.args = proxyargs
-                trace.kwargs = proxykwargs
+        # Returns the (proxied) result if this call to compile was inlined
+        current_trace = get_tracectx()
+        if current_trace is not None:
+            result = trc_or_result
+            return result
 
-            result = pfn(*proxyargs, **proxykwargs)
+        #
+        # Transforms the trace for execution and executes it, possibly
+        #   updating a cache
+        #
 
-            if started:
-                prims.python_return(result)
+        trc: TraceCtx = trc_or_result
+        traces: list[TraceCtx] = [trc]
 
-            # TODO review this with nested traces
-            trace.set_output(result)
+        # Transforms the trace for execution
+        # TODO Add the capability to recover from pass failures
+        extrace, extraces = executors.transform_for_execution(
+            trc,
+            executors_list=executors_list,
+            only_execute_prims=only_execute_prims,
+            use_rematerialization=use_rematerialization,
+        )
+        traces.extend(extraces)
+        cd.last_traces = traces
 
-            traces: list[TraceCtx] = [trace]
+        # Constructs the Python callable
+        c = extrace.python_callable()
 
-            if started:
-                # TODO Add the capability to recover from pass failures
-                extrace, extraces = executors.transform_for_execution(
-                    trace,
-                    executors_list=executors_list,
-                    only_execute_prims=only_execute_prims,
-                    use_rematerialization=use_rematerialization,
-                )
-                traces.extend(extraces)
+        if use_cudagraphs and not is_module:
+            c = CUDAGraphExecutor(c)
 
-                # Constructs callable and updates cache data
-                cd.last_traces = traces
-                c = extrace.python_callable()
+        # Executes the operation
+        result: Any = c(*args, **kwargs)
+        cd.last_executed = c
 
-                if use_cudagraphs and not isinstance(fn, pytorch.nn.Module):
-                    c = CUDAGraphExecutor(c)
-
-                cd.last_executed = c
-
-                if use_static_caching:
-                    cache_put(cd.cache, c, traces, args[cd.num_constant_args :], kwargs)
-
-                result: Any = c(*args, **kwargs)
-        finally:
-            # Ensures the language and tracing contexts are reset
-            maybe_reset_trace(started, tok)
-            if langctx_tok is not None:
-                reset_langctx(langctx_tok)
+        # (Possibly) Updates the cache
+        if use_static_caching:
+            cache_put(cd.cache, c, traces, args[cd.num_constant_args :], kwargs)
 
         return result
 

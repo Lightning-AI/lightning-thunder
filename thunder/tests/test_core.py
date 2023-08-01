@@ -360,6 +360,7 @@ def test_partial(executor, device, dtype):
 
     assert_close(lc_result, py_result)
 
+    # Tests that later partials override earlier partials correctly
     ppfoo = partial(pfoo, b=2, c=8)
     cppfoo = executor.make_callable(ppfoo)
 
@@ -367,6 +368,23 @@ def test_partial(executor, device, dtype):
     py_result = ppfoo(1)
 
     assert_close(lc_result, py_result)
+
+
+# Tests that partials that specify default args are not supported (yet)
+@instantiate(dtypes=(thunder.float32,))
+def test_partial_args(executor, device, dtype):
+    def foo(a, b):
+        return a + b
+
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    pfoo = partial(foo, a)
+
+    with pytest.raises(NotImplementedError):
+        cpfoo = executor.make_callable(pfoo)
+        cpfoo(b)
 
 
 @instantiate(dtypes=(thunder.float32,))
