@@ -7,7 +7,7 @@ from numbers import Number
 from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
 
-from thunder import _make_trace as make_trace
+from thunder import trace as ttrace
 from thunder.core import dtypes, prims
 from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype
 from thunder.core.devices import cpu, Device
@@ -37,6 +37,8 @@ from thunder import clang
 import torch
 
 import numpy as np
+
+construct_trace = partial(ttrace, inline_trace=False)
 
 
 class Transforms(Enum):
@@ -96,6 +98,7 @@ transform_skip_list = (
     prims.PrimIDs.UNPACK_KEY,
     prims.PrimIDs.UNPACK_SEQUENCE,
     prims.PrimIDs.UNPACK_TRIVIAL,
+    prims.PrimIDs.RETURN,
 )
 
 
@@ -190,7 +193,7 @@ def lower_to_prims(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
+        trace = construct_trace(func, *args, **kwargs)
         return eval_trace(trace, *args, **kwargs, symbol_mapper=lower_to_prims_mapper)
 
     return wrapper
@@ -212,7 +215,7 @@ def identity(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
+        trace = construct_trace(func, *args, **kwargs)
         return identity_call(*args, **kwargs, trace=trace)
 
     return wrapper
@@ -268,7 +271,7 @@ def inline(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
+        trace = construct_trace(func, *args, **kwargs)
         return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
 
     return wrapper
@@ -426,7 +429,7 @@ def unwrap_one_level_of_subsymbols(trace):
 def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
     args, in_dims = unzip2(args)
     unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
-    trace = make_trace(fn)(*unbatched_args, **kwargs)
+    trace = construct_trace(fn, *unbatched_args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     outs = _vmap_call_metafunc(args, in_dims, 0, axis_size, trace=trace, detached=False, **kwargs)
     if isinstance(outs, Sequence):
@@ -627,31 +630,32 @@ def vmap(func, in_dims=0, out_dims=0, axis_size=None):
             in_dims_flat, in_dims_spec = tree_flatten(in_dims)
             assert len(in_dims_flat) == len(args_flat), "in_dims must have the same length as args, kwargs"
         unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
-        trace = make_trace(func_flat)(*unbatched_args_flat)
+        trace = construct_trace(func_flat, *unbatched_args_flat)
         outs = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, trace=trace)
         return outs
 
     return wrapper
 
 
-def vmap_eager(func, args, in_dims=0, out_dims=0, axis_size=None, executor="torch"):
-    """Computes the vmap of a Thunder function.
+# TODO This function commented out because it calls make_traced, which does not exist
+# def vmap_eager(func, args, in_dims=0, out_dims=0, axis_size=None, executor="torch"):
+#     """Computes the vmap of a Thunder function.
 
-    Args:
-        func (Callable): A Thunder function to be transformed.
-        args (_type_): Args of the function.
-        executor (str, optional): Executor to use. Defaults to "torch".
+#     Args:
+#         func (Callable): A Thunder function to be transformed.
+#         args (_type_): Args of the function.
+#         executor (str, optional): Executor to use. Defaults to "torch".
 
-    Returns:
-        The result of the vmapped function.
-    """
-    # TODO: fix this - not all args may be batched
-    # TODO: here we assume batch axis is 0
-    vmap_trace = make_trace(
-        inline(vmap(func, in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), executor=executor
-    )(*args)
-    vmap_traced = make_traced(partial(eval_trace, vmap_trace), executor=executor)
-    return vmap_traced(*args)
+#     Returns:
+#         The result of the vmapped function.
+#     """
+#     # TODO: fix this - not all args may be batched
+#     # TODO: here we assume batch axis is 0
+#     vmap_trace = make_trace(
+#         inline(vmap(func, in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), executor=executor,
+#         *args)
+#     vmap_traced = make_traced(partial(eval_trace, vmap_trace), executor=executor)
+#     return vmap_traced(*args)
 
 
 # JVP transform
@@ -856,9 +860,9 @@ def _vmap_call_jvp(args: JVPDual, in_dims, out_dims, axis_size, trace: Trace, **
     primals, tangents = safe_zip(*args)
     in_dims, _ = safe_zip(*in_dims)
     out_dims, _ = safe_zip(*out_dims)
-    vmapped_trace = make_trace(
-        inline(vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size))
-    )(*primals)
+    vmapped_trace = construct_trace(
+        inline(vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), *primals
+    )
     vmapped_func = partial(eval_trace, vmapped_trace)
     out_primals, out_tangents = inline(jvp(vmapped_func))(primals, tangents, **kwargs)
     if isinstance(out_primals, Sequence):
@@ -881,33 +885,34 @@ def jvp(func):
     """
 
     def wrapper(primals, tangents):
-        trace = make_trace(func)(*primals)
+        trace = construct_trace(func, *primals)
         return jvp_call(primals, tangents, trace=trace)
 
     return wrapper
 
 
-def jvp_eager(func, primals, tangents, executor="torch"):
-    """Computes the Jacobian-vector product of a Thunder function.
+# TODO This function commented out because it calls make_traced, which does not exist
+# def jvp_eager(func, primals, tangents, executor="torch"):
+#     """Computes the Jacobian-vector product of a Thunder function.
 
-    Args:
-        func (Callable): A Thunder function to be transformed.
-        primals (_type_): Primals of the function.
-        tangents (_type_): Tangents of the function.
-        executor (str, optional): Executor to use. Defaults to "torch".
+#     Args:
+#         func (Callable): A Thunder function to be transformed.
+#         primals (_type_): Primals of the function.
+#         tangents (_type_): Tangents of the function.
+#         executor (str, optional): Executor to use. Defaults to "torch".
 
-    Returns:
-        The result of the Jacobian-vector product.
-    """
-    trace = make_trace(func, executor=executor)(*primals)
+#     Returns:
+#         The result of the Jacobian-vector product.
+#     """
+#     trace = make_trace(func, executor=executor, *primals)
 
-    def jvp_func(*primals_and_tangents):
-        _primals, _tangents = primals_and_tangents[: len(primals)], primals_and_tangents[len(primals) :]
-        return _jvp_call_metafunc(_primals, _tangents, trace, detached=False)
+#     def jvp_func(*primals_and_tangents):
+#         _primals, _tangents = primals_and_tangents[: len(primals)], primals_and_tangents[len(primals) :]
+#         return _jvp_call_metafunc(_primals, _tangents, trace, detached=False)
 
-    jvp_trace = make_trace(jvp_func, executor=executor)(*primals, *tangents)
-    jvp_traced = make_traced(partial(eval_trace, jvp_trace), executor=executor)
-    return jvp_traced(*primals, *tangents)
+#     jvp_trace = make_trace(jvp_func, executor=executor)(*primals, *tangents)
+#     jvp_traced = make_traced(partial(eval_trace, jvp_trace), executor=executor)
+#     return jvp_traced(*primals, *tangents)
 
 
 # VJP transform
@@ -1626,7 +1631,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     Returns:
         Callable: Augmented forward rule for the composite function
     """
-    trace = make_trace(decomposed_fn)(*args, **kwargs)
+    trace = construct_trace(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     # There may be a dead node like "_ = prims.convert_element_type(0, float)"
     # in the trace. We need to remove it before we can use the trace for
@@ -1643,7 +1648,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
 
 def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
     kwargs = {} if kwargs is None else kwargs
-    trace = make_trace(decomposed_fn)(*args, **kwargs)
+    trace = construct_trace(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     trace = dce(trace)[0]
     # bound_symbols = iter_bound_symbols(trace.bound_symbols)
@@ -1933,7 +1938,7 @@ def vjp(func):
 
     def _vjp(primals, cotangents, **kwargs):
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
-        trace = make_trace(flat_func)(*flat_args)
+        trace = construct_trace(flat_func, *flat_args)
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
         gprimals, gkwargs = tree_unflatten(vjp_result, spec)
         grads = gprimals + (gkwargs,) if len(gkwargs) != 0 else gprimals
@@ -1961,7 +1966,7 @@ def value_and_grad(func):
             raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
 
     def _value_and_grad(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
+        trace = construct_trace(func, *args, **kwargs)
         cotangents = tree_map(lambda v: ones_like(v), trace.output)
         return vjp(func)(args, cotangents, **kwargs)
 
@@ -2000,7 +2005,7 @@ def autocast_linear_rule(a, w, bias, dtype):
 
 
 def decomposed_fn_autocast_rule(*args, fn, dtype, **kwargs):
-    trace = make_trace(fn)(*args, **kwargs)
+    trace = construct_trace(fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
@@ -2039,7 +2044,7 @@ def autocast(func: Callable, dtype: dtypes.dtype):
 
     @wraps(func)
     def wrapper(*args, **kwargs):
-        trace = make_trace(func)(*args, **kwargs)
+        trace = construct_trace(func, *args, **kwargs)
         return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
     return wrapper

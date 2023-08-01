@@ -1,5 +1,5 @@
 import operator
-from functools import wraps
+from functools import wraps, partial
 from numbers import Number
 from typing import Union, Callable, Any, Tuple, Sequence, Optional
 
@@ -1479,10 +1479,12 @@ class ThunderFunction(torch.autograd.Function):
 
     @staticmethod
     def thunder_augmented_forward_backward(func, compile_config):
-        from thunder import _make_trace as make_trace, compile
+        from thunder import trace as ttrace, compile
+
+        construct_trace = partial(ttrace, inline_trace=False)
 
         def augmented_forward(*args):
-            trace = make_trace(func)(*args)
+            trace = construct_trace(func, *args)
             result, saved_for_backward = ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
 
             def backward_fn(saved_info, *args):

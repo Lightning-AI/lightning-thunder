@@ -329,10 +329,10 @@ class CompiledData:
 
 
 # Produces a trace of the given function with the given args and kwargs
-# If trace_recursively is True and this is called while tracing then
+# If inline_trace is True and this is called while tracing then
 #   the trace will be inlined into the current trace, and instead of a trace
 #   the results of the function will be returned
-# If trace_recursively is False then this will always produce a new trace.
+# If inline_trace is False then this will always produce a new trace.
 #   If this is called while already tracing then the tracing context that
 #   calls this will not observe those calls
 # If proxify_inputs is True then inputs are proxied before the function is called.
@@ -346,7 +346,7 @@ def trace(
     fn,
     *args,
     langctx: Optional[Any] = None,
-    trace_recursively: bool = True,
+    inline_trace: bool = True,
     proxify_inputs: bool = True,
     include_return_statement: bool = True,
     **kwargs,
@@ -358,7 +358,7 @@ def trace(
         current_trace = get_tracectx()
         tracectx_tok = None
 
-        if current_trace is not None and trace_recursively:
+        if current_trace is not None and inline_trace:
             return fn(*args, **kwargs)
 
         trace = TraceCtx(fn)
@@ -503,7 +503,7 @@ def compile(
 
         # Acquires the trace OR inlines the trace into an existing trace and
         #   returns the (proxied) result of the operation
-        trc_or_result = trace(pfn, *args, langctx=langctx, trace_recursively=True, **kwargs)
+        trc_or_result = trace(pfn, *args, langctx=langctx, **kwargs)
 
         # Returns the (proxied) result if this call to compile was inlined
         current_trace = get_tracectx()
@@ -687,68 +687,3 @@ def grad(fn):
         return original_result, original_trace
 
     return _fn
-
-
-# TODO TEMPORARY TEST FUNCTION -- NEEDS UX REVIEW
-def construct_trace(fn, trace, proxyargs, proxykwargs):
-    trace.args = proxyargs
-    trace.kwargs = proxykwargs
-    proxyresult = fn(*proxyargs, **proxykwargs)
-    trace.set_output(proxyresult)
-    return trace
-
-
-# TODO TEMPORARY TEST FUNCTION -- NEEDS UX REVIEW
-def _make_trace(
-    fn: Callable,
-    *,
-    langctx=None,
-    disable_preprocessing=True,
-) -> Callable:
-    """Converts a callable into a callable that will be traced and the trace returned.
-
-    Args:
-        fn: The callable to be traced.
-        langctx: The language context to use for the trace. If None, the default language context is used.
-        disable_preprocessing: If True, preprocessing is disabled. If False, preprocessing is enabled. Defaults to True.
-
-    Example:
-        >>> import torch
-        >>> import thunder
-        >>> import thunder.clang as lang
-        >>> def func(a, b):
-        ...     return lang.add(a, b)
-        >>> tracing_func = thunder.make_trace(func)
-        >>> a = torch.randn(2, 2, device='cuda')
-        >>> b = torch.randn(2, 1, device='cuda')
-        >>> trace = tracing_func(a, b)
-    """
-
-    if disable_preprocessing:
-        pfn = fn
-    else:
-        pfn = preprocess(fn, is_module=isinstance(fn, pytorch.nn.Module))
-
-    @wraps(fn)
-    def wrapped(*args, **kwargs):
-        try:
-            # Sets the proper tracing context
-            if langctx is not None:
-                langctx_tok = set_langctx(langctx)
-            trace = TraceCtx(fn)
-            trace_token = set_tracectx(trace)
-            proxyargs, proxykwargs = _unpack_inputs(pfn, trace, args, kwargs)
-            trace = construct_trace(pfn, trace, proxyargs, proxykwargs)
-        finally:
-            # Resets the tracing context
-            reset_tracectx(trace_token)
-            if langctx is not None:
-                reset_langctx(langctx_tok)
-        return trace
-
-    if isinstance(fn, pytorch.nn.Module):
-        wrapped = ThunderOptimizedModule(
-            fn, wrapped, pfn, pfn._additional_param_names, pfn._additional_param_values, pfn._additional_return_names
-        )
-
-    return wrapped

@@ -9,7 +9,7 @@ import torch
 
 import thunder.core.dtypes as dtypes
 
-from thunder import _make_trace as make_trace
+from thunder import trace as construct_trace
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map
 from thunder.core.transforms import jvp, vjp, inline
@@ -21,7 +21,6 @@ from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
-    # TODO: thunder.make_traced doesn't work with closures with torch.Tensor arguments
     # See https://github.com/Lightning-AI/lightning-thunder/issues/226
     # TODO: AttributeError: 'Tensor' object has no attribute 'true_dtype'
     "masked_fill",
@@ -71,7 +70,7 @@ def _generate_supported_op_list(checker):
                 continue
             samples = iter(opinfo.sample_inputs("cpu", dtypes.float64, requires_grad=True))
             sample = next(samples)
-            trace = make_trace(opinfo.op)(*sample.args, **sample.kwargs)
+            trace = construct_trace(opinfo.op, *sample.args, **sample.kwargs)
             all_supported = all(checker(s) for s in trace.bound_symbols)
             if all_supported:
                 yield opinfo.name
@@ -503,7 +502,7 @@ def test_multiple_output_vjp(executor, device, _):
     # a string of code with something like "out1, out2 = <lambda>(input)"
     # ops_to_torch_ops_map["sincos"] = lambda x: (torch.sin(x), torch.cos(x))
     # Therefore here we'll just check that the trace is correct
-    trace = make_trace(inline(vjp(func)))((x,), (v, v))
+    trace = construct_trace(inline(vjp(func)), (x,), (v, v))
     # Length of outputs should be two
     assert len(trace.output) == 2
     # Length of the first output should be two
