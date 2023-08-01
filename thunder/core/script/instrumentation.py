@@ -82,7 +82,6 @@ def intercept_errors():
 
 
 def verbose_error(f):
-
     @functools.wraps(f)
     def wrapped(*args, **kwargs):
         try:
@@ -96,12 +95,14 @@ def verbose_error(f):
             for k, v in bound.arguments.items():
                 lines.append(f"Argument(`{k}`):\n  {v}\n")
                 if id(v) in get_init_ctx():
-                    lines.extend([
-                        "Context (raw):",
-                        *reversed(tuple(emit_ctx(v, follow_delegates=False))),
-                        "\nContext (augmented):",
-                        *reversed(tuple(emit_ctx(v, follow_delegates=True))),
-                    ])
+                    lines.extend(
+                        [
+                            "Context (raw):",
+                            *reversed(tuple(emit_ctx(v, follow_delegates=False))),
+                            "\nContext (augmented):",
+                            *reversed(tuple(emit_ctx(v, follow_delegates=True))),
+                        ]
+                    )
 
             get_error_ctx().append("\n".join(lines))
             maybe_flush_errors()
@@ -117,7 +118,7 @@ def record(delegate_to: typing.Optional[str] | typing.Callable = None):
 
     def wrapper(f):
         f_verbose = verbose_error(f)
-        
+
         @functools.wraps(f)
         def wrapped(*args, **kwargs):
             stack = get_stack()

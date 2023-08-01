@@ -296,6 +296,36 @@ def cache_get(cache, args, kwargs) -> Optional[Callable]:
     return cache.get(key, (None, None))
 
 
+# TODO Better document the module-related data the preprocessing harvests,
+#   like additional_param_names
+class CompiledData:
+    def __init__(
+        self,
+        cache_mode: CACHE_MODES,
+        *,
+        is_module: bool,
+        additional_param_names: Optional[Any],
+        additional_param_values: Optional[Any],
+        additional_return_names: Optional[Any],
+        num_constant_args: int,
+    ):
+        self.cache_mode = cache_mode
+        self.cache = {}
+
+        self.last_executed = None
+        self.last_traces = None
+
+        self.calls = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+        self.is_module = is_module
+        self.additional_param_names = additional_param_names
+        self.additional_param_values = additional_param_values
+        self.additional_return_names = additional_return_names
+        self.num_constant_args = num_constant_args
+
+
 # Constructs a function that returns its output + the trace for further analysis
 # TODO probably a better name for this?
 # TODO review functions which compute large objects unrelated to tensors and how
@@ -337,11 +367,24 @@ def compile(
         lambda: f"Only one caching mode can be specified, but more than one of {always_trace=} (default), {use_static_caching=}, and {use_last_executed=} was set",
     )
 
-    # (Optionally) preprocesses
+    # (Optionally) Preprocesses
+    additional_param_names = None
+    additional_param_values = None
+    additional_return_names = None
+    num_constant_args = 0
+
+    is_module = isinstance(fn, pytorch.nn.Module)
     if disable_preprocessing:
         pfn = fn
     else:
-        pfn = preprocess(fn, is_module=isinstance(fn, pytorch.nn.Module))
+        pfn = preprocess(fn, is_module=is_module)
+
+    # TODO Revisit assuming that parameters are const
+    if is_module and not disable_preprocessing:
+        additional_param_names = pfn._additional_param_names
+        additional_param_values = pfn._additional_param_values
+        additional_return_names = pfn._additional_return_names
+        num_constant_args = len(additional_param_values)
 
     # Constructs function metadata
     # Identifies cache mode
@@ -359,25 +402,37 @@ def compile(
     if cache_mode is CACHE_MODES.DYNAMIC:
         raise NotImplementedError
 
+    # Initializes a CompileData object, which holds the compiled function's
+    #   cache and statistics like how often it's been called
+    cd = CompiledData(
+        cache_mode,
+        is_module=is_module,
+        additional_param_names=additional_param_names,
+        additional_param_values=additional_param_values,
+        additional_return_names=additional_return_names,
+        num_constant_args=num_constant_args,
+    )
+
     @wraps(fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
+        cd.calls += 1
+
         # TODO Return the previous traces when caching
-        if use_last_executed and _fn._last_executed is not None:
-            if _fn._last_executed is not None:
+        if use_last_executed and cd.last_executed is not None:
+            if cd.last_executed is not None:
                 result = c(*args, **kwargs)
                 # TODO Update _last_traces
-                _fn._cache_hits += 1
+                cd.cache_hits += 1
                 return result
         if use_static_caching:
-            c, traces = cache_get(_fn._cache, args[_fn._num_constant_args :], kwargs)
+            c, traces = cache_get(cd.cache, args[cd.num_constant_args :], kwargs)
             if c is not None:
-                # TODO Update _last_traces
-                _fn._cache_hits += 1
-                _fn._last_executed = c
-                _fn._last_traces = traces
+                cd.cache_hits += 1
+                cd.last_executed = c
+                cd.last_traces = traces
                 return c(*args, **kwargs)
 
-        _fn._cache_misses += 1
+        cd.cache_misses += 1
 
         # Sets the language and tracing context
         nonlocal langctx
@@ -416,16 +471,16 @@ def compile(
                 traces.extend(extraces)
 
                 # Constructs callable and updates cache data
-                _fn._last_traces = traces
+                cd.last_traces = traces
                 c = extrace.python_callable()
 
                 if use_cudagraphs and not isinstance(fn, pytorch.nn.Module):
                     c = CUDAGraphExecutor(c)
 
-                _fn._last_executed = c
+                cd.last_executed = c
 
                 if use_static_caching:
-                    cache_put(_fn._cache, c, traces, args[_fn._num_constant_args :], kwargs)
+                    cache_put(cd.cache, c, traces, args[cd.num_constant_args :], kwargs)
 
                 result: Any = c(*args, **kwargs)
         finally:
@@ -436,16 +491,16 @@ def compile(
 
         return result
 
-    if not isinstance(fn, pytorch.nn.Module) and use_generated_backward:
+    if not is_module and use_generated_backward:
         raise NotImplementedError(
             "Generated backward is only supported for nn.Modules for now. ",
             "Please wrap your function in a nn.Module and try again. ",
             "Alternatively, you can use the @thunder_backward decorator instead of thunder.compile.",
         )
 
-    if isinstance(fn, pytorch.nn.Module):
+    if is_module:
         if use_cudagraphs:
-            _fn = CUDAGraphExecutor(_fn, num_constant_args=len(pfn._additional_param_values))
+            _fn = CUDAGraphExecutor(_fn, num_constant_args=len(cd.additional_param_values))
 
         if use_generated_backward:
             compile_config = {
@@ -462,41 +517,37 @@ def compile(
             _fn = thunder_backward(**compile_config)(pfn)
 
         _fn = ThunderOptimizedModule(
-            fn, _fn, pfn, pfn._additional_param_names, pfn._additional_param_values, pfn._additional_return_names
+            fn, _fn, pfn, cd.additional_param_names, cd.additional_param_values, cd.additional_return_names
         )
-        # TODO Revisit assuming these are const
-        _fn._num_constant_args = len(pfn._additional_param_values)
 
     _fn._pfn = pfn
-    if not hasattr(_fn, "_num_constant_args"):
-        _fn._num_constant_args = 0
-    _fn._cache_mode = cache_mode
-    _fn._last_executed = None
-    _fn._last_traces = None
-    _fn._cache_hits = 0
-    _fn._cache_misses = 0
-    _fn._cache = {}
+    _fn._lc_cd = cd
 
     return _fn
 
 
+def compiled_data(fn) -> Optional[CompiledData]:
+    return getattr(fn, "_lc_cd", None)
+
+
 def last_traces(fn) -> Optional[List[TraceCtx]]:
-    return fn._last_traces
+    return compiled_data(fn).last_traces
 
 
 def cache_mode(fn) -> CACHE_MODES:
-    return fn._cache_mode
+    return compiled_data(fn).cache_mode
 
 
 def cache_hits(fn) -> int:
-    return fn._cache_hits
+    return compiled_data(fn).cache_hits
 
 
 def cache_misses(fn) -> int:
-    return fn._cache_misses
+    return compiled_data(fn).cache_misses
 
 
 # NOTE A sugar for compile_with_info that just returns the output of the program
+# TODO Remove this, https://github.com/Lightning-AI/lightning-thunder/issues/730
 def compile_with_info(fn, **compile_kwargs) -> Callable:
     cfn = compile(fn, **compile_kwargs)
 
@@ -583,125 +634,6 @@ def grad(fn):
     return _fn
 
 
-#
-# old stuff below here
-#
-
-#
-# tracing functions
-#
-
-
-# def _get_executor(executor=None):
-#     if executor is None:
-#         ex = get_executor_context()
-#         if ex is None:
-#             raise ValueError("No executor specified!")
-#         return ex
-
-#     if executor == "torch":
-#         try:
-#             from thunder.executors.torch import torchCtx
-
-#             return torchCtx()
-#         except ModuleNotFoundError:
-#             raise RuntimeError(
-#                 "The 'torch' executor was requested, but the `torch` package "
-#                 "is not available. Please make sure the `torch` package is installed"
-#                 "in the environment."
-#             )
-
-#     if executor == "nvfuser":
-#         try:
-#             from thunder.executors.nvfuser import nvFuserCtx
-
-#             return nvFuserCtx()
-#         except ModuleNotFoundError:
-#             raise RuntimeError(
-#                 "The 'nvfuser' executor was requested, but NVFuser is not available. "
-#                 "Please make sure the `torch` package is installed and CUDA is available."
-#             )
-
-#     if hasattr(executor, "get_executor_context"):
-#         return executor.get_executor_context()
-
-#     raise ValueError(f"Trying to acquire an executor from unknown object {executor}!")
-
-
-# # TODO: consider how subclasses could be supported
-# # TODO: consider how proxies are extensible (review JAX's proxy extension mechanism)
-# # TODO: harvest arg and kwargn names upfront to avoid name collisions with proxies
-# def _make_proxies(fn, trace, langctx, *args, **kwargs):
-#     """Proxying rules:
-
-#     1. All number and tensor inputs are proxied, including if they're in a container.
-#     2. All other inputs are passed unmodified.
-#     3. If a proxy is passed in as an input, its name is regenerated to avoid name collisions.
-#     """
-
-#     sig = inspect.signature(fn)
-#     bound_args = sig.bind_partial(*args)
-#     varargs_name = inspect.getfullargspec(fn).varargs
-
-#     def _convert(x):
-#         if isinstance(x, Proxy):
-#             # Regenerates proxy names to avoid name collisions
-#             name = trace.make_proxy_name()
-#             p = x.replace_name(name)
-#             return p
-
-#         if isinstance(x, (int, float, complex)) or isinstance(x, langctx.tensor_cls):
-#             # Proxies numbers and tensors
-#             name = trace.make_proxy_name()
-#             p = langctx.proxy(x, name=name)
-#             return p
-
-#         if isinstance(x, langctx.dtype_cls):
-#             # Converts dtypes
-#             thunder_dtype = langctx.thunder_dtype(x)
-#             return thunder_dtype
-
-#         return x
-
-#     proxyargs = []
-#     for name, arg in bound_args.arguments.items():
-#         if not isinstance(arg, Proxy) and (isinstance(arg, (int, float)) or isinstance(arg, langctx.tensor_cls)):
-#             # NOTE: for numbers or tensors that are passed as positional args,
-#             #   this just gives them the name of the positional argument
-#             #   Numbers or tensors in a collection (like a list or dict) are
-#             #   just given generic names (in the else-block, below)
-#             p = langctx.proxy(arg, name=name)
-#             proxyargs.append(p)
-#         else:
-#             values, structure = tree_flatten(arg)
-#             converted_values = list(_convert(v) for v in values)
-
-#             packed = tree_unflatten(converted_values, structure)
-
-#             # Handles varargs
-#             if name == varargs_name:
-#                 proxyargs.extend(packed)
-#             else:
-#                 proxyargs.append(packed)
-
-#     proxykwargs = {}
-#     for name, kwarg in kwargs.items():
-#         if isinstance(kwarg, (int, float)) or isinstance(kwarg, langctx.tensor_cls):
-#             # NOTE: for numbers or tensors that are passed as keyword arguments,
-#             #   this just gives them the name of the argument
-#             #   Numbers or tensors in a collection (like a list or dict) are
-#             #   just given generic names (in the else-block, below)
-#             p = langctx.proxy(kwarg, name=name)
-#             proxykwargs[name] = p
-#         else:
-#             values, structure = tree_flatten(kwarg)
-#             converted_values = list(_convert(v) for v in values)
-#             packed = tree_unflatten(converted_values, structure)
-#             proxykwargs[name] = packed
-
-#     return proxyargs, proxykwargs
-
-
 # TODO TEMPORARY TEST FUNCTION -- NEEDS UX REVIEW
 def construct_trace(fn, trace, proxyargs, proxykwargs):
     trace.args = proxyargs
@@ -765,136 +697,3 @@ def _make_trace(
         )
 
     return wrapped
-
-
-# import torch  # oops
-
-
-# class ThunderOptimizedModule(torch.nn.Module):  # TOM
-#     # todo: subclass nn.Module or forward things like .state_dict() to the
-#     #       model
-#     def __init__(self, model, fn, tfn, additional_param_names, additional_param_values):
-#         super().__init__()
-#         self._model = model
-#         self._forward_fn = fn
-#         self._tfn = tfn
-#         self._additional_param_values = additional_param_values
-#         self._additional_param_names = additional_param_names
-
-#     def __call__(self, *args, **kwargs):
-#         all_args = (*self._additional_param_values, *args)
-#         res = self._forward_fn(*all_args, **kwargs)
-#         return res
-
-
-# def make_traced(
-#     fn: Callable,
-#     executor: Optional[str] = None,
-#     language_ctx=langs.torch,
-#     *,
-#     mode=None,
-#     _info=False,
-#     _return_fusion=False,
-#     _preprocess=False,
-#     _profile_info=False,
-#     _static=False,
-# ) -> Callable:
-#     """Converts a callable in a callable that will be traced and then executed.
-
-#     Example usage:
-
-#       def foo(a, b):
-#         return tlang.add(a, b)
-
-#       traced_foo = thunder.make_traced(foo)
-
-#       a = torch.randn(2, 2, device='cuda')
-#       b = torch.randn(2, 1, device='cuda')
-
-#       result = traced_foo(a, b)
-#     """
-#     from thunder.core.transforms import inline
-
-#     ex = _get_executor(executor)
-#     langctx = language_ctx.ctx()
-
-#     if _preprocess:
-#         tfn = preprocess(fn, is_module=isinstance(fn, langctx.module_cls))
-#     else:
-#         tfn = fn
-
-#     @wraps(fn)
-#     def _fn(*args, **kwargs):
-#         acquisition_start = time.time_ns()
-#         acqusition_end = None
-#         result = None
-#         if _fn._thunder_cache is not None:
-#             cached = _fn._thunder_cache(*args, **kwargs)
-#             if cached is not None:
-#                 result = cached(*args, **kwargs)
-#                 acquisition_end = time.time_ns()
-
-#         translation_start = translation_end = 0
-#         invocation_start = invocation_end = 0
-#         fusion = None
-#         profile_info = None
-#         if result is None:
-#             trace = make_trace(inline(tfn), executor, language_ctx)(*args, **kwargs)
-#             acquisition_end = time.time_ns()
-
-#             translation_start = time.time_ns()
-#             # TODO: probably refactor this to not be such an ugly variadic return
-#             #   (maybe by returning a dict)
-#             profile_info = None
-#             fusion = None
-#             if _profile_info:
-#                 fusion, profile_info = ex.fuse(
-#                     trace,
-#                     profile_info=_profile_info,
-#                     mode=mode,
-#                     args=args,
-#                     kwargs=kwargs,
-#                     static_inputs=tfn._additional_param_values if hasattr(tfn, "_additional_param_values") else None,
-#                 )
-#             else:
-#                 fusion = ex.fuse(
-#                     trace,
-#                     mode=mode,
-#                     args=args,
-#                     kwargs=kwargs,
-#                     static_inputs=tfn._additional_param_names if hasattr(tfn, "_additional_param_names") else None,
-#                 )
-#             translation_end = time.time_ns()
-
-#             invocation_start = time.time_ns()
-#             result = fusion(*args, **kwargs)
-#             invocation_end = time.time_ns()
-
-#             if _static:
-#                 _fn._thunder_cache = cache.build_cache(tfn, args, kwargs, fusion)
-
-#         meta = None
-#         if _info:
-#             meta = {
-#                 "acquisition_time": acquisition_end - acquisition_start,
-#                 "invocation_time": invocation_end - invocation_start,
-#                 "translation_time": translation_end - translation_start,
-#             }
-
-#         if _info or _return_fusion or _profile_info:
-#             return {
-#                 "result": result,
-#                 "meta": meta,
-#                 "fusion": fusion,
-#                 "profile_info": profile_info,
-#             }
-
-#         return result
-
-#     if isinstance(fn, langctx.module_cls):
-#         _fn = ThunderOptimizedModule(fn, _fn, tfn, tfn._additional_param_names, tfn._additional_param_values)
-
-#     _fn._tfn = tfn
-#     setattr(_fn, "_thunder_cache", None)
-
-#     return _fn

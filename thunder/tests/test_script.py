@@ -717,6 +717,7 @@ def test_unused_arg():
     actual = thunder_fn(1)
     assert_close(actual, expected)
 
+
 @skipif_not_python_3_10
 def test_unresolved_global_error():
     def f():

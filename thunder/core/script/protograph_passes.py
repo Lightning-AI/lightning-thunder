@@ -221,6 +221,7 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
 
     return proto_graph.transform(replace_map), any(v != {k} for k, v in index_alias_map.items())
 
+
 def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     """Replace tuple accesses (`BINARY_SUBSCR`, `UNPACK_SEQUENCE` instructions) with their members, if known.
 
