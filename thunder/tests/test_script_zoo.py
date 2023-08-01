@@ -22,18 +22,18 @@ def inner_wrapper(x):
     return loop_relu(x)
 
 
-def second_wrapper(x):
+def outer_wrapper(x):
     return inner_wrapper(x)
 
 
 @skipif_not_python_3_10
 def test_nested_inline(capfd):
     with intercept_errors() as errors, pytest.raises(RecursionError):
-        thunder.compile(second_wrapper)
+        thunder.compile(outer_wrapper)
 
     assert "inner_wrapper" in (msg := "\n".join(errors)), msg
     assert not get_error_ctx()
 
-    thunder.examine.examine(second_wrapper, torch.ones((1,)))
+    thunder.examine.examine(outer_wrapper, torch.ones((1,)))
     assert "inner_wrapper" in (msg := capfd.readouterr().out), msg
     assert not get_error_ctx()
