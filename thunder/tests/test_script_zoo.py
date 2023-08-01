@@ -1,3 +1,4 @@
+"""Suite of Python-isms which will challenge preprocessing."""
 import pytest
 import torch
 
