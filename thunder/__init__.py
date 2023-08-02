@@ -7,6 +7,7 @@ from enum import auto, Enum
 import os
 import torch as pytorch
 import traceback
+from dataclasses import dataclass
 
 from looseversion import LooseVersion
 
@@ -298,34 +299,110 @@ def cache_get(cache, args, kwargs) -> Optional[Callable]:
     return cache.get(key, (None, None))
 
 
+# A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
 #   like additional_param_names
-class CompiledData:
+class CompileData:
     def __init__(
         self,
-        cache_mode: CACHE_MODES,
         *,
-        is_module: bool,
-        additional_param_names: Optional[Any],
-        additional_param_values: Optional[Any],
-        additional_return_names: Optional[Any],
-        num_constant_args: int,
+        fn: Callable,
+        langctx: Optional[Any] = None,
+        executors_list: Optional[list[executors.Executor]] = None,
+        only_execute_prims: bool = False,
+        disable_preprocessing: bool = False,
+        always_trace: Optional[bool] = None,
+        use_dynamic_caching: Optional[bool] = None,
+        use_static_caching: Optional[bool] = None,
+        use_last_executed: Optional[bool] = None,
+        use_rematerialization: bool = False,
+        use_cudagraphs: bool = False,
+        use_generated_backward: bool = False,
     ):
-        self.cache_mode = cache_mode
-        self.cache = {}
+        #
+        # Determines the cache mode
+        #
 
+        # Sets a default tracing mode if one wasn't specified
+        if (always_trace, use_dynamic_caching, use_static_caching, use_last_executed) == ((None,) * 4):
+            always_trace = True
+
+        # Checks that only one tracing mode is set
+        always_trace = always_trace if always_trace is not None else False
+        use_dynamic_caching = use_dynamic_caching if use_dynamic_caching is not None else False
+        use_static_caching = use_static_caching if use_static_caching is not None else False
+        use_last_executed = use_last_executed if use_last_executed is not None else False
+        utils.check(
+            always_trace ^ use_static_caching ^ use_last_executed ^ use_dynamic_caching,
+            lambda: f"Exactly one caching mode must be specified, but more than one of {always_trace=} (default), {use_static_caching=}, and {use_last_executed=} was set",
+        )
+
+        # Identifies cache mode
+        self.cache_mode: CACHE_MODES
+        if always_trace:
+            self.cache_mode = CACHE_MODES.NONE
+        elif use_dynamic_caching:
+            self.cache_mode = CACHE_MODES.DYNAMIC
+        elif use_static_caching:
+            self.cache_mode = CACHE_MODES.STATIC
+        elif use_last_executed:
+            self.cache_mode = CACHE_MODES.LAST_EXECUTED
+
+        # TODO Implement dynamic caching
+        if self.cache_mode is CACHE_MODES.DYNAMIC:
+            raise NotImplementedError
+
+        #
+        # Gathers additional metadata
+        #
+
+        self.fn = fn
+        self.langctx = langctx
+        self.executors_list = executors_list
+        self.only_execute_prims = only_execute_prims
+        self.disable_preprocessing = disable_preprocessing
+        self.use_rematerialization = use_rematerialization
+        self.use_cudagraphs = use_cudagraphs
+        self.use_generated_backward = use_generated_backward
+
+        self.is_module = isinstance(self.fn, pytorch.nn.Module)
+        utils.check(
+            not use_generated_backward or self.is_module,
+            lambda: f"Generated backward is only supported on nn.Modules for the moment. Wrap your function in an nn.Module and compile the module, or use the @thunder_backward decorator instead of thunder.compile",
+            exception_type=NotImplementedError,
+        )
+
+        #
+        # Possibly processes the function
+        #
+        self.additional_param_names = None
+        self.additional_param_values = None
+        self.additional_return_names = None
+        self.num_constant_args = 0
+
+        self.post_processed_function: Callable
+        if disable_preprocessing:
+            self.post_processed_function = fn
+        else:
+            self.post_processed_function = preprocess(fn, is_module=self.is_module)
+
+            # TODO Revisit assuming parameters are const
+            if self.is_module:
+                self.additional_param_names = self.post_processed_function._additional_param_names
+                self.additional_param_values = self.post_processed_function._additional_param_values
+                self.additional_return_names = self.post_processed_function._additional_return_names
+                self.num_constant_args = len(self.additional_param_values)
+
+        #
+        # Initializes execution statistics
+        #
         self.last_executed = None
         self.last_traces = None
 
+        self.cache = {}
         self.calls = 0
         self.cache_hits = 0
         self.cache_misses = 0
-
-        self.is_module = is_module
-        self.additional_param_names = additional_param_names
-        self.additional_param_values = additional_param_values
-        self.additional_return_names = additional_return_names
-        self.num_constant_args = num_constant_args
 
 
 # Produces a trace of the given function with the given args and kwargs
@@ -386,6 +463,67 @@ def trace(
     return trace
 
 
+def _wrap_in_tom(
+    *,
+    original_module,
+    possibly_processed_function,
+    compiled_function,
+    compile_data: CompileData,
+    use_cudagraphs: bool = False,
+) -> ThunderOptimizedModule:
+    if use_cudagraphs:
+        original_module = CUDAGraphExecutor(
+            original_module, num_constant_args=len(compile_data.additional_param_values)
+        )
+
+    tom = ThunderOptimizedModule(
+        original_module,
+        compiled_function,
+        possibly_processed_function,
+        compile_data.additional_param_names,
+        compile_data.additional_param_values,
+        compile_data.additional_return_names,
+    )
+
+    tom._pfn = possibly_processed_function
+    tom._lc_cd = compile_data
+    return tom
+
+
+# Executes the trace with the given args and kwargs and returns the result,
+#   the callable executed, and the series of traces constructed to produce
+#   that callable from the trace
+def execute_trace(
+    trc: TraceCtx,
+    *,
+    args,
+    kwargs,
+    executors_list: Sequence[Any],
+    only_execute_prims: bool,
+    use_cudagraphs: bool,
+    use_rematerialization: bool,
+) -> tuple[Any, Callable, list[TraceCtx]]:
+    # Transforms the trace for execution
+    # TODO Add the capability to recover from pass failures
+    extrace, extraces = executors.transform_for_execution(
+        trc,
+        executors_list=executors_list,
+        only_execute_prims=only_execute_prims,
+        use_rematerialization=use_rematerialization,
+    )
+
+    # Constructs the Python callable
+    c = extrace.python_callable()
+
+    if use_cudagraphs:
+        c = CUDAGraphExecutor(c)
+
+    # Executes the operation
+    result: Any = c(*args, **kwargs)
+
+    return result, c, extraces
+
+
 # Constructs a function that returns its output + the trace for further analysis
 # TODO probably a better name for this?
 # TODO review functions which compute large objects unrelated to tensors and how
@@ -411,67 +549,47 @@ def compile(
     use_cudagraphs: bool = False,
     use_generated_backward: bool = False,
 ) -> Callable:
-    pfn: Callable
-
-    # Sets a default tracing mode if one wasn't specified
-    if (always_trace, use_dynamic_caching, use_static_caching, use_last_executed) == ((None,) * 4):
-        always_trace = True
-
-    # Checks that only one tracing mode is set
-    always_trace = always_trace if always_trace is not None else False
-    use_dynamic_caching = use_dynamic_caching if use_dynamic_caching is not None else False
-    use_static_caching = use_static_caching if use_static_caching is not None else False
-    use_last_executed = use_last_executed if use_last_executed is not None else False
-    utils.check(
-        always_trace ^ use_static_caching ^ use_last_executed ^ use_dynamic_caching,
-        lambda: f"Only one caching mode can be specified, but more than one of {always_trace=} (default), {use_static_caching=}, and {use_last_executed=} was set",
+    cd = CompileData(
+        fn=fn,
+        langctx=langctx,
+        executors_list=executors_list,
+        only_execute_prims=only_execute_prims,
+        disable_preprocessing=disable_preprocessing,
+        always_trace=always_trace,
+        use_dynamic_caching=use_dynamic_caching,
+        use_static_caching=use_static_caching,
+        use_last_executed=use_last_executed,
+        use_rematerialization=use_rematerialization,
+        use_cudagraphs=use_cudagraphs,
+        use_generated_backward=use_generated_backward,
     )
 
-    # (Optionally) Preprocesses
-    additional_param_names = None
-    additional_param_values = None
-    additional_return_names = None
-    num_constant_args = 0
+    # NOTE This path is completely independent of typical compilation
+    # TODO Refactor these operations so they're not completely disjoint
+    if cd.is_module and use_generated_backward:
+        # TODO Test (and probably error) if use_cudagraphs=True
+        compile_config = {
+            "langctx": langctx,
+            "executors_list": executors_list,
+            "only_execute_prims": only_execute_prims,
+            "always_trace": always_trace,
+            "use_dynamic_caching": use_dynamic_caching,
+            "use_static_caching": use_static_caching,
+            "use_last_executed": use_last_executed,
+            "use_rematerialization": use_rematerialization,
+            "use_cudagraphs": use_cudagraphs,
+        }
 
-    is_module = isinstance(fn, pytorch.nn.Module)
-    if disable_preprocessing:
-        pfn = fn
-    else:
-        pfn = preprocess(fn, is_module=is_module)
+        _fn = thunder_backward(**compile_config)(cd.post_processed_function)
 
-    # TODO Revisit assuming that parameters are const
-    if is_module and not disable_preprocessing:
-        additional_param_names = pfn._additional_param_names
-        additional_param_values = pfn._additional_param_values
-        additional_return_names = pfn._additional_return_names
-        num_constant_args = len(additional_param_values)
+        tom = _wrap_in_tom(
+            original_module=fn,
+            possibly_processed_function=cd.post_processed_function,
+            compiled_function=_fn,
+            compile_data=cd,
+        )
 
-    # Constructs function metadata
-    # Identifies cache mode
-    cache_mode: CACHE_MODES
-    if always_trace:
-        cache_mode = CACHE_MODES.NONE
-    elif use_dynamic_caching:
-        cache_mode = CACHE_MODES.DYNAMIC
-    elif use_static_caching:
-        cache_mode = CACHE_MODES.STATIC
-    elif use_last_executed:
-        cache_mode = CACHE_MODES.LAST_EXECUTED
-
-    # TODO Implement dynamic caching
-    if cache_mode is CACHE_MODES.DYNAMIC:
-        raise NotImplementedError
-
-    # Initializes a CompileData object, which holds the compiled function's
-    #   cache and statistics like how often it's been called
-    cd = CompiledData(
-        cache_mode,
-        is_module=is_module,
-        additional_param_names=additional_param_names,
-        additional_param_values=additional_param_values,
-        additional_return_names=additional_return_names,
-        num_constant_args=num_constant_args,
-    )
+        return tom
 
     @wraps(fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
@@ -503,7 +621,7 @@ def compile(
 
         # Acquires the trace OR inlines the trace into an existing trace and
         #   returns the (proxied) result of the operation
-        trc_or_result = trace(pfn, *args, langctx=langctx, **kwargs)
+        trc_or_result = trace(cd.post_processed_function, *args, langctx=langctx, **kwargs)
 
         # Returns the (proxied) result if this call to compile was inlined
         current_trace = get_tracectx()
@@ -512,32 +630,25 @@ def compile(
             return result
 
         #
-        # Transforms the trace for execution and executes it, possibly
-        #   updating a cache
+        # Executes the trace, then updates the CompiledData and possibly
+        #   updates a cache
         #
 
         trc: TraceCtx = trc_or_result
         traces: list[TraceCtx] = [trc]
 
-        # Transforms the trace for execution
-        # TODO Add the capability to recover from pass failures
-        extrace, extraces = executors.transform_for_execution(
+        result, c, extraces = execute_trace(
             trc,
+            args=args,
+            kwargs=kwargs,
             executors_list=executors_list,
             only_execute_prims=only_execute_prims,
+            use_cudagraphs=(use_cudagraphs and not cd.is_module),
             use_rematerialization=use_rematerialization,
         )
+
         traces.extend(extraces)
         cd.last_traces = traces
-
-        # Constructs the Python callable
-        c = extrace.python_callable()
-
-        if use_cudagraphs and not is_module:
-            c = CUDAGraphExecutor(c)
-
-        # Executes the operation
-        result: Any = c(*args, **kwargs)
         cd.last_executed = c
 
         # (Possibly) Updates the cache
@@ -546,59 +657,76 @@ def compile(
 
         return result
 
-    if not is_module and use_generated_backward:
-        raise NotImplementedError(
-            "Generated backward is only supported for nn.Modules for now. ",
-            "Please wrap your function in a nn.Module and try again. ",
-            "Alternatively, you can use the @thunder_backward decorator instead of thunder.compile.",
+    if cd.is_module:
+        return _wrap_in_tom(
+            original_module=fn,
+            possibly_processed_function=cd.post_processed_function,
+            compiled_function=_fn,
+            compile_data=cd,
+            use_cudagraphs=use_cudagraphs,
         )
 
-    if is_module:
-        if use_cudagraphs:
-            _fn = CUDAGraphExecutor(_fn, num_constant_args=len(cd.additional_param_values))
-
-        if use_generated_backward:
-            compile_config = {
-                "langctx": langctx,
-                "executors_list": executors_list,
-                "only_execute_prims": only_execute_prims,
-                "always_trace": always_trace,
-                "use_dynamic_caching": use_dynamic_caching,
-                "use_static_caching": use_static_caching,
-                "use_last_executed": use_last_executed,
-                "use_rematerialization": use_rematerialization,
-                "use_cudagraphs": use_cudagraphs,
-            }
-            _fn = thunder_backward(**compile_config)(pfn)
-
-        _fn = ThunderOptimizedModule(
-            fn, _fn, pfn, cd.additional_param_names, cd.additional_param_values, cd.additional_return_names
-        )
-
-    _fn._pfn = pfn
+    # NOTE not is_module
+    _fn._pfn = cd.post_processed_function
     _fn._lc_cd = cd
-
     return _fn
 
 
-def compiled_data(fn) -> Optional[CompiledData]:
+# WIP Autograd function implementation to support compile_torch experimentation
+class LCFunction(pytorch.autograd.Function):
+    # TODO Test swapping order of tensors, tensors that require grad in keywords
+    @staticmethod
+    def forward(ctx, fn, compile_info, spec, *flats):
+        args, kwargs = tree_unflatten(flats, spec)
+
+        # TODO Add caching (inputs -> forward callable, backward compiled object)
+        # TODO Add module support
+
+        trc = trace(fn, *args, **kwargs)
+
+        # TODO Check if currently tracing
+
+        # TODO Execute
+        # TODO Support cudagraphs
+
+        # TODO Update compile_info
+
+    # TODO Test double backwards
+    @staticmethod
+    def backward(ctx, *args):
+        raise NotImplementedError
+
+
+# WIP
+# Returns a callable compatible with PyTorch's autograd
+def compile_torch(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        # NOTE pytorch.autograd.Function.apply() does not accept keyword arguments
+        flats, spec = tree_flatten((args, kwargs))
+        return LCFunction.apply(spec, *flats)
+
+    return wrapper
+
+
+def compile_data(fn) -> Optional[CompileData]:
     return getattr(fn, "_lc_cd", None)
 
 
 def last_traces(fn) -> Optional[List[TraceCtx]]:
-    return compiled_data(fn).last_traces
+    return compile_data(fn).last_traces
 
 
 def cache_mode(fn) -> CACHE_MODES:
-    return compiled_data(fn).cache_mode
+    return compile_data(fn).cache_mode
 
 
 def cache_hits(fn) -> int:
-    return compiled_data(fn).cache_hits
+    return compile_data(fn).cache_hits
 
 
 def cache_misses(fn) -> int:
-    return compiled_data(fn).cache_misses
+    return compile_data(fn).cache_misses
 
 
 # NOTE A sugar for compile_with_info that just returns the output of the program
