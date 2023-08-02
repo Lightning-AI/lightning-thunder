@@ -2051,21 +2051,23 @@ def broadcast_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs
 def broadcast_in_dim_error_generator(op, device, **kwargs):
     make = partial(make_tensor, device=device, dtype=torch.float32)
 
-    # inshape, outshape, dims, ex_info
+    # inshape, outshape, dims, ex_info, err_msg_match or None for universal match
+    # NOTE: all these tests xfail, so err_msg_match
+    # is not yet specified.
     cases = (
         # broadcast dimensions must be strictly ascending
-        ((2, 2), (2, 2), (1, 0), RuntimeError),
+        ((2, 2), (2, 2), (1, 0), RuntimeError, None),
         # broadcast dimensions must have the same length as a.ndim
-        ((3, 2, 2), (3, 2, 2), (0, 1), RuntimeError),
-        ((3, 2, 2), (3, 2, 2), (0, 1, 2, 3), RuntimeError),
+        ((3, 2, 2), (3, 2, 2), (0, 1), RuntimeError, None),
+        ((3, 2, 2), (3, 2, 2), (0, 1, 2, 3), RuntimeError, None),
         # Invalid outshape
-        ((3, 2, 2), (6, 2, 2), (0, 1, 2), RuntimeError),
-        ((3, 2, 2), (3, 1, 2), (0, 1, 2), RuntimeError),
+        ((3, 2, 2), (6, 2, 2), (0, 1, 2), RuntimeError, None),
+        ((3, 2, 2), (3, 1, 2), (0, 1, 2), RuntimeError, None),
     )
 
-    for inshape, outshape, dims, ex_info in cases:
+    for inshape, outshape, dims, ex_info, err_msg_match in cases:
         a = make(inshape)
-        yield SampleInput(a, outshape, dims), ex_info
+        yield SampleInput(a, outshape, dims), ex_info, err_msg_match
 
 
 broadcast_in_dim_opinfo = OpInfo(
@@ -2118,17 +2120,17 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
-    # shapes, dim, exception type
+    # shapes, dim, exception type, error message match or None for universal match
     cases = [
-        ([], 0, RuntimeError),  # empty list of tensors
-        ([(2,), (2,)], 1, IndexError),  # index out of range (positive)
-        ([(1,), (2,)], -2, IndexError),  # index out of range (negative)
-        ([(2,), (2, 3)], 0, RuntimeError),  # differing dimensions
-        ([(2, 3), (4, 5)], 0, RuntimeError),  # mismatched shapes in non-cat dim
+        ([], 0, RuntimeError, "expects a non-empty list of tensors"),
+        ([(2,), (2,)], 1, IndexError, "Expected dimension in inclusive range of -1 and 0"),  # pos dim
+        ([(1,), (2,)], -2, IndexError, "Expected dimension in inclusive range of -1 and 0"),  # neg dim
+        ([(2,), (2, 3)], 0, RuntimeError, "Attempted to concatenate tensors of different dimension: got 1 and 2"),
+        ([(2, 3), (4, 5)], 0, RuntimeError, "Sizes of tensors must match except in dimension"),
     ]
 
-    for shapes, dim, exc_type in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type
+    for shapes, dim, exc_type, err_msg_match in cases:
+        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
 
 
 cat_opinfo = OpInfo(
@@ -2173,18 +2175,20 @@ def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
-    # shapes, dim, exception type
+    # shapes, dim, exception type, error message match or None for universal match
     cases = [
-        ([], 0, RuntimeError),  # empty list of tensors
-        ([(2,), (3,)], 1, RuntimeError),  # differing shapes
-        ([(2,), (2,)], -3, IndexError),  # index out of range (negative)
-        ([(2,), (2,)], 4, IndexError),  # index out of range
-        ([(2,), (2, 3)], 0, RuntimeError),  # differing dimensions
-        ([(2, 3), (4, 5)], 0, RuntimeError),  # mismatched shapes in non-cat dim
+        ([], 0, RuntimeError, "list of tensors cannot be empty"),
+        ([(2,), (3,)], 1, RuntimeError, "tensors must be of the same shape"),
+        ([(2,), (2,)], -3, IndexError, "Dimension out of range"),
+        ([(2,), (2,)], 4, IndexError, "Dimension out of range"),
+        # TODO: BUG - differing dimensions is not captured.
+        ([(2,), (2, 3)], 0, RuntimeError, None),
+        # TODO: BUG - same shape but dim is not captured.
+        ([(2, 3), (4, 5)], 0, RuntimeError, None),
     ]
 
-    for shapes, dim, exc_type in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type
+    for shapes, dim, exc_type, err_msg_match in cases:
+        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
 
 
 stack_opinfo = OpInfo(
@@ -2234,18 +2238,22 @@ def expand_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def expand_error_generator(op, device, *, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
-    # Input shape, arg shape, exception type
+    # Input shape, arg shape, exception type, error message match or None for universal match
     cases = [
-        ((0,), (1,), RuntimeError),  # Expand scalar tensor
-        ((0,), (2,), RuntimeError),  # Expand scalar tensor
-        ((1,), (-1, 2), RuntimeError),  # Expand nonexisting dim
-        ((2, 2), (2, 4), RuntimeError),  # Expand non-singleton dim
-        ((1, 1), (-1, 3, -1), RuntimeError),  # Leading wildcard, expand, add dim with trailing wildcard
+        ((0,), (1,), RuntimeError, "attempting to expand a dimension of length 0"),
+        ((0,), (2,), RuntimeError, "attempting to expand a dimension of length 0"),
+        # TODO: Bug - "Found invalid length [IntegerProxy name=i0, value=-1]"
+        # is at least confusing, and might be wrong.
+        ((1,), (-1, 2), RuntimeError, None),  # Expand nonexisting dim
+        ((2, 2), (2, 4), RuntimeError, "attempting to expand a dimension of length 2"),
+        # TODO: Bug - "Found invalid length [IntegerProxy name=i0, value=-1]"
+        # is at least confusing, and might be wrong.
+        ((1, 1), (-1, 3, -1), RuntimeError, None),  # Leading wildcard, expand, add dim with trailing wildcard
     ]
 
-    for ishape, argshape, exc_type in cases:
-        yield SampleInput(make(ishape), argshape), exc_type
-        yield SampleInput(make(ishape), *argshape), exc_type
+    for ishape, argshape, exc_type, err_msg_match in cases:
+        yield SampleInput(make(ishape), argshape), exc_type, err_msg_match
+        yield SampleInput(make(ishape), *argshape), exc_type, err_msg_match
 
 
 expand_opinfo = OpInfo(
@@ -2718,7 +2726,11 @@ def permute_error_generator(op, device, dtype=torch.float32, **kwargs):
 
     # Checks that a len(permutation) != rank(tensor) throws an error
     t = make(2, 3, 4)
-    yield SampleInput(t, (0, 1)), RuntimeError
+    yield (
+        SampleInput(t, (0, 1)),
+        RuntimeError,
+        r"Expected the length \(2\) of the permutation(.*?) to be the number of dimensions \(3\)"
+    )
 
 
 # NOTE This reference is required because torch.permute requires the
@@ -3618,10 +3630,13 @@ def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_gr
 def scaled_dot_product_attention_error_generator(op, device, **kwargs):
     make = partial(make_tensor, device=device, dtype=torch.float32)
 
-    # passing an attention mask and `is_causal` should error out, they are redundant
     q, k, v = make(1, 1, 1), make(1, 1, 1), make(1, 1, 1, 1)
-    bool_attn_mask = make((1, 1), dtype=torch.bool, low=1, high=1).tril()
-    yield SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=True), ValueError
+    bool_attn_mask = make((1, 1), dtype=torch.bool, low=1, high=1)
+    yield (
+        SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=True),
+        ValueError,
+        "Explicit attn_mask should not be set when is_causal=True"
+    )
 
 
 sdpa_opinfo = OpInfo(
