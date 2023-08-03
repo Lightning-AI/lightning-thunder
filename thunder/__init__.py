@@ -42,6 +42,8 @@ import thunder.core.script.passes
 import thunder.core.script as script
 import thunder.core.script.python_ir
 
+from thunder.core.transforms import pytorch_grad_transform
+
 import thunder.torch as ltorch
 
 torchlangctx = ltorch
@@ -676,20 +678,39 @@ def compile(
 class LCFunction(pytorch.autograd.Function):
     # TODO Test swapping order of tensors, tensors that require grad in keywords
     @staticmethod
-    def forward(ctx, fn, compile_info, spec, *flats):
+    def forward(ctx, fn, compiledata: CompileData, spec, *flats):
         args, kwargs = tree_unflatten(flats, spec)
 
         # TODO Add caching (inputs -> forward callable, backward compiled object)
         # TODO Add module support
 
+        # TODO Transform for grad
         trc = trace(fn, *args, **kwargs)
+        grad_forward = pytorch_grad_transform(trc)
 
-        # TODO Check if currently tracing
+        # TODO Check if currently tracing?
 
-        # TODO Execute
         # TODO Support cudagraphs
+        # TODO Support rematerialization
+        result, c, extraces = execute_trace(
+            grad_forward,
+            args=args,
+            kwargs=kwargs,
+            executors_list=compiledata.executors_list,
+            only_execute_prims=compiledata.only_execute_prims,
+            use_cudagraphs=False,
+            use_rematerialization=False,
+        )
 
-        # TODO Update compile_info
+        traces: list[TraceCtx] = [trc, grad_forward]
+        traces.extend(extraces)
+
+        compiledata.last_traces = traces
+        compiledata.last_executed = c
+
+        # TODO Update cache
+
+        return result
 
     # TODO Test double backwards
     @staticmethod
@@ -699,12 +720,43 @@ class LCFunction(pytorch.autograd.Function):
 
 # WIP
 # Returns a callable compatible with PyTorch's autograd
-def compile_torch(fn):
+def compile_torch(
+    fn: Callable,
+    *,
+    langctx: Optional[Any] = None,
+    executors_list: Optional[list[executors.Executor]] = None,
+    only_execute_prims: bool = False,
+    disable_preprocessing: bool = False,
+    always_trace: Optional[bool] = None,
+    use_dynamic_caching: Optional[bool] = None,
+    use_static_caching: Optional[bool] = None,
+    use_last_executed: Optional[bool] = None,
+    use_rematerialization: bool = False,
+    use_cudagraphs: bool = False,
+    use_generated_backward: bool = False,
+) -> Callable:
+    cd = CompileData(
+        fn=fn,
+        langctx=langctx,
+        executors_list=executors_list,
+        only_execute_prims=only_execute_prims,
+        disable_preprocessing=disable_preprocessing,
+        always_trace=always_trace,
+        use_dynamic_caching=use_dynamic_caching,
+        use_static_caching=use_static_caching,
+        use_last_executed=use_last_executed,
+        use_rematerialization=use_rematerialization,
+        use_cudagraphs=use_cudagraphs,
+        use_generated_backward=use_generated_backward,
+    )
+
     @wraps(fn)
     def wrapper(*args, **kwargs):
         # NOTE pytorch.autograd.Function.apply() does not accept keyword arguments
         flats, spec = tree_flatten((args, kwargs))
-        return LCFunction.apply(spec, *flats)
+        return LCFunction.apply(fn, cd, spec, *flats)
+
+    wrapper._lc_cd = cd
 
     return wrapper
 

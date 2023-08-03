@@ -1234,7 +1234,7 @@ def get_symbolic_shape_and_contiguity(t: torch.Tensor) -> tuple[tuple[int, ...],
 def create_fd(
     trace, region, input_descriptors: Sequence[Union[type, tuple[tuple[int, ...], tuple[bool, ...]]]]
 ) -> FusionDefinition:
-    lc_to_nv_map = utils.ProxyDict(trace)
+    lc_to_nv_map = utils.ProxyDict()
 
     def keyfn(x):
         x = unvariableify(x)

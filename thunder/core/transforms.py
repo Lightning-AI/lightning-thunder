@@ -7,7 +7,6 @@ from numbers import Number
 from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
 
-from thunder import trace as ttrace
 from thunder.core import dtypes, prims
 from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype
 from thunder.core.devices import cpu, Device
@@ -17,7 +16,7 @@ from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbolInterface
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, get_tracectx
+from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -28,6 +27,7 @@ from thunder.core.utils import (
     const_as,
     sequencify,
     canonicalize_dims,
+    ProxyDict,
 )
 from thunder.executors.passes import dce
 from thunder import clang
@@ -35,10 +35,91 @@ from thunder import clang
 # from thunder.executors.torch import ops_to_torch_ops_map
 
 import torch
-
 import numpy as np
 
-construct_trace = partial(ttrace, inline_trace=False)
+
+# TODO This should be a partial of thunder.trace, but that would cause a circular import
+#   issue today. We should refactor so we dont have a circular import problem.
+def construct_trace(*args, **kwargs):
+    import thunder
+
+    kwargs.update(inline_trace=False)
+    return thunder.trace(*args, **kwargs)
+
+
+# Creates a new trace by calling visit() on a sequence of BoundSymbols.
+#   visit(bsym: BoundSymbolInterface) -> None should call operations
+#   as if executing a program, and those operations will be recorded into the
+#   new trace.
+# If a function is specified then the trace is constructed with that
+#   function's signature.
+def transform_inline_visitor(
+    trace_from: Trace,
+    provenance: str,
+    visit: Callable,
+) -> Trace:
+    trc = from_trace(trace_from)
+
+    try:
+        tracectx_tok = set_tracectx(trc)
+
+        for bsym in trace_from.bound_symbols:
+            visit(bsym)
+
+        # Updates the trace's output
+        return_bsym: BoundSymbolInterface = trc.bound_symbols[-1]
+        check(
+            return_bsym.sym.id is prims.PrimIDs.RETURN,
+            lambda: f"Expected the last symbol of a inline visitor transformed trace to be RETURN, but it was {return_bsym.sym}",
+        )
+        trc.output = return_bsym.output
+
+        trc.set_provenance(TraceProvenance(provenance))
+
+        return trc
+
+    finally:
+        reset_tracectx(tracectx_tok)
+
+
+# WIP -- This will apply the grad transform to forward and create the appropriate grad backward
+def pytorch_grad_transform(trc: Trace) -> Trace:
+    remap = ProxyDict()
+
+    def try_remap(x):
+        if not isinstance(x, Proxy):
+            return x
+
+        return remap.get(x, x)
+
+    def update_remap(old, new):
+        for a, b in zip(old, new):
+            if not isinstance(a, Proxy):
+                continue
+
+            remap[a] = b
+
+    # NOTE A simple identity visitor which reproduces the original trace
+    #   This just demonstrates the visitor pattern for the moment
+    def visit(bsym: BoundSymbolInterface) -> None:
+        sym = bsym.sym
+
+        remapped_args = tree_map(try_remap, bsym.args)
+        remapped_kwargs = tree_map(try_remap, bsym.kwargs)
+
+        result = sym(*remapped_args, **remapped_kwargs)
+
+        flat_outs, _ = tree_flatten(bsym.output)
+        flat_results, _ = tree_flatten(result)
+        update_remap(flat_outs, flat_results)
+
+    ntrc = transform_inline_visitor(
+        trace_from=trc,
+        provenance="Forward Grad Transform",
+        visit=visit,
+    )
+
+    return ntrc
 
 
 class Transforms(Enum):

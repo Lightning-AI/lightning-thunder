@@ -2729,7 +2729,7 @@ def permute_error_generator(op, device, dtype=torch.float32, **kwargs):
     yield (
         SampleInput(t, (0, 1)),
         RuntimeError,
-        r"Expected the length \(2\) of the permutation(.*?) to be the number of dimensions \(3\)"
+        r"Expected the length \(2\) of the permutation(.*?) to be the number of dimensions \(3\)",
     )
 
 
@@ -3635,7 +3635,7 @@ def scaled_dot_product_attention_error_generator(op, device, **kwargs):
     yield (
         SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=True),
         ValueError,
-        "Explicit attn_mask should not be set when is_causal=True"
+        "Explicit attn_mask should not be set when is_causal=True",
     )
 
 

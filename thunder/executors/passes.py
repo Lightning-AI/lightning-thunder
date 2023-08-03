@@ -97,7 +97,7 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     flat_outs, _ = tree_flatten(outs)
 
     # TODO Replace with ProxySet (which does not exist at the time of this writing)
-    handled = ProxyDict(trace)
+    handled = ProxyDict()
     for out in flat_outs:
         if isinstance(out, Proxy):
             handled[out] = None

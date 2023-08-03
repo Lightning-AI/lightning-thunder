@@ -826,8 +826,7 @@ def get_name(trace: TraceCtx, x: Any) -> str:
 #   ProxyDict changes the hashing behavior of proxies to hash using their name,
 #   which preserves type and history since names are unique.
 class ProxyDict:
-    def __init__(self, trace: TraceCtx):
-        self._trace = trace
+    def __init__(self):
         self._dict = {}
 
     def __setitem__(self, key: Proxy, val: Any):
@@ -874,7 +873,7 @@ class ProxyDict:
 
 # Returns a proxy -> producer mapping
 def producers(trace: TraceCtx) -> ProxyDict:
-    producers = ProxyDict(trace)
+    producers = ProxyDict()
 
     # Skips symbols that never produce anything
     skip = {
@@ -902,7 +901,7 @@ def producers(trace: TraceCtx) -> ProxyDict:
 
 
 def consumers(trace: TraceCtx) -> ProxyDict:
-    consumers = ProxyDict(trace)
+    consumers = ProxyDict()
 
     # Skips symbols that never consume anything
     skip = {
