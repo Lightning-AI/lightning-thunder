@@ -1691,6 +1691,14 @@ def softmax(a, dim, dtype=None):
     return converted
 
 
+# id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
+@torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
+def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:
+    utils.check(not inplace, lambda: f"relu only supports inplace=False", exception_type=NotImplementedError)
+
+    return where(a > 0, a, 0)
+
+
 @torchsymbol(torch.outer)
 def outer(a, b):
     utils.check(a.ndim == 1, lambda: f"Expected {a.ndim=} to be one")

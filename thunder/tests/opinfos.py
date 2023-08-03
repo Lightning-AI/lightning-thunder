@@ -1355,6 +1355,41 @@ reciprocal_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(reciprocal_opinfo)
 
+
+def relu_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (
+        SampleInput(a, inplace=True),
+        NotImplementedError,
+        "relu only supports inplace=False"
+    )
+
+
+relu_opinfo = OpInfo(
+    ltorch.relu,
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=relu_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.relu),
+    test_directives=(
+        # PyTorch does not support bool and complex types
+        # for both the CPU and CUDA relu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8, datatypes.complexfloating),
+        ),
+        # PyTorch does not support CPU Half relu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(relu_opinfo)
+
+
 round_opinfo = OpInfo(
     clang.round,
     dtypes=(datatypes.floating, datatypes.exact),
