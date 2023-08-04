@@ -1,3 +1,4 @@
+import copy
 import difflib
 import dis
 import io
@@ -6,11 +7,11 @@ import itertools
 import re
 import sys
 import textwrap
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional
 from collections.abc import Iterator
 
 import thunder.core.script.frontend as frontend
-from thunder.core.script.protograph import ProtoGraph
+import thunder.core.script.protograph as protograph
 from thunder.core.script.protograph_passes import apply_protograph_passes
 import thunder.core.script.python_ir_data as python_ir_data
 from thunder.core.utils import enable_debug_asserts
@@ -722,7 +723,9 @@ def try_except_finally(f, log):
         f.close()
 
 
-def assert_parse_matches_spec(proto_graph: ProtoGraph, expected: PARSE_SPECIFICATION) -> None:
+def assert_parse_matches_spec(
+    proto_graph: protograph.ProtoGraph, expected: PARSE_SPECIFICATION
+) -> None:
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
     assert len(tuple(proto_graph)) == len(block_to_index)
     assert len(block_to_index) == len(expected)
@@ -738,7 +741,7 @@ def assert_parse_matches_spec(proto_graph: ProtoGraph, expected: PARSE_SPECIFICA
         )
 
 
-def suggest_parse_spec(proto_graph: ProtoGraph):
+def suggest_parse_spec(proto_graph: protograph.ProtoGraph):
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
 
     lines = []
@@ -972,3 +975,67 @@ def test_parse(fn, parse_spec: Optional[str], flow_spec: Optional[str]):
     assert_parse_matches_spec(frontend.parse_bytecode(fn), extract_parse_spec(expected_blocks))
     if observed_flow is not None:
         assert_flow_matches_spec(observed_flow, tuple(extract_flow_spec(flow_spec)))
+
+
+def test_abstract_value():
+    x = protograph._AbstractValue()
+    assert x == x
+    assert x in {x}
+    with pytest.raises(NotImplementedError):
+        copy.copy(x)
+
+    y = protograph._AbstractValue()
+    assert x != y
+    assert x not in {y}
+    assert x in {x, y}
+    assert len({x, y}) == 2
+
+    assert x.substitute({x: y}) == y
+
+
+def test_value_missing():
+    x = protograph.ValueMissing()
+    assert x == protograph.ValueMissing()
+    assert x in {protograph.ValueMissing()}
+
+    # Sanity check that it doesn't always compare equal
+    assert x != protograph._AbstractValue()
+    assert x != protograph.AbstractValue()
+
+
+def test_external_ref():
+    key = protograph.VariableKey("self", python_ir_data.VariableScope.LOCAL)
+    x = protograph.ExternalRef(key)
+    y = protograph.ExternalRef(key)
+
+    assert x == y
+    assert x in {y}
+
+
+def test_abstract_phivalue():
+    x = protograph.AbstractValue()
+    y = protograph.AbstractValue()
+    xy = protograph.AbstractPhiValue((x, y))
+
+    # Deduplicate.
+    assert len(xy.constituents) == 2
+    assert protograph.AbstractPhiValue((x, x, y)) == xy
+
+    # Flatten.
+    assert xy == protograph.AbstractPhiValue((x, protograph.AbstractPhiValue((x, y))))
+
+    # Replace constituents.
+    x_prime = protograph.IntermediateValue()
+    y_prime = protograph.IntermediateValue()
+    xy_prime = xy.substitute({x: x_prime, y: y_prime})
+    assert xy_prime == protograph.AbstractPhiValue((x_prime, y_prime))
+
+    # Direct replacement takes precidence.
+    z = protograph.IntermediateValue()
+    assert xy.substitute({x: x_prime, y: y_prime, xy: z}) is z
+
+    # Direct replacements still need to propagate.
+    a = protograph.IntermediateValue()
+    b = protograph.IntermediateValue()
+    ab = protograph.AbstractPhiValue((a, b))
+    assert xy.substitute({xy: xy_prime, x_prime: a, y_prime: b}) == ab

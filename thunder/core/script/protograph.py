@@ -4,7 +4,7 @@ import dis
 import itertools
 import marshal
 from types import CodeType
-from typing import Any, Deque, Literal, Optional, NamedTuple
+from typing import final, Any, Deque, Literal, Optional, NamedTuple
 from collections.abc import Iterable, Iterator
 
 import networkx as nx
@@ -28,6 +28,7 @@ JumpTarget = tuple["ProtoBlock", bool]
 _AbstractValues = tuple["_AbstractValue", ...]
 NodeFlow = tuple[dis.Instruction, _AbstractValues, _AbstractValues]
 EdgeIndex = Literal[0, -1]
+ReplaceMap = dict["_AbstractValue", "_AbstractValue"]
 
 
 class VariableKey(NamedTuple):
@@ -58,6 +59,24 @@ class VariableKey(NamedTuple):
 
 class _AbstractValue:
     """Represents a value during instruction parsing. (Prior to type binding.)"""
+
+    def __copy__(self) -> "_AbstractValue":
+        raise NotImplementedError
+
+    @final
+    def substitute(self, replace_map: ReplaceMap) -> "_AbstractValue":
+        """Find the replacement for `self`, and recursively substitute. (If applicable.)
+
+        Some abstract values reference other abstract values. When we make substitution during
+        graph transformations it is necessary to also consider replacement of an abstract
+        value's constituents. Any subclass which must be unpacked in this manner should
+        override `_unpack_apply`.
+        """
+        return replace_map.get(self, self)._unpack_apply(replace_map)
+
+    def _unpack_apply(self, _: ReplaceMap) -> "_AbstractValue":
+        """Recursively update any constituent references in the abstract value."""
+        return self
 
 
 class AbstractValue(_AbstractValue):
@@ -241,11 +260,11 @@ class ProtoBlock(InstrumentingBase):
     def transform(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> "ProtoBlock":
         """Create a copy of `self` but allow values to be substituted."""
 
-        def make_replacement(values):
+        def make_replacement(values: Iterable[_AbstractValue]):
             cls = values.__class__
             assert cls in (list, tuple, collections.deque)
             assert all(isinstance(i, _AbstractValue) for i in values)
-            return cls((replace_map.get(i, i) for i in values))
+            return cls((i.substitute(replace_map) for i in values))
 
         pop, push = self.stack_effect
         node_flow = tuple(
@@ -260,7 +279,7 @@ class ProtoBlock(InstrumentingBase):
             variables={k: make_replacement(v) for k, v in self.variables.items()},
             node_flow=node_flow,
         )
-        transformed.uses.update(replace_map.get(i, i) for i in self.uses)
+        transformed.uses.update(self.uses)
 
         # NOTE: The caller will need to repopulate `transformed.jump_targets`
         return transformed
@@ -375,7 +394,7 @@ class IntermediateValue(AbstractValue):
     pass
 
 
-@dataclasses.dataclass(frozen=True, eq=False)
+@dataclasses.dataclass(frozen=True, eq=True)
 class ExternalRef(AbstractValue):
     """Reference values outside of the parsed code. (Arguments, constants, globals, etc.)"""
 
@@ -398,6 +417,10 @@ class AbstractPhiValue(AbstractValue):
         # Ensure a consistent order.
         constituents = tuple(v for _, v in sorted({id(v): v for v in constituents}.items()))
         object.__setattr__(self, "constituents", constituents)
+
+    def _unpack_apply(self, replace_map: ReplaceMap) -> "AbstractValue":
+        result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))
+        return result if len(result.constituents) > 1 else result.constituents[0]
 
     @classmethod
     def flatten(cls, v: AbstractValue):

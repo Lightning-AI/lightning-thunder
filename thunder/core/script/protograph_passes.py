@@ -216,8 +216,9 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
             assert not isinstance(v, _AbstractRef), f"Unhandled reference: {idx} {v}"
             continue
 
-        new_values = tuple(OrderedSet(values[idy] for idy in sorted(source_indices)))
-        replace_map[v] = AbstractPhiValue(new_values) if len(new_values) > 1 else new_values[0]
+        # `AbstractPhiValue._unpack_apply` will determine if it is needed after deduplication.
+        candidate_constituents = tuple(values[idy] for idy in sorted(source_indices))
+        replace_map[v] = AbstractPhiValue(candidate_constituents).substitute({})
 
     return proto_graph.transform(replace_map), any(v != {k} for k, v in index_alias_map.items())
 
