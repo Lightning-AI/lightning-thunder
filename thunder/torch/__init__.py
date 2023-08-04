@@ -134,7 +134,7 @@ def tensorproxy(name: Optional[str], t: torch.Tensor) -> TensorProxy:
     dtype = to_thunder_dtype(t.dtype)
 
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-    return TensorProxy(name, shape=tuple(t.shape), device=device, dtype=dtype)
+    return TensorProxy(name, shape=tuple(t.shape), device=device, dtype=dtype, requires_grad=t.requires_grad)
 
 
 # Convers from a torch device, or a string representing such a device, to a Thunder device
@@ -1742,7 +1742,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
 # See https://github.com/Lightning-AI/lightning-thunder/issues/660
 @torchsymbol("cross_entropy_backward", id="cross_entropy_backward", is_prim=True)
 def cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing):
-    return TensorProxy(shape=input.shape, device=g.device, dtype=g.dtype)
+    return TensorProxy(like=g, shape=input.shape)
 
 
 # TODO Add type annotations, change the name "input" to "a", require "a" be specified positionally

@@ -105,7 +105,7 @@ def tensorproxy(name: str, a: np.ndarray) -> TensorProxy:
     device = devices.cpu
     dtype = numpy_to_thunder_dtype(a.dtype)
 
-    p = TensorProxy(name, shape=a.shape, device=device, dtype=dtype)
+    p = TensorProxy(name, shape=a.shape, device=device, dtype=dtype, requires_grad=False)
 
     tracectx = get_tracectx()
     tracectx.post_unpack(lambda: prims.numpy_array_to_torch_tensor(p))

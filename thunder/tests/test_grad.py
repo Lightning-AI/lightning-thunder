@@ -437,6 +437,49 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
         torch.testing.assert_close(actual_out, out)
 
 
+# TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad
+#   and have their autograd functions set properly
+# Tests that we track the requires_grad property properly
+@instantiate(dtypes=(dtypes.float32,))
+def test_requires_grad(executor, device, dtype):
+    import thunder.torch as ltorch
+
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=False)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=False)
+
+    ag = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=True)
+
+    def foo(a, b):
+        c = a + b
+        return c.requires_grad
+
+    cfoo = executor.make_callable(foo)
+
+    # Tests that when neither inputs requires grad, the result of the addition doesn't, either
+    result = cfoo(a, b)
+    assert result is False
+
+    # Tests that when one input requires grad, the result of the addition requires grad, too
+    result = cfoo(ag, b)
+    assert result is True
+
+    def bar(a, b):
+        c = ltorch.cat((a, b))
+        return c.requires_grad
+
+    cbar = executor.make_callable(bar)
+
+    # Tests that when neither inputs requires grad, the result of the cat doesn't, either
+    result = cbar(a, b)
+    assert result is False
+
+    # Tests that when one input requires grad, the result of the cat requires grad, too
+    result = cbar(ag, b)
+    assert result is True
+
+
 @instantiate(
     dtypes=NOTHING,
 )

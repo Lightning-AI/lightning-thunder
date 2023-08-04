@@ -514,21 +514,26 @@ def _infer_tensor_properties(
     shape: Optional[ShapeLike] = None,
     device: Optional[devices.Device] = None,
     dtype: Optional[dtypes.dtype] = None,
+    requires_grad: Optional[bool] = None,
 ):
     _shape = None
     _device = None
     _dtype = None
+    _requires_grad: None | bool = None
 
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
         _shape = tuple(like.shape)
         _device = like.device
         _dtype = like.true_dtype
+        _requires_grad = like.requires_grad
 
     _shape = shape if shape is not None else _shape
     _device = device if device is not None else _device
     _dtype = dtype if dtype is not None else _dtype
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
+    _requires_grad = requires_grad if requires_grad is not None else _requires_grad
+    _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
 
     # Computes derived properties
     _numel = reduce(operator.mul, _shape, 1)
@@ -540,13 +545,14 @@ def _infer_tensor_properties(
     baseutils.check_valid_shape(_shape)
     baseutils.check_type(_device, devices.Device)
     baseutils.check_type(_dtype, dtypes.dtype)
+    baseutils.check_type(_requires_grad, bool)
 
     # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
     #   the true_dtype property
     _true_dtype = _dtype
     _dtype = dtypes.to_strong_dtype(_dtype)
 
-    return _shape, _device, _dtype, _true_dtype, _numel, _ndim
+    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
@@ -562,8 +568,21 @@ class FutureTensorProxy(Proxy):
     ):
         super().__init__(name)
 
-        self._shape, self._device, self._dtype, self.true_dtype, self.numel, self.ndim = _infer_tensor_properties(
-            like, shape, device, dtype
+        # NOTE FutureTensorProxies never require grad
+        (
+            self._shape,
+            self._device,
+            self._dtype,
+            self.true_dtype,
+            self.numel,
+            self.ndim,
+            self._requires_grad,
+        ) = _infer_tensor_properties(
+            like,
+            shape,
+            device,
+            dtype,
+            False,
         )
 
     @property
@@ -577,6 +596,10 @@ class FutureTensorProxy(Proxy):
     @property
     def dtype(self):
         return self._dtype
+
+    @property
+    def requires_grad(self):
+        return self._requires_grad
 
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
@@ -597,12 +620,19 @@ class TensorProxy(Proxy, TensorProxyInterface):
         shape: Optional[ShapeLike] = None,
         device: Optional[devices.Device] = None,
         dtype: Optional[dtypes.dtype] = None,
+        requires_grad: Optional[bool] = None,
     ):
         super().__init__(name)
 
-        self._shape, self._device, self._dtype, self.true_dtype, self.numel, self.ndim = _infer_tensor_properties(
-            like, shape, device, dtype
-        )
+        (
+            self._shape,
+            self._device,
+            self._dtype,
+            self.true_dtype,
+            self.numel,
+            self.ndim,
+            self._requires_grad,
+        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad)
 
     @property
     def shape(self):
@@ -616,17 +646,21 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def dtype(self):
         return self._dtype
 
+    @property
+    def requires_grad(self):
+        return self._requires_grad
+
+    @property
+    def size(self):
+        langctx = get_langctx()
+        return langctx.size(self)
+
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
         return TensorProxy(name, like=self)
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
-
-    @property
-    def size(self):
-        langctx = get_langctx()
-        return langctx.size(self)
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr):
@@ -911,12 +945,9 @@ def is_proxyable(x: Any) -> bool:
 def proxy(x: Any, *, name: Optional[str] = None) -> Any:
     langctx = langctx_for(x)
 
-    try:
-        tensor_cls = langctx.tensor_cls
-        if isinstance(x, tensor_cls):
-            return langctx.tensorproxy(name, x)
-    except AttributeError:
-        pass
+    tensor_cls = langctx.tensor_cls
+    if isinstance(x, tensor_cls):
+        return langctx.tensorproxy(name, x)
 
     if isinstance(x, Number):
         if isinstance(x, complex):

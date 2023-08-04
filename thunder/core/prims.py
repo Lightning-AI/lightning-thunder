@@ -1020,15 +1020,16 @@ def _elementwise_binary_meta(
     utils.check_same_device(a, b)
 
     tensor = a if isinstance(a, TensorProxy) else b
+    requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
 
     if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
         # NOTE that this is not just like=tensor, because one tensor could have a weak dtype
         #   and the other a strong dtype, and these are the "same"
-        return TensorProxy(like=tensor, dtype=dtype)
+        return TensorProxy(like=tensor, dtype=dtype, requires_grad=requires_grad)
     if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
-        return TensorProxy(like=tensor, dtype=dtypes.bool8)
+        return TensorProxy(like=tensor, dtype=dtypes.bool8, requires_grad=requires_grad)
     if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT and dtypes.is_complex_dtype(dtype):
-        return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype))
+        return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype), requires_grad=requires_grad)
 
     raise AssertionError(f"Unknown {output_dtype_kind=}")
 
@@ -1237,22 +1238,28 @@ sub = _make_elementwise_binary_prim(
 #
 
 
-# TODO restore type promotion
-# TODO add stride logic
-# TODO revise number handling to account for numbers with unknown values
-# TODO extract some of this logic into helpers
-# TODO use device properly
-def _where_meta(pred, a, b):
+# TODO Restore Number x Number x Number support
+def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> TensorProxy:
     # Checks types
     # NOTE pred must be a bool tensor or bool (this is checked later)
     utils.check_type(pred, (TensorProxy, Number))
     utils.check_type(a, (TensorProxy, Number))
     utils.check_type(b, (TensorProxy, Number))
 
+    if isinstance(pred, Number) and isinstance(a, Number) and isinstance(b, Number):
+        raise NotImplementedError
+
+    # Checks pred dtype (bool or bool tensor)
     if isinstance(pred, Number):
         utils.check(
             pytype(pred) is bool,
             lambda: f"Expected pred to be a boolean number, but found a number of type {pytype(pred)}",
+        )
+
+    if isinstance(pred, TensorProxy):
+        utils.check(
+            pred.dtype is dtypes.bool8,
+            lambda: f"Expected pred to be a tensor with dtype bool, but found dtype {pred.dtype}",
         )
 
     # Checks devices and determines result device
@@ -1262,35 +1269,20 @@ def _where_meta(pred, a, b):
     if len(devices_) > 0:
         resultdevice = devices_[0]
 
-    # Checks pred dtype and determines result dtype
-    if isinstance(pred, TensorProxy):
-        utils.check(
-            pred.dtype is dtypes.bool8,
-            lambda: f"Expected pred to be a tensor with dtype bool, but found dtype {pred.dtype}",
-        )
-
+    # Determines result dtype
     numbertype, tensordtype = utils.check_same_dtype(a, b)
     dtype = tensordtype if tensordtype is not None else numbertype
 
     # Checks shapes
     utils.check_same_shape(pred, a, b)
 
-    # Constructs return meta
-
-    # FIXME
-    # Handles all number cases with custom number handler
-    if isinstance(pred, Number) and isinstance(a, Number) and isinstance(b, Number):
-        raise NotImplementedError
-        # result = a if pred else b
-        # result = resulttype(result)
-        # return proxy(result, name=proxyname)
-
     # Determines output shape
-    # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior shortcircuit
+    # NOTE Assumes at least one of pred, a, and b is a TensorProxy because of prior check for Number x Number x Number
     shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
     resultshape = shapes[0]
 
-    return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
+    requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
+    return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype, requires_grad=requires_grad)
 
 
 where = make_prim(
@@ -1302,7 +1294,7 @@ where = make_prim(
 #
 # Tensor creation prims
 #
-# TODO: add some architecture for constructing tensor creation prims
+# TODO Add some architecture for constructing tensor creation prims
 
 
 def _iota_meta(
@@ -1321,25 +1313,28 @@ def _iota_meta(
 
     shape = () if length == 0 else (length,)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype)
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
 iota = make_prim(PrimIDs.IOTA, "iota", meta=_iota_meta)
 
 
+# TODO Review always setting requires_grad=False
+#   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
+#   extract their grad, but we could support compiling forward and backward and accessing grad attributes
+#   in the future
 def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype):
     # Checks inputs
     utils.check_type(fill_value, Number)
 
     # Ensures the requested fill_value can be safely cast to the dtype
-    # NOTE This is always true if the dtype is inferred
     fill_value_dtype = dtypes.to_dtype(fill_value)
     utils.check(
         utils.can_safe_cast_number_to(fill_value, fill_value_dtype),
         lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}",
     )
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype)
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
 full = make_prim(
@@ -1350,6 +1345,10 @@ full = make_prim(
 
 
 # TODO Should the uniform prim include minval maxval or always be [0, 1)?
+# TODO Review always setting requires_grad=False
+#   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
+#   extract their grad, but we could support compiling forward and backward and accessing grad attributes
+#   in the future
 def _uniform_meta(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
@@ -1359,7 +1358,7 @@ def _uniform_meta(
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype)
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
 uniform = make_prim(
@@ -1444,49 +1443,8 @@ def cat_meta(tensors: list[TensorProxy], dim: int):
             )
         shape[dim] += ai.shape[dim]
 
-    return TensorProxy(like=tensors[0], shape=shape)
-
-
-cat = make_prim(
-    PrimIDs.CAT,
-    "cat",
-    meta=cat_meta,
-)
-
-
-def cat_meta(tensors: list[TensorProxy], dim: int):
-    utils.check(len(tensors) > 0, lambda: "Cat expects a non-empty list of tensors")
-    utils.check_same_device(*tensors)
-    utils.check_same_dtype(*tensors)
-
-    ndim = tensors[0].ndim
-    utils.check(
-        dim >= -ndim and dim < ndim,
-        lambda: f"Expected dimension in inclusive range of {-ndim} and {ndim-1}: got {dim}.",
-        IndexError,
-    )
-
-    dim = utils.canonicalize_dim_idx(ndim, dim)
-
-    shape = [s for s in tensors[0].shape]
-    for i, ai in enumerate(tensors[1:]):
-        utils.check(
-            isinstance(ai, TensorProxy),
-            lambda: f"First argument to cat must be a list of tensors: found type {type(ai)}",
-        )
-        utils.check(
-            ai.ndim == ndim,
-            lambda: f"Attempted to concatenate tensors of different dimension: got {ndim} and {ai.ndim}",
-        )
-        for d, (sd, sad) in enumerate(zip(shape, ai.shape)):
-            utils.check(
-                sd == sad or d == dim,
-                lambda: f"Sizes of tensors must match except in dimension {dim}. "
-                f"Expected size {sd} but got size {sad} for tensor number {i+1} in the list.",
-            )
-        shape[dim] += ai.shape[dim]
-
-    return TensorProxy(like=tensors[0], shape=shape)
+    requires_grad = any(list([t.requires_grad for t in tensors]))
+    return TensorProxy(like=tensors[0], shape=shape, requires_grad=requires_grad)
 
 
 cat = make_prim(
@@ -1839,7 +1797,7 @@ var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta)
 
 
 # out = a @ w.transpose() + bias
-def linear_meta(a, w, bias):
+def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> TensorProxy:
     # a's shape is (batch dims..., in)
     # w's shape is (out x in)
     # if bias is not None, bias's shape is (out)
@@ -1895,7 +1853,8 @@ def linear_meta(a, w, bias):
 
     out_shape = batch_dims + (out_length,)
 
-    return TensorProxy(shape=out_shape, device=a.device, dtype=dtype)
+    requires_grad = any((a.requires_grad, w.requires_grad, False if bias is None else bias.requires_grad))
+    return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
 
 
 linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta)
@@ -1982,11 +1941,13 @@ def embedding_meta(a, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, s
 embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
 
 
-# TODO: Once we have fusable index_put we can implement it using primitives
+# TODO Add annotations
+# TODO Review requires_grad=False -- what about double backward?
+# TODO Once we have fusible index_put we can implement it using primitives
 # For now we just use the PyTorch implementation
 def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
     shape = (num_weights, grad.shape[-1])
-    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype)
+    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype, requires_grad=False)
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)

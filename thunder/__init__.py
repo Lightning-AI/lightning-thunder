@@ -277,7 +277,7 @@ class CACHE_MODES(Enum):
 
 def _make_subkey_for(x: Any) -> Any:
     if isinstance(x, pytorch.Tensor):
-        return (pytorch.Tensor, x.shape, x.device, x.dtype)
+        return (pytorch.Tensor, x.shape, x.device, x.dtype, x.requires_grad)
 
     return type(x), x
 

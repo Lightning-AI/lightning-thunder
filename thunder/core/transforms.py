@@ -575,7 +575,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
     return _vmap_impl
 
 
-def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0):
+def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0) -> TensorProxy:
     """Removes the batch dimension from a tensor.
 
     Args:
@@ -586,7 +586,7 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0):
     """
     trace = get_tracectx()
     new_shape = tensor.shape[:batch_dim] + tensor.shape[batch_dim + 1 :]
-    return TensorProxy(shape=new_shape, dtype=tensor.dtype, device=tensor.device)
+    return TensorProxy(like=tensor, shape=new_shape)
 
 
 # TODO: in JAX args, in_dims are flattened the same way

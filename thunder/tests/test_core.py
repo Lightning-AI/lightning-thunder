@@ -1453,7 +1453,13 @@ def test_trace_args_no_name_collision(executor, device, _):
     from thunder.core.proxies import TensorProxy
 
     with detached_trace():
-        a = TensorProxy(name="__a", shape=(2, 2), device=thunder.core.devices.cpu, dtype=thunder.core.dtypes.float32)
+        a = TensorProxy(
+            name="__a",
+            shape=(2, 2),
+            device=thunder.core.devices.cpu,
+            dtype=thunder.core.dtypes.float32,
+            requires_grad=False,
+        )
 
     def func(*args):
         return args[0] + args[1]
