@@ -2,7 +2,7 @@ import collections
 import dataclasses
 import functools
 import itertools
-from typing import Callable
+from typing import Callable, Iterable
 
 import networkx as nx
 
@@ -19,13 +19,15 @@ from thunder.core.script.protograph import (
 from thunder.core.script.python_ir_data import VariableScope, RAISE_RETURN_INSTRUCTIONS
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
+ValueEdges = Iterable[tuple[_AbstractValue, _AbstractValue]]
+
 
 def check_idempotent(f: Callable[[ProtoGraph], tuple[ProtoGraph, bool]]):
     @functools.wraps(f)
-    def wrapped(protograph: ProtoGraph):
-        protograph, had_effect = f(protograph)
+    def wrapped(protograph: ProtoGraph, *args, **kwargs):
+        protograph, had_effect = f(protograph, *args, **kwargs)
         if debug_asserts_enabled():
-            _, had_effect_on_rerun = f(protograph)
+            _, had_effect_on_rerun = f(protograph, *args, **kwargs)
             assert not had_effect_on_rerun
 
         return protograph, had_effect
@@ -106,25 +108,13 @@ def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     return protograph, bool(missing_transitive)
 
 
-@check_idempotent
-def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
-    """Bind references to more tangible values.
-
-    We make liberal use of `_AbstractRef`s when constructing value flow because
-    it allows us to process locally and defer global analysis. However we need
-    to resolve these references before we can bind our proto-Graph to a fully
-    fledged Graph.
-    """
-    # We only need the block connectivity to pair inputs and outputs. Once that
-    # is done we can operate entirely on the value graph. (And headaches like
-    # `is_jump` or variable scope simply disappear.)
-    G = nx.DiGraph()
+def _inter_block_edges(proto_graph: ProtoGraph) -> ValueEdges:
     for protoblock in proto_graph:
         for child, _ in protoblock.jump_targets:
             outputs = dict(protoblock.variable_state(index=-1))
             child_inputs = dict(child.variable_state(index=0))
             for key, child_input in child_inputs.items():
-                G.add_edge(outputs.get(key, ValueMissing()), child_input)
+                yield outputs.get(key, ValueMissing()), child_input
 
             # `_add_transitive` should ensure the stacks match.
             # (Except for return blocks which may discard the stack.)
@@ -132,19 +122,30 @@ def _condense_values(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
                 s_out, s_in = [ProtoBlock.stack_args(i) for i in (outputs, child_inputs)]
                 assert s_out == s_in, f"{s_out=} != {s_in=}, {child.raw_instructions[-1].opname}"
 
-    # Our goal is to remove `_AbstractValue`s and bind them to `AbstractValue`s.
-    # In most cases that means an earlier value in the graph; however for the
-    # root node those references are truly external. Fortunately it's simple to
-    # replace them: we can simply define an equality relation with a new
-    # `ExternalRef` which will automatically take precidence over the
-    # `_AbstractRef` during the chain folding pass.
+
+def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
     for key, (initial_ref, *_) in proto_graph.root.variables.items():
         if isinstance(initial_ref, ExternalRef):
             continue
 
         assert isinstance(initial_ref, _AbstractRef), initial_ref
         assert key.scope not in (VariableScope.CONST, VariableScope.STACK)
-        G.add_edge(ExternalRef(key), initial_ref)
+        yield ExternalRef(key), initial_ref
+
+
+@check_idempotent
+def _condense_values(
+    proto_graph: ProtoGraph,
+    *edge_sources: Callable[[ProtoGraph], ValueEdges],
+) -> tuple[ProtoGraph, bool]:
+    # We only need the block connectivity to pair inputs and outputs. Once that
+    # is done we can operate entirely on the value graph.
+    G = nx.DiGraph()
+    for source, sink in itertools.chain(*[fn(proto_graph) for fn in edge_sources]):
+        G.add_edge(source, sink)
+        if isinstance(source, AbstractPhiValue):
+            for source_constituent in source.constituents:
+                G.add_edge(source_constituent, source)
     G.remove_edges_from(nx.selfloop_edges(G))
 
     # While not strictly necessary, it's much easier to debug the intermediate
@@ -286,6 +287,6 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
 
 def apply_protograph_passes(protograph: "ProtoGraph") -> "ProtoGraph":
     protograph, _ = _add_transitive(protograph)
-    protograph, _ = _condense_values(protograph)
+    protograph, _ = _condense_values(protograph, _inter_block_edges, _graph_input_edges)
     protograph, _ = _tuple_fold(protograph)
     return protograph
