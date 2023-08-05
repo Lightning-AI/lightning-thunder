@@ -1486,6 +1486,44 @@ class ThunderFunction(torch.autograd.Function):
         return out
 
     @staticmethod
+    def get_forward_backward_splitter(func, compile_config):
+        from thunder import trace
+        from thunder.executors import transform_for_execution
+        from thunder.executors.passes import del_last_used
+        from thunder.core.rematerialization import split_vjp_trace_into_forward_and_backward
+        from thunder.core.transforms import inline, vjp
+
+        def make_trace(func):
+            return partial(trace, func, inline_trace=False)
+
+        def split_forward_backward(*args):
+            # NOTE: This function is rather slow, so it's intended to be used
+            # behind a cache.
+
+            # We need to run the function once to get the outputs that can be
+            # used to construct the backward trace
+            out = func(*args)
+            joint_trace = make_trace(inline(vjp(func)))(args, utils.sequencify(out))
+            extrace, _ = transform_for_execution(
+                joint_trace,
+                executors_list=compile_config.get("executors_list", None),
+                only_execute_prims=compile_config.get("only_execute_prims", False),
+                use_rematerialization=compile_config.get("use_rematerialization", True),
+            )
+            forward_trace, backward_trace = split_vjp_trace_into_forward_and_backward(extrace)
+            # Del calls were ignored in the splitting process, so we need to call it here
+            forward_trace, _ = del_last_used(forward_trace)
+            backward_trace, _ = del_last_used(backward_trace)
+            backward_trace_fn = backward_trace.python_callable()
+
+            def backward_fn(saved_info, *args):
+                return backward_trace_fn(*saved_info, *args)
+
+            return forward_trace.python_callable(), backward_fn
+
+        return split_forward_backward
+
+    @staticmethod
     def thunder_augmented_forward_backward(func, compile_config):
         from thunder import trace as ttrace, compile
 
@@ -1503,15 +1541,29 @@ class ThunderFunction(torch.autograd.Function):
         return augmented_forward
 
     @staticmethod
-    def forward(ctx, compiled_forward, *flat_args):
-        out, saved_info, compiled_backward = compiled_forward(*flat_args)
-        ctx.compiled_backward = compiled_backward
+    def forward(ctx, split_fw_bw, compiled_augmented_forward, *flat_args):
+        # Our splitter doesn't support splitting a single fusion region, so we
+        # try to split the trace into forward and backward passes. If that
+        # fails, we use the fallback path.
+        try:
+            compiled_forward, compiled_backward = split_fw_bw(*flat_args)
+            out, saved_info = compiled_forward(*flat_args)
+            ctx.compiled_backward = compiled_backward
+        except RuntimeError as e:
+            # The fallback path is disabled
+            raise
+            out, saved_info, compiled_backward = compiled_augmented_forward(*flat_args)
+            ctx.compiled_backward = compiled_backward
 
         # We must save tensors using ctx.save_for_backward
-        flat_env, ctx.env_spec = tree_flatten(saved_info)
-        is_tensor = tuple(isinstance(x, torch.Tensor) for x in flat_env)
-        ctx.save_for_backward(*(x for x, is_tensor in zip(flat_env, is_tensor) if is_tensor))
-        ctx.saved_non_tensors = tuple(x for x, is_tensor in zip(flat_env, is_tensor) if not is_tensor)
+        is_tensor = tuple(isinstance(x, torch.Tensor) for x in saved_info)
+        ctx.is_all_tensor = all(is_tensor)
+        if ctx.is_all_tensor:
+            ctx.save_for_backward(*saved_info)
+            return out
+
+        ctx.save_for_backward(*(x for x, is_tensor in zip(saved_info, is_tensor) if is_tensor))
+        ctx.saved_non_tensors = tuple(x for x, is_tensor in zip(saved_info, is_tensor) if not is_tensor)
         ctx.is_tensor = is_tensor
         return out
 
@@ -1519,14 +1571,16 @@ class ThunderFunction(torch.autograd.Function):
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):
         # Restore saved_info from ctx.saved_non_tensors and ctx.saved_tensors
-        saved_tensors = iter(ctx.saved_tensors)
-        saved_non_tensors = iter(ctx.saved_non_tensors)
-        flat_saved_info = tuple(
-            next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
-        )
-        saved_info = tree_unflatten(flat_saved_info, ctx.env_spec)
-        grads = ctx.compiled_backward(saved_info, *args)
-        return (None, *grads)
+        if ctx.is_all_tensor:
+            flat_saved_info = ctx.saved_tensors
+        else:
+            saved_tensors = iter(ctx.saved_tensors)
+            saved_non_tensors = iter(ctx.saved_non_tensors)
+            flat_saved_info = tuple(
+                next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
+            )
+        grads = ctx.compiled_backward(flat_saved_info, *args)
+        return (None, None, *grads)
 
 
 def thunder_backward(**compile_config):
@@ -1574,8 +1628,14 @@ def thunder_backward(**compile_config):
         # It does not work if the same function is compiled many times, so we must
         # decorate the augmented forward pass once with compile once and reuse it
         augmented_forward = ThunderFunction.thunder_augmented_forward_backward(flat_func, compile_config)
-        compiled_forward = compile(
+        compiled_augmented_forward = compile(
             augmented_forward,
+            **compile_config,
+        )
+
+        split_fw_bw = ThunderFunction.get_forward_backward_splitter(flat_func, compile_config)
+        compiled_split_fw_bw = compile(
+            split_fw_bw,
             **compile_config,
         )
 
@@ -1583,7 +1643,7 @@ def thunder_backward(**compile_config):
         def wrapper(*args, **kwargs):
             nonlocal spec
             flat_args, spec = tree_flatten((args, kwargs))
-            return ThunderFunction.apply(compiled_forward, *flat_args)
+            return ThunderFunction.apply(compiled_split_fw_bw, compiled_augmented_forward, *flat_args)
 
         return wrapper
 

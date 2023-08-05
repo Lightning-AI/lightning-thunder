@@ -185,6 +185,21 @@ class Benchmark:
                 use_rematerialization=True,
             )
 
+            # Benchmark forward+backward embedded into PyTorch's Autograd
+            if isinstance(self._fn, torch.nn.Module):
+                compiled_module = thunder.compile(
+                    self._fn,
+                    use_static_caching=True,
+                    use_generated_backward=True,
+                    use_rematerialization=True,
+                )
+
+                return (
+                    name,
+                    make_forward_and_backward_fn(self.postprocess_for_backward, compiled_module),
+                    None,
+                )
+
             if isinstance(cfn, ThunderOptimizedModule):
 
                 def fn_with_param(*args, **kwargs):
