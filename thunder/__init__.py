@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from looseversion import LooseVersion
 
-from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy
+from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy
 from thunder.core.trace import (
     TraceCtx,
     from_trace,
@@ -684,9 +684,14 @@ def compile(
 class LCFunction(pytorch.autograd.Function):
     # TODO Test swapping order of tensors, tensors that require grad in keywords
     @staticmethod
-    def forward(_: pytorch.Tensor, ctx, fn, compiledata: CompileData, args_and_kwargs: tuple[Any, Any]) -> Any:
+    def forward(
+        ctx: pytorch.autograd.function.FunctionCtx,
+        _: pytorch.Tensor,
+        fn,
+        compiledata: CompileData,
+        args_and_kwargs: tuple[Any, Any],
+    ) -> Any:
         args, kwargs = args_and_kwargs
-        print(f"LCFunction forward() called")
 
         # TODO Add caching (inputs -> forward callable, backward compiled object)
         # TODO Add module support
@@ -722,8 +727,25 @@ class LCFunction(pytorch.autograd.Function):
         # TODO Save necessary tensors for backward
         # ctx.save_for_backward(())
 
-        print(f"LCFunction forward() {result=}")
-        return result
+        # Returns tensors requiring grad separately from the other results
+        # NOTE GRAD OUTS
+        #   This is done because returning tensors in collections -- like ((c, d),) -- will not properly
+        #   set the tensors c and d as requiring grad. For this case, this logic will alter the function's
+        #   return to be ((c, d),), c, d, and then the wrapper that calls the function will ignore the
+        #   c and d results.
+        #   Note further that we have to inspect the proxy's requires_grad property to know if grad
+        #   should be set on the tensor.
+        result_and_grad_outs = [result]
+        flat_results, _ = tree_flatten(result)
+        flat_proxy_results = trc.bound_symbols[-1]._flat_outs
+        for x, p in zip(flat_results, flat_proxy_results):
+            if isinstance(x, pytorch.Tensor):
+                if p.requires_grad:
+                    result_and_grad_outs.append(x)
+                else:
+                    ctx.mark_non_differentiable(x)
+
+        return tuple(result_and_grad_outs)
 
     # TODO Test double backwards
     # NOTE When a function produces multiple outputs requiring grad, the gradient of inputs w.r.t. every output
@@ -740,10 +762,6 @@ class LCFunction(pytorch.autograd.Function):
     #   they are not.
     @staticmethod
     def backward(ctx, *args):
-        print(f"LCFunction backward {args=}")
-        a, b = args
-        print(f"{a._is_zerotensor()=}")
-        print(f"{b._is_zerotensor()=}")
         raise NotImplementedError
 
 
@@ -792,8 +810,9 @@ def compile_torch(
         #   autograd history.
         # NOTE Another option would be to flatten and unflatten the args and kwargs, but that can be
         #   slow.
+        # NOTE See the GRAD OUTS note above
         result = LCFunction.apply(_dummy, fn, cd, (args, kwargs))
-        return result
+        return result[0]
 
     wrapper._lc_cd = cd
 
