@@ -723,9 +723,7 @@ def try_except_finally(f, log):
         f.close()
 
 
-def assert_parse_matches_spec(
-    proto_graph: protograph.ProtoGraph, expected: PARSE_SPECIFICATION
-) -> None:
+def assert_parse_matches_spec(proto_graph: protograph.ProtoGraph, expected: PARSE_SPECIFICATION) -> None:
     block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
     assert len(tuple(proto_graph)) == len(block_to_index)
     assert len(block_to_index) == len(expected)

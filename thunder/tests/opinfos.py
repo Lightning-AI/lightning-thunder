@@ -3336,6 +3336,29 @@ arange_opinfo = OpInfo(
 tensor_creation_ops.append(arange_opinfo)
 
 
+def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    cases = (
+        # (),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
+        (1,),
+        (4, 4),
+        # (2, 0, 3),  # FIXME: nvFuser does not yet support shapes with 0-sized dimensions
+        (8, 1, 6),
+        (8, 7, 5, 1),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+# TODO Think of how to test empty (the tensor values cannot be compared as close -- maybe pass custom comparator?)
+# empty_opinfo = OpInfo(
+#     ltorch.empty,
+#     sample_input_generator=empty_sample_generator,
+#     torch_reference=torch.zeros,
+# )
+# tensor_creation_ops.append(empty_opinfo)
+
+
 def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_fv = partial(make_number, dtype=dtype)
 
@@ -3383,33 +3406,11 @@ full_like_opinfo = OpInfo(
 tensor_creation_ops.append(full_like_opinfo)
 
 
-def ones_sample_generator(op, device, dtype, requires_grad, **kwargs):
+def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
-        (()),
-        ((4, 4)),
-        ((8, 1, 6)),
-        ((8, 7, 5, 1)),
-    )
-
-    for shape in cases:
-        yield SampleInput(shape, device=device, dtype=dtype)
-
-
-ones_opinfo = OpInfo(
-    ltorch.ones,
-    sample_input_generator=ones_sample_generator,
-    torch_reference=torch.ones,
-)
-tensor_creation_ops.append(ones_opinfo)
-
-
-def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    cases = (
-        # (),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
-        (1,),
+        (),
         (4, 4),
-        # (2, 0, 3),  # FIXME: nvFuser does not yet support shapes with 0-sized dimensions
         (8, 1, 6),
         (8, 7, 5, 1),
     )
@@ -3418,12 +3419,35 @@ def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(shape, device=device, dtype=dtype)
 
 
-# empty_opinfo = OpInfo(
-#     ltorch.empty,
-#     sample_input_generator=empty_sample_generator,
-#     torch_reference=torch.zeros,
-# )
-# tensor_creation_ops.append(empty_opinfo)
+# TODO Test overriding the "like" values, like by setting a different requires grad
+#   This would probably require the "no dtype" and "no device" opinfo sample generator cases
+def fixed_value_like_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # shape
+    cases = (
+        (),
+        (4, 4),
+        (8, 1, 6),
+        (8, 7, 5, 1),
+    )
+
+    for shape in cases:
+        a = make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad)
+        yield SampleInput(a)
+
+
+ones_opinfo = OpInfo(
+    ltorch.ones,
+    sample_input_generator=fixed_value_tensor_creation_op_sample_generator,
+    torch_reference=torch.ones,
+)
+tensor_creation_ops.append(ones_opinfo)
+
+zeros_like_opinfo = OpInfo(
+    ltorch.zeros_like,
+    sample_input_generator=fixed_value_like_tensor_creation_op_sample_generator,
+    torch_reference=torch.zeros_like,
+)
+tensor_creation_ops.append(zeros_like_opinfo)
 
 
 opinfos.extend(tensor_creation_ops)

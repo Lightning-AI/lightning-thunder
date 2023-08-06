@@ -332,7 +332,7 @@ def test_split_trace_of_inline_vjp(executor, device, _):
             inline(vjp(func)),
             use_rematerialization=True,
             disable_preprocessing=True,
-            executors_list=executor.executors_list()
+            executors_list=executor.executors_list(),
         )
         (result, grads) = func_compiled(primals, cotangents)
         traces = thunder.last_traces(func_compiled)

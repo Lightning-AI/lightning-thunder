@@ -675,11 +675,18 @@ def compile(
 
 
 # WIP Autograd function implementation to support compile_torch experimentation
+# TODO Tensors returned within collections -- like with return ((c, d),) -- will not requires_grad
+#   when using autograd.Function -- probably need to return those tensors directly and then just not pass them
+#   on from the wrapper
+# TODO Look at constructing this class using a metaclass that can:
+#   - set the name of this class to something like "{fn.__name__}" so the backward
+#       of everything isn't "LCFunctionBackward"
 class LCFunction(pytorch.autograd.Function):
     # TODO Test swapping order of tensors, tensors that require grad in keywords
     @staticmethod
-    def forward(ctx, fn, compiledata: CompileData, spec, *flats):
-        args, kwargs = tree_unflatten(flats, spec)
+    def forward(_: pytorch.Tensor, ctx, fn, compiledata: CompileData, args_and_kwargs: tuple[Any, Any]) -> Any:
+        args, kwargs = args_and_kwargs
+        print(f"LCFunction forward() called")
 
         # TODO Add caching (inputs -> forward callable, backward compiled object)
         # TODO Add module support
@@ -692,8 +699,9 @@ class LCFunction(pytorch.autograd.Function):
 
         # TODO Support cudagraphs
         # TODO Support rematerialization
+        # TODO Actually execute the grad_forward, not the original trc
         result, c, extraces = execute_trace(
-            grad_forward,
+            trc,
             args=args,
             kwargs=kwargs,
             executors_list=compiledata.executors_list,
@@ -708,13 +716,34 @@ class LCFunction(pytorch.autograd.Function):
         compiledata.last_traces = traces
         compiledata.last_executed = c
 
-        # TODO Update cache
+        # TODO Update cache (maps input -> (forward callable, compiled backward function))
+        # TODO Update ctx with backward function
 
+        # TODO Save necessary tensors for backward
+        # ctx.save_for_backward(())
+
+        print(f"LCFunction forward() {result=}")
         return result
 
     # TODO Test double backwards
+    # NOTE When a function produces multiple outputs requiring grad, the gradient of inputs w.r.t. every output
+    #   does not always need to be computed. For example, let's say that a function produces tensors a, b, and c,
+    #   and a practitioner calls a.backward(), or .backward() on a later tensor that is derived exclusively from
+    #   a. In this case the gradient of the inputs is only computed w.r.t. the computation for a. PyTorch models
+    #   this by passing tensors of zeros for each output not involved in the computation.
+    #   In this example, the input would be grad_a, zeros_like(b), zeros_like(c).
+    #   In these cases, then, excessive computation on the zero tensors may be performed.
+    # TODO Consider checking for these cases, or requesting PyTorch provide a quick way to check if the tensors
+    #   are just zero tensors (like by passing None instead of zero tensors). Maybe PyTorch does have SOME
+    #   way of detecting this, and I (mruberry) am just ignorant of it.
+    #   One natural thing would be for these tensors to be "zerotensors" (a PyTorch implementation detail) but
+    #   they are not.
     @staticmethod
     def backward(ctx, *args):
+        print(f"LCFunction backward {args=}")
+        a, b = args
+        print(f"{a._is_zerotensor()=}")
+        print(f"{b._is_zerotensor()=}")
         raise NotImplementedError
 
 
@@ -750,11 +779,21 @@ def compile_torch(
         use_generated_backward=use_generated_backward,
     )
 
+    # TODO Is there a better way to do this? Seems like a minimal cost, but maybe it can be done better.
+    _dummy = pytorch.tensor((), device="cpu", dtype=pytorch.float32, requires_grad=True)
+
     @wraps(fn)
     def wrapper(*args, **kwargs):
         # NOTE pytorch.autograd.Function.apply() does not accept keyword arguments
-        flats, spec = tree_flatten((args, kwargs))
-        return LCFunction.apply(fn, cd, spec, *flats)
+        # NOTE This call to apply() packs the args and kwargs in a tuple.
+        #   This would typically prevent autograd.Function.apply() from marking inexact tensor
+        #   outputs as requiring grad, so this passes a "dummy" tensor that requires_grad to let
+        #   apply() know to mark inexact tensor outputs as requiring grad (and having the correct)
+        #   autograd history.
+        # NOTE Another option would be to flatten and unflatten the args and kwargs, but that can be
+        #   slow.
+        result = LCFunction.apply(_dummy, fn, cd, (args, kwargs))
+        return result
 
     wrapper._lc_cd = cd
 

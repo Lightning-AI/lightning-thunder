@@ -53,6 +53,7 @@ class PrimIDs(Enum):
     DEVICE_PUT = auto()
     NUMPY_ARRAY_TO_TORCH_TENSOR = auto()
     # Tensor creation prims
+    EXOGENOUS_LIKE = auto()
     FULL = auto()
     IOTA = auto()
     UNIFORM = auto()
@@ -1297,26 +1298,35 @@ where = make_prim(
 # TODO Add some architecture for constructing tensor creation prims
 
 
-def _iota_meta(
-    length: Number, *, start: Number, step: Number, device: devices.Device, dtype: dtypes.dtype
-) -> TensorProxy:
-    # Checks types
-    # NOTE that device and dtype types will be checked by TensorProxy, below
-    utils.check_type(length, Number)
-    utils.check_type(start, Number)
-    utils.check_type(step, Number)
+# NOTE exogenous_like is an "intermediate" primitive intended to exist only while modifying or optimizing a
+#   program. Its first intended use was to construct separate forward -> backward traces suitable
+#   for use with PyTorch's autograd. The grad values in these traces are introduced as
+#   "exogenous" values, and then later transforms remove the "exogenous" introductions and
+#   separate each trace into its own function.
+#   Because exogenous_like takes all outputs requiring grad as inputs and produces the grad representatives,
+#   it cannot be reordered to locations where the trace could not be split between forward and backward.
+# NOTE Why not just insert zeros_like calls into the trace?
+#   This is a reasonable option as of this writing, but there are two issues with this:
+#   1) Clarity. A developer would have to know these zeros_like calls were intended to model the
+#       introduction of exogenous values, and practitioners would have to understand that while reviewing
+#       traces. One option to improve that clarity would be to augment bound symbols with more comments
+#       about their derivation.
+#   2) Preventing optimizations. We don't want executors to try and fuse exogenous values, and we don't
+#       want to optimize traces by assuming their values (for example, we might in the future add special
+#       logic to optimize zerotensors).
+#   3) The way the zeros_like calls get flattened could break it apart, but we want this primitive to atomically
+#       produce multiple grads from multiple inputs.
+def _exogenous_like_meta(likes: Sequence[TensorProxy], /) -> tuple[TensorProxy]:
+    # NOTE Inputs are validated by the TensorProxy constructor
 
-    # Checks input properties
-    utils.check(utils.is_exact_dtype(dtype), lambda: f"dtype={dtype} was not an exact dtype")
-    utils.check(not utils.is_boolean_dtype(dtype), lambda: f"dtype={dtype} was not a non-boolean dtype")
-    utils.check(length >= 0, lambda: f"length={length} was not weakly positive")
-
-    shape = () if length == 0 else (length,)
-
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return tuple([TensorProxy(like=x) for x in likes])
 
 
-iota = make_prim(PrimIDs.IOTA, "iota", meta=_iota_meta)
+exogenous_like = make_prim(
+    PrimIDs.EXOGENOUS_LIKE,
+    "exogenous_like",
+    meta=_exogenous_like_meta,
+)
 
 
 # TODO Review always setting requires_grad=False
@@ -1342,6 +1352,28 @@ full = make_prim(
     "full",
     meta=_full_meta,
 )
+
+
+def _iota_meta(
+    length: Number, *, start: Number, step: Number, device: devices.Device, dtype: dtypes.dtype
+) -> TensorProxy:
+    # Checks types
+    # NOTE that device and dtype types will be checked by TensorProxy, below
+    utils.check_type(length, Number)
+    utils.check_type(start, Number)
+    utils.check_type(step, Number)
+
+    # Checks input properties
+    utils.check(utils.is_exact_dtype(dtype), lambda: f"dtype={dtype} was not an exact dtype")
+    utils.check(not utils.is_boolean_dtype(dtype), lambda: f"dtype={dtype} was not a non-boolean dtype")
+    utils.check(length >= 0, lambda: f"length={length} was not weakly positive")
+
+    shape = () if length == 0 else (length,)
+
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+iota = make_prim(PrimIDs.IOTA, "iota", meta=_iota_meta)
 
 
 # TODO Should the uniform prim include minval maxval or always be [0, 1)?

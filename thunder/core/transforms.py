@@ -14,7 +14,7 @@ from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_de
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbolInterface
-from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
@@ -118,6 +118,25 @@ def pytorch_grad_transform(trc: Trace) -> Trace:
         provenance="Forward Grad Transform",
         visit=visit,
     )
+
+    # TODO Give grads more useful names, like "g0"
+    # TODO Add a comment annotation to this exogenous_like call to explain it models the introduction
+    #   of gradients
+    return_bsym: BoundSymbolInterface = ntrc.bound_symbols.pop(-1)
+    grad_outputs = []
+    for x in return_bsym._flat_args:
+        if not isinstance(x, TensorProxy):
+            continue
+
+        if dtypes.is_exact_dtype(x.dtype):
+            continue
+
+        grad_outputs.append(x)
+
+    with tracectx(ntrc):
+        grads = prims.exogenous_like(grad_outputs)
+
+    # WIP Construct the full forward->backward trace
 
     return ntrc
 

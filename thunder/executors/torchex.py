@@ -136,6 +136,17 @@ def arange(
     return tbsym
 
 
+def _exogenous_like_helper(likes: Sequence[torch.Tensor], /) -> tuple[torch.Tensor, ...]:
+    return tuple([torch.zeros_like(x) for x in likes])
+
+
+def exogenous_like(bsym: BoundSymbol, likes: Sequence[TensorProxy], /) -> BoundSymbol:
+    sym = Symbol(name="exogenous_like", meta=None)
+    ctx: dict[str, Any] = {"exogenous_like": _exogenous_like_helper}
+
+    return sym.bind(likes, output=bsym.output, _call_ctx=ctx)
+
+
 def full(
     bsym: BoundSymbol, shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> BoundSymbol:
@@ -165,7 +176,7 @@ def full_like(
 
 
 # TODO Review whether this helper is required (and if it is, document why better)
-def _iota_helper(length, *, start, step, device, dtype):
+def _iota_helper(length, *, start, step, device, dtype) -> torch.Tensor:
     end = start + length * step
     device = ltorch.to_torch_device(device)
     dtype = ltorch.to_torch_dtype(dtype)
@@ -216,6 +227,22 @@ def uniform_prim(
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
     return sym.bind(shape, minval, maxval, device=torch_device, dtype=torch_dtype, output=bsym.output, _call_ctx=ctx)
+
+
+def zeros_like(
+    bsym: BoundSymbol,
+    a: TensorLike,
+    /,
+    *,
+    device: Optional[DeviceLike] = None,
+    dtype: Optional[dtypeLike] = None,
+) -> BoundSymbol:
+    sym = Symbol(name="zeros_like", meta=None, _module=torch)
+
+    device = ltorch.to_torch_device(device)
+    dtype = ltorch.to_torch_dtype(dtype)
+
+    return sym.bind(a, device=device, dtype=dtype, output=bsym.output)
 
 
 #
@@ -1087,10 +1114,12 @@ _ops_map.update(
         "torch.Tensor.to": (_always_executable, to),
         # Tensor creation operations
         "torch.arange": (_always_executable, arange),
+        PrimIDs.EXOGENOUS_LIKE: (_always_executable, exogenous_like),
         PrimIDs.FULL: (_always_executable, full),
         "torch.full_like": (_always_executable, full_like),
         PrimIDs.IOTA: (_always_executable, iota),
         PrimIDs.UNIFORM: (_always_executable, uniform_prim),
+        "torch.zeros_like": (_always_executable, zeros_like),
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_always_executable, broadcast_in_dim),
         "torch.cat": (_always_executable, cat),

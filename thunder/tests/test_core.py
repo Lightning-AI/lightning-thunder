@@ -527,7 +527,6 @@ def test_direct_torch_lowerings():
         "torch.zeros",
         "torch.ones",
         "torch.outer",
-        "torch.zeros_like",
         "torch.take_along_dim",
     }
 
