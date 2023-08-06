@@ -13,7 +13,7 @@ from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.symbol import BoundSymbolInterface
+from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
@@ -82,6 +82,32 @@ def transform_inline_visitor(
         reset_tracectx(tracectx_tok)
 
 
+def _unpack_trivial_fwd_grad(x: Any, *, name: Optional[str] = None) -> Any:
+    return prims.unpack_trivial(x, name=name), []
+
+
+def _return_fwd_grad(*args) -> Any:
+    return prims.python_return(*args), []
+
+
+def _mul_prim_fwd_grad(
+    a: Number | TensorProxy, b: Number | TensorProxy
+) -> tuple[Number | TensorProxy, list[Number | TensorProxy, Number | TensorProxy]]:
+    return prims.mul(a, b), [a, b]
+
+
+# NOTE Alternative implementation of augmented_forward_impls just to look at elaborating the code
+# TODO Provide an extensibility mechanism for this map
+# TODO Think about which of these entries should be symbols (if any)
+_explicit_forward_map = {
+    # Unpack prims
+    prims.PrimIDs.UNPACK_TRIVIAL: _unpack_trivial_fwd_grad,
+    # Utility prims
+    prims.PrimIDs.RETURN: _return_fwd_grad,
+    # Elementwise binary prims
+    prims.PrimIDs.MUL: _mul_prim_fwd_grad,
+}
+
 # WIP -- This will apply the grad transform to forward and create the appropriate grad backward
 def pytorch_grad_transform(trc: Trace) -> Trace:
     remap = ProxyDict()
@@ -99,19 +125,54 @@ def pytorch_grad_transform(trc: Trace) -> Trace:
 
             remap[a] = b
 
-    # NOTE A simple identity visitor which reproduces the original trace
-    #   This just demonstrates the visitor pattern for the moment
-    def visit(bsym: BoundSymbolInterface) -> None:
+    def fwd(remap: ProxyDict, bsym: BoundSymbolInterface) -> Any:
         sym = bsym.sym
-
         remapped_args = tree_map(try_remap, bsym.args)
         remapped_kwargs = tree_map(try_remap, bsym.kwargs)
 
-        result = sym(*remapped_args, **remapped_kwargs)
+        # Short circuits if the function has an explicit fwd impl
+        explicit_fwd_grad = _explicit_forward_map.get(sym.id, None)
+        if explicit_fwd_grad is not None:
+            result, saved = explicit_fwd_grad(*remapped_args, **remapped_kwargs)
 
+            # Updates remap
+            flat_outs, _ = tree_flatten(bsym.output)
+            flat_results, _ = tree_flatten(result)
+            update_remap(flat_outs, flat_results)
+
+            return result, saved
+
+        check(
+            not sym.is_prim,
+            lambda: f"Failed to find an explicit forward grad implementation for a primitive operation {sym.name}",
+        )
+
+        # NOTE In this case the symbol has no explicit fwd impl, so we create an implicit one
+        # NOTE We intentionally pass the unused args and kwargs so that they are recorded as inputs in the trace
+        def fn_(*args, **kwargs) -> Any:
+            total_saved = []
+            for sbsym in bsym.subsymbols:
+                _, saved = fwd(remap, sbsym)
+                total_saved.extend(saved)
+
+            remapped_outs = tree_map(try_remap, bsym.output)
+            return remapped_outs, total_saved
+
+        implicit_fwd_name: str = f"{sym.name}_implicit_fwd"
+        implicit_fwd = Symbol(name=implicit_fwd_name, meta=fn_, _module=None, _phantom=True)
+        results, saved = implicit_fwd(*remapped_args, **remapped_kwargs)
+
+        # Updates remap
         flat_outs, _ = tree_flatten(bsym.output)
-        flat_results, _ = tree_flatten(result)
+        flat_results, _ = tree_flatten(results)
         update_remap(flat_outs, flat_results)
+
+        return results, saved
+
+    # Constructs the start of a new fwd->bwd trace, updating all calls in the original
+    #   forward trace to be fwd calls instead (possibly construction an implicit forward)
+    def visit(bsym: BoundSymbolInterface) -> None:
+        result, saved = fwd(remap, bsym)
 
     ntrc = transform_inline_visitor(
         trace_from=trc,

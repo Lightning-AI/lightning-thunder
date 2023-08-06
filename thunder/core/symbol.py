@@ -103,6 +103,11 @@ class Symbol:
     _module: Any | None = None
     _hash: Optional[int] = None
 
+    # If True, then this function isn't actually executable
+    # NOTE This is useful when, for example, constructing implicit grad formulas
+    # TODO We could probably execute "phantom" symbols by executing their BoundSymbol's subsymbols
+    _phantom: bool = False
+
     @property
     def __name__(self):
         return self.name
@@ -144,6 +149,8 @@ class Symbol:
         module = self._module
         if module is not None:
             result = module
+        elif self._phantom:
+            return None
         elif self.meta is None:
             result = None
         else:
@@ -453,6 +460,9 @@ class BoundSymbol(BoundSymbolInterface):
             import_ctx = {}
         # NOTE If the call ctx was specified directly, then no import is needed to call the function
         elif self._call_ctx is not None:
+            import_ctx = {}
+        # NOTE If the symbol is a non-executable phantom, then no import is needed to call the function (because it cannot be called)
+        elif self.sym._phantom:
             import_ctx = {}
         else:
             # BoundSymbols of Symbols without Python implementations are assumed to need

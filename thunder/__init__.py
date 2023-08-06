@@ -698,6 +698,7 @@ class LCFunction(pytorch.autograd.Function):
 
         # TODO Transform for grad
         trc = trace(fn, *args, **kwargs)
+
         grad_forward = pytorch_grad_transform(trc)
 
         # TODO Check if currently tracing?
