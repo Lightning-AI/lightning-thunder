@@ -231,7 +231,10 @@ def test_find_cut_dropout(executor, device, _):
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
     cut = find_cut(trace, producer, consumer)
-    assert cut == ("t0", "t6", "t9")
+    # Note t5 is the boolean mask for dropout. It should be chosen over the t6
+    # that is the float32 mask. See this issue for the original problem:
+    # https://github.com/Lightning-AI/lightning-thunder/issues/706
+    assert cut == ("t0", "t5", "t9")
 
 
 @instantiate(

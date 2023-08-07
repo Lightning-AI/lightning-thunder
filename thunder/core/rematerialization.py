@@ -84,10 +84,16 @@ def apply_rematerialization_for_producer(
     # It's simple to update the producer node, all we need to do is to update
     # the producer's output with the cut information and the external outputs.
     cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
-    utils.check(isinstance(producer.output, Sequence), lambda: "Producer output must be a sequence")
     external_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
     new_producer_output_names = tuple(x.name for x in external_producer_outputs) + cut_names
-    new_producer_output = tuple(x for x in producer.output if x.name in new_producer_output_names)
+    # Remove the producer's inputs from the new producer's output.
+    new_producer_output_names = tuple(
+        x for x in new_producer_output_names if x not in (y.name for y in producer._flat_args)
+    )
+    all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
+    # Choose the new producer's output from all the produced variables.
+    new_producer_output = tuple(x for x in all_produced_vars if x.name in new_producer_output_names)
+    new_producer_output = tuple(sorted(new_producer_output, key=lambda x: x.name))
     new_producer = replace(producer, output=new_producer_output)
     return new_producer
 
@@ -111,9 +117,10 @@ def apply_rematerialization_for_consumer(
     # update the consumer's input with the cut information.
     # We need to keep consumer's inputs that are not in the cut and are not
     # produced by the producer. We call these inputs "external inputs".
-    cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
-    cut_inputs = tuple(filter(lambda x: x.name in cut_names, (*producer.output, *producer.args)))
     external_inputs = find_external_consumer_inputs(producer, consumer)
+    all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
+    cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
+    cut_inputs = tuple(filter(lambda x: x.name in cut_names, (*all_produced_vars, *producer.args)))
     new_consumer_args = cut_inputs + external_inputs
 
     # We need to rematerialize the consumer's inputs that are not in the new consumer's inputs.
@@ -125,22 +132,21 @@ def apply_rematerialization_for_consumer(
     trace = TraceCtx(None)
     trace.bound_symbols = (*producer.subsymbols, *consumer.subsymbols)
 
-    cut_proxies = tuple(filter(lambda x: x.name in cut_names, (*producer.output, *producer.args)))
-    recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_proxies)
+    recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_inputs)
+    new_subsymbols = recomputing_symbols + tuple(consumer.subsymbols)
 
     # Some recomputing_symbols might require producer's inputs, so we need to
     # add them to the consumer's inputs.
     # Probably find_min_cut should have returned this information.
     all_args = tuple(
         chain.from_iterable(
-            (x.name for x in bsym._flat_args if isinstance(x, ProxyInterface)) for bsym in recomputing_symbols
+            (x.name for x in bsym._flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
         )
     )
     new_consumer_args += tuple(
         x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
     )
-
-    new_subsymbols = recomputing_symbols + tuple(consumer.subsymbols)
+    new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: x.name))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
     return new_consumer
 
@@ -229,13 +235,13 @@ def find_cut(
 
     # Required producer variables. These are the variables that are required to
     # be connected to the "source" node.
-    required_producer_vars = tuple(x.name for x in producer.args)
-    required_producer_vars += tuple(x.name for x in external_producer_outputs)
+    required_producer_vars = tuple(x for x in producer.args)
+    required_producer_vars += tuple(x for x in external_producer_outputs)
 
     # This is needed to avoid rematerializing random or reduction primitives.
     required_producer_vars += tuple(
         chain.from_iterable(
-            (y.name for y in x._flat_outs) for x in producer.subsymbols if x.sym.id in REMATERIALIZATION_BLOCK_LIST
+            (y for y in x._flat_outs) for x in producer.subsymbols if x.sym.id in REMATERIALIZATION_BLOCK_LIST
         )
     )
 
@@ -292,8 +298,15 @@ def find_cut(
     combined_trace.bound_symbols = (*producer.subsymbols, *consumer.subsymbols)
     combined_consumers = utils.consumers(combined_trace)
 
-    def add_edges(var_name):
-        weight = WEIGHT / 2.0 if var_name in (x.name for x in producer.args) else WEIGHT
+    def get_weight(var):
+        if isinstance(var, TensorProxy):
+            return WEIGHT * var.dtype.bytes
+        return WEIGHT
+
+    def add_edges(var):
+        var_name = var.name
+        weight = get_weight(var)
+        weight = weight / 2.0 if var_name in (x.name for x in producer.args) else weight
         add_edge(var_name + "_in", var_name + "_out", capacity=weight)
         for user in combined_consumers._dict.get(var_name, tuple()):
             if user.sym.id in sym_skip_list:
@@ -307,13 +320,13 @@ def find_cut(
         # the source node is added to the graph.
         add_edge("source", "source", capacity=float("inf"))
 
-    for var_name in required_producer_vars:
-        add_edge("source", var_name + "_in", capacity=float("inf"))
-        add_edges(var_name)
+    for var in required_producer_vars:
+        add_edge("source", var.name + "_in", capacity=float("inf"))
+        add_edges(var)
 
     for symbol in chain(producer.subsymbols, consumer.subsymbols):
-        for var_name in (x.name for x in symbol._flat_outs):
-            add_edges(var_name)
+        for var in symbol._flat_outs:
+            add_edges(var)
 
     g = Graph(
         n=len(name_to_id),
