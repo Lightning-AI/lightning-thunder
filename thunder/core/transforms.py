@@ -19,6 +19,7 @@ from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
     check,
+    consumers,
     flatten_func,
     safe_map,
     safe_map_flat,
@@ -82,30 +83,96 @@ def transform_inline_visitor(
         reset_tracectx(tracectx_tok)
 
 
-def _unpack_trivial_fwd_grad(x: Any, *, name: Optional[str] = None) -> Any:
-    return prims.unpack_trivial(x, name=name), []
+# TODO Associating fwd->bwd results
+#   These fwd functions return (fwd_result, obj to save for backward), and this makes sense and looks pretty
+#   reasonable in traces, but there are two critical pieces of information that are not explicitly specified
+#   by those objects:
+#
+#   1) When backward is called, what should the input be?
+#   2) When backward returns grad values, to which inputs should those grad values be associated?
+#
+#   That's not to say that a convention for this information cannot be specified, but a convention seems more
+#   fragile than just explicitly specifying that information. For most fwd->bwd pairs a convention is completely
+#   adequate because they are so simple, but if we want to support writing custom transform rules for arbitrarily
+#   complicated functions then any convention seems confusing or tricky to work with.
+#
+#   To make this discussion more concrete, let's look at mul:
+#       mul(a, b) -> c
+#   And when we look at mul_bwd we can think, "it's obvious that mul_bwd has the signature
+#   mul_bwd(gc) -> ga, gb", which is fine until we consider that mul could be called like
+#   mul(b=a, a=b), so then what? How do we know that the first output of mul_bwd is the grad for keyword
+#   argument with the "a" key?
+#
+#   One option would be binding to the signature of mul and then tree_flattening the args, then
+#   using the order in which tensors requiring grad appear in the args to associate outputs and inputs.
+#   But how does this work for kwargs? Can they simply not require grad?
+#   This is also tricky because it requires each bwd symbol know what the input to its corresponding
+#   fwd symbol actually was.
+#
+#   We can also consider fwd functions that produce multiple tensors, possibly in complicated datastructures.
+#   How are grads to be associated with these outputs? Here at least we have a natural solution: we can
+#   pass grads to bwd s.t. they are structure exactly like the fwd output. For example, if a function produces
+#   a tuple (a, b) then it would receive grads (ga, gb). If a function produces a dict {'a': a, 'b': b} then
+#   it would receive a dict {'a': ga, 'b': gb}. Since not every function always produces output with the same
+#   structure, however, this has a similar problem to the fwd association proposed above: the bwd function
+#   has to understand what fwd output.
+#
+#   To really drive this complication home, consider a function (a, b, x) that depending on the value of
+#   x returns (a, b), (b, a), {'a': a, 'b': b}, or {'b': a, 'a': b}. Again, this function CAN reason
+#   about what the heck it did in fwd to know what backward to expect, but it might be nice to explicitly
+#   specify the expected relationships, instead. (In this case, this reasoning can be done by saving the
+#   value of x and replicating the fwd logic.)
+#
+#   What I'd like to see happen is that each fwd function produce two additional sequences of tensors, the first
+#   is a list of all output tensors (a, b, c, ...) corresponding to the order it expects grads to be passed
+#   in bwd (ga, gb, gc, ...), and the second is a list of all input tensors corresponding to the order it
+#   will return grads in. Going back to our mul example, the signature of mul_fwd would be:
+#       mul(a, b) -> c
+#       mul_fwd(a, b) -> c, (a, b), (a, b), (c,)
+#   That is, mul_fwd produces the fwd output, an object to save for bwd, and the list of corresponding grad inputs
+#   and grad outputs.
+#
+#   For mul this is completely overkill, but for more complicated functions it would be nice to be so clear.
 
 
-def _return_fwd_grad(*args) -> Any:
-    return prims.python_return(*args), []
+def _unpack_trivial_fwd(x: Any, *, name: Optional[str] = None) -> Any:
+    fwd_result = prims.unpack_trivial(x, name=name)
+
+    return fwd_result, []
 
 
-def _mul_prim_fwd_grad(
+# NOTE Doesn't set the grad context -- RETURN doesn't differentiate like other ops
+def _return_fwd(*args) -> Any:
+    fwd_result = prims.python_return(*args)
+
+    return fwd_result, []
+
+
+def _mul_fwd(
     a: Number | TensorProxy, b: Number | TensorProxy
 ) -> tuple[Number | TensorProxy, list[Number | TensorProxy, Number | TensorProxy]]:
-    return prims.mul(a, b), [a, b]
+    fwd_result = (prims.mul(a, b),)
+
+    return fwd_result, [a, b]
 
 
 # NOTE Alternative implementation of augmented_forward_impls just to look at elaborating the code
 # TODO Provide an extensibility mechanism for this map
 # TODO Think about which of these entries should be symbols (if any)
-_explicit_forward_map = {
+_explicit_fwd_map = {
     # Unpack prims
-    prims.PrimIDs.UNPACK_TRIVIAL: _unpack_trivial_fwd_grad,
+    prims.PrimIDs.UNPACK_TRIVIAL: _unpack_trivial_fwd,
     # Utility prims
-    prims.PrimIDs.RETURN: _return_fwd_grad,
+    prims.PrimIDs.RETURN: _return_fwd,
     # Elementwise binary prims
-    prims.PrimIDs.MUL: _mul_prim_fwd_grad,
+    prims.PrimIDs.MUL: _mul_fwd,
+}
+
+# def _mul_prim_bwd(output, saved)
+
+_explicit_bwd_map = {
+    # Elementwise binary prims
+    # prims.PrimIDs.MUL: _mul_prim_bwd,
 }
 
 # WIP -- This will apply the grad transform to forward and create the appropriate grad backward
@@ -131,7 +198,7 @@ def pytorch_grad_transform(trc: Trace) -> Trace:
         remapped_kwargs = tree_map(try_remap, bsym.kwargs)
 
         # Short circuits if the function has an explicit fwd impl
-        explicit_fwd_grad = _explicit_forward_map.get(sym.id, None)
+        explicit_fwd_grad = _explicit_fwd_map.get(sym.id, None)
         if explicit_fwd_grad is not None:
             result, saved = explicit_fwd_grad(*remapped_args, **remapped_kwargs)
 
@@ -180,22 +247,80 @@ def pytorch_grad_transform(trc: Trace) -> Trace:
         visit=visit,
     )
 
+    # A proxy -> [bsym, bsym, bsym...] mapping, where each bsym is a consumer of the proxy
+    consumer_map = consumers(ntrc)
+
     # TODO Give grads more useful names, like "g0"
-    # TODO Add a comment annotation to this exogenous_like call to explain it models the introduction
-    #   of gradients
-    return_bsym: BoundSymbolInterface = ntrc.bound_symbols.pop(-1)
+    # TODO Add a comment annotation (in the trace) to this exogenous_like call to explain
+    #   it models the introduction of gradients
+    # NOTE This looks a little weird, because we have
+    #   RETURN
+    #   EXOGENOUS_LIKE
+    #   And of course functions don't usually continue after RETURN, but today we need the RETURN statement still
+    #   because we want the trace to understand the data dependency. If we didn't keep RETURN then outputs that don't
+    #   require grad might be DCEd, or their creation could be reordered after the EXOGENOUS_LIKE primitive.
+    return_bsym: BoundSymbolInterface = ntrc.bound_symbols[-1]
     grad_outputs = []
     for x in return_bsym._flat_args:
-        if not isinstance(x, TensorProxy):
-            continue
-
-        if dtypes.is_exact_dtype(x.dtype):
+        if not isinstance(x, TensorProxy) or not x.requires_grad:
             continue
 
         grad_outputs.append(x)
 
+    # WIP
+    # def grad_for_output(grad_map: ProxyDict, out: Any) -> Any:
+    #     flat, spec = tree_flatten(out)
+
+    #     grads = []
+    #     for f in flat:
+    #         g = None
+    #         if isinstance(f, TensorProxy) and f.requires_grad:
+    #             g = grad_map.get(f, None)
+
+    #         if g is None:
+    #             g.append(None)
+    #             continue
+
+    #         total_grad = g[0]
+    #         for grad in g[1:]:
+    #             total_grad = total_grad + grad
+
+    #         grads.append(total_grad)
+
+    #     return tree_unflatten(grads, spec)
+
+    # def bwd(grad_map: ProxyDict, bsym: BoundSymbolInterface) -> Any:
+    #     sym = bsym.sym
+    #     out, saved = bsym.output
+    #     inp = grad_for_output(grad_map, out)
+
+    #     explicit_bwd_grad = _explicit_bwd_map.get(sym.id, None)
+
+    #     pass
+
+    # A proxy -> [grad, grad, grad...] mapping, where each grad is generated from a consumer of the proxy
+    grad_map = ProxyDict()
     with tracectx(ntrc):
         grads = prims.exogenous_like(grad_outputs)
+        for g, o in zip(grads, grad_outputs):
+            grad_map.append(g, o)
+
+        # Constructs backward
+        # TODO NOTE About operations that produce multiple tensors and tensors in collections
+        # TODO NOTE About tensors not requiring grad
+        # TODO NOTE About outputs that are never differentiable
+
+        # Iterates over the augmented forward bound symbols in reverse
+        # NOTE That this is continuing to modify ntrc.bound_symbols (by appending more bound symbols to it),
+        #   so the iteration has to independent of those mutation
+        # NOTE range is (start, stop, step) (it doesn't accept keyword arguments), and the stop must be -1
+        #   because the interval is [start, stop)
+        # NOTE That start is -3 because -1 would be the end of the list of bound symbols, and this skips
+        #   the EXOGENOUS_LIKE and RETURN statements that terminate fwd
+        # num_bsyms = len(ntrc.bound_symbols)
+        # for idx in range(num_bsyms - 3, -1, -1):
+        #     bsym = ntrc.bound_symbols[idx]
+        #     bwd(grad_map, bsym)
 
     # WIP Construct the full forward->backward trace
 
