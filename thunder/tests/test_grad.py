@@ -601,3 +601,25 @@ def test_torch_autograd_module(executor, device, _):
         l_grad = l.weight.grad
         torch.testing.assert_close(l_grad, g.mT @ a)
         torch.testing.assert_close(a.grad, g @ l.weight)
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _):
+    from thunder.executors.torchex import thunder_backward
+
+    @thunder_backward(
+        executors_list=executor.executors_list(),
+        use_static_caching=True,
+    )
+    def func(a, b):
+        return a - b
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+
+    # First call func(a, b) to populate the cache
+    func(a, b)
+    torch.testing.assert_close(func(a, b), a - b)
+    torch.testing.assert_close(func(b=a, a=b), b - a)
+    assert torch.autograd.gradcheck(lambda a, b: func(b=a, a=b), (a, b))

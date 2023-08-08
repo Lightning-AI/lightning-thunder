@@ -724,6 +724,19 @@ def _extract_backward_from_vjp_trace(
         bsym for bsym in utils.find_producer_symbols(trace, grads, stop_proxies=flat_args) if bsym not in forward_bsyms
     ] + [return_bsym]
 
+    # Remove all unpack args primitives from the backward trace
+    bound_symbols_for_backward = [
+        bsym
+        for bsym in bound_symbols_for_backward
+        if bsym.sym.id
+        not in (
+            prims.PrimIDs.UNPACK_EMPTY_DICT,
+            prims.PrimIDs.UNPACK_KEY,
+            prims.PrimIDs.UNPACK_SEQUENCE,
+            prims.PrimIDs.UNPACK_TRIVIAL,
+        )
+    ]
+
     if replace_nvfusion is not None:
         bound_symbols_for_backward.remove(replace_nvfusion["original"])
 
