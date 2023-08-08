@@ -1190,6 +1190,37 @@ def test_detached_trace(executor, device: str, _):
 
 
 @instantiate(dtypes=(thunder.float32,))
+def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
+    # This test verifies that the recorded trace for a call to prims.sum
+    # has its positional and keyword arguments normalized to the same form.
+    # See: https://github.com/Lightning-AI/lightning-thunder/issues/195
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    def func_dim_posarg(x):
+        return prims.sum(x, (0, 1))
+
+    def func_dim_kwarg(x):
+        return prims.sum(x, dims=(0, 1))
+
+    c1 = executor.make_callable(func_dim_posarg)
+    c2 = executor.make_callable(func_dim_kwarg)
+    out1 = c1(a)
+    out2 = c2(a)
+    torch.testing.assert_close(out1, out2)
+
+    trace1 = thunder.last_traces(c1)[0]
+    trace2 = thunder.last_traces(c2)[0]
+    sum1 = next(s for s in trace1.bound_symbols if s.sym.name == "sum")
+    sum2 = next(s for s in trace2.bound_symbols if s.sym.name == "sum")
+    assert len(sum1.args) == 2
+    assert len(sum2.args) == 2
+    assert len(sum1.kwargs) == 1
+    assert len(sum2.kwargs) == 1
+    assert "output_dtype" in sum1.kwargs
+    assert "output_dtype" in sum2.kwargs
+
+
+@instantiate(dtypes=(thunder.float32,))
 def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
     def foo():
         return clang.maybe_convert_to_dtype(1, dtype)
@@ -1287,33 +1318,31 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     def extract_bsyms(fn, args, ops):
         return [b for b in compile_bsyms(fn, args) if b.sym.name in ops]
 
-    # We want .rhs() for a + b and torch.add() to hash and compare
+    # We want .rhs() for a * b and torch.mul() to hash and compare
     # the same for writing the CSE pass.
-    def add_rhs(a, b):
+    def mul_rhs(a, b):
         c = a + b
         d = a + b
-        e = ltorch.add(a, b)
+        e = ltorch.mul(a, b)
         return c, d, e
 
-    bsyms = extract_bsyms(add_rhs, (a, b), ("add",))
+    bsyms = extract_bsyms(mul_rhs, (a, b), ("mul",))
     all_eq([hash(b.rhs()) for b in bsyms])
     all_eq([b.rhs() for b in bsyms])
 
-    # TODO: The current way BoundSymbols are compared treats args and kwargs
-    #       differently, so the same semantic call can be considered 'not equal'
-    #       if the arguments are passed differently. This is probably not the
-    #       behavior we want, and in the future we may change it, but for now
-    #       this test asserts the current behavior.
-    def add_rhs_kwargs(a, b):
-        c = a + b
-        d = ltorch.add(a=a, b=b)
+    # The current way BoundSymbols are compared treats args and kwargs the same,
+    # so the same semantic call can be considered 'equal' if the arguments are
+    # passed differently.
+    def mul_rhs_kwargs(a, b):
+        c = a * b
+        d = ltorch.mul(a=a, b=b)
         return c, d
 
     # Assert the current behavior.
     # When the test case is supported, switch this to all_eq.
-    bsyms = extract_bsyms(add_rhs_kwargs, (a, b), ("add",))
-    all_neq([hash(b.rhs()) for b in bsyms])
-    all_neq([b.rhs() for b in bsyms])
+    bsyms = extract_bsyms(mul_rhs_kwargs, (a, b), ("mul",))
+    all_eq([hash(b.rhs()) for b in bsyms])
+    all_eq([b.rhs() for b in bsyms])
 
     # Also make sure the symbols are the same.
     all_eq([b.sym for b in bsyms])
@@ -2366,13 +2395,13 @@ def test_cse(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
     def func(x, y, device):
-        a = x + y
-        b = y - x
-        c = x + y  # Expected to be removed in favor of `a`.
-        d = y - x  # Expected to be removed in favor of `b`.
-        z = a + b  # Expected to be intact.
-        w = c + d  # Expected to be converted to `w = a + b` and then removed in favor of `z`.
-        m = w + 1  # Expected to be updated to `m = z + 1`.
+        a = x * y
+        b = y / x
+        c = x * y  # Expected to be removed in favor of `a`.
+        d = y / x  # Expected to be removed in favor of `b`.
+        z = a * b  # Expected to be intact.
+        w = c * d  # Expected to be converted to `w = a * b` and then removed in favor of `z`.
+        m = w * 1  # Expected to be updated to `m = z * 1`.
         a = clang.uniform(w.shape, device=device, dtype=thunder.float16)
         b = clang.uniform(w.shape, device=device, dtype=thunder.float16)
         c = clang.uniform(z.shape, device=device, dtype=thunder.float16)

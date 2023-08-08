@@ -1,6 +1,6 @@
 from enum import auto, Enum
 from numbers import Number
-from functools import partial, reduce
+from functools import reduce
 import operator
 import builtins
 import math
@@ -610,72 +610,73 @@ comparison_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.complex_dtypes
 # TODO Maybe make a helper to construct elementwise unary prims?
 
 
-def _elementwise_unary_meta(
-    a: Union[TensorProxy, Number],
+def _elementwise_unary_meta_factory(
     *,
-    name=None,
-    number_fn=None,
-    supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
-    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
-    numbers_only: bool = False,
-    number_type_map: Optional[dict[Type, Type]] = None,
+    name,
+    number_fn,
+    supported_input_dtypes,
+    output_dtype_kind,
+    numbers_only: bool,
+    number_type_map: Optional[dict[Type, Type]],
 ):
-    # Checks that inputs have an expected type
-    utils.check_type(a, (TensorProxy, Number))
+    def meta(a: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+        # Checks that inputs have an expected type
+        utils.check_type(a, (TensorProxy, Number))
 
-    if isinstance(a, Number):
-        # Checks that the numbertype is supported
-        typ = utils.get_numberlike_type(a)
-        val = utils.get_numberlike_value(a)
+        if isinstance(a, Number):
+            # Checks that the numbertype is supported
+            typ = utils.get_numberlike_type(a)
+            val = utils.get_numberlike_value(a)
 
-        allowed_types = number_type_map.keys() if number_type_map is not None else supported_input_dtypes
+            allowed_types = number_type_map.keys() if number_type_map is not None else supported_input_dtypes
 
-        utils.check(typ in allowed_types, lambda: f"Unsupported input dtype {typ}")
+            utils.check(typ in allowed_types, lambda: f"Unsupported input dtype {typ}")
 
-        output_type = None
-        if number_type_map is not None:
-            output_type = number_type_map[typ]
-        elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
-            output_type = typ
-        elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
-            output_type = bool
-        elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT:
-            if dtypes.is_complex_dtype(typ):
-                output_type = float
-            else:
+            output_type = None
+            if number_type_map is not None:
+                output_type = number_type_map[typ]
+            elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
                 output_type = typ
-        else:
-            utils.check(False, lambda: f"Unknown {output_dtype_kind=}")
+            elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
+                output_type = bool
+            elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT:
+                if dtypes.is_complex_dtype(typ):
+                    output_type = float
+                else:
+                    output_type = typ
+            else:
+                utils.check(False, lambda: f"Unknown {output_dtype_kind=}")
 
-        if val is None or number_fn is None:
-            return numberproxy(output_typ, None)
+            if val is None or number_fn is None:
+                return numberproxy(output_typ, None)
 
-        value = number_fn(a)
-        result = numberproxy(type(value), value)
+            value = number_fn(a)
+            result = numberproxy(type(value), value)
+            utils.check(
+                type(value) is output_type,
+                lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
+            )
+            return result
+
+        # NOTE a is a TensorProxy
         utils.check(
-            type(value) is output_type,
-            lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
+            not numbers_only, lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input"
         )
-        return result
 
-    # NOTE a is a TensorProxy
-    utils.check(
-        not numbers_only, lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input"
-    )
+        # Checks that dtype is supported
+        utils.check(a.dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {a.dtype}")
 
-    # Checks that dtype is supported
-    utils.check(a.dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {a.dtype}")
+        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
+            return TensorProxy(like=a)
+        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
+            return TensorProxy(like=a, dtype=dtypes.bool8)
+        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT:
+            if dtypes.is_complex_dtype(a.dtype):
+                return TensorProxy(like=a, dtype=dtypes.corresponding_real_dtype(a.true_dtype))
+            return TensorProxy(like=a)
 
-    if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
-        return TensorProxy(like=a)
-    if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
-        return TensorProxy(like=a, dtype=dtypes.bool8)
-    if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT:
-        if dtypes.is_complex_dtype(a.dtype):
-            return TensorProxy(like=a, dtype=dtypes.corresponding_real_dtype(a.true_dtype))
-        return TensorProxy(like=a)
-
-    utils.check(False, lambda: f"Unknown {output_dtype_kind=}", exception_type=AssertionError)
+        utils.check(False, lambda: f"Unknown {output_dtype_kind=}", exception_type=AssertionError)
+    return meta
 
 
 def _make_elementwise_unary_prim(
@@ -691,8 +692,7 @@ def _make_elementwise_unary_prim(
     return make_prim(
         id,
         name,
-        meta=partial(
-            _elementwise_unary_meta,
+        meta=_elementwise_unary_meta_factory(
             name=name,
             number_fn=number_fn,
             supported_input_dtypes=supported_input_dtypes,
@@ -979,60 +979,63 @@ trunc = _make_elementwise_unary_prim(
 
 # TODO add stride logic
 # TODO Improve error messages for mismatched dtypes (using an error context)
-def _elementwise_binary_meta(
-    a: Union[TensorProxy, Number],
-    b: Union[TensorProxy, Number],
+def _elementwise_binary_meta_factory(
     *,
-    name=None,
-    number_fn=None,
-    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
-    supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
-) -> Union[TensorProxy, Number]:
-    # Checks that inputs have an expected type
-    utils.check_type(a, (TensorProxy, Number))
-    utils.check_type(b, (TensorProxy, Number))
+    name,
+    number_fn,
+    output_dtype_kind,
+    supported_input_dtypes,
+):
+    def meta(
+        a: Union[TensorProxy, Number],
+        b: Union[TensorProxy, Number],
+    ) -> Union[TensorProxy, Number]:
+        # Checks that inputs have an expected type
+        utils.check_type(a, (TensorProxy, Number))
+        utils.check_type(b, (TensorProxy, Number))
 
-    # Checks same dtype
-    numbertype, dtype = utils.check_same_dtype(a, b)
+        # Checks same dtype
+        numbertype, dtype = utils.check_same_dtype(a, b)
 
-    # Checks that dtype is supported
-    utils.check(
-        numbertype is None or numbertype in supported_input_dtypes, lambda: f"Unsupported number type {numbertype}"
-    )
-    utils.check(dtype is None or dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {dtype}")
+        # Checks that dtype is supported
+        utils.check(
+            numbertype is None or numbertype in supported_input_dtypes, lambda: f"Unsupported number type {numbertype}"
+        )
+        utils.check(dtype is None or dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {dtype}")
 
-    # Special-cases number x number inputs
-    if isinstance(a, Number) and isinstance(b, Number):
-        aval, bval = utils.get_numberlike_value(a), utils.get_numberlike_value(b)
+        # Special-cases number x number inputs
+        if isinstance(a, Number) and isinstance(b, Number):
+            aval, bval = utils.get_numberlike_value(a), utils.get_numberlike_value(b)
 
-        # Handles the case where a number has an indeterminate value, or the operation has
-        #   no number handler, by returning another indeterminate value
-        if aval is None or bval is None or number_fn is None:
-            return numberproxy(numbertype, None)
+            # Handles the case where a number has an indeterminate value, or the operation has
+            #   no number handler, by returning another indeterminate value
+            if aval is None or bval is None or number_fn is None:
+                return numberproxy(numbertype, None)
 
-        value = number_fn(aval, bval)
-        return numberproxy(type(value), value)
+            value = number_fn(aval, bval)
+            return numberproxy(type(value), value)
 
-    # Checks same shape
-    # NOTE: this doesn't verify a common shape if one or more inputs is a number
-    utils.check_same_shape(a, b)
+        # Checks same shape
+        # NOTE: this doesn't verify a common shape if one or more inputs is a number
+        utils.check_same_shape(a, b)
 
-    # Checks same device
-    utils.check_same_device(a, b)
+        # Checks same device
+        utils.check_same_device(a, b)
 
-    tensor = a if isinstance(a, TensorProxy) else b
-    requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
+        tensor = a if isinstance(a, TensorProxy) else b
+        requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
 
-    if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
-        # NOTE that this is not just like=tensor, because one tensor could have a weak dtype
-        #   and the other a strong dtype, and these are the "same"
-        return TensorProxy(like=tensor, dtype=dtype, requires_grad=requires_grad)
-    if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
-        return TensorProxy(like=tensor, dtype=dtypes.bool8, requires_grad=requires_grad)
-    if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT and dtypes.is_complex_dtype(dtype):
-        return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype), requires_grad=requires_grad)
+        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
+            # NOTE that this is not just like=tensor, because one tensor could have a weak dtype
+            #   and the other a strong dtype, and these are the "same"
+            return TensorProxy(like=tensor, dtype=dtype, requires_grad=requires_grad)
+        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
+            return TensorProxy(like=tensor, dtype=dtypes.bool8, requires_grad=requires_grad)
+        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT and dtypes.is_complex_dtype(dtype):
+            return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype), requires_grad=requires_grad)
 
-    raise AssertionError(f"Unknown {output_dtype_kind=}")
+        raise AssertionError(f"Unknown {output_dtype_kind=}")
+    return meta
 
 
 # number_fn should be a function that handles Number x Number inputs,
@@ -1051,8 +1054,7 @@ def _make_elementwise_binary_prim(
     return make_prim(
         id,
         name,
-        meta=partial(
-            _elementwise_binary_meta,
+        meta=_elementwise_binary_meta_factory(
             name=name,
             number_fn=number_fn,
             output_dtype_kind=output_dtype_kind,

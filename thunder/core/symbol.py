@@ -182,7 +182,15 @@ class Symbol:
         module_name = codeutils.module_shortname(self.module.__name__)
         return f"{module_name}.{self.name}"
 
+    def normalize(self, *args, **kwargs):
+        si = inspect.signature(self.meta)
+        ba = si.bind(*args, **kwargs)
+        ba.apply_defaults()
+        return ba.args, ba.kwargs
+
     def bind(self, *args, output, subsymbols=(), _call_ctx=None, **kwargs) -> BoundSymbol:
+        if self.meta is not None:
+            args, kwargs = self.normalize(*args, **kwargs)
         b = BoundSymbol(self, args=args, kwargs=kwargs, output=output, subsymbols=subsymbols, _call_ctx=_call_ctx)
         return b
 

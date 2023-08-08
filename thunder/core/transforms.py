@@ -717,7 +717,7 @@ def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
     unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
     trace = construct_trace(fn, *unbatched_args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
-    outs = _vmap_call_metafunc(args, in_dims, 0, axis_size, trace=trace, detached=False, **kwargs)
+    outs = _vmap_call_metafunc(False, args, in_dims, 0, axis_size, trace=trace, **kwargs)
     if isinstance(outs, Sequence):
         out_dims = (0,) * len(outs)
         return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
@@ -796,15 +796,15 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0) -> TensorProxy:
 
 # TODO: in JAX args, in_dims are flattened the same way
 # TODO: in JAX out_dims are flattened as well
-def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detached: bool, **kwargs):
+def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, trace: Trace, **kwargs):
     """Metafunction for vmap call.
 
     Args:
+        detached (bool): Whether to detach the trace.
         args (Tuple[Proxy]): Arguments to the function.
         in_dims (Tuple[int]): Batch dimension for each argument.
         out_dims (Tuple[int]): Batch dimension for return values.
         trace (Trace): Trace to use for the function.
-        detached (bool): Whether to detach the trace.
         kwargs: Keyword arguments.
 
     Raises:
@@ -813,8 +813,6 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
     Returns:
         Result of the vmap transform.
     """
-    assert len(kwargs) == 0, "vmap for kwargs is not implemented"
-
     common_device = {x.device for x in args if isinstance(x, TensorProxy)}
     assert len(common_device) <= 1, "vmap for multiple devices is not implemented"
     (common_device,) = common_device if len(common_device) == 1 else (cpu,)
@@ -829,7 +827,7 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
     with ctx:
         # We propagate the BatchValue through the trace, and then unwrap it at the end
         batched_args = safe_map(pair_to_batched_value, safe_zip(args, in_dims))
-        result = eval_trace(trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size))
+        result = eval_trace(trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size), **kwargs)
         # Unwrapping the BatchedValue's
         if isinstance(result, Sequence):
             flat_result, spec = tree_flatten(result)
@@ -851,8 +849,8 @@ def _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace: Trace, detach
         return out
 
 
-vmap_call = make_transform_prim(Transforms.VmapOp, "vmap_call", meta=partial(_vmap_call_metafunc, detached=True))
-inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, detached=False)
+vmap_call = make_transform_prim(Transforms.VmapOp, "vmap_call", meta=partial(_vmap_call_metafunc, True))
+inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, False)
 
 
 # TODO: how should we handle out_dims here?
@@ -863,7 +861,7 @@ inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, detached
 def _identity_call_vmap(axis_size, *batched_args, trace: Trace, **kwargs):
     args, in_dims = unzip2(batched_args)
     out_dims = 0  # Fixme
-    outs, out_dims = _vmap_call_metafunc(args, in_dims, out_dims, axis_size, trace=trace, detached=False, **kwargs)
+    outs, out_dims = _vmap_call_metafunc(False, args, in_dims, out_dims, axis_size, trace=trace, **kwargs)
     if isinstance(outs, Sequence):
         return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
     return BatchedValue(outs, out_dims)
@@ -1093,14 +1091,14 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
     return _jvp_impl
 
 
-def _jvp_call_metafunc(primals, tangents, trace: Trace, detached: bool, **kwargs):
+def _jvp_call_metafunc(detached: bool, primals, tangents, trace: Trace, **kwargs):
     """Metafunction for the JVP transform.
 
     Args:
+        detached (bool): Whether to detach the trace.
         primals (Tuple[Proxy]): Primal values.
         tangents (Tuple[Proxy]): Tangent values.
         trace (Trace): Trace of the function to be transformed.
-        detached (bool): Whether to detach the trace.
         kwargs: Keyword arguments.
 
     Raises:
@@ -1127,13 +1125,13 @@ def _jvp_call_metafunc(primals, tangents, trace: Trace, detached: bool, **kwargs
         return result.primal, result.tangent
 
 
-jvp_call = make_transform_prim(Transforms.JvpOp, "jvp_call", meta=partial(_jvp_call_metafunc, detached=True))
-inline_transforms_map[Transforms.JvpOp] = partial(_jvp_call_metafunc, detached=False)
+jvp_call = make_transform_prim(Transforms.JvpOp, "jvp_call", meta=partial(_jvp_call_metafunc, True))
+inline_transforms_map[Transforms.JvpOp] = partial(_jvp_call_metafunc, False)
 
 
 def _identity_call_jvp(*args: JVPDual, trace: Trace, **kwargs):
     primals, tangents = unzip2(args)
-    out_primals, out_tangents = _jvp_call_metafunc(primals, tangents, trace, detached=False, **kwargs)
+    out_primals, out_tangents = _jvp_call_metafunc(False, primals, tangents, trace, **kwargs)
     if isinstance(out_primals, Sequence):
         return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
     return JVPDual(out_primals, out_tangents)
@@ -1666,7 +1664,7 @@ def reshape_backward(orig_shape, g):
 
 
 @register_augmented_forward(prims.PrimIDs.SLICE)
-def slice_aug_fwd(a, start_indices, end_indices, strides=None):
+def slice_aug_fwd(a, start_indices, end_indices, strides):
     primal = prims.slice_prim(a, start_indices, end_indices, strides)
     residuals = (a.shape, start_indices, end_indices, strides)
     return VJPDual(primal, residuals)
@@ -1689,8 +1687,6 @@ def pullback(shape, start_indices, end_indices, strides, g):
     padding = tree_map(int, padding)
     result = prims.pad(g, const_as(0, g.dtype), padding)
 
-    if strides is None:
-        return result, None, None
     return result, None, None, None
 
 
@@ -1735,7 +1731,6 @@ def convert_element_type_backward(a_dtype, g):
 def cross_entropy_aug_fwd(
     input: Proxy,
     target: Proxy,
-    *,
     weight=None,
     size_average=None,
     ignore_index=-100,
@@ -1755,7 +1750,7 @@ def cross_entropy_backward(input, target, weight, reduction, ignore_index, label
     from thunder.torch import cross_entropy_backward
 
     ginput = cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing)
-    return ginput, None
+    return ginput, *((None,) * 7)
 
 
 @register_augmented_forward("torch.nn.functional.embedding")
@@ -1793,7 +1788,7 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
 
 
 @register_augmented_forward("torch.softmax")
-def softmax_aug_fwd(a: Proxy, *, dim: int, dtype: Optional[dtypes.dtype] = None) -> VJPDual:
+def softmax_aug_fwd(a: Proxy, dim: int, dtype: Optional[dtypes.dtype] = None) -> VJPDual:
     from thunder.torch import softmax
 
     primal = softmax(a, dim, dtype=dtype)
@@ -1803,7 +1798,7 @@ def softmax_aug_fwd(a: Proxy, *, dim: int, dtype: Optional[dtypes.dtype] = None)
 
 @register_backward("torch.softmax")
 def softmax_backward(primal, dim, g):
-    return primal * (g - (primal * g).sum(dim, keepdim=True))
+    return primal * (g - (primal * g).sum(dim, keepdim=True)), None, None
 
 
 @register_augmented_forward(prims.PrimIDs.MATMUL)
@@ -2195,7 +2190,7 @@ def backward_pass(forward_env, trace, init_cotangents):
     return tree_map(read_with_none, tuple(trace.args))
 
 
-def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
+def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwargs):
     # Assuming primals is flat
 
     if not isinstance(primals, Sequence):
@@ -2211,8 +2206,8 @@ def vjp_call_metafunc(primals, cotangents, trace: Trace, detached, **kwargs):
         return result, backward_pass(env, trace, cotangents)
 
 
-vjp_call = make_transform_prim(Transforms.VjpOp, "vjp_call", meta=partial(vjp_call_metafunc, detached=True))
-inline_transforms_map[Transforms.VjpOp] = partial(vjp_call_metafunc, detached=False)
+vjp_call = make_transform_prim(Transforms.VjpOp, "vjp_call", meta=partial(vjp_call_metafunc, True))
+inline_transforms_map[Transforms.VjpOp] = partial(vjp_call_metafunc, False)
 
 
 def vjp(func):
