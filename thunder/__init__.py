@@ -840,20 +840,6 @@ def cache_misses(fn) -> int:
     return compile_data(fn).cache_misses
 
 
-# NOTE A sugar for compile_with_info that just returns the output of the program
-# TODO Remove this, https://github.com/Lightning-AI/lightning-thunder/issues/730
-def compile_with_info(fn, **compile_kwargs) -> Callable:
-    cfn = compile(fn, **compile_kwargs)
-
-    @wraps(cfn)
-    def _fn(*args, **kwargs):
-        result = cfn(*args, **kwargs)
-        return result, last_traces(cfn)
-
-    _fn._fn = cfn
-    return _fn
-
-
 # TODO There is probably a better way to do this
 symbol.set_eagerctx(
     (partial(compile, executors_list=[executors.TORCH], only_execute_prims=True, disable_preprocessing=True), ltorch)
@@ -915,11 +901,12 @@ def _grad_transform(trace):
 # TODO Test nesting of grad and grad and grad and grad
 # TODO Test nesting of a regular function + calling grad
 def grad(fn):
-    cfn = compile_with_info(fn)
+    cfn = compile(fn)
 
     @wraps(cfn)
     def _fn(*args, **kwargs):
         original_result, original_trace = cfn(*args, **kwargs)
+        original_trace = last_traces(cfn)
 
         gradir = _grad_transform(original_trace)
 

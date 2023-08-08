@@ -393,17 +393,17 @@ def test_constant_creation(executor, device, dtype):
         x = prims.convert_element_type(1, float)
         return a + x
 
-    cfoo = thunder.compile_with_info(foo, executors_list=executor.executors_list())
+    cfoo = thunder.compile(foo, executors_list=executor.executors_list())
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
 
-    lc_result, traces = cfoo(a)
+    lc_result = cfoo(a)
     python_result = foo(a)
 
     assert_close(lc_result, python_result)
 
-    for trace in traces:
+    for trace in thunder.last_traces(cfoo):
         fn = trace.python_callable()
         lc_result = fn(a)
         assert_close(lc_result, python_result)
@@ -437,8 +437,9 @@ def test_consistent_trace_and_boundsymbol_printing():
     def foo(a=object(), b=(torch.float32, object())):
         return a, b, b[1]
 
-    cfoo = thunder.compile_with_info(foo)
-    result, traces = cfoo()
+    cfoo = thunder.compile(foo)
+    _ = cfoo()
+    traces = thunder.last_traces(cfoo)
 
     # Tests consistent printing of traces
     s0 = str(traces[0])
@@ -459,8 +460,9 @@ def test_consistent_boundsymbol_collection_printing():
         e = c + d["dict"]["val"]
         return a + b, e
 
-    cfoo = thunder.compile_with_info(foo)
-    result, traces = cfoo(((2, 3), 4), {"dict": {"val": 2}})
+    cfoo = thunder.compile(foo)
+    result = cfoo(((2, 3), 4), {"dict": {"val": 2}})
+    traces = thunder.last_traces(cfoo)
 
     # Tests consistent printing of bound symbols outside the trace context
     for bsym in traces[0].bound_symbols:
@@ -475,8 +477,9 @@ def test_consistent_boundsymbol_collection_hard_printing():
         d = b["dict"]["val"]
         return a + d, c
 
-    cfoo = thunder.compile_with_info(foo)
-    result, traces = cfoo(((2, {"dict": {"val": 2}}), 4))
+    cfoo = thunder.compile(foo)
+    result = cfoo(((2, {"dict": {"val": 2}}), 4))
+    traces = thunder.last_traces(cfoo)
 
     # Tests consistent printing of bound symbols outside the trace context
     for bsym in traces[0].bound_symbols:
@@ -972,9 +975,10 @@ def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
 
         return c, d, e
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -998,9 +1002,10 @@ def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1024,9 +1029,10 @@ def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1050,9 +1056,10 @@ def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1076,9 +1083,10 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    result = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1102,9 +1110,10 @@ def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1128,9 +1137,10 @@ def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1154,9 +1164,10 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.compile_with_info(foo)
+    cfoo = thunder.compile(foo)
 
-    result, traces = cfoo(a, b)
+    _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
 
     fusions = examine.get_fusions(traces[-1])
 
@@ -1310,7 +1321,8 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     # Returns the bound symbols for a function and args.
     def compile_bsyms(fn, args):
         fn = executor.make_callable_with_info(fn)
-        _, traces = fn(*args)
+        _ = fn(*args)
+        traces = thunder.last_traces(fn)
         return traces[0].bound_symbols
 
     # Extracts the bound symbols for the function with
@@ -2343,14 +2355,15 @@ def test_thunder_autocast_transform(executor, device, _):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
         x, y, z = [torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3)]
-        compiled = thunder.compile_with_info(
+        compiled = thunder.compile(
             autocast(func, dtype=dtype),
             executors_list=executor.executors_list(),
             # NOTE(crcrpar): preprocessing needs to be disabled as this transform would introduce
             # nonlocals that are not supported.
             disable_preprocessing=True,
         )
-        out, traces = compiled(x, y, z)
+        out = compiled(x, y, z)
+        traces = thunder.last_traces(compiled)
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
 
         # note(crcrpar): This test could be broken in the future as thunder autocast develops.

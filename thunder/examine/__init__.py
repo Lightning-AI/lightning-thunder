@@ -41,7 +41,7 @@ _method_name_remap_map = {
 
 # TODO Maybe have this print additional information and return more metadata?
 # TODO Add option to disable attempted preprocessing
-# TODO Accept kwargs for compile_with_info (like langctx)
+# TODO Accept kwargs for compile (like langctx)
 # TODO Add profiling (or profiling option) to determine if we have a slowdown
 # TODO If an error occurs, try to minify the program to produce a smaller sample to reproduce the error
 def examine(fn: Callable, *args, **kwargs):
@@ -124,7 +124,7 @@ def examine(fn: Callable, *args, **kwargs):
 
     # Step 3 Attempts to compile the function using lightning.compile
     try:
-        cfn = thunder.compile_with_info(fn)
+        cfn = thunder.compile(fn)
     except Exception as e:
         print("Encountered an error while compiling the function")
         print(

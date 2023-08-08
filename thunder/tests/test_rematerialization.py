@@ -47,7 +47,9 @@ def func_with_dropout(t0):
 def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     fusions = get_fusions(trace)
 
@@ -94,7 +96,9 @@ def test_find_producer_symbols(executor, device, _):
 )
 def test_apply_rematerialization_producer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
     assert len(nvfuser_symbols) == 2
@@ -125,7 +129,9 @@ def test_apply_rematerialization_producer(executor, device, _):
 )
 def test_apply_rematerialization_consumer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
     assert len(nvfuser_symbols) == 2
@@ -179,7 +185,9 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
         return t4
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     pairs = find_nvfuser_producer_consumer_pairs(trace)
     assert len(pairs) == n_fusion_regions
@@ -206,7 +214,9 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
 )
 def test_find_cut(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func, disable_preprocessing=True)(t0)
+    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
     assert len(nvfuser_symbols) == 2
@@ -223,7 +233,9 @@ def test_find_cut(executor, device, _):
 )
 def test_find_cut_dropout(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func_with_dropout, disable_preprocessing=True)(t0)
+    compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
     assert len(nvfuser_symbols) == 2
@@ -254,7 +266,9 @@ def test_find_cut_one_producer_op_no_args(executor, device, _):
         return t4
 
     t0 = make_tensor(3, 3, dtype=torch.float32, device=device)
-    _, traces = thunder.compile_with_info(func)(t0, device)
+    compiled_func = thunder.compile(func)
+    _ = compiled_func(t0, device)
+    traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
     assert len(nvfuser_symbols) == 2
@@ -286,14 +300,14 @@ def test_rematerialization(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
 
     # Result with rematerialization and without rematerialization should match
-    result_with_remat, _ = thunder.compile_with_info(
+    result_with_remat = thunder.compile(
         func,
         disable_preprocessing=True,
         use_rematerialization=True,
     )(t0)
     assert not isinstance(result_with_remat, Exception)
 
-    result_without_remat, _ = thunder.compile_with_info(
+    result_without_remat = thunder.compile(
         func,
         disable_preprocessing=True,
         use_rematerialization=False,
