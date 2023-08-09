@@ -1267,7 +1267,9 @@ def create_fd(
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, dtype = y
                 nvdtype = lcdtype_to_nvdtype(ltorch.to_thunder_dtype(dtype))
-                if nv_version >= LooseVersion("0.0.9"):
+                if nv_version >= LooseVersion("0.0.17"):
+                    nv = fd.define_tensor(shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
+                elif nv_version >= LooseVersion("0.0.9"):
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
                 else:
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguous=contiguity, dtype=nvdtype)
