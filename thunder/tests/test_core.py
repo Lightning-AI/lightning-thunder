@@ -23,6 +23,7 @@ import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
+from thunder.core.symbol import BoundSymbol
 
 #
 # Tests related to running valid Python programs
@@ -1178,6 +1179,74 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 # Tests related to trace manipulation and transformation
 #
 # TODO Maybe move to test_transforms.py?
+
+
+def test_insert_inplace():
+    device = "cpu"
+    dtype = torch.float32
+    a = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=True)
+    b = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=False)
+
+    def foo(a, b):
+        return a + b
+
+    trc = thunder.trace(foo, a, b)
+
+    from thunder.core.transforms import insert_inplace
+
+    def add_comments() -> None:
+        prims.comment("Unpacking is done")
+        prims.comment("About to add some tensors!")
+
+    insert_inplace(trc, 2, add_comments)
+
+    first_comment = trc.bound_symbols[2]
+    second_comment = trc.bound_symbols[3]
+
+    assert first_comment.sym.id is prims.PrimIDs.COMMENT
+    assert second_comment.sym.id is prims.PrimIDs.COMMENT
+
+    assert first_comment.args[0] == "Unpacking is done"
+    assert second_comment.args[0] == "About to add some tensors!"
+
+
+def test_replace_inplace():
+    device = "cpu"
+    dtype = torch.float32
+    a = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=True)
+    b = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=False)
+
+    def foo(a, b):
+        return a + b
+
+    trc = thunder.trace(foo, a, b)
+
+    from thunder.core.transforms import insert_inplace, replace_inplace
+
+    def add_comments() -> None:
+        prims.comment("Unpacking is done")
+        prims.comment("About to add some tensors!")
+
+    insert_inplace(trc, 2, add_comments)
+
+    def capitalize(bsym: BoundSymbol) -> None:
+        assert bsym.sym.id is prims.PrimIDs.COMMENT
+        prims.comment("The following comment is uppercase:")
+        prims.comment(bsym.args[0].upper())
+
+    replace_inplace(trc, 2, capitalize)
+
+    first_comment = trc.bound_symbols[2]
+    uppercase_comment = trc.bound_symbols[3]
+    original_comment = trc.bound_symbols[4]
+
+    assert first_comment.sym.id is prims.PrimIDs.COMMENT
+    assert uppercase_comment.sym.id is prims.PrimIDs.COMMENT
+    assert original_comment.sym.id is prims.PrimIDs.COMMENT
+
+    assert first_comment.args[0] == "The following comment is uppercase:"
+    assert uppercase_comment.args[0] == "UNPACKING IS DONE"
+    assert original_comment.args[0] == "About to add some tensors!"
 
 
 @instantiate(dtypes=NOTHING)

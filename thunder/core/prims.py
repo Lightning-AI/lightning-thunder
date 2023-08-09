@@ -404,13 +404,13 @@ def unpack(x: Any) -> Any:
 #
 
 
-def _print_meta(x):
+def _print_meta(x: Any) -> None:
     pass
 
 
 def python_print_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
-):
+) -> str:
     utils.check(
         out_printables is None or len(out_printables) == 0,
         lambda: f"Expected no out printables when printing python_print, but got {out_printables}",
@@ -423,7 +423,7 @@ def python_print_printer(
     )
     utils.check(
         len(arg_printables) == 1,
-        lambda: f"Expected only one arg printablewhen printing python_print, but got {kwarg_printables}",
+        lambda: f"Expected only one arg printable when printing python_print, but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -439,11 +439,30 @@ python_print = make_prim(
 )
 
 
-def _comment_meta(s: str) -> None:
+def _comment_meta(s: str, /) -> None:
     return None
 
 
-def comment_printer(s: str) -> str:
+def comment_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        out_printables is None or len(out_printables) == 0,
+        lambda: f"Expected no out printables when printing a comment, but got {out_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwarg printables when printing a comment, but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected only one arg printable when printing a comment, but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    (s,) = arg_printables
     return f"# {s}"
 
 
@@ -660,7 +679,8 @@ def _elementwise_unary_meta_factory(
 
         # NOTE a is a TensorProxy
         utils.check(
-            not numbers_only, lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input"
+            not numbers_only,
+            lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input",
         )
 
         # Checks that dtype is supported
@@ -676,6 +696,7 @@ def _elementwise_unary_meta_factory(
             return TensorProxy(like=a)
 
         utils.check(False, lambda: f"Unknown {output_dtype_kind=}", exception_type=AssertionError)
+
     return meta
 
 
@@ -1023,7 +1044,9 @@ def _elementwise_binary_meta_factory(
         utils.check_same_device(a, b)
 
         tensor = a if isinstance(a, TensorProxy) else b
-        requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
+        requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
+            isinstance(b, TensorProxy) and b.requires_grad
+        )
 
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
             # NOTE that this is not just like=tensor, because one tensor could have a weak dtype
@@ -1035,6 +1058,7 @@ def _elementwise_binary_meta_factory(
             return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype), requires_grad=requires_grad)
 
         raise AssertionError(f"Unknown {output_dtype_kind=}")
+
     return meta
 
 

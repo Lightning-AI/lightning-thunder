@@ -602,6 +602,7 @@ def test_torch_autograd_module(executor, device, _):
         torch.testing.assert_close(l_grad, g.mT @ a)
         torch.testing.assert_close(a.grad, g @ l.weight)
 
+
 @instantiate(
     dtypes=NOTHING,
 )

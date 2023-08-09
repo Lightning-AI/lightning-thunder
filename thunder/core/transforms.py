@@ -48,13 +48,80 @@ def construct_trace(*args, **kwargs):
     return thunder.trace(*args, **kwargs)
 
 
+# TODO We should consider using alternative datastructures for bound symbols if we're manipulating them inplace.
+#   Maybe we should be temporarily converting to a deque, or some intermediate datastructure that has to be
+#   translated into a list.
+# Helper function that extends a list with the values in "extension" from the specified starting index "start"
+def _insert_extend_list(l: list, start: int, extension: Sequence[Any]) -> None:
+    for offset, arg in enumerate(extension):
+        l.insert(start + offset, arg)
+
+
+# Calls the function fn (which must have the signature fn() -> Any), recording any
+#   symbols called into the given trace, starting at the specified index into its
+#   list of bound symbols.
+# NOTE This operation is inplace. It will modify the trace's bound_symbols.
+# NOTE Because this operation is explicitly inplace, it will disregard the trace being "complete".
+def insert_inplace(
+    trc: Trace,
+    idx: int,
+    fn: Callable,
+) -> None:
+    try:
+        tracectx_tok = set_tracectx(trc)
+        trc._complete = False
+
+        # Creates a temporary scope to record these operations in
+        old_scope = trc.scopes
+        scope = []
+        trc.scopes = [scope]
+
+        fn()
+        _insert_extend_list(trc.bound_symbols, idx, scope)
+
+    finally:
+        trc.scopes = old_scope
+        trc._complete = True
+        reset_tracectx(tracectx_tok)
+
+
+# Removes the BoundSymbol at index from the given trace, then calls fn with it
+#   (which must have the signature fn(bsym: BoundSymbol) -> Any) and records
+#   any symbols called into the trace, starting at the specified index (the position
+#   of the replaced BoundSymbol)
+# NOTE This operation is inplace. It will modify the trace's bound_symbols.
+# NOTE Because this operation is explicitly inplace, it will disregard the trace being "complete".
+def replace_inplace(
+    trc: Trace,
+    idx: int,
+    fn: Callable,
+) -> None:
+    try:
+        tracectx_tok = set_tracectx(trc)
+        trc._complete = False
+
+        # Creates a temporary scope to record these operations in
+        old_scope = trc.scopes
+        scope = []
+        trc.scopes = [scope]
+
+        fn(trc.bound_symbols[idx])
+        del trc.bound_symbols[idx]
+        _insert_extend_list(trc.bound_symbols, idx, scope)
+
+    finally:
+        trc.scopes = old_scope
+        trc._complete = True
+        reset_tracectx(tracectx_tok)
+
+
 # Creates a new trace by calling visit() on a sequence of BoundSymbols.
 #   visit(bsym: BoundSymbolInterface) -> None should call operations
 #   as if executing a program, and those operations will be recorded into the
 #   new trace.
 # If a function is specified then the trace is constructed with that
 #   function's signature.
-def transform_inline_visitor(
+def visitor_transform(
     trace_from: Trace,
     provenance: str,
     visit: Callable,
@@ -83,56 +150,25 @@ def transform_inline_visitor(
         reset_tracectx(tracectx_tok)
 
 
-# TODO Associating fwd->bwd results
-#   These fwd functions return (fwd_result, obj to save for backward), and this makes sense and looks pretty
-#   reasonable in traces, but there are two critical pieces of information that are not explicitly specified
-#   by those objects:
+# NOTE Associating fwd->bwd gradients
+#   Consider a function f(inp) -> out, where inp and out are any objects. What should the signature
+#   for its corresponding fwd and bwd functions be, and how do we understand how to call bwd and how to associate its
+#   output with gradients?
 #
-#   1) When backward is called, what should the input be?
-#   2) When backward returns grad values, to which inputs should those grad values be associated?
+#   We define fwd(inp) -> (out, some_saved_stuff) and bwd(some_saved_stuff, gout) -> ginp,
+#   where gout and ginp are pytrees with the same structure as out and inp (respectively),
+#   but with gradient values inplace of the fwd values. One caveat of this approach is that
+#   bwd has to be able to infer the structure of inp from (some_saved_stuff, gout).
 #
-#   That's not to say that a convention for this information cannot be specified, but a convention seems more
-#   fragile than just explicitly specifying that information. For most fwd->bwd pairs a convention is completely
-#   adequate because they are so simple, but if we want to support writing custom transform rules for arbitrarily
-#   complicated functions then any convention seems confusing or tricky to work with.
+#   To determine how to associate grads, inp and ginp are flattened and corresponding tensors identified.
+#   For example, if mul(a, b) -> c is called, then ginp is a tuple of two tensors, (ga, gb). When inp and ginp
+#   are flattened and zipped together, this yields pairs (a, ga), (b, gb).
 #
-#   To make this discussion more concrete, let's look at mul:
-#       mul(a, b) -> c
-#   And when we look at mul_bwd we can think, "it's obvious that mul_bwd has the signature
-#   mul_bwd(gc) -> ga, gb", which is fine until we consider that mul could be called like
-#   mul(b=a, a=b), so then what? How do we know that the first output of mul_bwd is the grad for keyword
-#   argument with the "a" key?
-#
-#   One option would be binding to the signature of mul and then tree_flattening the args, then
-#   using the order in which tensors requiring grad appear in the args to associate outputs and inputs.
-#   But how does this work for kwargs? Can they simply not require grad?
-#   This is also tricky because it requires each bwd symbol know what the input to its corresponding
-#   fwd symbol actually was.
-#
-#   We can also consider fwd functions that produce multiple tensors, possibly in complicated datastructures.
-#   How are grads to be associated with these outputs? Here at least we have a natural solution: we can
-#   pass grads to bwd s.t. they are structure exactly like the fwd output. For example, if a function produces
-#   a tuple (a, b) then it would receive grads (ga, gb). If a function produces a dict {'a': a, 'b': b} then
-#   it would receive a dict {'a': ga, 'b': gb}. Since not every function always produces output with the same
-#   structure, however, this has a similar problem to the fwd association proposed above: the bwd function
-#   has to understand what fwd output.
-#
-#   To really drive this complication home, consider a function (a, b, x) that depending on the value of
-#   x returns (a, b), (b, a), {'a': a, 'b': b}, or {'b': a, 'a': b}. Again, this function CAN reason
-#   about what the heck it did in fwd to know what backward to expect, but it might be nice to explicitly
-#   specify the expected relationships, instead. (In this case, this reasoning can be done by saving the
-#   value of x and replicating the fwd logic.)
-#
-#   What I'd like to see happen is that each fwd function produce two additional sequences of tensors, the first
-#   is a list of all output tensors (a, b, c, ...) corresponding to the order it expects grads to be passed
-#   in bwd (ga, gb, gc, ...), and the second is a list of all input tensors corresponding to the order it
-#   will return grads in. Going back to our mul example, the signature of mul_fwd would be:
-#       mul(a, b) -> c
-#       mul_fwd(a, b) -> c, (a, b), (a, b), (c,)
-#   That is, mul_fwd produces the fwd output, an object to save for bwd, and the list of corresponding grad inputs
-#   and grad outputs.
-#
-#   For mul this is completely overkill, but for more complicated functions it would be nice to be so clear.
+#   One thing to be aware of with this approach is that different calling conventions could confuse
+#   this logic. For example, the input of sub(b=a, a=b) also flattens to (a, b), and sub_bwd would
+#   naturally produce (gb, ga), and our desired association would be incorrect. This is addressed by
+#   canonicalizing a BoundSymbol's args and kwargs so that BoundSymbols are always called in the same way. That is,
+#   we canonicalize sub(b=a, a=b) to sub(b, a), and the association of gradients then works as expected.
 
 
 def _unpack_trivial_fwd(x: Any, *, name: Optional[str] = None) -> Any:
@@ -174,6 +210,7 @@ _explicit_bwd_map = {
     # Elementwise binary prims
     # prims.PrimIDs.MUL: _mul_prim_bwd,
 }
+
 
 # WIP -- This will apply the grad transform to forward and create the appropriate grad backward
 def pytorch_grad_transform(trc: Trace) -> Trace:
@@ -241,7 +278,7 @@ def pytorch_grad_transform(trc: Trace) -> Trace:
     def visit(bsym: BoundSymbolInterface) -> None:
         result, saved = fwd(remap, bsym)
 
-    ntrc = transform_inline_visitor(
+    ntrc = visitor_transform(
         trace_from=trc,
         provenance="Forward Grad Transform",
         visit=visit,
@@ -827,7 +864,9 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, trac
     with ctx:
         # We propagate the BatchValue through the trace, and then unwrap it at the end
         batched_args = safe_map(pair_to_batched_value, safe_zip(args, in_dims))
-        result = eval_trace(trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size), **kwargs)
+        result = eval_trace(
+            trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size), **kwargs
+        )
         # Unwrapping the BatchedValue's
         if isinstance(result, Sequence):
             flat_result, spec = tree_flatten(result)
