@@ -5,6 +5,7 @@ from functools import partial, reduce
 import math
 import operator
 from enum import Enum, auto
+import re
 
 from thunder.core.proxies import TensorProxy, FutureTensorProxy
 import thunder.core.prims as prims
@@ -953,6 +954,11 @@ def get_item(a: TensorLike, /, key):
     return basic_indexing(a, key)
 
 
+@torchsymbol(torch.movedim, is_method=True)
+def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Sequence[int]) -> TensorLike:
+    return clang.movedim(a, source, destination)
+
+
 @torchsymbol(torch.reshape, is_method=True)
 def reshape(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
@@ -1560,6 +1566,18 @@ def _native_layer_norm(a: TensorProxy, normalized_shape, weight, bias, eps: Numb
 @torchsymbol(torch.nn.functional.layer_norm)
 def layer_norm(a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
+
+
+#
+# Linear Algebra operations
+#
+
+
+# TODO Add string equation support
+# TODO Add sublist support (probably by translating the sublist into a string equation)
+@torchsymbol(torch.einsum, is_method=False)
+def einsum(equation: str | TensorLike, *operands: TensorLike | Sequence[int]) -> TensorLike | Number:
+    raise NotImplementedError("Einsum is not yet implemented")
 
 
 #

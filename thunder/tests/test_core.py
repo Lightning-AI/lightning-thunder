@@ -532,6 +532,8 @@ def test_direct_torch_lowerings():
         "torch.ones",
         "torch.outer",
         "torch.take_along_dim",
+        # einsum is just a stub so there's nothing to lower atm
+        "torch.einsum",
     }
 
     missing_lowerings = torch_symbols - direct_torchex_lowerings - allowed_exceptions

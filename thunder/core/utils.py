@@ -558,6 +558,13 @@ def canonicalize_dim(rank: int, idx: int, wrap_scalar: bool = True) -> int:
     return _idx
 
 
+def canonicalize_dims(rank, indices, wrap_scalar=True):
+    if isinstance(indices, int):
+        return canonicalize_dim(rank, indices, wrap_scalar)
+
+    return tuple(canonicalize_dim(rank, x, wrap_scalar) for x in indices)
+
+
 def canonicalize_dim_idx(dim_length, idx):
     check(dim_length >= 0, lambda: f"The length of a dimension ({dim_length}) cannot be negative!")
 
@@ -570,13 +577,6 @@ def canonicalize_dim_idx(dim_length, idx):
         return idx + dim_length
 
     return idx
-
-
-def canonicalize_dims(rank, indices, wrap_scalar=True):
-    if isinstance(indices, int):
-        return canonicalize_dim(rank, indices, wrap_scalar)
-
-    return tuple(canonicalize_dim(rank, x, wrap_scalar) for x in indices)
 
 
 def check_valid_permutation(rank: int, perm):

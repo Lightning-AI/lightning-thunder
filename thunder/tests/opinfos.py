@@ -2301,6 +2301,31 @@ expand_opinfo = OpInfo(
 shape_ops.append(expand_opinfo)
 
 
+def movedim_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape src dst
+    cases = (
+        ((2, 3, 4, 5), (0, -1), (2, 0)),
+        ((), (-1,), (0,)),
+        ((1, 3, 0, 2), (0, 1, 2, 3), (0, 1, 2, 3)),
+        ((1, 3, 0, 2), (0, 1, 2, 3), (3, 2, 0, 1)),
+        ((2, 7, 3), 1, -1),
+        ((2, 7, 3), (0, 1), (0, 1)),
+    )
+
+    for shape, src, dst in cases:
+        yield SampleInput(make(shape), src, dst)
+
+
+movedim_opinfo = OpInfo(
+    ltorch.movedim,
+    sample_input_generator=movedim_sample_generator,
+    torch_reference=torch.movedim,
+)
+shape_ops.append(movedim_opinfo)
+
+
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

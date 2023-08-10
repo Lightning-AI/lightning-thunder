@@ -336,6 +336,13 @@ def _pad_helper(a, padding_value, padding_config):
     return result
 
 
+def movedim(
+    bsym: BoundSymbol, a: TensorLike, /, source: int | Sequence[int], destination: int | Sequence[int]
+) -> TensorLike:
+    sym = Symbol(name="movedim", meta=None, _module=torch)
+    return sym.bind(a, source, destination, output=bsym.output)
+
+
 def pad(bsym: BoundSymbol, a, padding_value, padding_config):
     sym = Symbol(name="pad", meta=None)
     ctx: Dict[str, Any] = {"pad": _pad_helper}
@@ -1127,6 +1134,7 @@ _ops_map.update(
         "torch.Tensor.contiguous": (_always_executable, contiguous),
         "torch.Tensor.expand": (_always_executable, expand),
         "torch.Tensor.__getitem__": (_always_executable, getitem),
+        "torch.movedim": (_always_executable, movedim),
         PrimIDs.PAD: (_always_executable, pad),
         PrimIDs.RESHAPE: (_always_executable, reshape),
         "torch.reshape": (_always_executable, reshape),
@@ -1360,140 +1368,8 @@ def fuse(region: Region) -> list[BoundSymbol]:
 
 
 #
-# OLD CODE BELOW HERE
+# Code related to PyTorch's grad transform
 #
-
-# def convert_element_type(a, dtype):
-#     # Handles converting a tensor to a numbertype, which Thunder allows but
-#     #   Torch does not
-#     if isinstance(a, torch.Tensor) and dtypes.is_numbertype(dtype):
-#         dtype = ttorch.torch_dtype(dtypes.numbertype_to_dtype(dtype))
-
-#     # Handles number conversions
-#     if isinstance(a, Number):
-#         if not dtypes.is_numbertype(dtype):
-#             dtype = dtypes.dtype_to_numbertype(ttorch.thunder_dtype(dtype))
-#         return dtype(a)
-
-#     return a.to(dtype)
-
-
-# def broadcast_in_dim(a, shape, broadcast_dims):
-#     s = list(shape)
-#     for broadcast_dim in broadcast_dims:
-#         s[broadcast_dim] = -1
-
-#     v = a
-#     for idx, x in enumerate(s):
-#         if x != -1:
-#             v = v.unsqueeze(idx)
-
-#     return v.expand(shape)
-
-
-# # NOTE: PyTorch doesn't have a padding operation exactly like XLA's
-# #   When dilations are all zero, torch.nn.functional.pad can substitute for XLA's
-# #   Otherwise, this first dilates the original tensor by copying it into a slice of
-# #   a larger tensor, then pads the dilated tensor
-# def pad(a, padding_value, padding_config):
-#     intermediate_shape = []
-#     intermediate_slices = []
-#     pad_config = []
-#     just_pad = True
-#     for l, (low, high, dilation) in zip(a.shape, padding_config):
-#         assert dilation >= 0
-
-#         if dilation > 0:
-#             just_pad = False
-
-#         intermediate_length = l + max(0, l - 1) * dilation
-#         intermediate_shape.append(intermediate_length)
-#         intermediate_slices.append(slice(None, None, dilation + 1))
-
-#         pad_config.append((low, high))
-
-#     pad_config = [x for y in reversed(pad_config) for x in y]
-
-#     if just_pad:
-#         return torch.nn.functional.pad(a, pad_config, value=padding_value)
-
-#     result = torch.full(intermediate_shape, padding_value, device=a.device, dtype=a.dtype)
-#     result[intermediate_slices] = a
-#     result = torch.nn.functional.pad(result, pad_config, value=padding_value)
-#     return result
-
-
-# def erfcinv_helper(a):
-#     erfinv = _elementwise_unary_torch(torch.erfinv)
-#     return erfinv(1 - a)
-
-# # A composite implementation of c++ std::remainder and Python math.remainder.
-# def remainder_helper(a, b):
-#     return a - torch.round(a.div(b)) * b
-
-
-# def slice_helper(a, start_indices, end_indices, strides=None):
-#     _strides = strides if strides is not None else [1] * len(start_indices)
-
-#     slices = []
-#     for start, stop, step in zip(start_indices, end_indices, _strides):
-#         slices.append(slice(start, stop, step))
-
-#     return operator.getitem(a, slices)
-
-
-# # TODO: dim as a sequence is only supported on PyTorch 2.0 and greater
-# def squeeze_helper(a, dim):
-#     for d in sorted(dim, reverse=True):
-#         a = a.squeeze(d)
-
-#     return a
-
-
-# def view_helper(a, shape):
-#     return a.view(shape)
-
-
-# def is_tensor(a):
-#     return isinstance(a, torch.Tensor)
-
-
-# # NOTE: many PyTorch operations don't accept numbers as inputs,
-# #   so this helper wraps and unwraps numbers
-# def _elementwise_unary_torch(op):
-#     @wraps(op)
-#     def _fn(x):
-#         if isinstance(x, torch.Tensor):
-#             return op(x)
-
-#         return op(torch.tensor(x)).item()
-
-#     return _fn
-
-
-# def sum_helper(a, dims, output_dtype=None, **kwargs):
-#     output_dtype_ = _get_torch(output_dtype)
-#     # NOTE: PyTorch's sum reduces all dimensions if empty list is passed
-#     #   but Thunder follows NumPy's behavior of returning the original
-#     #   tensor if an empty list is passed.
-#     if len(dims) == 0:
-#         return a.to(output_dtype_)
-#     return torch.sum(a, dim=dims, dtype=output_dtype_)
-
-
-# # Handles adding two Python numbers, which PyTorch allows but returns
-# #   as a tensor, while Thunder expects a Python number
-# def add_helper(a, b, alpha=1):
-#     if any(map(is_tensor, (a, b, alpha))):
-#         return torch.add(a, b, alpha=alpha)
-
-#     return a + b * alpha
-
-
-# # NOTE: PyTorch's torch.eq expects tensor x tensor or tensor x number
-# #   but the == operator allows number x tensor
-# def eq_helper(a, b):
-#     return a == b
 
 
 class ThunderFunction(torch.autograd.Function):

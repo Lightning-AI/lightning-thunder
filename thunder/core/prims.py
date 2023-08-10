@@ -138,7 +138,7 @@ class PrimIDs(Enum):
     SUM = auto()
     VAR = auto()
     VAR_MEAN = auto()
-    # Matmul prims (Experimental!)
+    # Linear algebra prims (Mostly experimental)
     LINEAR = auto()
     MATMUL = auto()
     # NN prims (Experimental!)
@@ -1849,9 +1849,9 @@ var = make_prim(PrimIDs.VAR, "var", meta=_var_meta)
 var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta)
 
 #
-# Matmul prims
+# Linear algebra prims
 #
-# NOTE: matmul prims are highly experimental and will almost definitely change
+# NOTE linear algebra prims are highly experimental and will almost definitely change
 
 
 # out = a @ w.transpose() + bias

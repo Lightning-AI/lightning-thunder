@@ -244,6 +244,46 @@ def expand(a, *shape):
     return prims.broadcast_in_dim(a, shape_, tuple(range(offset, len(a.shape) + offset)))
 
 
+# Based on NumPy's https://numpy.org/doc/stable/reference/generated/numpy.moveaxis.html
+def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Sequence[int]) -> TensorLike:
+    src, dst = utils.sequencify(source), utils.sequencify(destination)
+
+    utils.check(
+        len(src) == len(dst), lambda: f"Received a source {source} and destination {destination} of different lengths"
+    )
+
+    src, dst = utils.canonicalize_dims(a.ndim, src), utils.canonicalize_dims(a.ndim, dst)
+
+    # Verifies that dims are uniquely specified
+    # NOTE This must be done after canonicalization, since canonicalization resolves different ways of specifying the same dim
+    src_set = set(src)
+    utils.check(len(src_set) == len(src), lambda: f"Found at least one source dimension specified multiple times")
+    utils.check(len(set(dst)) == len(dst), lambda: f"Found at least one destination dimension specified multiple times")
+
+    # Constructs a permutation that moves the dimensions as requested
+    # NOTE Essentially move_dim specifies a partial permutation, where dimensions not explicitly specified as moving
+    #   are ordered as they are in the original tensor and "fill in" around the explicit permutation
+
+    explicit_permutation_map = dict(zip(dst, src))
+
+    # Creates the "fill in" values
+    #   For example, if we have a tensor of rank 5, we can label its dims 0 1 2 3 4
+    #   If the explicit permutation specifies how dimensions 2 and 4 move, then the implicit dimeensions
+    #   which are "filled in" around the explicitly permuted dimensions are 0 1 and 3, which is what this
+    #   iterator returns
+    implicit_permutation_generator = iter(sorted(set(range(a.ndim)) - src_set))
+
+    perm = []
+    for idx in range(a.ndim):
+        explicit_perm: None | int = explicit_permutation_map.get(idx, None)
+        if explicit_perm is not None:
+            perm.append(explicit_perm)
+        else:
+            perm.append(next(implicit_permutation_generator))
+
+    return transpose(a, perm)
+
+
 # NOTE: shape may have a single -1 value, which is a marker that the length of that dimension
 #   should be inferred
 @clang_ctx
@@ -312,6 +352,7 @@ def squeeze(a, dims):
     return result
 
 
+# NOTE This function is named after NumPy's "transpose", which actually performs a permutation
 @clang_ctx
 def transpose(a, permutation):
     permutation = utils.canonicalize_dims(a.ndim, permutation)

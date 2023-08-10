@@ -125,12 +125,12 @@ def is_collection(x: Any) -> bool:
 
 
 def sequencify(x: Any) -> Sequence:
-    # NOTE: strings in Python are sequences, which requires this special handling
+    # NOTE strings in Python are sequences, which requires this special handling
     #   to avoid "hello" being treated as "h", "e", "l", "l", "o"
     if not isinstance(x, Sequence) or isinstance(x, str):
         return (x,)
-    else:
-        return x
+
+    return x
 
 
 def get_module(name: str) -> Any:
