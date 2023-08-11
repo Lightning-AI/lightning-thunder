@@ -297,6 +297,11 @@ def expand(bsym: BoundSymbol, tensor, *shape):
     return sym.bind(tensor, *shape, output=bsym.output)
 
 
+def flatten(bsym: BoundSymbol, a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
+    sym = Symbol(name="flatten", meta=None, _module=torch)
+    return sym.bind(a, start_dim, end_dim, output=bsym.output)
+
+
 def getitem(bsym: BoundSymbol, tensor, key) -> BoundSymbol:
     sym = Symbol(name="__getitem__", meta=None, _module=torch.Tensor)
     tbsym = BoundSymbol(sym, args=(tensor, key), kwargs={}, output=bsym.output)
@@ -1133,6 +1138,7 @@ _ops_map.update(
         PrimIDs.CAT: (_always_executable, cat),
         "torch.Tensor.contiguous": (_always_executable, contiguous),
         "torch.Tensor.expand": (_always_executable, expand),
+        "torch.flatten": (_always_executable, flatten),
         "torch.Tensor.__getitem__": (_always_executable, getitem),
         "torch.movedim": (_always_executable, movedim),
         PrimIDs.PAD: (_always_executable, pad),

@@ -2301,6 +2301,30 @@ expand_opinfo = OpInfo(
 shape_ops.append(expand_opinfo)
 
 
+def flatten_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, start_dim, end_dim
+    cases = (
+        ((1, 3), 0, -1),
+        ((2), 0, -1),
+        ((3, 7, 4, 2, 5, 2), 1, 3),
+        ((3, 7, 4, 2, 5, 2), 2, 5),
+        ((), 0, 0),
+    )
+
+    for shape, start_dim, end_dim in cases:
+        yield SampleInput(make(shape), start_dim, end_dim)
+
+
+flatten_opinfo = OpInfo(
+    ltorch.flatten,
+    sample_input_generator=flatten_sample_generator,
+    torch_reference=torch.flatten,
+)
+shape_ops.append(flatten_opinfo)
+
+
 def movedim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

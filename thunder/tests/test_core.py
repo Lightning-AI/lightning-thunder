@@ -527,7 +527,6 @@ def test_direct_torch_lowerings():
         "torch.index_add",
         "torch.scatter_add",
         "torch.full",
-        "torch.flatten",
         "torch.zeros",
         "torch.ones",
         "torch.outer",
