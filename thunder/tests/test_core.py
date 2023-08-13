@@ -1182,6 +1182,43 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 # TODO Maybe move to test_transforms.py?
 
 
+def test_bsym_toposort():
+    device = "cpu"
+    dtype = torch.float32
+    a = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=True)
+    b = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=False)
+
+    def foo(a, b):
+        return a + b, a - b
+
+    trc = thunder.trace(foo, a, b)
+
+    from thunder.core.transforms import bsym_list_to_dag, TOPOSORT_ORDER, toposort_bsym_dag, Node
+
+    nodes, return_node = bsym_list_to_dag(trc.bound_symbols)
+
+    top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
+    bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
+
+    top_down_add_bsym = top_down_bsyms[2]
+    bottom_up_sub_bsym = bottom_up_bsyms[2]
+
+    assert top_down_add_bsym.sym.id == "torch.add"
+    assert bottom_up_sub_bsym.sym.id == "torch.sub"
+
+    def prefer_sub_selector(eligible_nodes: list[Node]) -> int:
+        for idx, node in enumerate(eligible_nodes):
+            if node.bsym.sym.id == "torch.sub":
+                return idx
+
+        return 0
+
+    sub_preferring_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN, prefer_sub_selector)
+    sub_preferring_sub_bsym = sub_preferring_bsyms[2]
+
+    assert sub_preferring_sub_bsym.sym.id == "torch.sub"
+
+
 # Verifies that using only some of the results of a function works as expected
 #   (the other results are dce'd)
 @instantiate(dtypes=(thunder.float32,))

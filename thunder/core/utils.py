@@ -872,7 +872,7 @@ class ProxyDict:
 
 
 # Returns a proxy -> producer mapping
-def producers(trace: TraceCtx) -> ProxyDict:
+def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDict:
     producers = ProxyDict()
 
     # Skips symbols that never produce anything
@@ -882,8 +882,9 @@ def producers(trace: TraceCtx) -> ProxyDict:
         prims.PrimIDs.RETURN,
     }
 
-    for bsym in trace.bound_symbols:
-        if bsym.sym in skip:
+    bsyms = trace_or_bsyms if isinstance(trace_or_bsyms, list) else trace_or_bsyms.bound_symbols
+    for bsym in bsyms:
+        if bsym.sym.id in skip:
             continue
 
         flat = bsym._flat_outs
@@ -900,17 +901,21 @@ def producers(trace: TraceCtx) -> ProxyDict:
     return producers
 
 
-def consumers(trace: TraceCtx) -> ProxyDict:
+def consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDict:
     consumers = ProxyDict()
 
     # Skips symbols that never consume anything
+    # NOTE Skipping UNPACK_TRIVIAL is important, because UNPACK_TRIVIAL technically consumes the input
+    #   it produces
+    # TODO Consider modeling the function signature as a producer and UNPACK_TRIVIAL a consumer of the signature's output
     skip = {
         prims.PrimIDs.COMMENT,
         prims.PrimIDs.UNPACK_TRIVIAL,
     }
 
-    for bsym in trace.bound_symbols:
-        if bsym.sym in skip:
+    bsyms = trace_or_bsyms if isinstance(trace_or_bsyms, list) else trace_or_bsyms.bound_symbols
+    for bsym in bsyms:
+        if bsym.sym.id in skip:
             continue
 
         flatargs = bsym._flat_args
@@ -930,8 +935,8 @@ def consumers(trace: TraceCtx) -> ProxyDict:
 #   and the second mapping proxies to the bound symbols that consume them (if any)
 # NOTE This only returns things that are produced and consumed by "top level" bound symbols
 #   in the trace. It does not recurse into the bound symbols.
-def producers_and_consumers(trace: TraceCtx) -> tuple[ProxyDict, ProxyDict]:
-    return producers(trace), consumers(trace)
+def producers_and_consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> tuple[ProxyDict, ProxyDict]:
+    return producers(trace_or_bsyms), consumers(trace_or_bsyms)
 
 
 def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxies: Sequence[Proxy]) -> Tuple[Any, ...]:

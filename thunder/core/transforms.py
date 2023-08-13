@@ -6,12 +6,14 @@ from functools import lru_cache, partial, wraps
 from numbers import Number
 from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
+import copy
 
+import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -46,6 +48,161 @@ def construct_trace(*args, **kwargs):
 
     kwargs.update(inline_trace=False)
     return thunder.trace(*args, **kwargs)
+
+
+#
+# Functions related to converting lists of bound symbols to and from DAGs, and operations on
+#   DAGs of bound symbols
+#
+# TODO Consider adding more dag manipulation functions, currently these functions just support analysis
+#   and toposorting
+
+
+# A node in a DAG represents a bsym, with edges defined by the children (outgoing edges) and
+#   parents (incoming edges) lists
+class Node:
+    def __init__(self, bsym: BoundSymbolInterface):
+        self.bsym = bsym
+        self.children: list[Node] = []
+        self.parents: list[Node] = []
+
+    # TODO Consider printing parents and children
+    def __repr__(self) -> str:
+        return str(self.bsym)
+
+
+# TODO Think about how to model nodes likes comments -- maybe comments should be associated with
+#   other bound symbols so they are always printed above the bound symbol they refer to?
+# Converts a sequence of bound symbols to a directed acyclic graph
+# Returns a tuple of
+#   - a list of all Nodes corresponding to bound symbols without parents
+#   - an optional Node corresponding to the RETURN bound symbol, which must be unique or not in the list of bound symbols
+def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node], Node | None]:
+    nodes_without_parents: list[Node] = []
+    return_node: Optional | Node = None
+
+    # Constructs dag
+    producers, consumers = utils.producers_and_consumers(bsyms)
+
+    bsym_to_node_map: dict[BoundSymbolInterface, Node] = {}
+    for bsym in bsyms:
+        node = Node(bsym)
+        bsym_to_node_map[bsym] = node
+
+        if bsym.sym.id is prims.PrimIDs.RETURN:
+            utils.check(
+                return_node is None,
+                lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
+            )
+            return_node = node
+
+    for bsym, node in bsym_to_node_map.items():
+        has_parents: bool = False
+        for inp in chain(bsym._flat_args, bsym._flat_kwargs):
+            if not isinstance(inp, Proxy):
+                continue
+
+            # Ensures that nodes are not their own parents
+            # NOTE These nodes appear to be their own parents because nodes like TRIVIAL_UNPACK accept their input
+            #   from a function's signature, then are treated as the "producer" of that input in later analysis
+            possible_parent = producers[inp]
+            if possible_parent is bsym:
+                continue
+
+            parent = bsym_to_node_map[possible_parent]
+            node.parents.append(parent)
+
+            has_parents = True
+
+        if not has_parents:
+            nodes_without_parents.append(node)
+
+        for out in bsym._flat_outs:
+            if not isinstance(out, Proxy):
+                continue
+
+            # Checks that the output is actually produced by this function, and not an input to it
+            # NOTE This has to make an exception for UNPACK_TRIVIAL, which appears to consume what it produces
+            # TODO Think about modeling UNPACK_TRIVIAL differently
+            if not bsym.sym.id is prims.PrimIDs.UNPACK_TRIVIAL and variableify(out) in chain(
+                (variableify(x) for x in bsym._flat_args), (variableify(x) for x in bsym._flat_kwargs)
+            ):
+                continue
+
+            children = consumers.get(out, [])
+            for child in children:
+                child_node = bsym_to_node_map[child]
+                if child_node not in node.children:
+                    node.children.append(child_node)
+
+    return nodes_without_parents, return_node
+
+
+class TOPOSORT_ORDER(Enum):
+    TOP_DOWN = auto()
+    BOTTOM_UP = auto()
+
+
+def _default_toposort_selector(eligible_nodes: list[Node]) -> int:
+    return 0
+
+
+# Converts a dag of bound symbol nodes into a topologically sorted list of bound symbols
+#   "selector" must be a function with signature fn(eligible_nodes: list[Node]) -> int, which
+#       returns the index of the next node to add to the list of bound symbols
+#       "eligible_nodes" will be a list of all nodes that can appear next in a valid topological
+#       sorting of the dag (which is dependent on prevoius sorting choices)
+#   If "toposort_order" is TOP_DOWN then the original nodes should be nodes without parents, and
+#       eligible nodes will be the set of nodes who have all their parents sorted
+#   If "toposort_order" is BOTTOM_UP then the original nodes should be a list with just the return node
+#       (as returned from bsym_list_to_dag()) and eligible nodes will be the set of nodes who have
+#       all their children sorted
+#       NOTE Even though the sorting is BOTTOM_UP, the list of bound symbols will be returned in
+#           a valid (top to bottom) order
+def toposort_bsym_dag(
+    start_nodes: list[Node], toposort_order: TOPOSORT_ORDER, selector: Callable = _default_toposort_selector
+) -> list[BoundSymbolInterface]:
+    sorted: set[BoundSymbolInterface] = set()
+    bsyms: list[BoundSymbolInterface] = []
+
+    eligible_nodes: list[Node] = copy.copy(start_nodes)
+    while True:
+        # Picks the next node
+        idx: int = selector(eligible_nodes)
+        node: Node = eligible_nodes[idx]
+        del eligible_nodes[idx]
+        bsyms.append(node.bsym)
+        sorted.add(node.bsym)
+
+        # Identifies additional eligible nodes
+        # NOTE This doesn't check that the possibly eligible mode wasn't previously eligible or sorted,
+        #   because this is not possible since one of the nodes required for a parent or child to become
+        #   eligible was just sorted.
+        possibly_eligible = node.parents if toposort_order is TOPOSORT_ORDER.BOTTOM_UP else node.children
+        for pe_node in possibly_eligible:
+            required_nodes = pe_node.children if toposort_order is TOPOSORT_ORDER.BOTTOM_UP else pe_node.parents
+
+            is_eligible: bool = True
+            for req in required_nodes:
+                if req.bsym not in sorted:
+                    is_eligible = False
+                    break
+
+            if is_eligible:
+                eligible_nodes.append(pe_node)
+
+        if len(eligible_nodes) == 0:
+            break
+
+    if toposort_order is TOPOSORT_ORDER.BOTTOM_UP:
+        bsyms.reverse()
+
+    return bsyms
+
+
+#
+# Functions related to visitor transforms and modifying traces by tracing new functions
+#
 
 
 # TODO We should consider using alternative datastructures for bound symbols if we're manipulating them inplace.
