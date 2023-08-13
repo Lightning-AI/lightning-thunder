@@ -1292,7 +1292,10 @@ def create_fd(
 
             # Updates map
             for out, nvout in zip(utils.sequencify(bsym.output), utils.sequencify(nvresults)):
-                lc_to_nv_map[out] = nvout
+                # NOTE out can be None if an operation returned multiple results but only some are used,
+                #   in which case DCE will replace the unused results with None
+                if out is not None:
+                    lc_to_nv_map[out] = nvout
 
         for bsym in region.bound_symbols:
             translate_bound_symbol(bsym)

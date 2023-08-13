@@ -18,7 +18,7 @@ import thunder.torch as ltorch
 import thunder.executors.torchex as torchex
 import thunder.core.codeutils as codeutils
 from thunder.core.pytree import tree_flatten_only, tree_unflatten
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA
+from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, Executor
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
@@ -1180,6 +1180,25 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 # Tests related to trace manipulation and transformation
 #
 # TODO Maybe move to test_transforms.py?
+
+
+# Verifies that using only some of the results of a function works as expected
+#   (the other results are dce'd)
+@instantiate(dtypes=(thunder.float32,))
+def test_partial_results(executor: Executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a):
+        a, b = torch.var_mean(a)
+        return a
+
+    cfoo = executor.make_callable(foo, disable_preprocessing=False)
+
+    result = cfoo(a)
+    torch_result = foo(a)
+
+    assert_close(result, torch_result)
 
 
 def test_visitor_transform():

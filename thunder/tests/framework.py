@@ -62,6 +62,7 @@ class Executor:
             fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
         )
 
+    # TODO Remove this
     def make_callable_with_info(self, fn, **kwargs):
         disable_preprocessing = kwargs.pop("disable_preprocessing", True)
         return thunder.compile(
