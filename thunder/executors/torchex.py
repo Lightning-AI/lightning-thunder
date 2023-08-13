@@ -1117,7 +1117,7 @@ else:
 
 
 # TODO Refine prim ops to have less functionality to better debug errors
-# Maps from symbol ids to a tuple of (is_fusable, translate) callables
+# Maps from symbol ids to a tuple of (is_fusible, translate) callables
 _ops_map.update(
     {
         # Data movement operations

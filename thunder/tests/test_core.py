@@ -1182,6 +1182,58 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 # TODO Maybe move to test_transforms.py?
 
 
+def test_visitor_transform():
+    device = "cpu"
+    dtype = torch.float32
+    a = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=True)
+    b = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=False)
+
+    def foo(a, b):
+        return a + b
+
+    trc = thunder.trace(foo, a, b)
+
+    from thunder.core.transforms import visitor_transform, VISIT_TYPE
+
+    # Adds a comment before each bound symbols
+    def add_comments(bsym) -> VISIT_TYPE:
+        prims.comment(f"{bsym.sym.id}")
+        return VISIT_TYPE.INSERT_BEFORE
+
+    transformed_trc = visitor_transform(trc, "Add comments", add_comments)
+
+    first_comment = transformed_trc.bound_symbols[0]
+    second_comment = transformed_trc.bound_symbols[2]
+    third_comment = transformed_trc.bound_symbols[4]
+    fourth_comment = transformed_trc.bound_symbols[6]
+
+    assert first_comment.sym.id is prims.PrimIDs.COMMENT
+    assert second_comment.sym.id is prims.PrimIDs.COMMENT
+    assert third_comment.sym.id is prims.PrimIDs.COMMENT
+    assert fourth_comment.sym.id is prims.PrimIDs.COMMENT
+
+    assert first_comment.args[0] == "PrimIDs.UNPACK_TRIVIAL"
+    assert second_comment.args[0] == "PrimIDs.UNPACK_TRIVIAL"
+    assert third_comment.args[0] == "torch.add"
+    assert fourth_comment.args[0] == "PrimIDs.RETURN"
+
+    # Comments result of additions
+    def comment_add_results(bsym) -> VISIT_TYPE:
+        if bsym.sym.id == "torch.add":
+            add_result = bsym.output
+            prims.comment(f"add result ndims is {add_result.ndim}")
+            return VISIT_TYPE.INSERT_AFTER
+
+        # NOTE In this case either of INSERT_BEFORE or INSERT_AFTER is fine (both just preserve the bsym)
+        return VISIT_TYPE.INSERT_BEFORE
+
+    transformed_trc = visitor_transform(trc, "Comment add results", comment_add_results)
+
+    comment = transformed_trc.bound_symbols[3]
+    assert comment.sym.id is prims.PrimIDs.COMMENT
+    assert comment.args[0] == "add result ndims is 2"
+
+
 def test_insert_inplace():
     device = "cpu"
     dtype = torch.float32

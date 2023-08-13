@@ -115,24 +115,61 @@ def replace_inplace(
         reset_tracectx(tracectx_tok)
 
 
-# Creates a new trace by calling visit() on a sequence of BoundSymbols.
-#   visit(bsym: BoundSymbolInterface) -> None should call operations
+# Specifies how to preserve or replace bound symbols when visiting them
+class VISIT_TYPE(Enum):
+    INSERT_AFTER = auto()
+    INSERT_BEFORE = auto()
+    REPLACE = auto()
+
+
+# Creates a new trace from "trace_from" by calling "visit" on its bound symbols ("bsyms").
+#   visit(bsym: BoundSymbolInterface) -> VISIT_TYPE should call operations
 #   as if executing a program, and those operations will be recorded into the
 #   new trace.
-# If a function is specified then the trace is constructed with that
-#   function's signature.
+#   If visit() returns INSERT_AFTER for a bsym then that bsym will be copied
+#   to the new trace before visit() is called. This is useful when augmenting the bound
+#   symbols in an existing trace.
+#   If visit() returns INSERT_BEFORE for a bsym then that bsym will be copied to the new trace
+#   after visit() is called. This is also useful when augmenting the bound symbols in an existing
+#   trace.
+#   If visit() returns REPLACE for a bsym then that bsym will not be copied to the new trace.
+# TODO Suggest a mechanism to preserve the original bound symbol with operations
+#   recorded both before and after it. This could be done by passing the (sub)scope to visit() for
+#   direct modification, acquiring the trace's current scope through the trace ctx and modifying it
+#   directly (this can be done today), or adding a record() function that is a sugar for the previous
+#   approach. Perhaps both passing the scope directly to visit() and adding record() would be helpful.
 def visitor_transform(
     trace_from: Trace,
     provenance: str,
     visit: Callable,
 ) -> Trace:
-    trc = from_trace(trace_from)
+    trc: Trace = from_trace(trace_from)
 
     try:
         tracectx_tok = set_tracectx(trc)
 
         for bsym in trace_from.bound_symbols:
-            visit(bsym)
+            try:
+                # Creates a temporary scope to support copying the original bsym BEFORE
+                #   the operations performed by visit(), even though this doesn't know whether to
+                #   copy the original bsym until after visit() completes
+                old_scope = trc.scopes
+                scope = []
+                trc.scopes = [scope]
+
+                visit_type = visit(bsym)
+
+                if visit_type is VISIT_TYPE.INSERT_AFTER:
+                    trc.bound_symbols.append(bsym)
+
+                trc.bound_symbols.extend(scope)
+
+                if visit_type is VISIT_TYPE.INSERT_BEFORE:
+                    trc.bound_symbols.append(bsym)
+
+            finally:
+                # Restores the trc's scope
+                trc.scopes = old_scope
 
         # Updates the trace's output
         return_bsym: BoundSymbolInterface = trc.bound_symbols[-1]
@@ -275,8 +312,9 @@ def pytorch_grad_transform(trc: Trace) -> Trace:
 
     # Constructs the start of a new fwd->bwd trace, updating all calls in the original
     #   forward trace to be fwd calls instead (possibly construction an implicit forward)
-    def visit(bsym: BoundSymbolInterface) -> None:
+    def visit(bsym: BoundSymbolInterface) -> VISIT_TYPE:
         result, saved = fwd(remap, bsym)
+        return VISIT_TYPE.REPLACE
 
     ntrc = visitor_transform(
         trace_from=trc,

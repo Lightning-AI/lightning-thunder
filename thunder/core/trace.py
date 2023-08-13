@@ -47,7 +47,7 @@ class TraceCtx:
         self.kwargs = None
         self.output = None
 
-        self.bound_symbols: Sequence[BoundSymbolInterface] = []
+        self.bound_symbols: list[BoundSymbolInterface] = []
         self.scopes = [self.bound_symbols]
 
         self.name_ctr = 0

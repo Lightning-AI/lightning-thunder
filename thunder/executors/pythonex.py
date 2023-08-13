@@ -171,7 +171,7 @@ truediv = _elementwise_binary_factory("truediv", operator)
 pythonex_pow = _elementwise_binary_factory("pow", operator)
 
 
-# Maps from symbol ids to a tuple of (is_fusable, translate) callables
+# Maps from symbol ids to a tuple of (is_fusible, translate) callables
 _ops_map.update(
     {
         # Data movement and transformation prims
