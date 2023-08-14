@@ -1579,6 +1579,19 @@ def softmax(a, dim, dtype=None):
     converted = clang.maybe_convert_to_dtype(result, result_dtype)
     return converted
 
+@torchsymbol(torch.nn.functional.gelu, is_method=False)
+def gelu(a: TensorProxy, *, approximate: str = "none") -> TensorLike:
+    if approximate == "none":
+        # gelu(a) = a * Phi(a), where Phi is the cdf for the Normal Gaussian.
+        # We use the error function to compute Phi.
+        phi_a = 0.5 + 0.5 * erf(a / (math.sqrt(2)))
+        return a * phi_a
+    elif approximate == "tanh":
+        a_pow_3 = a * a * a
+        return 0.5 * a * (1.0 + tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * a_pow_3)))
+    else:
+        raise ValueError(f"gelu does not support the approximate={approximate} argument")
+
 
 # id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)

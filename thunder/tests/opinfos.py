@@ -3694,6 +3694,41 @@ embedding_opinfo = OpInfo(
 nn_ops.append(embedding_opinfo)
 
 
+def gelu_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    for sample in elementwise_unary_generator(op, device, dtype, requires_grad, **kwargs):
+        a, *_ = sample.args
+        yield sample
+        yield SampleInput(make(a.shape), approximate="none")
+        yield SampleInput(make(a.shape), approximate="tanh")
+
+
+gelu_opinfo = OpInfo(
+    ltorch.gelu,
+    # Note that Pytorch does not support complex inputs in gelu.
+    dtypes = (datatypes.floating, datatypes.complexfloating),
+    sample_input_generator=gelu_sample_generator,
+    torch_reference=torch.nn.functional.gelu,
+    test_directives=(
+        # PyTorch does not support complex types
+        # for both the CPU and CUDA gelu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+        # PyTorch does not support CPU Half gelu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(gelu_opinfo)
+
+
 def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)

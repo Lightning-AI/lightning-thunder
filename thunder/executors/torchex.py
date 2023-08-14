@@ -971,6 +971,9 @@ def embedding_backward(
     )
     return tbsym
 
+def gelu(bsym: BoundSymbol, a: TensorProxy, *, approximate: str = "none") -> BoundSymbol:
+    sym = Symbol(name="gelu", meta=None, _module=torch.nn.functional)
+    return sym.bind(a, approximate=approximate, output=bsym.output)
 
 def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
     sym = Symbol(name="layer_norm", meta=None, _module=torch.nn.functional)
@@ -1301,6 +1304,7 @@ _ops_map.update(
         PrimIDs.EMBEDDING: (_always_executable, embedding),
         PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),
         "torch.nn.functional.embedding": (_always_executable, embedding),
+        "torch.nn.functional.gelu": (_always_executable, gelu),
         "torch.layer_norm": (_always_executable, layer_norm),
         "torch.softmax": (_always_executable, softmax),
         "torch.nn.functional.scaled_dot_product_attention": (
