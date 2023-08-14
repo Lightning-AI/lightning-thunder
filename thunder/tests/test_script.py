@@ -222,7 +222,6 @@ def test_llama_block_compile():
     m2 = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
     m2.load_state_dict(m.state_dict())
     tom = thunder.compile(m2, executors_list=torchex)
-    thunder.core.script.python_ir.annotated_dis(tom._tfn)
     inp = torch.randn(1, 8, 4096)
     expected_result = m(inp)
     thunder_result = tom(inp)
