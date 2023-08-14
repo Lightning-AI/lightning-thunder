@@ -1384,23 +1384,6 @@ def fuse(region: Region) -> list[BoundSymbol]:
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def augmented_forward_pass_wrapper(trace, *args):
-        from thunder.core.transforms import augmented_forward_pass
-        from thunder.core.transforms import deconstruct_forward_env_for_backward
-
-        result, env = augmented_forward_pass(*args, trace=trace)
-        saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
-        return result, saved_for_backward
-
-    @staticmethod
-    def backward_pass_wrapper(trace, saved_for_backward, cotangents):
-        from thunder.core.transforms import backward_pass, reconstruct_forward_env_for_backward
-
-        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
-        out = backward_pass(env, trace, cotangents)
-        return out
-
-    @staticmethod
     def get_forward_backward_splitter(func, compile_config):
         from thunder import trace
         from thunder.executors import transform_for_execution
@@ -1443,40 +1426,14 @@ class ThunderFunction(torch.autograd.Function):
         return split_forward_backward
 
     @staticmethod
-    def thunder_augmented_forward_backward(func, compile_config):
-        from thunder import trace as ttrace, compile
-
-        construct_trace = partial(ttrace, inline_trace=False)
-
-        def augmented_forward(*args):
-            trace = construct_trace(func, *args)
-            result, saved_for_backward = ThunderFunction.augmented_forward_pass_wrapper(trace, *args)
-
-            def backward_fn(saved_info, *args):
-                return ThunderFunction.backward_pass_wrapper(trace, saved_info, args)
-
-            return result, saved_for_backward, compile(backward_fn, **compile_config)
-
-        return augmented_forward
-
-    @staticmethod
-    def forward(ctx, split_fw_bw, compiled_augmented_forward, spec, *flat_args):
-        # Our splitter doesn't support splitting a single fusion region, so we
-        # try to split the trace into forward and backward passes. If that
-        # fails, we use the fallback path.
-        try:
-            # We can't send unflatten args with a spec to the split_fw_bw
-            # function, because spec is not hashable. So we need to unflatten
-            # the args here.
-            args, kwargs = tree_unflatten(flat_args, spec)
-            compiled_forward, compiled_backward = split_fw_bw(*args, **kwargs)
-            out, saved_info = compiled_forward(*flat_args)
-            ctx.compiled_backward = compiled_backward
-        except RuntimeError as e:
-            # The fallback path is disabled
-            raise
-            out, saved_info, compiled_backward = compiled_augmented_forward(*flat_args)
-            ctx.compiled_backward = compiled_backward
+    def forward(ctx, split_fw_bw, spec, *flat_args):
+        # We can't send unflatten args with a spec to the split_fw_bw
+        # function, because spec is not hashable. So we need to unflatten
+        # the args here.
+        args, kwargs = tree_unflatten(flat_args, spec)
+        compiled_forward, compiled_backward = split_fw_bw(*args, **kwargs)
+        out, saved_info = compiled_forward(*flat_args)
+        ctx.compiled_backward = compiled_backward
 
         # We must save tensors using ctx.save_for_backward
         is_tensor = tuple(isinstance(x, torch.Tensor) for x in saved_info)
@@ -1503,7 +1460,7 @@ class ThunderFunction(torch.autograd.Function):
                 next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
             )
         grads = ctx.compiled_backward(flat_saved_info, *args)
-        return (None, None, None, *grads)
+        return (None, None, *grads)
 
 
 def thunder_backward(**compile_config):
@@ -1542,12 +1499,6 @@ def thunder_backward(**compile_config):
         # Compile's caching only works for many calls to the same compiled function
         # It does not work if the same function is compiled many times, so we must
         # decorate the augmented forward pass once with compile once and reuse it
-        augmented_forward = ThunderFunction.thunder_augmented_forward_backward(thunder_func, compile_config)
-        compiled_augmented_forward = compile(
-            augmented_forward,
-            **compile_config,
-        )
-
         split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_config)
         compiled_split_fw_bw = compile(
             split_fw_bw,
@@ -1559,7 +1510,7 @@ def thunder_backward(**compile_config):
             # We must save the spec of the args to be able to unflatten them later
             # torch.autograd.Functions support only flat arguments
             flat_args, spec = tree_flatten((args, kwargs))
-            return ThunderFunction.apply(compiled_split_fw_bw, compiled_augmented_forward, spec, *flat_args)
+            return ThunderFunction.apply(compiled_split_fw_bw, spec, *flat_args)
 
         return wrapper
 
