@@ -79,7 +79,7 @@ class Node:
 #   - an optional Node corresponding to the RETURN bound symbol, which must be unique or not in the list of bound symbols
 def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node], Node | None]:
     nodes_without_parents: list[Node] = []
-    return_node: Optional | Node = None
+    return_node: None | Node = None
 
     # Constructs dag
     producers, consumers = utils.producers_and_consumers(bsyms)

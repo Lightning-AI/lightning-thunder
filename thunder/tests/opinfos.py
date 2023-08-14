@@ -171,6 +171,18 @@ class SampleInput:
         args, kwargs = tree_map(to_jax, self.args), tree_map(to_jax, self.kwargs)
         return SampleInput(*args, **kwargs)
 
+    def numpy(self):
+        def to_numpy(t):
+            if isinstance(t, torch.Tensor):
+                return t.cpu().numpy()
+            if isinstance(t, torch.dtype):
+                return _torch_to_numpy_dtype_map[t]
+
+            return t
+
+        args, kwargs = tree_map(to_numpy, self.args), tree_map(to_numpy, self.kwargs)
+        return SampleInput(*args, **kwargs)
+
     def thunder(self):
         def to_thunder(t):
             if isinstance(t, torch.dtype):
@@ -2184,56 +2196,27 @@ cat_opinfo = OpInfo(
 shape_ops.append(cat_opinfo)
 
 
-def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
+def diagonal_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-    # shapes, dim
-    cases = [
-        ([(3,)], 0),  # single tensor provided
-        # 1D
-        ([(3,), (3,)], 0),
-        ([(4,), (4,)], 0),
-        ([(3,), (3,)], 1),
-        ([(3,), (3,)], -1),
-        ([(2, 3), (2, 3)], 1),
-        ([(2, 3), (2, 3), (2, 3)], 1),
-    ]
+    # Input shape, offset, dim1, dim2
+    cases = (
+        ((4, 7, 9), 0, 0, 1),
+        ((1, 2, 0, 3), -1, 0, -1),
+        ((4, 7), 1, -2, -1),
+        ((4, 3, 5, 7), 2, 1, 2),
+    )
 
-    for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+    for shape, offset, dim1, dim2 in cases:
+        yield SampleInput(make(shape), offset, dim1, dim2)
 
 
-def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype)
-
-    # shapes, dim, exception type, error message match or None for universal match
-    cases = [
-        ([], 0, RuntimeError, "list of tensors cannot be empty"),
-        ([(2,), (3,)], 1, RuntimeError, "tensors must be of the same shape"),
-        ([(2,), (2,)], -3, IndexError, "Dimension out of range"),
-        ([(2,), (2,)], 4, IndexError, "Dimension out of range"),
-        # TODO: BUG - differing dimensions is not captured.
-        ([(2,), (2, 3)], 0, RuntimeError, None),
-        # TODO: BUG - same shape but dim is not captured.
-        ([(2, 3), (4, 5)], 0, RuntimeError, None),
-    ]
-
-    for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
-
-
-stack_opinfo = OpInfo(
-    clang.stack,
-    sample_input_generator=stack_sample_generator,
-    error_input_generator=stack_error_generator,
-    torch_reference=torch.stack,
-    test_directives=(
-        # vjp and jvp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
-    ),
+diagonal_opinfo = OpInfo(
+    ltorch.diagonal,
+    sample_input_generator=diagonal_sample_generator,
+    torch_reference=torch.diagonal,
 )
-shape_ops.append(stack_opinfo)
+shape_ops.append(diagonal_opinfo)
 
 
 def expand_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -2325,6 +2308,145 @@ flatten_opinfo = OpInfo(
 shape_ops.append(flatten_opinfo)
 
 
+def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # NOTE PyTorch does not allow negative steps
+    # a.shape, key
+    basic_indexing_cases = (
+        # Fully specified slicing
+        ((5, 5), (slice(1, 3, 1), slice(2, 4, 2))),
+        ((11, 23), (slice(4, 9, 6), slice(3, 21, 4))),
+        ((11, 23), (slice(4, 9, 33), slice(3, 21, 1))),
+        # NOTE: PyTorch allows start > stop and will return a 0 length dim
+        ((5, 3), (slice(3, 1), slice(1, 2))),
+        # NOTE: NumPy allows slicing beyond the end of a dimension
+        ((5, 3), (slice(6, 7), slice(0, 2))),
+        ((5, 3), (slice(6, 2), slice(0, 2))),
+        ((5, 3), (slice(1, 9), slice(0, 2))),
+        # Inferred start
+        ((5, 3), (slice(None, 9), slice(0, 2))),
+        # Inferred end
+        ((5, 3), (slice(2, None), slice(0, 2))),
+        # Inferred start and end
+        ((5, 3), (slice(None, None), slice(0, 2))),
+        # Negative start and stop
+        ((5, 3), (slice(-3, -1), slice(0, -2))),
+        ((5, 3), (slice(-4, -1), slice(-1, -2))),
+        # Partially specified slicing
+        ((5, 3), (slice(-4, -1),)),
+        ((5, 3), slice(-4, -1)),
+        # Slicing and numbers
+        ((1, 5, 3), (0, slice(2, 3), 2)),
+        ((1, 5, 3), (-1, slice(2, 3), -2)),
+        # All numbers
+        ((1, 5, 3), (-1, 3, -2)),
+        # Ellipses
+        ((1, 5, 3), (..., slice(1, 2))),
+        ((1, 5, 3), (0, ..., slice(1, 2))),
+        ((1, 5, 3), ...),
+        # Newaxis/None
+        ((1, 5, 3), (None, None, 0, None, 2, ..., None, None, None)),
+        ((1, 5, 3), (None, None, 0, None, 2, ..., None, None)),
+        # Addtl. cases
+        ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),
+        ((11, 7, 9, 5), (None, slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None, None)),
+    )
+
+    for shape, key in basic_indexing_cases:
+        a = make(shape)
+        yield SampleInput(a, key)
+
+    def make_idx(dim_length: int, indices: int):
+        return make_tensor((indices,), low=-dim_length, high=dim_length, device=device, dtype=torch.int64)
+
+    # NOTE Advanced indexing currently supports:
+    #   - a 0D or 1D integer tensor
+    #   - a series of one or more 0D or 1D integer tensors containing at most one ellipsis as the first sequence element and at least one sequence element
+
+    # 1D tensor cases
+    a = make((5, 4, 7))
+    idx = make_idx(5, 12)
+    yield SampleInput(a, idx)
+
+    # Empty idx
+    a = make((5, 4, 7))
+    idx = make_idx(5, 0)
+    yield SampleInput(a, idx)
+
+    # 0D tensor
+    a = make((5, 4, 7))
+    idx = make_idx(5, 1).squeeze()
+    yield SampleInput(a, idx)
+
+    # Tensor with no elements
+    a = make((5, 0, 7))
+    idx = make_idx(5, 9)
+    yield SampleInput(a, idx)
+
+    # Sequence cases
+
+    # Fully specified
+    a = make((5, 4, 7))
+    idx0 = make_idx(5, 9)
+    idx1 = make_idx(4, 1).squeeze()
+    idx2 = make_idx(7, 9)
+    yield SampleInput(a, (idx0, idx1, idx2))
+
+    # Partially specified
+    a = make((5, 4, 7))
+    idx0 = make_idx(5, 3)
+    idx1 = make_idx(4, 3)
+    yield SampleInput(a, (idx0, idx1))
+
+    a = make((5, 4, 7, 2, 1))
+    idx0 = make_idx(5, 3)
+    idx1 = make_idx(4, 3)
+    yield SampleInput(a, (idx0, idx1))
+
+    a = make((5, 4, 7, 2, 1))
+    idx0 = make_idx(5, 4)
+    idx1 = make_idx(4, 4)
+    idx2 = make_idx(7, 1)
+    yield SampleInput(a, (idx0, idx1, idx2))
+
+    a = make((5, 4, 7, 2, 1))
+    idx0 = make_idx(5, 4)
+    idx1 = make_idx(4, 4)
+    idx2 = make_idx(7, 1).squeeze()
+    yield SampleInput(a, (idx0, idx1, idx2))
+
+    # Ellipsis
+    a = make((5, 2, 9, 4, 7))
+    idx0 = make_idx(4, 8)
+    idx1 = make_idx(7, 1)
+    yield SampleInput(a, (Ellipsis, idx0, idx1))
+
+    # Ellipsis indexing into a tensor with no elements
+    a = make((5, 0, 9, 4, 7))
+    idx0 = make_idx(7, 9)
+    yield SampleInput(a, (Ellipsis, idx0))
+
+
+# NOTE getitem intentionally defines 3 references, since advanced indexing is probably
+#   the most complicated operation that any framework implements, and there's a good chance
+#   that PyTorch, NumPy, and JAX have inconsistent behavior that we'd like to detect
+getitem_opinfo = OpInfo(
+    operator.getitem,
+    sample_input_generator=getitem_sample_generator,
+    torch_reference=operator.getitem,
+    jax_reference=operator.getitem,
+    numpy_reference=operator.getitem,
+    test_directives=(
+        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/422
+        DecorateInfo(pytest.mark.xfail, executors=("nvFuser",)),
+        # NotImplementedError: VJP for Ops.SQUEEZE is not implemented
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+    ),
+)
+shape_ops.append(getitem_opinfo)
+
+
 def movedim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -2348,120 +2470,6 @@ movedim_opinfo = OpInfo(
     torch_reference=torch.movedim,
 )
 shape_ops.append(movedim_opinfo)
-
-
-def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
-    # TODO Test advanced indexing, all cases below are basic indexing
-    # NOTE PyTorch does not allow negative steps
-    # a.shape, key
-    cases = (
-        # Fully specified slicing
-        ((5, 5), (slice(1, 3, 1), slice(2, 4, 2))),
-        ((11, 23), (slice(4, 9, 6), slice(3, 21, 4))),
-        ((11, 23), (slice(4, 9, 33), slice(3, 21, 1))),
-        # NOTE: PyTorch allows start > stop and will return a 0 length dim
-        ((5, 3), (slice(3, 1), slice(1, 2))),
-        # NOTE: NumPy allows slicing beyond the end of a dimension
-        ((5, 3), (slice(6, 7), slice(0, 2))),
-        ((5, 3), (slice(6, 2), slice(0, 2))),
-        ((5, 3), (slice(1, 9), slice(0, 2))),
-        # Inferred start
-        ((5, 3), (slice(None, 9), slice(0, 2))),
-        # Inferred end
-        ((5, 3), (slice(2, None), slice(0, 2))),
-        # Inferred start and end
-        ((5, 3), (slice(None, None), slice(0, 2))),
-        # Negative start and stop
-        ((5, 3), (slice(-3, -1), slice(0, -2))),
-        ((5, 3), (slice(-4, -1), slice(-1, -2))),
-        # Partially specified slicing
-        ((5, 3), (slice(-4, -1),)),
-        # Slicing and numbers
-        ((1, 5, 3), (0, slice(2, 3), 2)),
-        ((1, 5, 3), (-1, slice(2, 3), -2)),
-        # All numbers
-        ((1, 5, 3), (-1, 3, -2)),
-        # Ellipses
-        ((1, 5, 3), (..., slice(1, 2))),
-        ((1, 5, 3), (0, ..., slice(1, 2))),
-        # Newaxis/None
-        ((1, 5, 3), (None, None, 0, None, 2, ..., None, None, None)),
-        ((1, 5, 3), (None, None, 0, None, 2, ..., None, None)),
-        # Addtl. cases
-        ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),
-        ((11, 7, 9, 5), (None, slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None, None)),
-    )
-
-    for shape, key in cases:
-        a = make(shape)
-        yield SampleInput(a, key)
-
-
-getitem_opinfo = OpInfo(
-    operator.getitem,
-    sample_input_generator=getitem_sample_generator,
-    torch_reference=operator.getitem,
-    jax_reference=operator.getitem,
-    test_directives=(
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/422
-        DecorateInfo(pytest.mark.xfail, executors=("nvFuser",)),
-        # NotImplementedError: VJP for Ops.SQUEEZE is not implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-    ),
-)
-shape_ops.append(getitem_opinfo)
-
-
-# TODO: only remove these cases when the executor is nvFuser
-# FIXME: Zero-dim cases are skipped due to https://github.com/csarofeen/pytorch/issues/2383
-# FIXME: tensors with no elements are skipped because of no nvFuser support
-def reshape_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
-    # tensor shape, shape
-    cases = (
-        ((4, 2), (2, -1, 2)),
-        # ((), (-1,)),  # neg index, empty
-        ((4, 7, 9, 1, 1), (1, 4, 3, -1, 1)),  # neg index
-    )
-
-    reversible_cases = (
-        ((4,), (4,)),
-        ((2, 2, 2), (4, 2)),
-        ((125,), (25, 5)),
-        ((25, 25), (1, 5, 5, 1, 5, 1, 5, 1)),
-        ((16, 32), (2, 4, 1, 4, 4, 1, 4)),
-        ((16, 12), (12, 16)),
-        ((1, 16, 12), (12, 16)),
-        ((1, 5, 1, 5), (25, 1)),
-        ((2, 4, 2), (4, 4)),
-        ((1, 4), (1, 1, 2, 1, 2)),
-        ((3, 5, 7), (7, 5, 3)),
-        # ((1,), ()),  # empty
-        # ((5, 0, 2, 3), (5, 0, 2, 3)),
-        # ((2, 1, 0, 3, 1), (5, 0)),
-        # ((1,), ()),  # empty
-        ((4, 5, 6), (4, 5, 6, 1, 1, 1)),
-        # ((), (1, 1, 1, 1)),  # empty
-        # ((), ()),
-    )
-
-    for tensor_shape, shape in cases:
-        yield SampleInput(make(tensor_shape), shape)
-
-    for shape0, shape1 in reversible_cases:
-        yield SampleInput(make(shape0), shape1)
-        yield SampleInput(make(shape1), shape0)
-
-
-reshape_opinfo = OpInfo(
-    clang.reshape,
-    sample_input_generator=reshape_sample_generator,
-    torch_reference=torch.reshape,
-)
-shape_ops.append(reshape_opinfo)
 
 
 def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -2515,6 +2523,56 @@ pad_opinfo = OpInfo(
     ),
 )
 shape_ops.append(pad_opinfo)
+
+
+# TODO: only remove these cases when the executor is nvFuser
+# FIXME: Zero-dim cases are skipped due to https://github.com/csarofeen/pytorch/issues/2383
+# FIXME: tensors with no elements are skipped because of no nvFuser support
+def reshape_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # tensor shape, shape
+    cases = (
+        ((4, 2), (2, -1, 2)),
+        # ((), (-1,)),  # neg index, empty
+        ((4, 7, 9, 1, 1), (1, 4, 3, -1, 1)),  # neg index
+    )
+
+    reversible_cases = (
+        ((4,), (4,)),
+        ((2, 2, 2), (4, 2)),
+        ((125,), (25, 5)),
+        ((25, 25), (1, 5, 5, 1, 5, 1, 5, 1)),
+        ((16, 32), (2, 4, 1, 4, 4, 1, 4)),
+        ((16, 12), (12, 16)),
+        ((1, 16, 12), (12, 16)),
+        ((1, 5, 1, 5), (25, 1)),
+        ((2, 4, 2), (4, 4)),
+        ((1, 4), (1, 1, 2, 1, 2)),
+        ((3, 5, 7), (7, 5, 3)),
+        # ((1,), ()),  # empty
+        # ((5, 0, 2, 3), (5, 0, 2, 3)),
+        # ((2, 1, 0, 3, 1), (5, 0)),
+        # ((1,), ()),  # empty
+        ((4, 5, 6), (4, 5, 6, 1, 1, 1)),
+        # ((), (1, 1, 1, 1)),  # empty
+        # ((), ()),
+    )
+
+    for tensor_shape, shape in cases:
+        yield SampleInput(make(tensor_shape), shape)
+
+    for shape0, shape1 in reversible_cases:
+        yield SampleInput(make(shape0), shape1)
+        yield SampleInput(make(shape1), shape0)
+
+
+reshape_opinfo = OpInfo(
+    clang.reshape,
+    sample_input_generator=reshape_sample_generator,
+    torch_reference=torch.reshape,
+)
+shape_ops.append(reshape_opinfo)
 
 
 def slice_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -2681,6 +2739,58 @@ squeeze_opinfo = OpInfo(
     jax_reference=jax.lax.squeeze if JAX_AVAILABLE else None,
 )
 shape_ops.append(squeeze_opinfo)
+
+
+def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shapes, dim
+    cases = [
+        ([(3,)], 0),  # single tensor provided
+        # 1D
+        ([(3,), (3,)], 0),
+        ([(4,), (4,)], 0),
+        ([(3,), (3,)], 1),
+        ([(3,), (3,)], -1),
+        ([(2, 3), (2, 3)], 1),
+        ([(2, 3), (2, 3), (2, 3)], 1),
+    ]
+
+    for shapes, dim in cases:
+        yield SampleInput([make(s) for s in shapes], dim)
+
+
+def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shapes, dim, exception type, error message match or None for universal match
+    cases = [
+        ([], 0, RuntimeError, "list of tensors cannot be empty"),
+        ([(2,), (3,)], 1, RuntimeError, "tensors must be of the same shape"),
+        ([(2,), (2,)], -3, IndexError, "Dimension out of range"),
+        ([(2,), (2,)], 4, IndexError, "Dimension out of range"),
+        # TODO: BUG - differing dimensions is not captured.
+        ([(2,), (2, 3)], 0, RuntimeError, None),
+        # TODO: BUG - same shape but dim is not captured.
+        ([(2, 3), (4, 5)], 0, RuntimeError, None),
+    ]
+
+    for shapes, dim, exc_type, err_msg_match in cases:
+        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+
+
+stack_opinfo = OpInfo(
+    clang.stack,
+    sample_input_generator=stack_sample_generator,
+    error_input_generator=stack_error_generator,
+    torch_reference=torch.stack,
+    test_directives=(
+        # vjp and jvp not yet implemented
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
+    ),
+)
+shape_ops.append(stack_opinfo)
 
 
 def tensor_split_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -3706,7 +3816,7 @@ def gelu_sample_generator(op, device, dtype, requires_grad, **kwargs):
 gelu_opinfo = OpInfo(
     ltorch.gelu,
     # Note that Pytorch does not support complex inputs in gelu.
-    dtypes = (datatypes.floating, datatypes.complexfloating),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
     sample_input_generator=gelu_sample_generator,
     torch_reference=torch.nn.functional.gelu,
     test_directives=(

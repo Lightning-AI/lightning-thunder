@@ -8,8 +8,9 @@ from torch.testing import assert_close
 
 import thunder.core.dtypes as dtypes
 from thunder.tests.framework import ops, run_snippet, requiresJAX
-from thunder.tests.opinfos import opinfos
+from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.core.devices as devices
+from thunder.core.pytree import tree_map
 from thunder import compile
 
 #
@@ -52,7 +53,7 @@ def snippet_torch_consistency(op, torch_op, sample):
 #   maybe we should cut it up so developers can test just torch operator or just core lang operators
 # TODO: extend this test with some reproducible randomness (maybe using hypothesis)
 @ops(tuple(op for op in opinfos if op.torch_reference is not None))
-def test_core_vs_torch_consistency(op, device: devices.Device, dtype: dtypes.dtype, executor):
+def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor):
     if LooseVersion(torch.__version__) < "1.13" and dtype is dtypes.complex32:
         pytest.skip("complex32 tests on PyTorch versions before 1.13 are skipped!")
 
@@ -71,19 +72,28 @@ def test_core_vs_torch_consistency(op, device: devices.Device, dtype: dtypes.dty
 
 
 def snippet_jax_consistency(op, jax_op, sample):
+    import jax
+    import jax.numpy as jnp
+
     jax_sample = sample.jax()
 
     thunder_result = op(*sample.args, **sample.kwargs)
     jax_result = jax_op(*jax_sample.args, **jax_sample.kwargs)
 
-    # NOTE: this strange unpacking is to handle NumPy's and JAX's sometimes odd
+    # NOTE This strange unpacking is to handle NumPy's and JAX's sometimes odd
     #   number vs. array representation. In particular, NumPy can mimic
     #   Python numbers, but `asarray` doesn't understand this mimicry
-    np_array = np.array(jax_result)
-    if np_array.shape == ():
-        jax_result = torch.tensor(np_array.item(), device=thunder_result.device)
-    else:
-        jax_result = torch.asarray(np_array, device=thunder_result.device)
+    def convert_to_torch(x):
+        if not isinstance(x, jnp.ndarray):
+            return x
+
+        np_array = np.array(x)
+        if np_array.shape == ():
+            return torch.tensor(np_array.item(), device=thunder_result.device)
+        else:
+            return torch.asarray(np_array, device=thunder_result.device)
+
+    jax_result = tree_map(convert_to_torch, jax_result)
 
     # NOTE: dtype is not checked because jax will translate int64, float64, and complex128 to int32, float32 and complex64
     assert_close(thunder_result, jax_result, equal_nan=True, check_dtype=False)
@@ -94,7 +104,7 @@ def snippet_jax_consistency(op, jax_op, sample):
 # TODO: extend this test with some reproducible randomness (maybe using hypothesis)
 @ops(tuple(op for op in opinfos if op.jax_reference is not None))
 @requiresJAX
-def test_core_vs_jax_consistency(op, device: devices.Device, dtype: dtypes.dtype, executor):
+def test_core_vs_jax_consistency(op, device: str, dtype: dtypes.dtype, executor):
     if dtype is dtypes.complex32:
         pytest.skip("jax doesn't support complex32!")
     if dtype is dtypes.bfloat16:
@@ -108,6 +118,52 @@ def test_core_vs_jax_consistency(op, device: devices.Device, dtype: dtypes.dtype
             dtype,
             executor.make_callable(op.op),
             op.jax_reference,
+            sample,
+        )
+        if result is not None:
+            return result
+
+
+def snippet_numpy_consistency(op: OpInfo, np_op, sample: SampleInput):
+    np_sample = sample.numpy()
+
+    thunder_result = op(*sample.args, **sample.kwargs)
+    np_result = np_op(*np_sample.args, **np_sample.kwargs)
+
+    # Converts NumPy results to PyTorch.
+    # NOTE This assumes PyTorch will return tensors where NumPy is aggressive about returning `np.number` objects.
+    def convert_to_torch(x):
+        if not isinstance(x, (np.ndarray, np.number, np.bool_)):
+            return x
+
+        if isinstance(x, (np.number, np.bool_)):
+            return torch.tensor(x, device=thunder_result.device)
+        elif x.shape == ():
+            return torch.tensor(x.item(), device=thunder_result.device)
+        else:
+            return torch.asarray(x, device=thunder_result.device)
+
+    np_result = tree_map(convert_to_torch, np_result)
+
+    # NOTE dtype is intentionally not checked because NumPy sometimes has slight dtype variances
+    assert_close(thunder_result, np_result, equal_nan=True, check_dtype=False)
+
+
+@ops(tuple(op for op in opinfos if op.numpy_reference is not None))
+def test_core_vs_numpy_consistency(op: OpInfo, device: str, dtype: dtypes.dtype, executor):
+    if dtype == dtypes.complex32:
+        pytest.skip("NumPy does not support complex32")
+    if dtype == dtypes.bfloat16:
+        pytest.skip("NumPy does not support bfloat16")
+
+    for sample in op.sample_inputs(device, dtype):
+        result = run_snippet(
+            snippet_numpy_consistency,
+            op,
+            device,
+            dtype,
+            executor.make_callable(op.op),
+            op.numpy_reference,
             sample,
         )
         if result is not None:

@@ -4,6 +4,8 @@ from numbers import Number
 from typing import Union, List, Optional
 from collections.abc import Sequence
 import operator
+from types import EllipsisType
+import copy
 
 import thunder.core.dtypes as dtypes
 
@@ -108,7 +110,7 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
 
     # Checks that step makes progress
     utils.check(
-        (step < 0 and stop < start) or (step > 0 and stop > start),
+        (start == stop) or (step < 0 and stop < start) or (step > 0 and stop > start),
         lambda: f"step={step} must make progress from start={start} to stop={stop}",
     )
 
@@ -215,10 +217,28 @@ def uniform_like(
 #
 
 
+@clang_ctx
+def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
+    utils.check(
+        a.ndim >= 2,
+        lambda: f"diagonal() expected a tensor with at least two dimensions, but got a tensor with {a.ndims} dimensions",
+    )
+
+    diag_length = max(0, min(a.shape[dim1] + min(offset, 0), a.shape[dim2] - max(offset, 0)))
+
+    a = movedim(a, (dim1, dim2), (-2, -1))
+
+    i = arange(start=0, step=1, stop=diag_length, device=a.device)
+    j = arange(start=abs(offset), step=1, stop=(abs(offset) + diag_length), device=a.device)
+    if offset >= 0:
+        return a[..., i, j]
+    return a[..., j, i]
+
+
 # Expands a to the specified shape, possibly adding new dimensions and expanding
 #   dimensions of length 1 to any length
 @clang_ctx
-def expand(a, *shape):
+def expand(a: TensorLike, *shape: int) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
 
     # TODO: improve this error message with error context
@@ -290,7 +310,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if isinstance(key, (Number, slice)):
+    if isinstance(key, (Number, slice, EllipsisType)):
         key = (key,)
 
     for idx, x in enumerate(key):
@@ -402,10 +422,117 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 @clang_ctx
 def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # Advanced indexing currently supports the following cases:
-    #   - a series of 1D integer tensors
-    #   - an ellipsis followed by 1D integer tensors
+    #   - a 0D or 1D integer tensor
+    #   - a series of one or more 0D or 1D integer tensors containing at most one ellipsis as the first sequence element and at least one sequence element
 
-    pass
+    utils.check(
+        isinstance(key, (TensorLike, Sequence)),
+        lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
+    )
+
+    if isinstance(key, (TensorLike)):
+        key = utils.sequencify(key)
+
+    # Validates (currently supported) inputs
+    utils.check(len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}")
+
+    num_ellipses: int = 0
+    for x in key:
+        if x is Ellipsis:
+            num_ellipses += 1
+        utils.check(
+            isinstance(x, (EllipsisType, TensorLike)),
+            lambda: f"Advanced indexing currently only supports tensors as sequence elements (possibly with a starting ellipsis), but found an object of type {type(x)}",
+        )
+        if isinstance(x, TensorLike):
+            utils.check(
+                dtypes.is_nonboolean_integer_dtype(x.dtype) and (x.ndim == 1 or x.ndim == 0),
+                lambda: f"Advanced indexing currently only supports zero or one-dimensional integer tensors, but found a tensor with dtype {x.dtype} and {x.ndim} dimensions",
+            )
+
+    utils.check(num_ellipses <= 1, lambda: f"Found two or more ellipses in an advanced indexing key")
+
+    # NOTE When the key has an ellipsis it can be longer than the number of dimensions in a
+    #   (in this case the ellipsis matches no dimensions)
+    seq_len: int = len(key)
+    utils.check(
+        a.ndim >= (seq_len - num_ellipses),
+        lambda: f"Trying to (advanced) index into a tensor with {a.ndim} dimensions but with {seq_len - num_ellipses} index tensors",
+    )
+
+    # TODO Think about relaxing this
+    has_ellipsis: bool = num_ellipses > 0
+    utils.check(
+        not has_ellipsis or key[0] is Ellipsis,
+        lambda: f"Advanced indexing currently only supports ellipses as the first sequence element",
+    )
+
+    # The following models two advanced indexing cases:
+    #
+    #   1) (Ellipsis, 1D tensor, 1D tensor, ...)
+    #   2) (1D tensor, 1D tensor, ...)
+    #
+    # In both cases the tensor is partially or completely flattened and a flattened index is constructed for it,
+    #   such that take(flattened_tensor, flattened_index, dim) will compute the indexing operation.
+    #
+    # In the first case, the dimensions of the tensor corresponding to the tensor sequence elements is flattened,
+    #   and the "flattened take" happens in this new innermost dimension. For example, a tensor (4, 5, 2) being indexed into
+    #   like (..., a, b) will flatten its two dimensions corresponding to a and b to become (4, 10). Then the take
+    #   happens in that innermost dimension.
+    #
+    # In the second case, the dimensions corresponding to the tensor sequence elements are still flattened, and the
+    #   "flattened take" again happens in this new outermost dimension. For example, a tensor (4, 5, 2) being indexed
+    #   into like (a, b) will flatten its two dimensions corresponding to a and b and become (20, 2). Then the take
+    #   happens in that outermost dimension.
+    #
+    # Conceptually, this technique relies on the 1D tensor sequence elements being contiguous in the key, which is why it
+    #   doesn't support an ellipsis in the middle of the key. There are probably some reasonable generalizations that
+    #   would support those use cases. One idea would be to "materialize" the ellipses as a series of 1D tensors,
+    #   but actually generating those tensors seems expensive.
+    flattened: TensorLike
+    subtensor_shape: list[int]
+    dim: int
+    modified_key = list(key)
+
+    if has_ellipsis:
+        del modified_key[0]
+        subtensor_shape = a.shape[a.ndim - (seq_len - 1) :]
+        dim = -1
+        flattened = flatten(a, a.ndim - (seq_len - 1), -1)
+    else:
+        # NOTE No ellipsis case
+        subtensor_shape = a.shape[: len(key)]
+        dim = 0
+        flattened = flatten(a, 0, seq_len - 1)
+
+    # Canonicalizes tensor indices, wrapping negative indices like -5
+    # NOTE This does not check if the indices are valid. In PyTorch invalid indices
+    #   will trigger a device-side assertion.
+    def wrap_tensor(t: TensorLike, dim_length: int) -> TensorLike:
+        return t + where(t < 0, dim_length, 0)
+
+    # NOTE The following code might be a little too complicated. Conceptually it aligns
+    #   the key and a subset of the tensor dimensions, like in the following examples:
+    #
+    #   tensor dims:  a  b  c  d
+    #           key: k0 k1 k2
+    #
+    #   tensor dims: a  b  c  d
+    #           key:  ... k0 k1
+    #
+    # And then it iterates through both in reverse to pair c and k2, b and k1, etc.
+    #   to compute the correct flattened index.
+    #
+    # A detail is that the first pairing is treated specially to initialize the loop variables.
+    l = subtensor_shape[-1]
+    flattened_idx = wrap_tensor(key[-1], l)
+    accum: int = l
+    for k, l in zip(reversed(key[:-1]), reversed(subtensor_shape[:-1])):
+        wrapped = wrap_tensor(k, l)
+        flattened_idx = flattened_idx + wrapped * accum
+        accum *= l
+
+    return take(flattened, flattened_idx, dim=dim)
 
 
 # NOTE Advanced indexing is triggered whenever:

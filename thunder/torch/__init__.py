@@ -803,18 +803,27 @@ def uniform_like(
 
 
 @torchsymbol(torch.zeros)
-def zeros(shape: Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None):
+def zeros(
+    shape: Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+) -> TensorLike:
     return full(shape, 0, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.zeros_like)
-def zeros_like(a, /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None):
+def zeros_like(
+    a: TensorLike, /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+) -> TensorLike:
     return full_like(a, 0, device=device, dtype=dtype)
 
 
 #
 # Shape operations
 #
+
+
+@torchsymbol(torch.diagonal, is_method=True)
+def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
+    return clang.diagonal(a, offset, dim1, dim2)
 
 
 # TODO Create proper contiguous with memory format support
@@ -824,7 +833,7 @@ def contiguous(a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.Tensor.expand, is_method=True)
-def expand(a: TensorLike, /, *shape) -> TensorLike:
+def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
 
 
@@ -844,7 +853,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
 
 
 @torchsymbol(torch.reshape, is_method=True)
-def reshape(a: TensorLike, /, *shape) -> TensorLike:
+def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
 
     return clang.reshape(a, shape)
@@ -1578,6 +1587,7 @@ def softmax(a, dim, dtype=None):
     result = true_divide(a_exp, sum(a_exp, dim, keepdim=True))
     converted = clang.maybe_convert_to_dtype(result, result_dtype)
     return converted
+
 
 @torchsymbol(torch.nn.functional.gelu, is_method=False)
 def gelu(a: TensorProxy, *, approximate: str = "none") -> TensorLike:

@@ -292,6 +292,11 @@ def contiguous(bsym: BoundSymbol, a) -> BoundSymbol:
     return tbsym
 
 
+def diagonal(bsym: BoundSymbol, a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
+    sym = Symbol(name="diagonal", meta=None, _module=torch)
+    return sym.bind(a, offset, dim1, dim2, output=bsym.output)
+
+
 def expand(bsym: BoundSymbol, tensor, *shape):
     sym = Symbol(name="expand", meta=None, _module=torch.Tensor)
     return sym.bind(tensor, *shape, output=bsym.output)
@@ -307,6 +312,13 @@ def getitem(bsym: BoundSymbol, tensor, key) -> BoundSymbol:
     tbsym = BoundSymbol(sym, args=(tensor, key), kwargs={}, output=bsym.output)
 
     return tbsym
+
+
+def movedim(
+    bsym: BoundSymbol, a: TensorLike, /, source: int | Sequence[int], destination: int | Sequence[int]
+) -> TensorLike:
+    sym = Symbol(name="movedim", meta=None, _module=torch)
+    return sym.bind(a, source, destination, output=bsym.output)
 
 
 # NOTE PyTorch doesn't have a padding operation exactly like XLA's
@@ -339,13 +351,6 @@ def _pad_helper(a, padding_value, padding_config):
     result[intermediate_slices] = a
     result = torch.nn.functional.pad(result, pad_config, value=padding_value)
     return result
-
-
-def movedim(
-    bsym: BoundSymbol, a: TensorLike, /, source: int | Sequence[int], destination: int | Sequence[int]
-) -> TensorLike:
-    sym = Symbol(name="movedim", meta=None, _module=torch)
-    return sym.bind(a, source, destination, output=bsym.output)
 
 
 def pad(bsym: BoundSymbol, a, padding_value, padding_config):
@@ -446,17 +451,17 @@ def take(bsym: BoundSymbol, a, index, dim):
     return tbsym
 
 
-# NOTE Order of index, value and dim changes
-def index_add(bsym: BoundSymbol, a, index, value, dim):
-    sym = Symbol(name="index_add", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, dim, index, value), kwargs={}, output=bsym.output)
+def take_along_axis(bsym: BoundSymbol, a, index, dim):
+    sym = Symbol(name="take_along_dim", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, index, dim), kwargs={}, output=bsym.output)
 
     return tbsym
 
 
-def take_along_axis(bsym: BoundSymbol, a, index, dim):
-    sym = Symbol(name="take_along_dim", meta=None, _module=torch)
-    tbsym = BoundSymbol(sym, args=(a, index, dim), kwargs={}, output=bsym.output)
+# NOTE Order of index, value and dim changes
+def index_add(bsym: BoundSymbol, a, index, value, dim):
+    sym = Symbol(name="index_add", meta=None, _module=torch)
+    tbsym = BoundSymbol(sym, args=(a, dim, index, value), kwargs={}, output=bsym.output)
 
     return tbsym
 
@@ -971,9 +976,11 @@ def embedding_backward(
     )
     return tbsym
 
+
 def gelu(bsym: BoundSymbol, a: TensorProxy, *, approximate: str = "none") -> BoundSymbol:
     sym = Symbol(name="gelu", meta=None, _module=torch.nn.functional)
     return sym.bind(a, approximate=approximate, output=bsym.output)
+
 
 def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
     sym = Symbol(name="layer_norm", meta=None, _module=torch.nn.functional)
@@ -1140,6 +1147,7 @@ _ops_map.update(
         "torch.cat": (_always_executable, cat),
         PrimIDs.CAT: (_always_executable, cat),
         "torch.Tensor.contiguous": (_always_executable, contiguous),
+        "torch.diagonal": (_always_executable, diagonal),
         "torch.Tensor.expand": (_always_executable, expand),
         "torch.flatten": (_always_executable, flatten),
         "torch.Tensor.__getitem__": (_always_executable, getitem),
