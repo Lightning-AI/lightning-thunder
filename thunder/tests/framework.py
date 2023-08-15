@@ -1,7 +1,7 @@
 import inspect
 import os
 import sys
-from functools import wraps
+from functools import wraps, singledispatchmethod
 from itertools import product
 from typing import Callable, List, Optional
 from collections.abc import Sequence
@@ -15,6 +15,8 @@ import thunder.core.dtypes as datatypes
 import thunder.core.devices as devices
 import thunder.executors as executors
 import thunder.core.utils as utils
+
+from thunder.core.trace import TraceCtx, detached_trace
 
 import thunder
 
@@ -51,16 +53,27 @@ class Executor:
     def executors_list(self) -> list[executors.Executor]:
         return []
 
+    @singledispatchmethod
     def make_callable(self, fn, **kwargs):
         # TODO: an error is thrown for many functions because __code__ and
         # inspect.signature for wrapped functions is not matching.
         # KeyError: 'args'
         # thunder/core/script/frontend.py:125: KeyError
         # with disable_preprocessing=False
+        # See: https://github.com/Lightning-AI/lightning-thunder/issues/386
         disable_preprocessing = kwargs.pop("disable_preprocessing", True)
         return thunder.compile(
             fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
         )
+
+    @make_callable.register
+    def make_callable_from_trace(self, trace: TraceCtx, **kwargs):
+        executors = thunder.executors
+        # transform_for_execution doesn't work without a set trace
+        # So we use detached_trace to get the tracectx and then use it
+        with detached_trace():
+            executing_trace, history = executors.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
+        return executing_trace.python_callable()
 
     # TODO Remove this
     def make_callable_with_info(self, fn, **kwargs):

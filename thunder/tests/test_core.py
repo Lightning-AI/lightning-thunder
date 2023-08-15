@@ -29,6 +29,22 @@ from thunder.core.symbol import BoundSymbol
 # Tests related to running valid Python programs
 #
 
+@instantiate(dtypes=NOTHING)
+def test_make_callable_from_trace(executor, device: str, _):
+    def foo(a, b):
+        return a + b
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    traced_foo = thunder.trace(foo, a, b, inline_trace=False)
+    assert len(traced_foo.bound_symbols) == 4
+    assert traced_foo.bound_symbols[-2].sym.name == "add"
+
+    # Ensure that the trace can be fused and executed
+    fusion = executor.make_callable(traced_foo)
+    actual = fusion(a, b)
+    torch.testing.assert_close(actual, a + b)
+
 
 # Tests that traces don't generate duplicate names
 #   (at least not within the first 10k names tested below)
@@ -1377,6 +1393,11 @@ def test_detached_trace(executor, device: str, _):
     finally:
         reset_tracectx(trace_token)
 
+    # Detached trace should work even if there is no outer trace
+    assert get_tracectx() is None
+    with detached_trace():
+        pass
+
 
 @instantiate(dtypes=(thunder.float32,))
 def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
@@ -1466,11 +1487,9 @@ def test_torch_call_recording(executor, device: str, _):
     assert torch_trace.bound_symbols[-2].sym.id == "torch.nn.functional.dropout"
 
     # Ensure that the trace can be fused and executed
-    # TODO: Restore this
-    # ex = _get_executor(executor)
-    # fusion = ex.fuse(torch_trace)
-    # actual = fusion(a)
-    # assert actual.shape == (2, 3)
+    fusion = executor.make_callable(torch_trace)
+    actual = fusion(a)
+    assert actual.shape == (2, 3)
 
 
 # Asserts that all the elements of a collection are equal to each other.
@@ -1608,8 +1627,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
 #     assert not any(s.name == "torch.nn.functional.softmax" for s in nvfuser_trace.symbols)
 
 #     # Ensure that the trace can be fused and executed
-#     ex = _get_executor(executor)
-#     fusion = ex.fuse(nvfuser_trace)
+#     fusion = executor.make_callable(nvfuser_trace)
 #     actual = fusion(a)
 #     expected = thunder.make_traced(func, executor=executor)(a)
 #     assert_close(actual, expected)
@@ -1637,12 +1655,10 @@ def test_nested_trace(executor, device, _):
     assert len(bar_trace.bound_symbols) == 4
     assert bar_trace.bound_symbols[-2].sym.name == "mul"
 
-    # TODO: Restore this once there's an equivalent
-    # ex = _get_executor(executor)
-    # fusion = ex.fuse(bar_trace)
-    # actual = fusion(a, b)
-    # expected = a * b
-    # assert_close(actual, expected)
+    fusion = executor.make_callable(bar_trace)
+    actual = fusion(a, b)
+    expected = a * b
+    assert_close(actual, expected)
 
 
 @instantiate(dtypes=NOTHING)
@@ -1830,9 +1846,9 @@ def test_transforms_identity(executor, device, _):
     assert trace.bound_symbols[-3].sym.name == "mul"
     assert trace.bound_symbols[-2].sym.name == "mul"
 
-    # TODO: Restore this once there's an equivalent
-    # ex = _get_executor(executor)
-    # fusion = ex.fuse(nested_id_trace)
+    # TODO: RuntimeError: Could not find executor for bound symbol __f =
+    # thunder.core.transforms.identity_call
+    # fusion = executor.make_callable(nested_id_trace)
     # actual = fusion(a, b, c=c)
     # expected = executor.make_callable(func)(a, b, c=c)
     # torch.testing.assert_close(actual, expected)
