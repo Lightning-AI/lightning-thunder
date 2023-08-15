@@ -6,6 +6,7 @@ import math
 import operator
 from enum import Enum, auto
 import re
+import itertools
 
 from thunder.core.proxies import TensorProxy, FutureTensorProxy
 import thunder.core.prims as prims
@@ -983,6 +984,49 @@ def squeeze(a: TensorLike, /, dim: Optional[Tuple[int, ...] | int] = None) -> Te
         dims = (dim,)
 
     return clang.squeeze(a, dims)
+
+
+@torchsymbol(torch.chunk, is_method=True)
+def chunk(a: TensorLike, chunks: int, dim: int = 0) -> Sequence[TensorLike]:
+    utils.check(a.ndim > 0, lambda: f"chunk: a ({a.ndim=}) must be at least 1-dimensional")
+    utils.check(chunks > 0, lambda: f"chunk: chunks ({chunks=}) must be greater than 0")
+
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    a_dim_len = a.shape[dim]
+
+    # a_dim_len == 0?
+    # Easy case, return `chunk` number of copies of `a` as slices slice(0, 1) at dim=dim.
+    if a_dim_len == 0:
+        return tuple(
+            clang.slice_in_dim(a, 0, 1, dim=dim) for _ in range(chunks)
+        )
+
+    # chunks == 1?
+    # Easy case, return a copy of `a` as a slice(0, a_dim_len) at dim=dim.
+    if chunks == 1:
+        return (clang.slice_in_dim(a, 0, a_dim_len, dim=dim),)
+
+    # NOTE: in the code below a_dim_len > 0 and chunks > 1.
+    # In the output, the first len - 1 tensors
+    # will always have shape[dim] = ceil(a.shape[dim] / chunks).
+    chunk_len = (a_dim_len + chunks - 1) // chunks
+    # Based on `chunk_len` above, the len of the result is either
+    # `chunk` or less, and is defined as ceil(a.shape[dim] / chunk_len).
+    # So we update `chunks` to this new value below.
+    chunks = (a_dim_len + chunk_len - 1) // chunk_len
+    chunk_len_last = a_dim_len - (chunks - 1) * chunk_len
+
+    # A generator that defines start and stop for each chunk.
+    chunk_start_end_gen = itertools.chain(
+        ((chunk_start, chunk_start + chunk_len)
+            for chunk_start in range(0, a_dim_len - chunk_len_last, chunk_len)),
+        # Last chunk
+        ((a_dim_len - chunk_len_last, a_dim_len),)
+    )
+
+    return tuple(
+        clang.slice_in_dim(a, *chunk_data, dim=dim) for chunk_data in chunk_start_end_gen
+    )
 
 
 # TODO Add type annotations

@@ -292,6 +292,11 @@ def contiguous(bsym: BoundSymbol, a) -> BoundSymbol:
     return tbsym
 
 
+def chunk(bsym: BoundSymbol, a: TensorProxy, chunks: int, dim: int = 0) -> BoundSymbol:
+    sym = Symbol(name="chunk", meta=None, _module=torch)
+    return sym.bind(a, chunks, dim, output=bsym.output)
+
+
 def diagonal(bsym: BoundSymbol, a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
     sym = Symbol(name="diagonal", meta=None, _module=torch)
     return sym.bind(a, offset, dim1, dim2, output=bsym.output)
@@ -1147,6 +1152,7 @@ _ops_map.update(
         "torch.cat": (_always_executable, cat),
         PrimIDs.CAT: (_always_executable, cat),
         "torch.Tensor.contiguous": (_always_executable, contiguous),
+        "torch.chunk": (_always_executable, chunk),
         "torch.diagonal": (_always_executable, diagonal),
         "torch.Tensor.expand": (_always_executable, expand),
         "torch.flatten": (_always_executable, flatten),

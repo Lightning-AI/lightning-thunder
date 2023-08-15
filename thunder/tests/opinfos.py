@@ -2676,6 +2676,56 @@ split_opinfo = OpInfo(
 shape_ops.append(split_opinfo)
 
 
+def chunk_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, chunks size, dim
+    cases = (
+        # Case - any size, chunk=1.
+        ((0,), 1, 0),
+        ((1,), 1, 0),
+        ((0, 2, 3), 1, 0),
+        ((2, 2, 3), 1, 0),
+        # Case - shape[dim] == 0, any chunk.
+        ((0,), 3, 0),
+        ((0, 2, 3), 1, 0),
+        ((0, 2, 3), 4, 0),
+        # Exampes from the PyTorch's docs.
+        ((11,), 6, 0),
+        ((12,), 6, 0),
+        ((13,), 6, 0),
+        # Examples taken from split_sample_generator
+        ((4, 6, 7), 2, 0),
+        ((4, 6, 7), 3, 0),
+        ((4, 6, 7), 3, -1),
+        ((4, 6, 7), 9, 1),
+        ((4, 4, 12), 4, 2),
+        # Just interesting cases when you get not what you expected
+        ((9, 2), 4, 0),  # Expects 3 chunks, not 4. See the impl code for more details.
+    )
+
+    for shape, size_or_sections, dim in cases:
+        yield SampleInput(make(shape), size_or_sections, dim)
+
+
+def chunk_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+    yield (SampleInput(make(), 1), RuntimeError, "must be at least 1-dimensional")
+    yield (SampleInput(make((0,)), -1), RuntimeError, "chunks(.*?) must be greater than 0")
+    yield (SampleInput(make((0,)), 0), RuntimeError, "chunks(.*?) must be greater than 0")
+    # NOTE: maybe not needed as it tests dim canonization.
+    yield (SampleInput(make((0,)), 1, dim=1), IndexError, "Dimension out of range")
+
+
+chunk_opinfo = OpInfo(
+    ltorch.chunk,
+    sample_input_generator=chunk_sample_generator,
+    error_input_generator=chunk_error_generator,
+    torch_reference=torch.chunk,
+)
+shape_ops.append(chunk_opinfo)
+
+
 def squeeze_torch_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
