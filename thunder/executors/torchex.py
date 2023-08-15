@@ -1398,7 +1398,7 @@ def fuse(region: Region) -> list[BoundSymbol]:
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def get_forward_backward_splitter(func, compile_config):
+    def get_forward_backward_splitter(func, compile_config, compile_data):
         from thunder import trace
         from thunder.executors import transform_for_execution
         from thunder.executors.passes import del_last_used
@@ -1420,7 +1420,7 @@ class ThunderFunction(torch.autograd.Function):
             flat_func, flat_args, spec = utils.flatten_func(func, args, kwargs)
             out = flat_func(*flat_args)
             joint_trace = make_trace(inline(vjp(flat_func)))(flat_args, utils.sequencify(out))
-            extrace, _ = transform_for_execution(
+            extrace, extraces = transform_for_execution(
                 joint_trace,
                 executors_list=compile_config.get("executors_list", None),
                 only_execute_prims=compile_config.get("only_execute_prims", False),
@@ -1434,6 +1434,11 @@ class ThunderFunction(torch.autograd.Function):
 
             def backward_fn(saved_info, *args):
                 return backward_trace_fn(*saved_info, *args)
+
+            if compile_data is not None:
+                compile_data.joint_last_traces = [joint_trace, *extraces]
+                compile_data.forward_trace = forward_trace
+                compile_data.backward_trace = backward_trace
 
             return forward_trace.python_callable(), backward_fn
 
@@ -1477,7 +1482,7 @@ class ThunderFunction(torch.autograd.Function):
         return (None, None, *grads)
 
 
-def thunder_backward(**compile_config):
+def thunder_backward(*, compile_data=None, **compile_config):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
 
     Args:
@@ -1513,7 +1518,7 @@ def thunder_backward(**compile_config):
         # Compile's caching only works for many calls to the same compiled function
         # It does not work if the same function is compiled many times, so we must
         # decorate the augmented forward pass once with compile once and reuse it
-        split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_config)
+        split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_config, compile_data)
         compiled_split_fw_bw = compile(
             split_fw_bw,
             **compile_config,

@@ -401,6 +401,11 @@ class CompileData:
         self.last_executed = None
         self.last_traces = None
 
+        # torch.autograd.Function specific data
+        self.joint_last_traces = None
+        self.forward_trace = None
+        self.backward_trace = None
+
         self.cache = {}
         self.calls = 0
         self.cache_hits = 0
@@ -582,7 +587,7 @@ def compile(
             "use_cudagraphs": use_cudagraphs,
         }
 
-        _fn = thunder_backward(**compile_config)(cd.post_processed_function)
+        _fn = thunder_backward(compile_data=cd, **compile_config)(cd.post_processed_function)
 
         tom = _wrap_in_tom(
             original_module=fn,

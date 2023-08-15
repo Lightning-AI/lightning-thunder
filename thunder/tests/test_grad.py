@@ -606,6 +606,37 @@ def test_torch_autograd_module(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_torch_autograd_module_get_compile_data(executor, device, _):
+    from thunder.core.trace import TraceCtx
+    from thunder import compile_data
+    l = torch.nn.Linear(3, 4, bias=False, device=device)
+    a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
+    g = make_tensor((2, 4), device=device, dtype=torch.float32)
+
+    lc = executor.make_callable(
+        l,
+        disable_preprocessing=False,
+        use_generated_backward=True,
+        use_static_caching=True,
+    )
+    lc.zero_grad()
+    a.grad = None
+    out = lc(a)
+    out.backward(g)
+
+    compile_data = compile_data(lc)
+    joint_trace_history = compile_data.joint_last_traces
+    forward_trace = compile_data.forward_trace
+    backward_trace = compile_data.backward_trace
+    assert isinstance(joint_trace_history, list)
+    assert len(joint_trace_history) > 1
+    assert isinstance(forward_trace, TraceCtx)
+    assert isinstance(backward_trace, TraceCtx)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _):
     from thunder.executors.torchex import thunder_backward
 
