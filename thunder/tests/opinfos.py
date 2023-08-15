@@ -2802,13 +2802,11 @@ def tensor_split_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 6, 7), 2, 2),
         ((4, 6, 7), 3, 0),
         ((4, 6, 7), 5, -1),
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/421
-        # ((4, 6, 7), (0, 1), 1),
+        ((4, 6, 7), (0, 1), 1),
         ((4, 6, 7), (1, 5, 6), 2),
         ((4, 6, 7), (1, 5, 9, 9), 2),
         ((4, 6, 7), (1, 5, 6, 7), 2),
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/421
-        # ((4, 6, 7), (0, 0, 1, 1, 2), -2),
+        ((4, 6, 7), (0, 0, 1, 1, 2), -2),
     )
 
     for shape, indices_or_sections, dim in cases:
