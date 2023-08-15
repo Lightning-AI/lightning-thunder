@@ -3323,6 +3323,69 @@ def reduction_sample_generator(op, device, dtype, requires_grad, **kwargs):
             yield (SampleInput(make(shape), dim, keepdim, dtype=dtype))
 
 
+def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(
+        make_tensor,
+        device=device,
+        dtype=dtype,
+        requires_grad=requires_grad,
+        # We set low (inclusive) and high (exclusive) here to avoid values
+        # whose products can otherwise become extremely large
+        low=-2,
+        high=3,
+    )
+
+    # shape, dim, keepdim
+    cases = (
+        ((4, 4), (0, 1), False),
+        ((5,), 0, True),
+        ((5,), 0, False),
+        ((8, 1, 6), 1, True),
+        ((8, 0, 5, 1), (0, 2), True),
+        ((8, 0, 5, 1), (0, 2), False),
+        ((8, 7, 5, 1), (0, 1), True),
+        ((8, 7, 5, 1), (1, 3), False),
+    )
+
+    for shape, dim, keepdim in cases:
+        yield (SampleInput(make(shape), dim, keepdim))
+
+        if dtype.is_floating_point:
+            # Randomly select half of the elements per dimension
+            per_dim_indices = [torch.randint(0, max(dim_size, 1), (dim_size // 2,)) for dim_size in shape]
+            # Get product of per_dim_indices because tensor indexing does not support selection along multiple dimensions
+            indices = torch.cartesian_prod(*per_dim_indices)
+            inf_input_tensor = make(shape)
+            # Set selected elements to positive infinity
+            inf_input_tensor[indices] = float('inf')
+            yield (SampleInput(inf_input_tensor, dim, keepdim))
+
+
+logsumexp_opinfo = OpInfo(
+    ltorch.logsumexp,
+    # NOTE Pytorch logsumexp does not support complex dtypes.
+    # RuntimeError: logsumexp(): Expected floating point type for result tensor, but got: ComplexFloat
+    dtypes=(datatypes.exact, datatypes.floating),
+    sample_input_generator=logsumexp_sample_generator,
+    torch_reference=torch.logsumexp,
+    test_directives=(
+        # NOTE Nvfuser fails with AssertionError: Tensor-likes are not close!
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            executors=("nvFuser",),
+        ),
+        # RuntimeError: "exp_vml_cpu" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+reduction_ops.append(logsumexp_opinfo)
+
+
 prod_opinfo = OpInfo(
     ltorch.prod,
     sample_input_generator=reduction_sample_generator,
@@ -3765,13 +3828,12 @@ opinfos.extend(matmul_ops)
 nn_ops = []
 
 
-# TODO: improve sample generation, test dtype argument
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     S = 2
     M = 5
-    # Shape, dim, dtype
+    # shape, dim
     cases = (
         ((S,), 0),
         ((S, S), 0),
@@ -3781,8 +3843,18 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((), 0),
     )
 
-    for shape, dim in cases:
-        yield SampleInput(make(shape), dim=dim)
+    # NOTE: torch.log_softmax(x, dim, dtype=float) returns a float64 tensor while thunder returns a float32 tensor.
+    # NOTE: Skip torch.bfloat16 because of atol tolerance
+    supported_float_dtypes = {None, torch.float32, torch.float64}
+
+    # Skip dtype parameter with gradient testing because tolerances are too conservative
+    if requires_grad:
+        for shape, dim in cases:
+            yield SampleInput(make(shape), dim=dim)
+    else:
+        for example, dtype_option in itertools.product(cases, supported_float_dtypes):
+            shape, dim = example
+            yield SampleInput(make(shape), dim=dim, dtype=dtype_option)
 
 
 softmax_opinfo = OpInfo(
@@ -3803,11 +3875,36 @@ softmax_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
+            dtypes=(datatypes.bfloat16, datatypes.float16),
         ),
     ),
 )
 nn_ops.append(softmax_opinfo)
+
+
+log_softmax_opinfo = OpInfo(
+    ltorch.log_softmax,
+    sample_input_generator=softmax_sample_generator,
+    torch_reference=None if LooseVersion(torch.__version__) < "1.13" else torch._refs.log_softmax,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # torch.log_softmax doesn't support float16 on CPU
+        # RuntimeError: "log_softmax_lastdim_kernel_impl" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Tolerances are currently too conservative for this test with half precision
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+        ),
+    ),
+)
+nn_ops.append(log_softmax_opinfo)
 
 
 def embedding_sample_generator(op, device, dtype, requires_grad, **kwargs):

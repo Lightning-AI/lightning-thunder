@@ -1693,6 +1693,37 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     return attn_weight @ value
 
 
+@torchsymbol(torch.logsumexp, is_method=True)
+def logsumexp(a: TensorLike,
+              dim: Union[int, Sequence[int]],
+              keepdim: bool = False):
+    input_max = amax(a, dim, keepdim=True)
+    input_max_sans_inf = where(abs(input_max) == float("inf"), 0, input_max)
+    result = log(sum(exp(a - input_max_sans_inf), dim, keepdim))
+    squeeze_max = input_max_sans_inf if keepdim else squeeze(input_max_sans_inf, dim)
+    return result + squeeze_max
+
+
+# The dim parameter in torch.nn.functional.log_softmax is optional.
+# Inferring dim parameter is deprecated, so we made dim a required parameter in our log_softmax definition.
+# See the PyTorch documentation:
+# https://pytorch.org/docs/master/generated/torch.nn.functional.log_softmax.html
+# https://pytorch.org/docs/master/special.html?#torch.special.log_softmax
+@torchsymbol(torch.log_softmax, torch.special.log_softmax, torch.nn.functional.log_softmax, is_method=True)
+def log_softmax(a: TensorLike, dim: int, *, dtype=None):
+    result_dtype = dtype or a.dtype
+
+    # If dtype parameter is specified, the input tensor is cast to dtype before the operation is performed.
+    # We cast the input to the corresponding computation dtype and the output to the desired dtype.
+    computation_dtype = utils.get_computation_dtype(result_dtype)
+    a_ = clang.maybe_convert_to_dtype(a, computation_dtype)
+
+    result = a_ - logsumexp(a_, dim, keepdim=True)
+
+    converted = clang.maybe_convert_to_dtype(result, result_dtype)
+    return converted
+
+
 # The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward
 # primitive. Executors can override the primitive using internal implementations.
 # See https://github.com/Lightning-AI/lightning-thunder/issues/660
@@ -1748,15 +1779,7 @@ def cross_entropy(
         )
         bcast_weight = clang.reshape(weight, [C] + [1 for i in range(2, input.ndim)])
 
-    # log_softmax
-    # softmax_input = _softmax_decomp(input, C_dim)
-    # log_softmax_input = clang.log(softmax_input)
-    # implementation suggested by Jacob to avoid division in _softmax_decomp
-    input_max = amax(input, C_dim, keepdim=True)
-    input_prime = clang.sub(input, input_max)
-    sumexp = sum(clang.exp(input_prime), C_dim, keepdim=True)
-    log_softmax_input = clang.sub(input_prime, clang.log(sumexp))
-
+    log_softmax_input = log_softmax(input, C_dim)
     out = clang.neg(log_softmax_input)
 
     if input.shape == target.shape:

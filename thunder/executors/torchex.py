@@ -994,6 +994,19 @@ def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, e
     return tbsym
 
 
+def logsumexp(bsym: BoundSymbol, a: TensorProxy, dim: Number, keepdim: bool =False) -> BoundSymbol:
+    sym = Symbol(name="logsumexp", meta=None, _module=torch)
+    return sym.bind(a, dim, keepdim, output=bsym.output)
+
+
+def log_softmax(bsym: BoundSymbol, a: TensorProxy, dim: Number, dtype=None) -> BoundSymbol:
+    torch_dtype = None
+    if dtype is not None:
+        torch_dtype = ltorch.to_torch_dtype(dtype)
+    sym = Symbol(name="log_softmax", meta=None, _module=torch)
+    return sym.bind(a, dim, dtype=torch_dtype, output=bsym.output)
+
+
 def relu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
     sym = Symbol(name="relu", meta=None, _module=torch.nn.functional)
     # NOTE: inplace is ignored since only
@@ -1001,19 +1014,12 @@ def relu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
     return sym.bind(a, output=bsym.output)
 
 
-def softmax(bsym: BoundSymbol, a, dim, dtype=None) -> BoundSymbol:
+def softmax(bsym: BoundSymbol, a: TensorProxy, dim: Number, dtype=None) -> BoundSymbol:
     torch_dtype = None
     if dtype is not None:
-        torch_dtype = ltorch.to_torch_dtype(dtypes.numbertype_to_dtype(dtype))
-
+        torch_dtype = ltorch.to_torch_dtype(dtype)
     sym = Symbol(name="softmax", meta=None, _module=torch)
-
-    kwargs = {
-        "dtype": torch_dtype,
-    }
-
-    tbsym = BoundSymbol(sym, args=(a, dim), kwargs=kwargs, output=bsym.output)
-    return tbsym
+    return sym.bind(a, dim, dtype=torch_dtype, output=bsym.output)
 
 
 def _scaled_dot_product_attention_check(
@@ -1320,6 +1326,8 @@ _ops_map.update(
         "torch.nn.functional.embedding": (_always_executable, embedding),
         "torch.nn.functional.gelu": (_always_executable, gelu),
         "torch.layer_norm": (_always_executable, layer_norm),
+        "torch.logsumexp": (_always_executable, logsumexp),
+        "torch.log_softmax": (_always_executable, log_softmax),
         "torch.softmax": (_always_executable, softmax),
         "torch.nn.functional.scaled_dot_product_attention": (
             _scaled_dot_product_attention_check,
