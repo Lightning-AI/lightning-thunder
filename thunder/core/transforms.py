@@ -2180,10 +2180,10 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
 
 @register_augmented_forward("torch.Tensor.contiguous")
 @register_augmented_forward("torch.contiguous")
-def contiguous_aug_fwd(x: TensorProxy) -> VJPDual:
+def contiguous_aug_fwd(x: TensorProxy, /, *, memory_format: torch.memory_format = torch.contiguous_format) -> VJPDual:
     from thunder.torch import contiguous
 
-    return VJPDual(contiguous(x), tuple())
+    return VJPDual(contiguous(x, memory_format=memory_format), tuple())
 
 
 @register_backward("torch.Tensor.contiguous")
