@@ -285,13 +285,6 @@ def cat(bsym: BoundSymbol, tensors, dim=0) -> BoundSymbol:
     return tbsym
 
 
-def contiguous(bsym: BoundSymbol, a) -> BoundSymbol:
-    sym = Symbol(name="contiguous", meta=None, _module=torch.Tensor)
-    tbsym = BoundSymbol(sym, args=(a,), kwargs={}, output=bsym.output)
-
-    return tbsym
-
-
 def chunk(bsym: BoundSymbol, a: TensorProxy, chunks: int, dim: int = 0) -> BoundSymbol:
     sym = Symbol(name="chunk", meta=None, _module=torch)
     return sym.bind(a, chunks, dim, output=bsym.output)
@@ -521,6 +514,50 @@ def view(bsym: BoundSymbol, a, *shape):
     tbsym = BoundSymbol(sym, args=(a, shape), kwargs={}, output=bsym.output)
 
     return tbsym
+
+
+#
+# Memory format operations
+#
+
+
+def contiguous(
+    bsym: BoundSymbol, a: TensorLike, /, *, memory_format: torch.memory_format = torch.contiguous_format
+) -> BoundSymbol:
+    sym = Symbol(name="contiguous", meta=None, _module=torch.Tensor)
+    return sym.bind(a, memory_format=memory_format, output=bsym.output)
+
+
+# TODO Detect if the tensor is already contiguous as requested, and if so just return it
+# TODO Review how strides are set if the tensor contains no elements
+def _stride_order_helper(a: torch.Tensor, order: Sequence[int]) -> torch.Tensor:
+    # Canonicalizes permutation as a tuple so it can be compared to the channels_last special cases below
+    order = tuple(order)
+
+    # Special cases channels_last and channels_last_3d cases
+    if order == (3, 0, 2, 1):
+        return a.contiguous(memory_format=torch.channels_last)
+    elif order == (4, 0, 3, 2, 1):
+        return a.contiguous(memory_format=torch.channels_last_3d)
+
+    # Creates a tensor with the appropriate shape and strides, then copies the input
+    #   tensor into it
+    ordered_dims = sorted(zip(a.shape, order), key=lambda x: x[1])
+    ordered_strides = [1]
+    accum = ordered_dims[0][0]
+    for dim_length, _ in ordered_dims[1:]:
+        ordered_strides.append(accum)
+        accum *= dim_length
+
+    strides = tuple(ordered_strides[x] for x in order)
+    return torch.empty_strided(a.shape, strides, device=a.device, dtype=a.dtype).copy_(a)
+
+
+def stride_order(bsym: BoundSymbol, a: TensorProxy, order: Sequence[int]) -> BoundSymbol:
+    sym = Symbol(name="stride_order", meta=None)
+    ctx: dict[str, Any] = {"stride_order": _stride_order_helper}
+
+    return sym.bind(a, order, output=bsym.output, _call_ctx=ctx)
 
 
 #
@@ -1158,6 +1195,7 @@ _ops_map.update(
         "torch.cat": (_always_executable, cat),
         PrimIDs.CAT: (_always_executable, cat),
         "torch.Tensor.contiguous": (_always_executable, contiguous),
+        PrimIDs.STRIDE_ORDER: (_always_executable, stride_order),
         "torch.chunk": (_always_executable, chunk),
         "torch.diagonal": (_always_executable, diagonal),
         "torch.Tensor.expand": (_always_executable, expand),

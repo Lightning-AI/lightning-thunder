@@ -70,6 +70,8 @@ class PrimIDs(Enum):
     TAKE_ALONG_AXIS = auto()
     SCATTER_ADD = auto()
     VIEW = auto()
+    # Memory layout prims (Experimental)
+    STRIDE_ORDER = auto()
     # Elementwise unary prims
     PY_ABS = auto()
     ABS = auto()
@@ -1764,6 +1766,24 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta)
 
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta)
+
+#
+# Memory format prims (Experimental)
+#
+
+
+def stride_order_meta(a: TensorProxy, order: Sequence[int]) -> TensorProxy:
+    # Validates inputs
+    utils.check_type(a, TensorProxy)
+    utils.check_valid_permutation(a.ndim, order)
+
+    return TensorProxy(like=a)
+
+
+# TODO Consider a more general stride manipulation primitive, like PyTorch's
+#   as_strided or set_strided operations
+# See clang.stride_order for this prim's documentation
+stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta)
 
 #
 # Reduction prims

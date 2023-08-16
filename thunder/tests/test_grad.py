@@ -609,6 +609,7 @@ def test_torch_autograd_module(executor, device, _):
 def test_torch_autograd_module_get_compile_data(executor, device, _):
     from thunder.core.trace import TraceCtx
     from thunder import compile_data
+
     l = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)

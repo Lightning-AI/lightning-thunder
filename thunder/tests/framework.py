@@ -72,7 +72,9 @@ class Executor:
         # transform_for_execution doesn't work without a set trace
         # So we use detached_trace to get the tracectx and then use it
         with detached_trace():
-            executing_trace, history = executors.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
+            executing_trace, history = executors.transform_for_execution(
+                trace, executors_list=self.executors_list(), **kwargs
+            )
         return executing_trace.python_callable()
 
     # TODO Remove this

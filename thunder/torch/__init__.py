@@ -675,13 +675,13 @@ def _mask_tensor(a, mask):
     return where(mask, a, 0)
 
 
-# NOTE: masked_fill is a strange wrapper around where, it probably exists only because of PyTorch's inplace pattern
-# NOTE: PyTorch's masked fill requires value be a number or number tensor
-# NOTE: PyTorch's masked fill is only defined as a tensor method that implicitly takes a as the first argument
-# NOTE: PyTorch's masked_fill_ requires the dtype of a not change, so it checks that
+# NOTE masked_fill is a strange wrapper around where, it probably exists only because of PyTorch's inplace pattern
+# NOTE PyTorch's masked fill requires value be a number or number tensor
+# NOTE PyTorch's masked fill is only defined as a tensor method that implicitly takes a as the first argument
+# NOTE PyTorch's masked_fill_ requires the dtype of a not change, so it checks that
 #   value can be safely cast to a
-# TODO: PyTorch's masked_fill always returns a contiguous tensor
-# TODO: add number tensor support
+# TODO PyTorch's masked_fill always returns a contiguous tensor
+# TODO add number tensor support
 @torchsymbol(torch.masked_fill, is_method=True)
 def masked_fill(a: TensorLike, /, mask: TensorLike, value: Number | TensorLike) -> TensorLike:
     result = where(mask, value, a)
@@ -827,10 +827,31 @@ def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> Te
     return clang.diagonal(a, offset, dim1, dim2)
 
 
-# TODO Create proper contiguous with memory format support
 @torchsymbol(torch.Tensor.contiguous, is_method=True)
-def contiguous(a: TensorLike, /) -> TensorLike:
-    return a
+def contiguous(a: TensorLike, /, *, memory_format: torch.memory_format = torch.contiguous_format) -> TensorLike:
+    # NOTE PyTorch supports the following memory formats:
+    #   - torch.preserve_format
+    #   - torch.contiguous_format
+    #   - torch.channels_last
+    #   - torch.channels_last_3d
+    #
+    #   torch.channels_last is also known as channels_last_2d, and only applies to 4D tensors (NCHW dims with NHWC strides)
+    #   torch.channels_last_3d only applies to 5D tensors (NCDHW dims with NDHWC strides)
+
+    if memory_format is torch.preserve_format:
+        # TODO Should this case raise a NotImplementedError? We don't know the format of a
+        #   to preserve it
+        return a
+    elif memory_format is torch.contiguous_format:
+        return clang.stride_order(a)
+    elif memory_format is torch.channels_last:
+        utils.check(a.ndim == 4, lambda: f"Expected a 4D tensor for the channels last memory format")
+        return clang.stride_order(a, (3, 0, 2, 1))
+    elif memory_format is torch.channels_last_3d:
+        utils.check(a.ndim == 5, lambda: f"Expected a 5D tensor for the channels last 3D memory format")
+        return clang.stride_order(a, (4, 0, 3, 2, 1))
+
+    utils.check(False, lambda: f"Found unexpected memory_format={memory_format}", exception_type=ValueError)
 
 
 @torchsymbol(torch.Tensor.expand, is_method=True)
@@ -997,9 +1018,7 @@ def chunk(a: TensorLike, chunks: int, dim: int = 0) -> Sequence[TensorLike]:
     # a_dim_len == 0?
     # Easy case, return `chunk` number of copies of `a` as slices slice(0, 1) at dim=dim.
     if a_dim_len == 0:
-        return tuple(
-            clang.slice_in_dim(a, 0, 1, dim=dim) for _ in range(chunks)
-        )
+        return tuple(clang.slice_in_dim(a, 0, 1, dim=dim) for _ in range(chunks))
 
     # chunks == 1?
     # Easy case, return a copy of `a` as a slice(0, a_dim_len) at dim=dim.
@@ -1018,15 +1037,12 @@ def chunk(a: TensorLike, chunks: int, dim: int = 0) -> Sequence[TensorLike]:
 
     # A generator that defines start and stop for each chunk.
     chunk_start_end_gen = itertools.chain(
-        ((chunk_start, chunk_start + chunk_len)
-            for chunk_start in range(0, a_dim_len - chunk_len_last, chunk_len)),
+        ((chunk_start, chunk_start + chunk_len) for chunk_start in range(0, a_dim_len - chunk_len_last, chunk_len)),
         # Last chunk
-        ((a_dim_len - chunk_len_last, a_dim_len),)
+        ((a_dim_len - chunk_len_last, a_dim_len),),
     )
 
-    return tuple(
-        clang.slice_in_dim(a, *chunk_data, dim=dim) for chunk_data in chunk_start_end_gen
-    )
+    return tuple(clang.slice_in_dim(a, *chunk_data, dim=dim) for chunk_data in chunk_start_end_gen)
 
 
 # TODO Add type annotations

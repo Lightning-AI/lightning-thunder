@@ -668,6 +668,37 @@ def transpose(a, permutation):
     return prims.transpose(a, permutation)
 
 
+# TODO Consider moving this out of the core language and into something like NumPy's
+#   lib.stride_tricks
+@clang_ctx
+def stride_order(a: TensorLike, order: None | Sequence[int] = None) -> TensorLike:
+    """
+    Creates a dense, non-overlapping and strided tensor with the same data and metadata as a.
+
+    A dense, non-overlapping and strided tensor has three properties:
+        - Dense. Its data is stored contiguously in memory in an array
+        - Non-overlapping. Each array element has a unique index in the tensor
+        - Strided. The array position of an element x with index index_x is <index_x, strides>, the dot product of its index and the tensor's strides
+
+    Intuitively, dense and non-overlapping tensors are distinguished from arbitrarily strided tensors because they are neither
+    "overlapped", where multiple indices refer to the same elements, nor do they have "gaps" where memory addresses between the
+    first and last array elements do not point to the tensor's data.
+
+    If a permutation is provided the strides will be ordered (least to greatest) like the permutation.
+    If no permutation is provided the strides will be ordered from outermost to innermost (..., 2, 1, 0).
+    For example, if a is a 4D tensor with dimensions labeled NCHW, then strided(a, (3, 0, 2, 1)) produces a
+        dense, non-overlapping and strided tensor where the C dimension has a corresponding stride of one.
+
+    NOTE No other lightning.compile operations specify how their outputs are represented in memory, and lightning.compile
+        does not model strides. This operation is an explicit directive to construct a dense, non-overlapping and
+        strided tensor, but operations on that tensor do not have to preserve those properties.
+    """
+    if order is None:
+        order = tuple(range(a.ndim - 1, -1, -1))
+
+    return prims.stride_order(a, order)
+
+
 # expanding `a` to the shape of `ref` except dimension `exclude_dim`
 # This is basically broadcasting `a` to `ref`, while preserving the shape at dimension `exclude_dim`
 def _maybe_expand_exclude_dim(a: TensorProxy, ref: TensorProxy, exclude_dim: int) -> TensorProxy:

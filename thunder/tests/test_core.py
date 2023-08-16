@@ -29,6 +29,7 @@ from thunder.core.symbol import BoundSymbol
 # Tests related to running valid Python programs
 #
 
+
 @instantiate(dtypes=NOTHING)
 def test_make_callable_from_trace(executor, device: str, _):
     def foo(a, b):
@@ -2229,6 +2230,76 @@ def test_traceback():
     assert "on a bool tensor" in str(excinfo.value)
     assert "torch.neg" in str(excinfo.traceback[-1].statement)
     assert "LC.gen" in excinfo.traceback[-1].path
+
+
+# TODO Add nvFuser support (https://github.com/Lightning-AI/lightning-thunder/issues/809)
+# TODO Make these OpInfo tests (https://github.com/Lightning-AI/lightning-thunder/issues/810)
+@instantiate(
+    dtypes=NOTHING,
+    executors=(TorchExecutor,),
+)
+def test_contiguous_and_stride_order(executor: Executor, device: str, _):
+    inp = torch.randn(2, 4, 5, 3, device=device, dtype=torch.float32).permute(0, 3, 1, 2)
+
+    def foo(a, order):
+        return clang.stride_order(a, order)
+
+    # stride order, expected strides (from shape 2, 4, 5, 3)
+    test_cases = (
+        ((3, 2, 1, 0), (60, 20, 5, 1)),
+        ((3, 0, 2, 1), (60, 1, 15, 3)),
+    )
+
+    for stride_order, expected_strides in test_cases:
+        cfoo = executor.make_callable(foo)
+        o = cfoo(inp, stride_order)
+        assert o.shape == inp.shape
+        assert o.stride() == expected_strides
+        assert_close(inp, o)
+
+    # order=none case
+    thunder_result = cfoo(inp, None)
+    assert thunder_result.stride() == (60, 20, 5, 1)
+    assert_close(thunder_result, inp)
+
+    # Memory format tests
+    def channels_last_2d(a, memory_format):
+        return a.contiguous(memory_format=memory_format)
+
+    cfn = executor.make_callable(channels_last_2d, disable_preprocessing=False)
+
+    # Contiguous cases
+    a = torch.randn((4, 3, 2), device=device, dtype=torch.float32)
+    thunder_result = cfn(a, torch.contiguous_format)
+    torch_result = channels_last_2d(a, torch.contiguous_format)
+    assert_close(torch_result, thunder_result, check_stride=True)
+
+    b = a.permute(0, 2, 1)
+    thunder_result = cfn(a, torch.contiguous_format)
+    torch_result = channels_last_2d(a, torch.contiguous_format)
+    assert_close(torch_result, thunder_result, check_stride=True)
+
+    # Channels last 2D cases
+    a = torch.randn((5, 4, 3, 2), device=device, dtype=torch.float32)
+    thunder_result = cfn(a, torch.channels_last)
+    torch_result = channels_last_2d(a, torch.channels_last)
+    assert_close(torch_result, thunder_result, check_stride=True)
+
+    b = a.permute(3, 1, 0, 2)
+    thunder_result = cfn(b, torch.channels_last)
+    torch_result = channels_last_2d(b, torch.channels_last)
+    assert_close(torch_result, thunder_result, check_stride=True)
+
+    # Channels last 3D cases
+    a = torch.randn((5, 4, 3, 7, 2), device=device, dtype=torch.float32)
+    thunder_result = cfn(a, torch.channels_last_3d)
+    torch_result = channels_last_2d(a, torch.channels_last_3d)
+    assert_close(torch_result, thunder_result, check_stride=True)
+
+    b = a.permute(0, 4, 2, 1, 3)
+    thunder_result = cfn(a, torch.channels_last_3d)
+    torch_result = channels_last_2d(a, torch.channels_last_3d)
+    assert_close(torch_result, thunder_result, check_stride=True)
 
 
 @instantiate(
