@@ -347,6 +347,8 @@ def find_cut(
     cutset = ((id_to_name[u], id_to_name[v]) for u, v in cutset)
     cut_nodes = set()
     for node_in, node_out in cutset:
+        if node_out == "sink":
+            continue
         assert node_in.endswith("_in")
         assert node_out.endswith("_out")
         assert node_in[:-3] == node_out[:-4]

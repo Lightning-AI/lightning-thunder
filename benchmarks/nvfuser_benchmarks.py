@@ -203,7 +203,7 @@ class Benchmark:
             if isinstance(cfn, ThunderOptimizedModule):
 
                 def fn_with_param(*args, **kwargs):
-                    all_args = (*thunder.compiled_data(cfn).additional_param_values, *args)
+                    all_args = (*thunder.compile_data(cfn).additional_param_values, *args)
                     return compiled_fn(*all_args, **kwargs)
 
                 return (
@@ -866,7 +866,7 @@ class StackedAddBenchmark(Benchmark):
 @dataclasses.dataclass
 class GPTConfig:
     name: str = ""
-    block_size: int = 1024
+    block_size: int = 128
     # GPT-2 vocab_size is 50257 but recent nanoGPT uses 50304 for GPU performance
     # https://github.com/karpathy/nanoGPT/blob/eba36e84649f3c6d840a93092cb779a260544d08/model.py#L111
     vocab_size: int = 50304
@@ -964,9 +964,9 @@ class NanoGPTBenchmark(GPTBenchMarkBase):
             default=0.1,
         ),
         BenchmarkArg(
-            name="inshape",
-            description="The shape of the input. Default is (16, 128).",
-            default=(16, 128),
+            name="batch_dims",
+            description="The batch dimensions to use for the input. (The input will have innermost dimensions of config.block_size. Default is (16,).",
+            default=(16,),
         ),
         BenchmarkArg(
             name="indices_dtype",
@@ -975,9 +975,10 @@ class NanoGPTBenchmark(GPTBenchMarkBase):
         ),
     )
 
-    def _make_batch(self, inshape, device, indices_dtype, **_) -> tuple[list, dict]:
-        x = make_tensor(inshape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
-        targets = make_tensor(inshape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
+    def _make_batch(self, batch_dims, gpt_config, device, indices_dtype, **_) -> tuple[list, dict]:
+        shape = batch_dims + (gpt_config.block_size,)
+        x = make_tensor(shape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
+        targets = make_tensor(shape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
         return (x, targets), {}
 
     @property
@@ -998,8 +999,8 @@ class NanoGPTBlockBenchmark(GPTBenchMarkBase):
         ),
         BenchmarkArg(
             name="batch_dims",
-            description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (8,).",
-            default=(8,),
+            description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (16,).",
+            default=(16,),
         ),
     )
 
@@ -1060,13 +1061,175 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
         ),
         BenchmarkArg(
             name="batch_dims",
-            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length config.n_embd). Default is (8,).",
-            default=(8,),
+            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length (config.block_size, config.n_embd). Default is (16,).",
+            default=(16,),
         ),
     )
 
     def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
-        x = make_tensor(batch_dims + (gpt_config.n_embd,), device=device, dtype=tdtype, requires_grad=self.backward)
+        x = make_tensor(batch_dims + (gpt_config.block_size, gpt_config.n_embd), device=device, dtype=tdtype, requires_grad=self.backward)
+        return (x,), {}
+
+
+# Current version of benchmarking doesn't correctly support benchmark_factory to
+# be a callable that returns a nn.Module
+class nanoGPTLayerNorm(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ln = torch.nn.LayerNorm(config.n_embd)
+
+    def forward(self, x):
+        return self.ln(x)
+
+
+class NanoGPTLayerNormBenchmark(GPTBenchMarkBase):
+    benchmark_factory = nanoGPTLayerNorm
+    name_template = "nanogpt-{gpt_config}-layer-norm"
+    extra_args = (
+        BenchmarkArg(
+            name="batch_dims",
+            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length (config.block_size, config.n_embd). Default is (16,).",
+            default=(16,),
+        ),
+    )
+
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
+        x = make_tensor(
+            batch_dims + (gpt_config.block_size, gpt_config.n_embd),
+            device=device,
+            dtype=tdtype,
+            requires_grad=self.backward,
+        )
+        return (x,), {}
+
+
+class nanoGPTCrossEntropy(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+    def forward(self, logits, targets):
+        return torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+
+
+class NanoGPTCrossEntropyBenchmark(GPTBenchMarkBase):
+    benchmark_factory = nanoGPTCrossEntropy
+    name_template = "nanogpt-{gpt_config}-cross-entropy"
+    extra_args = (
+        BenchmarkArg(
+            name="batch_dims",
+            description="The batch dimensions to use for the input. Default is (16,).",
+            default=(16,),
+        ),
+        BenchmarkArg(
+            name="indices_dtype",
+            description="The dtype of the input. Default is int64.",
+            default=thunder.int64,
+        ),
+    )
+
+    def _make_batch(self, batch_dims, gpt_config, device, indices_dtype, tdtype, **_) -> tuple[list, dict]:
+        logits = make_tensor(
+            batch_dims + (gpt_config.block_size, gpt_config.vocab_size),
+            low=0,
+            high=255,
+            device=device,
+            dtype=tdtype,
+        )
+        targets = make_tensor(
+            batch_dims + (gpt_config.block_size,),
+            low=0,
+            high=255,
+            device=device,
+            dtype=ltorch.to_torch_dtype(indices_dtype),
+        )
+        return (logits, targets), {}
+
+
+class nanoGPTEmbedding(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.wte = torch.nn.Embedding(config.vocab_size, config.n_embd)
+        self.wpe = torch.nn.Embedding(config.block_size, config.n_embd)
+        self.drop = torch.nn.Dropout(config.dropout)
+        self.ln = torch.nn.LayerNorm(config.n_embd)
+
+    def forward(self, idx):
+        # This is a part of the GPT's forward pass before the transformer block
+        device = idx.device
+        b, t = idx.shape
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
+        tok_emb = self.wte(idx)  # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.wpe(pos)  # position embeddings of shape (1, t, n_embd)
+        x = self.drop(tok_emb + pos_emb)
+        # LayerNorm is the first operation in nanoGPT's Block before the attention
+        return self.ln(x)
+
+
+class NanoGPTEmbeddingBenchmark(GPTBenchMarkBase):
+    benchmark_factory = nanoGPTEmbedding
+    name_template = "nanogpt-{gpt_config}-embedding"
+    extra_args = (
+        BenchmarkArg(
+            name="batch_dims",
+            description="The batch dimensions to use for the input. Default is (16,).",
+            default=(16,),
+        ),
+        BenchmarkArg(
+            name="indices_dtype",
+            description="The dtype of the input. Default is int64.",
+            default=thunder.int64,
+        ),
+    )
+
+    def _make_batch(self, batch_dims, gpt_config, device, indices_dtype, tdtype, **_) -> tuple[list, dict]:
+        idx = make_tensor(
+            batch_dims + (gpt_config.block_size,),
+            low=0,
+            high=255,
+            device=device,
+            dtype=ltorch.to_torch_dtype(indices_dtype),
+        )
+        return (idx,), {}
+
+
+class nanoGPTBlockLoop(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.transformer = torch.nn.ModuleDict(
+            dict(
+                drop=torch.nn.Dropout(config.dropout),
+                h=torch.nn.ModuleList([nanogpt_model.Block(config) for _ in range(config.n_layer)]),
+                ln_f=torch.nn.LayerNorm(config.n_embd),
+            )
+        )
+
+    def forward(self, x):
+        x = self.transformer.drop(x)
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+        return x
+
+
+class NanoGPTBlockLoopBenchmark(GPTBenchMarkBase):
+    benchmark_factory = nanoGPTBlockLoop
+    name_template = "nanogpt-{gpt_config}-block-loop"
+    extra_args = (
+        BenchmarkArg(
+            name="batch_dims",
+            description="The batch dimensions to use for the input. Default is (16,).",
+            default=(16,),
+        ),
+    )
+
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
+        x = make_tensor(
+            batch_dims + (gpt_config.block_size, gpt_config.n_embd),
+            low=0,
+            high=255,
+            device=device,
+            dtype=tdtype,
+        )
         return (x,), {}
 
 
@@ -1356,8 +1519,12 @@ benchmarks = {
     # nanogpt benchmarks
     "nanogpt": (NanoGPTBenchmark, "nanogpt forward"),
     "nanogpt-block": (NanoGPTBlockBenchmark, "nanogpt block module forward"),
+    "nanogpt-block-loop": (NanoGPTBlockLoopBenchmark, "nanogpt block module in a loop"),
     "nanogpt-csa": (NanoGPTCSABenchmark, "nanogpt CausalSelfAttention (CSA) module forward"),
     "nanogpt-mlp": (NanoGPTMLPBenchmark, "nanogpt MLP module forward"),
+    "nanogpt-layer-norm": (NanoGPTLayerNormBenchmark, "nanogpt LayerNorm module"),
+    "nanogpt-cross-entropy": (NanoGPTCrossEntropyBenchmark, "nanogpt cross entropy loss"),
+    "nanogpt-embedding": (NanoGPTEmbeddingBenchmark, "nanogpt embedding+dropout+layer norm"),
     "nanogpt-gelu": (NanoGPTGeLUBenchmark, "nanogpt gelu function forward"),
     "hf-bart-self-attn": (HuggingFaceSelfAttnBenchmark, "hf bart self-attn module forward"),
     "llama-block": (LLaMABlockBenchmark, "lit llama block forward"),
