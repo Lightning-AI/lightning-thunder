@@ -1416,18 +1416,26 @@ class ThunderFunction(torch.autograd.Function):
         def make_trace(func):
             return partial(trace, func, inline_trace=False)
 
-        def split_forward_backward(*args, **kwargs):
+        def split_forward_backward(requires_grad_mask, *args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used
             # behind a cache.
 
-            # We need to run the function once to get the outputs that can be
-            # used to construct the backward trace
             # Since autograd.Function accepts flattened inputs in forward,
             # and expects flattened outputs in backward, we need to flatten
             # the given function and its inputs when we generate the "joint trace"
             flat_func, flat_args, spec = utils.flatten_func(func, args, kwargs)
+            # We need to run the function once to get the outputs that can be
+            # used to construct the backward trace
             out = flat_func(*flat_args)
-            joint_trace = make_trace(inline(vjp(flat_func)))(flat_args, utils.sequencify(out))
+
+            def joint_func(flat_args, output_grads):
+                out, grads = inline(vjp(flat_func))(flat_args, output_grads)
+                filtered_grads = tuple(
+                    (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(grads, requires_grad_mask)
+                )
+                return out, filtered_grads
+
+            joint_trace = make_trace(joint_func)(flat_args, utils.sequencify(out))
             extrace, extraces = transform_for_execution(
                 joint_trace,
                 executors_list=compile_config.get("executors_list", None),
@@ -1453,12 +1461,14 @@ class ThunderFunction(torch.autograd.Function):
         return split_forward_backward
 
     @staticmethod
+    @staticmethod
     def forward(ctx, split_fw_bw, spec, *flat_args):
+        requires_grad_mask = tuple(isinstance(arg, torch.Tensor) and arg.requires_grad for arg in flat_args)
         # We can't send unflatten args with a spec to the split_fw_bw
         # function, because spec is not hashable. So we need to unflatten
         # the args here.
         args, kwargs = tree_unflatten(flat_args, spec)
-        compiled_forward, compiled_backward = split_fw_bw(*args, **kwargs)
+        compiled_forward, compiled_backward = split_fw_bw(requires_grad_mask, *args, **kwargs)
         out, saved_info = compiled_forward(*flat_args)
         ctx.compiled_backward = compiled_backward
 
