@@ -7,6 +7,7 @@ from igraph import Graph
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
@@ -446,6 +447,80 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     new_bound_symbols = tuple(replace_bound_symbol(bsym) for bsym in trace.bound_symbols)
     rematerialized_trace.bound_symbols = new_bound_symbols
     return rematerialized_trace, [rematerialized_trace]
+
+
+def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
+    """Apply rematerialization optimization to the forward and backward traces.
+
+    Args:
+        fw_trace (TraceCtx): Forward trace.
+        bw_trace (TraceCtx): Backward trace.
+
+    Returns:
+        tuple[TraceCtx, TraceCtx]: Rematerialized forward and backward traces.
+    """
+    # Circular dependency
+    from thunder.core.transforms import (
+        _update_backward_with_new_saved_for_backward,
+        _update_forward_with_new_saved_for_backward,
+    )
+
+    def joint_fn(args, kwargs, cotangents):
+        pass
+
+    joint_extrace = TraceCtx(joint_fn)
+    joint_extrace.args = (fw_trace.args, fw_trace.kwargs, bw_trace.args[1])
+    assert fw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
+    assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
+    # Omit the last RETURN symbol
+    joint_extrace.bound_symbols = fw_trace.bound_symbols[:-1] + bw_trace.bound_symbols[:-1]
+    # Add a new RETURN symbol
+    joint_extrace.bound_symbols.append(
+        replace(fw_trace.bound_symbols[-1], args=(fw_trace.bound_symbols[-1].args[0], bw_trace.bound_symbols[-1].args))
+    )
+    joint_extrace, _ = rematerialize(joint_extrace)
+
+    # We need to update "save_for_backward" sequence
+    new_bw_bsyms = joint_extrace.bound_symbols[len(fw_trace.bound_symbols) :]
+    new_bw_bsyms = list(
+        bsym
+        for bsym in new_bw_bsyms
+        if bsym.sym.id
+        not in (
+            PrimIDs.UNPACK_TRIVIAL,
+            PrimIDs.UNPACK_SEQUENCE,
+            PrimIDs.UNPACK_EMPTY_DICT,
+            PrimIDs.UNPACK_KEY,
+            PrimIDs.DEL,
+            PrimIDs.RETURN,
+        )
+    )
+    all_args = tuple(
+        chain.from_iterable((x for x in bsym._flat_args if isinstance(x, ProxyInterface)) for bsym in new_bw_bsyms)
+    )
+    producers = utils.producers(new_bw_bsyms)
+    new_required_for_backward = tuple(
+        a for a in all_args if producers.get(a, None) is None and a.name not in (y.name for y in bw_trace.args[1])
+    )
+    new_required_for_backward = tuple(
+        sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)
+    )  # Removes duplicates and sorts by name
+
+    # Now construct the updated backward and forward traces
+    new_bw_trace = from_trace(bw_trace)
+    new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
+    new_bw_trace.bound_symbols = new_bw_bsyms
+    new_bw_trace.bound_symbols.append(replace(bw_trace.bound_symbols[-1], args=bw_trace.bound_symbols[-1].args))
+    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
+
+    new_fw_trace = from_trace(fw_trace)
+    new_fw_trace.set_provenance(TraceProvenance("Rematerialization"))
+    new_fw_trace.bound_symbols = list(
+        bsym for bsym in joint_extrace.bound_symbols[: len(fw_trace.bound_symbols) - 1] if bsym.sym.id != PrimIDs.DEL
+    )
+    new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
+    _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
+    return new_fw_trace, new_bw_trace
 
 
 def split_vjp_trace_into_forward_and_backward(

@@ -626,13 +626,14 @@ def test_torch_autograd_module_get_compile_data(executor, device, _):
     out.backward(g)
 
     compile_data = compile_data(lc)
-    joint_trace_history = compile_data.joint_last_traces
-    forward_trace = compile_data.forward_trace
-    backward_trace = compile_data.backward_trace
-    assert isinstance(joint_trace_history, list)
-    assert len(joint_trace_history) > 1
-    assert isinstance(forward_trace, TraceCtx)
-    assert isinstance(backward_trace, TraceCtx)
+    primal_trace = compile_data.primal_trace
+    forward_traces = compile_data.forward_last_traces
+    backward_traces = compile_data.backward_last_traces
+    assert isinstance(forward_traces, list)
+    assert len(forward_traces) > 1
+    assert isinstance(backward_traces, list)
+    assert len(backward_traces) > 1
+    assert isinstance(primal_trace, TraceCtx)
 
 
 @instantiate(
@@ -656,3 +657,75 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
     torch.testing.assert_close(func(a, b), a - b)
     torch.testing.assert_close(func(b=a, a=b), b - a)
     assert torch.autograd.gradcheck(lambda a, b: func(b=a, a=b), (a, b))
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_forward_and_backward_from_trace(executor, device, _):
+    from thunder import trace
+    from thunder.clang import cos, sin
+    import thunder.torch as ltorch
+    from thunder.core.transforms import forward_and_backward_from_trace, inline, value_and_grad
+
+    def func(a, b, *, c):
+        d = a + b + c
+        e = d * a + d * b + d * c
+        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
+
+    expected_vjp_func = executor.make_callable(inline(value_and_grad(func)))
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
+    trace = trace(func, a, b, c=c, inline_trace=False)
+    fw_trace, bw_trace = forward_and_backward_from_trace(trace)
+    fw = executor.make_callable(fw_trace)
+    bw = executor.make_callable(bw_trace)
+    fw_out, saved_for_backward = fw(a, b, c=c)
+    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
+    torch.testing.assert_close(fw_out, expected_fw_out)
+
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
+    bw_out = bw(saved_for_backward, output_grads)
+    torch.testing.assert_close(bw_out, expected_grads)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_rematerialization_with_forward_and_backward_from_trace(executor, device, _):
+    from thunder import trace
+    from thunder.clang import cos, sin
+    import thunder.torch as ltorch
+    from thunder.core.transforms import forward_and_backward_from_trace, inline, value_and_grad
+    from thunder.executors import transform_for_execution
+    from thunder.core.rematerialization import rematerialize_forward_and_backward
+
+    def func(a, b, *, c):
+        d = a + b + c
+        e = d * a + d * b + d * c
+        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
+
+    expected_vjp_func = executor.make_callable(inline(value_and_grad(func)))
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
+    trace = trace(func, a, b, c=c, inline_trace=False)
+    fw_trace, bw_trace = forward_and_backward_from_trace(trace)
+
+    fw_extrace, _ = transform_for_execution(fw_trace, executors_list=executor.executors_list(), use_rematerialization=False)
+    bw_extrace, _ = transform_for_execution(bw_trace, executors_list=executor.executors_list(), use_rematerialization=False)
+    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+
+    fw = fw_extrace.python_callable()
+    bw = bw_extrace.python_callable()
+
+    fw_out, saved_for_backward = fw(a, b, c=c)
+    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
+    torch.testing.assert_close(fw_out, expected_fw_out)
+
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
+    bw_out = bw(saved_for_backward, output_grads)
+    torch.testing.assert_close(bw_out, expected_grads)

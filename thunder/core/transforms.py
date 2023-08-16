@@ -1,7 +1,8 @@
+from collections import namedtuple
 from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import auto, Enum
-from itertools import chain
+from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 from numbers import Number
 from typing import Any, Callable, Dict, Union, Optional
@@ -2380,10 +2381,13 @@ def backward_pass(forward_env, trace, init_cotangents):
             # Skip writing to constants
             pass
 
-    if isinstance(trace.output, Sequence):
-        safe_map(write, tuple(trace.output), init_cotangents)
-    else:
-        write(trace.output, init_cotangents)
+    if (
+        isinstance(init_cotangents, Sequence)
+        and len(init_cotangents) == 1
+        and not isinstance(trace.output, Sequence)
+    ):
+        init_cotangents = init_cotangents[0]
+    safe_map_flat(write, trace.output, init_cotangents)
 
     for symbol in reversed(trace.bound_symbols):
         if symbol.sym.id in transform_skip_list:
@@ -2421,7 +2425,10 @@ def backward_pass(forward_env, trace, init_cotangents):
         else:
             return x
 
-    return tree_map(read_with_none, tuple(trace.args))
+    gargs = tree_map(read_with_none, tuple(trace.args))
+    gkwargs = tree_map(read_with_none, trace.kwargs)
+    gkwargs = {k: v for k, v in gkwargs.items() if v is not None}
+    return gargs + (gkwargs,) if len(gkwargs) != 0 else gargs
 
 
 def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwargs):
@@ -2486,6 +2493,188 @@ def value_and_grad(func):
         return vjp(func)(args, cotangents, **kwargs)
 
     return _value_and_grad
+
+
+ForwardBackwardTraces = namedtuple("ForwardBackwardTraces", ["forward_trace", "backward_trace"])
+
+
+def _update_forward_with_new_saved_for_backward(
+    forward_trace: Trace, saved_for_backward: Sequence[Variable]
+) -> None:
+    """Updates the forward trace with new saved_for_backward.
+
+    This is necessary because the updated saved_for_backward is not available
+    when the forward and backward traces are constructed.
+
+    Args:
+        forward_trace (Trace): Forward trace to update.
+        saved_for_backward (Sequence[Variable]): Saved_for_backward to use to
+            update the forward trace.
+    """
+    saved_for_backward = tree_map(lambda x: x.value if isinstance(x, NumberProxy) else x, saved_for_backward)
+    forward_return_bsym = next(x for x in reversed(forward_trace.bound_symbols) if x.sym.id == prims.PrimIDs.RETURN)
+    forward_return_bsym.args = (forward_trace.output[0], saved_for_backward)
+    forward_trace.output = forward_return_bsym.args
+
+
+def _update_backward_with_new_saved_for_backward(
+    backward_trace: Trace, saved_for_backward: Sequence[Variable]
+) -> None:
+    """Updates the backward trace with new saved_for_backward.
+
+    This is necessary because the updated saved_for_backward is
+    not available when the backward trace is constructed.
+
+    Args:
+        backward_trace (Trace): Backward trace to update.
+        saved_for_backward (Sequence[Variable]): Saved_for_backward to use to
+            update the backward trace.
+    """
+    def unpacking_fn(saved_for_backward, cotangents):
+        pass
+
+    cotangents = backward_trace.args[1]
+    unpacking_trace = construct_trace(unpacking_fn, saved_for_backward, cotangents, rename_proxies=False)
+    assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
+
+    backward_trace.args = unpacking_trace.args
+    backward_trace_bsyms_without_unpacking = (
+        bsym
+        for bsym in backward_trace.bound_symbols
+        if bsym.sym.id
+        not in (
+            prims.PrimIDs.UNPACK_EMPTY_DICT,
+            prims.PrimIDs.UNPACK_KEY,
+            prims.PrimIDs.UNPACK_SEQUENCE,
+            prims.PrimIDs.UNPACK_TRIVIAL,
+        )
+    )
+    backward_trace.bound_symbols = tuple((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
+
+
+def forward_and_backward_from_trace(trace: Trace) -> ForwardBackwardTraces:
+    """Generates the forward and backward passes from a trace.
+
+    This is a convenience function that combines the functionality of
+    `augmented_forward_pass` and `backward_pass`. The main difference is that
+    this function does not require the user to provide new inputs for the
+    trace evaluation. Instead it uses the inputs that were used to construct
+    the trace.
+
+    Args:
+        trace (Trace): Trace to generate the forward and backward passes from.
+
+    Returns:
+        ForwardBackwardTraces: A named tuple containing the forward and backward
+            traces.
+
+    Example:
+        >>> import torch
+        >>> from thunder import compile, last_traces
+        >>> from thunder.core.transforms import forward_and_backward_from_trace
+        >>> def f(x):
+        ...     return torch.sin(x)
+        >>> x = torch.tensor(3.0)
+        >>> cf = compile(f)
+        >>> out = cf(x)
+        >>> trace = last_traces(cf)[0]
+        >>> forward_and_backward_from_trace(trace)
+        ... ForwardBackwardTraces(
+        ... forward_trace=# import thunder as thunder
+        ... # import thunder.core.prims as prims
+        ... import torch
+        ...
+        ... @torch.no_grad()
+        ... def augmented_forward_fn(*args):
+        ...   # args: "Collection" =  (t0,)  (trivial unpack)
+        ...   t0, \
+        ...   = args
+        ...   t1 = prims.sin(t0)  # t1: "cpu f32[]"
+        ...   return t1, (t0,),
+        ... backward_trace=# import thunder as thunder
+        ... # import thunder.core.prims as prims
+        ... import torch
+        ...
+        ... @torch.no_grad()
+        ... def backward_fn(saved_for_backward, cotangents):
+        ...   # saved_for_backward: "Collection" =  (t0,)  (trivial unpack)
+        ...   # cotangents: "cpu f32[]" =  cotangents  (trivial unpack)
+        ...   t0, \
+        ...   = saved_for_backward
+        ...   t1 = prims.cos(t0)  # t1: "cpu f32[]"
+        ...   t2 = prims.mul(cotangents, t1)  # t2: "cpu f32[]"
+        ...   return (t2,))
+    """
+
+    def augmented_forward_fn(*args, **kwargs):
+        result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
+        saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
+        return result, saved_for_backward
+
+    def backward_fn(saved_for_backward, cotangents):
+        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+        out = backward_pass(env, trace, cotangents)
+        return out
+
+    def ones_like(x):
+        if isinstance(x, TensorProxy):
+            return full_like(x, fill_value=1)
+        elif isinstance(x, NumberProxy):
+            return type(x.value)(1)
+        else:
+            raise ValueError(f"forward_and_backward_from_trace: ones_like got an unsupported type {type(x)}")
+
+    forward_trace = construct_trace(augmented_forward_fn, *trace.args, **trace.kwargs)
+    # We set forward trace to construct proxies because we need these proxies to
+    # have different names than the ones in the forward trace.
+    try:
+        tracectx_token = set_tracectx(forward_trace)
+        # We don't want to record those ones_like calls in the forward trace.
+        with detached_trace():
+            cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
+    finally:
+        reset_tracectx(tracectx_token)
+
+    saved_for_backward = forward_trace.output[1]
+    backward_trace = construct_trace(backward_fn, saved_for_backward, cotangents, rename_proxies=False)
+
+    # We are done with constructing the forward and backward passes at this
+    # stage. The following is not strictly necessary, but it's good to filter
+    # out the unused elements of the saved_for_backward and flatten it for more
+    # compact backward trace.
+
+    # Now we can determine exactly what's used in the backward pass from the
+    # saved_for_backward. We can flatten and filter the saved_for_backward
+    consumers = utils.consumers(backward_trace)
+
+    # Forward's and backward's "saved_for_backward" are not necessarily the same
+    # as the saved_for_backward, because some or all elements of the
+    # saved_for_backward results might be re-proxified.
+    bw_flat_saved_for_backward, spec = tree_flatten(backward_trace.args[0])
+    fw_flat_saved_for_backward, _ = tree_flatten(forward_trace.output[1])
+    used_mask = list((len(consumers.get(x, ())) > 0 for x in bw_flat_saved_for_backward))
+
+    # Don't use the same variable twice in the backward pass
+    seen = set()
+    from thunder.core.proxies import Variable
+    for i, x in enumerate(fw_flat_saved_for_backward):
+        x = variableify(x)
+        if not isinstance(x, Variable):
+            continue
+        if x in seen:
+            used_mask[i] = False
+        else:
+            seen.add(x)
+
+    only_used_fw_saved_for_backward = tuple(compress(fw_flat_saved_for_backward, used_mask))
+    only_used_bw_saved_for_backward = tuple(compress(bw_flat_saved_for_backward, used_mask))
+
+    # We need to update the traces with the new saved_for_backward
+    _update_forward_with_new_saved_for_backward(forward_trace, only_used_fw_saved_for_backward)
+    _update_backward_with_new_saved_for_backward(backward_trace, only_used_bw_saved_for_backward)
+    forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
+    backward_trace.set_provenance(TraceProvenance("Backward pass"))
+    return ForwardBackwardTraces(forward_trace, backward_trace)
 
 
 # do we happen to want to register `ltorch` ops such as `ltorch.layer_norm` as well?

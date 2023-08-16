@@ -1448,8 +1448,8 @@ class ThunderFunction(torch.autograd.Function):
         from thunder import trace
         from thunder.executors import transform_for_execution
         from thunder.executors.passes import del_last_used
-        from thunder.core.rematerialization import split_vjp_trace_into_forward_and_backward
-        from thunder.core.transforms import inline, vjp
+        from thunder.core.rematerialization import rematerialize_forward_and_backward
+        from thunder.core.transforms import forward_and_backward_from_trace
 
         def make_trace(func):
             return partial(trace, func, inline_trace=False)
@@ -1462,39 +1462,44 @@ class ThunderFunction(torch.autograd.Function):
             # and expects flattened outputs in backward, we need to flatten
             # the given function and its inputs when we generate the "joint trace"
             flat_func, flat_args, spec = utils.flatten_func(func, args, kwargs)
-            # We need to run the function once to get the outputs that can be
-            # used to construct the backward trace
-            out = flat_func(*flat_args)
+            primal_trace = make_trace(flat_func)(*flat_args)
+            fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace)
+            assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
+            filtered_grads = tuple(
+                (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args, requires_grad_mask)
+            )
+            bw_trace.bound_symbols[-1].args = filtered_grads
+            bw_trace.output = filtered_grads
 
-            def joint_func(flat_args, output_grads):
-                out, grads = inline(vjp(flat_func))(flat_args, output_grads)
-                filtered_grads = tuple(
-                    (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(grads, requires_grad_mask)
-                )
-                return out, filtered_grads
-
-            joint_trace = make_trace(joint_func)(flat_args, utils.sequencify(out))
-            extrace, extraces = transform_for_execution(
-                joint_trace,
+            fw_extrace, fw_extraces = transform_for_execution(
+                fw_trace,
                 executors_list=compile_config.get("executors_list", None),
                 only_execute_prims=compile_config.get("only_execute_prims", False),
-                use_rematerialization=compile_config.get("use_rematerialization", True),
+                use_rematerialization=False,
+                use_del_last_used=False,
             )
-            forward_trace, backward_trace = split_vjp_trace_into_forward_and_backward(extrace)
-            # Del calls were ignored in the splitting process, so we need to call it here
-            forward_trace, _ = del_last_used(forward_trace)
-            backward_trace, _ = del_last_used(backward_trace)
-            backward_trace_fn = backward_trace.python_callable()
 
-            def backward_fn(saved_info, *args):
-                return backward_trace_fn(*saved_info, *args)
+            bw_extrace, bw_extraces = transform_for_execution(
+                bw_trace,
+                executors_list=compile_config.get("executors_list", None),
+                only_execute_prims=compile_config.get("only_execute_prims", False),
+                use_rematerialization=False,
+                use_del_last_used=False,
+            )
+            fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+
+            fw_extrace, _ = del_last_used(fw_extrace)
+            fw_extraces.append(fw_extrace)
+
+            bw_extrace, _ = del_last_used(bw_extrace)
+            bw_extraces.append(bw_extrace)
 
             if compile_data is not None:
-                compile_data.joint_last_traces = [joint_trace, *extraces]
-                compile_data.forward_trace = forward_trace
-                compile_data.backward_trace = backward_trace
+                compile_data.primal_trace = primal_trace
+                compile_data.forward_last_traces = fw_extraces
+                compile_data.backward_last_traces = bw_extraces
 
-            return forward_trace.python_callable(), backward_fn
+            return fw_extrace.python_callable(), bw_extrace.python_callable()
 
         return split_forward_backward
 
@@ -1534,7 +1539,7 @@ class ThunderFunction(torch.autograd.Function):
             flat_saved_info = tuple(
                 next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
             )
-        grads = ctx.compiled_backward(flat_saved_info, *args)
+        grads = ctx.compiled_backward(flat_saved_info, args)
         return (None, None, *grads)
 
 

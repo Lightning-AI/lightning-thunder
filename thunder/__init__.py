@@ -117,7 +117,7 @@ add_operator_executor = executors.add_operator_executor
 # Common UX functions
 
 
-def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
+def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool):
     tracectx.unpacking()
 
     # Translates tensors, arrays, and dtypes to lightning.compile types
@@ -136,6 +136,9 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs):
             return proxy(x, name=name)
 
         if isinstance(x, Proxy):
+            if not rename_proxies:
+                get_tracectx().names.add(x.name)
+                return x
             return x.replace_name(name)
         if isinstance(x, pytorch.dtype):
             return ltorch.to_thunder_dtype(x)
@@ -402,9 +405,9 @@ class CompileData:
         self.last_traces = None
 
         # torch.autograd.Function specific data
-        self.joint_last_traces = None
-        self.forward_trace = None
-        self.backward_trace = None
+        self.primal_trace = None
+        self.forward_last_traces = None
+        self.backward_last_traces = None
 
         self.cache = {}
         self.calls = 0
@@ -419,8 +422,8 @@ class CompileData:
 # If inline_trace is False then this will always produce a new trace.
 #   If this is called while already tracing then the tracing context that
 #   calls this will not observe those calls
-# If proxify_inputs is True then inputs are proxied before the function is called.
-# If proxify_inputs is False then inputs are passed to the function unmodified.
+# If rename_proxies is True then new proxy inputs are generated when the function is called.
+# If rename_proxies is False then proxy inputs are passed to the function unmodified.
 #   This can be useful when trace() is called in a context where proxies have already
 #   been constructed.
 # If include_return_statement is True then the trace will terminate with a RETURN operation
@@ -431,7 +434,7 @@ def trace(
     *args,
     langctx: Optional[Any] = None,
     inline_trace: bool = True,
-    proxify_inputs: bool = True,
+    rename_proxies: bool = True,
     include_return_statement: bool = True,
     **kwargs,
 ) -> Any | TraceCtx:
@@ -449,8 +452,7 @@ def trace(
         tracectx_tok = set_tracectx(trace)
 
         proxyargs, proxykwargs = args, kwargs
-        if proxify_inputs:
-            proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs)
+        proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs, rename_proxies=rename_proxies)
         trace.args, trace.kwargs = proxyargs, proxykwargs
 
         result = fn(*proxyargs, **proxykwargs)

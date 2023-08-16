@@ -737,7 +737,12 @@ def safe_map(f, *args):
 
 
 def safe_map_flat(f, *args):
-    args_flat_spec = safe_map(tree_flatten, args)
+    def convert_sequences_to_tuple(x):
+        if isinstance(x, Sequence):
+            return tuple(x)
+        return x
+
+    args_flat_spec = safe_map(lambda x: tree_flatten(convert_sequences_to_tuple(x)), args)
     _, spec = args_flat_spec[0]
     for i, (_, s) in enumerate(args_flat_spec[1:], start=1):
         assert s == spec, f"argument layout mismatch: {args[0]} {args[i]}"

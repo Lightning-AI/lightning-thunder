@@ -113,6 +113,7 @@ def transform_for_execution(
     *,
     only_execute_prims=False,
     use_rematerialization=False,
+    use_del_last_used=True,
 ) -> tuple[TraceCtx, list[TraceCtx]]:
     # Acquires the executors
     if executors_list is None:
@@ -163,10 +164,12 @@ def transform_for_execution(
         traces.extend(remat_traces)
         fused_trace = remat_trace
 
-    lifetime_trace, lifetime_traces = passes.del_last_used(fused_trace)
-    traces.extend(lifetime_traces)
+    if use_del_last_used:
+        lifetime_trace, lifetime_traces = passes.del_last_used(fused_trace)
+        traces.extend(lifetime_traces)
+        fused_trace = lifetime_trace
 
-    return lifetime_trace, traces
+    return fused_trace, traces
 
 
 from thunder.core.symbol import Symbol, BoundSymbol

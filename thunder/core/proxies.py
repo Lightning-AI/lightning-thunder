@@ -925,7 +925,7 @@ def numberproxy(cls: type, value: Optional[Number]) -> NumberProxy:
 
 
 def is_proxyable(x: Any) -> bool:
-    if isinstance(x, Number):
+    if isinstance(x, Number) and not isinstance(x, NumberProxy):
         return True
 
     # NOTE The langctx may not have defined the tensor_cls attribute
