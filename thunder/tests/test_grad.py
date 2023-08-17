@@ -10,8 +10,9 @@ import torch
 import thunder.core.dtypes as dtypes
 
 from thunder import trace as construct_trace
+from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, inline
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
@@ -577,6 +578,68 @@ def test_torch_autograd_function(executor, device, _):
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
 
     assert torch.autograd.gradcheck(lambda a, b, c: func(a, b, c=c), (a, b, c))
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
+    from thunder.executors.torchex import thunder_backward
+
+    # Borrowed from
+    # https://github.com/Lightning-AI/lightning-thunder/blob/3401475ee47d5a732b6b4d5dcbd88afcd9bed81d/thunder/tests/test_core.py#L117
+    def foo(a, b, c, *, ka, kb, kc):
+        d = {
+            5: 2,
+            7: 9,
+            "a": [a, b],
+            "b": {"a": a, "b": b, "c": [b, (a, c)]},
+            "x": (a, [a, a, a], (b, (a, a, c, b))),
+        }
+
+        e = a["a"]["a"] + b[0]
+        f = c[1]["c"] + b[1]
+        g = e + f
+        h = f + ka + kb
+        i = ka + ka  # NOTE: not returned (ignored computation)
+        j = kc[0] + kc[1]
+
+        d["j"] = j
+
+        return (
+            a,
+            (g,),
+            (((j,),),),
+            g,
+            g,
+            b,
+            e,
+            d["j"],
+            (f, d, c, (d,), c, {"a": a, 5: f, "b": h}),
+            (5,),
+            (),
+            (a,),
+            [5, a, (b,), (), {}],
+            {},
+        )
+
+    traced_foo = thunder_backward(executors_list=executor.executors_list())(foo)
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2,), device=device, dtype=tdtype, requires_grad=True)
+    b = make_tensor((2, 2, 2), device=device, dtype=tdtype, requires_grad=True)
+    c = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+
+    args = ({"a": {"a": a}}, (b, c), (3, {"c": c}))
+    kwargs = {"ka": b, "kb": 3.0, "kc": (a, 2)}
+    thunder_result = traced_foo(*args, **kwargs)
+    torch_result = foo(*args, **kwargs)
+    torch.testing.assert_close(thunder_result, torch_result)
+
+    flat_thunder_result, _ = tree_flatten(thunder_result)
+    sum(flat_thunder_result).sum().backward()
+    assert a.grad is not None
+    assert b.grad is not None
+    assert c.grad is not None
 
 
 @instantiate(

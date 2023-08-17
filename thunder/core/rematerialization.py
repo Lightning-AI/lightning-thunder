@@ -502,7 +502,10 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     )
     producers = utils.producers(new_bw_bsyms)
     new_required_for_backward = tuple(
-        a for a in all_args if producers.get(a, None) is None and a.name not in (y.name for y in bw_trace.args[1])
+        a
+        for a in all_args
+        if producers.get(a, None) is None
+        and a.name not in (y.name for y in tree_flatten(bw_trace.args[1])[0] if isinstance(y, ProxyInterface))
     )
     new_required_for_backward = tuple(
         sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)

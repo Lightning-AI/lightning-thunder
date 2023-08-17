@@ -1952,7 +1952,7 @@ def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
 @register_augmented_forward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
 def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
     primal = prims.convert_element_type(a, dtype)
-    residuals = (a.dtype if isinstance(a, TensorProxy) else type(a),)
+    residuals = (a.dtype if isinstance(a, TensorProxy) else (a.python_type if isinstance(a, NumberProxy) else type(a)),)
     return VJPDual(primal, residuals)
 
 
@@ -2333,7 +2333,7 @@ def augmented_forward_pass(*args, trace: Trace, **kwargs):
         with_env=True,
         symbol_mapper=vjp_symbol_mapper,
     )
-    result = tree_map(lambda x: x.primal, result)
+    result = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, result)
     return result, env
 
 
@@ -2356,9 +2356,11 @@ def backward_pass(forward_env, trace, init_cotangents):
     """
     env = {}
 
-    def read(x: Variable):
+    def read_with_none(x: Variable):
         if isinstance(x, Variable):
-            return env[x.name]
+            # Return None if the variable was not used in the computation and
+            # hence not in the env
+            return env.get(x.name, None)
         else:
             return x
 
@@ -2393,7 +2395,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         if symbol.sym.id in transform_skip_list:
             continue
         symbol_output = sequencify(symbol.output)
-        cotangents = safe_map(read, symbol_output)
+        cotangents = safe_map(read_with_none, symbol_output)
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
@@ -2416,14 +2418,6 @@ def backward_pass(forward_env, trace, init_cotangents):
             lambda: f"Pullback for {symbol.sym.id} returned {len(result)} values, but expected {len(symbol.args)}",
         )
         safe_map(write, symbol.args, result)
-
-    def read_with_none(x: Variable):
-        if isinstance(x, Variable):
-            # Return None if the variable was not used in the computation and
-            # hence not in the env
-            return env.get(x.name, None)
-        else:
-            return x
 
     gargs = tree_map(read_with_none, tuple(trace.args))
     gkwargs = tree_map(read_with_none, trace.kwargs)
@@ -2639,6 +2633,8 @@ def forward_and_backward_from_trace(trace: Trace) -> ForwardBackwardTraces:
             return full_like(x, fill_value=1)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
+        elif isinstance(x, Number):
+            return None
         else:
             raise ValueError(f"forward_and_backward_from_trace: ones_like got an unsupported type {type(x)}")
 

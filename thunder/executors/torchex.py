@@ -1483,7 +1483,7 @@ class ThunderFunction(torch.autograd.Function):
             # inputs that require gradients
             assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
             filtered_grads = tuple(
-                (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args, requires_grad_mask)
+                (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
             )
             bw_trace.bound_symbols[-1].args = filtered_grads
             bw_trace.output = filtered_grads
@@ -1564,11 +1564,20 @@ class ThunderFunction(torch.autograd.Function):
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
-        return out
+
+        # torch.autograd.Function doesn't support non-flat outputs, the grads
+        # wouldn't be propagated and backward receives None for each non-flat
+        # non-tensor output. The output must also be a flat tuple, not any other
+        # container type.
+        flat_out, ctx.output_spec = tree_flatten(out)
+        ctx.len_output = len(flat_out)
+        return ctx.output_spec, *flat_out
 
     @staticmethod
     @torch.autograd.function.once_differentiable
-    def backward(ctx, *args):
+    def backward(ctx, *flat_args):
+        args = tree_unflatten(flat_args[1:], ctx.output_spec)
+        args = (args,) if isinstance(args, torch.Tensor) else args
         grads = ctx.compiled_backward((ctx.saved_tensors, ctx.saved_other), args)
         return (None, None, *grads)
 
@@ -1620,7 +1629,10 @@ def thunder_backward(*, compile_data=None, **compile_config):
             # We must save the spec of the args to be able to unflatten them later
             # torch.autograd.Functions support only flat arguments
             flat_args, spec = tree_flatten((args, kwargs))
-            return ThunderFunction.apply(compiled_split_fw_bw, spec, *flat_args)
+            output_spec, *flat_out = ThunderFunction.apply(compiled_split_fw_bw, spec, *flat_args)
+            if isinstance(flat_out, torch.Tensor):
+                return flat_out
+            return tree_unflatten(flat_out, output_spec)
 
         return wrapper
 
