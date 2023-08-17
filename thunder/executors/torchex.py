@@ -1559,34 +1559,17 @@ class ThunderFunction(torch.autograd.Function):
         # the args here.
         args, kwargs = tree_unflatten(flat_args, spec)
         compiled_forward, compiled_backward = split_fw_bw(requires_grad_mask, *args, **kwargs)
-        out, saved_info = compiled_forward(*flat_args)
+        out, (saved_tensors, ctx.saved_other) = compiled_forward(*flat_args)
         ctx.compiled_backward = compiled_backward
 
         # We must save tensors using ctx.save_for_backward
-        is_tensor = tuple(isinstance(x, torch.Tensor) for x in saved_info)
-        ctx.is_all_tensor = all(is_tensor)
-        if ctx.is_all_tensor:
-            ctx.save_for_backward(*saved_info)
-            return out
-
-        ctx.save_for_backward(*(x for x, is_tensor in zip(saved_info, is_tensor) if is_tensor))
-        ctx.saved_non_tensors = tuple(x for x, is_tensor in zip(saved_info, is_tensor) if not is_tensor)
-        ctx.is_tensor = is_tensor
+        ctx.save_for_backward(*saved_tensors)
         return out
 
     @staticmethod
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):
-        # Restore saved_info from ctx.saved_non_tensors and ctx.saved_tensors
-        if ctx.is_all_tensor:
-            flat_saved_info = ctx.saved_tensors
-        else:
-            saved_tensors = iter(ctx.saved_tensors)
-            saved_non_tensors = iter(ctx.saved_non_tensors)
-            flat_saved_info = tuple(
-                next(saved_tensors) if is_tensor else next(saved_non_tensors) for is_tensor in ctx.is_tensor
-            )
-        grads = ctx.compiled_backward(flat_saved_info, args)
+        grads = ctx.compiled_backward((ctx.saved_tensors, ctx.saved_other), args)
         return (None, None, *grads)
 
 

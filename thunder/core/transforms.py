@@ -2498,6 +2498,22 @@ def value_and_grad(func):
 ForwardBackwardTraces = namedtuple("ForwardBackwardTraces", ["forward_trace", "backward_trace"])
 
 
+def _split_saved_for_backward_into_tensors_and_other(
+    saved_for_backward: Sequence[Variable],
+) -> tuple[Sequence[Variable], Sequence[Variable]]:
+    """Splits saved_for_backward into tensors and other.
+
+    Args:
+        saved_for_backward (Sequence[Variable]): Saved_for_backward to split.
+
+    Returns:
+        tuple[Sequence[Variable], Sequence[Variable]]: Tuple of tensors and other.
+    """
+    is_tensor = lambda x: isinstance(x, TensorProxy)
+    other, tensors = utils.partition(is_tensor, saved_for_backward)
+    return tuple(tensors), tuple(other)
+
+
 def _update_forward_with_new_saved_for_backward(
     forward_trace: Trace, saved_for_backward: Sequence[Variable]
 ) -> None:
@@ -2512,8 +2528,9 @@ def _update_forward_with_new_saved_for_backward(
             update the forward trace.
     """
     saved_for_backward = tree_map(lambda x: x.value if isinstance(x, NumberProxy) else x, saved_for_backward)
+    saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     forward_return_bsym = next(x for x in reversed(forward_trace.bound_symbols) if x.sym.id == prims.PrimIDs.RETURN)
-    forward_return_bsym.args = (forward_trace.output[0], saved_for_backward)
+    forward_return_bsym.args = (forward_trace.output[0], (saved_tensors, saved_other))
     forward_trace.output = forward_return_bsym.args
 
 
@@ -2534,7 +2551,8 @@ def _update_backward_with_new_saved_for_backward(
         pass
 
     cotangents = backward_trace.args[1]
-    unpacking_trace = construct_trace(unpacking_fn, saved_for_backward, cotangents, rename_proxies=False)
+    saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
+    unpacking_trace = construct_trace(unpacking_fn, (saved_tensors, saved_other), cotangents, rename_proxies=False)
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
     backward_trace.args = unpacking_trace.args

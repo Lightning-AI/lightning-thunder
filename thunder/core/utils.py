@@ -1027,3 +1027,14 @@ def get_symbols_to_last_used_variables(symbols, ignore):
             variables = (symbol.args, symbol.kwargs)
         tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables)
     return symbol_to_last_variables
+
+
+# From https://docs.python.org/dev/library/itertools.html#itertools-recipes
+def partition(pred, iterable):
+    """Partition entries into false entries and true entries.
+
+    If *pred* is slow, consider wrapping it with functools.lru_cache().
+    """
+    # partition(is_odd, range(10)) --> 0 2 4 6 8   and  1 3 5 7 9
+    t1, t2 = itertools.tee(iterable)
+    return itertools.filterfalse(pred, t1), filter(pred, t2)
