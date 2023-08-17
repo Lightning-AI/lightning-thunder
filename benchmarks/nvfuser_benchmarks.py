@@ -866,7 +866,8 @@ class StackedAddBenchmark(Benchmark):
 @dataclasses.dataclass
 class GPTConfig:
     name: str = ""
-    block_size: int = 128
+    block_size: int = 1024
+    seq_len: int = 128
     # GPT-2 vocab_size is 50257 but recent nanoGPT uses 50304 for GPU performance
     # https://github.com/karpathy/nanoGPT/blob/eba36e84649f3c6d840a93092cb779a260544d08/model.py#L111
     vocab_size: int = 50304
@@ -976,7 +977,7 @@ class NanoGPTBenchmark(GPTBenchMarkBase):
     )
 
     def _make_batch(self, batch_dims, gpt_config, device, indices_dtype, **_) -> tuple[list, dict]:
-        shape = batch_dims + (gpt_config.block_size,)
+        shape = batch_dims + (gpt_config.seq_len,)
         x = make_tensor(shape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
         targets = make_tensor(shape, low=0, high=255, device=device, dtype=ltorch.to_torch_dtype(indices_dtype))
         return (x, targets), {}
@@ -999,7 +1000,7 @@ class NanoGPTBlockBenchmark(GPTBenchMarkBase):
         ),
         BenchmarkArg(
             name="batch_dims",
-            description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (16,).",
+            description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
             default=(16,),
         ),
     )
@@ -1009,7 +1010,7 @@ class NanoGPTBlockBenchmark(GPTBenchMarkBase):
             make_tensor(
                 batch_dims
                 + (
-                    gpt_config.block_size,
+                    gpt_config.seq_len,
                     gpt_config.n_embd,
                 ),
                 device=device,
@@ -1030,7 +1031,7 @@ class NanoGPTCSABenchmark(GPTBenchMarkBase):
         ),
         BenchmarkArg(
             name="batch_dims",
-            description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (8,).",
+            description="The batch dimensions to use for the input. (The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (8,).",
             default=(8,),
         ),
     )
@@ -1040,7 +1041,7 @@ class NanoGPTCSABenchmark(GPTBenchMarkBase):
             make_tensor(
                 batch_dims
                 + (
-                    gpt_config.block_size,
+                    gpt_config.seq_len,
                     gpt_config.n_embd,
                 ),
                 device=device,
@@ -1061,13 +1062,13 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
         ),
         BenchmarkArg(
             name="batch_dims",
-            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length (config.block_size, config.n_embd). Default is (16,).",
+            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length (config.seq_len, config.n_embd). Default is (16,).",
             default=(16,),
         ),
     )
 
     def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
-        x = make_tensor(batch_dims + (gpt_config.block_size, gpt_config.n_embd), device=device, dtype=tdtype, requires_grad=self.backward)
+        x = make_tensor(batch_dims + (gpt_config.seq_len, gpt_config.n_embd), device=device, dtype=tdtype, requires_grad=self.backward)
         return (x,), {}
 
 
@@ -1088,14 +1089,14 @@ class NanoGPTLayerNormBenchmark(GPTBenchMarkBase):
     extra_args = (
         BenchmarkArg(
             name="batch_dims",
-            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length (config.block_size, config.n_embd). Default is (16,).",
+            description="The batch dimensions to use for the input. (The input will have an innermost dimension of length (config.seq_len, config.n_embd). Default is (16,).",
             default=(16,),
         ),
     )
 
     def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
         x = make_tensor(
-            batch_dims + (gpt_config.block_size, gpt_config.n_embd),
+            batch_dims + (gpt_config.seq_len, gpt_config.n_embd),
             device=device,
             dtype=tdtype,
             requires_grad=self.backward,
@@ -1129,7 +1130,7 @@ class NanoGPTCrossEntropyBenchmark(GPTBenchMarkBase):
 
     def _make_batch(self, batch_dims, gpt_config, device, indices_dtype, tdtype, **_) -> tuple[list, dict]:
         logits = make_tensor(
-            batch_dims + (gpt_config.block_size, gpt_config.vocab_size),
+            batch_dims + (gpt_config.seq_len, gpt_config.vocab_size),
             low=0,
             high=255,
             device=device,
@@ -1137,7 +1138,7 @@ class NanoGPTCrossEntropyBenchmark(GPTBenchMarkBase):
             requires_grad=self.backward,
         )
         targets = make_tensor(
-            batch_dims + (gpt_config.block_size,),
+            batch_dims + (gpt_config.seq_len,),
             low=0,
             high=255,
             device=device,
@@ -1184,7 +1185,7 @@ class NanoGPTEmbeddingBenchmark(GPTBenchMarkBase):
 
     def _make_batch(self, batch_dims, gpt_config, device, indices_dtype, tdtype, **_) -> tuple[list, dict]:
         idx = make_tensor(
-            batch_dims + (gpt_config.block_size,),
+            batch_dims + (gpt_config.seq_len,),
             low=0,
             high=255,
             device=device,
@@ -1225,7 +1226,7 @@ class NanoGPTBlockLoopBenchmark(GPTBenchMarkBase):
 
     def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
         x = make_tensor(
-            batch_dims + (gpt_config.block_size, gpt_config.n_embd),
+            batch_dims + (gpt_config.seq_len, gpt_config.n_embd),
             low=0,
             high=255,
             device=device,
