@@ -1024,6 +1024,18 @@ def gelu(bsym: BoundSymbol, a: TensorProxy, *, approximate: str = "none") -> Bou
     return sym.bind(a, approximate=approximate, output=bsym.output)
 
 
+def group_norm(
+    bsym: BoundSymbol,
+    a: TensorProxy,
+    num_groups: int,
+    weight: Optional[TensorProxy] = None,
+    bias: Optional[TensorProxy] = None,
+    eps: float = 1e-5
+) -> BoundSymbol:
+    sym = Symbol(name="group_norm", meta=None, _module=torch.nn.functional)
+    return sym.bind(a, num_groups, weight, bias, eps, output=bsym.output)
+
+
 def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
     sym = Symbol(name="layer_norm", meta=None, _module=torch.nn.functional)
     tbsym = BoundSymbol(sym, args=(a, normalized_shape, weight, bias, eps), kwargs={}, output=bsym.output)
@@ -1363,6 +1375,7 @@ _ops_map.update(
         PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),
         "torch.nn.functional.embedding": (_always_executable, embedding),
         "torch.nn.functional.gelu": (_always_executable, gelu),
+        "torch.nn.functional.group_norm": (_always_executable, group_norm),
         "torch.layer_norm": (_always_executable, layer_norm),
         "torch.logsumexp": (_always_executable, logsumexp),
         "torch.log_softmax": (_always_executable, log_softmax),

@@ -3834,6 +3834,94 @@ opinfos.extend(matmul_ops)
 nn_ops = []
 
 
+def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # NOTE: we set low/high to -+ 1 to avoid numerical issues with reduced float types.
+    make = partial(make_tensor, low=-1, high=+1, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    dim_len = (0, 2)
+    groups = (1,)
+    ndims = (2, 3, 4)
+    for ndim in ndims:
+        for shape in itertools.product(dim_len, repeat=ndim):
+            _, num_channels, *inner_dims = shape
+
+            # PyTorch has a bug, it causes:
+            # RuntimeError: CUDA error: invalid configuration argument
+            # for inputs with ndim >= 3 and num_channels == 0 with empty
+            # weight and/or bias.
+            if torch.device(device).type == "cuda" and ndim >= 3 and num_channels == 0:
+                continue
+
+            a = make(shape)
+
+            for weight, bias in itertools.product((False, True), repeat=2):
+                for group_len in groups:
+                    yield SampleInput(
+                        a,
+                        group_len,
+                        make((num_channels,)) if weight else None,
+                        make((num_channels,)) if bias else None
+                    )
+
+
+def group_norm_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    yield (
+        SampleInput(make((1,)), 1),
+        RuntimeError,
+        f"a.ndim=1 should be at least 2",
+    )
+    yield (
+        SampleInput(make((1, 1)), 0),
+        RuntimeError,
+        f"num_groups=(.*?) should be greater than 0"
+    )
+    yield (
+        SampleInput(make((1, 1)), 2),
+        RuntimeError,
+        f"num_channels=(.*?) should be divisible by num_groups"
+    )
+    for param in ('weight', 'bias'):
+        yield (
+            SampleInput(make((1, 1)), 1, **{param: make((1, 1))}),
+            RuntimeError,
+            f"{param}.ndim=(.*?) should be equal to 1"
+        )
+        yield (
+            SampleInput(make((2, 3)), 1, **{param: make((4,))}),
+            RuntimeError,
+            f"{param}.numel=(.*?) to num_channels=3"
+        )
+
+
+group_norm_opinfo = OpInfo(
+    ltorch.group_norm,
+    sample_input_generator=group_norm_sample_generator,
+    error_input_generator=group_norm_error_generator,
+    torch_reference=torch.nn.functional.group_norm,
+    # Complex var is not supported yet
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # PyTorch doesn't support float16 and bfloat16 on CUDA
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+    ),
+)
+nn_ops.append(group_norm_opinfo)
+
+
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

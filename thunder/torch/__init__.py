@@ -1663,6 +1663,64 @@ def gelu(a: TensorProxy, *, approximate: str = "none") -> TensorLike:
         raise ValueError(f"gelu does not support the approximate={approximate} argument")
 
 
+@torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
+def group_norm(
+    a: TensorProxy,
+    num_groups: int,
+    weight: Optional[TensorProxy] = None,
+    bias: Optional[TensorProxy] = None,
+    eps: float = 1e-5
+) -> TensorProxy:
+    utils.check(a.ndim >=2, lambda: f"group_norm: {a.ndim=} should be at least 2")
+
+    batch_size, num_channels, *inner_dims = a.shape
+
+    # To avoid division by zero in the check below.
+    utils.check(
+        num_groups > 0,
+        lambda: f"group_norm: {num_groups=} should be greater than 0"
+    )
+    utils.check(
+        num_channels % num_groups == 0,
+        lambda: f"group_norm: {num_channels=} should be divisible by {num_groups=}"
+    )
+    utils.check(
+        weight is None or (weight.ndim == 1 and weight.numel == num_channels),
+        lambda: f"group_norm: {weight.ndim=} should be equal to 1 and {weight.numel=} to {num_channels=}"
+    )
+    utils.check(
+        bias is None or (bias.ndim == 1 and bias.numel == num_channels),
+        lambda: f"group_norm: {bias.ndim=} should be equal to 1 and {bias.numel=} to {num_channels=}"
+    )
+
+    # Empty `a` implies empty result.
+    if any(d == 0 for d in a.shape):
+        return zeros_like(a)
+
+    # Split channels (num_channels,) -> (num_groups, num_channels // num_groups).
+    a_groupped = view(a, [batch_size, num_groups, num_channels // num_groups] + inner_dims)
+
+    # Perform Normalization (yes, subtract mean, divide by sd) over all the dims
+    # but the batch and the group dim.
+    res, *_ = _normalize(a_groupped, norm_dims=range(2, a_groupped.ndim), eps=eps)
+    # Restore the channel dimension
+    res = view(res, a.shape)
+
+    # Reshape weight/bias (they are usually learnable parameters)
+    # to be broadcastable with the current `res`.
+    params_shape = [1, num_channels] + [1 for i in range(2, a.ndim)]
+    weight = view(weight, params_shape) if weight is not None else None
+    bias = view(bias, params_shape) if bias is not None else None
+
+    if weight is not None:
+        res = res * weight
+    if bias is not None:
+        res = res + bias
+
+    res = clang.maybe_convert_to_dtype(res, a.dtype)
+    return res
+
+
 # id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:
