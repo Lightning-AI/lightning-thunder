@@ -1134,6 +1134,7 @@ class NanoGPTCrossEntropyBenchmark(GPTBenchMarkBase):
             high=255,
             device=device,
             dtype=tdtype,
+            requires_grad=self.backward,
         )
         targets = make_tensor(
             batch_dims + (gpt_config.block_size,),
