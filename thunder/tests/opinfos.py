@@ -4,7 +4,7 @@ import operator
 from collections import namedtuple
 from functools import partial, wraps
 from numbers import Number
-from typing import Union, Callable, Optional
+from typing import Union, Callable, Optional, Tuple
 from collections.abc import Sequence
 
 import numpy as np
@@ -3353,17 +3353,25 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((8, 7, 5, 1), (1, 3), False),
     )
 
+    # Randomly select a fraction of the elements in a tensor and set them to specified value
+    def _replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
+        flat = torch.flatten(a)
+        num_values_to_replace: int = math.floor(flat.numel() * percentage)
+        choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
+        choice = torch.asarray(choice_np, device=a.device)
+        flat[choice] = value
+        return flat.reshape(a.shape)
+
     for shape, dim, keepdim in cases:
         yield (SampleInput(make(shape), dim, keepdim))
 
+        # Test that positive and negative infinity are set to zero
         if dtype.is_floating_point:
-            # Randomly select half of the elements per dimension
-            per_dim_indices = [torch.randint(0, max(dim_size, 1), (dim_size // 2,)) for dim_size in shape]
-            # Get product of per_dim_indices because tensor indexing does not support selection along multiple dimensions
-            indices = torch.cartesian_prod(*per_dim_indices)
             inf_input_tensor = make(shape)
-            # Set selected elements to positive infinity
-            inf_input_tensor[indices] = float('inf')
+            # Set a quarter of elements to positive infinity
+            _replace_random_percentage(inf_input_tensor, float('inf'), 0.25)
+            # Set a quarter of elements to negative infinity
+            _replace_random_percentage(inf_input_tensor, float('-inf'), 0.25)
             yield (SampleInput(inf_input_tensor, dim, keepdim))
 
 
@@ -3994,7 +4002,7 @@ log_softmax_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
+            dtypes=(datatypes.bfloat16, datatypes.float16),
         ),
     ),
 )
