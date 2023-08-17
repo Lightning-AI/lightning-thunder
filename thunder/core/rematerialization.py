@@ -34,6 +34,8 @@ def find_external_producer_outputs(
 
     def filter_func(out: ProxyInterface):
         consumers = proxy_to_consumers.get(out, tuple())
+        if len(consumers) == 0:
+            return True
         consumers = tuple(filter(lambda x: x.sym.name != "del", consumers))
         return len(consumers) == 1 and out.name in (x.name for x in consumer.args)
 
