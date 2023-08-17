@@ -729,3 +729,28 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor, device
     output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_torch_autograd_redundant_casts(executor, device, _):
+    # There was a bug where we would eliminate the redundant casts in forward
+    # but backward wasn't updated with the new proxies. This test ensures that
+    # we don't regress.
+    from thunder.core.prims import convert_element_type
+    from thunder.executors.torchex import thunder_backward
+    import thunder.torch as ltorch
+
+    @thunder_backward(executors_list=executor.executors_list())
+    def func(a, b, c):
+        d = a + b + c
+        e = d * a + d * b + d * c
+        return ltorch.sin(e) + ltorch.cos(e)
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float16, requires_grad=True)
+
+    # This would fail if we didn't update the backward with the new proxies
+    func(a, b, c).sum().backward()

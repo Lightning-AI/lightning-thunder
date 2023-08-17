@@ -1,5 +1,6 @@
 import operator
 from functools import wraps, partial
+from itertools import groupby
 from numbers import Number
 from typing import Union, Callable, Any, Tuple, Sequence, Optional
 
@@ -1477,6 +1478,9 @@ class ThunderFunction(torch.autograd.Function):
             flat_func, flat_args, spec = utils.flatten_func(func, args, kwargs)
             primal_trace = make_trace(flat_func)(*flat_args)
             fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace)
+
+            # Update the backward trace to only compute gradients for the
+            # inputs that require gradients
             assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
             filtered_grads = tuple(
                 (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args, requires_grad_mask)
@@ -1484,21 +1488,51 @@ class ThunderFunction(torch.autograd.Function):
             bw_trace.bound_symbols[-1].args = filtered_grads
             bw_trace.output = filtered_grads
 
-            fw_extrace, fw_extraces = transform_for_execution(
-                fw_trace,
+            # Some of the optimization passes change proxies in the trace and
+            # any change in the forward trace must be reflected in the backward
+            # trace. Easiest way to do this is to create a joint trace and run
+            # the optimization passes on it. Note that this trace is not
+            # executable and is only used to run the optimization passes.
+            def joint_fn(args, kwargs, cotangents):
+                pass
+
+            joint_extrace = TraceCtx(joint_fn)
+            joint_extrace.args = (fw_trace.args, fw_trace.kwargs, bw_trace.args[1])
+            joint_extrace.bound_symbols = list((*fw_trace.bound_symbols, *bw_trace.bound_symbols))
+            joint_extrace, joint_extraces = transform_for_execution(
+                joint_extrace,
                 executors_list=compile_config.get("executors_list", None),
                 only_execute_prims=compile_config.get("only_execute_prims", False),
                 use_rematerialization=False,
                 use_del_last_used=False,
             )
 
-            bw_extrace, bw_extraces = transform_for_execution(
-                bw_trace,
-                executors_list=compile_config.get("executors_list", None),
-                only_execute_prims=compile_config.get("only_execute_prims", False),
-                use_rematerialization=False,
-                use_del_last_used=False,
-            )
+            fw_extraces = []
+            bw_extraces = []
+            for trc in joint_extraces:
+                # groupby is used to split the joint trace into forward and backward traces
+                # We determine the split point by looking at the return symbol
+                joint_bsyms = [list(g) for _, g in groupby(trc.bound_symbols, lambda bsym: bsym.sym.id == PrimIDs.RETURN)]
+                assert len(joint_bsyms) == 4
+                fw_bsyms = joint_bsyms[0] + joint_bsyms[1]
+                bw_bsyms = joint_bsyms[2] + joint_bsyms[3]
+                fw_trc = from_trace(fw_trace)
+                bw_trc = from_trace(bw_trace)
+                fw_trc.bound_symbols = fw_bsyms
+                bw_trc.bound_symbols = bw_bsyms
+                # Update output from the return symbol
+                fw_trc.output = fw_trc.bound_symbols[-1].args
+                bw_trc.output = bw_trc.bound_symbols[-1].args
+                # Update saved_for_backward from the unpack_trivial symbol
+                assert bw_trc.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
+                assert bw_trc.bound_symbols[0].kwargs["name"] == "saved_for_backward"
+                bw_trc.args[0] = bw_trc.bound_symbols[0].args[0]
+                fw_trc.set_provenance(trc._provenance)
+                bw_trc.set_provenance(trc._provenance)
+                fw_extraces.append(fw_trc)
+                bw_extraces.append(bw_trc)
+
+            fw_extrace, bw_extrace = fw_extraces[-1], bw_extraces[-1]
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
 
             fw_extrace, _ = del_last_used(fw_extrace)
