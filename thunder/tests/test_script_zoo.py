@@ -164,3 +164,14 @@ def test_self_mutation():
     tom = thunder.compile(CountingModule())
     x = torch.ones((1,))
     assert_close(CountingModule()(x), tom(x))
+
+
+def loop_add(a, b):
+    for _ in range(100):
+        a = a + b
+
+    return a
+
+
+def test_loop_add():
+    thunder.compile(loop_add)

@@ -354,17 +354,20 @@ def strongly_inline_functions(gr: "Graph") -> None:
 def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
     """replaces calls to torch.foo functions with calls into thunder's torch language."""
 
-    def fill_in_value(v: Value) -> None:
+    def fill_in_value(v: Value, seen: OrderedSet[Value]) -> None:
+        if v in seen:
+            return
+        seen.add(v)
         parent = v.parent
         if parent is None and isinstance(v, PhiValue):
             for vv in v.values:
-                fill_in_value(vv)
+                fill_in_value(vv, seen)
             for vv in v.values[1:]:
                 if vv.value is not v.values[0].value:
                     return
             v.value = v.values[0].value
         if v.value is None and parent is not None:
-            fill_in_value(parent)
+            fill_in_value(parent, seen)
         if v.name is None and isinstance(v, PhiValue) and parent is not None and parent.name is not None:
             v.name = parent.name
         if v.value is None and parent is not None and parent.value is not None and v.name is not None:
@@ -374,7 +377,7 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
         for n in bl.nodes:
             for i in n.inputs:
                 done = False
-                fill_in_value(i)
+                fill_in_value(i, OrderedSet())
                 i_or_parent = i
                 while i_or_parent.value not in _torch_to_thunder_complete_map and i_or_parent.parent is not None:
                     i_or_parent = i_or_parent.parent
