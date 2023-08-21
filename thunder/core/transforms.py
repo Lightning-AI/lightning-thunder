@@ -2564,7 +2564,7 @@ def _update_backward_with_new_saved_for_backward(
     backward_trace.bound_symbols = tuple((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
 
 
-def forward_and_backward_from_trace(trace: Trace) -> ForwardBackwardTraces:
+def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> ForwardBackwardTraces:
     """Generates the forward and backward passes from a trace.
 
     This is a convenience function that combines the functionality of
@@ -2621,12 +2621,11 @@ def forward_and_backward_from_trace(trace: Trace) -> ForwardBackwardTraces:
     def augmented_forward_fn(*args, **kwargs):
         result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
         saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
+        if flatten_forward_out:
+            flat_out, spec = tree_flatten(result)
+            flat_out = tuple(flat_out)
+            return ((spec, flat_out), saved_for_backward)
         return result, saved_for_backward
-
-    def backward_fn(saved_for_backward, cotangents):
-        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
-        out = backward_pass(env, trace, cotangents)
-        return out
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
@@ -2645,9 +2644,20 @@ def forward_and_backward_from_trace(trace: Trace) -> ForwardBackwardTraces:
         tracectx_token = set_tracectx(forward_trace)
         # We don't want to record those ones_like calls in the forward trace.
         with detached_trace():
-            cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
+            if flatten_forward_out:
+                # It's assumed that forward_trace.output[0] is a tuple of (spec, flat_out)
+                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), forward_trace.output[0][1]))
+            else:
+                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
     finally:
         reset_tracectx(tracectx_token)
+
+    def backward_fn(saved_for_backward, cotangents):
+        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+        if flatten_forward_out:
+            cotangents = tree_unflatten(cotangents, forward_trace.output[0][0])
+        out = backward_pass(env, trace, cotangents)
+        return out
 
     saved_for_backward = forward_trace.output[1]
     backward_trace = construct_trace(backward_fn, saved_for_backward, cotangents, rename_proxies=False)

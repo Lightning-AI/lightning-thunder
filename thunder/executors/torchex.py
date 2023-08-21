@@ -1477,7 +1477,13 @@ class ThunderFunction(torch.autograd.Function):
             # the given function and its inputs when we generate the "joint trace"
             flat_func, flat_args, spec = utils.flatten_func(func, args, kwargs)
             primal_trace = make_trace(flat_func)(*flat_args)
-            fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace)
+
+            # torch.autograd.Function doesn't support non-flat outputs, the
+            # grads wouldn't be propagated and backward receives None for each
+            # non-flat non-tensor output. The output must also be a flat tuple,
+            # not any other container type. So we need to flatten the outputs of
+            # the forward trace and inputs of the backward trace.
+            fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, flatten_forward_out=True)
 
             # Update the backward trace to only compute gradients for the
             # inputs that require gradients
@@ -1559,25 +1565,17 @@ class ThunderFunction(torch.autograd.Function):
         # the args here.
         args, kwargs = tree_unflatten(flat_args, spec)
         compiled_forward, compiled_backward = split_fw_bw(requires_grad_mask, *args, **kwargs)
-        out, (saved_tensors, ctx.saved_other) = compiled_forward(*flat_args)
+        (output_spec, flat_out), (saved_tensors, ctx.saved_other) = compiled_forward(*flat_args)
         ctx.compiled_backward = compiled_backward
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
-
-        # torch.autograd.Function doesn't support non-flat outputs, the grads
-        # wouldn't be propagated and backward receives None for each non-flat
-        # non-tensor output. The output must also be a flat tuple, not any other
-        # container type.
-        flat_out, ctx.output_spec = tree_flatten(out)
-        ctx.len_output = len(flat_out)
-        return ctx.output_spec, *flat_out
+        return output_spec, *flat_out
 
     @staticmethod
     @torch.autograd.function.once_differentiable
-    def backward(ctx, *flat_args):
-        args = tree_unflatten(flat_args[1:], ctx.output_spec)
-        args = (args,) if isinstance(args, torch.Tensor) else args
+    def backward(ctx, *args):
+        args = args[1:]
         grads = ctx.compiled_backward((ctx.saved_tensors, ctx.saved_other), args)
         return (None, None, *grads)
 
