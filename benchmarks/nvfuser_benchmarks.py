@@ -26,7 +26,7 @@ from thunder.tests import nanogpt_model
 import thunder.core.proxies as proxies
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
-
+from thunder.executors.triton_crossentropy import register_triton_entropyex
 
 # This file contains custom nvFuser-related benchmarks.
 
@@ -151,6 +151,7 @@ class Benchmark:
                 self._fn,
                 use_static_caching=True,
                 use_cudagraphs=use_cudagraphs,
+                executors_list=["triton_crossentropy", thunder.executors.NVFUSER, thunder.executors.TORCH]
             )
 
             return (name, tom, None)

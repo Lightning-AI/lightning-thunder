@@ -237,3 +237,13 @@ class OpExecutor:
 def add_operator_executor(name, op_map, *, add_to_default_executors: bool = True):
     opex = OpExecutor(name, op_map)
     add_executor(name, opex, add_to_default_executors=add_to_default_executors)
+
+
+def remove_operator_executor(name):
+    executor_map = get_executorsctx()
+    del executor_map[name]
+    set_executorsctx(executor_map)
+
+    defaults = list_default_executors()
+    defaults = tuple(x for x in defaults if x != name)
+    set_default_executors(defaults)

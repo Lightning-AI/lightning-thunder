@@ -27,6 +27,7 @@ class NOTHING:
 
 
 JAX_AVAILABLE = package_available("jax")
+TRITON_AVAILABLE = package_available("triton")
 NVFUSER_AVAILABLE = executors.nvfuser_available()
 
 
@@ -375,6 +376,16 @@ def requiresJAX(fn):
     def _fn(*args, **kwargs):
         if not JAX_AVAILABLE:
             pytest.skip("Requires JAX")
+        return fn(*args, **kwargs)
+
+    return _fn
+
+
+def requiresTriton(fn):
+    @wraps(fn)
+    def _fn(*args, **kwargs):
+        if not TRITON_AVAILABLE:
+            pytest.skip("Requires Triton")
         return fn(*args, **kwargs)
 
     return _fn
