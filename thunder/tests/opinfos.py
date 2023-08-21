@@ -3930,6 +3930,72 @@ group_norm_opinfo = OpInfo(
 nn_ops.append(group_norm_opinfo)
 
 
+def layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # input_shape, normalized_shape, kwargs
+    cases = (
+        ((1, 2, 3), (1, 2, 3), {"eps": 0.5}),
+        ((2, 2, 3), (2, 3), {"eps": 0.5}),
+        ((1,), (1,), {}),
+        ((1, 2), (2,), {}),
+        # ((0, 1), (1,), {}),  # nvFuser doesn't handle tensors with zeros in shape.
+    )
+
+    make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    for input_shape, normalized_shape, kwargs in cases:
+        # Shape of weight and bias should be the same as normalized_shape
+        a = make_arg(input_shape)
+        weight = make_arg(normalized_shape)
+        bias = make_arg(normalized_shape)
+        yield SampleInput(a, normalized_shape, weight, bias, **kwargs)
+
+
+def layer_norm_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    yield (
+        SampleInput(make(1, 1), ()),
+        RuntimeError,
+        "Expected normalized_shape=(.*?) to have length >= 1"
+    )
+    yield (
+        SampleInput(make(1), (1, 1)),
+        RuntimeError,
+        "Expected a.ndim=1 to be greater than or equal to len\\(normalized_shape\\)=2"
+    )
+    yield (
+        SampleInput(make(1, 2, 3), (2, 1)),
+        RuntimeError,
+        "Expected the last 2 dimensions"  # a.shape[-len(normalized_shape):] == normalized_shape
+    )
+    for param in ('weight', 'bias'):
+        yield (
+            SampleInput(make((1, 2, 3)), (2, 3), **{param: make((1, 1))}),
+            RuntimeError,
+            f"Expected {param}.shape(.*?) to be the same as normalized_shape"
+        )
+
+
+layer_norm_opinfo = OpInfo(
+    ltorch.layer_norm,
+    sample_input_generator=layer_norm_sample_generator,
+    error_input_generator=layer_norm_error_generator,
+    torch_reference=torch.nn.functional.layer_norm,
+    # Complex var is not supported yet
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(layer_norm_opinfo)
+
+
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

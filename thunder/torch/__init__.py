@@ -1478,7 +1478,7 @@ def _native_layer_norm(a: TensorProxy, normalized_shape, weight, bias, eps: Numb
         lambda: f"Expected a.ndim={a.ndim} to be greater than or equal to len(normalized_shape)={normalized_ndim}",
     )
     utils.check(
-        a.shape[(a.ndim - normalized_ndim) :] == tuple(normalized_shape),
+        a.shape[-normalized_ndim:] == tuple(normalized_shape),
         lambda: f"Expected the last {len(normalized_shape)} dimensions of a (a.shape={a.shape}) to be the same as {normalized_shape}",
     )
 

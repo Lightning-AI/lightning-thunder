@@ -116,31 +116,3 @@ def test_var_mean(executor, device, dtype):
     assert_close(thunder_result, torch_result)
 
 
-# TODO: autogenerate consistency tests using opinfos
-@instantiate(dtypes=(thunder.float32,))
-def test_layer_norm(executor, device, dtype):
-    thunder_fn = executor.make_callable(ttorch.layer_norm)
-    torch_fn = torch.nn.functional.layer_norm
-    tdtype = ttorch.to_torch_dtype(dtype)
-
-    # TODO: improve these
-    # input_shape, normalized_shape, kwargs
-    cases = (
-        ((1, 2, 3), (1, 2, 3), {"eps": 0.5}),
-        ((2, 2, 3), (2, 3), {"eps": -0.5}),
-        ((1,), (1,), {}),
-        ((1, 2), (2,), {}),
-        # ((0, 1), (1,), {}),  # nvFuser doesn't handle tensors with zero elements
-    )
-
-    make_arg = partial(make_tensor, device=device, dtype=tdtype)
-
-    for input_shape, normalized_shape, kwargs in cases:
-        # Shape of weight and bias should be the same as normalized_shape
-        a = make_arg(input_shape)
-        weight = make_arg(normalized_shape)
-        bias = make_arg(normalized_shape)
-
-        thunder_result = thunder_fn(a, normalized_shape, weight, bias, **kwargs)
-        torch_result = torch_fn(a, normalized_shape, weight, bias, **kwargs)
-        assert_close(thunder_result, torch_result, atol=1e-3, rtol=0.0)
