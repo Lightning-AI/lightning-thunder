@@ -1669,28 +1669,24 @@ def group_norm(
     num_groups: int,
     weight: Optional[TensorProxy] = None,
     bias: Optional[TensorProxy] = None,
-    eps: float = 1e-5
+    eps: float = 1e-5,
 ) -> TensorProxy:
-    utils.check(a.ndim >=2, lambda: f"group_norm: {a.ndim=} should be at least 2")
+    utils.check(a.ndim >= 2, lambda: f"group_norm: {a.ndim=} should be at least 2")
 
     batch_size, num_channels, *inner_dims = a.shape
 
     # To avoid division by zero in the check below.
+    utils.check(num_groups > 0, lambda: f"group_norm: {num_groups=} should be greater than 0")
     utils.check(
-        num_groups > 0,
-        lambda: f"group_norm: {num_groups=} should be greater than 0"
-    )
-    utils.check(
-        num_channels % num_groups == 0,
-        lambda: f"group_norm: {num_channels=} should be divisible by {num_groups=}"
+        num_channels % num_groups == 0, lambda: f"group_norm: {num_channels=} should be divisible by {num_groups=}"
     )
     utils.check(
         weight is None or (weight.ndim == 1 and weight.numel == num_channels),
-        lambda: f"group_norm: {weight.ndim=} should be equal to 1 and {weight.numel=} to {num_channels=}"
+        lambda: f"group_norm: {weight.ndim=} should be equal to 1 and {weight.numel=} to {num_channels=}",
     )
     utils.check(
         bias is None or (bias.ndim == 1 and bias.numel == num_channels),
-        lambda: f"group_norm: {bias.ndim=} should be equal to 1 and {bias.numel=} to {num_channels=}"
+        lambda: f"group_norm: {bias.ndim=} should be equal to 1 and {bias.numel=} to {num_channels=}",
     )
 
     # Empty `a` implies empty result.
@@ -1768,9 +1764,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
 
 
 @torchsymbol(torch.logsumexp, is_method=True)
-def logsumexp(a: TensorLike,
-              dim: Union[int, Sequence[int]],
-              keepdim: bool = False):
+def logsumexp(a: TensorLike, dim: Union[int, Sequence[int]], keepdim: bool = False):
     input_max = amax(a, dim, keepdim=True)
     input_max_sans_inf = where(abs(input_max) == float("inf"), 0, input_max)
     result = log(sum(exp(a - input_max_sans_inf), dim, keepdim))
@@ -2169,6 +2163,11 @@ def _convert_element_type_eager(
         return a.astype(dtype)
 
     utils.check(False, lambda: f"Unexpected case!", exception_type=AssertionError)
+
+
+@eager_for(pids.RESHAPE)
+def _reshape_eager(a: torch.Tensor, shape: Sequence[int]) -> torch.Tensor:
+    return a.reshape(shape)
 
 
 def _elementwise_binary_eager(

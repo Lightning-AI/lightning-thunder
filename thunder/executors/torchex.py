@@ -1031,7 +1031,7 @@ def group_norm(
     num_groups: int,
     weight: Optional[TensorProxy] = None,
     bias: Optional[TensorProxy] = None,
-    eps: float = 1e-5
+    eps: float = 1e-5,
 ) -> BoundSymbol:
     sym = Symbol(name="group_norm", meta=None, _module=torch.nn.functional)
     return sym.bind(a, num_groups, weight, bias, eps, output=bsym.output)
@@ -1044,7 +1044,7 @@ def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, e
     return tbsym
 
 
-def logsumexp(bsym: BoundSymbol, a: TensorProxy, dim: Number, keepdim: bool =False) -> BoundSymbol:
+def logsumexp(bsym: BoundSymbol, a: TensorProxy, dim: Number, keepdim: bool = False) -> BoundSymbol:
     sym = Symbol(name="logsumexp", meta=None, _module=torch)
     return sym.bind(a, dim, keepdim, output=bsym.output)
 
@@ -1489,7 +1489,8 @@ class ThunderFunction(torch.autograd.Function):
             # inputs that require gradients
             assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
             filtered_grads = tuple(
-                (arg_grad if requires_grad else None) for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
+                (arg_grad if requires_grad else None)
+                for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
             )
             bw_trace.bound_symbols[-1].args = filtered_grads
             bw_trace.output = filtered_grads
@@ -1518,7 +1519,9 @@ class ThunderFunction(torch.autograd.Function):
             for trc in joint_extraces:
                 # groupby is used to split the joint trace into forward and backward traces
                 # We determine the split point by looking at the return symbol
-                joint_bsyms = [list(g) for _, g in groupby(trc.bound_symbols, lambda bsym: bsym.sym.id == PrimIDs.RETURN)]
+                joint_bsyms = [
+                    list(g) for _, g in groupby(trc.bound_symbols, lambda bsym: bsym.sym.id == PrimIDs.RETURN)
+                ]
                 assert len(joint_bsyms) == 4
                 fw_bsyms = joint_bsyms[0] + joint_bsyms[1]
                 bw_bsyms = joint_bsyms[2] + joint_bsyms[3]
@@ -1532,7 +1535,7 @@ class ThunderFunction(torch.autograd.Function):
                 # Update saved_for_backward from the unpack_trivial symbol
                 assert bw_trc.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
                 assert bw_trc.bound_symbols[0].kwargs["name"] == "saved_for_backward"
-                bw_trc.args[0] = bw_trc.bound_symbols[0].args[0]
+                bw_trc.args[0] = bw_trc.bound_symbols[0].output
                 fw_trc.set_provenance(trc._provenance)
                 bw_trc.set_provenance(trc._provenance)
                 fw_extraces.append(fw_trc)

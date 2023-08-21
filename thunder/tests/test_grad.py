@@ -579,6 +579,7 @@ def test_torch_autograd_function(executor, device, _):
 
     assert torch.autograd.gradcheck(lambda a, b, c: func(a, b, c=c), (a, b, c))
 
+
 @instantiate(
     dtypes=(dtypes.float32,),
 )
@@ -778,8 +779,12 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor, device
     trace = trace(func, a, b, c=c, inline_trace=False)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
-    fw_extrace, _ = transform_for_execution(fw_trace, executors_list=executor.executors_list(), use_rematerialization=False)
-    bw_extrace, _ = transform_for_execution(bw_trace, executors_list=executor.executors_list(), use_rematerialization=False)
+    fw_extrace, _ = transform_for_execution(
+        fw_trace, executors_list=executor.executors_list(), use_rematerialization=False
+    )
+    bw_extrace, _ = transform_for_execution(
+        bw_trace, executors_list=executor.executors_list(), use_rematerialization=False
+    )
     fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
 
     fw = fw_extrace.python_callable()

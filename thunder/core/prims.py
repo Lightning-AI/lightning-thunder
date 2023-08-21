@@ -166,9 +166,16 @@ def make_prim(
     meta,
     python_printer=default_python_printer,
     python_impl=None,
+    _bind_postprocess: None | Callable = None,
 ):
     sym = Symbol(
-        name=name, meta=prim_ctx(meta), python_impl=python_impl, id=id, is_prim=True, python_printer=python_printer
+        name=name,
+        meta=prim_ctx(meta),
+        python_impl=python_impl,
+        id=id,
+        is_prim=True,
+        python_printer=python_printer,
+        _bind_postprocess=_bind_postprocess,
     )
     return sym
 
@@ -185,11 +192,11 @@ def _collectify(x: Any, *, name: Optional[str] = None) -> Any:
     return x
 
 
-def unpack_trivial_impl(x: Any, *, name: Optional[str] = None) -> Any:
+def unpack_trivial_impl(x: Any, /, *, name: Optional[str] = None) -> Any:
     return x
 
 
-def unpack_trivial_meta(x: Any, *, name: Optional[str] = None) -> Any:
+def unpack_trivial_meta(x: Any, /, *, name: Optional[str] = None) -> Any:
     return _collectify(x, name=name)
 
 
@@ -197,8 +204,8 @@ def unpack_trivial_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ) -> str:
     utils.check(
-        len(arg_printables) == 1,
-        lambda: f"Expected one argument for unpack_trivial but got {arg_printables}",
+        len(arg_printables) == 0,
+        lambda: f"Expected zero arguments for unpack_trivial but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
@@ -207,11 +214,14 @@ def unpack_trivial_printer(
         exception_type=AssertionError,
     )
 
-    result_str = "_ =" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)} = "
-    arg_str = codeutils.prettyprint(arg_printables[0])
-
-    s = f"# {result_str} {arg_str}  (trivial unpack{', unused' if bsym.output is None else ''})"
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    s = f"# {result_str} {'(unused)' if bsym.output is None else ''}"
     return s
+
+
+# Removes the inputs from unpack_trivial, so it appears to have no input
+def _unpack_trivial_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
 
 
 unpack_trivial = make_prim(
@@ -220,6 +230,7 @@ unpack_trivial = make_prim(
     meta=unpack_trivial_meta,
     python_printer=unpack_trivial_printer,
     python_impl=unpack_trivial_impl,
+    _bind_postprocess=_unpack_trivial_bind_postprocess,
 )
 
 
@@ -460,7 +471,7 @@ def comment_printer(
     )
     utils.check(
         len(arg_printables) == 1,
-        lambda: f"Expected only one arg printable when printing a comment, but got {kwarg_printables}",
+        lambda: f"Expected only one arg printable when printing a comment, but got {arg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1541,7 +1552,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a, shape):
+def reshape_meta(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)

@@ -91,8 +91,11 @@ class TraceCtx:
         return self._siginfo
 
     #
-    # Methods for setting trace metadata (like the provenance)
+    # Methods for getting and setting trace metadata (like the provenance)
     #
+
+    def get_provenance(self) -> None | TraceProvenance:
+        return self._provenance
 
     def set_provenance(self, provenance: TraceProvenance) -> None:
         self._provenance = provenance

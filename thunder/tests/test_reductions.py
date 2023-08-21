@@ -114,5 +114,3 @@ def test_var_mean(executor, device, dtype):
     thunder_result = traced_foo(a)
     torch_result = torch.var_mean(a, [0, 1], keepdim=True, correction=2)
     assert_close(thunder_result, torch_result)
-
-

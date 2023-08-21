@@ -1199,21 +1199,25 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 # TODO Maybe move to test_transforms.py?
 
 
-def test_bsym_toposort():
-    device = "cpu"
-    dtype = torch.float32
-    a = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=True)
-    b = make_tensor((2, 2), device=device, dtype=dtype, requires_grad=False)
+@instantiate(dtypes=(thunder.float32,))
+def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
+    tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    make = partial(make_tensor, device=device, dtype=tdtype, requires_grad=False)
+
+    a = make((2, 2))
+    b = make((2, 2))
 
     def foo(a, b):
         return a + b, a - b
 
-    trc = thunder.trace(foo, a, b)
+    cfoo = executor.make_callable(foo)
+    _, _ = cfoo(a, b)
+    traces = thunder.last_traces(cfoo)
+    trc = traces[0]
 
     from thunder.core.transforms import bsym_list_to_dag, TOPOSORT_ORDER, toposort_bsym_dag, Node
 
     nodes, return_node = bsym_list_to_dag(trc.bound_symbols)
-
     top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
     bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
 
@@ -1234,6 +1238,48 @@ def test_bsym_toposort():
     sub_preferring_sub_bsym = sub_preferring_bsyms[2]
 
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
+
+    # Tests collection and reshape with -1 input
+    # NOTE Additions before and after the reshape are to prevent nvFuser from "bookending" the operation
+    def bar(a, shape):
+        b = a + 3
+        c = a + 2.0
+        return ltorch.reshape(b, shape) + 2, c
+
+    a = make(((4, 3, 2, 3)))
+
+    cbar = executor.make_callable(bar)
+    expected = cbar(a, (12, -1))
+    traces = thunder.last_traces(cbar)
+    trc = traces[0]
+
+    nodes, return_node = bsym_list_to_dag(trc.bound_symbols)
+    top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
+    bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
+
+    top_down_reshape_bsym = top_down_bsyms[5]
+    bottom_up_reshape_bsym = bottom_up_bsyms[4]
+
+    assert top_down_reshape_bsym.sym.id == "torch.reshape"
+    assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
+
+    # Tests flattening to prims
+    # NOTE The flatten will be different depending on the executor, so this just verifies
+    #   that the conversion produces a valid program that computes the same result
+    flat_trace: TraceCtx
+    for trc in traces:
+        if trc.get_provenance() is not None and "Flatten" in str(trc.get_provenance()):
+            flat_trace = trc
+
+    nodes, return_node = bsym_list_to_dag(flat_trace.bound_symbols)
+    top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
+    bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
+
+    for bsyms in (top_down_bsyms, bottom_up_bsyms):
+        flat_trace.bound_symbols = top_down_bsyms
+        ctrace = flat_trace.python_callable()
+        actual = ctrace(a, (12, -1))
+        assert_close(expected, actual)
 
 
 # Verifies that using only some of the results of a function works as expected

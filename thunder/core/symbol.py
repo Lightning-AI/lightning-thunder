@@ -103,6 +103,9 @@ class Symbol:
     _module: Any | None = None
     _hash: Optional[int] = None
 
+    # An optional postprocessing function to modify the bound symbol resulting from bind()
+    _bind_postprocess: None | Callable = None
+
     # If True, then this function isn't actually executable
     # NOTE This is useful when, for example, constructing implicit grad formulas
     # TODO We could probably execute "phantom" symbols by executing their BoundSymbol's subsymbols
@@ -192,6 +195,8 @@ class Symbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
         b = BoundSymbol(self, args=args, kwargs=kwargs, output=output, subsymbols=subsymbols, _call_ctx=_call_ctx)
+        if self._bind_postprocess:
+            self._bind_postprocess(b)
         return b
 
     # TODO Restore eager dispatch by tracing and executing a trace

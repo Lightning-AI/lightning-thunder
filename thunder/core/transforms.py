@@ -61,6 +61,7 @@ def construct_trace(*args, **kwargs):
 
 # A node in a DAG represents a bsym, with edges defined by the children (outgoing edges) and
 #   parents (incoming edges) lists
+# NOTE Don't compare nodes directly. Compare their bsyms.
 class Node:
     def __init__(self, bsym: BoundSymbolInterface):
         self.bsym = bsym
@@ -70,6 +71,12 @@ class Node:
     # TODO Consider printing parents and children
     def __repr__(self) -> str:
         return str(self.bsym)
+
+    def __hash__(self) -> int:
+        utils.check(False, lambda: f"Trying to hash a Node. Hash its bsym instead.")
+
+    def __eq__(self, other) -> bool:
+        utils.check(False, lambda: f"Trying to compare Nodes for equality. Compare their bsyms' instead.")
 
 
 # TODO Think about how to model nodes likes comments -- maybe comments should be associated with
@@ -103,15 +110,18 @@ def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node],
             if not isinstance(inp, Proxy):
                 continue
 
-            # Ensures that nodes are not their own parents
-            # NOTE These nodes appear to be their own parents because nodes like TRIVIAL_UNPACK accept their input
-            #   from a function's signature, then are treated as the "producer" of that input in later analysis
-            possible_parent = producers[inp]
-            if possible_parent is bsym:
-                continue
+            producer = producers[inp]
+            parent = bsym_to_node_map[producer]
 
-            parent = bsym_to_node_map[possible_parent]
-            node.parents.append(parent)
+            # Checks if the node was already parent to avoid multiple edges between two nodes
+            already_has_parent: bool = False
+            for pnode in node.parents:
+                if producer is pnode.bsym:
+                    already_has_parent = True
+                    break
+
+            if not already_has_parent:
+                node.parents.append(parent)
 
             has_parents = True
 
@@ -123,9 +133,7 @@ def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node],
                 continue
 
             # Checks that the output is actually produced by this function, and not an input to it
-            # NOTE This has to make an exception for UNPACK_TRIVIAL, which appears to consume what it produces
-            # TODO Think about modeling UNPACK_TRIVIAL differently
-            if not bsym.sym.id is prims.PrimIDs.UNPACK_TRIVIAL and variableify(out) in chain(
+            if variableify(out) in chain(
                 (variableify(x) for x in bsym._flat_args), (variableify(x) for x in bsym._flat_kwargs)
             ):
                 continue
@@ -133,7 +141,15 @@ def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node],
             children = consumers.get(out, [])
             for child in children:
                 child_node = bsym_to_node_map[child]
-                if child_node not in node.children:
+
+                # Checks if the node was already a child to avoid multiple edges between two nodes
+                already_has_child: bool = False
+                for cnode in node.children:
+                    if child is cnode.bsym:
+                        already_has_child = True
+                        break
+
+                if not already_has_child:
                     node.children.append(child_node)
 
     return nodes_without_parents, return_node
@@ -168,10 +184,12 @@ def toposort_bsym_dag(
 
     eligible_nodes: list[Node] = copy.copy(start_nodes)
     while True:
+        if len(eligible_nodes) == 0:
+            break
+
         # Picks the next node
         idx: int = selector(eligible_nodes)
-        node: Node = eligible_nodes[idx]
-        del eligible_nodes[idx]
+        node: Node = eligible_nodes.pop(idx)
         bsyms.append(node.bsym)
         sorted.add(node.bsym)
 
@@ -180,6 +198,7 @@ def toposort_bsym_dag(
         #   because this is not possible since one of the nodes required for a parent or child to become
         #   eligible was just sorted.
         possibly_eligible = node.parents if toposort_order is TOPOSORT_ORDER.BOTTOM_UP else node.children
+
         for pe_node in possibly_eligible:
             required_nodes = pe_node.children if toposort_order is TOPOSORT_ORDER.BOTTOM_UP else pe_node.parents
 
@@ -191,9 +210,6 @@ def toposort_bsym_dag(
 
             if is_eligible:
                 eligible_nodes.append(pe_node)
-
-        if len(eligible_nodes) == 0:
-            break
 
     if toposort_order is TOPOSORT_ORDER.BOTTOM_UP:
         bsyms.reverse()
@@ -2383,11 +2399,7 @@ def backward_pass(forward_env, trace, init_cotangents):
             # Skip writing to constants
             pass
 
-    if (
-        isinstance(init_cotangents, Sequence)
-        and len(init_cotangents) == 1
-        and not isinstance(trace.output, Sequence)
-    ):
+    if isinstance(init_cotangents, Sequence) and len(init_cotangents) == 1 and not isinstance(trace.output, Sequence):
         init_cotangents = init_cotangents[0]
     safe_map_flat(write, trace.output, init_cotangents)
 
@@ -2508,9 +2520,7 @@ def _split_saved_for_backward_into_tensors_and_other(
     return tuple(tensors), tuple(other)
 
 
-def _update_forward_with_new_saved_for_backward(
-    forward_trace: Trace, saved_for_backward: Sequence[Variable]
-) -> None:
+def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
     """Updates the forward trace with new saved_for_backward.
 
     This is necessary because the updated saved_for_backward is not available
@@ -2528,9 +2538,7 @@ def _update_forward_with_new_saved_for_backward(
     forward_trace.output = forward_return_bsym.args
 
 
-def _update_backward_with_new_saved_for_backward(
-    backward_trace: Trace, saved_for_backward: Sequence[Variable]
-) -> None:
+def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
     """Updates the backward trace with new saved_for_backward.
 
     This is necessary because the updated saved_for_backward is
@@ -2541,6 +2549,7 @@ def _update_backward_with_new_saved_for_backward(
         saved_for_backward (Sequence[Variable]): Saved_for_backward to use to
             update the backward trace.
     """
+
     def unpacking_fn(saved_for_backward, cotangents):
         pass
 
@@ -2681,6 +2690,7 @@ def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> 
     # Don't use the same variable twice in the backward pass
     seen = set()
     from thunder.core.proxies import Variable
+
     for i, x in enumerate(fw_flat_saved_for_backward):
         x = variableify(x)
         if not isinstance(x, Variable):

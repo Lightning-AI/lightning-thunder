@@ -3369,9 +3369,9 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if dtype.is_floating_point:
             inf_input_tensor = make(shape)
             # Set a quarter of elements to positive infinity
-            _replace_random_percentage(inf_input_tensor, float('inf'), 0.25)
+            _replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
             # Set a quarter of elements to negative infinity
-            _replace_random_percentage(inf_input_tensor, float('-inf'), 0.25)
+            _replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
             yield (SampleInput(inf_input_tensor, dim, keepdim))
 
 
@@ -3865,10 +3865,7 @@ def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
             for weight, bias in itertools.product((False, True), repeat=2):
                 for group_len in groups:
                     yield SampleInput(
-                        a,
-                        group_len,
-                        make((num_channels,)) if weight else None,
-                        make((num_channels,)) if bias else None
+                        a, group_len, make((num_channels,)) if weight else None, make((num_channels,)) if bias else None
                     )
 
 
@@ -3880,26 +3877,18 @@ def group_norm_error_generator(op, device, **kwargs):
         RuntimeError,
         f"a.ndim=1 should be at least 2",
     )
-    yield (
-        SampleInput(make((1, 1)), 0),
-        RuntimeError,
-        f"num_groups=(.*?) should be greater than 0"
-    )
-    yield (
-        SampleInput(make((1, 1)), 2),
-        RuntimeError,
-        f"num_channels=(.*?) should be divisible by num_groups"
-    )
-    for param in ('weight', 'bias'):
+    yield (SampleInput(make((1, 1)), 0), RuntimeError, f"num_groups=(.*?) should be greater than 0")
+    yield (SampleInput(make((1, 1)), 2), RuntimeError, f"num_channels=(.*?) should be divisible by num_groups")
+    for param in ("weight", "bias"):
         yield (
             SampleInput(make((1, 1)), 1, **{param: make((1, 1))}),
             RuntimeError,
-            f"{param}.ndim=(.*?) should be equal to 1"
+            f"{param}.ndim=(.*?) should be equal to 1",
         )
         yield (
             SampleInput(make((2, 3)), 1, **{param: make((4,))}),
             RuntimeError,
-            f"{param}.numel=(.*?) to num_channels=3"
+            f"{param}.numel=(.*?) to num_channels=3",
         )
 
 
@@ -3953,26 +3942,22 @@ def layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def layer_norm_error_generator(op, device, **kwargs):
     make = partial(make_tensor, device=device, dtype=torch.float32)
 
-    yield (
-        SampleInput(make(1, 1), ()),
-        RuntimeError,
-        "Expected normalized_shape=(.*?) to have length >= 1"
-    )
+    yield (SampleInput(make(1, 1), ()), RuntimeError, "Expected normalized_shape=(.*?) to have length >= 1")
     yield (
         SampleInput(make(1), (1, 1)),
         RuntimeError,
-        "Expected a.ndim=1 to be greater than or equal to len\\(normalized_shape\\)=2"
+        "Expected a.ndim=1 to be greater than or equal to len\\(normalized_shape\\)=2",
     )
     yield (
         SampleInput(make(1, 2, 3), (2, 1)),
         RuntimeError,
-        "Expected the last 2 dimensions"  # a.shape[-len(normalized_shape):] == normalized_shape
+        "Expected the last 2 dimensions",  # a.shape[-len(normalized_shape):] == normalized_shape
     )
-    for param in ('weight', 'bias'):
+    for param in ("weight", "bias"):
         yield (
             SampleInput(make((1, 2, 3)), (2, 3), **{param: make((1, 1))}),
             RuntimeError,
-            f"Expected {param}.shape(.*?) to be the same as normalized_shape"
+            f"Expected {param}.shape(.*?) to be the same as normalized_shape",
         )
 
 
