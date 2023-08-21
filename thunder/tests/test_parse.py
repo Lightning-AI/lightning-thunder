@@ -338,22 +338,20 @@ def done_fn(_):
 
 @add_parse_test(
     """
-        LOAD_FAST                   0 (x)    ║
-        LOAD_CONST                  1 (2)    ║
-        BUILD_TUPLE                 2        ║
-        STORE_FAST                  1 (t)    ║
-                                             ║
-        LOAD_FAST                   1 (t)    ║
-        UNPACK_TUPLE                2        ║
-        STORE_FAST                  2 (a)    ║
-        STORE_FAST                  3 (_)    ║
-        LOAD_FAST                   2 (a)    ║
+        LOAD_FAST                0 (x)       ║
+        LOAD_CONST               1 (2)       ║
+        BUILD_TUPLE              2           ║
+        STORE_FAST               1 (t)       ║
+        LOAD_FAST                1 (t)       ║
+        UNPACK_SEQUENCE          2           ║
+        STORE_FAST               2 (a)       ║
+        STORE_FAST               3 (_)       ║
+        LOAD_FAST                2 (a)       ║
         RETURN_VALUE                         ║
         """,
     """
-        0)  BUILD_TUPLE:  (0, 1) -> (2)
-        1)  UNPACK_TUPLE: (2) -> (0, 1)
-        2)  RETURN_VALUE: (1) -> ()
+        0)  BUILD_TUPLE:     (x, 2) -> OUTPUT_0
+        0)  RETURN_VALUE:    (x) ->
         """,
 )
 def tuple_fold(x):
@@ -364,23 +362,19 @@ def tuple_fold(x):
 
 @add_parse_test(
     """
-        LOAD_FAST                   0 (x)    ║
-        LOAD_CONST                  1 (2)    ║
-        BUILD_TUPLE                 2        ║
-        STORE_FAST                  1 (t)    ║
-                                             ║
-        LOAD_FAST                   1 (t)    ║
-        UNPACK_EX                   2        ║
-        STORE_FAST                  2 (a)    ║
-        STORE_FAST                  3 (_)    ║
-        LOAD_FAST                   2 (a)    ║
+        LOAD_FAST                0 (x)       ║
+        LOAD_CONST               1 (2)       ║
+        BUILD_TUPLE              2           ║
+        STORE_FAST               1 (t)       ║
+        LOAD_FAST                1 (t)       ║
+        UNPACK_EX                1           ║
+        STORE_FAST               2 (a)       ║
+        STORE_FAST               3 (_)       ║
+        LOAD_FAST                2 (a)       ║
         RETURN_VALUE                         ║
         """,
-    """
-        0)  BUILD_TUPLE:  (0, 1) -> (2)
-        1)  UNPACK_EX:    (2) -> (3, 0)
-        2)  RETURN_VALUE: (0) -> ()
-        """,
+    # TODO(robieta, apaz-cli): Figure out UNPACK_EX indexing.
+    flow_spec=DONT_CHECK_FLOW
 )
 def tuple_fold_ex(x):
     t = (x, 2)

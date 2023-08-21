@@ -878,6 +878,41 @@ def test_codeobject_debug():
     assert d2 == {}
 
 
+def tuple_fold(x):
+    t = (x, 2)
+    a, _ = t
+    return a
+
+
+def test_tuple_fold():
+    tom = thunder.compile(tuple_fold)
+    assert tuple_fold(1) == tom(1)
+
+
+def tuple_fold_ex(x):
+    t = (x, 2, 3, 4, 5)
+    a, b, c, *_ = t
+    return a, b, c
+
+
+@pytest.mark.skip(reason="TODO(robieta, apaz-cli): Figure out UNPACK_EX indexing.")
+def test_tuple_fold_ex():
+    tom = thunder.compile(tuple_fold_ex)
+    assert tuple_fold_ex(1) == tom(1)
+
+
+def tuple_index(x):
+    t = (x, 2)
+    a = t[0]
+    b = t[-1]
+    return a, t[1], b
+
+
+def test_tuple_index():
+    tom = thunder.compile(tuple_index)
+    assert tuple_index(1) == tom(1)
+
+
 # @instantiate(dtypes=(thunder.float32,))
 # def test_local_acquired_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)

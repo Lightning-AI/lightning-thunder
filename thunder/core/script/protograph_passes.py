@@ -250,19 +250,20 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
             if instr.opname == "BUILD_TUPLE":
                 assert ivals is not None  # The elements of the tuple
                 assert len(ovals) == 1  # The output tuple
-                tuple_sources.update({TupleKey(ovals[0], _i): i for _i, i in enumerate(ivals)})
+                tuple_sources.update({TupleKey(ovals[0], _i): i for _i, i in enumerate(reversed(ivals))})
             elif instr.opname == "BINARY_SUBSCR":
                 assert len(ivals) == 2  # The tuple, and the index
                 assert len(ovals) == 1  # The result of tup[idx]
-                ref = ivals[1]
+                ref = ivals[0]
                 if isinstance(ref, ExternalRef):
                     if ref.key.scope == VariableScope.CONST and isinstance(ref.key.identifier, int):
-                        queries.update({TupleKey(ivals[0], ref.key.identifier): ovals[0]})
+                        queries.update({TupleKey(ivals[1], ref.key.identifier): ovals[0]})
             elif instr.opname == "UNPACK_SEQUENCE":
                 assert len(ivals) == 1  # The tuple to unpack
                 assert len(ovals)  # The elements of the tuple, unpacked
                 queries.update({TupleKey(ivals[0], _i): o for _i, o in enumerate(ovals)})
             elif instr.opname == "UNPACK_EX":
+                continue
                 assert len(ivals) == 1  # The tuple to unpack
                 assert len(ovals) >= 2  # [remaining, unpack...]
                 # Note: The remaining elements are a list, not a tuple.

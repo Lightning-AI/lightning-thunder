@@ -363,7 +363,7 @@ class ProtoGraph:
                         counter += 1
 
         def to_index_str(values):
-            indices = (idxes[v] for v in values)
+            indices = (str(idxes[v]) for v in values)
             return f"({', '.join(indices)})"
 
         for i, pb in enumerate(self):
