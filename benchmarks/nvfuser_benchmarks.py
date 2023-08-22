@@ -1252,6 +1252,34 @@ class NanoGPTBlockLoopBenchmark(GPTBenchMarkBase):
         return (x,), {}
 
 
+class nanoGPTScaledDotProductAttention(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dropout = config.dropout
+
+    def forward(self, q, k, v):
+        return torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+
+
+class NanoGPTScaledDotProductAttentionBenchmark(GPTBenchMarkBase):
+    benchmark_factory = nanoGPTScaledDotProductAttention
+    name_template = "nanogpt-{gpt_config}-sdpa"
+    extra_args = (
+        BenchmarkArg(
+            name="batch_dims",
+            description="The batch dimensions to use for the input. Default is (16,).",
+            default=(16,),
+        ),
+    )
+
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
+        shape = batch_dims + (gpt_config.n_head, gpt_config.seq_len, gpt_config.n_embd)
+        q = make_tensor(shape, device=device, dtype=tdtype, requires_grad=self.backward)
+        k = make_tensor(shape, device=device, dtype=tdtype, requires_grad=self.backward)
+        v = make_tensor(shape, device=device, dtype=tdtype, requires_grad=self.backward)
+        return (q, k, v), {}
+
+
 c = math.sqrt(2.0 / math.pi)
 
 
@@ -1544,6 +1572,7 @@ benchmarks = {
     "nanogpt-layer-norm": (NanoGPTLayerNormBenchmark, "nanogpt LayerNorm module"),
     "nanogpt-cross-entropy": (NanoGPTCrossEntropyBenchmark, "nanogpt cross entropy loss"),
     "nanogpt-embedding": (NanoGPTEmbeddingBenchmark, "nanogpt embedding+dropout+layer norm"),
+    "nanogpt-sdpa": (NanoGPTScaledDotProductAttentionBenchmark, "nanogpt scaled dot product attention"),
     "nanogpt-gelu": (NanoGPTGeLUBenchmark, "nanogpt gelu function forward"),
     "hf-bart-self-attn": (HuggingFaceSelfAttnBenchmark, "hf bart self-attn module forward"),
     "llama-block": (LLaMABlockBenchmark, "lit llama block forward"),
