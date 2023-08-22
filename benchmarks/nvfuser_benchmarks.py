@@ -33,6 +33,16 @@ TRITON_AVAILABLE = package_available("triton")
 if TRITON_AVAILABLE:
     from thunder.executors.triton_crossentropy import register_triton_entropyex
 
+from lightning_utilities.core.imports import package_available
+
+TRITON_AVAILABLE = package_available("triton")
+if TRITON_AVAILABLE:
+    from thunder.executors.triton_crossentropy import register_triton_entropyex
+
+APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
+if APEX_CROSS_ENTROPY_AVAILABLE:
+    from thunder.executors.apex_entropyex import register_apex_entropyex
+
 # This file contains custom nvFuser-related benchmarks.
 
 # To use this file, try running it with -v, which will list all available benchmarks, and -h, which will describe
@@ -114,140 +124,152 @@ class Benchmark:
         self.shortname = shortname if shortname is not None else name
 
     @functools.cache
-    def compiled_fn(self, executor: str):
-        use_cudagraphs = executor.endswith("_cuda_graphs")
+    def compiled_fn(self, executor: str) -> tuple[str, Callable]:
+        # Prepares and validates the executor base and extensions
+        executors = executor.split("+")
+        base_executor = executors[0]
+        assert base_executor in (
+            "thunder",
+            "torch",
+            "torch.compile",
+        ), f"Unexpected executor base {base_executor}, accepted executor bases are thunder, torch and torch.compile"
 
-        executor = executor.replace("_cuda_graphs", "")
+        use_cudagraphs: bool = False
+        executor_extensions = executors[1:]
+        for extension in executor_extensions:
+            assert extension in (
+                "nvfuser",
+                "triton",
+                "apex",
+                "cudagraphs",
+            ), f"Unexpected executor extension {extension}, accepted extensions are nvfuser, triton, apex and cudagraphs"
 
-        if executor == "torch-eager":
+            if extension in ("nvfuser", "triton", "apex"):
+                assert (
+                    base_executor == "thunder"
+                ), f"The executor extension {extension} is only available with the thunder executor base"
+
+            if extension == "triton":
+                assert (
+                    TRITON_AVAILABLE
+                ), "Trying to run a benchmark with a Triton executor extension, but Triton is not available"
+                register_triton_entropyex(add_to_default_executors=False)
+
+            if extension == "apex":
+                assert (
+                    APEX_CROSS_ENTROPY_AVAILABLE
+                ), "Trying to run a benchmark with the Apex executor extension, but the xentropy_cuda package is not available"
+                register_apex_entropyex()
+
+            if extension == "cudagraphs":
+                use_cudagraphs = True
+
+        if base_executor == "torch":
             if use_cudagraphs and not self.backward:
-                return executor, CUDAGraphExecutor(self._fn), None
+                return executor, CUDAGraphExecutor(self._fn)
 
             if self.backward:
                 compiled_fn = make_forward_and_backward_fn(self.postprocess_for_backward, self._fn)
                 compiled_fn = CUDAGraphExecutor(compiled_fn) if use_cudagraphs else compiled_fn
                 return (
-                    "fw+bw: " + f"{executor}",
+                    f"fw+bw: {executor}",
                     compiled_fn,
-                    None,
                 )
-            return executor, self._fn, None
-
-        elif executor == "torch.compile":
+            return executor, self._fn
+        elif base_executor == "torch.compile":
             options = {"triton.cudagraphs": True} if use_cudagraphs else None
-            name = f"{executor}{'_cuda_graphs' if use_cudagraphs else ''}"
             forward_fn = torch.compile(self._fn, options=options)
             if self.backward:
                 return (
-                    "fw+bw: " + name,
+                    f"fw+bw: {executor}",
                     make_forward_and_backward_fn(self.postprocess_for_backward, forward_fn),
-                    None,
                 )
-            return name, forward_fn, None
-        elif executor == "torch.compile_nvfuser_prims":
-            assert not use_cudagraphs
-            return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
-        elif executor == "nvfuser+triton":
-            assert TRITON_AVAILABLE, "Trying to run a benchmark with a Triton executor, but Triton is not available"
-            register_triton_entropyex()
+            return executor, forward_fn
 
-            name = "nvfuser+triton"
+        assert base_executor == "thunder", f"Unknown executor base {base_executor}"
+
+        # Constructs the executors list
+        _executor_extension_map: dict[str, list] = {
+            "nvfuser": [thunder.executors.NVFUSER],
+            "apex": ["apex_xentropy"],
+            "triton": ["triton_crossentropy"],
+            "cudagraphs": [],
+        }
+
+        def _map_to_executor(ext: str) -> list:
+            return _executor_extension_map[ext]
+
+        executors_list = []
+        for ext in executor_extensions:
+            executors_list.extend(_map_to_executor(ext))
+        executors_list.append(thunder.executors.TORCH)
+
+        if not self.backward:
             tom = thunder.compile(
                 self._fn,
                 use_static_caching=True,
                 use_cudagraphs=use_cudagraphs,
-                executors_list=["triton_crossentropy", thunder.executors.NVFUSER, thunder.executors.TORCH],
+                executors_list=executors_list,
             )
 
-            return (name, tom, None)
-        elif executor == "torch+triton":
-            assert TRITON_AVAILABLE, "Trying to run a benchmark with a Triton executor, but Triton is not available"
-            register_triton_entropyex()
+            return executor, tom
 
-            name = "torch+triton"
-            tom = thunder.compile(
+        # NOTE self.backward is True
+        if use_cudagraphs:
+            raise NotImplementedError("thunder backward + CUDA graphs is currently disabled")
+
+        from thunder import ThunderOptimizedModule
+        from thunder.core.transforms import eval_trace, value_and_grad, inline
+        from functools import partial
+
+        name = f"fw+bw: {executor}"
+        args, kwargs = self.make_batch()
+        cfn = thunder.compile(self._fn)
+        cfn(*args, **kwargs)
+        primal_trace = thunder.last_traces(cfn)[0]
+        primal_fn = partial(eval_trace, primal_trace)
+
+        def _primal_fn(*args, **kwargs):
+            res = primal_fn(*args, **kwargs)
+            return self.postprocess_for_backward(res)
+
+        # NOTE Must have "kwargs" in the signature without
+        # packing it (i.e. no **kwargs) for the current cache implementation to work
+        def value_and_grad_fn(*args, kwargs={}):
+            return inline(value_and_grad(_primal_fn))(*args, **kwargs)
+
+        compiled_fn = thunder.compile(
+            value_and_grad_fn,
+            use_static_caching=True,
+            disable_preprocessing=True,
+            use_rematerialization=True,
+            executors_list=executors_list,
+        )
+
+        # Benchmark forward+backward embedded into PyTorch's Autograd
+        if isinstance(self._fn, torch.nn.Module):
+            compiled_module = thunder.compile(
                 self._fn,
                 use_static_caching=True,
-                use_cudagraphs=use_cudagraphs,
-                executors_list=["triton_crossentropy", thunder.executors.TORCH],
-            )
-
-            return (name, tom, None)
-        # TODO Add an option to use different kinds of caching
-        elif executor in ("thunder+nvfuser", "thunder", "nvfuser") and not self.backward:
-            name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
-            tom = thunder.compile(
-                self._fn,
-                use_static_caching=True,
-                use_cudagraphs=use_cudagraphs,
-                executors_list=[thunder.executors.NVFUSER, thunder.executors.TORCH],
-            )
-
-            return (name, tom, None)
-        elif executor in ("thunder+nvfuser", "thunder", "nvfuser") and self.backward:
-            if use_cudagraphs:
-                raise NotImplementedError("thunder backward + CUDA graphs is currently disabled")
-            from thunder import ThunderOptimizedModule
-            from thunder.core.transforms import eval_trace, value_and_grad, inline
-            from functools import partial
-
-            name = f"fw+bw: thunder+nvfuser"
-            args, kwargs = self.make_batch()
-            cfn = thunder.compile(self._fn)
-            cfn(*args, **kwargs)
-            primal_trace = thunder.last_traces(cfn)[0]
-            primal_fn = partial(eval_trace, primal_trace)
-
-            def _primal_fn(*args, **kwargs):
-                res = primal_fn(*args, **kwargs)
-                return self.postprocess_for_backward(res)
-
-            # NOTE: Must have "kwargs" in the signature without
-            # packing it (i.e. no **kwargs) for the current cache implementation to work
-            def value_and_grad_fn(*args, kwargs={}):
-                return inline(value_and_grad(_primal_fn))(*args, **kwargs)
-
-            compiled_fn = thunder.compile(
-                value_and_grad_fn,
-                use_static_caching=True,
-                disable_preprocessing=True,
+                use_generated_backward=True,
                 use_rematerialization=True,
+                executors_list=executors_list,
             )
-
-            # Benchmark forward+backward embedded into PyTorch's Autograd
-            if isinstance(self._fn, torch.nn.Module):
-                compiled_module = thunder.compile(
-                    self._fn,
-                    use_static_caching=True,
-                    use_generated_backward=True,
-                    use_rematerialization=True,
-                )
-
-                return (
-                    name,
-                    make_forward_and_backward_fn(self.postprocess_for_backward, compiled_module),
-                    None,
-                )
-
-            if isinstance(cfn, ThunderOptimizedModule):
-
-                def fn_with_param(*args, **kwargs):
-                    all_args = (*thunder.compile_data(cfn).additional_param_values, *args)
-                    return compiled_fn(*all_args, **kwargs)
-
-                return (
-                    name,
-                    fn_with_param,
-                    None,
-                )
 
             return (
                 name,
-                compiled_fn,
-                None,
+                make_forward_and_backward_fn(self.postprocess_for_backward, compiled_module),
             )
 
-        raise ValueError(f"Unknown executor {executor} requested")
+        if isinstance(cfn, ThunderOptimizedModule):
+
+            def fn_with_param(*args, **kwargs):
+                all_args = (*thunder.compile_data(cfn).additional_param_values, *args)
+                return compiled_fn(*all_args, **kwargs)
+
+            return name, fn_with_param
+
+        return name, compiled_fn
 
     @classmethod
     @property
@@ -1486,7 +1508,7 @@ def benchmark(
         cuda_init_time = time.time() - t0
 
         t0 = time.time()
-        name, fn, _ = benchmark.compiled_fn(executor)
+        name, fn = benchmark.compiled_fn(executor)
         static_init_time = time.time() - t0
 
         stats = time_ns(fn, benchmark.make_batch, warmup_iters=warmup_iters, iters=iters)
@@ -1571,14 +1593,9 @@ benchmarks = {
 # TODO Allow a file to specify which benchmarks to run and how
 if __name__ == "__main__":
     executors = (
-        "torch-eager",
+        "thunder",
+        "torch",
         "torch.compile",
-        "torch.compile_cuda_graphs",
-        "thunder+nvfuser",
-        # TODO Re-enable thunder + CUDA graphs when they're supported again
-        # "thunder+nvfuser_cuda_graphs",
-        # NOTE "torch.compile_nvfuser_prims" doesn't work with nightly nvFuser
-        # "torch.compile_nvfuser_prims",
     )
 
     # Argparse doesn't properly share parents, so subparsers have to make a parent without defaults.

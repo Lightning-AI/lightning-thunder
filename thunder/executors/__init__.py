@@ -74,8 +74,11 @@ def add_executor(id, executor, *, add_to_default_executors: bool = True):
 
     if add_to_default_executors:
         defaults = list_default_executors()
-        defaults = (id,) + tuple(defaults)
-        set_default_executors(defaults)
+
+        # Prevents registering the same executor twice
+        if id not in defaults:
+            defaults = (id,) + tuple(defaults)
+            set_default_executors(defaults)
 
 
 def list_executors() -> tuple:
@@ -234,12 +237,12 @@ class OpExecutor:
         return bsyms
 
 
-def add_operator_executor(name, op_map, *, add_to_default_executors: bool = True):
+def add_operator_executor(name, op_map, *, add_to_default_executors: bool = True) -> None:
     opex = OpExecutor(name, op_map)
     add_executor(name, opex, add_to_default_executors=add_to_default_executors)
 
 
-def remove_operator_executor(name):
+def remove_operator_executor(name) -> None:
     executor_map = get_executorsctx()
     del executor_map[name]
     set_executorsctx(executor_map)

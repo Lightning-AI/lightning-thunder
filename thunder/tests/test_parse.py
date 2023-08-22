@@ -374,7 +374,7 @@ def tuple_fold(x):
         RETURN_VALUE                         ║
         """,
     # TODO(robieta, apaz-cli): Figure out UNPACK_EX indexing.
-    flow_spec=DONT_CHECK_FLOW
+    flow_spec=DONT_CHECK_FLOW,
 )
 def tuple_fold_ex(x):
     t = (x, 2)

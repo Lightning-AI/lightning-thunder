@@ -4,7 +4,7 @@ import operator
 from collections import namedtuple
 from functools import partial, wraps
 from numbers import Number
-from typing import Union, Callable, Optional, Tuple
+from typing import Union, Callable, Optional, Tuple, Generator
 from collections.abc import Sequence
 
 import numpy as np
@@ -320,10 +320,19 @@ class OpInfo:
     # TODO Maybe allow sample input generation not using torch?
     # NOTE Today all sample inputs are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
-    def sample_inputs(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
+    def sample_inputs(
+        self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
+    ) -> Generator:
         torch_dtype = ltorch.to_torch_dtype(dtype)
         torch_device = str(device)
         return self.sample_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
+
+    def reference_inputs(
+        self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
+    ) -> Generator:
+        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_device = str(device)
+        return self.reference_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
     def error_inputs(self, device: devices.Device, **kwargs):
         torch_device = str(device)
@@ -4231,8 +4240,6 @@ sdpa_opinfo = OpInfo(
 nn_ops.append(sdpa_opinfo)
 
 
-# TODO Enable test cases after adding support nll_loss_nd, weight tensor, and label_smoothing options.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/704
 # TODO When more bwd support is added merge the logic (but not all the cases) for sample generation
 def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -4240,12 +4247,12 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
     # input_shape, target_shape
     shapes = (
         ((7, 18), (7,)),
-        # ((7, 18), (7, 18)),
-        # ((3, 4, 2, 3), (3, 4, 2, 3)),
-        # ((3, 4, 2, 3), (3, 2, 3)),
+        ((7, 18), (7, 18)),
+        ((3, 4, 2, 3), (3, 4, 2, 3)),
+        ((3, 4, 2, 3), (3, 2, 3)),
         ((5,), ()),
-        # ((3, 4, 0), (3, 0)),
-        # ((3, 4, 0), (3, 4, 0)),
+        ((3, 4, 0), (3, 0)),
+        ((3, 4, 0), (3, 4, 0)),
         ((256, 1024), (256,)),
         ((256, 32768), (256,)),
         ((256, 1024), (256, 1024)),
@@ -4331,19 +4338,11 @@ cross_entropy_opinfo = OpInfo(
     sample_input_generator=cross_entropy_sample_generator,
     reference_input_generator=cross_entropy_reference_generator,
     torch_reference=torch.nn.functional.cross_entropy,
-    dtypes=(datatypes.float32, datatypes.float64),
+    dtypes=(datatypes.floating,),
     test_directives=(
-        # nvFuser version 10 adds take_along_axis, which this
-        #   operator relies on
+        # TODO Investigate why CPU torch executor tests fail in CI (but not locally)
         DecorateInfo(
             pytest.mark.skip,
-            executors=("nvFuser",),
-            active_if=nvfuser_version < LooseVersion("0.0.10"),
-        ),
-        # TODO These tests inexplicably fail in CI
-        DecorateInfo(
-            pytest.mark.skip,
-            dtypes=(datatypes.float32, datatypes.float64),
             devicetypes=(devices.DeviceType.CPU,),
             executors=("TorchEx",),
         ),

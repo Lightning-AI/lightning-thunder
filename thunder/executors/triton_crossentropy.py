@@ -2,6 +2,8 @@ import math
 
 import torch
 
+import thunder.torch as ltorch
+
 # TODO Make a "triton_utils" and create a function that replaces this
 #   by checking for availability + a minimum version required for Triton
 from lightning_utilities.core.imports import package_available
@@ -320,7 +322,7 @@ class CrossEntropy(torch.autograd.Function):
 
 
 def cross_entropy(
-    input,
+    a,
     target,
     weight=None,
     ignore_index=-100,
@@ -328,13 +330,13 @@ def cross_entropy(
     label_smoothing=0.0,
 ):
     r"""
-    Returns the Cross Entropy loss of input. If the target is class indcies
+    Returns the Cross Entropy loss of a. If the target is class indcies
     then the ignore_index argument is applicable, while the label_smoothing argument
     is not.  On the other hand, if the target is class probabilites, then the
     label_smoothing argument is applicable, while the ignore_index argument is not.
 
     Args:
-        input: Tensor of shape (B, N)
+        a: Tensor of shape (B, N)
             where B is the batch dim and N is the number of classes
         target: Int Tensor of shape (B,), min = 0, max = N-1 or
             Float Tensor of shape (B, N), rows sum to 1.0
@@ -345,11 +347,12 @@ def cross_entropy(
         reduction: String: ['none', 'sum', 'mean']
         label_smoothing: Float between 0 and 1
     """
-    return CrossEntropy.apply(input, target, weight, ignore_index, reduction, label_smoothing)
+    return CrossEntropy.apply(a, target, weight, ignore_index, reduction, label_smoothing)
 
 
+# TODO: What is correct handling of ignore_index?
 def cross_entropy_impl(
-    input,
+    a,
     target,
     weight=None,
     size_average=None,
@@ -358,16 +361,14 @@ def cross_entropy_impl(
     reduction="mean",
     label_smoothing=0.0,
 ):
-    if triton is None:
-        raise ImportError("Cannot import triton. Please install triton.")
-    # TODO: What is correct handling of ignore_index?
-    loss = cross_entropy(input, target, weight, ignore_index, reduction, label_smoothing)
+    loss = cross_entropy(a, target, weight, ignore_index, reduction, label_smoothing)
 
     return loss
 
 
 def cross_entropy_checker(
-    input,
+    a,
+    /,
     target,
     weight=None,
     size_average=None,
@@ -375,8 +376,12 @@ def cross_entropy_checker(
     reduce=None,
     reduction="mean",
     label_smoothing=0.0,
-):
+) -> bool:
     if triton is None:
+        return False
+
+    torch_dtype = ltorch.to_torch_dtype(a.dtype)
+    if torch_dtype not in (torch.float32, torch.float64):
         return False
 
     # These arguments are deprecated and not supported
@@ -387,7 +392,7 @@ def cross_entropy_checker(
     if reduction not in ["sum", "mean", "none"]:
         return False
 
-    if len(input.shape) != 2:
+    if len(a.shape) != 2:
         return False
 
     return True
@@ -398,13 +403,15 @@ _op_to_xentropy = {
 }
 
 
-def register_triton_entropyex():
+def register_triton_entropyex(*, add_to_default_executors: bool = True) -> None:
     from thunder.executors import add_operator_executor
 
-    add_operator_executor("triton_crossentropy", _op_to_xentropy)
+    return add_operator_executor(
+        "triton_crossentropy", _op_to_xentropy, add_to_default_executors=add_to_default_executors
+    )
 
 
-def deregister_triton_entropyex():
+def deregister_triton_entropyex() -> None:
     from thunder.executors import remove_operator_executor
 
-    remove_operator_executor("triton_crossentropy")
+    return remove_operator_executor("triton_crossentropy")

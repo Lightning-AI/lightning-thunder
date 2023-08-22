@@ -1,3 +1,5 @@
+from typing import Any
+
 import torch
 from torch.testing import assert_close
 
@@ -11,11 +13,14 @@ import thunder.torch as ltorch
 from thunder.tests.opinfos import OpInfo, get_opinfo
 from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet, Executor, ops
 
-try:
+from lightning_utilities.core.imports import package_available
+
+TRITON_AVAILABLE = package_available("triton")
+
+triton: None | Any = None
+if TRITON_AVAILABLE:
     import triton
     from thunder.executors.triton_crossentropy import deregister_triton_entropyex, register_triton_entropyex
-except ImportError:
-    triton = None
 
 
 # NOTE This test modifies the global executor map, so it technically should not
@@ -44,10 +49,7 @@ def test_triton_cross_entropy(executor, device, dtype):
         actual = ctest(logits, labels, weight, reduction, ignore_index)
         torch.testing.assert_close(actual, expected)
         last_trace = thunder.last_traces(ctest)[-1]
-        if triton is not None:
-            assert any(bsym.sym.name == "triton_cross_entropy" for bsym in last_trace.bound_symbols)
-        else:
-            assert all(bsym.sym.name != "triton_cross_entropy" for bsym in last_trace.bound_symbols)
+        assert any(bsym.sym.name == "triton_cross_entropy" for bsym in last_trace.bound_symbols)
     finally:
         deregister_triton_entropyex()
 
@@ -73,7 +75,7 @@ def test_triton_cross_entropy_vs_torch_consistency():
 
         device = "cuda"
         for dtype in (torch.float32, torch.float64):
-            for sample in opinfo.reference_input_generator(opinfo, device=device, dtype=dtype, requires_grad=False):
+            for sample in opinfo.reference_inputs(device=device, dtype=dtype, requires_grad=False):
                 result = run_snippet(
                     snippet_torch_consistency,
                     opinfo,
