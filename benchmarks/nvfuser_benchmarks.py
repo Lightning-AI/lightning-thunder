@@ -144,11 +144,10 @@ class Benchmark:
                     None,
                 )
             return name, forward_fn, None
-
         elif executor == "torch.compile_nvfuser_prims":
             assert not use_cudagraphs
             return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
-        elif executor in ("nvfuser+triton"):
+        elif executor == "nvfuser+triton":
             assert TRITON_AVAILABLE, "Trying to run a benchmark with a Triton executor, but Triton is not available"
             register_triton_entropyex()
 
@@ -161,7 +160,7 @@ class Benchmark:
             )
 
             return (name, tom, None)
-        elif executor in ("torch+triton"):
+        elif executor == "torch+triton":
             assert TRITON_AVAILABLE, "Trying to run a benchmark with a Triton executor, but Triton is not available"
             register_triton_entropyex()
 
@@ -185,7 +184,6 @@ class Benchmark:
             )
 
             return (name, tom, None)
-
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser") and self.backward:
             if use_cudagraphs:
                 raise NotImplementedError("thunder backward + CUDA graphs is currently disabled")
