@@ -371,11 +371,6 @@ class CompileData:
         self.use_generated_backward = use_generated_backward
 
         self.is_module = isinstance(self.fn, pytorch.nn.Module)
-        utils.check(
-            not use_generated_backward or self.is_module,
-            lambda: f"Generated backward is only supported on nn.Modules for the moment. Wrap your function in an nn.Module and compile the module, or use the @thunder_backward decorator instead of thunder.compile",
-            exception_type=NotImplementedError,
-        )
 
         #
         # Possibly processes the function
@@ -573,33 +568,6 @@ def compile(
         use_generated_backward=use_generated_backward,
     )
 
-    # NOTE This path is completely independent of typical compilation
-    # TODO Refactor these operations so they're not completely disjoint
-    if cd.is_module and use_generated_backward:
-        # TODO Test (and probably error) if use_cudagraphs=True
-        compile_config = {
-            "langctx": langctx,
-            "executors_list": executors_list,
-            "only_execute_prims": only_execute_prims,
-            "always_trace": always_trace,
-            "use_dynamic_caching": use_dynamic_caching,
-            "use_static_caching": use_static_caching,
-            "use_last_executed": use_last_executed,
-            "use_rematerialization": use_rematerialization,
-            "use_cudagraphs": use_cudagraphs,
-        }
-
-        _fn = thunder_backward(compile_data=cd, **compile_config)(cd.post_processed_function)
-
-        tom = _wrap_in_tom(
-            original_module=fn,
-            possibly_processed_function=cd.post_processed_function,
-            compiled_function=_fn,
-            compile_data=cd,
-        )
-
-        return tom
-
     @wraps(fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cd.calls += 1
@@ -665,6 +633,27 @@ def compile(
             cache_put(cd.cache, c, traces, args[cd.num_constant_args :], kwargs)
 
         return result
+
+    # NOTE This path is completely independent of typical compilation
+    # TODO Refactor these operations so they're not completely disjoint
+    if use_generated_backward:
+        # TODO Test (and probably error) if use_cudagraphs=True
+        compile_config = {
+            "langctx": langctx,
+            "executors_list": executors_list,
+            "only_execute_prims": only_execute_prims,
+            "always_trace": always_trace,
+            "use_dynamic_caching": use_dynamic_caching,
+            "use_static_caching": use_static_caching,
+            "use_last_executed": use_last_executed,
+            "use_rematerialization": use_rematerialization,
+            "use_cudagraphs": use_cudagraphs,
+        }
+
+        # thunder_backward recursively calls compile and wraps the result in a
+        # torch.autograd.Function to support embedding of Thunder-compiled
+        # functions in PyTorch's Autograd
+        _fn = thunder_backward(compile_data=cd, **compile_config)(cd.post_processed_function)
 
     if cd.is_module:
         return _wrap_in_tom(

@@ -10,13 +10,14 @@ from looseversion import LooseVersion
 import thunder.core.dtypes as dtypes
 from thunder.core.prims import PrimIDs, DistributedReduceOps
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.proxies import Proxy, TensorProxy, FutureTensorProxy
+from thunder.core.proxies import Proxy, TensorProxy, FutureTensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.utils as utils
 
 from thunder.executors.utils import Region, Executor
+from thunder.executors.passes import replace_redundant_inputs
 
 import thunder.torch as ltorch
 from thunder.torch import DeviceLike, dtypeLike, TensorLike
@@ -1492,54 +1493,49 @@ class ThunderFunction(torch.autograd.Function):
                 (arg_grad if requires_grad else None)
                 for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
             )
-            bw_trace.bound_symbols[-1].args = filtered_grads
-            bw_trace.output = filtered_grads
+            # autograd.Function.backward expects a flat tuple of gradients
+            bw_trace.bound_symbols[-1].args = (filtered_grads,)
+            bw_trace.output = (filtered_grads,)
 
-            # Some of the optimization passes change proxies in the trace and
-            # any change in the forward trace must be reflected in the backward
-            # trace. Easiest way to do this is to create a joint trace and run
-            # the optimization passes on it. Note that this trace is not
-            # executable and is only used to run the optimization passes.
-            def joint_fn(args, kwargs, cotangents):
-                pass
-
-            joint_extrace = TraceCtx(joint_fn)
-            joint_extrace.args = (fw_trace.args, fw_trace.kwargs, bw_trace.args[1])
-            joint_extrace.bound_symbols = list((*fw_trace.bound_symbols, *bw_trace.bound_symbols))
-            joint_extrace, joint_extraces = transform_for_execution(
-                joint_extrace,
+            # Now we can run the optimization passes on the forward trace
+            fw_extrace, fw_extraces = transform_for_execution(
+                fw_trace,
                 executors_list=compile_config.get("executors_list", None),
                 only_execute_prims=compile_config.get("only_execute_prims", False),
                 use_rematerialization=False,
                 use_del_last_used=False,
             )
 
-            fw_extraces = []
-            bw_extraces = []
-            for trc in joint_extraces:
-                # groupby is used to split the joint trace into forward and backward traces
-                # We determine the split point by looking at the return symbol
-                joint_bsyms = [
-                    list(g) for _, g in groupby(trc.bound_symbols, lambda bsym: bsym.sym.id == PrimIDs.RETURN)
-                ]
-                assert len(joint_bsyms) == 4
-                fw_bsyms = joint_bsyms[0] + joint_bsyms[1]
-                bw_bsyms = joint_bsyms[2] + joint_bsyms[3]
-                fw_trc = from_trace(fw_trace)
-                bw_trc = from_trace(bw_trace)
-                fw_trc.bound_symbols = fw_bsyms
-                bw_trc.bound_symbols = bw_bsyms
-                # Update output from the return symbol
-                fw_trc.output = fw_trc.bound_symbols[-1].args
-                bw_trc.output = bw_trc.bound_symbols[-1].args
-                # Update saved_for_backward from the unpack_trivial symbol
-                assert bw_trc.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
-                assert bw_trc.bound_symbols[0].kwargs["name"] == "saved_for_backward"
-                bw_trc.args[0] = bw_trc.bound_symbols[0].output
-                fw_trc.set_provenance(trc._provenance)
-                bw_trc.set_provenance(trc._provenance)
-                fw_extraces.append(fw_trc)
-                bw_extraces.append(bw_trc)
+            # Some of the optimization passes change proxies in the trace and
+            # any change in the forward trace must be reflected in the backward
+            # trace.
+            original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
+            new_fw_saved_tensors_for_backward = fw_extraces[-1].output[1][0]
+            swap_map = {variableify(x): y for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)}
+            new_bsyms = replace_redundant_inputs(swap_map, bw_trace.bound_symbols)
+            # replace_redundant_inputs doesn't replace the output of
+            # UNPACK_SEQUENCE so we do it manually. Here we have certain
+            # assumptions about the structure of the backward trace.
+            assert bw_trace.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
+            assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
+            assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
+            assert bw_trace.bound_symbols[4].args[0].name == "C0"
+            new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
+                swap_map,
+                skip_inputs=False,
+                skip_output=False,
+                skip_subsymbols=False,
+            )
+            bw_trace.bound_symbols = new_bsyms
+
+            # Now we can run the optimization passes on the backward trace
+            bw_extrace, bw_extraces = transform_for_execution(
+                bw_trace,
+                executors_list=compile_config.get("executors_list", None),
+                only_execute_prims=compile_config.get("only_execute_prims", False),
+                use_rematerialization=False,
+                use_del_last_used=False,
+            )
 
             fw_extrace, bw_extrace = fw_extraces[-1], bw_extraces[-1]
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)

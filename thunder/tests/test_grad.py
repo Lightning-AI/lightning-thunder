@@ -581,6 +581,21 @@ def test_torch_autograd_function(executor, device, _):
 
 
 @instantiate(
+    dtypes=NOTHING,
+)
+def test_torch_autograd_function_single_input(executor, device, _):
+    from thunder.clang import sin
+    from thunder.executors.torchex import thunder_backward
+
+    @thunder_backward(executors_list=executor.executors_list())
+    def func(a):
+        return sin(a)
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(func, (a,))
+
+
+@instantiate(
     dtypes=(dtypes.float32,),
 )
 def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):

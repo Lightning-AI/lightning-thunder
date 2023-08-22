@@ -218,58 +218,19 @@ class Benchmark:
         if use_cudagraphs:
             raise NotImplementedError("thunder backward + CUDA graphs is currently disabled")
 
-        from thunder import ThunderOptimizedModule
-        from thunder.core.transforms import eval_trace, value_and_grad, inline
-        from functools import partial
-
-        name = f"fw+bw: {executor}"
-        args, kwargs = self.make_batch()
-        cfn = thunder.compile(self._fn)
-        cfn(*args, **kwargs)
-        primal_trace = thunder.last_traces(cfn)[0]
-        primal_fn = partial(eval_trace, primal_trace)
-
-        def _primal_fn(*args, **kwargs):
-            res = primal_fn(*args, **kwargs)
-            return self.postprocess_for_backward(res)
-
-        # NOTE Must have "kwargs" in the signature without
-        # packing it (i.e. no **kwargs) for the current cache implementation to work
-        def value_and_grad_fn(*args, kwargs={}):
-            return inline(value_and_grad(_primal_fn))(*args, **kwargs)
-
-        compiled_fn = thunder.compile(
-            value_and_grad_fn,
+        # Benchmark forward+backward embedded into PyTorch's Autograd
+        forward_fn = thunder.compile(
+            self._fn,
             use_static_caching=True,
-            disable_preprocessing=True,
+            use_generated_backward=True,
             use_rematerialization=True,
             executors_list=executors_list,
         )
 
-        # Benchmark forward+backward embedded into PyTorch's Autograd
-        if isinstance(self._fn, torch.nn.Module):
-            compiled_module = thunder.compile(
-                self._fn,
-                use_static_caching=True,
-                use_generated_backward=True,
-                use_rematerialization=True,
-                executors_list=executors_list,
-            )
-
-            return (
-                name,
-                make_forward_and_backward_fn(self.postprocess_for_backward, compiled_module),
-            )
-
-        if isinstance(cfn, ThunderOptimizedModule):
-
-            def fn_with_param(*args, **kwargs):
-                all_args = (*thunder.compile_data(cfn).additional_param_values, *args)
-                return compiled_fn(*all_args, **kwargs)
-
-            return name, fn_with_param
-
-        return name, compiled_fn
+        return (
+            f"fw+bw: {executor}",
+            make_forward_and_backward_fn(self.postprocess_for_backward, forward_fn),
+        )
 
     @classmethod
     @property
