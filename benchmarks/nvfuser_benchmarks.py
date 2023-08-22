@@ -26,7 +26,12 @@ from thunder.tests import nanogpt_model
 import thunder.core.proxies as proxies
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
-from thunder.executors.triton_crossentropy import register_triton_entropyex
+
+from lightning_utilities.core.imports import package_available
+
+TRITON_AVAILABLE = package_available("triton")
+if TRITON_AVAILABLE:
+    from thunder.executors.triton_crossentropy import register_triton_entropyex
 
 # This file contains custom nvFuser-related benchmarks.
 
@@ -143,7 +148,32 @@ class Benchmark:
         elif executor == "torch.compile_nvfuser_prims":
             assert not use_cudagraphs
             return executor, torch.compile(self._fn, backend="nvprims_nvfuser"), None
+        elif executor in ("nvfuser+triton"):
+            assert TRITON_AVAILABLE, "Trying to run a benchmark with a Triton executor, but Triton is not available"
+            register_triton_entropyex()
 
+            name = "nvfuser+triton"
+            tom = thunder.compile(
+                self._fn,
+                use_static_caching=True,
+                use_cudagraphs=use_cudagraphs,
+                executors_list=["triton_crossentropy", thunder.executors.NVFUSER, thunder.executors.TORCH],
+            )
+
+            return (name, tom, None)
+        elif executor in ("torch+triton"):
+            assert TRITON_AVAILABLE, "Trying to run a benchmark with a Triton executor, but Triton is not available"
+            register_triton_entropyex()
+
+            name = "torch+triton"
+            tom = thunder.compile(
+                self._fn,
+                use_static_caching=True,
+                use_cudagraphs=use_cudagraphs,
+                executors_list=["triton_crossentropy", thunder.executors.TORCH],
+            )
+
+            return (name, tom, None)
         # TODO Add an option to use different kinds of caching
         elif executor in ("thunder+nvfuser", "thunder", "nvfuser") and not self.backward:
             name = f"thunder+nvfuser{'_cuda_graphs' if use_cudagraphs else ''}"
@@ -151,7 +181,7 @@ class Benchmark:
                 self._fn,
                 use_static_caching=True,
                 use_cudagraphs=use_cudagraphs,
-                executors_list=["triton_crossentropy", thunder.executors.NVFUSER, thunder.executors.TORCH]
+                executors_list=[thunder.executors.NVFUSER, thunder.executors.TORCH],
             )
 
             return (name, tom, None)
@@ -1069,7 +1099,12 @@ class NanoGPTMLPBenchmark(GPTBenchMarkBase):
     )
 
     def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
-        x = make_tensor(batch_dims + (gpt_config.seq_len, gpt_config.n_embd), device=device, dtype=tdtype, requires_grad=self.backward)
+        x = make_tensor(
+            batch_dims + (gpt_config.seq_len, gpt_config.n_embd),
+            device=device,
+            dtype=tdtype,
+            requires_grad=self.backward,
+        )
         return (x,), {}
 
 
