@@ -4246,6 +4246,8 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
 
     # input_shape, target_shape
     shapes = (
+         # input_shape[1] should be divisible by 4 for Apex executor testing
+        ((2, 16), (2,)),
         ((7, 18), (7,)),
         ((7, 18), (7, 18)),
         ((3, 4, 2, 3), (3, 4, 2, 3)),
@@ -4296,6 +4298,8 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # input_shape, target_shape
     shapes = (
+         # input_shape[1] should be divisible by 4 for Apex executor testing
+        ((2, 16), (2,)),
         ((7, 18), (7,)),
         # ((7, 18), (7, 18)),
         # ((3, 4, 2, 3), (3, 4, 2, 3)),

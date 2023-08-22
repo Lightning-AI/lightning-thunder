@@ -33,11 +33,11 @@ def cross_entropy_impl(
     losses, max_log_sum_exp = xentropy_cuda.forward(a, target, label_smoothing, half_to_float)
 
     if reduction == "mean":
-        return losses.mean()
+        return losses.mean().to(a.dtype)
     elif reduction == "sum":
-        return losses.sum()
+        return losses.sum().to(a.dtype)
     elif reduction == "none":
-        return losses
+        return losses.to(a.dtype)
     else:
         raise ValueError(f"Invalid reduction: {reduction}")
 
@@ -89,9 +89,9 @@ def cross_entropy_checker(
     if a.numel == 0:
         return False
 
-    # Xentropy kernel produces incorrect results if the batch size is smaller
+    # Xentropy kernel produces incorrect results if a.shape[1] is less
     # than 30 and not a multiple of 4
-    if a.shape[0] < 30 and a.shape[0] % 4 != 0:
+    if a.shape[1] < 30 and a.shape[1] % 4 != 0:
         return False
 
     return True
