@@ -224,6 +224,7 @@ def test_llama_block_compile():
     tom = thunder.compile(m2, executors_list=torchex)
     inp = torch.randn(1, 8, 4096)
     expected_result = m(inp)
+
     thunder_result = tom(inp)
     assert_close(expected_result, thunder_result)
     assert_close(m.attn.rope_cache, m2.attn.rope_cache)
@@ -383,6 +384,29 @@ def test_nanogpt_functionalization():
     o2 = m.forward(x)
 
     assert_close(o[0], o2[0])
+
+
+class ModuleTestFunctionalizationConditional(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.a = 0.2
+        self.b = True
+
+    def forward(self, x):
+        p = self.a if self.b else 0.1
+        return torch.nn.functional.dropout(x, p=p)
+
+
+@skipif_not_python_3_10
+def test_functionalization_conditional():
+    m = ModuleTestFunctionalizationConditional()
+    tom = thunder.compile(m)
+    a = torch.randn(5, 5)
+    torch.manual_seed(123)
+    expected = m(a)
+    torch.manual_seed(123)
+    actual = tom(a)
+    assert_close(actual, expected)
 
 
 @skipif_not_python_3_10

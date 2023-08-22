@@ -375,7 +375,7 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
 
     for bl in gr.blocks:
         for n in bl.nodes:
-            for i in n.inputs:
+            for idx, i in enumerate(n.inputs):
                 done = False
                 fill_in_value(i, OrderedSet())
                 i_or_parent = i
@@ -384,11 +384,17 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
 
                 if i_or_parent.value in _torch_to_thunder_complete_map:
                     i_or_parent.value = _torch_to_thunder_complete_map[i.value]
-                    i_or_parent.typ = type(i_or_parent.value)
-                    i_or_parent.parent = None
-                    i_or_parent.is_const = True
-                    i_or_parent.is_global = False
-                    if n.i.opname == "CALL_METHOD":
+                    # we reinstantiate because we don't want a PhiValue here
+                    i_new = Value(
+                        value=i_or_parent.value,
+                        typ=type(i_or_parent.value),
+                        parent=None,
+                        is_const=True,
+                        is_global=False,
+                        name=i_or_parent.name,
+                    )
+                    n.inputs[idx] = i_new
+                    if n.i.opname == "CALL_METHOD" and idx == 0:
                         # todo get others, too
                         n.i = get_instruction(opname="CALL_FUNCTION", arg=n.i.arg)
                         del n.inputs[1]
@@ -679,6 +685,48 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     attr_values = []
     return_values: Dict[str, Value] = {}  # PhiValues in the return block
 
+    def functionalize_value_if_possible(i):
+        # TODO: inefficient because it looks twice
+        v = find_and_evaluate_method_through_phi_parent(i)
+        maybe_self, attrs = find_method_through_phi_parent(i)
+
+        attr_string = ".".join(attrs)
+        if maybe_self.value is gr.module and (isinstance(v, torch.Tensor) or (attr_string in return_values)):
+            # the new attributes come directly after the self argument
+            idx = attr_dict.setdefault(attr_string, len(attr_list) + 1)
+            if idx == len(attr_list) + 1:
+                func_arg = Value(name=attr_string, is_function_arg=True)
+                gr.local_variables_at_start.insert(idx, func_arg)
+                attr_list.append(attr_string)
+                attr_values.append(v)
+                gr.co_argcount += 1
+                # we need a default argument to be able to put the things at the end (but this will have to change for *args, **kwargs anyway...
+                # gr.func_defaults.append(None)
+                if attr_string in return_values:
+                    return_values[attr_string].add_missing_value(func_arg)
+            else:
+                func_arg = gr.local_variables_at_start[idx]
+
+            pvs = [pv for pv in func_arg.phi_values if pv.block is bl]
+            if not pvs:
+                pv = PhiValue([func_arg], [None], bl)
+                bl.block_inputs.append(pv)
+            else:
+                (pv,) = pvs
+            ## remove old input from phi_values etc?
+            return pv
+        if maybe_self.value is gr.module and (
+            n.i.opname not in {"BINARY_SUBSCR"} and not isinstance(v, torch.nn.Module)
+        ):
+            ## inline to const...
+            i.value = v
+            i.typ = type(i.value)
+            i.parent = None
+            i.is_const = True
+            i.is_global = False
+            return None
+        return None
+
     return_block = None
     for bl in gr.blocks:
         if bl.nodes[-1].i.opname == "RETURN_VALUE":
@@ -710,45 +758,13 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     for bl in gr.blocks:
         for n in bl.nodes:
             for idx_i, i in enumerate(n.inputs):
-                # TODO: inefficient because it looks twice
-                v = find_and_evaluate_method_through_phi_parent(i)
-                maybe_self, attrs = find_method_through_phi_parent(i)
+                v = functionalize_value_if_possible(i)
+                if v is not None:
+                    n.inputs[idx_i] = v
 
-                attr_string = ".".join(attrs)
-                if maybe_self.value is gr.module and (isinstance(v, torch.Tensor) or (attr_string in return_values)):
-                    # the new attributes come directly after the self argument
-                    idx = attr_dict.setdefault(attr_string, len(attr_list) + 1)
-                    if idx == len(attr_list) + 1:
-                        func_arg = Value(name=attr_string, is_function_arg=True)
-                        gr.local_variables_at_start.insert(idx, func_arg)
-                        attr_list.append(attr_string)
-                        attr_values.append(v)
-                        gr.co_argcount += 1
-                        # we need a default argument to be able to put the things at the end (but this will have to change for *args, **kwargs anyway...
-                        # gr.func_defaults.append(None)
-                        if attr_string in return_values:
-                            return_values[attr_string].add_missing_value(func_arg)
-                    else:
-                        func_arg = gr.local_variables_at_start[idx]
-
-                    pvs = [pv for pv in func_arg.phi_values if pv.block is bl]
-                    if not pvs:
-                        pv = PhiValue([func_arg], [None], bl)
-                        bl.block_inputs.append(pv)
-                    else:
-                        (pv,) = pvs
-                    n.inputs[idx_i] = pv
-                    ## remove old input from phi_values etc?
-                elif maybe_self.value is gr.module and (
-                    n.i.opname not in {"BINARY_SUBSCR"} or not isinstance(v, torch.nn.Module)
-                ):
-                    ## inline to const...
-                    i.value = v
-
-                    i.typ = type(i.value)
-                    i.parent = None
-                    i.is_const = True
-                    i.is_global = False
+        bl.block_outputs = OrderedSet(
+            [v if (v := functionalize_value_if_possible(o)) is not None else o for o in bl.block_outputs]
+        )
 
     if return_values:
         bt_extra = Node(
@@ -759,14 +775,15 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
         bt_extra.outputs = [v_tuple_extra]
         return_block.nodes.insert(-1, bt_extra)
         return_block.nodes[-1].inputs = [v_tuple_extra]
-    # gr.summary(print_lines=True)
 
     remove_unused_values(gr)
     if gr.local_variables_at_start[0].phi_values:
+        gr.summary(print_lines=True)
         raise RuntimeError(
             """could not eliminate self argument
     this most likely means that you are setting attributes in forward or using them
-    in an unexpected way that thunder does not yet support."""
+    in an unexpected way that thunder does not yet support.
+    The problem lies in (indirect) uses of V_0 in the graph above."""
         )
 
     # check to avoid assignments for both a.b and a.b.c

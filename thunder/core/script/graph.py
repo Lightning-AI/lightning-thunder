@@ -140,7 +140,7 @@ class Value(InstrumentingBase):
             translation_dict[self] = v
         return v
 
-    def __str__(self) -> str:
+    def __str__(self, _value_printer=str) -> str:
         parts = []
         if self.is_function_arg:
             parts.append("funcarg")
@@ -148,14 +148,14 @@ class Value(InstrumentingBase):
             parts.append(f"name={self.name}")
         if self.typ is not None:
             parts.append(f"typ={self.typ}")
-        if self.value:
+        if self.value is not None:
             parts.append(f"value of type {type(self.value)}")
         if self.is_const:
             parts.append("const")
         if self.is_global:
             parts.append("global")
         if self.parent is not None:
-            parts.append(f"parent={self.parent}")
+            parts.append(f"parent={_value_printer(self.parent)}")
         return f"""{type(self).__name__} {hex(id(self))} ({' '.join(parts)})"""
 
     def __repr__(self) -> str:
@@ -427,6 +427,8 @@ class Graph(InstrumentingBase):
                 # Populate cache
                 if isinstance(v, PhiValue):
                     _ = [get_name(vi) for vi in v.values]
+                if v.parent is not None:
+                    _ = get_name(v.parent)
 
             return "{}_{}".format(*results[v])
 
@@ -456,7 +458,7 @@ class Graph(InstrumentingBase):
 
         for v, (prefix, idx) in sorted(results.items(), key=lambda x: x[1]):
             values = f"[{', '.join(get_name(vi) for vi in v.values)}]" if isinstance(v, PhiValue) else ""
-            legend_lines.append(f"{prefix}_{idx}  {str(v):<16} {values}")
+            legend_lines.append(f"{prefix}_{idx}  {v.__str__(_value_printer=get_name):<16} {values}")
 
         if print_lines:
             print("\n".join(graph_lines) + "\n" + "\n".join(legend_lines))
