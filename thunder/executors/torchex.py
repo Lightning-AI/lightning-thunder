@@ -1511,7 +1511,10 @@ class ThunderFunction(torch.autograd.Function):
             # trace.
             original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
             new_fw_saved_tensors_for_backward = fw_extraces[-1].output[1][0]
-            swap_map = {variableify(x): y for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)}
+            swap_map = {
+                variableify(x): y
+                for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
+            }
             new_bsyms = replace_redundant_inputs(swap_map, bw_trace.bound_symbols)
             # replace_redundant_inputs doesn't replace the output of
             # UNPACK_SEQUENCE so we do it manually. Here we have certain

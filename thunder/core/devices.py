@@ -31,6 +31,8 @@ def devicetype_string(devicetype: DeviceType) -> str:
 
 
 class Device:
+    # TODO Simplify this so string_or_devicetype can be either a string or devicetype regardless of
+    #   whether number is provided
     def __init__(self, string_or_devicetype: DeviceType, number: Number | None = None):
         if number is not None:
             baseutils.check_type(number, Number)

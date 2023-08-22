@@ -8,6 +8,8 @@ import os
 import torch as pytorch
 import traceback
 from dataclasses import dataclass
+import argparse
+import time
 
 from looseversion import LooseVersion
 
@@ -398,6 +400,14 @@ class CompileData:
         #
         self.last_executed = None
         self.last_traces = None
+        self.last_trace_start: int = -1
+        self.last_trace_stop: int = -1
+        self.last_trace_cache_start: int = -1
+        self.last_trace_cache_stop: int = -1
+        self.last_trace_tracing_start: int = -1
+        self.last_trace_tracing_stop: int = -1
+        self.last_trace_execution_start: int = -1
+        self.last_trace_execution_stop: int = -1
 
         # torch.autograd.Function specific data
         self.primal_trace = None
@@ -570,24 +580,43 @@ def compile(
 
     @wraps(fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
+        cd.last_trace_start = time.time_ns()
         cd.calls += 1
 
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
-        if use_last_executed and cd.last_executed is not None:
+        cd.last_trace_cache_start = time.time_ns()
+        if cd.cache_mode is CACHE_MODES.LAST_EXECUTED and cd.last_executed is not None:
             if cd.last_executed is not None:
-                result = c(*args, **kwargs)
-                # TODO Update _last_traces
+                # TODO Update _last_traces?
+                # Updates statistics before early termination
                 cd.cache_hits += 1
+                cd.last_trace_cache_stop = time.time_ns()
+                cd.last_trace_tracing_start = -1
+                cd.last_trace_tracing_stop = -1
+                cd.last_trace_stop = cd.last_trace_cache_stop
+                cd.last_trace_execution_start = time.time_ns()
+                result = cd.last_executed(*args, **kwargs)
+                cd.last_trace_execution_stop = time.time_ns()
+                cd.last_trace_stop = cd.last_trace_execution_stop
                 return result
-        if use_static_caching:
+        if cd.cache_mode is CACHE_MODES.STATIC:
             c, traces = cache_get(cd.cache, args[cd.num_constant_args :], kwargs)
             if c is not None:
+                # Updates statistics before early termination
                 cd.cache_hits += 1
                 cd.last_executed = c
-                cd.last_traces = traces
-                return c(*args, **kwargs)
+                cd.last_trace_cache_stop = time.time_ns()
+                cd.last_trace_tracing_start = -1
+                cd.last_trace_tracing_stop = -1
+                cd.last_trace_stop = cd.last_trace_cache_stop
+                cd.last_trace_execution_start = time.time_ns()
+                result = c(*args, **kwargs)
+                cd.last_trace_execution_stop = time.time_ns()
+                cd.last_trace_stop = cd.last_trace_execution_stop
+                return result
         cd.cache_misses += 1
+        cd.last_trace_cache_stop = time.time_ns()
 
         # TODO Revisit compile() behavior when hit in a trace ctx
         #   This will inline the invocation of compile into the current
@@ -598,7 +627,9 @@ def compile(
 
         # Acquires the trace OR inlines the trace into an existing trace and
         #   returns the (proxied) result of the operation
+        cd.last_trace_tracing_start = time.time_ns()
         trc_or_result = trace(cd.post_processed_function, *args, langctx=langctx, **kwargs)
+        cd.last_trace_tracing_stop = time.time_ns()
 
         # Returns the (proxied) result if this call to compile was inlined
         current_trace = get_tracectx()
@@ -614,24 +645,27 @@ def compile(
         trc: TraceCtx = trc_or_result
         traces: list[TraceCtx] = [trc]
 
+        cd.last_trace_execution_start = time.time_ns()
         result, c, extraces = execute_trace(
             trc,
             args=args,
             kwargs=kwargs,
             executors_list=executors_list,
             only_execute_prims=only_execute_prims,
-            use_cudagraphs=(use_cudagraphs and not cd.is_module),
-            use_rematerialization=use_rematerialization,
+            use_cudagraphs=(cd.use_cudagraphs and not cd.is_module),
+            use_rematerialization=cd.use_rematerialization,
         )
+        cd.last_trace_execution_stop = time.time_ns()
 
         traces.extend(extraces)
         cd.last_traces = traces
         cd.last_executed = c
 
         # (Possibly) Updates the cache
-        if use_static_caching:
+        if cd.cache_mode is CACHE_MODES.STATIC:
             cache_put(cd.cache, c, traces, args[cd.num_constant_args :], kwargs)
 
+        cd.last_trace_stop = time.time_ns()
         return result
 
     # NOTE This path is completely independent of typical compilation
@@ -661,7 +695,7 @@ def compile(
             possibly_processed_function=cd.post_processed_function,
             compiled_function=_fn,
             compile_data=cd,
-            use_cudagraphs=use_cudagraphs,
+            use_cudagraphs=cd.use_cudagraphs,
         )
 
     # NOTE not is_module
