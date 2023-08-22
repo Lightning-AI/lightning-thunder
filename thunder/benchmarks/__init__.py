@@ -48,6 +48,7 @@ class BenchmarkArg:
     description: str
 
 
+# TODO Update the metaclass to review the class and point out missing properties/mistakes (like not defining a name)
 # Simple metaclass that automatically adds defined benchmarks to the list of benchmarks above
 class UserFacingBenchmarkMeta(type):
     def __new__(metacls, clsname, bases, namespace):
@@ -193,6 +194,8 @@ class BenchmarkExecutor:
 @dataclass
 class BenchmarkRunStatistics:
     total_time: int
+    start_time: int
+    stop_time: int
     has_extended_stats: bool = False
     last_trace_start: int = -1
     last_trace_stop: int = -1
@@ -218,7 +221,7 @@ def _benchmark(
         stop: int = time.time_ns()
 
         cd = thunder.compile_data(fn)
-        stat = BenchmarkRunStatistics(stop - start)
+        stat = BenchmarkRunStatistics(total_time=(stop - start), start_time=start, stop_time=stop)
         if cd is not None:
             stat.has_extended_stats = True
             stat.last_trace_start = cd.last_trace_start
@@ -292,14 +295,17 @@ def _prettyprint_stats(
     median_benchmark_time_us: str = ns_to_us(median_benchmark_time_ns)
 
     # Computes the average benchmark run time and estimates initialization time
-    # NOTE This pre-averages the values because I (mruberry) was concerned (almost certainly unnecessarily) about
-    #   how large they could become (if there were a lot of benchmark runs, for example)
+    total_benchmark_time_ns: int = 0
     avg_benchmark_time_ns: int = 0
     for stat in benchmark_stats:
-        avg_benchmark_time_ns += stat.total_time / len(benchmark_stats)
+        total_benchmark_time_ns += stat.total_time
+    avg_benchmark_time_ns = total_benchmark_time_ns / len(benchmark_stats)
 
     initialization_estimate_ns: int = (avg_warmup_time_ns - avg_benchmark_time_ns) * len(warmup_stats)
     initialization_estimate_us: str = ns_to_us(initialization_estimate_ns)
+
+    absolute_total_time_ns = total_warmup_time_ns + total_benchmark_time_ns
+    absolute_total_time_us: str = ns_to_us(absolute_total_time_ns)
 
     us = "\u03BCs"
 
@@ -331,9 +337,19 @@ def _prettyprint_stats(
     tracing_time_us: str = ns_to_us(tracing_time_ns)
     trace_execution_time_us: str = ns_to_us(trace_execution_time_ns)
 
-    cache_time_percentage: str = f"{round(cache_time_ns / trace_time_ns * 100)}%"
-    tracing_time_percentage: str = f"{round(tracing_time_ns / trace_time_ns * 100)}%"
-    trace_execution_time_percentage: str = f"{round(trace_execution_time_ns / trace_time_ns * 100)}%"
+    trace_time_percentage: str = f"{round(trace_time_ns / median_benchmark_stat.total_time * 100)}%"
+    cache_time_percentage: str = f"{round(cache_time_ns / median_benchmark_stat.total_time * 100)}%"
+    tracing_time_percentage: str = f"{round(tracing_time_ns / median_benchmark_stat.total_time * 100)}%"
+    trace_execution_time_percentage: str = f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
+
+    before_trace_time_ns = median_benchmark_stat.last_trace_start - median_benchmark_stat.start_time
+    after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_stop
+
+    before_trace_time_us: str = ns_to_us(before_trace_time_ns)
+    after_trace_time_us: str = ns_to_us(after_trace_time_ns)
+
+    before_trace_time_percentage: str = f"{round(before_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
+    after_trace_time_percentage: str = f"{round(after_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
 
     print(
         textwrap.dedent(
@@ -342,11 +358,14 @@ def _prettyprint_stats(
             The median time of {len(benchmark_stats)} benchmark iterations was {median_benchmark_time_us}.
             Constructing the callable took {callable_construction_time_us}.
             The total time taken by {len(warmup_stats)} warmup iterations was {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
+            The total time to run all the iterations (warmup and benchmark) was {absolute_total_time_us}.
             The estimated initialization time is {initialization_estimate_us}.
-            The median benchmark run's total time in tracing logic was {trace_time_us}.
-            The median benchmark run's cache lookup time was {cache_time_us}, {cache_time_percentage} of the total time in tracing logic.
-            The median benchmark run's time spent tracing was {tracing_time_us}, {tracing_time_percentage} of the total time in tracing logic.
-            The median benchmark run's time to execute the traced program was {trace_execution_time_us}, {trace_execution_time_percentage} of the total time in tracing logic.
+            The median benchmark took {before_trace_time_us} ({before_trace_time_percentage} of the total time) to get into the tracing logic.
+            The median benchmark took {after_trace_time_us} ({after_trace_time_percentage} of the total time) returning from the tracing logic.
+            The median benchmark run's total time in tracing logic was {trace_time_us}, {trace_time_percentage} of the total time.
+            The median benchmark run's cache lookup time was {cache_time_us}, {cache_time_percentage} of the total time .
+            The median benchmark run's time spent tracing was {tracing_time_us}, {tracing_time_percentage} of the total time.
+            The median benchmark run's time to request the traced program be executed was {trace_execution_time_us}, {trace_execution_time_percentage} of the total time.
     """
         )
     )
@@ -391,6 +410,43 @@ def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: 
         warmup_stats=warmup_stats,
         benchmark_stats=benchmark_stats,
     )
+
+
+#
+# Common executors (defined here for convenience)
+#
+
+
+def default_torch_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return fn
+
+
+def default_torch_compile_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch._dynamo.reset()
+    return torch.compile(fn)
+
+
+def default_thunder_always_trace_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn)
+
+
+def default_thunder_static_caching_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, use_static_caching=True)
+
+
+def default_thunder_last_used_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, use_last_executed=True)
+
+
+#
+# Benchmarks
+#
+# TODO Document a pattern to define benchmarks in another file
 
 
 # This Benchmark currently fails when run with the thunder executor, see https://github.com/Lightning-AI/lightning-thunder/issues/818
@@ -461,6 +517,11 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return foo
 
 
+#
+# NanoGPT benchmarks
+#
+
+
 class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
@@ -514,38 +575,117 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return foo
 
 
-def default_torch_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    return fn
+# Taken from nanogpt_model.py
+@dataclasses.dataclass
+class NanoGPTConfig:
+    name: str = ""
+    block_size: int = 1024
+    seq_len: int = 128
+    # NOTE The original GPT-2 vocab_size was 50257, but recent nanoGPT uses 50304 for GPU performance
+    # https://github.com/karpathy/nanoGPT/blob/eba36e84649f3c6d840a93092cb779a260544d08/model.py#L111
+    vocab_size: int = 50304
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    dropout: float = 0.1
+
+    def update(self, **kwargs) -> None:
+        for field in dataclasses.fields(self):
+            if field.name in kwargs:
+                setattr(self, field.name, kwargs[field.name])
 
 
-def default_torch_compile_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch._dynamo.reset()
-    return torch.compile(fn)
+_nanogpt_configs = {
+    "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+    "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
+    "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
+    "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
+}
+
+from thunder.tests import nanogpt_model
 
 
-def default_thunder_always_trace_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn)
+class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The name (str) of the NanoGPT configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. (The input will have innermost dimensions of config.block_size.) Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="indices_dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and targets. Default is thunder.int64.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the model. Default is thunder.float32.",
+        ),
+    )
 
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt"
 
-def default_thunder_static_caching_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_static_caching=True)
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT with targets."
 
+    @classmethod
+    @property
+    def args(cls):
+        return cls._args
 
-def default_thunder_last_used_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_last_executed=True)
+    def __init__(
+        self,
+        config: str = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        indices_dtype: dtypes.dtype = thunder.int64,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+    ) -> None:
+        super().__init__()
+
+        self.config: NanoGPTConfig = NanoGPTConfig()
+        self.config.update(**_nanogpt_configs[config])
+
+        self.batchdims = batchdims
+        self.indices_dtype = indices_dtype
+        self.device = device
+        self.dtype = dtype
+
+        # Performs torch dtype conversions
+        self.indices_tdtype: torch.dtype = ltorch.to_torch_dtype(self.indices_dtype)
+        self.model_tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, low=0, high=255, device=self.device, dtype=self.indices_tdtype)
+        shape = self.batchdims + (self.config.seq_len,)
+
+        x = make(shape)
+        targets = make(shape)
+        return (x, targets), {}
+
+    def fn(self) -> Callable:
+        gpt = nanogpt_model.GPT(self.config).to(device=self.device, dtype=self.model_tdtype)
+        return gpt
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
 # TODO Move command-line processing to benchmarks.py so users call `python benchmarks.py ...`
-# TODO Validate benchmark extensibility point, so benchmarks from multiple files appear as expected,
-#   and/or let other benchmark files easily have a "main" function that replicates this one
 # TODO Port other benchmarks
 # TODO Port additional executors
 # TODO Add parsing for common benchmark arguments, like shape, dtype, device, and string and integer values
