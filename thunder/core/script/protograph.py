@@ -19,6 +19,7 @@ from thunder.core.script.python_ir_data import (
     PushNew,
     VariableScope,
     RETURN_VALUE,
+    EXTENDED_ARG,
 )
 from thunder.core.utils import OrderedSet
 
@@ -180,6 +181,9 @@ class ProtoBlock(InstrumentingBase):
 
         assert raw_instructions
         for instruction in raw_instructions:
+            if instruction.opname == EXTENDED_ARG:
+                # these are already reflexted in the next opcode's argument
+                continue
             assert hasattr(instruction, "line_no"), instruction
             pop, push = stack_effect_adjusted(instruction)
 

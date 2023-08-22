@@ -895,7 +895,7 @@ def tuple_fold_ex(x):
     return a, b, c
 
 
-@pytest.mark.skip(reason="TODO(robieta, apaz-cli): Figure out UNPACK_EX indexing.")
+@skipif_not_python_3_10
 def test_tuple_fold_ex():
     tom = thunder.compile(tuple_fold_ex)
     assert tuple_fold_ex(1) == tom(1)

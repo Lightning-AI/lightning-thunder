@@ -16,6 +16,7 @@ from thunder.core.utils import OrderedSet
 
 logger = logging.getLogger(__name__)
 SUPPORTS_PREPROCESSING = (3, 9) <= sys.version_info < (3, 11)
+EXTENDED_ARG = "EXTENDED_ARG"
 JUMP_ABSOLUTE = "JUMP_ABSOLUTE"
 RETURN_VALUE = "RETURN_VALUE"
 X_THUNDER_STORE_ATTR = "X_THUNDER_STORE_ATTR"
