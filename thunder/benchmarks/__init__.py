@@ -690,7 +690,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, low=0, high=255, device=self.device, dtype=self.indices_tdtype)
+        make = partial(make_tensor, low=0, high=255, device=self.device, dtype=self.indices_tdtype, requires_grad=False)
         shape = self.batchdims + (self.config.seq_len,)
 
         x = make(shape)
@@ -698,8 +698,76 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x, targets), {}
 
     def fn(self) -> Callable:
-        gpt = nanogpt_model.GPT(self.config).to(device=self.device, dtype=self.model_tdtype)
+        gpt = nanogpt_model.GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(False)
         return gpt
+
+
+class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The name (str) of the NanoGPT configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. (The input will have innermost dimensions of config.block_size.) Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-block"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's Block module."
+
+    @classmethod
+    @property
+    def args(cls):
+        return cls._args
+
+    def __init__(
+        self,
+        config: str = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+    ) -> None:
+        super().__init__()
+
+        self.config: NanoGPTConfig = NanoGPTConfig()
+        self.config.update(**_nanogpt_configs[config])
+
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, low=0, high=255, device=self.device, dtype=self.tdtype, requires_grad=False)
+        shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        gpt_block = nanogpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(False)
+        return gpt_block
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
