@@ -196,15 +196,16 @@ class BenchmarkRunStatistics:
     total_time: int
     start_time: int
     stop_time: int
+    host_stop_time: int
     has_extended_stats: bool = False
-    last_trace_start: int = -1
-    last_trace_stop: int = -1
+    last_trace_host_start: int = -1
+    last_trace_host_stop: int = -1
     last_trace_cache_start: int = -1
     last_trace_cache_stop: int = -1
     last_trace_tracing_start: int = -1
     last_trace_tracing_stop: int = -1
-    last_trace_execution_start: int = -1
-    last_trace_execution_stop: int = -1
+    last_trace_host_execution_start: int = -1
+    last_trace_host_execution_stop: int = -1
 
 
 # A timing helper
@@ -217,21 +218,24 @@ def _benchmark(
         wait_for_computation()
         start: int = time.time_ns()
         fn(*args, **kwargs)
+        host_stop: int = time.time_ns()
         wait_for_computation()
         stop: int = time.time_ns()
 
         cd = thunder.compile_data(fn)
-        stat = BenchmarkRunStatistics(total_time=(stop - start), start_time=start, stop_time=stop)
+        stat = BenchmarkRunStatistics(
+            total_time=(stop - start), start_time=start, stop_time=stop, host_stop_time=host_stop
+        )
         if cd is not None:
             stat.has_extended_stats = True
-            stat.last_trace_start = cd.last_trace_start
-            stat.last_trace_stop = cd.last_trace_stop
+            stat.last_trace_host_start = cd.last_trace_host_start
+            stat.last_trace_host_stop = cd.last_trace_host_stop
             stat.last_trace_cache_start = cd.last_trace_cache_start
             stat.last_trace_cache_stop = cd.last_trace_cache_stop
             stat.last_trace_tracing_start = cd.last_trace_tracing_start
             stat.last_trace_tracing_stop = cd.last_trace_tracing_stop
-            stat.last_trace_execution_start = cd.last_trace_execution_start
-            stat.last_trace_execution_stop = cd.last_trace_execution_stop
+            stat.last_trace_host_execution_start = cd.last_trace_host_execution_start
+            stat.last_trace_host_execution_stop = cd.last_trace_host_execution_stop
 
         stats.append(stat)
 
@@ -246,7 +250,7 @@ def wait_for_cuda_computation() -> None:
 # Prints nanoseconds as microseconds, rounded
 def ns_to_us(ns: Number) -> str:
     us = "\u03BCs"
-    return f"{round(ns / 1000)}{us}"
+    return f"{round(ns / 1000):.2e}{us}"
 
 
 def _prettyprint_stats(
@@ -289,7 +293,7 @@ def _prettyprint_stats(
         left_middle: int = right_middle - 1
         left_stat: BenchmarkRunStatistics = sorted_benchmark_stats[left_middle]
         right_stat: BenchmarkRunStatistics = sorted_benchmark_stats[right_middle]
-        median_benchmark_time_ns = (left_stat.total_time + right_stat.total_time) / 2
+        median_benchmark_time_ns: int = (left_stat.total_time + right_stat.total_time) // 2
         median_benchmark_stat = left_stat
 
     median_benchmark_time_us: str = ns_to_us(median_benchmark_time_ns)
@@ -304,8 +308,17 @@ def _prettyprint_stats(
     initialization_estimate_ns: int = (avg_warmup_time_ns - avg_benchmark_time_ns) * len(warmup_stats)
     initialization_estimate_us: str = ns_to_us(initialization_estimate_ns)
 
-    absolute_total_time_ns = total_warmup_time_ns + total_benchmark_time_ns
-    absolute_total_time_us: str = ns_to_us(absolute_total_time_ns)
+    total_initialization_time_ns: int = callable_construction_time + initialization_estimate_ns
+    total_initialization_time_us: str = ns_to_us(total_initialization_time_ns)
+    callable_construction_percentage: str = f"{round(callable_construction_time / total_initialization_time_ns * 100)}%"
+    initialization_percentage: str = f"{round(initialization_estimate_ns / total_initialization_time_ns * 100)}%"
+
+    total_benchmark_time_ns: int = total_warmup_time_ns + total_benchmark_time_ns
+    total_benchmark_time_us: str = ns_to_us(total_benchmark_time_ns)
+
+    total_host_time_ns: int = median_benchmark_stat.host_stop_time - median_benchmark_stat.start_time
+    total_host_time_us: str = ns_to_us(total_host_time_ns)
+    host_time_percentage: str = f"{round(total_host_time_ns / median_benchmark_stat.total_time * 100)}%"
 
     us = "\u03BCs"
 
@@ -315,21 +328,24 @@ def _prettyprint_stats(
             textwrap.dedent(
                 f"""\
             {benchmark_name} benchmark results:
-                The median time of {len(benchmark_stats)} benchmark iterations was {median_benchmark_time_us}.
-                Constructing the callable took {callable_construction_time_us}.
+                The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
+                The estimated callable construction and initialization time is {total_initialization_time_us}.
+                The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
+                Constructing the callable took {callable_construction_time_us}, {callable_construction_percentage} of the total construction and initialization time.
+                The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
                 The total time taken by {len(warmup_stats)} warmup iterations was {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
-                The estimated initialization time is {initialization_estimate_us}.
+                The total time to run all the iterations (warmup and benchmark) was {total_benchmark_time_us}.
         """
             )
         )
         return
 
     # NOTE At this point in the program extended statistics are available
-    trace_time_ns = median_benchmark_stat.last_trace_stop - median_benchmark_stat.last_trace_start
+    trace_time_ns = median_benchmark_stat.last_trace_host_stop - median_benchmark_stat.last_trace_host_start
     cache_time_ns = median_benchmark_stat.last_trace_cache_stop - median_benchmark_stat.last_trace_cache_start
     tracing_time_ns = median_benchmark_stat.last_trace_tracing_stop - median_benchmark_stat.last_trace_tracing_start
     trace_execution_time_ns = (
-        median_benchmark_stat.last_trace_execution_stop - median_benchmark_stat.last_trace_execution_start
+        median_benchmark_stat.last_trace_host_execution_stop - median_benchmark_stat.last_trace_host_execution_start
     )
 
     trace_time_us: str = ns_to_us(trace_time_ns)
@@ -342,8 +358,8 @@ def _prettyprint_stats(
     tracing_time_percentage: str = f"{round(tracing_time_ns / median_benchmark_stat.total_time * 100)}%"
     trace_execution_time_percentage: str = f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
 
-    before_trace_time_ns = median_benchmark_stat.last_trace_start - median_benchmark_stat.start_time
-    after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_stop
+    before_trace_time_ns = median_benchmark_stat.last_trace_host_start - median_benchmark_stat.start_time
+    after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop
 
     before_trace_time_us: str = ns_to_us(before_trace_time_ns)
     after_trace_time_us: str = ns_to_us(after_trace_time_ns)
@@ -355,17 +371,20 @@ def _prettyprint_stats(
         textwrap.dedent(
             f"""\
         {benchmark_name} benchmark results:
-            The median time of {len(benchmark_stats)} benchmark iterations was {median_benchmark_time_us}.
-            Constructing the callable took {callable_construction_time_us}.
-            The total time taken by {len(warmup_stats)} warmup iterations was {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
-            The total time to run all the iterations (warmup and benchmark) was {absolute_total_time_us}.
-            The estimated initialization time is {initialization_estimate_us}.
+            The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
+            The estimated callable construction and initialization time is {total_initialization_time_us}.
+            The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
+            Constructing the callable took {callable_construction_time_us}, {callable_construction_percentage} of the total construction and initialization time.
+            The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
+            The total time taken by {len(warmup_stats)} warmup iterations is {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
+            The total time to run all the iterations (warmup and benchmark) is {total_benchmark_time_us}.
+            The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
             The median benchmark took {before_trace_time_us} ({before_trace_time_percentage} of the total time) to get into the tracing logic.
             The median benchmark took {after_trace_time_us} ({after_trace_time_percentage} of the total time) returning from the tracing logic.
-            The median benchmark run's total time in tracing logic was {trace_time_us}, {trace_time_percentage} of the total time.
-            The median benchmark run's cache lookup time was {cache_time_us}, {cache_time_percentage} of the total time .
-            The median benchmark run's time spent tracing was {tracing_time_us}, {tracing_time_percentage} of the total time.
-            The median benchmark run's time to request the traced program be executed was {trace_execution_time_us}, {trace_execution_time_percentage} of the total time.
+            The median benchmark run's total time in tracing logic is {trace_time_us}, {trace_time_percentage} of the total time.
+            The median benchmark run's cache lookup time is {cache_time_us}, {cache_time_percentage} of the total time.
+            The median benchmark run's time spent tracing is {tracing_time_us}, {tracing_time_percentage} of the total time.
+            The median benchmark run's time to request the traced program be executed is {trace_execution_time_us}, {trace_execution_time_percentage} of the total time.
     """
         )
     )
@@ -386,8 +405,9 @@ def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: 
             break
 
     # Measures the construction of the callable
+    benchmark_fn = benchmark.fn()
     start_time: int = time.time_ns()
-    benchmark_callable = constructor(benchmark.fn())
+    benchmark_callable = constructor(benchmark_fn)
     stop_time: int = time.time_ns()
     callable_construction_time: int = stop_time - start_time
 

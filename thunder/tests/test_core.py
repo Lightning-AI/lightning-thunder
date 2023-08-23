@@ -851,6 +851,93 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     assert cache_misses(cm) == 2
     assert cache_hits(cm) == 2
 
+    #
+    # Sequence tests
+    #
+    def caz(tup):
+        accum = 0
+        for x in tup:
+            accum += x
+        return accum
+
+    ccaz = thunder.compile(caz, use_static_caching=True)
+
+    inp0 = [5, 3, 7]
+    thunder_result = ccaz(inp0)
+    torch_result = caz(inp0)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(ccaz) == 1
+    assert cache_hits(ccaz) == 0
+
+    # List with different values -- cache miss
+    inp1 = [6, 3, 7]
+    thunder_result = ccaz(inp1)
+    torch_result = caz(inp1)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(ccaz) == 2
+    assert cache_hits(ccaz) == 0
+
+    # List with same values -- cache hit
+    inp2 = [5, 3, 7]
+    thunder_result = ccaz(inp2)
+    torch_result = caz(inp2)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(ccaz) == 2
+    assert cache_hits(ccaz) == 1
+
+    # List with same values but different types -- cache miss
+    inp3 = [5.0, 3, 7]
+    thunder_result = ccaz(inp3)
+    torch_result = caz(inp3)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(ccaz) == 3
+    assert cache_hits(ccaz) == 1
+
+    #
+    # Kwarg tests
+    #
+    def daz(*, a, b):
+        return a + b
+
+    cdaz = thunder.compile(daz, use_static_caching=True)
+
+    inp0 = {"a": a, "b": b}
+    thunder_result = cdaz(**inp0)
+    torch_result = daz(**inp0)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(cdaz) == 1
+    assert cache_hits(cdaz) == 0
+
+    # Same keys and tensor metadata the same -- cache hit
+    inp1 = {"a": b, "b": a}
+    thunder_result = cdaz(**inp1)
+    torch_result = daz(**inp1)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(cdaz) == 1
+    assert cache_hits(cdaz) == 1
+
+    # Same keys but different tensor metadata -- cache hit
+    inp2 = {"a": b, "b": e}
+    thunder_result = cdaz(**inp2)
+    torch_result = daz(**inp2)
+
+    assert_close(thunder_result, torch_result)
+
+    assert cache_misses(cdaz) == 2
+    assert cache_hits(cdaz) == 1
+
 
 #
 # Tests related to optimizing passes

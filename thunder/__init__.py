@@ -5,13 +5,15 @@ from collections.abc import Sequence
 from collections import deque
 from enum import auto, Enum
 import os
-import torch as pytorch
 import traceback
 from dataclasses import dataclass
 import argparse
 import time
 
 from looseversion import LooseVersion
+
+import torch as pytorch
+import numpy as np
 
 from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy
 from thunder.core.trace import (
@@ -280,28 +282,85 @@ class CACHE_MODES(Enum):
     LAST_EXECUTED = auto()
 
 
-def _make_subkey_for(x: Any) -> Any:
+# TODO Update cacheable types
+def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
     if isinstance(x, pytorch.Tensor):
-        return (pytorch.Tensor, x.shape, x.device, x.dtype, x.requires_grad)
+        return True, (pytorch.Tensor, x.shape, x.device, x.dtype, x.requires_grad)
 
-    return type(x), x
+    # TODO Add NumPy ndarray support
+    if isinstance(x, np.ndarray):
+        return False, None
+
+    # NOTE Special cases strings because strings are Sequences, but we want to treat them like non-Sequence objects
+    if isinstance(x, str):
+        return True, (str, x)
+
+    if isinstance(x, Sequence):
+        key = [None] * len(x)
+        for idx, v in enumerate(x):
+            is_hashable, subkey = _make_subkey_for(v)
+            if not is_hashable:
+                return None, False
+            key[idx] = subkey
+        return True, tuple(key)
+
+    # TODO Add support for additional collections (like dicts)
+    if utils.is_collection(x):
+        return False, None
+
+    if isinstance(x, Hashable):
+        return True, (type(x), x)
+
+    return False, None
 
 
-def _make_cache_key(args, kwargs) -> Any:
-    def _cache_kwargkey_helper(x: Any, *, key: Hashable) -> Any:
-        return type(key), key, _make_subkey_for(x)
-
-    arg_key = tuple(_make_subkey_for(arg) for arg in args)
-    kwarg_key = tuple(_cache_kwargkey_helper(v, key=key) for key, v in kwargs.items())
-    return arg_key + kwarg_key
+# Private class just to separate objects in the cache
+class _key_value_separator:
+    pass
 
 
-def cache_put(cache, fn, traces, args, kwargs) -> None:
+# Returns a hashable key or None if the given args and kwargs are not hashable
+def _make_cache_key(args, kwargs) -> None | tuple:
+    key = [None] * (len(args) + len(kwargs))
+
+    # Constructs arg portion of key
+    for idx, arg in enumerate(args):
+        is_hashable, subkey = _make_subkey_for(arg)
+        if not is_hashable:
+            return None
+        key[idx] = subkey
+
+    # Constructs kwarg portion of key
+
+    def kwarg_helper(key, value) -> tuple[bool, None | tuple]:
+        is_key_hashable, key_key = _make_subkey_for(key)
+        is_value_hashable, value_key = _make_subkey_for(value)
+
+        return is_key_hashable and is_value_hashable, (key_key, _key_value_separator, value_key)
+
+    offset = len(args)
+    for idx, (k, v) in enumerate(kwargs.items()):
+        is_hashable, subkey = kwarg_helper(k, v)
+        if not is_hashable:
+            return None
+
+        key[offset + idx] = subkey
+
+    return tuple(key)
+
+
+# Returns True if successfully cached, false otherwise
+def cache_put(cache: dict, fn, traces: Sequence[TraceCtx], args, kwargs) -> bool:
     key = _make_cache_key(args, kwargs)
+
+    if key is None:
+        return False
+
     cache[key] = (fn, traces)
+    return True
 
 
-def cache_get(cache, args, kwargs) -> Optional[Callable]:
+def cache_get(cache: dict, args, kwargs) -> tuple[None | Callable, None | Sequence[TraceCtx]]:
     key = _make_cache_key(args, kwargs)
     return cache.get(key, (None, None))
 
@@ -400,14 +459,14 @@ class CompileData:
         #
         self.last_executed = None
         self.last_traces = None
-        self.last_trace_start: int = -1
-        self.last_trace_stop: int = -1
+        self.last_trace_host_start: int = -1
+        self.last_trace_host_stop: int = -1
         self.last_trace_cache_start: int = -1
         self.last_trace_cache_stop: int = -1
         self.last_trace_tracing_start: int = -1
         self.last_trace_tracing_stop: int = -1
-        self.last_trace_execution_start: int = -1
-        self.last_trace_execution_stop: int = -1
+        self.last_trace_host_execution_start: int = -1
+        self.last_trace_host_execution_stop: int = -1
 
         # torch.autograd.Function specific data
         self.primal_trace = None
@@ -580,7 +639,7 @@ def compile(
 
     @wraps(fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
-        cd.last_trace_start = time.time_ns()
+        cd.last_trace_host_start = time.time_ns()
         cd.calls += 1
 
         # Tries to lookup a callable in a cache
@@ -594,11 +653,10 @@ def compile(
                 cd.last_trace_cache_stop = time.time_ns()
                 cd.last_trace_tracing_start = -1
                 cd.last_trace_tracing_stop = -1
-                cd.last_trace_stop = cd.last_trace_cache_stop
-                cd.last_trace_execution_start = time.time_ns()
+                cd.last_trace_host_execution_start = time.time_ns()
                 result = cd.last_executed(*args, **kwargs)
-                cd.last_trace_execution_stop = time.time_ns()
-                cd.last_trace_stop = cd.last_trace_execution_stop
+                cd.last_trace_host_execution_stop = time.time_ns()
+                cd.last_trace_host_stop = cd.last_trace_host_execution_stop
                 return result
         if cd.cache_mode is CACHE_MODES.STATIC:
             c, traces = cache_get(cd.cache, args[cd.num_constant_args :], kwargs)
@@ -609,11 +667,10 @@ def compile(
                 cd.last_trace_cache_stop = time.time_ns()
                 cd.last_trace_tracing_start = -1
                 cd.last_trace_tracing_stop = -1
-                cd.last_trace_stop = cd.last_trace_cache_stop
-                cd.last_trace_execution_start = time.time_ns()
+                cd.last_trace_host_execution_start = time.time_ns()
                 result = c(*args, **kwargs)
-                cd.last_trace_execution_stop = time.time_ns()
-                cd.last_trace_stop = cd.last_trace_execution_stop
+                cd.last_trace_host_execution_stop = time.time_ns()
+                cd.last_trace_host_stop = cd.last_trace_host_execution_stop
                 return result
         cd.cache_misses += 1
         cd.last_trace_cache_stop = time.time_ns()
@@ -645,7 +702,7 @@ def compile(
         trc: TraceCtx = trc_or_result
         traces: list[TraceCtx] = [trc]
 
-        cd.last_trace_execution_start = time.time_ns()
+        cd.last_trace_host_execution_start = time.time_ns()
         result, c, extraces = execute_trace(
             trc,
             args=args,
@@ -655,7 +712,7 @@ def compile(
             use_cudagraphs=(cd.use_cudagraphs and not cd.is_module),
             use_rematerialization=cd.use_rematerialization,
         )
-        cd.last_trace_execution_stop = time.time_ns()
+        cd.last_trace_host_execution_stop = time.time_ns()
 
         traces.extend(extraces)
         cd.last_traces = traces
@@ -665,7 +722,7 @@ def compile(
         if cd.cache_mode is CACHE_MODES.STATIC:
             cache_put(cd.cache, c, traces, args[cd.num_constant_args :], kwargs)
 
-        cd.last_trace_stop = time.time_ns()
+        cd.last_trace_host_stop = time.time_ns()
         return result
 
     # NOTE This path is completely independent of typical compilation
