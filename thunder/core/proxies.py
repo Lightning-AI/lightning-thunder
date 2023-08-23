@@ -573,9 +573,9 @@ class FutureTensorProxy(Proxy):
             self._shape,
             self._device,
             self._dtype,
-            self.true_dtype,
-            self.numel,
-            self.ndim,
+            self._true_dtype,
+            self._numel,
+            self._ndim,
             self._requires_grad,
         ) = _infer_tensor_properties(
             like,
@@ -590,12 +590,24 @@ class FutureTensorProxy(Proxy):
         return self._shape
 
     @property
+    def numel(self):
+        return self._numel
+
+    @property
+    def ndim(self):
+        return self._ndim
+
+    @property
     def device(self):
         return self._device
 
     @property
     def dtype(self):
         return self._dtype
+
+    @property
+    def true_dtype(self):
+        return self._true_dtype
 
     @property
     def requires_grad(self):
@@ -628,9 +640,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._shape,
             self._device,
             self._dtype,
-            self.true_dtype,
-            self.numel,
-            self.ndim,
+            self._true_dtype,
+            self._numel,
+            self._ndim,
             self._requires_grad,
         ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad)
 
@@ -639,12 +651,24 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._shape
 
     @property
+    def numel(self):
+        return self._numel
+
+    @property
+    def ndim(self):
+        return self._ndim
+
+    @property
     def device(self):
         return self._device
 
     @property
     def dtype(self):
         return self._dtype
+
+    @property
+    def true_dtype(self):
+        return self._true_dtype
 
     @property
     def requires_grad(self):
