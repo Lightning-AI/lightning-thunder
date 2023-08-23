@@ -391,6 +391,8 @@ def _prettyprint_stats(
 
 
 def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20):
+    print(f"Running benchmark {benchmark.name}")
+
     devices: list[str] = benchmark.devices
     if len(devices) == 0:
         raise RuntimeError("Found a benchmark with no specified devices")
@@ -598,7 +600,6 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 # Taken from nanogpt_model.py
 @dataclasses.dataclass
 class NanoGPTConfig:
-    name: str = ""
     block_size: int = 1024
     seq_len: int = 128
     # NOTE The original GPT-2 vocab_size was 50257, but recent nanoGPT uses 50304 for GPU performance
@@ -621,6 +622,14 @@ _nanogpt_configs = {
     "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
     "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
 }
+
+
+# Prints a NanoGPT config (useful for understanding what the NanoGPT benchmarks are doing)
+def _print_nanogpt_config(cfg: NanoGPTConfig) -> None:
+    print("NanoGPT Config:")
+    for field in dataclasses.fields(cfg):
+        print(f"\t{field.name}={getattr(cfg, field.name)}")
+
 
 from thunder.tests import nanogpt_model
 
@@ -698,6 +707,9 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x, targets), {}
 
     def fn(self) -> Callable:
+        # Prints the config
+        _print_nanogpt_config(self.config)
+
         gpt = nanogpt_model.GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(False)
         return gpt
 
@@ -766,6 +778,9 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
+        # Prints the config
+        _print_nanogpt_config(self.config)
+
         gpt_block = nanogpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(False)
         return gpt_block
 
