@@ -390,6 +390,8 @@ def _prettyprint_stats(
     )
 
 
+# TODO Consider isolating each benchmark run in a subprocess to avoid cache reuse across benchmarks
+#   (which has been observed, to get around this just run one benchmark at a time)
 def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20):
     print(f"Running benchmark {benchmark.name}")
 
@@ -406,16 +408,20 @@ def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: 
             wait_for_computation_fn = wait_for_cuda_computation
             break
 
-    # Measures the construction of the callable
-    benchmark_fn = benchmark.fn()
-    start_time: int = time.time_ns()
-    benchmark_callable = constructor(benchmark_fn)
-    stop_time: int = time.time_ns()
-    callable_construction_time: int = stop_time - start_time
-
     # Creates a batch to initialize the device being used for the benchmark
     benchmark.make_batch()
     wait_for_computation_fn()
+
+    # Measures the construction of the callable
+    # NOTE Callable construction probably doesn't use an accelerator, but this waits for the accelerator
+    #   to finish its work just incase
+    benchmark_fn = benchmark.fn()
+    wait_for_computation_fn()
+    start_time: int = time.time_ns()
+    benchmark_callable = constructor(benchmark_fn)
+    wait_for_computation_fn()
+    stop_time: int = time.time_ns()
+    callable_construction_time: int = stop_time - start_time
 
     _run_benchmark = partial(_benchmark, benchmark_callable, benchmark.make_batch, wait_for_computation_fn)
 
@@ -534,6 +540,71 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             for _ in range(depth):
                 a = a + b
 
+            return a
+
+        return foo
+
+
+# This Benchmark currently fails when run with the thunder executor, see https://github.com/Lightning-AI/lightning-thunder/issues/818
+class ReshapeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="depth",
+            description="The number of reshape sequences (int) to perform. Default is 100.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="The device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (torch.dtype, thunder.dtypes.dtype) of the the input tensor. Default is thunder.float32.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "reshapes"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Performs many reshape operations on the same tensor."
+
+    @classmethod
+    @property
+    def args(cls):
+        return cls._args
+
+    def __init__(
+        self,
+        depth: int = 100,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+    ) -> None:
+        super().__init__()
+
+        self.depth: int = depth
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        shape = (16, 16, 16, 16, 16)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        return (make(shape),), {"depth": self.depth}
+
+    def fn(self) -> Callable:
+        def foo(a: torch.Tensor, *, depth: int):
+            for _ in range(depth):
+                a = a.reshape(32, 32, 8, 4, 2, 16)
+                a = a.reshape(1024, 2, 32, 2, 8)
+                a = a.reshape(4, 4, 4, 4, 4, 4, 4, 4, 4, 4)
+                a = a.reshape(2, 2, 16, 8, 4, 2, 1, 32, 2, 2, 2)
+                a = a.reshape(16, 65536)
             return a
 
         return foo
