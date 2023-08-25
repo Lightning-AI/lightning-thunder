@@ -17,7 +17,6 @@ import thunder.core.proxies as proxies
 import thunder.torch as ltorch
 import thunder.executors.torchex as torchex
 import thunder.core.codeutils as codeutils
-from thunder.core.pytree import tree_flatten_only, tree_unflatten
 from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, Executor
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
