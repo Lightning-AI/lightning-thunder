@@ -11,6 +11,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder.core.script.frontend
 import thunder.core.script.passes
+from thunder.core.script.passes import noinline, invoke_noinline
 import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
 from thunder.core.utils import enable_debug_asserts
@@ -629,6 +630,53 @@ def test_nonlocal_closure():
     with pytest.raises(RuntimeError) as excinfo:
         thunder.preprocess(func, is_module=False)
     assert "nonlocal variables are not supported but" in str(excinfo.value)
+
+
+def add1(a, b):
+    return a + b
+
+
+def add2(a, b):
+    return a + b
+
+
+@noinline
+def add_noinline(a, b):
+    return a + b
+
+
+@skipif_not_python_3_10
+def test_noinline():
+    def fn1():
+        a = torch.arange(10)
+        b = torch.arange(10)
+        add1(a, b)
+
+    def fn2():
+        a = torch.arange(10)
+        b = torch.arange(10)
+        add_noinline(a, b)
+
+    assert add1 not in thunder.compile(fn1)._pfn.__code__.co_consts
+    noinline(add1)
+    assert add1 in thunder.compile(fn1)._pfn.__code__.co_consts
+    assert add_noinline in thunder.compile(fn2)._pfn.__code__.co_consts
+
+
+@skipif_not_python_3_10
+def test_invoke_noinline():
+    def fn1():
+        a = torch.arange(10)
+        b = torch.arange(10)
+        add2(a, b)
+
+    def fn2():
+        a = torch.arange(10)
+        b = torch.arange(10)
+        invoke_noinline(add2)(a, b)
+
+    assert add2 not in thunder.compile(fn1)._pfn.__code__.co_consts
+    assert add2 in thunder.compile(fn2)._pfn.__code__.co_consts
 
 
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying

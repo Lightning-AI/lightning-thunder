@@ -3,6 +3,7 @@ import inspect
 import opcode
 import types
 from typing import Any, Callable, Dict, List, Tuple, Union
+from contextvars import ContextVar
 
 import torch  # # aehem.
 
@@ -328,6 +329,42 @@ def inline_submodule_calls(gr: "Graph") -> bool:
     return changed
 
 
+NOINLINE_METHODS: ContextVar[set[Callable]] = ContextVar("NOINLINE_METHODS", default=set())
+
+
+def noinline(f: Callable) -> Callable:
+    """
+    Function/Decorator to prevent preprocessing from inlining the function.
+
+    Example:
+    >>> @noinline
+    >>> def foo(x):
+    >>>     return x + 1
+    >>> def bar(x):
+    >>>     return foo(x) + 1
+    >>> thunder.compile(bar)
+    """
+
+    NOINLINE_METHODS.get().add(f)
+    return f
+
+
+@noinline
+def invoke_noinline(f: Callable) -> Callable:
+    """
+    Function to prevent preprocessing from inlining a single invocation of a function.
+
+    Example:
+    >>> def foo(x):
+    >>>     return x + 1
+    >>> def bar(x):
+    >>>     return invoke_noinline(foo)(x) + 1
+    >>> thunder.compile(bar)
+    """
+
+    return f
+
+
 def strongly_inline_functions(gr: "Graph") -> None:
     loop = True
     while loop:
@@ -342,6 +379,7 @@ def strongly_inline_functions(gr: "Graph") -> None:
                         and not inspect.isbuiltin(fn_value)
                         and isinstance(fn_value, types.FunctionType)
                         and fn_value not in _torch_to_thunder_complete_map
+                        and fn_value not in NOINLINE_METHODS.get()
                     ):
                         ## handle methods or nn.Modules / other classes?
                         try:
