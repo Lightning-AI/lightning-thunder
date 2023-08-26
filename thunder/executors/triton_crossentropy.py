@@ -1,5 +1,6 @@
 import math
 
+from enum import Enum
 import torch
 
 import thunder.torch as ltorch
@@ -9,13 +10,34 @@ import thunder.torch as ltorch
 from lightning_utilities.core.imports import package_available
 
 TRITON_AVAILABLE = package_available("triton")
-assert TRITON_AVAILABLE, f"Attempting to import a Triton executor but Triton is not available"
+assert TRITON_AVAILABLE, "Attempting to import a Triton executor but Triton is not available"
 
-import triton
-import triton.language as tl
+import triton  # noqa: E402
+import triton.language as tl  # noqa: E402
 
 # Temporarily borrowed from https://github.com/openai/triton
 FORWARD_NUM_STAGES = 1
+
+
+class TritonDtype(Enum):
+    kFP16 = 0
+    kBF16 = 1
+    kFP32 = 2
+    kFP64 = 3
+
+
+_TORCH2DTYPE = {
+    torch.float16: TritonDtype.kFP16,
+    torch.bfloat16: TritonDtype.kBF16,
+    torch.float32: TritonDtype.kFP32,
+    torch.float64: TritonDtype.kFP64,
+}
+_DTYPE2TRITON = {
+    TritonDtype.kFP16: tl.float16,
+    TritonDtype.kBF16: tl.bfloat16,
+    TritonDtype.kFP32: tl.float32,
+    TritonDtype.kFP64: tl.float64,
+}
 
 
 @triton.autotune(
@@ -32,6 +54,7 @@ FORWARD_NUM_STAGES = 1
         "N",
         "CLASS_INDICES",
         "log_size_logits",
+        "BUFFER_DTYPE",
     ],
 )
 @triton.jit
@@ -48,22 +71,25 @@ def _forward(
     WEIGHTS: tl.constexpr,
     CLASS_INDICES: tl.constexpr,
     IGNORE_INDEX: tl.constexpr,
+    BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
+    buffer_dtype = _DTYPE2TRITON[BUFFER_DTYPE.value]
     row = tl.program_id(0)
     cols = tl.arange(0, BLOCK)
     logit_start_ptrs = LOGITS + row * N
     logit_ptrs = logit_start_ptrs + cols
     m_prev = -float("inf")
     l_prev = 0.0
-    m_prev = m_prev.to(LOGITS.dtype.element_ty)
-    l_prev = l_prev.to(LOGITS.dtype.element_ty)
+    m_prev = m_prev.to(buffer_dtype)
+    l_prev = l_prev.to(buffer_dtype)
+
     for start_n in range(0, tl.cdiv(N, BLOCK)):
         row_logits = tl.load(
             logit_ptrs,
             mask=cols < N - (start_n * BLOCK),
             other=-float("inf"),
-        )
+        ).to(buffer_dtype)
 
         m_curr = tl.maximum(tl.max(row_logits, 0), m_prev)
         l_prev *= tl.exp(m_prev - m_curr)
@@ -73,13 +99,13 @@ def _forward(
         m_prev = m_curr
         logit_ptrs += BLOCK
     logit_ptrs = logit_start_ptrs + cols
-    output_ptrs = PROBS + row * N + cols
+    PROBS + row * N + cols
     WRIT_PROBS = PROBS + row * N + cols
     if not CLASS_INDICES:
         sum_total = 0.0
         weights_total = 0.0
-        sum_total = sum_total.to(LOGITS.dtype.element_ty)
-        weights_total = weights_total.to(LOGITS.dtype.element_ty)
+        sum_total = sum_total.to(buffer_dtype)
+        weights_total = weights_total.to(buffer_dtype)
         idx_ptr = IDX + row * N + cols
         if WEIGHTS:
             weight_ptr = weight + cols
@@ -91,7 +117,7 @@ def _forward(
             logit_ptrs,
             mask=cols < N - start_n * BLOCK,
             other=l_prev_log + m_prev,
-        )
+        ).to(buffer_dtype)
         if not CLASS_INDICES:
             idx = tl.load(idx_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
             full_weights_val = (1.0 - smoothing_factor) * idx + smoothing_factor / N
@@ -156,6 +182,7 @@ def _forward(
         "N",
         "CLASS_INDICES",
         "log_size_logits",
+        "BUFFER_DTYPE",
     ],
 )
 @triton.jit
@@ -173,8 +200,10 @@ def _backward(
     WEIGHTS: tl.constexpr,
     CLASS_INDICES: tl.constexpr,
     IGNORE_INDEX: tl.constexpr,
+    BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
+    buffer_dtype = _DTYPE2TRITON[BUFFER_DTYPE.value]
     row = tl.program_id(0)
     start_n = tl.program_id(1)
     cols = tl.arange(0, BLOCK)
@@ -186,13 +215,13 @@ def _backward(
         probs_start,
         mask=cols < N - (start_n * BLOCK),
         other=float("inf"),
-    )
+    ).to(buffer_dtype)
     DIN = DIN + row * N + cols + BLOCK * start_n
-    dout = tl.load(DPROBS + row * dprob_stride)
+    dout = tl.load(DPROBS + row * dprob_stride).to(buffer_dtype)
     # We know d(-log(p[i])/dlogit[k] = -id_mat[i,k] + p[k]
     # and we have -log(p[k]) stored in PROBS, so this is easy
     if CLASS_INDICES:
-        probs = tl.exp(probs.to(tl.float32))
+        probs = tl.exp(probs)
         idx = tl.load(IDX + row)
         delta = ((start_n * BLOCK) + cols) == idx
         # write result in-place in PROBS
@@ -210,14 +239,14 @@ def _backward(
             IDX + row * N + cols + BLOCK * start_n,
             mask=cols < N - start_n * BLOCK,
             other=0.0,
-        )
+        ).to(buffer_dtype)
         full_weights_val = (1.0 - smoothing_factor) * idx + smoothing_factor / N
         if WEIGHTS:
             weight_ptr = weight + cols + BLOCK * start_n
-            weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
+            weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0).to(buffer_dtype)
             full_weights_val = weights_val * full_weights_val
         probs = probs / full_weights_val
-        probs = tl.exp(probs.to(tl.float32))
+        probs = tl.exp(probs.to(buffer_dtype))
         weighted_probs = probs * weights_total
         weighted_probs_per_class = weighted_probs - full_weights_val
         din = (weighted_probs_per_class) * dout
@@ -227,20 +256,30 @@ def _backward(
 
 class CrossEntropy(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, logits, indices, weight, ignore_index, reduction, label_smoothing):
-        # make sure we can use triton
-        # assert (
-        #     indices.dtype == torch.int64
-        # ), "Indices are expected to be of type long."
+    def forward(
+        ctx,
+        logits,
+        indices,
+        weight,
+        ignore_index,
+        reduction,
+        label_smoothing,
+    ):
+        buffer_dtype = None
         assert weight is None or (len(weight.shape) == 1 and weight.shape[0] == logits.shape[-1])
         # make kernel
+        if buffer_dtype is None:
+            if logits.dtype in [torch.bfloat16, torch.float16]:
+                buffer_dtype = torch.float32
+            else:
+                buffer_dtype = logits.dtype
+        buffer_dtype_enum = _TORCH2DTYPE[buffer_dtype]
         device, dtype = logits.device, logits.dtype
         n_cols = logits.shape[-1]
         # run the kernel
         result = torch.empty((logits.shape[0],), dtype=dtype, device=device)
-        # result = torch.empty_like(indices, dtype=dtype, device=device)
-        neg_logprobs = torch.empty_like(logits, dtype=dtype, device=device)
-        weights_buffer = torch.empty_like(result)
+        neg_logprobs = torch.empty_like(logits, dtype=buffer_dtype, device=device)
+        weights_buffer = torch.empty_like(result, dtype=buffer_dtype)
         grid = lambda opt: (logits.numel() // n_cols,)
         log_size_logits = int(math.log(math.prod(logits.shape) / n_cols))
         _forward[grid](
@@ -256,6 +295,7 @@ class CrossEntropy(torch.autograd.Function):
             WEIGHTS=(weight is not None),
             CLASS_INDICES=(indices.dtype == torch.int64),
             IGNORE_INDEX=ignore_index,
+            BUFFER_DTYPE=buffer_dtype_enum,
         )
         # save for backward
         ctx.save_for_backward(neg_logprobs, indices, weights_buffer)
@@ -263,6 +303,7 @@ class CrossEntropy(torch.autograd.Function):
         ctx.label_smoothing = label_smoothing
         ctx.ignore_index = ignore_index
         ctx.reduction = reduction
+        ctx.buffer_dtype = buffer_dtype_enum
         if reduction == "none":
             return result
         elif reduction == "sum":
@@ -277,7 +318,7 @@ class CrossEntropy(torch.autograd.Function):
             else:
                 denom = indices.shape[0]
             ctx.denom = denom
-            return result.sum(dim=0) / denom
+            return (result.sum(dim=0) / denom).to(dtype)
 
     @staticmethod
     def backward(ctx, dneg_logprobs):
@@ -293,8 +334,7 @@ class CrossEntropy(torch.autograd.Function):
         neg_logprobs, indices, weights_buffer = ctx.saved_tensors
         din = torch.empty_like(neg_logprobs)
         weight = ctx.WEIGHT
-        # run the kernel
-        # neg_logprobs will be modified in place to become our gradient:
+        buffer_dtype = ctx.buffer_dtype
         n_cols = neg_logprobs.shape[-1]
         grid = lambda opt: (
             neg_logprobs.numel() // n_cols,
@@ -315,10 +355,11 @@ class CrossEntropy(torch.autograd.Function):
             WEIGHTS=(weight is not None),
             CLASS_INDICES=(indices.dtype == torch.int64),
             IGNORE_INDEX=ctx.ignore_index,
+            BUFFER_DTYPE=buffer_dtype,
         )
         if ctx.reduction == "mean":
             din /= ctx.denom
-        return din, None, None, None, None, None
+        return din, None, None, None, None, None, None
 
 
 def cross_entropy(
@@ -330,7 +371,7 @@ def cross_entropy(
     label_smoothing=0.0,
 ):
     r"""
-    Returns the Cross Entropy loss of a. If the target is class indcies
+    Returns the Cross Entropy loss of input. If the target is class indcies
     then the ignore_index argument is applicable, while the label_smoothing argument
     is not.  On the other hand, if the target is class probabilites, then the
     label_smoothing argument is applicable, while the ignore_index argument is not.
@@ -347,7 +388,14 @@ def cross_entropy(
         reduction: String: ['none', 'sum', 'mean']
         label_smoothing: Float between 0 and 1
     """
-    return CrossEntropy.apply(a, target, weight, ignore_index, reduction, label_smoothing)
+    return CrossEntropy.apply(
+        a,
+        target,
+        weight,
+        ignore_index,
+        reduction,
+        label_smoothing,
+    )
 
 
 # TODO: What is correct handling of ignore_index?
@@ -381,7 +429,7 @@ def cross_entropy_checker(
         return False
 
     torch_dtype = ltorch.to_torch_dtype(a.dtype)
-    if torch_dtype not in (torch.float32, torch.float64):
+    if torch_dtype not in (torch.float16, torch.bfloat16, torch.float32, torch.float64):
         return False
 
     # These arguments are deprecated and not supported

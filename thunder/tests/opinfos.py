@@ -159,6 +159,16 @@ class SampleInput:
         args, kwargs = tree_map(to_noncontiguous, self.args), tree_map(to_noncontiguous, self.kwargs)
         return SampleInput(*args, **kwargs)
 
+    def to(dtype: torch.dtype):
+        def _to(x):
+            if isinstance(x, torch.Tensor):
+                return x.to(dtype)
+
+            return x
+
+        args, kwargs = tree_map(_to, self.args), tree_map(_to, self.kwargs)
+        return SampleInput(*args, **kwargs)
+
     def jax(self):
         def to_jax(t):
             if isinstance(t, torch.Tensor):
