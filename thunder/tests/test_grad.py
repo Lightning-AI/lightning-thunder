@@ -346,8 +346,9 @@ def snippet_jvp_correctness(func, args, executor):
     check_jvp(func, *args, executor=executor)
 
 
+# TODO Use the given comparator
 @ops((op for op in opinfos if op.name in supported_jvp_ops), supported_dtypes=(dtypes.float64,))
-def test_jvp_correctness(op, device, dtype, executor):
+def test_jvp_correctness(op, device, dtype, executor, comp):
     at_least_one_differentiable_input = False
     eps = 1e-2
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
@@ -378,8 +379,9 @@ def snippet_vjp_correctness(func, args, executor):
     check_vjp(func, *args, executor=executor)
 
 
+# TODO Use the given comparator
 @ops((op for op in opinfos if op.name in supported_vjp_ops), supported_dtypes=(dtypes.float64,))
-def test_vjp_correctness(op, device, dtype, executor):
+def test_vjp_correctness(op, device, dtype, executor, comp):
     at_least_one_differentiable_input = False
     eps = 1e-2
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
@@ -422,7 +424,7 @@ def test_vjp_correctness(op, device, dtype, executor):
 # Embedding is a special case because its Jacobian product can't be approximated
 # with finite differences
 @ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
-def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
+def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         # Compute vjp result using PyTorch
         out = op.torch_reference(*sample.args, **sample.kwargs)
@@ -434,8 +436,8 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor):
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         actual_out, (gindices, gweight) = executor.make_callable(inline(vjp(filtered_op)))(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
-        torch.testing.assert_close(gweight, expected[0])
-        torch.testing.assert_close(actual_out, out)
+        comp(gweight, expected[0])
+        comp(actual_out, out)
 
 
 # TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad

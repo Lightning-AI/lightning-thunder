@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import pytest
 import torch
+from torch.testing import assert_close
 
 from lightning_utilities.core.imports import package_available
 
@@ -189,8 +190,16 @@ def _instantiate_opinfo_test_template(
 
     test_name = "_".join((template.__name__, opinfo.name, executor.name, device_str, str(dtype)))
 
+    # Acquires the comparator
+    # TODO If multiple decorators define custom comparators and they "overlap", then which
+    #   custom comparator is applied by this is uncertain
+    comp = assert_close
+    for decorator in opinfo.test_decorators(template.__name__, executor, device, dtype):
+        if isinstance(decorator, custom_comparator):
+            comp = decorator.comparator
+
     def test():
-        result = template(opinfo, device_str, dtype, executor)
+        result = template(opinfo, device_str, dtype, executor, comp)
         return result
 
     for decorator in opinfo.test_decorators(template.__name__, executor, device, dtype):
@@ -411,3 +420,12 @@ def requiresNVFuser(fn):
         return fn(*args, **kwargs)
 
     return _fn
+
+
+# A dummy decorator that passes the comparator metadata
+class custom_comparator:
+    def __init__(self, comparator):
+        self.comparator = comparator
+
+    def __call__(self, test_template):
+        return test_template

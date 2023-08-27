@@ -22,9 +22,10 @@ if APEX_CROSS_ENTROPY_AVAILABLE:
 
 # NOTE This test modifies the global executor map, so it technically should not
 # be run in parallel with other tests
-@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
+@pytest.mark.parametrize("dtype", [torch.float32])
+@pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
-def test_apex_cross_entropy(executor, device, dtype):
+def test_apex_cross_entropy(device, dtype):
     if not APEX_CROSS_ENTROPY_AVAILABLE:
         pytest.skip("Apex cross entropy is not available")
 
@@ -37,7 +38,7 @@ def test_apex_cross_entropy(executor, device, dtype):
         def test(logits, labels):
             return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
 
-        ctest = thunder.compile(test, executors_list=["apex_xentropy"] + executor.executors_list())
+        ctest = thunder.compile(test, executors_list=["apex_xentropy"])
         actual = ctest(logits, labels)
         torch.testing.assert_close(actual, expected)
         last_trace = thunder.last_traces(ctest)[-1]
@@ -58,17 +59,15 @@ def snippet_torch_consistency(op, torch_op, sample):
     assert any(bsym.sym.name == "apex_cross_entropy" for bsym in last_trace.bound_symbols)
 
 
-# TODO Make it easier for executors to write tests like this, including writing them out-of-tree
-@ops(
-    (get_opinfo("cross_entropy"),),
-    supported_devicetypes=(devices.DeviceType.CUDA,),
-    supported_dtypes=(dtypes.float16, dtypes.float32),
-)
-def test_apex_torch_consistency(op, device, dtype, executor):
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+@pytest.mark.parametrize("device,", ["cuda"])
+def test_apex_torch_consistency(device, dtype):
     from thunder.executors.apex_entropyex import cross_entropy_checker
 
     if not APEX_CROSS_ENTROPY_AVAILABLE:
         pytest.skip("Apex cross entropy is not available")
+
+    op = get_opinfo("cross_entropy")
 
     try:
         register_apex_entropyex()
@@ -76,7 +75,7 @@ def test_apex_torch_consistency(op, device, dtype, executor):
         def fn(*args, **kwargs):
             return thunder.torch.cross_entropy(*args, **kwargs)
 
-        cfn = thunder.compile(fn, executors_list=["apex_xentropy"] + executor.executors_list())
+        cfn = thunder.compile(fn, executors_list=["apex_xentropy"])
         at_least_one_supported_input = False
         for sample in op.reference_inputs(device, dtype, requires_grad=False):
             if not cross_entropy_checker(*sample.args, **sample.kwargs):

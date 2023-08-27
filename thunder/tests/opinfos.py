@@ -12,6 +12,7 @@ import pytest
 
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
+from torch.testing import assert_close
 from looseversion import LooseVersion
 
 import thunder.core.devices as devices
@@ -20,7 +21,7 @@ import thunder.clang as clang
 import thunder.core.prims as prims
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
 from thunder.tests.make_tensor import make_tensor
 from thunder.core.symbol import Symbol
 
@@ -132,20 +133,46 @@ if JAX_AVAILABLE:
     }
 
 
+class TorchTensorComp(object):
+    """
+    This class provides a very simple wrapper over torch.testing.assert_close,
+    and is used as a default comparator for per-SampleInput comparisons.
+    """
+
+    __slots__ = [
+        "kwargs",
+    ]
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def __call__(self, a, b, **kwargs):
+        # Call assert_close with parameters defined as a union
+        # of `kwargs` and `self.kwargs` with the preference
+        # given to `self.kwargs`.
+        assert_close(a, b, **(kwargs | self.kwargs))
+
+
 class SampleInput:
     """Represents sample inputs to a function."""
 
     __slots__ = [
         "args",
         "kwargs",
+        "comp",
     ]
 
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        self.comp = None
 
     def __repr__(self):
         return f"[SampleInput args={self.args} kwargs={self.kwargs}]"
+
+    def set_comparator(self, comp):
+        self.comp = comp
+        return self
 
     def noncontiguous(self):
         def to_noncontiguous(t):
@@ -157,7 +184,7 @@ class SampleInput:
             return t
 
         args, kwargs = tree_map(to_noncontiguous, self.args), tree_map(to_noncontiguous, self.kwargs)
-        return SampleInput(*args, **kwargs)
+        return SampleInput(*args, **kwargs).set_comparator(self.comp)
 
     def to(dtype: torch.dtype):
         def _to(x):
@@ -179,7 +206,7 @@ class SampleInput:
             return t
 
         args, kwargs = tree_map(to_jax, self.args), tree_map(to_jax, self.kwargs)
-        return SampleInput(*args, **kwargs)
+        return SampleInput(*args, **kwargs).set_comparator(self.comp)
 
     def numpy(self):
         def to_numpy(t):
@@ -191,7 +218,7 @@ class SampleInput:
             return t
 
         args, kwargs = tree_map(to_numpy, self.args), tree_map(to_numpy, self.kwargs)
-        return SampleInput(*args, **kwargs)
+        return SampleInput(*args, **kwargs).set_comparator(self.comp)
 
     def thunder(self):
         def to_thunder(t):
@@ -200,7 +227,7 @@ class SampleInput:
             return t
 
         args, kwargs = tree_map(to_thunder, self.args), tree_map(to_thunder, self.kwargs)
-        return SampleInput(*args, **kwargs)
+        return SampleInput(*args, **kwargs).set_comparator(self.comp)
 
 
 # TODO: add executor
@@ -599,6 +626,12 @@ asinh_opinfo = OpInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
             active_if=nvfuser_version < LooseVersion("0.0.3"),
+        ),
+        # Sets (slightly) more permissive atol and rtol precisions for complex64
+        #   vs. assert_close's default atol=1e-5 and rtol=1.3e-6
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1.3e-6)),
+            dtypes=(datatypes.complex64,),
         ),
     ),
 )
@@ -4032,18 +4065,29 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((), 0),
     )
 
-    # NOTE: torch.log_softmax(x, dim, dtype=float) returns a float64 tensor while thunder returns a float32 tensor.
-    # NOTE: Skip torch.bfloat16 because of atol tolerance
-    supported_float_dtypes = {None, torch.float32, torch.float64}
+    for shape, dim in cases:
+        yield SampleInput(make(shape), dim=dim)
 
-    # Skip dtype parameter with gradient testing because tolerances are too conservative
-    if requires_grad:
-        for shape, dim in cases:
-            yield SampleInput(make(shape), dim=dim)
-    else:
-        for example, dtype_option in itertools.product(cases, supported_float_dtypes):
-            shape, dim = example
-            yield SampleInput(make(shape), dim=dim, dtype=dtype_option)
+    # Adds dtype parameter testing when not doing grad testing
+    # TODO Reconcile the grad and non-grad samples
+    if not requires_grad:
+        # NOTE: torch.log_softmax(x, dim, dtype=float) returns a float64 tensor while thunder returns a float32 tensor.
+        supported_float_dtypes = {None, torch.bfloat16, torch.float32, torch.float64}
+
+        # Defines a custom comparator for when the output is bfloat16
+        # TODO These are very loose tolerances, but observered differences can be up to 0.019 in absolute difference
+        #   and .02 in relativle difference
+        bfloat16_comp = TorchTensorComp(atol=1e-1, rtol=1e-1)
+
+        for (shape, dim), dtype_option in itertools.product(cases, supported_float_dtypes):
+            si = SampleInput(make(shape), dim=dim, dtype=dtype_option)
+
+            # Sets the bfloat16 comparator with custom tolerances when the output is requrested
+            #   to be in bfloat16
+            if dtype_option is torch.bfloat16:
+                si.set_comparator(bfloat16_comp)
+
+            yield si
 
 
 softmax_opinfo = OpInfo(
@@ -4059,12 +4103,6 @@ softmax_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # Tolerances are currently too conservative for this test with half precision
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
         ),
     ),
 )
@@ -4085,11 +4123,11 @@ log_softmax_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # Tolerances are currently too conservative for this test with half precision
+        # Sets more permissive atol and rtol precisions for bfloat16 than assert_close's defaults
+        #   (which are 1.6e-2 and 1e-5)
         DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            dtypes=(datatypes.bfloat16,),
         ),
     ),
 )
