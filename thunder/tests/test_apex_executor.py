@@ -22,7 +22,7 @@ if APEX_CROSS_ENTROPY_AVAILABLE:
 
 # NOTE This test modifies the global executor map, so it technically should not
 # be run in parallel with other tests
-@pytest.mark.parametrize("dtype", [torch.float32])
+@pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy(device, dtype):
@@ -59,7 +59,7 @@ def snippet_torch_consistency(op, torch_op, sample):
     assert any(bsym.sym.name == "apex_cross_entropy" for bsym in last_trace.bound_symbols)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32], ids=("float16", "float32"))
 @pytest.mark.parametrize("device,", ["cuda"])
 def test_apex_torch_consistency(device, dtype):
     from thunder.executors.apex_entropyex import cross_entropy_checker

@@ -338,7 +338,7 @@ class OpInfo:
 
         self._dtypes = dtypes if dtypes is not None else (datatypes.exact, datatypes.inexact)
         self.sample_input_generator = sample_input_generator
-        self.reference_input_generator = sample_input_generator
+        self.reference_input_generator = reference_input_generator
         self.error_input_generator = error_input_generator
         self.benchmark_generator = benchmark_generator
         self.method_variant = method_variant
@@ -4294,7 +4294,6 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
 
     # input_shape, target_shape
     shapes = (
-        # input_shape[1] should be divisible by 4 for Apex executor testing
         ((2, 16), (2,)),
         ((7, 18), (7,)),
         ((7, 18), (7, 18)),
@@ -4346,7 +4345,6 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # input_shape, target_shape
     shapes = (
-        # input_shape[1] should be divisible by 4 for Apex executor testing
         ((2, 16), (2,)),
         ((7, 18), (7,)),
         # ((7, 18), (7, 18)),
