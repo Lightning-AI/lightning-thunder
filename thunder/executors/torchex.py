@@ -1467,7 +1467,7 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.core.transforms import forward_and_backward_from_trace
 
         def make_trace(func):
-            return partial(trace, func, inline_trace=False)
+            return partial(trace(inline_trace=False), func)
 
         def split_forward_backward(requires_grad_mask, *args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used

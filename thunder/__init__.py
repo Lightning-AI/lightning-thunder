@@ -381,9 +381,9 @@ class CompileData:
         use_dynamic_caching: Optional[bool] = None,
         use_static_caching: Optional[bool] = None,
         use_last_executed: Optional[bool] = None,
-        use_rematerialization: bool = False,
         use_cudagraphs: bool = False,
         use_generated_backward: bool = False,
+        use_rematerialization: bool = False,
     ):
         #
         # Determines the cache mode
@@ -493,47 +493,55 @@ class CompileData:
 # If include_return_statement is True then the trace will terminate with a RETURN operation
 # If include_return_statement is False then the trace will end without an explicit RETURN
 # TODO Consider modeling additional calls to trace()
+# TODO Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
+#   to separate the traced function's args and kwargs from this function's kwargs
+
+
 def trace(
-    fn,
-    *args,
-    langctx: Optional[Any] = None,
+    langctx: None | Any = None,
     inline_trace: bool = True,
     rename_proxies: bool = True,
     include_return_statement: bool = True,
-    **kwargs,
-) -> Any | TraceCtx:
-    langctx = langctx if langctx is not None else get_default_langctx()
+) -> Callable:
+    def _trace(
+        fn,
+        *args,
+        **kwargs,
+    ) -> Any | TraceCtx:
+        langctx_ = langctx if langctx is not None else get_default_langctx()
 
-    try:
-        langctx_tok = set_langctx(langctx)
-        current_trace = get_tracectx()
-        tracectx_tok = None
+        try:
+            langctx_tok = set_langctx(langctx_)
+            current_trace = get_tracectx()
+            tracectx_tok = None
 
-        if current_trace is not None and inline_trace:
-            return fn(*args, **kwargs)
+            if current_trace is not None and inline_trace:
+                return fn(*args, **kwargs)
 
-        trace = TraceCtx(fn)
-        tracectx_tok = set_tracectx(trace)
+            trace = TraceCtx(fn)
+            tracectx_tok = set_tracectx(trace)
 
-        proxyargs, proxykwargs = args, kwargs
-        proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs, rename_proxies=rename_proxies)
-        trace.args, trace.kwargs = proxyargs, proxykwargs
+            proxyargs, proxykwargs = args, kwargs
+            proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs, rename_proxies=rename_proxies)
+            trace.args, trace.kwargs = proxyargs, proxykwargs
 
-        result = fn(*proxyargs, **proxykwargs)
+            result = fn(*proxyargs, **proxykwargs)
 
-        if include_return_statement:
-            prims.python_return(result)
+            if include_return_statement:
+                prims.python_return(result)
 
-        trace.set_output(result)
+            trace.set_output(result)
 
-    finally:
-        # Resets contexts
-        reset_langctx(langctx_tok)
+        finally:
+            # Resets contexts
+            reset_langctx(langctx_tok)
 
-        if tracectx_tok is not None:
-            reset_tracectx(tracectx_tok)
+            if tracectx_tok is not None:
+                reset_tracectx(tracectx_tok)
 
-    return trace
+        return trace
+
+    return _trace
 
 
 def _wrap_in_tom(
@@ -612,29 +620,29 @@ def compile(
     *,
     langctx: Optional[Any] = None,
     executors_list: Optional[list[executors.Executor]] = None,
-    only_execute_prims: bool = False,
-    disable_preprocessing: bool = False,
     always_trace: Optional[bool] = None,
     use_dynamic_caching: Optional[bool] = None,
     use_static_caching: Optional[bool] = None,
     use_last_executed: Optional[bool] = None,
-    use_rematerialization: bool = False,
     use_cudagraphs: bool = False,
     use_generated_backward: bool = False,
+    use_rematerialization: bool = False,
+    only_execute_prims: bool = False,
+    disable_preprocessing: bool = False,
 ) -> Callable:
     cd = CompileData(
         fn=fn,
         langctx=langctx,
         executors_list=executors_list,
-        only_execute_prims=only_execute_prims,
-        disable_preprocessing=disable_preprocessing,
         always_trace=always_trace,
         use_dynamic_caching=use_dynamic_caching,
         use_static_caching=use_static_caching,
         use_last_executed=use_last_executed,
-        use_rematerialization=use_rematerialization,
         use_cudagraphs=use_cudagraphs,
         use_generated_backward=use_generated_backward,
+        use_rematerialization=use_rematerialization,
+        only_execute_prims=only_execute_prims,
+        disable_preprocessing=disable_preprocessing,
     )
 
     @wraps(fn)
@@ -685,7 +693,7 @@ def compile(
         # Acquires the trace OR inlines the trace into an existing trace and
         #   returns the (proxied) result of the operation
         cd.last_trace_tracing_start = time.time_ns()
-        trc_or_result = trace(cd.post_processed_function, *args, langctx=langctx, **kwargs)
+        trc_or_result = trace(langctx=langctx)(cd.post_processed_function, *args, **kwargs)
         cd.last_trace_tracing_stop = time.time_ns()
 
         # Returns the (proxied) result if this call to compile was inlined
@@ -784,7 +792,7 @@ class LCFunction(pytorch.autograd.Function):
         # TODO Add module support
 
         # TODO Transform for grad
-        trc = trace(fn, *args, **kwargs)
+        trc = trace()(fn, *args, **kwargs)
 
         grad_forward = pytorch_grad_transform(trc)
 
@@ -860,51 +868,61 @@ def compile_torch(
     *,
     langctx: Optional[Any] = None,
     executors_list: Optional[list[executors.Executor]] = None,
-    only_execute_prims: bool = False,
-    disable_preprocessing: bool = False,
     always_trace: Optional[bool] = None,
     use_dynamic_caching: Optional[bool] = None,
     use_static_caching: Optional[bool] = None,
     use_last_executed: Optional[bool] = None,
-    use_rematerialization: bool = False,
     use_cudagraphs: bool = False,
-    use_generated_backward: bool = False,
+    only_execute_prims: bool = False,
+    disable_preprocessing: bool = False,
 ) -> Callable:
     cd = CompileData(
         fn=fn,
         langctx=langctx,
         executors_list=executors_list,
-        only_execute_prims=only_execute_prims,
-        disable_preprocessing=disable_preprocessing,
         always_trace=always_trace,
         use_dynamic_caching=use_dynamic_caching,
         use_static_caching=use_static_caching,
         use_last_executed=use_last_executed,
-        use_rematerialization=use_rematerialization,
         use_cudagraphs=use_cudagraphs,
-        use_generated_backward=use_generated_backward,
+        use_rematerialization=False,
+        use_generated_backward=False,
+        only_execute_prims=only_execute_prims,
+        disable_preprocessing=disable_preprocessing,
     )
 
-    # TODO Is there a better way to do this? Seems like a minimal cost, but maybe it can be done better.
-    _dummy = pytorch.tensor((), device="cpu", dtype=pytorch.float32, requires_grad=True)
-
+    # TODO Add timings
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        # NOTE pytorch.autograd.Function.apply() does not accept keyword arguments
-        # NOTE This call to apply() packs the args and kwargs in a tuple.
-        #   This would typically prevent autograd.Function.apply() from marking inexact tensor
-        #   outputs as requiring grad, so this passes a "dummy" tensor that requires_grad to let
-        #   apply() know to mark inexact tensor outputs as requiring grad (and having the correct)
-        #   autograd history.
-        # NOTE Another option would be to flatten and unflatten the args and kwargs, but that can be
-        #   slow.
-        # NOTE See the GRAD OUTS note above
-        result = LCFunction.apply(_dummy, fn, cd, (args, kwargs))
-        return result[0]
+        # TODO Add caching
 
-    wrapper._lc_cd = cd
+        # TODO Review recursive trace support
+        current_trace = get_tracectx()
+        if current_trace is not None:
+            raise NotImplementedError(
+                "Recursively tracing is not yet supported. Please file an issue requesting this feature."
+            )
+
+        # trc = trace(cd.post_processed_function, *args, langctx=langctx, **kwargs)
 
     return wrapper
+    # @wraps(fn)
+    # def wrapper(*args, **kwargs):
+    #     # NOTE pytorch.autograd.Function.apply() does not accept keyword arguments
+    #     # NOTE This call to apply() packs the args and kwargs in a tuple.
+    #     #   This would typically prevent autograd.Function.apply() from marking inexact tensor
+    #     #   outputs as requiring grad, so this passes a "dummy" tensor that requires_grad to let
+    #     #   apply() know to mark inexact tensor outputs as requiring grad (and having the correct)
+    #     #   autograd history.
+    #     # NOTE Another option would be to flatten and unflatten the args and kwargs, but that can be
+    #     #   slow.
+    #     # NOTE See the GRAD OUTS note above
+    #     result = LCFunction.apply(_dummy, fn, cd, (args, kwargs))
+    #     return result[0]
+
+    # wrapper._lc_cd = cd
+
+    # return wrapper
 
 
 def compile_data(fn) -> Optional[CompileData]:

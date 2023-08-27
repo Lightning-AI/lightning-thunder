@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 import torch
 
+import thunder
 import thunder.core.dtypes as dtypes
 
-from thunder import trace as construct_trace
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map, tree_flatten
@@ -71,8 +71,8 @@ def _generate_supported_op_list(checker):
                 continue
             samples = iter(opinfo.sample_inputs("cpu", dtypes.float64, requires_grad=True))
             sample = next(samples)
-            trace = construct_trace(opinfo.op, *sample.args, **sample.kwargs)
-            all_supported = all(checker(s) for s in trace.bound_symbols)
+            trc = thunder.trace()(opinfo.op, *sample.args, **sample.kwargs)
+            all_supported = all(checker(s) for s in trc.bound_symbols)
             if all_supported:
                 yield opinfo.name
 
@@ -548,7 +548,7 @@ def test_multiple_output_vjp(executor, device, _):
     # a string of code with something like "out1, out2 = <lambda>(input)"
     # ops_to_torch_ops_map["sincos"] = lambda x: (torch.sin(x), torch.cos(x))
     # Therefore here we'll just check that the trace is correct
-    trace = construct_trace(inline(vjp(func)), (x,), (v, v))
+    trace = thunder.trace()(inline(vjp(func)), (x,), (v, v))
     # Length of outputs should be two
     assert len(trace.output) == 2
     # Length of the first output should be two
@@ -759,7 +759,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
-    trace = trace(func, a, b, c=c, inline_trace=False)
+    trace = trace(inline_trace=False)(func, a, b, c=c)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)
@@ -793,7 +793,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor, device
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
-    trace = trace(func, a, b, c=c, inline_trace=False)
+    trace = trace(inline_trace=False)(func, a, b, c=c)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
     fw_extrace, _ = transform_for_execution(

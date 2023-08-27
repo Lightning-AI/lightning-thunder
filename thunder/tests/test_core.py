@@ -36,7 +36,7 @@ def test_make_callable_from_trace(executor, device: str, _):
 
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
-    traced_foo = thunder.trace(foo, a, b, inline_trace=False)
+    traced_foo = thunder.trace(inline_trace=False)(foo, a, b)
     assert len(traced_foo.bound_symbols) == 4
     assert traced_foo.bound_symbols[-2].sym.name == "add"
 
@@ -1396,7 +1396,7 @@ def test_visitor_transform():
     def foo(a, b):
         return a + b
 
-    trc = thunder.trace(foo, a, b)
+    trc = thunder.trace()(foo, a, b)
 
     from thunder.core.transforms import visitor_transform, VISIT_TYPE
 
@@ -1448,7 +1448,7 @@ def test_insert_inplace():
     def foo(a, b):
         return a + b
 
-    trc = thunder.trace(foo, a, b)
+    trc = thunder.trace()(foo, a, b)
 
     from thunder.core.transforms import insert_inplace
 
@@ -1477,7 +1477,7 @@ def test_replace_inplace():
     def foo(a, b):
         return a + b
 
-    trc = thunder.trace(foo, a, b)
+    trc = thunder.trace()(foo, a, b)
 
     from thunder.core.transforms import insert_inplace, replace_inplace
 
@@ -1568,7 +1568,7 @@ def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
     def foo():
         return clang.maybe_convert_to_dtype(1, dtype)
 
-    trace = thunder.trace(foo)
+    trace = thunder.trace()(foo)
 
     assert len(trace.bound_symbols) == 2
     symbol = trace.bound_symbols[0]
@@ -1578,7 +1578,7 @@ def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
     def bar(a, b):
         return clang.add(a, b)
 
-    trace = thunder.trace(bar, 1, 2)
+    trace = thunder.trace()(bar, 1, 2)
     # Trace consists of two trivial unpack and addition
     assert len(trace.bound_symbols) == 4
     symbol = trace.bound_symbols[-2]
@@ -1597,7 +1597,7 @@ def test_argument_of_none(executor, device, dtype):
     tdtype = ltorch.to_torch_dtype(dtype)
     a, b = [make_tensor((1,), device=device, dtype=tdtype) for _ in range(2)]
     c = None
-    trace = thunder.trace(foo, a, b, c)
+    trace = thunder.trace()(foo, a, b, c)
 
     producers = thunder.core.utils.producers(trace)
     consumers = thunder.core.utils.consumers(trace)
@@ -1614,7 +1614,7 @@ def test_torch_call_recording(executor, device: str, _):
 
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    torch_trace = thunder.trace(func, a)
+    torch_trace = thunder.trace()(func, a)
     assert len(torch_trace.bound_symbols) == 3
     assert torch_trace.bound_symbols[-2].sym.name == "dropout"
     assert torch_trace.bound_symbols[-2].sym.id == "torch.nn.functional.dropout"
@@ -1776,7 +1776,7 @@ def test_nested_trace(executor, device, _):
         return clang.add(a, b)
 
     def bar(a, b):
-        foo_trace = thunder.trace(foo, a, b, inline_trace=False)
+        foo_trace = thunder.trace(inline_trace=False)(foo, a, b)
         assert len(foo_trace.bound_symbols) == 4
         assert foo_trace.bound_symbols[-2].sym.name == "add"
         return clang.mul(a, b)
@@ -1784,7 +1784,7 @@ def test_nested_trace(executor, device, _):
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    bar_trace = thunder.trace(bar, a, b)
+    bar_trace = thunder.trace()(bar, a, b)
     assert len(bar_trace.bound_symbols) == 4
     assert bar_trace.bound_symbols[-2].sym.name == "mul"
 
@@ -1801,7 +1801,7 @@ def test_nested_trace_no_name_collision(executor, device, _):
 
     def bar(__a, __b):
         a, b = __a, __b
-        foo_trace = thunder.trace(foo, a, b, inline_trace=False)
+        foo_trace = thunder.trace(inline_trace=False)(foo, a, b)
         # The name of the output of the add symbol should not be the same as
         # the name of the first argument to the bar function.
         assert foo_trace.bound_symbols[-2].sym.name == "add"
@@ -1811,7 +1811,7 @@ def test_nested_trace_no_name_collision(executor, device, _):
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    thunder.trace(bar, a, b)
+    thunder.trace()(bar, a, b)
 
 
 @instantiate(dtypes=NOTHING)
@@ -1831,7 +1831,7 @@ def test_trace_args_no_name_collision(executor, device, _):
     def func(*args):
         return args[0] + args[1]
 
-    trace = thunder.trace(func, a, a)
+    trace = thunder.trace()(func, a, a)
     # trace.args must have non-duplicate names
     # because Python disallows duplicate names in function definitions
     assert trace.args[0].name != trace.args[1].name
@@ -1854,7 +1854,7 @@ def test_eval_trace(executor, device, _):
     c = 4.0
 
     # Test eval_trace() with eager proxy execution
-    foo_trace = thunder.trace(foo, a, b, c=c)
+    foo_trace = thunder.trace()(foo, a, b, c=c)
     try:
         trace = TraceCtx(None)
         trace_token = set_tracectx(trace)
@@ -1883,7 +1883,7 @@ def test_eval_trace(executor, device, _):
     assert_close(actual, expected)
 
     # Test eval_trace() with retracing
-    foo_trace2 = thunder.trace(eval_trace_as_function(foo_trace), a, b, c=c)
+    foo_trace2 = thunder.trace()(eval_trace_as_function(foo_trace), a, b, c=c)
     # How to test that two traces are equal?
     # Two operators and others are do-nothing annotations
     assert len(foo_trace2.bound_symbols) == 7
@@ -1909,7 +1909,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
 
     a = torch.ones((2, 2), device=device, dtype=torch.float32)
 
-    foo_trace = thunder.trace(foo1, a)
+    foo_trace = thunder.trace()(foo1, a)
     assert len(foo_trace.bound_symbols) == 2
     assert foo_trace.bound_symbols[0].sym.name == "unpack_trivial"
     assert len(foo_trace.output) == 2
@@ -1928,7 +1928,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
         return a, a
 
     for foo in [foo1, foo2]:
-        foo_trace = thunder.trace(identity(foo), a)
+        foo_trace = thunder.trace()(identity(foo), a)
         assert len(foo_trace.bound_symbols) == 4
         assert len(foo_trace.output) == 2
         assert foo_trace.output[0].name == foo_trace.output[1].name
@@ -1962,7 +1962,7 @@ def test_transforms_identity(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
     c = 4.0
 
-    nested_id_trace = thunder.trace(nested_id_func, a, b, c=c)
+    nested_id_trace = thunder.trace()(nested_id_func, a, b, c=c)
     # one annotating symbol per input and one actual symbol
     assert len(nested_id_trace.bound_symbols) == 6
     assert nested_id_trace.bound_symbols[-2].sym.id == Transforms.IdentityOp
@@ -2008,7 +2008,7 @@ def test_transforms_inline(executor, device, _):
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    inlined_nested_id_trace = thunder.trace(inline(nested_id_func), a, b)
+    inlined_nested_id_trace = thunder.trace()(inline(nested_id_func), a, b)
     assert len(inlined_nested_id_trace.bound_symbols) == 6
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in inlined_nested_id_trace.bound_symbols)
     assert inlined_nested_id_trace.bound_symbols[-4].sym.name == "add"
@@ -2021,7 +2021,7 @@ def test_transforms_inline(executor, device, _):
 
     # Since the outer-most transform is inline, the trace should not contain
     # any identity transforms.
-    transformed_trace = thunder.trace(transformed_func, a, b)
+    transformed_trace = thunder.trace()(transformed_func, a, b)
     assert len(transformed_trace.bound_symbols) == 6
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
 

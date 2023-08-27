@@ -44,11 +44,10 @@ import numpy as np
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
 #   issue today. We should refactor so we dont have a circular import problem.
-def construct_trace(*args, **kwargs):
+def construct_trace(inline_trace=False, **extra_kwargs):
     import thunder
 
-    kwargs.update(inline_trace=False)
-    return thunder.trace(*args, **kwargs)
+    return thunder.trace(inline_trace=inline_trace, **extra_kwargs)
 
 
 #
@@ -728,7 +727,7 @@ def lower_to_prims(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = construct_trace(func, *args, **kwargs)
+        trace = construct_trace()(func, *args, **kwargs)
         return eval_trace(trace, *args, **kwargs, symbol_mapper=lower_to_prims_mapper)
 
     return wrapper
@@ -750,7 +749,7 @@ def identity(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = construct_trace(func, *args, **kwargs)
+        trace = construct_trace()(func, *args, **kwargs)
         return identity_call(*args, **kwargs, trace=trace)
 
     return wrapper
@@ -806,7 +805,7 @@ def inline(func):
     """
 
     def wrapper(*args, **kwargs):
-        trace = construct_trace(func, *args, **kwargs)
+        trace = construct_trace()(func, *args, **kwargs)
         return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
 
     return wrapper
@@ -964,7 +963,7 @@ def unwrap_one_level_of_subsymbols(trace):
 def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
     args, in_dims = unzip2(args)
     unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
-    trace = construct_trace(fn, *unbatched_args, **kwargs)
+    trace = construct_trace()(fn, *unbatched_args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     outs = _vmap_call_metafunc(False, args, in_dims, 0, axis_size, trace=trace, **kwargs)
     if isinstance(outs, Sequence):
@@ -1165,7 +1164,7 @@ def vmap(func, in_dims=0, out_dims=0, axis_size=None):
             in_dims_flat, in_dims_spec = tree_flatten(in_dims)
             assert len(in_dims_flat) == len(args_flat), "in_dims must have the same length as args, kwargs"
         unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
-        trace = construct_trace(func_flat, *unbatched_args_flat)
+        trace = construct_trace()(func_flat, *unbatched_args_flat)
         outs = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, trace=trace)
         return outs
 
@@ -1395,7 +1394,7 @@ def _vmap_call_jvp(args: JVPDual, in_dims, out_dims, axis_size, trace: Trace, **
     primals, tangents = safe_zip(*args)
     in_dims, _ = safe_zip(*in_dims)
     out_dims, _ = safe_zip(*out_dims)
-    vmapped_trace = construct_trace(
+    vmapped_trace = construct_trace()(
         inline(vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), *primals
     )
     vmapped_func = partial(eval_trace, vmapped_trace)
@@ -1420,7 +1419,7 @@ def jvp(func):
     """
 
     def wrapper(primals, tangents):
-        trace = construct_trace(func, *primals)
+        trace = construct_trace()(func, *primals)
         return jvp_call(primals, tangents, trace=trace)
 
     return wrapper
@@ -2163,7 +2162,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     Returns:
         Callable: Augmented forward rule for the composite function
     """
-    trace = construct_trace(decomposed_fn, *args, **kwargs)
+    trace = construct_trace()(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     # There may be a dead node like "_ = prims.convert_element_type(0, float)"
     # in the trace. We need to remove it before we can use the trace for
@@ -2180,7 +2179,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
 
 def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads):
     kwargs = {} if kwargs is None else kwargs
-    trace = construct_trace(decomposed_fn, *args, **kwargs)
+    trace = construct_trace()(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     trace = dce(trace)[0]
     # bound_symbols = iter_bound_symbols(trace.bound_symbols)
@@ -2466,7 +2465,7 @@ def vjp(func):
 
     def _vjp(primals, cotangents, **kwargs):
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
-        trace = construct_trace(flat_func, *flat_args)
+        trace = construct_trace()(flat_func, *flat_args)
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
         gprimals, gkwargs = tree_unflatten(vjp_result, spec)
         grads = gprimals + (gkwargs,) if len(gkwargs) != 0 else gprimals
@@ -2494,7 +2493,7 @@ def value_and_grad(func):
             raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
 
     def _value_and_grad(*args, **kwargs):
-        trace = construct_trace(func, *args, **kwargs)
+        trace = construct_trace()(func, *args, **kwargs)
         cotangents = tree_map(lambda v: ones_like(v), trace.output)
         return vjp(func)(args, cotangents, **kwargs)
 
@@ -2555,7 +2554,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
-    unpacking_trace = construct_trace(unpacking_fn, (saved_tensors, saved_other), cotangents, rename_proxies=False)
+    unpacking_trace = construct_trace(rename_proxies=False)(unpacking_fn, (saved_tensors, saved_other), cotangents)
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
     backward_trace.args = unpacking_trace.args
@@ -2646,7 +2645,7 @@ def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> 
         else:
             raise ValueError(f"forward_and_backward_from_trace: ones_like got an unsupported type {type(x)}")
 
-    forward_trace = construct_trace(augmented_forward_fn, *trace.args, **trace.kwargs)
+    forward_trace = construct_trace()(augmented_forward_fn, *trace.args, **trace.kwargs)
     # We set forward trace to construct proxies because we need these proxies to
     # have different names than the ones in the forward trace.
     try:
@@ -2669,7 +2668,7 @@ def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> 
         return out
 
     saved_for_backward = forward_trace.output[1]
-    backward_trace = construct_trace(backward_fn, saved_for_backward, cotangents, rename_proxies=False)
+    backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
 
     # We are done with constructing the forward and backward passes at this
     # stage. The following is not strictly necessary, but it's good to filter
@@ -2743,7 +2742,7 @@ def autocast_linear_rule(a, w, bias, dtype):
 
 
 def decomposed_fn_autocast_rule(*args, fn, dtype, **kwargs):
-    trace = construct_trace(fn, *args, **kwargs)
+    trace = construct_trace()(fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
     return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
@@ -2782,7 +2781,7 @@ def autocast(func: Callable, dtype: dtypes.dtype):
 
     @wraps(func)
     def wrapper(*args, **kwargs):
-        trace = construct_trace(func, *args, **kwargs)
+        trace = construct_trace()(func, *args, **kwargs)
         return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
     return wrapper
