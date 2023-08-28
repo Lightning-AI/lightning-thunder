@@ -2572,7 +2572,18 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
     backward_trace.bound_symbols = tuple((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
 
 
-def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> ForwardBackwardTraces:
+# NOTE: Returning namedtuples from compiled functions doesn't work. See:
+# https://github.com/Lightning-AI/lightning-thunder/issues/881
+# Note [Grad forward output spec]
+# If it did work it would be nice to use this namedtuple
+# instead of the plain tuple or dict that we're using now.
+TorchAutogradForwardData = namedtuple(
+    "TorchAutogradForwardData",
+    ["output", "flat_args", "flat_output", "args_spec", "output_spec"],
+)
+
+
+def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> ForwardBackwardTraces:
     """Generates the forward and backward passes from a trace.
 
     This is a convenience function that combines the functionality of
@@ -2629,10 +2640,19 @@ def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> 
     def augmented_forward_fn(*args, **kwargs):
         result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
         saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
-        if flatten_forward_out:
-            flat_out, spec = tree_flatten(result)
-            flat_out = tuple(flat_out)
-            return ((spec, flat_out), saved_for_backward)
+        if torch_autograd:
+            flat_args, args_spec = tree_flatten((args, kwargs))
+            flat_output, output_spec = tree_flatten(result)
+            flat_output = tuple(flat_output)
+            # See Note [Grad forward output spec]
+            for_autograd = TorchAutogradForwardData(
+                result,
+                flat_args,
+                flat_output,
+                args_spec,
+                output_spec,
+            )._asdict()
+            return (for_autograd, saved_for_backward)
         return result, saved_for_backward
 
     def ones_like(x):
@@ -2652,9 +2672,10 @@ def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> 
         tracectx_token = set_tracectx(forward_trace)
         # We don't want to record those ones_like calls in the forward trace.
         with detached_trace():
-            if flatten_forward_out:
-                # It's assumed that forward_trace.output[0] is a tuple of (spec, flat_out)
-                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), forward_trace.output[0][1]))
+            if torch_autograd:
+                # It's assumed that forward_trace.output[0] is a dict from TorchAutogradForwardData
+                flat_output = forward_trace.output[0]["flat_output"]
+                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), flat_output))
             else:
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
     finally:
@@ -2662,9 +2683,12 @@ def forward_and_backward_from_trace(trace: Trace, flatten_forward_out=False) -> 
 
     def backward_fn(saved_for_backward, cotangents):
         env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
-        if flatten_forward_out:
-            cotangents = tree_unflatten(cotangents, forward_trace.output[0][0])
+        if torch_autograd:
+            output_spec = forward_trace.output[0]["output_spec"]
+            cotangents = tree_unflatten(cotangents, output_spec)
         out = backward_pass(env, trace, cotangents)
+        if torch_autograd:
+            out = tree_flatten(out)[0]
         return out
 
     saved_for_backward = forward_trace.output[1]

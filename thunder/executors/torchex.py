@@ -1,5 +1,6 @@
 import operator
 from functools import wraps, partial
+from inspect import signature
 from itertools import groupby
 from numbers import Number
 from typing import Union, Callable, Any, Tuple, Sequence, Optional
@@ -1469,25 +1470,23 @@ class ThunderFunction(torch.autograd.Function):
         def make_trace(func):
             return partial(trace(inline_trace=False), func)
 
-        def split_forward_backward(requires_grad_mask, *args, **kwargs):
+        def split_forward_backward(*args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used
             # behind a cache.
-
-            # Since autograd.Function accepts flattened inputs in forward,
-            # and expects flattened outputs in backward, we need to flatten
-            # the given function and its inputs when we generate the "joint trace"
-            flat_func, flat_args, spec = utils.flatten_func(func, args, kwargs)
-            primal_trace = make_trace(flat_func)(*flat_args)
+            primal_trace = make_trace(func)(*args, **kwargs)
 
             # torch.autograd.Function doesn't support non-flat outputs, the
             # grads wouldn't be propagated and backward receives None for each
             # non-flat non-tensor output. The output must also be a flat tuple,
             # not any other container type. So we need to flatten the outputs of
             # the forward trace and inputs of the backward trace.
-            fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, flatten_forward_out=True)
+            fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
 
             # Update the backward trace to only compute gradients for the
             # inputs that require gradients
+            flat_args, _ = tree_flatten((args, kwargs))
+            tensor_cls = (torch.Tensor, TensorProxy)
+            requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
             assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
             filtered_grads = tuple(
                 (arg_grad if requires_grad else None)
@@ -1559,27 +1558,20 @@ class ThunderFunction(torch.autograd.Function):
         return split_forward_backward
 
     @staticmethod
-    @staticmethod
-    def forward(ctx, split_fw_bw, spec, *flat_args):
-        requires_grad_mask = tuple(isinstance(arg, torch.Tensor) and arg.requires_grad for arg in flat_args)
-        # We can't send unflatten args with a spec to the split_fw_bw
-        # function, because spec is not hashable. So we need to unflatten
-        # the args here.
-        args, kwargs = tree_unflatten(flat_args, spec)
-        compiled_forward, compiled_backward = split_fw_bw(requires_grad_mask, *args, **kwargs)
-        (output_spec, flat_out), (saved_tensors, ctx.saved_other) = compiled_forward(*flat_args)
+    def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+        # Here we just propagate the tensors through the autograd graph
+        ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
-        return output_spec, *flat_out
+        return flat_output
 
     @staticmethod
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):
-        args = args[1:]
         grads = ctx.compiled_backward((ctx.saved_tensors, ctx.saved_other), args)
-        return (None, None, *grads)
+        return (None, None, None, None, *grads)
 
 
 def thunder_backward(*, compile_data=None, **compile_config):
@@ -1623,16 +1615,31 @@ def thunder_backward(*, compile_data=None, **compile_config):
             split_fw_bw,
             **compile_config,
         )
+        sig = signature(thunder_func)
 
         @wraps(thunder_func)
         def wrapper(*args, **kwargs):
-            # We must save the spec of the args to be able to unflatten them later
-            # torch.autograd.Functions support only flat arguments
-            flat_args, spec = tree_flatten((args, kwargs))
-            output_spec, *flat_out = ThunderFunction.apply(compiled_split_fw_bw, spec, *flat_args)
-            if isinstance(flat_out, torch.Tensor):
-                return flat_out
-            return tree_unflatten(flat_out, output_spec)
+            # Fetch the compiled forward and backward functions using the
+            # compiled function cache
+            compiled_forward, compiled_backward = compiled_split_fw_bw(*args, **kwargs)
+
+            # Compiled forward function currently doesn't support positional
+            # arguments passed as kwargs, so we must bind them here
+            ba = sig.bind(*args, **kwargs)
+            args, kwargs = ba.args, ba.kwargs
+
+            # Run the compiled forward function
+            data_for_autograd, (saved_tensors, saved_other) = compiled_forward(*args, **kwargs)
+
+            # Connect produced tensors with PyTorch's autograd graph
+            ThunderFunction.apply(
+                compiled_backward,
+                saved_tensors,
+                saved_other,
+                data_for_autograd["flat_output"],
+                *data_for_autograd["flat_args"]
+            )
+            return data_for_autograd["output"]
 
         return wrapper
 
