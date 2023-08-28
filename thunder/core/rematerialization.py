@@ -59,11 +59,13 @@ def find_external_consumer_inputs(
         Tuple[ProxyInterface, ...]: Consumer's inputs that must be included in
         the input of the consumer.
     """
+    all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
     external_consumer_inputs_names = tuple(
         sorted(
             set(x.name for x in consumer.args)
             - set(x.name for x in producer.output)
             - set(x.name for x in producer.args)
+            - set(x.name for x in all_produced_vars)
         )
     )
     return tuple(x for x in consumer.args if x.name in external_consumer_inputs_names)
@@ -410,11 +412,20 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         tuple[TraceCtx, list[TraceCtx]]: Rematerialized trace and the list of
             rematerialized traces.
     """
-    # Find all the producers and consumers
-    pairs = find_nvfuser_producer_consumer_pairs(trace)
+    import copy
 
-    # Find the minimal cut between the producer and the consumer
-    cuts = tuple(find_cut(trace, producer, consumer) for producer, consumer in pairs)
+    rematerialized_trace = from_trace(trace)
+    rematerialized_trace.set_provenance(TraceProvenance("Rematerialization"))
+    rematerialized_trace.bound_symbols = copy.copy(trace.bound_symbols)
+
+    def replace_bound_symbol(bsym, new_bsyms):
+        new_bsym = new_bsyms.get(bsym, None)
+        if new_bsym is not None:
+            return _update_nvfusion_call_ctx(rematerialized_trace, new_bsym)
+        return bsym
+
+    # Find all the producers and consumers
+    pairs = find_nvfuser_producer_consumer_pairs(rematerialized_trace)
 
     # Pairs of producer and consumer are not unique. Each update to the producer
     # or consumer may affect the other. We need to update the producer and
@@ -422,32 +433,30 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     producers = {producer for producer, _ in pairs}
     consumers = {consumer for _, consumer in pairs}
     new_bsyms = {bsym: bsym for bsym in producers | consumers}
-    for (producer, consumer), cut in zip(pairs, cuts):
+    for producer, consumer in pairs:
+        # Find the minimal cut between the producer and the consumer
+        cut = find_cut(rematerialized_trace, producer, consumer)
         current_producer = new_bsyms.get(producer, None) or producer
         current_consumer = new_bsyms.get(consumer, None) or consumer
         if cut:
-            updated_producer = apply_rematerialization_for_producer(trace, current_producer, current_consumer, cut)
+            updated_producer = apply_rematerialization_for_producer(
+                rematerialized_trace, current_producer, current_consumer, cut)
             updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
-            new_bsyms[producer] = updated_producer
-            new_bsyms[consumer] = updated_consumer
+            # As we replace bound symbols of the input trace with updated ones every iteration,
+            # we should keep track of the map of `current` to `updated` as well as `producer`/`consumer`
+            # to `updated` ones.
+            # ref: https://github.com/Lightning-AI/lightning-thunder/pull/868#discussion_r1305640813
+            new_bsyms[producer] = new_bsyms[current_producer] = updated_producer
+            new_bsyms[consumer] = new_bsyms[current_consumer] = updated_consumer
         else:
             new_bsyms[producer] = None
             new_bsyms[consumer] = None
 
-    rematerialized_trace = from_trace(trace)
-    rematerialized_trace.set_provenance(TraceProvenance("Rematerialization"))
+        # TODO: New bound symbols are still incorrect. Its _ctx_call dict points
+        # to the old nvFuser fusion. We need to update it to use the new definition.
+        rematerialized_trace.bound_symbols = tuple(
+            replace_bound_symbol(bsym, new_bsyms) for bsym in rematerialized_trace.bound_symbols)
 
-    def replace_bound_symbol(bsym):
-        new_bsym = new_bsyms.get(bsym, None)
-        if new_bsym is not None:
-            return _update_nvfusion_call_ctx(trace, new_bsym)
-        return bsym
-
-    # TODO: New bound symbols are still incorrect. Its _ctx_call dict points
-    # to the old nvFuser fusion. We need to update it to use the new definition.
-
-    new_bound_symbols = tuple(replace_bound_symbol(bsym) for bsym in trace.bound_symbols)
-    rematerialized_trace.bound_symbols = new_bound_symbols
     return rematerialized_trace, [rematerialized_trace]
 
 
@@ -526,327 +535,3 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
     return new_fw_trace, new_bw_trace
-
-
-def split_vjp_trace_into_forward_and_backward(
-    trace: TraceCtx,
-) -> tuple[TraceCtx, TraceCtx]:
-    """Split VJP transform applied trace into forward and backward.
-
-    The input trace is supposed to follow the signature of ``func(inputs0, inputs1) -> (outputs0, outputs1)``,
-    where
-        - ``inputs0``: the inputs for the forward computation (a.k.a. primals)
-        - ``inputs1``: the inputs for the backward computation (a.k.a. cotangents)
-        - ``outputs0``: the results of the forward
-        - ``outputs1``: the results of the backward, i.e. gradients
-
-    This function splits the trace into the forward and the backward. This is feasible only when
-    the extracted forward is independent from any of ``inputs1``. This function returns the following
-    two functions:
-        1. ``forward(*inputs0) -> (outputs0, saved_tensors_for_backward)``
-        2. ``backward(*saved_tensors_for_backward, *inputs1) -> outputs1``
-
-    Note that the two traces do not include :class:``BoundSymbols`` of ``prims.PrimIDs.del``.
-
-    Args:
-        trace: Trace of a function with VJP transform applied
-
-    Returns:
-        Two :class:``TraceCtx``s, one representing forward and the other backward.
-        The forward trace has the signature of `forward_trace` with primals spelled out.
-        The backward trace's arguments consist of ``*intermediate_values_of_forward`` and ``*cotangents``.
-    """
-    # There can be a case where the forward trace has a nvFusion merged with the backward trace.
-    # In this case, we need to split the nvFusion into two nvFusions, one for the forward and the other
-    # for the backward.
-    nvfusion = find_common_nvfusion_consumer(trace)
-    replace_nvfusion = None
-    if nvfusion is not None:
-        fw_nvfusion, bw_nvfusion = split_nvfusion_into_forward_and_backward(trace, nvfusion)
-        replace_nvfusion = {
-            "original": nvfusion,
-            "forward": fw_nvfusion,
-            "backward": bw_nvfusion,
-        }
-    bwd_trace, tensors_to_save_for_backward = _extract_backward_from_vjp_trace(trace, replace_nvfusion=replace_nvfusion)
-    fwd_trace = _extract_forward_from_vjp_trace(trace, tensors_to_save_for_backward, replace_nvfusion=replace_nvfusion)
-    return fwd_trace, bwd_trace
-
-
-def find_common_nvfusion_consumer(
-    trace: TraceCtx,
-):
-    """Find a common nvFusion of forward and backward traces.
-
-    Args:
-        trace: Trace of a function with VJP transform applied
-
-    Returns:
-        A :class:``BoundSymbol`` representing the common nvFusion.
-    """
-    # We are searching for a common nvFusion that is supposed to be only in the
-    # forward trace, but also depends on the inputs of the backward trace.
-    fw_input, _ = tree_flatten(trace.args[0])
-    fw_output, _ = tree_flatten(trace.output[0])
-    forward_bsyms = tuple(utils.find_producer_symbols(trace, fw_output, fw_input))
-    bw_input, _ = tree_flatten(trace.args[1])
-    filter_fn = lambda bsym: bsym.sym.name.startswith("nvFusion") and any(
-        x.name == y.name for x, y in product(bsym._flat_args, bw_input)
-    )
-    common_consumers = tuple(filter(filter_fn, forward_bsyms))
-    if common_consumers:
-        utils.check(
-            len(common_consumers) == 1,
-            lambda: "Only the case of one common nvFusion between forward and backward is supported.",
-        )
-        return common_consumers[0]
-    return None
-
-
-def _subtrace_from_bsym(
-    bsym: BoundSymbolInterface,
-) -> TraceCtx:
-    """Create a trace from a :class:``BoundSymbol``.
-
-    Args:
-        trace: Trace of a function with VJP transform applied
-        bsym: A :class:``BoundSymbol``
-
-    Returns:
-        A :class:``TraceCtx`` representing the trace of the function represented by ``bsym``.
-    """
-    trace = TraceCtx(bsym.sym.__call__)
-    trace.args = bsym.args
-    trace.kwargs = bsym.kwargs
-    trace.output = bsym.output
-    # Current version of splitting function requires use of the python_return primitive at the end of the trace.
-    trace.bound_symbols = tuple(bsym.subsymbols) + (prims.python_return.bind(*bsym.output, output=()),)
-    return trace
-
-
-def split_nvfusion_into_forward_and_backward(
-    trace: TraceCtx,
-    nvfusion: BoundSymbolInterface,
-) -> tuple[BoundSymbolInterface, BoundSymbolInterface]:
-    """Split a common nvFusion into forward and backward nvFusions.
-
-    Args:
-        trace: Trace of a function with VJP transform applied
-        common_nvfusion: A :class:``BoundSymbol`` representing the common nvFusion.
-
-    Returns:
-        A tuple of two :class:``BoundSymbol``s representing the forward and backward nvFusions.
-    """
-    input1, _ = tree_flatten(trace.args[1])
-    output0, _ = tree_flatten(trace.output[0])
-
-    # We want to remove input1 from the given nvFusion.
-    # First we find the specific subset of input1 that is used in the nvFusion.
-    # Then we remove the subset from the nvFusion.
-    nvfusion_input1 = tuple(x for x in input1 if x.name in (a.name for a in nvfusion._flat_args))
-    nvfusion_input0 = tuple(x for x in nvfusion._flat_args if x.name not in (y.name for y in nvfusion_input1))
-    nvfusion_output0 = tuple(x for x in nvfusion.output if x.name in (y.name for y in output0))
-    nvfusion_output1 = tuple(x for x in nvfusion.output if x.name not in (y.name for y in nvfusion_output0))
-
-    nvfusion_trace = _subtrace_from_bsym(nvfusion)
-    nvfusion_trace.args = (nvfusion_input0, nvfusion_input1)
-    nvfusion_trace.output = (nvfusion_output0, nvfusion_output1)
-    fw_nvfusion_trace, bw_nvfusion_trace = split_vjp_trace_into_forward_and_backward(nvfusion_trace)
-
-    fw_fusion_input = tree_flatten(fw_nvfusion_trace.args)[0]
-    fw_fusion_output = tuple(
-        x for x in tree_flatten(fw_nvfusion_trace.output)[0] if x.name not in (y.name for y in fw_fusion_input)
-    )
-    fw_fusion_output = tuple(sorted({x.name: x for x in fw_fusion_output}.values(), key=lambda x: x.name))
-    fw_nvfusion = replace(
-        nvfusion,
-        args=fw_fusion_input,
-        output=fw_fusion_output,
-        subsymbols=tuple(x for x in fw_nvfusion_trace.bound_symbols if x.sym.id != prims.PrimIDs.RETURN),
-    )
-
-    bw_nvfusion = replace(
-        nvfusion,
-        args=tree_flatten(bw_nvfusion_trace.args)[0],
-        output=tree_flatten(bw_nvfusion_trace.output)[0],
-        subsymbols=tuple(x for x in bw_nvfusion_trace.bound_symbols if x.sym.id != prims.PrimIDs.RETURN),
-    )
-
-    # These nvFusions were constructed with naive splitting, so we might need to
-    # update them with rematerialization.
-    fw_bw_trace = from_trace(nvfusion_trace)
-    fw_bw_trace.bound_symbols = [fw_nvfusion, bw_nvfusion, prims.python_return.bind(*nvfusion_trace.output, output=())]
-    cut = find_cut(fw_bw_trace, fw_nvfusion, bw_nvfusion)
-    if cut:
-        original_fw_nvfusion = fw_nvfusion
-        fw_nvfusion = apply_rematerialization_for_producer(fw_bw_trace, original_fw_nvfusion, bw_nvfusion, cut)
-        bw_nvfusion = apply_rematerialization_for_consumer(original_fw_nvfusion, bw_nvfusion, cut)
-
-    fw_nvfusion = _update_nvfusion_call_ctx(trace, fw_nvfusion)
-    bw_nvfusion = _update_nvfusion_call_ctx(trace, bw_nvfusion)
-    return fw_nvfusion, bw_nvfusion
-
-
-def _extract_forward_from_vjp_trace(
-    trace: TraceCtx,
-    tensors_to_save_for_backward: list[TensorProxy],
-    replace_nvfusion=None,
-) -> TraceCtx:
-    """Extract bound symbols defining forward computation from joint trace.
-
-    The generated trace takes ``primals`` as its positional arguments and kwargs, if exists.
-    This raises an exception if the trace is not splittable without the forward depending on any of cotangents.
-    """
-    fwd_trace = from_trace(trace)
-
-    cotangent_args = (a.name for a in trace.args[1])
-
-    fwd_outputs, _ = tree_flatten(fwd_trace.output[0])
-    fwd_trace.output = fwd_outputs
-    # note(crcrpar): Cotangents are required for unsplittable joint trace. Otherwise, infinite loop.
-    # https://github.com/Lightning-AI/lightning-thunder/commit/20505d9772786ac43b1a47811a6846c166f87022
-    # seems to fix the infinite loop.
-    forward_bsyms = list(
-        {
-            v: v
-            for v in utils.find_producer_symbols(
-                trace, fwd_outputs, tree_flatten((fwd_trace.args, fwd_trace.kwargs))[0]
-            )
-        }.keys()
-    )
-
-    if replace_nvfusion is not None:
-        utils.check(
-            replace_nvfusion["original"] in forward_bsyms,
-            lambda: "Something went wrong. The common nvFusion is not included in the forward trace.",
-        )
-        forward_bsyms = [
-            replace_nvfusion["forward"] if bsym == replace_nvfusion["original"] else bsym for bsym in forward_bsyms
-        ]
-
-    # now that we have collected bound symbols of forward computation, make sure they don't depend on any cotangents
-    all_tensor_arg_names = {t.name for bsym in forward_bsyms for t in bsym._flat_args if isinstance(t, TensorProxy)}
-    used_cotangent_args = tuple(a for a in cotangent_args if a in all_tensor_arg_names)
-    if used_cotangent_args:
-        raise RuntimeError(
-            f"Impossible to split the trace due to the dependency on cotangents of {used_cotangent_args}"
-        )
-
-    fwd_trace.args = tree_flatten((fwd_trace.args[0], fwd_trace.kwargs))[0]
-    fwd_trace.kwargs = {}
-    fwd_trace.bound_symbols = forward_bsyms + [prims.python_return.bind(*fwd_outputs, output=())]
-
-    fwd_trace._siginfo = None
-
-    def forward_fn(*args):
-        pass
-
-    fwd_trace.fn = forward_fn
-    fwd_siginfo = fwd_trace.siginfo()
-    fwd_siginfo.args = [(a.name, a) for a in fwd_trace.args]
-    fwd_siginfo.varargs = None
-    fwd_siginfo.kwargs = {}
-
-    fwd_outputs, fwd_outputs_spec = tree_flatten(trace.output[0])
-    fwd_trace.output = fwd_trace.output, tensors_to_save_for_backward
-    fwd_trace.bound_symbols[-1].args = (
-        tree_unflatten(fwd_trace.bound_symbols[-1].args, fwd_outputs_spec),
-        tensors_to_save_for_backward,
-    )
-    return fwd_trace
-
-
-def _extract_backward_from_vjp_trace(
-    trace: TraceCtx,
-    replace_nvfusion=None,
-) -> tuple[TraceCtx, list[TensorProxy]]:
-    """Extract backward definition from joint trace.
-
-    The generated trace, the first of two return values, defines the backward computation.
-    Its arguments follow the structure of ``*saved_for_backward, *cotangents`` for the sake of
-    easy embedding into :class:``torch.autograd.Function``.
-    The second return value, a list of :class:``TensorProxy``s, is a list of intermediate and output
-    ``Tensor``s that will be used in the backward.
-    """
-    bwd_trace = from_trace(trace)
-    bwd_trace.bound_symbols = trace.bound_symbols
-    result, grads = bwd_trace.output
-    result, _ = tree_flatten(result)
-
-    forward_args, cotangents = bwd_trace.args
-    flat_args, _ = tree_flatten((bwd_trace.args, bwd_trace.kwargs))
-
-    forward_bsyms = list({v: v for v in utils.find_producer_symbols(bwd_trace, result, flat_args)}.keys())
-
-    bound_symbols_for_backward = []
-    # It's assumed that the common nvFusion is not included in the constructed
-    # backward trace.
-    if replace_nvfusion is not None:
-        utils.check(
-            replace_nvfusion["original"] in forward_bsyms,
-            lambda: "Something went wrong. The common nvFusion is not included in the forward trace.",
-        )
-        forward_bsyms = [
-            replace_nvfusion["forward"] if bsym == replace_nvfusion["original"] else bsym for bsym in forward_bsyms
-        ]
-        bound_symbols_for_backward += [replace_nvfusion["backward"]]
-
-    forward_intermediate_map = {out.name: out for bsym in forward_bsyms for out in bsym._flat_outs}
-    for r in result:
-        if r.name not in forward_intermediate_map:
-            forward_intermediate_map[r.name] = r
-    for a in tree_flatten((bwd_trace.args[1]))[0]:
-        if a.name in forward_intermediate_map:
-            del forward_intermediate_map[a.name]
-    forward_intermediates = list(forward_intermediate_map.values())
-
-    return_bsym = bwd_trace.bound_symbols[-1]
-    return_bsym.args = grads
-    bound_symbols_for_backward += [
-        bsym for bsym in utils.find_producer_symbols(trace, grads, stop_proxies=flat_args) if bsym not in forward_bsyms
-    ] + [return_bsym]
-
-    # Remove all unpack args primitives from the backward trace
-    bound_symbols_for_backward = [
-        bsym
-        for bsym in bound_symbols_for_backward
-        if bsym.sym.id
-        not in (
-            prims.PrimIDs.UNPACK_EMPTY_DICT,
-            prims.PrimIDs.UNPACK_KEY,
-            prims.PrimIDs.UNPACK_SEQUENCE,
-            prims.PrimIDs.UNPACK_TRIVIAL,
-        )
-    ]
-
-    if replace_nvfusion is not None:
-        bound_symbols_for_backward.remove(replace_nvfusion["original"])
-
-    backward_trace = from_trace(trace)
-    backward_trace._siginfo = None
-    backward_trace.bound_symbols = bound_symbols_for_backward
-    consumed_vars = set(utils.consumers(backward_trace)._dict.keys())
-    used_forward_intermediate_results = tuple(
-        a
-        for a in (forward_intermediates + tree_flatten((bwd_trace.args[0], bwd_trace.kwargs))[0])
-        if a.name in consumed_vars
-    )
-    # Remove duplicates
-    used_forward_intermediate_results = tuple(
-        sorted({x.name: x for x in used_forward_intermediate_results}.values(), key=lambda a: a.name)
-    )
-    backward_trace.args = tuple(used_forward_intermediate_results + bwd_trace.args[1])
-    backward_trace.kwargs = None
-    backward_trace.output = grads
-
-    # N.B.(crcrpar): Override `siginfo` so that the trace would spell out arguments.
-    # Otherwise, it'd end up `backward_trace(*args)`.
-    def backward_fn(*args):
-        pass
-
-    backward_trace.fn = backward_fn
-    bwd_siginfo = backward_trace.siginfo()
-    bwd_siginfo.args = [(a.name, a) for a in bwd_siginfo.varargs[1]]
-    bwd_siginfo.varargs = None
-    backward_trace._siginfo = bwd_siginfo
-    return backward_trace, used_forward_intermediate_results
