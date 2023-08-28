@@ -62,6 +62,8 @@ line_length = 120
 
 [tool.ruff]
 line-length = 120
+# Always generate Python 3.10-compatible code.
+target-version = "py310"
 # Enable Pyflakes `E` and `F` codes by default.
 select = [
     "E", "W",  # see: https://pypi.org/project/pycodestyle

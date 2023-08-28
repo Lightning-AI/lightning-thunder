@@ -3,7 +3,9 @@ name: Code updates
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * 0"  # on Sundays
+    # https://crontab.guru/#0_13,23_*_*_1-5
+    # “At minute 0 past hour 3am on every day-of-week from Monday through Friday.”
+    - cron: "0 3 * * 1-5"
 
 jobs:
 
@@ -22,12 +24,25 @@ jobs:
 
     - name: Run pre-commit 🤖
       continue-on-error: true
+      id: precommit
       run: |
         pip install -q pre-commit
         pre-commit run --all-files
 
-    - name: Commit changes ↩️
-      uses: EndBug/add-and-commit@v9
+    - name: Get current date
+      run: echo "TODAY=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+    - name: Create Pull Request ↩️
+      if: job.steps.precommit.status == failure()
+      uses: peter-evans/create-pull-request@v5.0.2
       with:
-        default_author: github_actions
-        message: "pre-commit: apply formatting"
+        token: ${{ secrets.PAT_GHOST }}
+        commit-message: "precommit: running and fixing..."
+        committer: GitHub <noreply@github.com>
+        author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
+        base: main
+        title: "pre-commit: apply formatting"
+        body: "**This is automated formatting fix...**"
+        branch: "precommit/${{ env.TODAY }}"
+        delete-branch: true
+        labels: "code health"
+        reviewers: mruberry
