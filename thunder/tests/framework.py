@@ -226,6 +226,8 @@ class ops:
         self.supported_executors = (
             set(supported_executors) if supported_executors is not None else set(_all_executors())
         )
+        for ex in self.supported_executors:
+            assert isinstance(ex, Executor)
 
         self.supported_devicetypes = (
             set(supported_devicetypes) if supported_devicetypes is not None else set(_all_devicetypes())

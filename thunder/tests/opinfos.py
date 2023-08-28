@@ -4211,6 +4211,19 @@ gelu_opinfo = OpInfo(
 nn_ops.append(gelu_opinfo)
 
 
+def scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
+    for si in scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
+        yield si
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # 4-dim (multiheaded) causal cases
+    n_head = 8
+    N, L, S, E, Ev = 2, 2, 64, 64, 64
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    yield SampleInput(q, k, v, None, 0.0, True)
+
+
 def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -4220,7 +4233,7 @@ def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_gr
         q, k, v = make(N, L, E), make(N, S, E), make(N, S, Ev)
         yield SampleInput(q, k, v, dropout_p=0.0, is_causal=True)
 
-    # 4-dim (multiheaded) causal case
+    # 4-dim (multiheaded) causal cases
     n_head = 3
     N, L, S, E, Ev = 2, 2, 3, 2, 3
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -4263,6 +4276,7 @@ def scaled_dot_product_attention_error_generator(op, device, **kwargs):
 sdpa_opinfo = OpInfo(
     ltorch.scaled_dot_product_attention,
     sample_input_generator=scaled_dot_product_attention_sample_generator,
+    reference_input_generator=scaled_dot_product_attention_reference_generator,
     error_input_generator=scaled_dot_product_attention_error_generator,
     torch_reference=torch.nn.functional.scaled_dot_product_attention,
     dtypes=(datatypes.floating,),
@@ -4270,11 +4284,13 @@ sdpa_opinfo = OpInfo(
         # PyTorch CPU doesn't support float16 matmul
         DecorateInfo(
             pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
         DecorateInfo(
             pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
             dtypes=(datatypes.bfloat16,),
             devicetypes=(
                 # Numerical issue with bfloat16: skipped since CPU is not a priority
