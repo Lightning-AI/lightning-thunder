@@ -2,9 +2,8 @@ name: General checks
 
 on:
   push:
-    branches: [main, "release/*"]
-  pull_request:
-    branches: [main, "release/*"]
+    branches: [main]
+  pull_request: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}

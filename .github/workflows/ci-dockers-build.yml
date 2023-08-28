@@ -2,9 +2,8 @@ name: Docker build
 
 on:
   push:
-    branches: [main, "release/*"]
+    branches: [main]
   pull_request:
-    branches: [main, "release/*"]
     types: [opened, reopened, ready_for_review, synchronize]  # added `ready_for_review` since draft is skipped
     paths:
       - ".github/workflows/ci-dockers-build.yml"
