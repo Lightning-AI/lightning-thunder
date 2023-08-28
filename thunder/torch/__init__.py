@@ -1313,6 +1313,39 @@ def amin(a, dim=None, keepdim: bool = False):
         output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
     )
 
+@torchsymbol(torch.convolution, is_method=False)
+def convolution(
+    a: TensorLike,
+    weight: TensorLike,
+    bias: Optional[TensorLike],
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+    transposed: bool,
+    output_padding: Sequence[int],
+    groups: int
+) -> TensorLike:
+    # The checks below is a PyTorch limitation of supporting only 1D, 2D and 3D convolutions.
+    utils.check(
+        a.ndim <= 5,
+        lambda: f"Expected {a.ndim=} to be <= 5 as only up to 3D convolutions are supported"
+    )
+    utils.check(
+        weight.ndim <= 5,
+        lambda: f"Expected {weight.ndim=} to be <= 5 as only up to 3D convolutions are supported"
+    )
+
+    return clang.convolution(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups,
+    )
 
 @torchsymbol(torch.mean, is_method=True)
 def mean(a: TensorProxy, dim=None, keepdim: bool = False, *, dtype=None):

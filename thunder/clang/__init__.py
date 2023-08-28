@@ -151,6 +151,31 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
 
 
 @clang_ctx
+def convolution(
+    a: TensorLike,
+    weight: TensorLike,
+    bias: Optional[TensorLike],
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+    transposed: bool,
+    output_padding: Sequence[int],
+    groups: int
+) -> TensorLike:
+    return prims.convolution(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        bool(transposed),
+        output_padding,
+        groups
+    )
+
+
+@clang_ctx
 def full(shape, fill_value, *, device, dtype=None):
     # Infers dtype from the fill_value when not explicitly provided
     if dtype is None:

@@ -879,6 +879,24 @@ def matmul(bsym: BoundSymbol, a: TensorProxy, b: TensorProxy) -> BoundSymbol:
 #
 # NN operations
 #
+def convolution(
+    bsym: BoundSymbol,
+    a: TensorLike,
+    weight: TensorLike,
+    bias: Optional[TensorLike],
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+    transposed: Number,
+    output_padding: Sequence[int],
+    groups: int
+) -> BoundSymbol:
+    sym = Symbol(name="convolution", meta=None, _module=torch)
+    return sym.bind(
+        a, weight, bias, stride, padding, dilation, bool(transposed), output_padding, groups, output=bsym.output
+    )
+
+
 def cross_entropy(
     bsym: BoundSymbol,
     input,
@@ -1374,6 +1392,8 @@ _ops_map.update(
         "torch.nn.functional.cross_entropy": (_always_executable, cross_entropy),
         "cross_entropy_backward": (_always_executable, cross_entropy_backward),
         "torch.nn.functional.dropout": (_always_executable, dropout),
+        PrimIDs.CONVOLUTION: (_always_executable, convolution),
+        "torch.convolution": (_always_executable, convolution),
         PrimIDs.EMBEDDING: (_always_executable, embedding),
         PrimIDs.EMBEDDING_BACKWARD: (_always_executable, embedding_backward),
         "torch.nn.functional.embedding": (_always_executable, embedding),

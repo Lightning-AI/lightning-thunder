@@ -144,6 +144,7 @@ class PrimIDs(Enum):
     LINEAR = auto()
     MATMUL = auto()
     # NN prims (Experimental!)
+    CONVOLUTION = auto()
     EMBEDDING = auto()
     EMBEDDING_BACKWARD = auto()
     # Distributed prims (Experimental!)
@@ -1522,6 +1523,165 @@ cat = make_prim(
     PrimIDs.CAT,
     "cat",
     meta=cat_meta,
+)
+
+
+# TODO: model transpose and layout (channels last and alike)
+def convolution_meta(
+    a: TensorProxy,
+    weight: TensorProxy,
+    bias: Optional[TensorProxy],
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+    transposed: Number,
+    output_padding: Sequence[int],
+    groups: int
+) -> TensorProxy:
+    # Validate types {
+    utils.check_type(a, TensorProxy)
+    utils.check_type(weight, TensorProxy)
+    utils.check_type(bias, (TensorProxy, type(None)))
+    utils.check_same_dtype(a, weight, *([bias] if bias is not None else []))
+    utils.check(pytype(transposed) is bool, lambda: f"Expected {transposed=} to be a boolean value")
+    utils.check_type(groups, int)
+    # }
+
+    # Validate device {
+    utils.check_same_device(a, weight, *([bias] if bias is not None else []))
+    # }
+
+    # TODO: add support for these later {
+    utils.check(
+        transposed == 0,
+        lambda: f"{transposed=} is not supported",
+        exception_type=NotImplementedError
+    )
+    # }
+
+    # Validate inputs {
+    utils.check(groups > 0, lambda: f"{groups=} should be greater than 0")
+
+    # Check the ranks of `a` and `weight`
+    features_rank = weight.ndim - 2
+    utils.check(features_rank > 0, lambda: f"{weight.ndim=} should be at least 3")
+    utils.check(a.ndim == weight.ndim, lambda: f"{a.ndim=} should be equal to {weight.ndim}")
+
+    # Check out_channels/in_channels/groups/bias relationships
+    minibatch, in_channels, *features_size = a.shape
+    out_channels, in_channels_grouped, *kernel_size = weight.shape
+
+    # Check features_size and kernel_size contain no empty dims.
+    # This limitation comes from PyTorch.
+    # It is possible to relax this requirement on input and
+    # error only if the padded input dim is empty.
+    utils.check(
+        all(fs != 0 for fs in features_size),
+        lambda: f"Input's shape {a.shape=} can be zero only "
+                "in the batch (i.e. a.shape[0]) and/or "
+                "in the channel dimension (i.e. a.shape[1])"
+    )
+    utils.check(
+        all(ks != 0 for ks in kernel_size),
+        lambda: f"{kernel_size=} (i.e. weight.shape[2:]) should not contain zero dimensions"
+    )
+
+    utils.check(
+        in_channels_grouped * groups == in_channels,
+        lambda: f"{weight.shape[1]=} should be equal to "
+                f"(in_channels / groups)={in_channels // groups} "
+                f"(i.e. {a.shape[1]=} / {groups=})"
+    )
+    utils.check(
+        out_channels % groups == 0,
+        lambda: f"out_channels (i.e. {weight.shape[0]=}) should be divisible by {groups=}"
+    )
+    utils.check(
+        bias is None or (bias.ndim == 1 and bias.numel == out_channels),
+        lambda: f"{bias.ndim=} should be 1 and {bias.numel=} should match "
+                f"out_channels, (i.e. {weight.shape[0]=})"
+    )
+
+    # Check sequences (stride, padding, dilation, output_padding)
+    # for correct type, length, and that the elements are from proper domains.
+    def check_sequence(seq, seq_str_name, rank, *, min_val):
+        utils.check_type(seq, Sequence)
+
+        utils.check(
+            len(seq) == 1 or len(seq) == rank,
+            lambda: f"len({seq_str_name}) should be either 1 or {rank}"
+        )
+
+        # Check all elements are >= min_val
+        for i, e in enumerate(seq):
+            utils.check(
+                isinstance(e, int) and e >= min_val,
+                lambda: f"all elements in {seq_str_name} should be integers at least {min_val}, "
+                        f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements"
+            )
+
+    # stride and dilation should be at least 1
+    check_sequence(stride, "stride", features_rank, min_val=1)
+    check_sequence(dilation, "dilation", features_rank, min_val=1)
+    # paddings should be non-negative
+    check_sequence(padding, "padding", features_rank, min_val=0)
+    check_sequence(output_padding, "output_padding", features_rank, min_val=0)
+
+    # Expand sequences to features_rank len if needed.
+    def maybe_expand_seq(seq, ndim):
+        if isinstance(seq, int):
+            return (seq,) * ndim
+        elif len(seq) == 1:
+            return (seq[0],) * ndim
+        else:
+            return tuple(seq)
+
+    # Let's expand sequence inputs to match features_rank
+    # for easier homogeneous processing
+    stride = maybe_expand_seq(stride, features_rank)
+    dilation = maybe_expand_seq(dilation, features_rank)
+    padding = maybe_expand_seq(padding, features_rank)
+    output_padding = maybe_expand_seq(output_padding, features_rank)
+
+    # Check a.shape[2:]/weight.shape[2:] consistency
+    # in the presence of padding/dilation, i.e.
+    # having padded input shape smaller than the dilated kernel shape
+    # at any dimension is an error.
+    for dim, (f, p, k, d) in enumerate(zip(features_size, padding, kernel_size, dilation)):
+        padded_a_dim = f + 2 * p
+        dilated_weight_dim = d * (k - 1) + 1
+        tensor_dim = dim + 2
+        utils.check(
+            padded_a_dim >= dilated_weight_dim,
+            lambda: f"Inconsistent shapes at dimension {tensor_dim} between `a` and `weight`. "
+                    f"The padded `a` dimension {tensor_dim} is equal to {padded_a_dim} "
+                    f"(i.e. a.shape[{tensor_dim}] + 2 * dilation[{dim}] = "
+                    f"{a.shape[tensor_dim]} + 2 * {dilation[dim]}) "
+                    "and should be greater or equal to the dilated `weight` shape at the same dimension "
+                    f"which is equal to {dilated_weight_dim} "
+                    f"(i.e. dilation[{dim}] * (weight.shape[{tensor_dim}] - 1) + 1 = "
+                    f"{dilation[dim]} * ({weight.shape[tensor_dim]} - 1) + 1)"
+        )
+    # }
+
+    # Output shape {
+    output_shape = [minibatch, out_channels if in_channels > 0 else 0]
+    for f, p, k, d, s, op in zip(features_size, padding, kernel_size, dilation, stride, output_padding):
+        # Padded features
+        pf = f + 2 * p
+        # Dilated kernel
+        dk = d * (k - 1) + 1
+        dim_len = (pf - dk) // s + 1 + op
+        output_shape.append(dim_len)
+
+    return TensorProxy(like=a, shape=output_shape)
+    # }
+
+
+convolution = make_prim(
+    PrimIDs.CONVOLUTION,
+    "convolution",
+    meta=convolution_meta,
 )
 
 
