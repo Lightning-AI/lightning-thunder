@@ -9,7 +9,7 @@ CUDNN_AVAILABLE = package_available("cudnn")
 cudnn: None | Any = None
 if CUDNN_AVAILABLE:
     import cudnn
-    
+
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
 
@@ -133,8 +133,10 @@ _op_to_cudnn = {
 def register_cudnnex(*, add_to_default_executors: bool = True) -> None:
     assert CUDNN_AVAILABLE, f"Trying to register the cudnn executor, but the cudnn package is not available"
 
-    print("WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n"
-          "Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880")
+    print(
+        "WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n"
+        "Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880"
+    )
 
     from thunder.executors import add_operator_executor
 

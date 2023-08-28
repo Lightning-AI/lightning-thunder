@@ -1657,7 +1657,7 @@ def thunder_backward(*, compile_data=None, **compile_config):
                 saved_tensors,
                 saved_other,
                 data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"]
+                *data_for_autograd["flat_args"],
             )
             return data_for_autograd["output"]
 

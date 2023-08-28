@@ -6,5 +6,10 @@ pytest-xdist ==3.3.1
 pytest-random-order ==1.1.0
 graphviz ==0.20.1
 fdm ==0.4.1
-expecttest  # for test_ddp
-hypothesis  # ditto, for test_ddp
+expecttest  # for test_ddp.py
+hypothesis  # for test_ddp.py
+numpy  # for test_ops.py
+
+# Installs JAX on Linux and MacOS
+jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
+jax; sys_platform == 'linux' or sys_platform == 'darwin'  # for test_ops.py

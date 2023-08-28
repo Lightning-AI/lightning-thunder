@@ -196,6 +196,9 @@ class SampleInput:
         args, kwargs = tree_map(_to, self.args), tree_map(_to, self.kwargs)
         return SampleInput(*args, **kwargs)
 
+    # NOTE This conversion is always to a jax cpu array, we could consider
+    #   converting to a jax gpu array, although we would probably have to update
+    #   how we're installing jax in ci
     def jax(self):
         def to_jax(t):
             if isinstance(t, torch.Tensor):
@@ -2577,11 +2580,12 @@ pad_opinfo = OpInfo(
     sample_input_generator=pad_sample_generator,
     jax_reference=_jax_pad if JAX_AVAILABLE else None,
     test_directives=(
-        # TODO FIXME nvFuser's pad translation likely just needs an update
+        # nvFuser pad is not working properly
+        #   see https://github.com/Lightning-AI/lightning-thunder/issues/886
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvFuser",),
-            dtypes=(datatypes.complexfloating,),
+            # dtypes=(datatypes.complexfloating,),
         ),
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(
