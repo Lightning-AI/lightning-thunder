@@ -2,8 +2,8 @@ import dis
 import enum
 import logging
 import sys
-from types import CodeType
-from typing import Callable, Dict, Optional, Tuple, Union
+from types import CodeType, MappingProxyType
+from typing import Callable, Dict, Optional, Tuple, TypeVar, Union
 from collections.abc import Iterable
 
 try:
@@ -16,6 +16,7 @@ from thunder.core.utils import OrderedSet
 
 logger = logging.getLogger(__name__)
 SUPPORTS_PREPROCESSING = (3, 9) <= sys.version_info < (3, 11)
+T = TypeVar("T")
 EXTENDED_ARG = "EXTENDED_ARG"
 JUMP_ABSOLUTE = "JUMP_ABSOLUTE"
 RETURN_VALUE = "RETURN_VALUE"
@@ -30,10 +31,55 @@ class VariableScope(enum.Enum):
     STACK = enum.auto()
 
 
+class ThunderInstruction(dis.Instruction):
+    """Thin wrapper on top of dis.Instruction to implement thunder specific logic."""
+
+    def __hash__(self) -> int:
+        # We sometimes want to use an instruction as a key so we can map back to nodes.
+        # `dis.Instruction` is a named tuple and therefore implements recursive constituent
+        # hashing which can lead to unwanted collisions. We instead override this behavior
+        # to instead use identity hashing.
+        return id(self)
+
+    def __eq__(self, other) -> int:
+        return self is other
+
+    def modify_copy(self, **kwargs) -> "ThunderInstruction":
+        assert type(self) is ThunderInstruction, self
+        return ThunderInstruction(**{**self._asdict(), **kwargs})
+
+    @classmethod
+    def make(cls, opname: str, arg: Optional[int], **kwargs) -> "ThunderInstruction":
+        ctor_kwargs = dict(
+            opname=opname,
+            opcode=dis.opmap.get(opname, -1),
+            arg=arg,
+            argval=None,
+            argrepr="None",
+            offset=-999,
+            starts_line=None,
+            is_jump_target=False,
+        )
+        ctor_kwargs.update(kwargs)
+        return cls(**ctor_kwargs)
+
+    @classmethod
+    def make_jump_absolute(cls, arg: int) -> "ThunderInstruction":
+        return cls.make(JUMP_ABSOLUTE, arg, argrepr=f"{arg}")
+
+    @classmethod
+    def make_return(cls, is_jump_target: bool) -> "ThunderInstruction":
+        return cls.make(RETURN_VALUE, arg=None, argrepr="", is_jump_target=is_jump_target)
+
+
+# TODO(robieta): replace callsites.
+get_instruction = ThunderInstruction.make
+
+
 class InstructionSet(OrderedSet[str]):
     """Convenience class for checking opcode properties."""
 
-    def canonicalize(self, i: str | int | dis.Instruction) -> str:
+    def canonicalize(self, i: str | int | ThunderInstruction) -> str:
         if isinstance(i, str):
             return i
 
@@ -41,7 +87,7 @@ class InstructionSet(OrderedSet[str]):
             return dis.opname[i]
 
         else:
-            assert isinstance(i, dis.Instruction)
+            assert isinstance(i, ThunderInstruction)
             return i.prefix if isinstance(i, SyntheticInstruction) else i.opname
 
 
@@ -54,8 +100,8 @@ RAISE_RETURN_INSTRUCTIONS = InstructionSet(("RAISE_VARARGS", "RERAISE"))
 RETURN_INSTRUCTIONS = InstructionSet((RETURN_VALUE, *RAISE_RETURN_INSTRUCTIONS))
 
 
-class SyntheticInstruction(dis.Instruction):
-    def __new__(cls, i: dis.Instruction) -> "SyntheticInstruction":
+class SyntheticInstruction(ThunderInstruction):
+    def __new__(cls, i: ThunderInstruction) -> "SyntheticInstruction":
         opname, _, *args = i
         i_is_synthetic = isinstance(i, SyntheticInstruction)
         if not i_is_synthetic:
@@ -292,6 +338,30 @@ _JUMP_DEPENDENT_SPEC: Dict[str, Tuple[StackEffect, StackEffect, StackEffect]] = 
 }
 
 
+def mapping(**kwargs: T) -> MappingProxyType[str, T]:
+    return MappingProxyType(kwargs)
+
+
+LOAD_OPNAMES = mapping(
+    LOAD_CONST=VariableScope.CONST,
+    LOAD_FAST=VariableScope.LOCAL,
+    LOAD_DEREF=VariableScope.NONLOCAL,
+    LOAD_GLOBAL=VariableScope.GLOBAL,
+)
+
+STORE_OPNAMES = mapping(
+    STORE_FAST=VariableScope.LOCAL,
+    STORE_DEREF=VariableScope.NONLOCAL,
+    STORE_GLOBAL=VariableScope.GLOBAL,
+)
+
+DEL_OPNAMES = mapping(
+    DELETE_FAST=VariableScope.LOCAL,
+    DELETE_DEREF=VariableScope.NONLOCAL,
+    DELETE_GLOBAL=VariableScope.GLOBAL,
+)
+
+
 FIXED_STACK_EFFECTS_DETAIL: Dict[str, StackEffect] = {}
 SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL: Dict[str, Callable[[int], StackEffect]] = {}
 JUMP_DEPENDENT_DETAIL: Dict[Tuple[str, bool], Tuple[str, StackEffect]] = {}
@@ -336,7 +406,7 @@ __build_maps()
 del __build_maps
 
 
-def stack_effect_adjusted(instruction: dis.Instruction) -> StackEffect:
+def stack_effect_adjusted(instruction: ThunderInstruction) -> StackEffect:
     opname: str = instruction.opname
     if isinstance(instruction, NoJumpEpilogue):
         return JUMP_DEPENDENT_DETAIL[(instruction.prefix, False)]
@@ -355,15 +425,15 @@ def stack_effect_adjusted(instruction: dis.Instruction) -> StackEffect:
     raise ValueError(f"Invalid opname {opname}")
 
 
-def get_epilogue(instruction: dis.Instruction, *, jump: bool = False) -> Optional[dis.Instruction]:
+def get_epilogue(instruction: ThunderInstruction, *, jump: bool = False) -> Optional[JumpEpilogue | NoJumpEpilogue]:
     if (instruction.opname, jump) in JUMP_DEPENDENT_DETAIL:
         epilogue = (JumpEpilogue if jump else NoJumpEpilogue)(instruction)
         epilogue.line_no = getattr(instruction, "line_no", None)
         return epilogue
 
 
-def stack_effect_detail(instruction: dis.Instruction, *, jump: bool = False) -> tuple[int, int]:
-    assert type(instruction) is dis.Instruction, type(instruction)
+def stack_effect_detail(instruction: ThunderInstruction, *, jump: bool = False) -> tuple[int, int]:
+    assert type(instruction) is ThunderInstruction, type(instruction)
     pop, push = stack_effect_adjusted(instruction)
     if epilogue := get_epilogue(instruction, jump=jump):
         epilogue_pop, epilogue_push = stack_effect_adjusted(epilogue)
@@ -371,53 +441,7 @@ def stack_effect_detail(instruction: dis.Instruction, *, jump: bool = False) -> 
     return pop, len(push)
 
 
-def make_jump_absolute(arg: int) -> dis.Instruction:
-    return dis.Instruction(
-        opname=JUMP_ABSOLUTE,
-        opcode=dis.opmap.get(JUMP_ABSOLUTE, -1),
-        arg=arg,
-        argval=None,
-        argrepr=f"{arg}",
-        offset=-999,
-        starts_line=None,
-        is_jump_target=False,
-    )
-
-
-def make_return(is_jump_target: bool) -> dis.Instruction:
-    return dis.Instruction(
-        opname=RETURN_VALUE,
-        opcode=dis.opmap[RETURN_VALUE],
-        arg=None,
-        argval=None,
-        argrepr="",
-        offset=-999,
-        starts_line=None,
-        is_jump_target=is_jump_target,
-    )
-
-
-def get_instruction(opname: str, arg: Optional[int], **kwargs) -> dis.Instruction:
-    ctor_kwargs = dict(
-        opname=opname,
-        opcode=dis.opmap.get(opname, -1),
-        arg=arg,
-        argval=None,
-        argrepr="None",
-        offset=-999,
-        starts_line=None,
-        is_jump_target=False,
-    )
-    ctor_kwargs.update(kwargs)
-    return dis.Instruction(**ctor_kwargs)
-
-
-def modify_copy_instruction(i: dis.Instruction, **kwargs) -> dis.Instruction:
-    # todo: or make a mutuable Instruction?
-    return dis.Instruction(**{**i._asdict(), **kwargs})
-
-
-def compute_jump(instruction: dis.Instruction, position: int) -> Optional[int]:
+def compute_jump(instruction: ThunderInstruction, position: int) -> Optional[int]:
     if instruction.opcode in dis.hasjabs:
         assert instruction.arg is not None
         return instruction.arg
@@ -487,23 +511,3 @@ def debug_compare_functions(
         debug_compare_functions_print(diffs)
 
     return diffs
-
-
-load_opcodes = {
-    "LOAD_CONST": VariableScope.CONST,
-    "LOAD_FAST": VariableScope.LOCAL,
-    "LOAD_DEREF": VariableScope.NONLOCAL,
-    "LOAD_GLOBAL": VariableScope.GLOBAL,
-}
-
-store_opcodes = {
-    "STORE_FAST": VariableScope.LOCAL,
-    "STORE_DEREF": VariableScope.NONLOCAL,
-    "STORE_GLOBAL": VariableScope.GLOBAL,
-}
-
-del_opcodes = {
-    "DELETE_FAST": VariableScope.LOCAL,
-    "DELETE_DEREF": VariableScope.NONLOCAL,
-    "DELETE_GLOBAL": VariableScope.GLOBAL,
-}

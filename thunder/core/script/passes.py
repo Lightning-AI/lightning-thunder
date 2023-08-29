@@ -23,11 +23,7 @@ from thunder.core.script.graph import (
     Value,
 )
 from thunder.core.script.instrumentation import verbose_error, record
-from thunder.core.script.python_ir_data import (
-    get_instruction,
-    modify_copy_instruction,
-    X_THUNDER_STORE_ATTR,
-)
+from thunder.core.script.python_ir_data import get_instruction, ThunderInstruction, JUMP_ABSOLUTE, X_THUNDER_STORE_ATTR
 from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.utils import OrderedSet
 
@@ -60,17 +56,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     bl.block_outputs = OrderedSet()
     nbl.block_inputs = []
 
-    jump_ins = dis.Instruction(
-        opname="JUMP_ABSOLUTE",
-        opcode=opcode.opmap["JUMP_ABSOLUTE"],
-        arg=None,
-        argval=None,
-        argrepr="None",
-        offset=-999,  # last_node_i.offset,
-        starts_line=None,
-        is_jump_target=False,
-    )
-    bl_jump_node = Node(i=jump_ins, inputs=[], outputs=[])
+    bl_jump_node = Node(i=ThunderInstruction.make_jump_absolute(arg=None), inputs=[], outputs=[])
     bl_jump_node.jump_targets = [nbl]
     if bl.nodes:
         bl_jump_node.line_no = bl.nodes[-1].line_no
@@ -279,11 +265,9 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     (ret_bl,) = (bl for bl in gr1.blocks if len(bl.nodes) > 0 and bl.nodes[-1].i.opname == "RETURN_VALUE")
 
     ret_node = ret_bl.nodes[-1]
-    ret_node.i = dis.Instruction(
-        opname="JUMP_ABSOLUTE",
-        opcode=opcode.opmap["JUMP_ABSOLUTE"],
+    ret_node.i = ThunderInstruction.make(
+        JUMP_ABSOLUTE,
         arg=-1,
-        argval=None,
         argrepr="None",
         offset=ret_node.i.offset,
         starts_line=ret_node.i.starts_line,
@@ -780,7 +764,7 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
                 attrs.append(n.i.argval)
                 if maybe_self.value is gr.module:
                     attr_string = ".".join(attrs)
-                    n.i = modify_copy_instruction(n.i, opname=X_THUNDER_STORE_ATTR, opcode=None, argval=attr_string)
+                    n.i = n.i.modify_copy(opname=X_THUNDER_STORE_ATTR, opcode=None, argval=attr_string)
                     pv = return_values.get(attr_string)
                     if pv is None:
                         pv = PhiValue([], [], return_block)

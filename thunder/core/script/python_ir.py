@@ -14,12 +14,7 @@ from thunder.core.script.graph import (
     insert_before,
     insert_after,
 )
-from thunder.core.script.python_ir_data import (
-    get_instruction,
-    modify_copy_instruction,
-    RETURN_VALUE,
-    X_THUNDER_STORE_ATTR,
-)
+from thunder.core.script.python_ir_data import get_instruction, RETURN_VALUE, X_THUNDER_STORE_ATTR
 from thunder.core.utils import OrderedSet
 
 
@@ -220,7 +215,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     except ValueError:
                         idx = len(names)
                         names.append(n.i.argval)
-                    n.i = modify_copy_instruction(n.i, arg=idx)
+                    n.i = n.i.modify_copy(arg=idx)
                 if n.i.opname == X_THUNDER_STORE_ATTR:
                     bl.nodes.remove(n)
         if bl.nodes[-1].i.opname != RETURN_VALUE:  # TODO Should the return block have outputs (probably not)
@@ -333,7 +328,7 @@ def generate_function(gr: "Graph") -> Callable:
             jump_node = None
             for n in bl.nodes:
                 opcode = n.i.opcode
-                if opcode is None or opcode == -1:  # Todo: opcode is typed int in dis.Instruction, remove None here?
+                if opcode is None or opcode == -1:  # Todo: opcode is typed int in ThunderInstruction, remove None here?
                     opcode = dis.opmap[n.i.opname]
                 assert opcode is not None, f"{n} has invalid opcode"
                 # source range instead for 3.11?

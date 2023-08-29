@@ -11,13 +11,12 @@ import networkx as nx
 
 from thunder.core.script.instrumentation import InstrumentingBase
 from thunder.core.script.python_ir_data import (
-    RAISE_RETURN_INSTRUCTIONS,
-    del_opcodes,
-    load_opcodes,
-    store_opcodes,
     stack_effect_adjusted,
     PushNew,
     VariableScope,
+    DEL_OPNAMES,
+    LOAD_OPNAMES,
+    STORE_OPNAMES,
     RETURN_VALUE,
     EXTENDED_ARG,
 )
@@ -191,11 +190,11 @@ class ProtoBlock(InstrumentingBase):
                 assert (pop, push) == tuple(expected), f"{instruction=} {pop=} {push=}"
 
             # Peek at the stack to track variable mutations.
-            if (store_scope := store_opcodes.get(instruction.opname)) is not None:
+            if (store_scope := STORE_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(1, ())
                 peek_variable(instruction, store_scope).append(peek_stack(pop=False))
 
-            elif (del_scope := del_opcodes.get(instruction.opname)) is not None:
+            elif (del_scope := DEL_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(1, ())
                 peek_variable(instruction, del_scope).append(ValueMissing())
 
@@ -215,7 +214,7 @@ class ProtoBlock(InstrumentingBase):
 
                 return new_intermediates[index]
 
-            if (load_scope := load_opcodes.get(instruction.opname)) is not None:
+            if (load_scope := LOAD_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(0, PushNew)
                 outputs = [peek_variable(instruction, load_scope)[-1]]
 

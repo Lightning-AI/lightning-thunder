@@ -36,10 +36,9 @@ from thunder.core.script.python_ir_data import (
     compute_jump,
     get_epilogue,
     get_instruction,
-    make_jump_absolute,
-    make_return,
     JumpEpilogue,
     NoJumpEpilogue,
+    ThunderInstruction,
     VariableScope,
     JUMP_INSTRUCTIONS,
     RETURN_INSTRUCTIONS,
@@ -56,7 +55,7 @@ class Super:
 
 def parse_bytecode(method: Callable) -> ProtoGraph:
     """Given a method, disassemble it to a sequence of simple blocks."""
-    bytecode: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(method, first_line=0))
+    bytecode = tuple(ThunderInstruction(*i) for i in dis.get_instructions(method, first_line=0))
     make_protoblock = functools.partial(ProtoBlock.from_instructions, code=method.__code__)
 
     # Determine the boundaries for the simple blocks.
@@ -71,7 +70,7 @@ def parse_bytecode(method: Callable) -> ProtoGraph:
     # Drop the group index, copy from the groupby iter, and unzip `enumerate`.
     groups = (zip(*tuple(i)) for _, i in groups)
 
-    blocks: dict[int, tuple[int, list[dis.Instruction]]] = {
+    blocks: dict[int, tuple[int, list[ThunderInstruction]]] = {
         start: (len(block), list(block)) for (start, *_), block in groups
     }
 
@@ -82,10 +81,10 @@ def parse_bytecode(method: Callable) -> ProtoGraph:
         if block[-1] not in split_after:
             next_start = start + block_size
             assert bytecode[next_start].is_jump_target
-            block.append(make_jump_absolute(next_start))
+            block.append(ThunderInstruction.make_jump_absolute(next_start))
 
     # Consolidate `return` statements.
-    def is_return(block: list[dis.Instruction]) -> bool:
+    def is_return(block: list[ThunderInstruction]) -> bool:
         assert block and not any(i.opname == RETURN_VALUE for i in block[:-1])
         return block[-1].opname == RETURN_VALUE
 
@@ -95,9 +94,9 @@ def parse_bytecode(method: Callable) -> ProtoGraph:
         new_return_start = len(bytecode) + 1
         for _, block in (blocks[start] for start in return_starts):
             assert is_return([prior_return := block.pop()]), prior_return
-            block.append(make_jump_absolute(new_return_start))
+            block.append(ThunderInstruction.make_jump_absolute(new_return_start))
 
-        blocks[new_return_start] = 1, [make_return(is_jump_target=True)]
+        blocks[new_return_start] = 1, [ThunderInstruction.make_return(is_jump_target=True)]
         assert is_return(blocks[new_return_start][1])
 
     # Assign line numbers once structure is (mostly) finalized.
@@ -528,7 +527,7 @@ def acquire_partial(
 
     if args_for_varargs or kwargs:
         prelude = Block()
-        jump_node = Node(i=make_jump_absolute(None), inputs=[], outputs=[], line_no=0)
+        jump_node = Node(i=ThunderInstruction.make_jump_absolute(None), inputs=[], outputs=[], line_no=0)
         prelude.nodes.append(jump_node)
         jump_target = gr.blocks[0]
         assert jump_target.jump_sources[0] is None
