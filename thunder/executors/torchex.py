@@ -889,7 +889,7 @@ def convolution(
     dilation: Sequence[int],
     transposed: Number,
     output_padding: Sequence[int],
-    groups: int
+    groups: int,
 ) -> BoundSymbol:
     sym = Symbol(name="convolution", meta=None, _module=torch)
     return sym.bind(

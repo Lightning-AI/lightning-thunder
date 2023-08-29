@@ -160,19 +160,9 @@ def convolution(
     dilation: Sequence[int],
     transposed: bool,
     output_padding: Sequence[int],
-    groups: int
+    groups: int,
 ) -> TensorLike:
-    return prims.convolution(
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        bool(transposed),
-        output_padding,
-        groups
-    )
+    return prims.convolution(a, weight, bias, stride, padding, dilation, bool(transposed), output_padding, groups)
 
 
 @clang_ctx

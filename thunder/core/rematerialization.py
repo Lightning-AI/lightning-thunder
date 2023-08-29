@@ -440,7 +440,8 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         current_consumer = new_bsyms.get(consumer, None) or consumer
         if cut:
             updated_producer = apply_rematerialization_for_producer(
-                rematerialized_trace, current_producer, current_consumer, cut)
+                rematerialized_trace, current_producer, current_consumer, cut
+            )
             updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
             # As we replace bound symbols of the input trace with updated ones every iteration,
             # we should keep track of the map of `current` to `updated` as well as `producer`/`consumer`
@@ -455,7 +456,8 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         # TODO: New bound symbols are still incorrect. Its _ctx_call dict points
         # to the old nvFuser fusion. We need to update it to use the new definition.
         rematerialized_trace.bound_symbols = tuple(
-            replace_bound_symbol(bsym, new_bsyms) for bsym in rematerialized_trace.bound_symbols)
+            replace_bound_symbol(bsym, new_bsyms) for bsym in rematerialized_trace.bound_symbols
+        )
 
     return rematerialized_trace, [rematerialized_trace]
 

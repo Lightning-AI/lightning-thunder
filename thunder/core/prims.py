@@ -1536,7 +1536,7 @@ def convolution_meta(
     dilation: Sequence[int],
     transposed: Number,
     output_padding: Sequence[int],
-    groups: int
+    groups: int,
 ) -> TensorProxy:
     # Validate types {
     utils.check_type(a, TensorProxy)
@@ -1552,11 +1552,7 @@ def convolution_meta(
     # }
 
     # TODO: add support for these later {
-    utils.check(
-        transposed == 0,
-        lambda: f"{transposed=} is not supported",
-        exception_type=NotImplementedError
-    )
+    utils.check(transposed == 0, lambda: f"{transposed=} is not supported", exception_type=NotImplementedError)
     # }
 
     # Validate inputs {
@@ -1578,28 +1574,26 @@ def convolution_meta(
     utils.check(
         all(fs != 0 for fs in features_size),
         lambda: f"Input's shape {a.shape=} can be zero only "
-                "in the batch (i.e. a.shape[0]) and/or "
-                "in the channel dimension (i.e. a.shape[1])"
+        "in the batch (i.e. a.shape[0]) and/or "
+        "in the channel dimension (i.e. a.shape[1])",
     )
     utils.check(
         all(ks != 0 for ks in kernel_size),
-        lambda: f"{kernel_size=} (i.e. weight.shape[2:]) should not contain zero dimensions"
+        lambda: f"{kernel_size=} (i.e. weight.shape[2:]) should not contain zero dimensions",
     )
 
     utils.check(
         in_channels_grouped * groups == in_channels,
         lambda: f"{weight.shape[1]=} should be equal to "
-                f"(in_channels / groups)={in_channels // groups} "
-                f"(i.e. {a.shape[1]=} / {groups=})"
+        f"(in_channels / groups)={in_channels // groups} "
+        f"(i.e. {a.shape[1]=} / {groups=})",
     )
     utils.check(
-        out_channels % groups == 0,
-        lambda: f"out_channels (i.e. {weight.shape[0]=}) should be divisible by {groups=}"
+        out_channels % groups == 0, lambda: f"out_channels (i.e. {weight.shape[0]=}) should be divisible by {groups=}"
     )
     utils.check(
         bias is None or (bias.ndim == 1 and bias.numel == out_channels),
-        lambda: f"{bias.ndim=} should be 1 and {bias.numel=} should match "
-                f"out_channels, (i.e. {weight.shape[0]=})"
+        lambda: f"{bias.ndim=} should be 1 and {bias.numel=} should match " f"out_channels, (i.e. {weight.shape[0]=})",
     )
 
     # Check sequences (stride, padding, dilation, output_padding)
@@ -1607,17 +1601,14 @@ def convolution_meta(
     def check_sequence(seq, seq_str_name, rank, *, min_val):
         utils.check_type(seq, Sequence)
 
-        utils.check(
-            len(seq) == 1 or len(seq) == rank,
-            lambda: f"len({seq_str_name}) should be either 1 or {rank}"
-        )
+        utils.check(len(seq) == 1 or len(seq) == rank, lambda: f"len({seq_str_name}) should be either 1 or {rank}")
 
         # Check all elements are >= min_val
         for i, e in enumerate(seq):
             utils.check(
                 isinstance(e, int) and e >= min_val,
                 lambda: f"all elements in {seq_str_name} should be integers at least {min_val}, "
-                        f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements"
+                f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements",
             )
 
     # stride and dilation should be at least 1
@@ -1654,13 +1645,13 @@ def convolution_meta(
         utils.check(
             padded_a_dim >= dilated_weight_dim,
             lambda: f"Inconsistent shapes at dimension {tensor_dim} between `a` and `weight`. "
-                    f"The padded `a` dimension {tensor_dim} is equal to {padded_a_dim} "
-                    f"(i.e. a.shape[{tensor_dim}] + 2 * dilation[{dim}] = "
-                    f"{a.shape[tensor_dim]} + 2 * {dilation[dim]}) "
-                    "and should be greater or equal to the dilated `weight` shape at the same dimension "
-                    f"which is equal to {dilated_weight_dim} "
-                    f"(i.e. dilation[{dim}] * (weight.shape[{tensor_dim}] - 1) + 1 = "
-                    f"{dilation[dim]} * ({weight.shape[tensor_dim]} - 1) + 1)"
+            f"The padded `a` dimension {tensor_dim} is equal to {padded_a_dim} "
+            f"(i.e. a.shape[{tensor_dim}] + 2 * dilation[{dim}] = "
+            f"{a.shape[tensor_dim]} + 2 * {dilation[dim]}) "
+            "and should be greater or equal to the dilated `weight` shape at the same dimension "
+            f"which is equal to {dilated_weight_dim} "
+            f"(i.e. dilation[{dim}] * (weight.shape[{tensor_dim}] - 1) + 1 = "
+            f"{dilation[dim]} * ({weight.shape[tensor_dim]} - 1) + 1)",
         )
     # }
 

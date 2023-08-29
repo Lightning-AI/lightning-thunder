@@ -131,6 +131,10 @@ class Benchmark:
             fn() should return a Callable to be benchmarked.
             The returned callable must accept the output of make_batch(), and it may be modified depending on
             the initialization arguments.
+            This function typically prints the benchmark's parameters.
+
+        If your benchmark returns a tensor t requiring grad, or a Sequence where the first element is a tensor t
+        requiring grad, then t.backward(torch.randn_like(t)) will be called as part of the benchmark.
 
     """
 
@@ -217,7 +221,13 @@ def _benchmark(
         args, kwargs = generator()
         wait_for_computation()
         start: int = time.time_ns()
-        fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+        # Inspects the first tensor retunred to see if it requires grad and, if so, calls backward on it
+        grad_tensor = (
+            result if isinstance(result, torch.Tensor) else result[0] if isinstance(result, Sequence) else None
+        )
+        if grad_tensor is not None and grad_tensor.requires_grad:
+            grad_tensor.backward(torch.randn_like(grad_tensor))
         host_stop: int = time.time_ns()
         wait_for_computation()
         stop: int = time.time_ns()
@@ -477,6 +487,12 @@ def default_thunder_last_used_executor(fn: Callable) -> Callable:
 # TODO Document a pattern to define benchmarks in another file
 
 
+def _print_benchmark_arguments(bmark: Benchmark) -> None:
+    print(f"{bmark.name} benchmark parameters:")
+    for arg in bmark.args:
+        print(f"\t{arg.name}={getattr(bmark, arg.name)}")
+
+
 class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
@@ -495,6 +511,10 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="dtype",
             description="The dtype of the tensors. Default is thunder.float32.",
         ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
     )
 
     @classmethod
@@ -509,7 +529,7 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
@@ -518,6 +538,7 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         shape: Sequence[int] = (16, 16),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
@@ -526,20 +547,19 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
 
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        a = make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=False)
-        b = make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=False)
-        return (a, b), {"depth": self.depth}
+        a = make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        b = make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        return (a, b), {
+            "depth": self.depth,
+        }
 
     def fn(self) -> Callable:
-        print(f"{self.name} benchmark parameters:")
-        print(f"\tdepth={self.depth}")
-        print(f"\tshape={self.shape}")
-        print(f"\tdevice={self.device}")
-        print(f"\tdtype={self.tdtype}")
+        _print_benchmark_arguments(self)
 
         def foo(a, b, *, depth):
             for _ in range(depth):
@@ -564,6 +584,10 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="dtype",
             description="The dtype (torch.dtype, thunder.dtypes.dtype) of the the input tensor. Default is thunder.float32.",
         ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
     )
 
     @classmethod
@@ -578,7 +602,7 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
@@ -586,6 +610,7 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         depth: int = 100,
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
@@ -593,19 +618,17 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
 
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
         shape = (16, 16, 16, 16, 16)
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         return (make(shape),), {"depth": self.depth}
 
     def fn(self) -> Callable:
-        print(f"{self.name} benchmark parameters:")
-        print(f"\tdepth={self.depth}")
-        print(f"\tdevice={self.device}")
-        print(f"\tdtype={self.tdtype}")
+        _print_benchmark_arguments(self)
 
         def foo(a: torch.Tensor, *, depth: int):
             for _ in range(depth):
@@ -638,6 +661,10 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="dtype",
             description="The dtype of the tensors. Default is thunder.float32.",
         ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
     )
 
     @classmethod
@@ -652,11 +679,15 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
-        self, shape: Sequence[int] = (1024, 1024), device: str = "cuda", dtype: dtypes.dtype = thunder.float32
+        self,
+        shape: Sequence[int] = (1024, 1024),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
@@ -664,14 +695,15 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = (requires_grad,)
 
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        return (make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=False),), {}
+        return (make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),), {}
 
     def fn(self) -> Callable:
-        # TODO Print parameters
+        _print_benchmark_arguments(self)
 
         def foo(a):
             return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))
@@ -716,11 +748,23 @@ def _print_nanogpt_config(cfg: NanoGPTConfig) -> None:
 from thunder.tests import nanogpt_model
 
 
+def _extract_nanogpt_config(config: str | NanoGPTConfig):
+    if isinstance(config, NanoGPTConfig):
+        return config
+
+    assert isinstance(config, str), "Expected the configuration to be a NanoGPTConfig object or a string"
+    assert config in _nanogpt_configs, f"Expected {config=} to be in {_nanogpt_configs.keys()}"
+
+    result: NanoGPTConfig = NanoGPTConfig()
+    result.update(**_nanogpt_configs[config])
+    return result
+
+
 class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The name (str) of the NanoGPT configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the NanoGPT model for details.",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -738,6 +782,10 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             name="dtype",
             description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the model. Default is thunder.float32.",
         ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
     )
 
     @classmethod
@@ -752,26 +800,26 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
         self,
-        config: str = "gpt2-medium",
+        config: str | NanoGPTConfig = "gpt2-medium",
         batchdims: Sequence[int] = (16,),
         indices_dtype: dtypes.dtype = thunder.int64,
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
     ) -> None:
         super().__init__()
 
-        self.config: NanoGPTConfig = NanoGPTConfig()
-        self.config.update(**_nanogpt_configs[config])
-
+        self.config = _extract_nanogpt_config(config)
         self.batchdims = batchdims
         self.indices_dtype = indices_dtype
         self.device = device
         self.dtype = dtype
+        self.requires_grad: bool = requires_grad
 
         # Performs torch dtype conversions
         self.indices_tdtype: torch.dtype = ltorch.to_torch_dtype(self.indices_dtype)
@@ -789,17 +837,13 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x, targets), {}
 
     def fn(self) -> Callable:
-        # Prints the parameters
-        print(f"{self.name} benchmark parameters:")
-        print(f"\tbatchdims={self.batchdims}")
-        print(f"\tindices_dtype={self.indices_tdtype}")
-        print(f"\tdevice={self.device}")
-        print(f"\tdtype={self.model_tdtype}")
+        _print_benchmark_arguments(self)
 
-        # Prints the config
-        _print_nanogpt_config(self.config)
-
-        gpt = nanogpt_model.GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(False)
+        gpt = (
+            nanogpt_model.GPT(self.config)
+            .to(device=self.device, dtype=self.model_tdtype)
+            .requires_grad_(self.requires_grad)
+        )
         return gpt
 
 
@@ -807,7 +851,7 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
     _args = (
         BenchmarkArg(
             name="config",
-            description="The name (str) of the NanoGPT configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the NanoGPT model for details.",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -823,7 +867,11 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         ),
         BenchmarkArg(
             name="dtype",
-            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the model. Default is thunder.float32.",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the logits. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the logits require grad. Default is False.",
         ),
     )
 
@@ -839,55 +887,47 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
         self,
-        config: str = "gpt2-medium",
+        config: str | NanoGPTConfig = "gpt2-medium",
         batchdims: Sequence[int] = (16,),
         indices_dtype: dtypes.dtype = thunder.int64,
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
-        self.config: NanoGPTConfig = NanoGPTConfig()
-        self.config.update(**_nanogpt_configs[config])
-
+        self.config = _extract_nanogpt_config(config)
         self.batchdims = batchdims
         self.indices_dtype = indices_dtype
         self.device = device
         self.dtype = dtype
+        self.requires_grad: bool = requires_grad
 
         # Performs torch dtype conversions
         self.indices_tdtype: torch.dtype = ltorch.to_torch_dtype(self.indices_dtype)
-        self.model_tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.logits_dtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
 
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, low=0, high=255, device=self.device, requires_grad=False)
+        make = partial(make_tensor, low=0, high=255, device=self.device, requires_grad=self.requires_grad)
 
         logits_shape = self.batchdims + (self.config.seq_len, self.config.vocab_size)
-        logits = make(logits_shape, dtype=self.model_tdtype)
+        logits = make(logits_shape, dtype=self.logits_dtype)
 
         targets_shape = self.batchdims + (self.config.seq_len,)
-        targets = make(targets_shape, dtype=self.indices_tdtype)
+        targets = make(targets_shape, dtype=self.indices_tdtype, requires_grad=False)
 
         return (logits, targets), {}
 
     def fn(self) -> Callable:
-        # Prints the parameters
-        print(f"{self.name} benchmark parameters:")
-        print(f"\tbatchdims={self.batchdims}")
-        print(f"\tindices_dtype={self.indices_tdtype}")
-        print(f"\tdevice={self.device}")
-        print(f"\tdtype={self.model_tdtype}")
-
-        # Prints the config
-        _print_nanogpt_config(self.config)
+        _print_benchmark_arguments(self)
 
         def foo(logits, targets):
             return torch.nn.functional.cross_entropy(
@@ -901,7 +941,7 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The name (str) of the NanoGPT configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the NanoGPT model for details.",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -914,6 +954,10 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         BenchmarkArg(
             name="dtype",
             description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
         ),
     )
 
@@ -929,24 +973,24 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
         self,
-        config: str = "gpt2-medium",
+        config: str | NanoGPTConfig = "gpt2-medium",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
     ) -> None:
         super().__init__()
 
-        self.config: NanoGPTConfig = NanoGPTConfig()
-        self.config.update(**_nanogpt_configs[config])
-
+        self.config = _extract_nanogpt_config(config)
         self.batchdims = batchdims
         self.device = device
         self.dtype = dtype
+        self.requires_grad: bool = requires_grad
 
         # Performs torch dtype conversions
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -961,16 +1005,13 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        # Prints the parameters
-        print(f"{self.name} benchmark parameters:")
-        print(f"\tbatchdims={self.batchdims}")
-        print(f"\tdevice={self.device}")
-        print(f"\tdtype={self.tdtype}")
+        _print_benchmark_arguments(self)
 
-        # Prints the config
-        _print_nanogpt_config(self.config)
-
-        gpt_block = nanogpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(False)
+        gpt_block = (
+            nanogpt_model.Block(self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
         return gpt_block
 
 
@@ -978,7 +1019,7 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The name (str) of the NanoGPT configuration to use. Options are gpt2, gpt2-medium, gpt2-large, and gpt2-xl. Default is gpt2-medium. See the NanoGPT model for details.",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -991,6 +1032,10 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         BenchmarkArg(
             name="dtype",
             description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
         ),
     )
 
@@ -1006,24 +1051,24 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     @classmethod
     @property
-    def args(cls):
+    def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
     def __init__(
         self,
-        config: str = "gpt2-medium",
+        config: str | NanoGPTConfig = "gpt2-medium",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
     ) -> None:
         super().__init__()
 
-        self.config: NanoGPTConfig = NanoGPTConfig()
-        self.config.update(**_nanogpt_configs[config])
-
+        self.config = _extract_nanogpt_config(config)
         self.batchdims = batchdims
         self.device = device
         self.dtype = dtype
+        self.requires_grad: bool = requires_grad
 
         # Performs torch dtype conversions
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
@@ -1038,16 +1083,11 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        # Prints the parameters
-        print(f"{self.name} benchmark parameters:")
-        print(f"\tbatchdims={self.batchdims}")
-        print(f"\tdevice={self.device}")
-        print(f"\tdtype={self.tdtype}")
+        _print_benchmark_arguments(self)
 
-        # Prints the config
-        _print_nanogpt_config(self.config)
-
-        gpt_mlp = nanogpt_model.MLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(False)
+        gpt_mlp = (
+            nanogpt_model.MLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        )
         return gpt_mlp
 
 

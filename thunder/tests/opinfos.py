@@ -3922,7 +3922,7 @@ def _convolution_get_default_args():
         "dilation": (1,),
         "transposed": False,
         "output_padding": (0,),
-        "groups": 1
+        "groups": 1,
     }
 
     return defaults
@@ -3936,10 +3936,10 @@ def convolution_1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Ordered as shapes for input, weight, bias,
     # and a dict of values of (stride, padding, dilation, groups)
     cases: Tuple = (
-        ((1, 3, 4), (3, 3, 3), (3,), {'stride': (2,), 'padding': 2, 'groups': 1}),
-        ((2, 4, 8), (2, 2, 3), (2,), {'stride': 3, 'padding': 1, 'groups': 2, 'dilation': 2}),
-        ((1, 4, 5), (1, 4, 3), None, {'stride': (2,), 'padding': 'valid'}),
-        ((2, 2, 4), (2, 1, 4), (2,), {'stride': (1,), 'padding': 'same', 'groups': 2, 'dilation': (2,)}),
+        ((1, 3, 4), (3, 3, 3), (3,), {"stride": (2,), "padding": 2, "groups": 1}),
+        ((2, 4, 8), (2, 2, 3), (2,), {"stride": 3, "padding": 1, "groups": 2, "dilation": 2}),
+        ((1, 4, 5), (1, 4, 3), None, {"stride": (2,), "padding": "valid"}),
+        ((2, 2, 4), (2, 1, 4), (2,), {"stride": (1,), "padding": "same", "groups": 2, "dilation": (2,)}),
         # With defaults
         ((1, 4, 5), (3, 4, 3), None, {}),
         # Empty inputs
@@ -3956,10 +3956,7 @@ def convolution_1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for a_shape, weight_shape, bias_shape, kwargs in cases:
         yield SampleInput(
-            make(a_shape),
-            make(weight_shape),
-            make(bias_shape) if bias_shape is not None else None,
-            **kwargs
+            make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **kwargs
         )
 
 
@@ -3970,7 +3967,7 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
     # and a dict of values of (stride, padding, dilation, groups)
     cases: Tuple = (
         # groups should be > 0
-        ((1, 1, 1), (1, 1, 1), None, {'groups': 0}, "groups(.*?) should be greater than 0"),
+        ((1, 1, 1), (1, 1, 1), None, {"groups": 0}, "groups(.*?) should be greater than 0"),
         # Wrong weight dim.
         # The string match is partial because
         # this generator is used for both conv1d and convolution,
@@ -3983,9 +3980,9 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
         # Zero-dim kernel
         ((1, 1, 1), (1, 1, 0), None, {}, "kernel_size(.*?) should not contain zero dimensions"),
         # weight.shape[1] ==  a.shape[1] / groups, i.e. in_channels / groups
-        ((1, 4, 1), (1, 1, 1), None, {'groups': 2}, r"weight.shape(.*?)equal to \(in_channels / groups\)"),
+        ((1, 4, 1), (1, 1, 1), None, {"groups": 2}, r"weight.shape(.*?)equal to \(in_channels / groups\)"),
         # groups should divide out_channels, i.e. weight.shape[0]
-        ((1, 4, 1), (3, 2, 1), None, {'groups': 2}, "out_channels(.*?) should be divisible by groups"),
+        ((1, 4, 1), (3, 2, 1), None, {"groups": 2}, "out_channels(.*?) should be divisible by groups"),
         # Wrong bias ndim/numel
         ((1, 2, 2), (3, 2, 2), (1, 1), {}, "bias.ndim(.*?) should be 1"),
         ((1, 2, 2), (3, 2, 2), (1,), {}, r"bias.numel(.*?) should match out_channels, \(i.e. weight.shape\[0\]=3"),
@@ -3994,25 +3991,18 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
     for a_shape, weight_shape, bias_shape, kwargs, err_msg in cases:
         yield (
             SampleInput(
-                make(a_shape),
-                make(weight_shape),
-                make(bias_shape) if bias_shape is not None else None,
-                **kwargs
+                make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **kwargs
             ),
             RuntimeError,
-            err_msg
+            err_msg,
         )
 
     # Produce all sorts of wrong values for stride, padding, dilation
     def incorrect_seq_gen():
-        min_val_map = {
-            'stride': 1,
-            'dilation': 1,
-            'padding': 0
-        }
+        min_val_map = {"stride": 1, "dilation": 1, "padding": 0}
 
-        for param in ('stride', 'padding', 'dilation'):
-            yield param, (1, 1), fr"len\({param}\) should be(.*?) 1 or"
+        for param in ("stride", "padding", "dilation"):
+            yield param, (1, 1), rf"len\({param}\) should be(.*?) 1 or"
             # convolution does not support scalars for sequence params,
             # only conv does. However, scalars are wrapped to a sequence
             # before convolution fallback only if they are integers.
@@ -4022,26 +4012,22 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
             yield param, (-1), f"should be (.*?) at least {min_val_map[param]}"
 
     for param, param_val, err_msg in incorrect_seq_gen():
-        yield (
-            SampleInput(make(1, 1, 1), make(1, 1, 1), None, **{param: param_val}),
-            RuntimeError,
-            err_msg
-        )
+        yield (SampleInput(make(1, 1, 1), make(1, 1, 1), None, **{param: param_val}), RuntimeError, err_msg)
 
     # padding == 'same' only works with all-1 strides
     yield (
-        SampleInput(make(1, 1, 1), make(1, 1, 1), None, **{'padding': 'same', 'stride': 2}),
+        SampleInput(make(1, 1, 1), make(1, 1, 1), None, **{"padding": "same", "stride": 2}),
         RuntimeError,
-        "padding='same' requires all `strides` to be 1"
+        "padding='same' requires all `strides` to be 1",
     )
 
     # padded_a_dim = a_dim + 2 * padding
     # dilated_kernel = dilation * (kernel_size - 1) + 1
     # padded_a_dim < dilation_kernel signals shape inconsistency
     yield (
-        SampleInput(make(2, 2, 2), make(2, 2, 2), None, **{'padding': 0, 'dilation': 2}),
+        SampleInput(make(2, 2, 2), make(2, 2, 2), None, **{"padding": 0, "dilation": 2}),
         RuntimeError,
-        "Inconsistent shape"
+        "Inconsistent shape",
     )
 
 
@@ -4078,28 +4064,21 @@ def convolution_2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Ordered as shapes for input, weight, bias
     # and a dict of values of (stride, padding, groups, dilation)
     cases: Tuple = (
-        ((1, 3, 4, 4), (3, 3, 3, 3), (3,),
-            {'stride': (2, 2), 'padding': 2, 'groups': 1}),
-        ((2, 4, 8, 8), (2, 2, 3, 3), (2,),
-            {'stride': (3, 2), 'padding': (2, 1), 'groups': 2, 'dilation': (4, 4)}),
-        ((1, 4, 5, 5), (1, 4, 2, 3), (1,),
-            {'stride': 2, 'padding': 1, 'groups': 1, 'dilation': (2, 3)}),
-        ((1, 4, 5, 5), (1, 4, 2, 3), (1,),
-            {'stride': 2, 'padding': 1, 'groups': 1, 'dilation': (2, 3)}),
-        ((1, 2, 4, 3), (4, 2, 3, 4), None,
-            {'stride': 2, 'padding': 1, 'groups': 1}),
-        ((1, 4, 5, 5), (1, 4, 2, 3), (1,),
-            {'stride': 2, 'padding': "valid"}),
-        ((1, 4, 5, 6), (1, 4, 2, 3), (1,),
-            {'stride': 1, 'padding': "same", 'dilation': 3}),
+        ((1, 3, 4, 4), (3, 3, 3, 3), (3,), {"stride": (2, 2), "padding": 2, "groups": 1}),
+        ((2, 4, 8, 8), (2, 2, 3, 3), (2,), {"stride": (3, 2), "padding": (2, 1), "groups": 2, "dilation": (4, 4)}),
+        ((1, 4, 5, 5), (1, 4, 2, 3), (1,), {"stride": 2, "padding": 1, "groups": 1, "dilation": (2, 3)}),
+        ((1, 4, 5, 5), (1, 4, 2, 3), (1,), {"stride": 2, "padding": 1, "groups": 1, "dilation": (2, 3)}),
+        ((1, 2, 4, 3), (4, 2, 3, 4), None, {"stride": 2, "padding": 1, "groups": 1}),
+        ((1, 4, 5, 5), (1, 4, 2, 3), (1,), {"stride": 2, "padding": "valid"}),
+        ((1, 4, 5, 6), (1, 4, 2, 3), (1,), {"stride": 1, "padding": "same", "dilation": 3}),
         # Below are the group related samples from common_nn.py
-        ((2, 4, 6, 6), (4, 1, 3, 3), (4,), {'groups': 4}),
-        ((2, 4, 6, 6), (8, 1, 3, 3), (8,), {'groups': 4}),
-        ((2, 4, 6, 6), (8, 1, 3, 3), None, {'groups': 4}),
-        ((2, 4, 6, 6), (4, 1, 3, 3), (4,), {'groups': 4, 'stride': (3, 2)}),
-        ((2, 4, 6, 6), (4, 1, 3, 3), (4,), {'groups': 4, 'padding': (1, 1)}),
-        ((2, 4, 5, 5), (4, 1, 2, 2), (4,), {'groups': 4, 'dilation': (2, 2)}),
-        ((2, 4, 6, 5), (6, 2, 3, 2), (6,), {'groups': 2}),
+        ((2, 4, 6, 6), (4, 1, 3, 3), (4,), {"groups": 4}),
+        ((2, 4, 6, 6), (8, 1, 3, 3), (8,), {"groups": 4}),
+        ((2, 4, 6, 6), (8, 1, 3, 3), None, {"groups": 4}),
+        ((2, 4, 6, 6), (4, 1, 3, 3), (4,), {"groups": 4, "stride": (3, 2)}),
+        ((2, 4, 6, 6), (4, 1, 3, 3), (4,), {"groups": 4, "padding": (1, 1)}),
+        ((2, 4, 5, 5), (4, 1, 2, 2), (4,), {"groups": 4, "dilation": (2, 2)}),
+        ((2, 4, 6, 5), (6, 2, 3, 2), (6,), {"groups": 2}),
         # With defaults
         ((1, 4, 5, 5), (3, 4, 3, 3), None, {}),
         # Empty inputs
@@ -4116,26 +4095,14 @@ def convolution_2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for a_shape, weight_shape, bias_shape, kwargs in cases:
         yield SampleInput(
-            make(a_shape),
-            make(weight_shape),
-            make(bias_shape) if bias_shape is not None else None,
-            **kwargs
+            make(a_shape), make(weight_shape), make(bias_shape) if bias_shape is not None else None, **kwargs
         )
 
 
 def convolution_2d_error_generator(op, device, dtype=torch.float32, **kwargs):
     # We re-use 1D samples and lift them to 2D
     for sample, ex_type, err_msg in convolution_1d_error_generator(op, device, dtype, **kwargs):
-        yield (
-            _convolution_sample_dim_lifter(
-                sample,
-                device=device,
-                dtype=dtype,
-                **kwargs
-            ),
-            ex_type,
-            err_msg
-        )
+        yield (_convolution_sample_dim_lifter(sample, device=device, dtype=dtype, **kwargs), ex_type, err_msg)
 
 
 def convolution_3d_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -4152,16 +4119,7 @@ def convolution_3d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def convolution_3d_error_generator(op, device, dtype=torch.float32, **kwargs):
     # We re-use 2D samples and lift them to 3D
     for sample, ex_type, err_msg in convolution_2d_error_generator(op, device, dtype, **kwargs):
-        yield (
-            _convolution_sample_dim_lifter(
-                sample,
-                device=device,
-                dtype=dtype,
-                **kwargs
-            ),
-            ex_type,
-            err_msg
-        )
+        yield (_convolution_sample_dim_lifter(sample, device=device, dtype=dtype, **kwargs), ex_type, err_msg)
 
 
 def _convolution_sample_materialize_defaults(sample, **kwargs):
@@ -4171,25 +4129,25 @@ def _convolution_sample_materialize_defaults(sample, **kwargs):
     defaults = _convolution_get_default_args()
     sample.kwargs = defaults | sample.kwargs
 
-    for key in ('stride', 'padding', 'dilation'):
+    for key in ("stride", "padding", "dilation"):
         param = sample.kwargs[key]
         if isinstance(param, int):
             sample.kwargs[key] = (param,)
 
     # Handle string padding
-    padding = sample.kwargs['padding']
+    padding = sample.kwargs["padding"]
     if isinstance(padding, str):
         if padding == "valid":
-            sample.kwargs['padding'] = defaults['padding']
+            sample.kwargs["padding"] = defaults["padding"]
         elif padding == "same":
             # Pad a, replace padding == 'same' with zero
-            sample.kwargs['padding'] = (0,)
+            sample.kwargs["padding"] = (0,)
 
             a, weight, bias = sample.args
 
             def produce_pad_args():
                 dim = weight.ndim - 2
-                dilation = sample.kwargs.get('dilation', defaults['dilation'])
+                dilation = sample.kwargs.get("dilation", defaults["dilation"])
                 if isinstance(dilation, int):
                     dilation = (dilation,) * dim
                 elif len(dilation) == 1:
@@ -4200,7 +4158,7 @@ def _convolution_sample_materialize_defaults(sample, **kwargs):
                 for d, k in zip(reversed(dilation), reversed(kernel_size)):
                     total_pad = d * (k - 1)
                     lo = total_pad // 2
-                    hi =  total_pad - lo
+                    hi = total_pad - lo
                     pad.append(lo)
                     pad.append(hi)
                 # No need to pad batch and channel dims
@@ -4208,10 +4166,10 @@ def _convolution_sample_materialize_defaults(sample, **kwargs):
                 return pad
 
             return SampleInput(
-                torch.nn.functional.pad(make(a.shape), produce_pad_args(), mode='constant', value=0),
+                torch.nn.functional.pad(make(a.shape), produce_pad_args(), mode="constant", value=0),
                 make(weight.shape),
                 make(bias.shape) if bias is not None else None,
-                **sample.kwargs
+                **sample.kwargs,
             )
 
     return sample
@@ -4224,11 +4182,7 @@ def convolution_sample_generator(op, device, dtype, requires_grad, **kwargs):
         convolution_3d_sample_generator(op, device, dtype, requires_grad, **kwargs),
     ):
         yield _convolution_sample_materialize_defaults(
-            sample,
-            device=device,
-            dtype=dtype,
-            requires_grad=requires_grad,
-            **kwargs
+            sample, device=device, dtype=dtype, requires_grad=requires_grad, **kwargs
         )
 
 
@@ -4239,20 +4193,11 @@ def convolution_error_generator(op, device, dtype=torch.float32, **kwargs):
         convolution_3d_error_generator(op, device, dtype, **kwargs),
     ):
         # Leave padding == "same" to conv{1, 2, 3}d
-        padding = sample.kwargs.get('padding', None)
+        padding = sample.kwargs.get("padding", None)
         if padding == "same":
             continue
 
-        yield (
-            _convolution_sample_materialize_defaults(
-                sample,
-                device=device,
-                dtype=dtype,
-                **kwargs
-            ),
-            ex_type,
-            err_msg
-        )
+        yield (_convolution_sample_materialize_defaults(sample, device=device, dtype=dtype, **kwargs), ex_type, err_msg)
 
 
 convolution_opinfo = OpInfo(
