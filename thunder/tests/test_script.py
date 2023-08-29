@@ -296,16 +296,15 @@ def test_nanogpt_inlining_unrolling():
 
     # these will likely change specialization, more inlining, ...
     # but lets check when it happens
-    assert len(gr.blocks) == 5
-    assert sum(len(bl.nodes) for bl in gr.blocks) == 579
+    assert len(gr.blocks) == 78
+    assert sum(len(bl.nodes) for bl in gr.blocks) == 677
 
     # has everything been inlined/unrolled?
     funcs = _helper_get_func_calls(gr)
     allowed_funcs = {
         float,
+        bool,
         math.sqrt,
-        ## This might eventually go (i.e. be inlined as well)...
-        nanogpt_model.new_gelu,
         ## PyTorch functions
         torch.arange,
         torch.nn.functional.cross_entropy,
@@ -314,13 +313,14 @@ def test_nanogpt_inlining_unrolling():
         torch.nn.functional.layer_norm,
         torch.nn.functional.linear,
         torch.nn.functional.softmax,
+        torch.nn.functional.scaled_dot_product_attention,
+        torch.nn.functional.gelu,
         ## these should be Tensor methods
         "contiguous",
         "masked_fill",
         "size",
         "split",
         "transpose",
-        "unsqueeze",
         "view",
         ## there is an oddball (handled above) from instantiating the AssertionError
         "LOAD_ASSERTION_ERROR",

@@ -2191,6 +2191,10 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     result = backward_pass(reconstructed_env, trace, grads)
     if len(args) == 1:
         return result[0]
+    # Backward pass might return a dict with grads but current interface of
+    # backward rule does not support it. So we just drop it for now.
+    elif isinstance(result[-1], dict):
+        return result[:-1]
     return result
 
 
@@ -2277,6 +2281,12 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
+nondifferentiable_vjp_symbols = (
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.FULL
+)
+
+
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     """Symbol mapper for the VJP transform.
 
@@ -2289,9 +2299,10 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         Callable: A function that computes the VJP of the symbol.
     """
     # Constant case
-    if symbol.are_all_args_constant:
+    if symbol.are_all_args_constant or symbol.sym.id in nondifferentiable_vjp_symbols:
 
         def vjp_impl_const(symbol, *args, **kwargs):
+            args, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
             primals = symbol_to_eval(symbol)(*args, **kwargs)
             n_args = len(args)
             if isinstance(primals, Sequence):
@@ -2411,7 +2422,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
         residuals = forward_env[symbol_output[0].name].residuals
-        if symbol.are_all_args_constant:
+        if symbol.are_all_args_constant or symbol.sym.id in nondifferentiable_vjp_symbols:
             # We can skip the pullback if all the arguments are constant
             continue
 
