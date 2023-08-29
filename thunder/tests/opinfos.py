@@ -4237,6 +4237,29 @@ def conv1d_error_generator(op, device, dtype=torch.float32, **kwargs):
             yield (s, ex_type, err_msg)
 
 
+def conv2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    for sample in itertools.chain(
+        convolution_2d_sample_generator(op, device, dtype, requires_grad, **kwargs),
+    ):
+        yield sample
+        yield from _conv_remove_batch(
+            sample,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            **kwargs
+        )
+
+
+def conv2d_error_generator(op, device, dtype=torch.float32, **kwargs):
+    for sample, ex_type, err_msg in itertools.chain(
+        convolution_2d_error_generator(op, device, dtype, **kwargs),
+    ):
+        yield (sample, ex_type, err_msg)
+        for s in _conv_remove_batch(sample, device=device, dtype=dtype, **kwargs):
+            yield (s, ex_type, err_msg)
+
+
 convolution_opinfo = OpInfo(
     ltorch.convolution,
     sample_input_generator=convolution_sample_generator,
@@ -4290,6 +4313,33 @@ conv1d_opinfo = OpInfo(
     ),
 )
 nn_ops.append(conv1d_opinfo)
+
+
+conv2d_opinfo = OpInfo(
+    ltorch.conv2d,
+    sample_input_generator=conv2d_sample_generator,
+    error_input_generator=conv2d_error_generator,
+    torch_reference=torch.nn.functional.conv2d,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            # We do not support complex convolutions
+            # because there is no access to real/imag yet.
+            dtypes=(datatypes.complexfloating,),
+            executors=("TorchEx", "nvFuser"),
+        ),
+    ),
+)
+nn_ops.append(conv2d_opinfo)
 
 
 def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):

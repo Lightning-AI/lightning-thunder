@@ -1464,6 +1464,22 @@ def conv1d(
     )
 
 
+@torchsymbol(torch.conv2d, torch.nn.functional.conv2d, id="torch.nn.functional.conv2d", is_method=False)
+def conv2d(
+    a: TensorProxy,
+    weight: TensorProxy,
+    bias: Optional[TensorProxy] = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1
+) -> TensorProxy:
+    return _conv_helper(
+        2,  # means 2D convolution
+        a, weight, bias, stride, padding, dilation, groups
+    )
+
+
 @torchsymbol(torch.mean, is_method=True)
 def mean(a: TensorProxy, dim=None, keepdim: bool = False, *, dtype=None):
     dtype = dtype if dtype is not None else a.dtype

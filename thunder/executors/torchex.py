@@ -913,6 +913,22 @@ def conv1d(
     )
 
 
+def conv2d(
+    bsym: BoundSymbol,
+    a: TensorLike,
+    weight: TensorLike,
+    bias: Optional[TensorLike] = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int | Sequence[int] = 1,
+    groups: int = 1
+) -> BoundSymbol:
+    sym = Symbol(name="conv2d", meta=None, _module=torch.nn.functional)
+    return sym.bind(
+        a, weight, bias, stride, padding, dilation, groups, output=bsym.output
+    )
+
+
 def cross_entropy(
     bsym: BoundSymbol,
     input,
@@ -1406,6 +1422,7 @@ _ops_map.update(
         PrimIDs.MATMUL: (_always_executable, matmul),
         # NN operations
         "torch.nn.functional.conv1d": (_always_executable, conv1d),
+        "torch.nn.functional.conv2d": (_always_executable, conv2d),
         "torch.nn.functional.cross_entropy": (_always_executable, cross_entropy),
         "cross_entropy_backward": (_always_executable, cross_entropy_backward),
         "torch.nn.functional.dropout": (_always_executable, dropout),
