@@ -71,7 +71,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
         is_jump_target=False,
     )
     bl_jump_node = Node(i=jump_ins, inputs=[], outputs=[])
-    bl_jump_node.jump_targets = [((0, 0), nbl)]
+    bl_jump_node.jump_targets = [nbl]
     if bl.nodes:
         bl_jump_node.line_no = bl.nodes[-1].line_no
     else:
@@ -289,9 +289,9 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
         starts_line=ret_node.i.starts_line,
         is_jump_target=ret_node.i.is_jump_target,
     )
-    bl.nodes[-1].jump_targets = [((0, 0), gr1.blocks[0])]
+    bl.nodes[-1].jump_targets = [gr1.blocks[0]]
     gr1.blocks[0].jump_sources = [bl.nodes[-1]]
-    ret_node.jump_targets = [((0, 0), nbl)]
+    ret_node.jump_targets = [nbl]
     nbl.jump_sources = [ret_node if js == bl.nodes[-1] else js for js in nbl.jump_sources]
 
     gr.blocks[i_bl + 1 : i_bl + 1] = gr1.blocks
@@ -462,7 +462,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
     jt = bl1.nodes[-1].jump_targets
     if len(jt) != 1:
         raise RuntimeError("can only fuse blocks with deterministic connection")
-    bl2 = jt[0][1]
+    bl2 = jt[0]
     if len(bl2.jump_sources) != 1 or bl2.jump_sources[0] != bl1.nodes[-1]:
         raise RuntimeError("second block to be fused must only have first block as jump source")
 
@@ -496,7 +496,7 @@ def merge_blocks_where_possible(gr: "Graph") -> None:
         bl1 = gr.blocks[i_bl]
         jt = bl1.nodes[-1].jump_targets
         if len(jt) == 1:
-            bl2 = jt[0][1]
+            bl2 = jt[0]
         else:
             bl2 = None
         if bl2 is not None and len(bl2.jump_sources) == 1 and bl2.jump_sources[0] == bl1.nodes[-1]:
@@ -518,14 +518,14 @@ def find_blocks_of_for(gr: "Graph", for_block: "Block") -> list[Block]:
             return False
         currently_looking_at.add(start_block)
         found = False
-        for _, jt in start_block.nodes[-1].jump_targets:
+        for jt in start_block.nodes[-1].jump_targets:
             found |= find_blocks_of_for_rec(for_block, jt)
         currently_looking_at.remove(start_block)
         if found:
             blocks_of_for_loop.add(start_block)
         return found
 
-    find_blocks_of_for_rec(for_block, for_block.nodes[-1].jump_targets[0][1])
+    find_blocks_of_for_rec(for_block, for_block.nodes[-1].jump_targets[0])
     return list(blocks_of_for_loop)
 
 
@@ -592,21 +592,21 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
 
     for_iter_block_jmp = Node(i=get_instruction(opname="JUMP_ABSOLUTE", arg=None))
     for_iter_block.nodes.append(for_iter_block_jmp)
-    for_iter_block_jmp.jump_targets = [((0, 0), for_iter_node.jump_targets[0][1])]
-    _, for_iter_node_exit_jump_target = for_iter_node.jump_targets[1]
+    for_iter_block_jmp.jump_targets = [for_iter_node.jump_targets[0]]
+    for_iter_node_exit_jump_target = for_iter_node.jump_targets[1]
     for_iter_node.jump_targets = []
-    for_iter_block_jmp.jump_targets[0][1].jump_sources = [
+    for_iter_block_jmp.jump_targets[0].jump_sources = [
         (js if js is not for_iter_node else for_iter_block_jmp)
-        for js in for_iter_block_jmp.jump_targets[0][1].jump_sources
+        for js in for_iter_block_jmp.jump_targets[0].jump_sources
     ]
 
     exit_block = Block()
     gr.blocks.append(exit_block)
     exit_node = Node(i=get_instruction(opname="JUMP_ABSOLUTE", arg=None))
-    exit_node.jump_targets = [((0, 0), for_iter_node_exit_jump_target)]
-    target_after_iter = exit_node.jump_targets[0][1]
-    exit_node.jump_targets[0][1].jump_sources = [
-        (js if js is not for_iter_node else exit_node) for js in exit_node.jump_targets[0][1].jump_sources
+    exit_node.jump_targets = [for_iter_node_exit_jump_target]
+    target_after_iter = exit_node.jump_targets[0]
+    exit_node.jump_targets[0].jump_sources = [
+        (js if js is not for_iter_node else exit_node) for js in exit_node.jump_targets[0].jump_sources
     ]
     exit_block.nodes.append(exit_node)
     for i in for_iter_block.block_inputs:
@@ -647,7 +647,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     for idx_it, (fib_i, jump_sources_to_fix, fib_next, nbls) in enumerate(fixup_data):
         for js in jump_sources_to_fix:
             assert js is not None
-            for idx, (_, jt) in enumerate(js.jump_targets):
+            for idx, jt in enumerate(js.jump_targets):
                 if jt == fib_i:
                     js.set_jump_target(fib_next, idx=idx)
 

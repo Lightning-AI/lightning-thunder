@@ -255,7 +255,7 @@ class Node(InstrumentingBase):
         self.i = i
         self.inputs: list[Value] = inputs if inputs is not None else []
         self.outputs: list[Value] = outputs if outputs is not None else []
-        self.jump_targets: list[tuple[tuple[int, int], Block]] = []
+        self.jump_targets: list[Block] = []
         self.line_no = line_no
         self.block: Optional[Block] = None
 
@@ -269,7 +269,7 @@ class Node(InstrumentingBase):
         outputs = [o.clone(translation_dict=translation_dict) for o in self.outputs]
         i = copy.copy(self.i)
         n2 = Node(i=i, inputs=inputs, outputs=outputs, line_no=self.line_no)
-        n2.jump_targets = [(se, assert_block(translation_dict.get(bl, bl))) for se, bl in self.jump_targets]
+        n2.jump_targets = [assert_block(translation_dict.get(bl, bl)) for bl in self.jump_targets]
         if self.block is None:
             n2.block = None
         else:
@@ -284,14 +284,13 @@ class Node(InstrumentingBase):
         # is_jump = (self.i.opname not in unconditional_jump_names) or (idx == 1) or (idx is None and self.jump_targets)
         # assert is_jump
 
-        jt_plus = (stack_effect_detail(self.i, jump=False), jt)
         if idx is None:
             assert len(self.jump_targets) <= 1
-            self.jump_targets.append(jt_plus)
+            self.jump_targets.append(jt)
         else:
-            old_jt = self.jump_targets[idx][1]
+            old_jt = self.jump_targets[idx]
             old_jt.jump_sources.remove(self)
-            self.jump_targets[idx] = jt_plus
+            self.jump_targets[idx] = jt
         jt.jump_sources.append(self)
 
     def __str__(self) -> str:
@@ -587,7 +586,7 @@ def make_dot(gr: Graph, format: str = "png", add_names: bool = False) -> "graphv
                     sub_dot.edge(f"i {i_bl} {i_n - 1}", f"i {i_bl} {i_n}")
 
     for i_bl, bl in enumerate(gr.blocks):
-        for _, jt_bl in bl.nodes[-1].jump_targets:
+        for jt_bl in bl.nodes[-1].jump_targets:
             dot.edge(f"i {i_bl} {len(bl.nodes) - 1}", f"i {block_idxes[jt_bl]} {0}")
         for i in bl.block_inputs:
             i_idx = value_idxes[i]
@@ -708,7 +707,7 @@ def _check_graph(gr: Graph) -> None:
             assert not n.jump_targets
         else:
             assert 1 <= len(n.jump_targets) <= 2, f"{n} should have one or two ump targets, but has {n.jump_targets}"
-            jump_targets[n] = {jt for _, jt in n.jump_targets}
+            jump_targets[n] = {jt for jt in n.jump_targets}
             assert len(n.jump_targets) == len(jump_targets[n])
 
     for bl in gr.blocks:

@@ -346,15 +346,13 @@ def _bind_to_graph(
     for protoblock, block in blocks.items():
         block.nodes = list(make_nodes(protoblock))
         for target, _ in protoblock.jump_targets:
-            pop, values_pushed = protoblock.stack_effect
             if _is_epilogue(target):
-                pop, values_pushed = fold_epilogue_stack(protoblock, target)
                 ((target, _),) = target.jump_targets
 
             jump_target = blocks[target]
             last_node = block.nodes[-1]
             jump_target.jump_sources.append(last_node)
-            last_node.jump_targets.append(((pop, len(values_pushed)), jump_target))
+            last_node.jump_targets.append(jump_target)
 
     # Second pass: link blocks.
     for protoblock, block in blocks.items():
@@ -535,7 +533,7 @@ def acquire_partial(
         jump_target = gr.blocks[0]
         assert jump_target.jump_sources[0] is None
         jump_target.jump_sources[0] = jump_node
-        jump_node.jump_targets.append((0, jump_target))
+        jump_node.jump_targets.append(jump_target)
         prelude.jump_sources.append(None)
         for i in jump_target.block_inputs:
             assert i.jump_sources[0] is None
