@@ -311,6 +311,8 @@ class VISIT_TYPE(Enum):
 #   direct modification, acquiring the trace's current scope through the trace ctx and modifying it
 #   directly (this can be done today), or adding a record() function that is a sugar for the previous
 #   approach. Perhaps both passing the scope directly to visit() and adding record() would be helpful.
+# TODO(crcrpar): Think about providing a guide how to let thunder "claim" if this is called after
+# `thunder.executors.transform_for_execution`.
 def visitor_transform(
     trace_from: Trace,
     provenance: str,

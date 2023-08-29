@@ -10,9 +10,9 @@ from looseversion import LooseVersion
 
 import thunder.core.dtypes as dtypes
 from thunder.core.prims import PrimIDs, DistributedReduceOps
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.proxies import Proxy, TensorProxy, FutureTensorProxy, variableify
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
+from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
+from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.utils as utils
@@ -1563,6 +1563,7 @@ class ThunderFunction(torch.autograd.Function):
                 (arg_grad if requires_grad else None)
                 for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
             )
+
             # autograd.Function.backward expects a flat tuple of gradients
             bw_trace.bound_symbols[-1].args = (filtered_grads,)
             bw_trace.output = (filtered_grads,)
@@ -1600,6 +1601,17 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
+            if compile_data is not None and getattr(compile_data.fn, "use_ddp", False):
+                # note(crcrpar): If this transformation happens after `claim`, we'd reach
+                # https://github.com/Lightning-AI/lightning-thunder/blob/abef76e/thunder/core/symbol.py#L201-L214
+                # and it errors out. With that said, the call being here could create another nvfuserion
+                # only for pre-averaging. This could be mitigated by dodged by using NCCL's premul_sum
+                # e.g. `torch.distributed.all_reduce(tensor, op=c10d._make_nccl_premul_sum(scale))`
+                # see: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/ops.html#c.ncclRedOpCreatePreMulSum.
+                bw_trace = insert_bsym_to_allreduce_grads(
+                    bw_trace,
+                    process_group=getattr(compile_data.fn, "process_group_for_ddp", None),
+                )
 
             # Now we can run the optimization passes on the backward trace
             bw_extrace, bw_extraces = transform_for_execution(
@@ -1715,3 +1727,63 @@ def thunder_backward(*, compile_data=None, **compile_config):
         return wrapper
 
     return decorator
+
+
+if torch.distributed.is_available():
+    from torch.distributed.distributed_c10d import ProcessGroup
+
+    def insert_bsym_to_allreduce_grads(
+        backward_trace: TraceCtx,
+        process_group: Optional[ProcessGroup],
+    ) -> TraceCtx:
+        """Insert :class:`BoundSymbol`s of pre-averaging, async all_reduce, and wait.
+
+        Args:
+            joint_trace: A trace representing backward.
+            process_group:
+        """
+        from torch.distributed.distributed_c10d import _get_default_group
+        from thunder.core import prims
+        from thunder.core.transforms import visitor_transform, VISIT_TYPE
+
+        # NOTE(crcrpar): To do "pre-averaging" to mitigate grad overflow,
+        # we need to know the world size of ddp.
+        pg: ProcessGroup = _get_default_group() if process_group is None else process_group
+        world_size = float(pg.size())
+        gradients, orig_grads_spec = tree_flatten(backward_trace.output)
+        grad_to_future = utils.ProxyDict()
+        for grad in gradients:
+            if not isinstance(grad, TensorProxy):
+                continue
+            grad_to_future[grad] = True
+
+        class AllReduceGradVisitor:
+
+            def __init__(self):
+                self.future_tensor_proxies: list[FutureTensorProxy] = []
+
+            def __call__(self, bsym: BoundSymbol) -> None:
+                sym: Symbol = bsym.sym
+                if sym.id == PrimIDs.RETURN:
+                    prims.python_return(*[
+                        prims.wait(grad_to_future[grad]) if isinstance(grad, TensorProxy) else None
+                        for grad in gradients
+                    ])
+                    return VISIT_TYPE.REPLACE
+                grads_of_bsym = tuple(t for t in bsym._flat_outs if isinstance(t, TensorProxy) and t in grad_to_future)
+                if len(grads_of_bsym) == 0:
+                    # NOTE(crcrpar): Wouldn't `VISIT_TYPE.NOOP` be more lucid?
+                    return VISIT_TYPE.INSERT_AFTER
+                for grad in grads_of_bsym:
+                    preaveraged = ltorch.true_divide(grad, world_size)
+                    future = ltorch.all_reduce(preaveraged, group=pg, async_op=True)
+                    grad_to_future[grad] = future
+
+                return VISIT_TYPE.INSERT_AFTER
+
+        backward_trace_with_grads_allreduced = visitor_transform(
+            trace_from=backward_trace,
+            provenance="All-reduce gradients tranform",
+            visit=AllReduceGradVisitor(),
+        )
+        return backward_trace_with_grads_allreduced

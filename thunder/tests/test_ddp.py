@@ -1,4 +1,5 @@
 import math
+import os
 import sys
 import unittest
 from typing import Optional
@@ -419,12 +420,18 @@ def _test_native_ddp_helper(input_data):
 
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
-    cmodel = thunder.compile(model, executors_list=executor.executors_list())
-    cmodel = ddp(
-        cmodel,
+    ddp_model = ddp(
+        model,
         rank=rank,
         broadcast_from=0,
         process_group=pg,
+    )
+    cmodel = thunder.compile(
+        ddp_model,
+        executors_list=executor.executors_list(),
+        use_rematerialization=True,
+        use_generated_backward=True,
+        use_static_caching=True,
     )
 
     comparison_exceptions = []
@@ -452,8 +459,26 @@ def _test_native_ddp_helper(input_data):
                     except Exception as e:
                         comparison_exceptions.append(e)
 
+            pred.mean().backward()
+
+            grad_gather_list = None
+            for grad in filter(lambda p: p.grad is not None, cmodel.parameters()):
+                if rank == 0:
+                    grad_gather_list = []
+                    for _ in range(world_size):
+                        grad_gather_list.append(torch.empty_like(grad))
+
+                tdist.gather(grad, grad_gather_list, dst=0, group=pg, async_op=False)
+
+                if rank == 0:
+                    for other in grad_gather_list:
+                        try:
+                            assert_close(grad, other)
+                        except Exception as e:
+                            comparison_exceptions.append(e)
+
     # NOTE This function is undocumented; its definition is here:
-    #   https://github.com/pytorch/pytorch/blob/main/torch/distributed/distributed_c10d.py#L1359
+    #   https://github.com/pytorch/pytorch/blob/416bf4e/torch/distributed/distributed_c10d.py#L1359
     tdist.barrier(pg)
     tdist.destroy_process_group(pg)
 
