@@ -1245,7 +1245,11 @@ def create_fd(
 
     # constants = list(unvariableify(x) for x in sorted(region.constants, key=keyfn))
 
-    fd = FusionDefinition()
+    # NOTE nvFuser's default max length is 1024 operations at the time of this writing
+    #   This arbitrarily increases it to 9999
+    # TODO Review splititng very large fusions or removing the max length restriction completely
+    #   See https://github.com/Lightning-AI/lightning-thunder/issues/901
+    fd = FusionDefinition(max_length=9999)
     with fd:
         # 0) Adds constants
 

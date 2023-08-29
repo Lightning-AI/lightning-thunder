@@ -260,7 +260,9 @@ def _benchmark(
             host_stop_time=host_stop,
             called_backward=called_backward,
         )
-        if cd is not None:
+
+        # TODO Ensure the compile data statistics are always populated
+        if cd is not None and cd.last_trace_host_start > 0:
             stat.has_extended_stats = True
             stat.last_trace_host_start = cd.last_trace_host_start
             stat.last_trace_host_stop = cd.last_trace_host_stop
@@ -417,7 +419,6 @@ def _prettyprint_stats(
             The total time taken by {len(warmup_stats)} warmup iterations is {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
             The total time to run all the iterations (warmup and benchmark) is {total_benchmark_time_us}.
             The benchmark called backward() {total_backward_calls} times.
-            The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
             The median benchmark took {before_trace_time_us} ({before_trace_time_percentage} of the total time) to get into the tracing logic.
             The median benchmark took {after_trace_time_us} ({after_trace_time_percentage} of the total time) returning from the tracing logic.
             The median benchmark run's total time in tracing logic is {trace_time_us}, {trace_time_percentage} of the total time.
@@ -497,12 +498,12 @@ def default_torch_compile_executor(fn: Callable) -> Callable:
 
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_generated_backward=True)
+    return thunder.compile(fn, use_generated_backward=True, use_rematerialization=True)
 
 
 def default_thunder_static_caching_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_static_caching=True, use_generated_backward=True)
+    return thunder.compile(fn, use_static_caching=True, use_generated_backward=True, use_rematerialization=True)
 
 
 def default_thunder_static_caching_executor_no_grad(fn: Callable) -> Callable:
@@ -512,7 +513,7 @@ def default_thunder_static_caching_executor_no_grad(fn: Callable) -> Callable:
 
 def default_thunder_last_used_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_last_executed=True, use_generated_backward=True)
+    return thunder.compile(fn, use_last_executed=True, use_generated_backward=True, use_rematerialization=True)
 
 
 # TODO Add grad support
