@@ -17,7 +17,7 @@ import thunder.core.script.python_ir_data
 from thunder.core.utils import enable_debug_asserts
 import thunder.torch as ltorch
 from thunder.tests import nanogpt_model, lit_llama_model
-from thunder.tests.framework import instantiate, requiresNVFuser
+from thunder.tests.framework import instantiate, requiresNVFuser, IN_CI
 
 from thunder.executors.utils import Executor
 
@@ -31,6 +31,20 @@ def skipif_not_python_3_10(f):
     return pytest.mark.skipif(
         not thunder.core.script.python_ir_data.SUPPORTS_PREPROCESSING,
         reason=f"requires python3.10, got {sys.version_info=}",
+    )(f)
+
+
+def skipif_not_CI(f):
+    return pytest.mark.skipif(
+        not IN_CI,
+        reason=f"Not in CI.",
+    )(f)
+
+
+def skipif_CI(f):
+    return pytest.mark.skipif(
+        IN_CI,
+        reason=f"In CI.",
     )(f)
 
 

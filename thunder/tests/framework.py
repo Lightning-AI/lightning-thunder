@@ -31,6 +31,8 @@ JAX_AVAILABLE = package_available("jax")
 TRITON_AVAILABLE = package_available("triton")
 NVFUSER_AVAILABLE = executors.nvfuser_available()
 
+IN_CI = os.getenv("CI", None) == "true"
+
 
 # TODO: Add device type functionality to an object in this list
 def _all_devicetypes() -> Sequence[devices.DeviceType]:
