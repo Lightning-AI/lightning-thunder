@@ -395,6 +395,19 @@ class BoundSymbol(BoundSymbolInterface):
     def _flat_outs(self):
         return tree_flatten(self.output)[0]
 
+    # NOTE These proxy variants are here because only operating on proxies is very common
+    @functools.cached_property
+    def flat_proxy_args(self):
+        return (x for x in self._flat_args if isinstance(x, Proxy))
+
+    @functools.cached_property
+    def flat_proxy_kwargs(self):
+        return (x for x in self._flat_kwargs if isinstance(x, Proxy))
+
+    @functools.cached_property
+    def flat_proxy_outs(self):
+        return (x for x in self._flat_outs if isinstance(x, Proxy))
+
     @property
     def _out_printables(self):
         trace = get_tracectx()
