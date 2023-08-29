@@ -397,16 +397,16 @@ class BoundSymbol(BoundSymbolInterface):
 
     # NOTE These proxy variants are here because only operating on proxies is very common
     @functools.cached_property
-    def flat_proxy_args(self):
-        return (x for x in self._flat_args if isinstance(x, Proxy))
+    def flat_proxy_args(self) -> tuple[Proxy, ...]:
+        return tuple(x for x in self._flat_args if isinstance(x, Proxy))
 
     @functools.cached_property
-    def flat_proxy_kwargs(self):
-        return (x for x in self._flat_kwargs if isinstance(x, Proxy))
+    def flat_proxy_kwargs(self) -> tuple[Proxy, ...]:
+        return tuple(x for x in self._flat_kwargs if isinstance(x, Proxy))
 
     @functools.cached_property
-    def flat_proxy_outs(self):
-        return (x for x in self._flat_outs if isinstance(x, Proxy))
+    def flat_proxy_outs(self) -> tuple[Proxy, ...]:
+        return tuple(x for x in self._flat_outs if isinstance(x, Proxy))
 
     @property
     def _out_printables(self):

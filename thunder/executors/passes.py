@@ -12,7 +12,7 @@ from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
 from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor, group_bookend_meta_ops
-from thunder.core.proxies import Proxy, variableify, unvariableify
+from thunder.core.proxies import Proxy, variableify, unvariableify, Variable
 from thunder.executors import torchex as TorchEx
 
 
@@ -23,7 +23,7 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
     producers: ProxyDict = cutils.producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
-    needed_proxies = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    needed_proxies = set(tuple(Variable(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
     # NOTE These primitives are marked to not be collected because they dictate the function's output
@@ -35,6 +35,7 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
         prims.PrimIDs.UNPACK_TRIVIAL,
     }
 
+    bsym: BoundSymbol
     for bsym in reversed(trace.bound_symbols):
         # Preserves symbols that should never be collected
         if bsym.sym.id in dont_collect:
@@ -45,21 +46,20 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
         # NOTE This block is run even if we know we're preserving the operation, because it
         #   may mark some of the operation's outputs as unused
         some_unused = False
-        for out in bsym._flat_outs:
-            if isinstance(out, Proxy):
-                if variableify(out) in needed_proxies and producers[out] == bsym:
-                    needed = True
-                else:
-                    some_unused = True
+        for out in bsym.flat_proxy_outs:
+            if Variable(out) in needed_proxies and producers[out] == bsym:
+                needed = True
+            else:
+                some_unused = True
 
         if needed:
-            nbsym = bsym
+            nbsym: BoundSymbol = bsym
 
             # Replaces unused Proxy outputs with None
             if some_unused:
 
                 def _helper(x):
-                    if isinstance(x, Proxy) and (variableify(x) not in needed_proxies or producers[x] != bsym):
+                    if isinstance(x, Proxy) and (Variable(x) not in needed_proxies or producers[x] != bsym):
                         return None
                     return x
 
@@ -67,9 +67,8 @@ def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
                 nbsym = bsym.from_bsym(output=nbsym_output)
 
             dced.append(nbsym)
-            for x in chain(nbsym._flat_args, nbsym._flat_kwargs):
-                if isinstance(x, Proxy):
-                    needed_proxies.add(variableify(x))
+            for x in chain(nbsym.flat_proxy_args, nbsym.flat_proxy_kwargs):
+                needed_proxies.add(Variable(x))
 
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
@@ -102,18 +101,15 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if isinstance(out, Proxy):
             handled[out] = None
 
+    bsym: BoundSymbol
     for bsym in reversed(trace.bound_symbols):
         if bsym.sym.id in comment_symbols:
             bsyms.appendleft(bsym)
             continue
 
-        flat_outs, _ = tree_flatten(bsym.output)
-        flat_args, _ = tree_flatten(bsym.args)
-        flat_kwargs, _ = tree_flatten(bsym.kwargs)
-
         to_del = []
-        for x in chain(flat_outs, flat_args, flat_kwargs):
-            if not isinstance(x, Proxy) or x in handled:
+        for x in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
+            if x in handled:
                 continue
 
             handled[x] = None
@@ -224,8 +220,8 @@ def replace_redundant_inputs(
     for bsym in bsyms:
         # Checks if the bound symbol has redundant inputs (that need to be replaced)
         has_redundant_inputs: bool = False
-        for x in chain(bsym._flat_args, bsym._flat_kwargs):
-            if isinstance(x, Proxy) and variableify(x) in redundant_map:
+        for x in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
+            if Variable(x) in redundant_map:
                 has_redundant_inputs = True
                 break
 
@@ -360,7 +356,7 @@ def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     # Updates the trace's output
     def map_redundant(x: Any) -> Any:
         if isinstance(x, Proxy):
-            return redundant_map.get(variableify(x), x)
+            return redundant_map.get(Variable(x), x)
         return x
 
     new_trace_output = tree_map(map_redundant, trace.output)
@@ -612,7 +608,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     # Updates the trace's output
     def map_redundant(x: Any) -> Any:
         if isinstance(x, Proxy):
-            return replacement_map.get(variableify(x), x)
+            return replacement_map.get(Variable(x), x)
         return x
 
     new_trace_output = tree_map(map_redundant, trace.output)
