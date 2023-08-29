@@ -148,8 +148,8 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # report number of parameters (note we don't count the decoder parameters in lm_head)
-        n_params = sum(p.numel() for p in self.transformer.parameters())
-        print(f"number of parameters: {n_params / 1e6:.2f}M")
+        # n_params = sum(p.numel() for p in self.transformer.parameters())
+        # print(f"number of parameters: {n_params / 1e6:.2f}M")
 
     def forward(self, idx, targets=None):
         device = idx.device

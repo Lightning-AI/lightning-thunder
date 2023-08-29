@@ -22,6 +22,7 @@ import thunder.torch as ltorch
 from thunder.cudagraphs import CUDAGraphExecutor
 import thunder.core.dtypes as dtypes
 import thunder.executors as executors
+from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_llama_model
 
 # List of all benchmarks
 benchmarks: list = []
@@ -136,8 +137,15 @@ class Benchmark:
             the initialization arguments.
             This function typically prints the benchmark's parameters.
 
-        If your benchmark returns a tensor t requiring grad, or a Sequence where the first element is a tensor t
-        requiring grad, then t.backward(torch.randn_like(t)) will be called as part of the benchmark.
+        6) Optionally implement the postprocess_for_backward() method.
+
+            def postprocess_for_backward(self, out: Any) -> Any:
+
+            This will be given the output of fn(), and if it returns a torch.Tensor t that requires grad then
+            the benchmark will call t.backward(torch.randn_like(t)).
+
+            By default, postprocess_for_backward() returns the output of fn(), or the first element of
+            the output of fn() if fn() returns a Sequence.
 
     """
 
@@ -164,6 +172,12 @@ class Benchmark:
 
     def fn(self, *args, **kwargs) -> Callable:
         raise NotImplementedError
+
+    def postprocess_for_backward(self, out: Any) -> Any:
+        if isinstance(out, Sequence):
+            return out[0]
+
+        return out
 
 
 def describe_benchmark(benchmark: type) -> None:
@@ -218,20 +232,20 @@ class BenchmarkRunStatistics:
 
 # A timing helper
 def _benchmark(
-    fn: Callable, generator: Callable, wait_for_computation: Callable, repetitions: int
+    benchmark: Benchmark, fn: Callable, wait_for_computation: Callable, repetitions: int
 ) -> list[BenchmarkRunStatistics]:
     stats = []
     for _ in range(repetitions):
-        args, kwargs = generator()
+        args, kwargs = benchmark.make_batch()
         wait_for_computation()
         called_backward: bool = False
         start: int = time.time_ns()
         result = fn(*args, **kwargs)
-        # Inspects the first tensor retunred to see if it requires grad and, if so, calls backward on it
-        grad_tensor = (
-            result if isinstance(result, torch.Tensor) else result[0] if isinstance(result, Sequence) else None
-        )
-        if grad_tensor is not None and grad_tensor.requires_grad:
+
+        # Calls backward, if the output requires grad
+        # TODO Consider zeroing the grad when generating a batch
+        grad_tensor = benchmark.postprocess_for_backward(result)
+        if grad_tensor is not None and isinstance(grad_tensor, torch.Tensor) and grad_tensor.requires_grad:
             grad_tensor.backward(torch.randn_like(grad_tensor))
             called_backward = True
         host_stop: int = time.time_ns()
@@ -448,7 +462,7 @@ def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: 
     stop_time: int = time.time_ns()
     callable_construction_time: int = stop_time - start_time
 
-    _run_benchmark = partial(_benchmark, benchmark_callable, benchmark.make_batch, wait_for_computation_fn)
+    _run_benchmark = partial(_benchmark, benchmark, benchmark_callable, wait_for_computation_fn)
 
     # Performs warmup iters
     warmup_stats: list[BenchmarkRunStatistics] = _run_benchmark(warmup_iters)
@@ -831,9 +845,6 @@ def _print_nanogpt_config(cfg: NanoGPTConfig) -> None:
         print(f"\t{field.name}={getattr(cfg, field.name)}")
 
 
-from thunder.tests import nanogpt_model
-
-
 def _extract_nanogpt_config(config: str | NanoGPTConfig):
     if isinstance(config, NanoGPTConfig):
         return config
@@ -931,6 +942,10 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             .requires_grad_(self.requires_grad)
         )
         return gpt
+
+    def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> Any:
+        logits, loss = output
+        return loss
 
 
 class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
@@ -1620,6 +1635,200 @@ class NanoGPTSDPABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 )
 
         return nanoGPTScaledDotProductAttention()
+
+
+# Taken from HuggingFace Bart-Large model config:
+# https://huggingface.co/facebook/bart-large/blob/main/config.json
+class HuggingFaceSelfAttnBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="embed_dim",
+            description="The number (int) of embedded dimensions. Default is 1024.",
+        ),
+        BenchmarkArg(
+            name="num_heads",
+            description="The number (int) of heads. Default is 16.",
+        ),
+        BenchmarkArg(
+            name="sequences",
+            description="The number (int) of sequences to execute. Default is 8.",
+        ),
+        BenchmarkArg(
+            name="seq_length",
+            description="The length (int) of each sequence. The input will have dimensions (sequences, seq_length, embed_dim). Default is 1024.",
+        ),
+        BenchmarkArg(
+            name="dropout",
+            description="The dropout likelihood (float). Default is .1.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "hf-bart"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Huggingface's Bart large config."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        embed_dim: int = 1024,
+        num_heads: int = 16,
+        sequences: int = 8,
+        seq_length: int = 1024,
+        dropout: float = 0.1,
+        device: str = "cuda",
+        dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.sequences = sequences
+        self.seq_length = seq_length
+        self.dropout = dropout
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+
+        a = make((self.sequences, self.seq_length, self.embed_dim))
+        b = make((self.sequences, 1, 1, self.seq_length))
+
+        return (a, b), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        bart_model = (
+            hf_bart_self_attn.BartAttention(
+                self.embed_dim,
+                self.num_heads,
+                dropout=self.dropout,
+            )
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+
+        return bart_model
+
+
+class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _config_map = {
+        "7B": lit_llama_model.LLaMAConfig.from_name("7B"),
+    }
+
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The configuration (str) to use. Options are '7B'. Default is '7B'.",
+        ),
+        BenchmarkArg(
+            name="sequences",
+            description="The number (int) of sequences to execute. Default is 8.",
+        ),
+        BenchmarkArg(
+            name="seq_length",
+            description="The length (int) of each sequence. The input will have dimensions (sequences, seq_length, embed_dim). Default is 1024.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "llama-block"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Lit-llama's block module"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str = "7B",
+        sequences: int = 8,
+        seq_length: int = 1024,
+        device: str = "cuda",
+        dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.config = self._config_map[config]
+        self.sequences = sequences
+        self.seq_length = seq_length
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+
+        a = make((self.sequences, self.seq_length, self.config.n_embd))
+
+        return (a,), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        model = (
+            lit_llama_model.Block(self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+        return model
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
