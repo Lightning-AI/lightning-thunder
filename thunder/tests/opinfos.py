@@ -3974,7 +3974,7 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
         # and they produce different error messages.
         ((1, 1, 1), (1, 1), None, {}, ""),  # weight.ndim is too low
         # Wrong a dim,
-        ((1, 1, 1, 1), (1, 1, 1), None, {}, ""),  # a.ndim > weight.ndim
+        ((1, 1, 1, 1, 1), (1, 1, 1), None, {}, ""),  # a.ndim > weight.ndim
         # Zero-dim features
         ((1, 1, 0), (1, 1, 1), None, {}, "Input's shape(.*?) can be zero only in the(.*?)batch(.*?)channel"),
         # Zero-dim kernel
@@ -4200,6 +4200,43 @@ def convolution_error_generator(op, device, dtype=torch.float32, **kwargs):
         yield (_convolution_sample_materialize_defaults(sample, device=device, dtype=dtype, **kwargs), ex_type, err_msg)
 
 
+def _conv_remove_batch(sample, **kwargs):
+    make = partial(make_tensor, **kwargs)
+
+    a, weight, bias = sample.args
+    # Batch dim is present in a
+    if a.ndim == weight.ndim:
+        a = make(a.shape[1:])
+        weight = make(weight.shape)
+        bias = make(bias.shape) if bias is not None else None
+        return (SampleInput(a, weight, bias, **sample.kwargs),)
+    else:
+        return ()
+
+
+def conv1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    for sample in itertools.chain(
+        convolution_1d_sample_generator(op, device, dtype, requires_grad, **kwargs),
+    ):
+        yield sample
+        yield from _conv_remove_batch(
+            sample,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            **kwargs
+        )
+
+
+def conv1d_error_generator(op, device, dtype=torch.float32, **kwargs):
+    for sample, ex_type, err_msg in itertools.chain(
+        convolution_1d_error_generator(op, device, dtype, **kwargs),
+    ):
+        yield (sample, ex_type, err_msg)
+        for s in _conv_remove_batch(sample, device=device, dtype=dtype, **kwargs):
+            yield (s, ex_type, err_msg)
+
+
 convolution_opinfo = OpInfo(
     ltorch.convolution,
     sample_input_generator=convolution_sample_generator,
@@ -4226,6 +4263,33 @@ convolution_opinfo = OpInfo(
     ),
 )
 nn_ops.append(convolution_opinfo)
+
+
+conv1d_opinfo = OpInfo(
+    ltorch.conv1d,
+    sample_input_generator=conv1d_sample_generator,
+    error_input_generator=conv1d_error_generator,
+    torch_reference=torch.nn.functional.conv1d,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            # We do not support complex convolutions
+            # because there is no access to real/imag yet.
+            dtypes=(datatypes.complexfloating,),
+            executors=("TorchEx", "nvFuser"),
+        ),
+    ),
+)
+nn_ops.append(conv1d_opinfo)
 
 
 def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):

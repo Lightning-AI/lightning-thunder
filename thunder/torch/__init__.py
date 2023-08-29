@@ -8,7 +8,7 @@ from enum import Enum, auto
 import re
 import itertools
 
-from thunder.core.proxies import TensorProxy, FutureTensorProxy
+from thunder.core.proxies import TensorProxy, FutureTensorProxy, pytype
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.core.dtypes as dtypes
@@ -1342,6 +1342,125 @@ def convolution(
         transposed,
         output_padding,
         groups,
+    )
+
+
+# TODO: all transposed and layout.
+def _conv_helper(
+    dim: int,
+    a: TensorProxy,
+    weight: TensorProxy,
+    bias: Optional[TensorProxy] = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int | Sequence[int] = 1,
+    groups: int = 1
+) -> TensorProxy:
+    # a, weight rank check
+    utils.check(
+        dim + 1 <= a.ndim <= dim + 2,
+        lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}"
+    )
+    utils.check(
+        weight.ndim == dim + 2,
+        lambda: f"{weight.ndim=} should be equal to {dim + 2}"
+    )
+
+    # insert batch dim into a if not present
+    if a.ndim == dim + 1:
+        a = unsqueeze(a, 0)
+
+    # Handle stride, padding, dilation {
+    def int_to_seq(param):
+        if isinstance(param, int):
+            return (param,)
+        else:
+            return param
+
+    def process_padding_str(padding, stride: Sequence[int], dilation: Sequence[int], a: TensorProxy):
+        if isinstance(padding, str):
+            # Means no padding
+            if padding == "valid":
+                return (0,), a
+            elif padding == "same":
+                # padding == "same" only works with strides equal to 1.
+                # NOTE: stride has to be a Sequence, see the annotation!
+                utils.check(
+                    all(s == 1 for s in stride),
+                    lambda: f"{padding=} requires all `strides` to be 1, but got {stride=}"
+                )
+                utils.check(
+                    len(dilation) == 1 or len(dilation) == dim,
+                    lambda: f"{len(dilation)=} has to be either 1 or {dim}" 
+                )
+                utils.check(
+                    all(isinstance(d, int) and d >= 1 for d in dilation),
+                    lambda: f"{dilation=} has to be a Sequences of integers >= 1"
+                )
+
+                # Need to pad a because "low" padding might not be equal to "high" padding,
+                # and clang.convolution assumes this equality.
+                # Expand to len == dim for easier processing of the pad arguments.
+                if len(dilation) == 1:
+                    dilation = (dilation[0],) * dim
+
+                def pad_lo_hi_dilation_seq():
+                    # No need to pad batch and channels dim
+                    res = [(0, 0, 0), (0, 0, 0)]
+                    _, _, *kernel_size = weight.shape
+                    for d, k in zip(dilation, kernel_size):
+                        total_p = d * (k - 1)
+                        lo = total_p // 2
+                        hi = total_p - lo
+                        res.append((lo, hi, 0))
+                    return res
+
+                a = prims.pad(
+                    a,
+                    clang.maybe_convert_to_dtype(0, a.dtype, enforce_safe_casting=True),
+                    pad_lo_hi_dilation_seq()
+                )
+                return (0,), a
+            else:
+                utils.check(
+                    False,
+                    lambda: f"padding string values other than ('valid', 'same') "
+                            "are not supported, got {padding=}"
+                )
+        else:
+            return padding, a
+
+    stride = int_to_seq(stride)
+    dilation = int_to_seq(dilation)
+    padding, a = process_padding_str(int_to_seq(padding), stride, dilation, a)
+    # }
+
+    return clang.convolution(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        False,  # transposed
+        (0,) * dim,  # output_padding
+        groups
+    )
+
+
+@torchsymbol(torch.conv1d, torch.nn.functional.conv1d, id="torch.nn.functional.conv1d", is_method=False)
+def conv1d(
+    a: TensorProxy,
+    weight: TensorProxy,
+    bias: Optional[TensorProxy] = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1
+) -> TensorProxy:
+    return _conv_helper(
+        1,  # means 1D convolution
+        a, weight, bias, stride, padding, dilation, groups
     )
 
 
