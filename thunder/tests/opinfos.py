@@ -4219,13 +4219,7 @@ def conv1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
         convolution_1d_sample_generator(op, device, dtype, requires_grad, **kwargs),
     ):
         yield sample
-        yield from _conv_remove_batch(
-            sample,
-            device=device,
-            dtype=dtype,
-            requires_grad=requires_grad,
-            **kwargs
-        )
+        yield from _conv_remove_batch(sample, device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
 
 
 def conv1d_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -4242,13 +4236,7 @@ def conv2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
         convolution_2d_sample_generator(op, device, dtype, requires_grad, **kwargs),
     ):
         yield sample
-        yield from _conv_remove_batch(
-            sample,
-            device=device,
-            dtype=dtype,
-            requires_grad=requires_grad,
-            **kwargs
-        )
+        yield from _conv_remove_batch(sample, device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
 
 
 def conv2d_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -4265,13 +4253,7 @@ def conv3d_sample_generator(op, device, dtype, requires_grad, **kwargs):
         convolution_3d_sample_generator(op, device, dtype, requires_grad, **kwargs),
     ):
         yield sample
-        yield from _conv_remove_batch(
-            sample,
-            device=device,
-            dtype=dtype,
-            requires_grad=requires_grad,
-            **kwargs
-        )
+        yield from _conv_remove_batch(sample, device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
 
 
 def conv3d_error_generator(op, device, dtype=torch.float32, **kwargs):

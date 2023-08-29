@@ -932,9 +932,9 @@ def _split_indices(a: TensorLike, indices: int, dim: int = 0) -> Tuple[TensorLik
 #   at which to split, and the values must sum to the length of the dimension.
 @torchsymbol(torch.split, is_method=True)
 def split(a, size_or_sections, dim=0):
-    # TODO: see note in tensor_split
+    # TODO See note in tensor_split
     if isinstance(size_or_sections, TensorProxy):
-        raise NotImplemented
+        raise NotImplementedError
 
     dim = utils.canonicalize_dim(a.ndim, dim)
 
@@ -1049,10 +1049,10 @@ def chunk(a: TensorLike, chunks: int, dim: int = 0) -> Sequence[TensorLike]:
 # See https://pytorch.org/docs/master/generated/torch.tensor_split.html
 @torchsymbol(torch.tensor_split, is_method=True)
 def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
-    # TODO: consider if we even should support this, it could introduce data-dependent control flow
-    # NOTE: this will also catch number tensors
+    # TODO Consider if we even should support this, it could introduce data-dependent control flow
+    # NOTE This will also catch number tensors
     if isinstance(indices_or_sections, TensorProxy):
-        raise NotImplemented
+        raise NotImplementedError
 
     utils.check(
         indices_or_sections,
@@ -1354,17 +1354,11 @@ def _conv_helper(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> TensorProxy:
     # a, weight rank check
-    utils.check(
-        dim + 1 <= a.ndim <= dim + 2,
-        lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}"
-    )
-    utils.check(
-        weight.ndim == dim + 2,
-        lambda: f"{weight.ndim=} should be equal to {dim + 2}"
-    )
+    utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
+    utils.check(weight.ndim == dim + 2, lambda: f"{weight.ndim=} should be equal to {dim + 2}")
 
     # insert batch dim into a if not present
     if a.ndim == dim + 1:
@@ -1386,16 +1380,14 @@ def _conv_helper(
                 # padding == "same" only works with strides equal to 1.
                 # NOTE: stride has to be a Sequence, see the annotation!
                 utils.check(
-                    all(s == 1 for s in stride),
-                    lambda: f"{padding=} requires all `strides` to be 1, but got {stride=}"
+                    all(s == 1 for s in stride), lambda: f"{padding=} requires all `strides` to be 1, but got {stride=}"
                 )
                 utils.check(
-                    len(dilation) == 1 or len(dilation) == dim,
-                    lambda: f"{len(dilation)=} has to be either 1 or {dim}" 
+                    len(dilation) == 1 or len(dilation) == dim, lambda: f"{len(dilation)=} has to be either 1 or {dim}"
                 )
                 utils.check(
                     all(isinstance(d, int) and d >= 1 for d in dilation),
-                    lambda: f"{dilation=} has to be a Sequences of integers >= 1"
+                    lambda: f"{dilation=} has to be a Sequences of integers >= 1",
                 )
 
                 # Need to pad a because "low" padding might not be equal to "high" padding,
@@ -1416,16 +1408,13 @@ def _conv_helper(
                     return res
 
                 a = prims.pad(
-                    a,
-                    clang.maybe_convert_to_dtype(0, a.dtype, enforce_safe_casting=True),
-                    pad_lo_hi_dilation_seq()
+                    a, clang.maybe_convert_to_dtype(0, a.dtype, enforce_safe_casting=True), pad_lo_hi_dilation_seq()
                 )
                 return (0,), a
             else:
                 utils.check(
                     False,
-                    lambda: f"padding string values other than ('valid', 'same') "
-                            "are not supported, got {padding=}"
+                    lambda: f"padding string values other than ('valid', 'same') " "are not supported, got {padding=}",
                 )
         else:
             return padding, a
@@ -1436,15 +1425,7 @@ def _conv_helper(
     # }
 
     return clang.convolution(
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        False,  # transposed
-        (0,) * dim,  # output_padding
-        groups
+        a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
     )
 
 
@@ -1456,12 +1437,9 @@ def conv1d(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> TensorProxy:
-    return _conv_helper(
-        1,  # means 1D convolution
-        a, weight, bias, stride, padding, dilation, groups
-    )
+    return _conv_helper(1, a, weight, bias, stride, padding, dilation, groups)  # means 1D convolution
 
 
 @torchsymbol(torch.conv2d, torch.nn.functional.conv2d, id="torch.nn.functional.conv2d", is_method=False)
@@ -1472,12 +1450,9 @@ def conv2d(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> TensorProxy:
-    return _conv_helper(
-        2,  # means 2D convolution
-        a, weight, bias, stride, padding, dilation, groups
-    )
+    return _conv_helper(2, a, weight, bias, stride, padding, dilation, groups)  # means 2D convolution
 
 
 @torchsymbol(torch.conv3d, torch.nn.functional.conv3d, id="torch.nn.functional.conv3d", is_method=False)
@@ -1488,12 +1463,9 @@ def conv3d(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> TensorProxy:
-    return _conv_helper(
-        3,  # means 3D convolution
-        a, weight, bias, stride, padding, dilation, groups
-    )
+    return _conv_helper(3, a, weight, bias, stride, padding, dilation, groups)  # means 3D convolution
 
 
 @torchsymbol(torch.mean, is_method=True)
@@ -2338,11 +2310,11 @@ def _convert_element_type_eager(
 
     if isinstance(a, torch.Tensor):
         torch_dtype = to_torch_dtype(dtype)
-        return a.to(dtype)
+        return a.to(torch_dtype)
 
     if isinstance(a, np.ndarray):
         np_dtype = lnp.to_numpy_dtype(dtype)
-        return a.astype(dtype)
+        return a.astype(np_dtype)
 
     utils.check(False, lambda: f"Unexpected case!", exception_type=AssertionError)
 

@@ -145,7 +145,8 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         f = c[1]["c"] + b[1]
         g = e + f
         h = f + ka + kb
-        i = ka + ka  # NOTE: not returned (ignored computation)
+        # NOTE The following line is intentionally not returned
+        i = ka + ka  # noqa
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -272,7 +273,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b
+        c = a + b  # noqa
         pass
 
     traced_foo = executor.make_callable(foo)
@@ -478,7 +479,7 @@ def test_consistent_boundsymbol_collection_printing():
         return a + b, e
 
     cfoo = thunder.compile(foo)
-    result = cfoo(((2, 3), 4), {"dict": {"val": 2}})
+    _ = cfoo(((2, 3), 4), {"dict": {"val": 2}})
     traces = thunder.last_traces(cfoo)
 
     # Tests consistent printing of bound symbols outside the trace context
@@ -495,7 +496,7 @@ def test_consistent_boundsymbol_collection_hard_printing():
         return a + d, c
 
     cfoo = thunder.compile(foo)
-    result = cfoo(((2, {"dict": {"val": 2}}), 4))
+    _ = cfoo(((2, {"dict": {"val": 2}}), 4))
     traces = thunder.last_traces(cfoo)
 
     # Tests consistent printing of bound symbols outside the trace context
@@ -1332,7 +1333,7 @@ def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
         c = a + 2.0
         return ltorch.reshape(b, shape) + 2, c
 
-    a = make(((4, 3, 2, 3)))
+    a = make((4, 3, 2, 3))
 
     cbar = executor.make_callable(bar)
     expected = cbar(a, (12, -1))

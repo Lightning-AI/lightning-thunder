@@ -1039,7 +1039,6 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0) -> TensorProxy:
     Returns:
         TensorProxy: Tensor with the batch dimension removed.
     """
-    trace = get_tracectx()
     new_shape = tensor.shape[:batch_dim] + tensor.shape[batch_dim + 1 :]
     return TensorProxy(like=tensor, shape=new_shape)
 
@@ -2141,7 +2140,6 @@ def deconstruct_forward_env_for_backward(trace, env):
     # where this is tested.
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
     saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
-    is_any_dict = any(isinstance(x, dict) for x in saved_for_backward)
     return saved_for_backward
 
 
@@ -2283,10 +2281,7 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (
-    prims.PrimIDs.BITWISE_AND,
-    prims.PrimIDs.FULL
-)
+nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.FULL)
 
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
@@ -2306,7 +2301,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         def vjp_impl_const(symbol, *args, **kwargs):
             args, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
             primals = symbol_to_eval(symbol)(*args, **kwargs)
-            n_args = len(args)
             if isinstance(primals, Sequence):
                 return tree_map(lambda x: VJPDual(x, tuple()), primals)
             return VJPDual(primals, tuple())

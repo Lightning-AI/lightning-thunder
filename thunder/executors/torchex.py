@@ -905,12 +905,10 @@ def conv1d(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> BoundSymbol:
     sym = Symbol(name="conv1d", meta=None, _module=torch.nn.functional)
-    return sym.bind(
-        a, weight, bias, stride, padding, dilation, groups, output=bsym.output
-    )
+    return sym.bind(a, weight, bias, stride, padding, dilation, groups, output=bsym.output)
 
 
 def conv2d(
@@ -921,12 +919,10 @@ def conv2d(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> BoundSymbol:
     sym = Symbol(name="conv2d", meta=None, _module=torch.nn.functional)
-    return sym.bind(
-        a, weight, bias, stride, padding, dilation, groups, output=bsym.output
-    )
+    return sym.bind(a, weight, bias, stride, padding, dilation, groups, output=bsym.output)
 
 
 def conv3d(
@@ -937,12 +933,10 @@ def conv3d(
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
-    groups: int = 1
+    groups: int = 1,
 ) -> BoundSymbol:
     sym = Symbol(name="conv3d", meta=None, _module=torch.nn.functional)
-    return sym.bind(
-        a, weight, bias, stride, padding, dilation, groups, output=bsym.output
-    )
+    return sym.bind(a, weight, bias, stride, padding, dilation, groups, output=bsym.output)
 
 
 def cross_entropy(
@@ -1001,7 +995,6 @@ def _cross_entropy_backward_helper(
 
     utils.check(label_smoothing == 0.0, lambda: f"label smoothing values not equal to zero are not supported.")
 
-    batch_size = 0 if input.dim() <= 1 else input.shape[1]
     dim = 0 if input.dim() == 1 else 1
     a = torch.log_softmax(input, dim, input.dtype)
 
@@ -1758,17 +1751,18 @@ if torch.distributed.is_available():
             grad_to_future[grad] = True
 
         class AllReduceGradVisitor:
-
             def __init__(self):
                 self.future_tensor_proxies: list[FutureTensorProxy] = []
 
             def __call__(self, bsym: BoundSymbol) -> None:
                 sym: Symbol = bsym.sym
                 if sym.id == PrimIDs.RETURN:
-                    prims.python_return(*[
-                        prims.wait(grad_to_future[grad]) if isinstance(grad, TensorProxy) else None
-                        for grad in gradients
-                    ])
+                    prims.python_return(
+                        *[
+                            prims.wait(grad_to_future[grad]) if isinstance(grad, TensorProxy) else None
+                            for grad in gradients
+                        ]
+                    )
                     return VISIT_TYPE.REPLACE
                 grads_of_bsym = tuple(t for t in bsym._flat_outs if isinstance(t, TensorProxy) and t in grad_to_future)
                 if len(grads_of_bsym) == 0:

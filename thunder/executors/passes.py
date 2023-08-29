@@ -523,7 +523,6 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if not isinstance(a, Proxy):
             return False, None, None
 
-        adtyp = dtypes.to_dtype(a)
         is_float_to_float_conversion = dtypes.is_float_dtype(dtypes.to_dtype(a)) and dtypes.is_float_dtype(dtyp)
 
         return is_float_to_float_conversion, a, dtyp

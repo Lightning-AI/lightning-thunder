@@ -324,8 +324,6 @@ class TraceCtx:
             program.append("@torch.no_grad()")
             program.append(signature_str)
 
-            indent = codeutils.indent_string(1)
-
             # TODO Print objects from context
             # Prints constants (if any) upfront
             # constants = tuple(om for om in self._object_meta_map.values() if om.is_constant)

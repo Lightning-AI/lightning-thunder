@@ -72,7 +72,7 @@ class CausalSelfAttention(nn.Module):
         # https://github.com/Lightning-AI/lightning-thunder/issues/605
         # TODO: Move the bias registration to be happening `if not self.flash` once the bug is fixed.
         # if not self.flash:
-            # print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
+        # print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
         # causal mask to ensure that attention is only applied to the left in the input sequence
         self.register_buffer(
             "bias",

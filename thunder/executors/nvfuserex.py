@@ -1330,7 +1330,6 @@ def nvfusion_printer(
     )
 
     # NOTE nvFuser fusions always return a sequence
-    outputs = codeutils.sequencify(bsym.output)
     result_str = f"{codeutils.prettyprint(bsym.output)} = "
 
     s = f"{result_str}{bsym.name_with_module()}({arg_str})"
