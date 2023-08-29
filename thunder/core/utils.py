@@ -691,6 +691,9 @@ class OrderedSet(Generic[T]):
     def copy(self) -> "OrderedSet":
         return self.__class__(self)
 
+    def clear(self) -> None:
+        self.d.clear()
+
 
 #
 # Context-related functions and decorators

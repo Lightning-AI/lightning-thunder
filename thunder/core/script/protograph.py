@@ -3,6 +3,7 @@ import dataclasses
 import dis
 import itertools
 import marshal
+import textwrap
 from types import CodeType
 from typing import final, Any, Deque, Literal, Optional, NamedTuple
 from collections.abc import Iterable, Iterator
@@ -72,11 +73,36 @@ class _AbstractValue:
         value's constituents. Any subclass which must be unpacked in this manner should
         override `_unpack_apply`.
         """
-        return replace_map.get(self, self)._unpack_apply(replace_map)
+        new_self = replace_map.get(self, self)
+        if new_self != (x := replace_map.get(new_self, new_self)):
+            msg = f"""
+                `replace_map` may not contain chains.
+                    {self}
+                    {new_self}
+                    {x}
+                See `_flatten_replace_map`.
+            """
+            raise ValueError(textwrap.dedent(msg))
+
+        return new_self._unpack_apply(replace_map)
 
     def _unpack_apply(self, _: ReplaceMap) -> "_AbstractValue":
         """Recursively update any constituent references in the abstract value."""
         return self
+
+    @staticmethod
+    def _flatten_replace_map(replace_map: ReplaceMap) -> None:
+        """Remove intermediate steps in the replace map.
+
+        For example, if we `replace_map` is `{A: B, B: C}` we will update it to `{A: C, B: C}`.
+        (Effectively converting A->B->C to A->C.)
+        """
+        G = nx.from_edgelist(replace_map.items(), nx.DiGraph).reverse()
+        G.remove_edges_from(nx.selfloop_edges(G))
+        assert nx.is_directed_acyclic_graph(G)
+        for cluster in nx.connected_components(G.to_undirected()):
+            (root,) = [i for i in cluster if not G.in_degree(i)]
+            replace_map.update({i: root for i in cluster if i is not root})
 
 
 class AbstractValue(_AbstractValue):
@@ -110,6 +136,7 @@ class ProtoBlock(InstrumentingBase):
         return id(self)
 
     def __post_init__(self) -> None:
+        self.uses.clear()
         values_used = set(itertools.chain(*(inputs for _, inputs, _ in self.node_flow)))
         self.uses.update(k for k, v in self.variable_state(index=0) if v in values_used)
 
@@ -338,17 +365,44 @@ class ProtoGraph:
 
         self.protoblocks = tuple(sorted(protoblocks, key=lambda x: sort_map[x]))
 
-    def transform(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> "ProtoGraph":
-        assert (v := replace_map.get(ValueMissing())) is None, v
-        transformed = {protoblock: protoblock.transform(replace_map) for protoblock in self}
+    def substitute(self, transformed: dict[ProtoBlock, ProtoBlock]) -> "ProtoGraph":
+        """Copies the ProtoGraph with block level substitutions while retaining the same topology."""
+        assert not (delta := OrderedSet(transformed.keys()) - self), delta
+
+        # TODO(robieta): Right now block order is load bearing, so we have to preserve it.
+        transformed = {k: transformed.get(k) or k.transform({}) for k in self}
         for old_protoblock, new_protoblock in transformed.items():
             for old_target, is_jump in old_protoblock.jump_targets:
                 new_protoblock.add_jump_target(transformed[old_target], is_jump)
 
         return ProtoGraph(transformed.values())
 
+    def transform(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> "ProtoGraph":
+        """Copies the ProtoGraph with value replacements.
+
+        NOTE: This is strictly a condensing transform, and this is only invertable
+              (using another `.transform` call) in trivial cases.
+        """
+        assert (v := replace_map.get(ValueMissing(), missing := object())) is missing, v
+        replace_map = replace_map.copy()
+        _AbstractValue._flatten_replace_map(replace_map)
+        return self.substitute({protoblock: protoblock.transform(replace_map) for protoblock in self})
+
+    def unlink(self) -> "ProtoGraph":
+        """Copies the ProtoGraph but replaces all block inputs with references. (Useful for graph rewrites.)"""
+        transformed: dict[ProtoBlock, ProtoBlock] = {}
+        for protoblock in self:
+            begin_vars = (v for _, v in protoblock.variable_state(index=0) if not isinstance(v, _AbstractRef))
+            replace_map = {v: _AbstractRef(f"Unlink: {v}") for v in begin_vars}
+            transformed[protoblock] = new_protoblock = protoblock.transform(replace_map)
+            new_protoblock.__post_init__()
+        return self.substitute(transformed)
+
     def __iter__(self) -> Iterator[ProtoBlock]:
         yield from self.protoblocks
+
+    def __getitem__(self, index) -> ProtoBlock:
+        return self.protoblocks[index]
 
     def debug_print_protoflows(self):
         """
