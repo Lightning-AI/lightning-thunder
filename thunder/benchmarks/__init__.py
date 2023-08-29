@@ -12,6 +12,8 @@ import sys
 import argparse
 from dataclasses import dataclass
 
+from lightning_utilities.core.imports import package_available
+
 import torch
 from torch.testing import make_tensor
 
@@ -19,6 +21,7 @@ import thunder
 import thunder.torch as ltorch
 from thunder.cudagraphs import CUDAGraphExecutor
 import thunder.core.dtypes as dtypes
+import thunder.executors as executors
 
 # List of all benchmarks
 benchmarks: list = []
@@ -201,6 +204,7 @@ class BenchmarkRunStatistics:
     start_time: int
     stop_time: int
     host_stop_time: int
+    called_backward: bool
     has_extended_stats: bool = False
     last_trace_host_start: int = -1
     last_trace_host_stop: int = -1
@@ -220,6 +224,7 @@ def _benchmark(
     for _ in range(repetitions):
         args, kwargs = generator()
         wait_for_computation()
+        called_backward: bool = False
         start: int = time.time_ns()
         result = fn(*args, **kwargs)
         # Inspects the first tensor retunred to see if it requires grad and, if so, calls backward on it
@@ -228,13 +233,18 @@ def _benchmark(
         )
         if grad_tensor is not None and grad_tensor.requires_grad:
             grad_tensor.backward(torch.randn_like(grad_tensor))
+            called_backward = True
         host_stop: int = time.time_ns()
         wait_for_computation()
         stop: int = time.time_ns()
 
         cd = thunder.compile_data(fn)
         stat = BenchmarkRunStatistics(
-            total_time=(stop - start), start_time=start, stop_time=stop, host_stop_time=host_stop
+            total_time=(stop - start),
+            start_time=start,
+            stop_time=stop,
+            host_stop_time=host_stop,
+            called_backward=called_backward,
         )
         if cd is not None:
             stat.has_extended_stats = True
@@ -309,10 +319,13 @@ def _prettyprint_stats(
     median_benchmark_time_us: str = ns_to_us(median_benchmark_time_ns)
 
     # Computes the average benchmark run time and estimates initialization time
+    total_backward_calls: int = 0
     total_benchmark_time_ns: int = 0
-    avg_benchmark_time_ns: int = 0
     for stat in benchmark_stats:
         total_benchmark_time_ns += stat.total_time
+        if stat.called_backward:
+            total_backward_calls += 1
+
     avg_benchmark_time_ns = total_benchmark_time_ns / len(benchmark_stats)
 
     initialization_estimate_ns: int = (avg_warmup_time_ns - avg_benchmark_time_ns) * len(warmup_stats)
@@ -345,6 +358,7 @@ def _prettyprint_stats(
                 The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
                 The total time taken by {len(warmup_stats)} warmup iterations was {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
                 The total time to run all the iterations (warmup and benchmark) was {total_benchmark_time_us}.
+                The benchmark called backward() {total_backward_calls} times.
         """
             )
         )
@@ -388,6 +402,7 @@ def _prettyprint_stats(
             The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
             The total time taken by {len(warmup_stats)} warmup iterations is {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
             The total time to run all the iterations (warmup and benchmark) is {total_benchmark_time_us}.
+            The benchmark called backward() {total_backward_calls} times.
             The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
             The median benchmark took {before_trace_time_us} ({before_trace_time_percentage} of the total time) to get into the tracing logic.
             The median benchmark took {after_trace_time_us} ({after_trace_time_percentage} of the total time) returning from the tracing logic.
@@ -468,17 +483,88 @@ def default_torch_compile_executor(fn: Callable) -> Callable:
 
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn)
+    return thunder.compile(fn, use_generated_backward=True)
 
 
 def default_thunder_static_caching_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_static_caching=True)
+    return thunder.compile(fn, use_static_caching=True, use_generated_backward=True)
+
+
+def default_thunder_static_caching_executor_no_grad(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, use_static_caching=True, use_generated_backward=False)
 
 
 def default_thunder_last_used_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_last_executed=True)
+    return thunder.compile(fn, use_last_executed=True, use_generated_backward=True)
+
+
+# TODO Add grad support
+def default_thunder_triton_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    TRITON_AVAILABLE = package_available("triton")
+    assert TRITON_AVAILABLE, "Trying to benchmark with the thunder+triton executor, but triton is not available"
+
+    from thunder.executors.triton_crossentropy import register_triton_entropyex
+
+    register_triton_entropyex(add_to_default_executors=False)
+
+    executors_list = ("triton_crossentropy", executors.NVFUSER, executors.TORCH)
+
+    return thunder.compile(fn, executors_list=executors_list, use_static_caching=True, use_generated_backward=False)
+
+
+# TODO Add grad support
+def default_thunder_apex_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
+    assert APEX_CROSS_ENTROPY_AVAILABLE, "Trying to benchmark with the thunder+apex executor, but apex is not available"
+
+    from thunder.executors.apex_entropyex import register_apex_entropyex
+
+    register_apex_entropyex(add_to_default_executors=False)
+
+    executors_list = ("apex_xentropy", executors.NVFUSER, executors.TORCH)
+    return thunder.compile(fn, executors_list=executors_list, use_static_caching=True, use_generated_backward=False)
+
+
+# TODO Add grad support
+def default_thunder_cudnn_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    CUDNN_AVAILABLE = package_available("cudnn")
+    assert CUDNN_AVAILABLE, "Trying to benchmark with the thunder+cudnn executor, but cudnn is not available"
+
+    from thunder.executors.cudnnex import register_cudnnex
+
+    register_cudnnex(add_to_default_executors=False)
+
+    executors_list = ("cudnn", executors.NVFUSER, executors.TORCH)
+    return thunder.compile(fn, executors_list=executors_list, use_static_caching=True, use_generated_backward=False)
+
+
+# TODO Add grad support
+def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    executors_list = []
+
+    # Adds the Apex executor, if available
+    APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
+    if APEX_CROSS_ENTROPY_AVAILABLE:
+        from thunder.executors.apex_entropyex import register_apex_entropyex
+
+        register_apex_entropyex(add_to_default_executors=False)
+        executors_list.append("apex_xentropy")
+
+    executors_list.extend((executors.NVFUSER, executors.TORCH))
+    return thunder.compile(
+        fn, executors_list=executors_list, use_static_caching=True, use_cudagraphs=True, use_generated_backward=False
+    )
 
 
 #
@@ -768,7 +854,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. (The input will have innermost dimensions of config.block_size.) Default is (16,).",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
         ),
         BenchmarkArg(
             name="indices_dtype",
@@ -855,7 +941,7 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         ),
         BenchmarkArg(
             name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. (The input will have innermost dimensions of config.block_size.) Default is (16,).",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.vocab_size). Default is (16,).",
         ),
         BenchmarkArg(
             name="indices_dtype",
@@ -937,6 +1023,84 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         return foo
 
 
+class NanoGPTCSABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-csa"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's Causal Selft Attention (CSA) module."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | NanoGPTConfig = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.config = _extract_nanogpt_config(config)
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        gpt_csa = (
+            nanogpt_model.CausalSelfAttention(self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+        return gpt_csa
+
+
 class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
@@ -945,7 +1109,7 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. (The input will have innermost dimensions of config.block_size.) Default is (16,).",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
         ),
         BenchmarkArg(
             name="device",
@@ -1015,6 +1179,103 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return gpt_block
 
 
+class NanoGPTBlockLoopBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="depth", description="The number (int) of block modules to run in sequence. Default is config.n_layer."
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-block-loop"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's Block module run sequentially."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | NanoGPTConfig = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        depth: None | int = None,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.config = _extract_nanogpt_config(config)
+        self.batchdims = batchdims
+        self.depth: int = depth if depth is not None else self.config.n_layer
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        class nanoGPTBlockLoop(torch.nn.Module):
+            def __init__(slf):
+                super().__init__()
+                slf.transformer = torch.nn.ModuleDict(
+                    dict(
+                        drop=torch.nn.Dropout(self.config.dropout),
+                        h=torch.nn.ModuleList([nanogpt_model.Block(self.config) for _ in range(self.depth)]),
+                        ln_f=torch.nn.LayerNorm(self.config.n_embd),
+                    ),
+                )
+
+            def forward(self, x):
+                x = self.transformer.drop(x)
+                for block in self.transformer.h:
+                    x = block(x)
+                x = self.transformer.ln_f(x)
+                return x
+
+        module = nanoGPTBlockLoop().to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        return module
+
+
 class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
@@ -1023,7 +1284,7 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. (The input will have innermost dimensions of config.block_size.) Default is (16,).",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
         ),
         BenchmarkArg(
             name="device",
@@ -1089,6 +1350,276 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             nanogpt_model.MLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return gpt_mlp
+
+
+class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-layernorm"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's layer norm operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | NanoGPTConfig = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.config = _extract_nanogpt_config(config)
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        class nanoGPTLayerNorm(torch.nn.Module):
+            def __init__(slf):
+                super().__init__()
+                slf.ln = torch.nn.LayerNorm(self.config.n_embd)
+
+            def forward(slf, x):
+                return slf.ln(x)
+
+        layernorm_module = (
+            nanoGPTLayerNorm().to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        )
+        return layernorm_module
+
+
+class NanoGPTEmbeddingBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="indices_dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input. Default is thunder.int64.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the model. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-embedding"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's embedding operations (followed by dropout and layernorm)."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | NanoGPTConfig = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        indices_dtype: dtypes.dtype = thunder.int64,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.config = _extract_nanogpt_config(config)
+        self.batchdims = batchdims
+        self.indices_dtype = indices_dtype
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tindices_dtype: torch.dtype = ltorch.to_torch_dtype(self.indices_dtype)
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        shape = self.batchdims + (self.config.seq_len,)
+        idx = make_tensor(shape, low=0, high=255, device=self.device, dtype=self.tindices_dtype)
+
+        return (idx,), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        class nanoGPTEmbedding(torch.nn.Module):
+            def __init__(slf):
+                super().__init__()
+                slf.wte = torch.nn.Embedding(self.config.vocab_size, self.config.n_embd)
+                slf.wpe = torch.nn.Embedding(self.config.block_size, self.config.n_embd)
+                slf.drop = torch.nn.Dropout(self.config.dropout)
+                slf.ln = torch.nn.LayerNorm(self.config.n_embd)
+
+            def forward(slf, idx):
+                # This is a part of the GPT's forward pass before the transformer block
+                device = idx.device
+                b, t = idx.shape
+                pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
+                tok_emb = slf.wte(idx)  # token embeddings of shape (b, t, n_embd)
+                pos_emb = slf.wpe(pos)  # position embeddings of shape (1, t, n_embd)
+                x = slf.drop(tok_emb + pos_emb)
+                # LayerNorm is the first operation in nanoGPT's Block before the attention
+                return slf.ln(x)
+
+        module = nanoGPTEmbedding().to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        return module
+
+
+class NanoGPTSDPABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The inputs will have innermost dimensions of (config.n_head, config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input requires grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-sdpa"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's Scaled Dot Product Attention call."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | NanoGPTConfig = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.config = _extract_nanogpt_config(config)
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = self.batchdims + (self.config.n_head, self.config.seq_len, self.config.n_embd)
+
+        q = make(shape)
+        k = make(shape)
+        v = make(shape)
+
+        return (q, k, v), {"dropout": self.config.dropout}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        class nanoGPTScaledDotProductAttention(torch.nn.Module):
+            def __init__(slf):
+                super().__init__()
+
+            def forward(slf, q, k, v, *, dropout):
+                return torch.nn.functional.scaled_dot_product_attention(
+                    q, k, v, attn_mask=None, dropout_p=dropout, is_causal=True
+                )
+
+        return nanoGPTScaledDotProductAttention()
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

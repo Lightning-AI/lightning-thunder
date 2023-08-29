@@ -124,6 +124,7 @@ def transform_for_execution(
 
     # NOTE The Python executor is required to execute any nontrivial program
     if PYTHON not in executors_list:
+        executors_list = list(executors_list)
         executors_list.append(PYTHON)
 
     if torchex._is_autocast_enabled():
