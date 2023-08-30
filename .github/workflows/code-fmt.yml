@@ -3,9 +3,8 @@ name: Code updates
 on:
   workflow_dispatch:
   schedule:
-    # https://crontab.guru/#0_13,23_*_*_1-5
-    # “At minute 0 past hour 3am on every day-of-week from Monday through Friday.”
-    - cron: "0 3 * * 1-5"
+    # “At minute 0 past hour 3am on every Monday.”
+    - cron: "0 3 * * 1"
 
 jobs:
 
