@@ -682,6 +682,8 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         args = tree_map(read, symbol.args)
         kwargs = tree_map(read, symbol.kwargs)
         prim_func = symbol_mapper(symbol)
+        if prim_func is None:
+            continue
         result = prim_func(*args, **kwargs)
         if symbol.sym.id in allow_duplicates_list:
             safe_map_flat(write_with_duplicates, list(sequencify(symbol.output)), list(sequencify(result)))
@@ -2315,6 +2317,10 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.sym.__call__)
             register_backward(symbol.sym.id)(partial(decomposed_fn_backward_rule, symbol.sym.__call__))
         else:
+            # We could not find a VJP for this symbol and we could not decompose it
+            # It could be a torch.dropout with 0.0 probability, so we skip it
+            if symbol.sym.id == "torch.nn.functional.dropout":
+                return None
             raise NotImplementedError(f"VJP for {symbol.sym.id} is not implemented")
 
     def _vjp_impl(*args, **kwargs):
@@ -2426,6 +2432,14 @@ def backward_pass(forward_env, trace, init_cotangents):
             # We can skip the pullback if the cotangent is None
             safe_map(write, symbol.args, (None,) * len(symbol.args))
             continue
+
+        if symbol.sym.id == "torch.nn.functional.dropout" and not symbol.subsymbols:
+            # We can skip the pullback if the dropout probability is 0.0
+            # Assuming that the dropout symbol has the same output and argument
+            # https://github.com/Lightning-AI/lightning-thunder/issues/906
+            assert symbol.output.name == symbol.args[0].name, "Dropout symbol has a different output and argument"
+            if symbol.args[1] == 0.0:
+                continue
 
         pullback = backward_impls[symbol.sym.id]
         result = pullback(*residuals, *cotangents)

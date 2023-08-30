@@ -36,6 +36,30 @@ def test_nanogpt_complete(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
+# TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
+# this file.
+# https://github.com/Lightning-AI/lightning-thunder/issues/907
+@instantiate(dtypes=(thunder.float32,))
+def test_nanogpt_complete_autograd(executor, device, dtype):
+    tdtype = ttorch.to_torch_dtype(dtype)
+
+    # NOTE: currently setting dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
+
+    x = make_tensor((8, 64), dtype=torch.int64, low=0, high=255, device=device)
+    targets = make_tensor((8, 64), dtype=torch.int64, low=0, high=255, device=device)
+    torch_result = gpt(x, targets=targets)
+    torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
+
+    cmodel = executor.make_callable(gpt, use_generated_backward=True, disable_preprocessing=False)
+    thunder_result = cmodel(x, targets=targets)
+    thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
+
+    assert_close(torch_result, thunder_result)
+    assert_close(torch_grads, thunder_grads)
+
+
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cudagraphs(executor, device, dtype):
