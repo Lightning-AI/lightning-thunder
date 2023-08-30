@@ -1,6 +1,7 @@
 import collections
 import dataclasses
 import dis
+import inspect
 import itertools
 import marshal
 import textwrap
@@ -194,7 +195,10 @@ class ProtoBlock(InstrumentingBase):
                 # We will have to emit some nonlocal _AbstractValue and resolve it later, once we can prove
                 # See https://github.com/python/cpython/blob/0ba07b2108d4763273f3fb85544dde34c5acd40a/Include/internal/pycore_code.h#L119-L133
                 # for more explanation of localsplus.
-                msg = f"nonlocal variables are not supported but instruction = {instr} found"
+                source_lines, first_line = inspect.getsourcelines(code)
+                msg = f"""nonlocal variables are not supported but instruction = {instr} found
+              {code.co_name} defined in {code.co_filename}:{code.co_firstlineno}
+              line {instr.line_no + code.co_firstlineno}: {source_lines[instr.line_no].rstrip()}"""
                 raise RuntimeError(msg)
             elif scope == VariableScope.GLOBAL:
                 identifier = code.co_names[arg]

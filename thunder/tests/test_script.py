@@ -627,6 +627,7 @@ def test_raise_nonlocals():
     with pytest.raises(RuntimeError) as excinfo:
         thunder.preprocess(func, is_module=False)
     assert "nonlocal variables are not supported but" in str(excinfo.value)
+    assert "return f(a)" in str(excinfo.value)
 
 
 # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/667
