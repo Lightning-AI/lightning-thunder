@@ -528,7 +528,7 @@ def _infer_tensor_properties(
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
 
-    _shape = shape if shape is not None else _shape
+    _shape = tuple(shape) if shape is not None else _shape
     _device = device if device is not None else _device
     _dtype = dtype if dtype is not None else _dtype
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
