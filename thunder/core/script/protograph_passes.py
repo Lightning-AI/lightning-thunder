@@ -283,6 +283,9 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
         if source_value := tuple_sources.get(query_key):
             transform_replacements[query_value] = source_value
 
+    if not transform_replacements:
+        return (protograph, False)
+
     return (protograph.transform(transform_replacements), True)
 
 
