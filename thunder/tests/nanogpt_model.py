@@ -93,12 +93,8 @@ class CausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-
-            # NOTE: is_causal=bool(True) is a workaround for a bug in the
-            # bytecode preprocessor
-            # TypeError: scaled_dot_product_attention(): argument 'is_causal' must be bool, not int
             y = torch.nn.functional.scaled_dot_product_attention(
-                q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=bool(True)
+                q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True
             )
         else:
             # manual implementation of attention

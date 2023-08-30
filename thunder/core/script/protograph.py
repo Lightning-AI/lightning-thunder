@@ -49,6 +49,14 @@ class VariableKey(NamedTuple):
     def __repr__(self) -> str:
         return f"VariableKey({self.identifier}, scope={self.scope.name})"
 
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, VariableKey)
+            and self.scope == other.scope
+            and type(self.identifier) is type(other.identifier)
+            and self.identifier == other.identifier
+        )
+
     def __lt__(self, other: "VariableKey") -> bool:
         try:
             return (self.scope.value, self.identifier) < (other.scope.value, other.identifier)

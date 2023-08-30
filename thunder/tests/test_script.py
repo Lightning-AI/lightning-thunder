@@ -311,13 +311,12 @@ def test_nanogpt_inlining_unrolling():
     # these will likely change specialization, more inlining, ...
     # but lets check when it happens
     assert len(gr.blocks) == 78
-    assert sum(len(bl.nodes) for bl in gr.blocks) == 677
+    assert sum(len(bl.nodes) for bl in gr.blocks) == 665
 
     # has everything been inlined/unrolled?
     funcs = _helper_get_func_calls(gr)
     allowed_funcs = {
         float,
-        bool,
         math.sqrt,
         ## PyTorch functions
         torch.arange,
@@ -339,7 +338,7 @@ def test_nanogpt_inlining_unrolling():
         ## there is an oddball (handled above) from instantiating the AssertionError
         "LOAD_ASSERTION_ERROR",
     }
-    assert not (funcs ^ allowed_funcs)
+    assert not (delta := funcs ^ allowed_funcs), delta
 
     fn = thunder.core.script.python_ir.generate_function(gr)
     x = torch.randint(0, 255, (5, 5))
@@ -998,6 +997,22 @@ def tuple_index(x):
 def test_tuple_index():
     tom = thunder.compile(tuple_index)
     assert tuple_index(1) == tom(1)
+
+
+def noop(*args):
+    return args
+
+
+def collision():
+    return noop(True, 1)
+
+
+def test_collision():
+    tom = thunder.compile(collision)
+    a0, b0 = tom()
+    a1, b1 = collision()
+    assert type(a0) is type(a1) and a0 == a1
+    assert type(b0) is type(b1) and b0 == b1
 
 
 # @instantiate(dtypes=(thunder.float32,))
