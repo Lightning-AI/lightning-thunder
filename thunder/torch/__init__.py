@@ -1909,7 +1909,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
         # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
         # with a very negative value that should become ~0 after softmax
         if dtypes.is_boolean_dtype(attn_mask.dtype):
-            attn_mask = masked_fill(zeros_like(attn_mask, dtype=query.dtype), attn_mask == 0, -math.inf)
+            attn_mask = masked_fill(zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
         # Otherwise, attn_mask represents an additive attention tensor
         logits = logits + attn_mask
     attn_weight = softmax(logits, dim=-1)
