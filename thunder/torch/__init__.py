@@ -664,7 +664,7 @@ def where(pred: TensorLike, /, a: Number | TensorLike, b: Number | TensorLike) -
     return clang.where(pred, a, b)
 
 
-def _mask_tensor(a, mask):
+def _mask_tensor(a, mask, fill_value):
     utils.check(
         dtypes.is_boolean_dtype(mask.dtype), lambda: f"_mask_tensor: mask ({mask.dtype=}) must have a boolean dtype"
     )
@@ -672,7 +672,7 @@ def _mask_tensor(a, mask):
     if dtypes.is_boolean_dtype(a.dtype):
         return a & mask
 
-    return where(mask, a, 0)
+    return where(mask, a, fill_value)
 
 
 # NOTE masked_fill is a strange wrapper around where, it probably exists only because of PyTorch's inplace pattern
@@ -695,7 +695,7 @@ def masked_fill(a: TensorLike, /, mask: TensorLike, value: Number | TensorLike) 
 #   When diagonal is specified, the mask computation changes so that
 #   elements with rownum + diagonal >= colnum are preserved.
 @torchsymbol(torch.tril, is_method=True)
-def tril(a: TensorLike, /, diagonal: int = 0) -> TensorLike:
+def tril(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
     utils.check(a.ndim >= 2, lambda: f"tril: a ({a.ndim=}) must have at least two dimensions")
 
     nrows, ncols = a.shape[-2:]
@@ -704,7 +704,10 @@ def tril(a: TensorLike, /, diagonal: int = 0) -> TensorLike:
 
     mask = (row_numbers + diagonal) >= col_numbers
 
-    return _mask_tensor(a, mask)
+    if fill_value is None:
+        fill_value = 0
+
+    return _mask_tensor(a, mask, fill_value)
 
 
 #

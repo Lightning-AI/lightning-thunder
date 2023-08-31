@@ -753,7 +753,11 @@ def masked_fill(bsym: BoundSymbol, a, mask, value):
     return tbsym
 
 
-def tril(bsym: BoundSymbol, a, diagonal: int = 0):
+def _tril_check(a: TensorProxy, diagonal: int = 0, fill_value: None | Number = None):
+    return fill_value is None
+
+
+def tril(bsym: BoundSymbol, a, diagonal: int = 0, *, fill_value: None | Number = None):
     sym = Symbol(name="tril", meta=None, _module=torch)
     return sym.bind(a, diagonal, output=bsym.output)
 
@@ -1423,7 +1427,7 @@ _ops_map.update(
         PrimIDs.SUB: (_elementwise_binary_check, sub),
         # Conditional and masking operations
         "torch.masked_fill": (_always_executable, masked_fill),
-        "torch.tril": (_always_executable, tril),
+        "torch.tril": (_tril_check, tril),
         PrimIDs.WHERE: (_elementwise_ternary_check, where),
         "torch.where": (_elementwise_ternary_check, where),
         # Reduction operators
