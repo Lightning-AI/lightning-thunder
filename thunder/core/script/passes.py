@@ -5,6 +5,7 @@ import types
 from typing import Any, Callable, Dict, List, Tuple, Union
 from contextvars import ContextVar
 
+import networkx as nx
 import torch  # # aehem.
 
 import thunder
@@ -26,6 +27,8 @@ from thunder.core.script.instrumentation import verbose_error, record
 from thunder.core.script.python_ir_data import get_instruction, ThunderInstruction, JUMP_ABSOLUTE, X_THUNDER_STORE_ATTR
 from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.utils import OrderedSet
+
+MAX_INLINE_ITERS = 50
 
 
 def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
@@ -110,34 +113,35 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     return nbl
 
 
-def _find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
-    # for inlining, we need to (reverse) traverse PhiValues and attribute
-    # lookups to find the actual function we want to inline
-    while isinstance(fn_value, PhiValue) and len(fn_value.values) == 1:
-        fn_value = fn_value.values[0]
-    if isinstance(fn_value, PhiValue):  # so len(fn_value.values) is not 1
-        # if all different phi-value paths resolve to the same thing, we can continue
-        parent_value, attr_lookups = _find_method_through_phi_parent(fn_value.values[0])
-        for v in fn_value.values[1:]:
-            pv2, al2 = _find_method_through_phi_parent(v)
-            if not (pv2 is parent_value and al2 == attr_lookups):
-                return fn_value, []
-            return parent_value, attr_lookups
-    if fn_value.parent is not None and fn_value.name is not None:
-        parent_value, attr_lookups = _find_method_through_phi_parent(fn_value.parent)
-        attr_lookups.append(fn_value.name)
-        return parent_value, attr_lookups
-    if fn_value.node is not None and fn_value.node.i.opname == "BINARY_SUBSCR" and fn_value.node.inputs[1].is_const:
-        parent_value, attr_lookups = _find_method_through_phi_parent(fn_value.node.inputs[0])
-        attr_lookups.append(f"[{fn_value.node.inputs[1].value}]")
-        return parent_value, attr_lookups
-
-    return fn_value, []
-
-
 @verbose_error
 def find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
-    return _find_method_through_phi_parent(fn_value)
+    Point = tuple[Value, tuple[str, ...]]
+    to_process: list[Point] = [(v, ()) for v in fn_value.resolve()]
+    edges: OrderedSet[tuple[Point, Point]] = OrderedSet(((fn_value, ()), i) for i in to_process)
+    while to_process:
+        v, attr = to_process.pop()
+        destination = (v, attr)
+        if (parent := v.parent) is not None and (name := v.name) is not None:
+            destination = (parent, (name, *attr))
+
+        elif (node := v.node) is not None and node.i.opname == "BINARY_SUBSCR" and node.inputs[1].is_const:
+            destination = (node.inputs[0], (f"[{node.inputs[1].value}]", *attr))
+
+        for vi in destination[0].resolve():
+            edge = ((v, attr), (vi, destination[1]))
+            if edge not in edges:
+                edges.add(edge)
+                to_process.append(edge[1])
+
+    G = nx.from_edgelist(edges, nx.DiGraph)
+    G.remove_edges_from(nx.selfloop_edges(G))
+    assert nx.is_connected(G.to_undirected())
+    assert nx.is_directed_acyclic_graph(G)
+
+    # A size one topological generation means all flow must pass through that node. Thus, the latest
+    # generation with that property is the farthest we can resolve attributes.
+    *_, (fn_value, attr_lookups) = (i for i, *other in nx.topological_generations(G) if not other)
+    return fn_value, list(attr_lookups)
 
 
 def find_and_evaluate_method_through_phi_parent(v: Value) -> Union[object, Callable]:
@@ -350,8 +354,7 @@ def invoke_noinline(f: Callable) -> Callable:
 
 
 def strongly_inline_functions(gr: "Graph") -> None:
-    loop = True
-    while loop:
+    for _ in range(MAX_INLINE_ITERS):
         loop = False
         gr.ensure_links()
         for bl in gr.blocks[:]:
@@ -371,6 +374,10 @@ def strongly_inline_functions(gr: "Graph") -> None:
                             loop = True
                         except SkipInlineError:
                             pass
+        if not loop:
+            return
+
+    raise AssertionError(f"Inlining did not complete after {MAX_INLINE_ITERS} passes.")
 
 
 def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:

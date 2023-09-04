@@ -108,6 +108,9 @@ class Value(InstrumentingBase):
         self.is_function_arg = is_function_arg
         self.phi_values: list["PhiValue"] = []
 
+    def resolve(self) -> tuple["Value", ...]:
+        return (self,)
+
     def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "Value":
         # clones a value, including (recursively) parent value
         # uses translation_dict to look up parent value
@@ -183,6 +186,16 @@ class PhiValue(Value):
                 if v is not None:
                     v.phi_values.append(self)
         self.jump_sources = list(jump_sources)
+
+    def resolve(self) -> tuple[Value, ...]:
+        to_process = [self]
+        seen: OrderedSet[Value] = OrderedSet()
+        while to_process:
+            seen.add(v := to_process.pop())
+            if isinstance(v, PhiValue):
+                to_process.extend(vi for vi in v.values if vi not in seen)
+
+        return tuple(i for i in seen if not isinstance(i, PhiValue))
 
     def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "PhiValue":
         # due to loops in the Graph, this is complicated:

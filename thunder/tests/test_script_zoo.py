@@ -25,14 +25,13 @@ def test_comprehension():
     tom = thunder.compile(mapping_comprehension)
 
 
-def loop_relu(x):
-    for _ in range(5):
-        x = torch.add(x, 1)
-    return x
+def invoke_missing(x):
+    if []:  # Empty list is falsy but is not elided by the bytecode parser.
+        return foo(x)
 
 
 def inner_wrapper(x):
-    return loop_relu(x)
+    return invoke_missing(x)
 
 
 def outer_wrapper(x):
@@ -41,7 +40,7 @@ def outer_wrapper(x):
 
 @skipif_not_python_3_10
 def test_nested_inline(capfd):
-    with intercept_errors() as errors, pytest.raises(RecursionError):
+    with intercept_errors() as errors, pytest.raises(ValueError):
         thunder.compile(outer_wrapper)
 
     assert "inner_wrapper" in (msg := "\n".join(errors)), msg

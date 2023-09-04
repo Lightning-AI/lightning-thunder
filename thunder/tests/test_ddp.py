@@ -148,8 +148,8 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     def test_compile_ddp_module(self):
         model = ToyModel().to(self.rank)
         with self.assertRaisesRegex(
-            RecursionError,
-            "maximum recursion depth exceeded while calling a Python object",
+            AttributeError,
+            "'NoneType' object has no attribute 'zero_'",
         ):
             thunder.compile(DDP(model, device_ids=[self.rank]), use_generated_backward=True)
 
