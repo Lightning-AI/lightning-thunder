@@ -930,6 +930,8 @@ def compile_data(fn) -> Optional[CompileData]:
 
 
 def last_traces(fn) -> Optional[List[TraceCtx]]:
+    if compile_data(fn).forward_last_traces is not None and compile_data(fn).backward_last_traces is not None:
+        return compile_data(fn).forward_last_traces, compile_data(fn).backward_last_traces
     return compile_data(fn).last_traces
 
 
