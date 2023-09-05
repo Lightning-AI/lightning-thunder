@@ -1879,6 +1879,19 @@ def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:
     return where(a > 0, a, 0)
 
 
+# id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
+@torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
+def selu(a: TensorProxy, inplace: bool = False) -> TensorLike:
+    utils.check(not inplace, lambda: f"selu only supports inplace=False", exception_type=NotImplementedError)
+    
+    alpha = 1.6732632423543772848170429916717
+    scale = 1.0507009873554804934193349852946
+
+    rhs = alpha * expm1(a)
+
+    return scale * where(a > 0, a, rhs)
+
+
 @torchsymbol(torch.outer)
 def outer(a, b):
     utils.check(a.ndim == 1, lambda: f"Expected {a.ndim=} to be one")

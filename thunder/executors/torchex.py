@@ -1125,6 +1125,13 @@ def relu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
     return sym.bind(a, output=bsym.output)
 
 
+def selu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
+    sym = Symbol(name="selu", meta=None, _module=torch.nn.functional)
+    # NOTE: inplace is ignored since only
+    # inplace=False is supported and it has a default value.
+    return sym.bind(a, output=bsym.output)
+
+
 def softmax(bsym: BoundSymbol, a: TensorProxy, dim: Number, dtype=None) -> BoundSymbol:
     torch_dtype = None
     if dtype is not None:
@@ -1353,6 +1360,7 @@ _ops_map.update(
         "torch.reciprocal": (_elementwise_unary_check, reciprocal),
         PrimIDs.RECIPROCAL: (_elementwise_unary_check, reciprocal),
         "torch.relu": (_always_executable, relu),
+        "torch.selu": (_always_executable, selu),
         "torch.round": (_elementwise_unary_check, torch_round),
         PrimIDs.ROUND: (_elementwise_unary_check, torch_round),
         "torch.rsqrt": (_elementwise_unary_check, rsqrt),

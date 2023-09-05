@@ -1470,6 +1470,30 @@ relu_opinfo = OpInfo(
 elementwise_unary_ops.append(relu_opinfo)
 
 
+def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
+
+
+selu_opinfo = OpInfo(
+    ltorch.selu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=selu_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.selu),
+    test_directives=(
+        # Some versions of PyTorch do not support CPU float16 selu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CPU,),
+            dtypes=(datatypes.float16,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(selu_opinfo)
+
+
 round_opinfo = OpInfo(
     clang.round,
     dtypes=(datatypes.floating, datatypes.exact),
