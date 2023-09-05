@@ -4800,8 +4800,6 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
         # ignore_index can't be supplied with probablity target
         if probability_target and ignore_index >= 0:
             continue
-        if not probability_target and label_smoothing > 0.0:
-            continue
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),

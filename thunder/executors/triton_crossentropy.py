@@ -40,25 +40,8 @@ _DTYPE2TRITON = {
 }
 
 
-@triton.autotune(
-    configs=[
-        # fmt: off
-        triton.Config({'BLOCK': 1024}, num_stages=FORWARD_NUM_STAGES, num_warps=1),
-        triton.Config({'BLOCK': 2048}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
-        triton.Config({'BLOCK': 4096}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
-        triton.Config({'BLOCK': 8192}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
-        triton.Config({'BLOCK': 16384}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
-        # fmt: on
-    ],
-    key=[
-        "N",
-        "CLASS_INDICES",
-        "log_size_logits",
-        "BUFFER_DTYPE",
-    ],
-)
 @triton.jit
-def _forward(
+def _class_indices_forward(
     LOGITS,
     PROBS,
     IDX,
@@ -70,6 +53,7 @@ def _forward(
     log_size_logits,
     WEIGHTS: tl.constexpr,
     CLASS_INDICES: tl.constexpr,
+    LABEL_SMOOTHING: tl.constexpr,
     IGNORE_INDEX: tl.constexpr,
     BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
@@ -88,7 +72,7 @@ def _forward(
         row_logits = tl.load(
             logit_ptrs,
             mask=cols < N - (start_n * BLOCK),
-            other=-float("inf"),
+            other=-float('inf'),
         ).to(buffer_dtype)
 
         m_curr = tl.maximum(tl.max(row_logits, 0), m_prev)
@@ -99,14 +83,13 @@ def _forward(
         m_prev = m_curr
         logit_ptrs += BLOCK
     logit_ptrs = logit_start_ptrs + cols
-    PROBS + row * N + cols
+    output_ptrs = PROBS + row * N + cols
     WRIT_PROBS = PROBS + row * N + cols
-    if not CLASS_INDICES:
+    if LABEL_SMOOTHING:
         sum_total = 0.0
-        weights_total = 0.0
         sum_total = sum_total.to(buffer_dtype)
+        weights_total = 0.0
         weights_total = weights_total.to(buffer_dtype)
-        idx_ptr = IDX + row * N + cols
         if WEIGHTS:
             weight_ptr = weight + cols
 
@@ -118,19 +101,19 @@ def _forward(
             mask=cols < N - start_n * BLOCK,
             other=l_prev_log + m_prev,
         ).to(buffer_dtype)
-        if not CLASS_INDICES:
-            idx = tl.load(idx_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
-            full_weights_val = (1.0 - smoothing_factor) * idx + smoothing_factor / N
-            if WEIGHTS:
-                weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
-                full_weights_val = weights_val * full_weights_val
+        if LABEL_SMOOTHING and WEIGHTS:
+            full_weights_val = tl.load(
+                weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
+            )
             weights_total += tl.sum(full_weights_val, 0)
 
         row_minus_max = row_logits - m_prev
         log_softmax = l_prev_log - row_minus_max
 
-        if not CLASS_INDICES:
+        if LABEL_SMOOTHING and WEIGHTS:
             log_softmax *= full_weights_val
+
+        if LABEL_SMOOTHING:
             sum_total += tl.sum(log_softmax, 0)
         # Store it back
 
@@ -141,31 +124,203 @@ def _forward(
         )
         logit_ptrs += BLOCK
         WRIT_PROBS += BLOCK
-        if not CLASS_INDICES:
-            idx_ptr += BLOCK
-            if WEIGHTS:
-                weight_ptr += BLOCK
+        if LABEL_SMOOTHING and WEIGHTS:
+            weight_ptr += BLOCK
 
-    if CLASS_INDICES:
-        idx = tl.load(IDX + row)
-        use_class = 0.0
-        if IGNORE_INDEX >= 0:
-            use_class = idx == IGNORE_INDEX
-        READ_PROBS = PROBS + row * N + idx
-        tl.debug_barrier()
-        # write-back loss
-        probs = tl.load(READ_PROBS)
-        probs = probs * (1.0 - use_class)
-        if WEIGHTS:
-            weight_ptr = weight + idx
-            weights_val = tl.load(weight_ptr)
-            probs = weights_val * probs
-    else:
-        # Need to load all the indices and smooth it.
+    idx = tl.load(IDX + row)
+    use_class = 0.0
+    if IGNORE_INDEX >= 0:
+        use_class = idx == IGNORE_INDEX
+    READ_PROBS = PROBS + row * N + idx
+    tl.debug_barrier()
+    # write-back loss
+    probs = tl.load(READ_PROBS)
+    if WEIGHTS and not LABEL_SMOOTHING:
+        weight_ptr = weight + idx
+        weights_val = tl.load(weight_ptr)
+        probs = weights_val * probs
+    if LABEL_SMOOTHING:
         tl.store(WEIGHT_BUFFER + row, weights_total)
-        probs = sum_total
+        probs = (1 - smoothing_factor) * probs + smoothing_factor * (
+            sum_total
+        ) / N
+    probs = probs * (1.0 - use_class)
 
     tl.store(LOSS + row, probs)
+
+
+@triton.jit
+def _class_probs_forward(
+    LOGITS,
+    PROBS,
+    IDX,
+    LOSS,
+    weight,
+    N,
+    WEIGHT_BUFFER,
+    smoothing_factor,
+    log_size_logits,
+    WEIGHTS: tl.constexpr,
+    CLASS_INDICES: tl.constexpr,
+    LABEL_SMOOTHING: tl.constexpr,
+    IGNORE_INDEX: tl.constexpr,
+    BUFFER_DTYPE: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    buffer_dtype = _DTYPE2TRITON[BUFFER_DTYPE.value]
+    row = tl.program_id(0)
+    cols = tl.arange(0, BLOCK)
+    logit_start_ptrs = LOGITS + row * N
+    logit_ptrs = logit_start_ptrs + cols
+    m_prev = -float("inf")
+    l_prev = 0.0
+    m_prev = m_prev.to(buffer_dtype)
+    l_prev = l_prev.to(buffer_dtype)
+
+    for start_n in range(0, tl.cdiv(N, BLOCK)):
+        row_logits = tl.load(
+            logit_ptrs,
+            mask=cols < N - (start_n * BLOCK),
+            other=-float('inf'),
+        ).to(buffer_dtype)
+
+        m_curr = tl.maximum(tl.max(row_logits, 0), m_prev)
+        l_prev *= tl.exp(m_prev - m_curr)
+        p = tl.exp(row_logits - m_curr)
+        l_curr = tl.sum(p, 0) + l_prev
+        l_prev = l_curr
+        m_prev = m_curr
+        logit_ptrs += BLOCK
+    logit_ptrs = logit_start_ptrs + cols
+    output_ptrs = PROBS + row * N + cols
+    WRIT_PROBS = PROBS + row * N + cols
+
+    sum_total = 0.0
+    weights_total = 0.0
+    sum_total = sum_total.to(buffer_dtype)
+    weights_total = weights_total.to(buffer_dtype)
+    idx_ptr = IDX + row * N + cols
+    if WEIGHTS:
+        weight_ptr = weight + cols
+
+    l_prev_log = tl.log(l_prev)
+    # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
+    for start_n in range(0, tl.cdiv(N, BLOCK)):
+        row_logits = tl.load(
+            logit_ptrs,
+            mask=cols < N - start_n * BLOCK,
+            other=l_prev_log + m_prev,
+        ).to(buffer_dtype)
+        idx = tl.load(idx_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
+        full_weights_val = (
+            1.0 - smoothing_factor
+        ) * idx + smoothing_factor / N
+        if WEIGHTS:
+            weights_val = tl.load(
+                weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
+            )
+            full_weights_val = weights_val * full_weights_val
+        else:
+            full_weights_val = tl.where(
+                cols < N - start_n * BLOCK, full_weights_val, 0.0
+            )
+        weights_total += tl.sum(full_weights_val, 0)
+
+        row_minus_max = row_logits - m_prev
+        log_softmax = l_prev_log - row_minus_max
+
+        log_softmax *= full_weights_val
+        sum_total += tl.sum(log_softmax, 0)
+        # Store it back
+
+        tl.store(
+            WRIT_PROBS,
+            log_softmax,
+            mask=cols < N - start_n * BLOCK,
+        )
+        logit_ptrs += BLOCK
+        WRIT_PROBS += BLOCK
+        idx_ptr += BLOCK
+        if WEIGHTS:
+            weight_ptr += BLOCK
+
+    tl.store(WEIGHT_BUFFER + row, weights_total)
+    probs = sum_total
+
+    tl.store(LOSS + row, probs)
+
+
+@triton.autotune(
+    configs=[
+        # fmt: off
+        triton.Config({'BLOCK': 1024}, num_stages=FORWARD_NUM_STAGES, num_warps=1),
+        triton.Config({'BLOCK': 2048}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
+        triton.Config({'BLOCK': 4096}, num_stages=FORWARD_NUM_STAGES, num_warps=8),
+        triton.Config({'BLOCK': 8192}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
+        triton.Config({'BLOCK': 16384}, num_stages=FORWARD_NUM_STAGES, num_warps=16),
+        # fmt: on
+    ],
+    key=[
+        'N',
+        'CLASS_INDICES',
+        'log_size_logits',
+        'BUFFER_DTYPE',
+    ],
+)
+@triton.jit
+def _forward(
+    LOGITS,
+    PROBS,
+    IDX,
+    LOSS,
+    weight,
+    N,
+    WEIGHT_BUFFER,
+    smoothing_factor,
+    log_size_logits,
+    WEIGHTS: tl.constexpr,
+    CLASS_INDICES: tl.constexpr,
+    LABEL_SMOOTHING: tl.constexpr,
+    IGNORE_INDEX: tl.constexpr,
+    BUFFER_DTYPE: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    if CLASS_INDICES:
+        _class_indices_forward(
+            LOGITS,
+            PROBS,
+            IDX,
+            LOSS,
+            weight,
+            N,
+            WEIGHT_BUFFER,
+            smoothing_factor,
+            log_size_logits,
+            WEIGHTS,
+            CLASS_INDICES,
+            LABEL_SMOOTHING,
+            IGNORE_INDEX,
+            BUFFER_DTYPE,
+            BLOCK,
+        )
+    else:
+        _class_probs_forward(
+            LOGITS,
+            PROBS,
+            IDX,
+            LOSS,
+            weight,
+            N,
+            WEIGHT_BUFFER,
+            smoothing_factor,
+            log_size_logits,
+            WEIGHTS,
+            CLASS_INDICES,
+            LABEL_SMOOTHING,
+            IGNORE_INDEX,
+            BUFFER_DTYPE,
+            BLOCK,
+        )
 
 
 @triton.autotune(
@@ -179,10 +334,10 @@ def _forward(
         # fmt: on
     ],
     key=[
-        "N",
-        "CLASS_INDICES",
-        "log_size_logits",
-        "BUFFER_DTYPE",
+        'N',
+        'CLASS_INDICES',
+        'log_size_logits',
+        'BUFFER_DTYPE',
     ],
 )
 @triton.jit
@@ -199,6 +354,7 @@ def _backward(
     log_size_logits,
     WEIGHTS: tl.constexpr,
     CLASS_INDICES: tl.constexpr,
+    LABEL_SMOOTHING: tl.constexpr,
     IGNORE_INDEX: tl.constexpr,
     BUFFER_DTYPE: tl.constexpr,
     BLOCK: tl.constexpr,
@@ -214,36 +370,68 @@ def _backward(
     probs = -tl.load(
         probs_start,
         mask=cols < N - (start_n * BLOCK),
-        other=float("inf"),
+        other=float('inf'),
     ).to(buffer_dtype)
     DIN = DIN + row * N + cols + BLOCK * start_n
     dout = tl.load(DPROBS + row * dprob_stride).to(buffer_dtype)
     # We know d(-log(p[i])/dlogit[k] = -id_mat[i,k] + p[k]
     # and we have -log(p[k]) stored in PROBS, so this is easy
     if CLASS_INDICES:
-        probs = tl.exp(probs)
         idx = tl.load(IDX + row)
         delta = ((start_n * BLOCK) + cols) == idx
         # write result in-place in PROBS
         if IGNORE_INDEX >= 0:
             use_class = idx == IGNORE_INDEX
             dout = dout * (1 - use_class)
-        din = (probs - delta) * dout
-        if WEIGHTS:
-            weight_ptr = weight + idx
-            weights_val = tl.load(weight_ptr)
-            din = weights_val * din
+        if LABEL_SMOOTHING:
+            if WEIGHTS:
+                weight_ptr = weight + cols + BLOCK * start_n
+                full_weights_val = tl.load(
+                    weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
+                ).to(buffer_dtype)
+                weights_val = tl.load(weight + idx)
+                probs = probs / full_weights_val
+            probs = tl.exp(probs)
+            if WEIGHTS:
+                weights_total = tl.load(WEIGHT_BUFFER + row)
+                numerator_contrib = (
+                    weights_val * (1.0 - smoothing_factor) * (probs - delta)
+                )
+                mean_contrib = (
+                    ((weights_total * probs) - (full_weights_val))
+                    * smoothing_factor
+                    / N
+                )
+            else:
+                numerator_contrib = (1.0 - smoothing_factor) * (probs - delta)
+                mean_contrib = (smoothing_factor * probs) - (
+                    smoothing_factor / N
+                )
+
+            din = (numerator_contrib + mean_contrib) * dout
+
+        else:
+            probs = tl.exp(probs)
+            din = (probs - delta) * dout
+            if WEIGHTS:
+                weight_ptr = weight + idx
+                weights_val = tl.load(weight_ptr)
+                din = weights_val * din
     else:
-        weights_total = tl.load(WEIGHT_BUFFER + row)
         idx = tl.load(
             IDX + row * N + cols + BLOCK * start_n,
             mask=cols < N - start_n * BLOCK,
             other=0.0,
         ).to(buffer_dtype)
-        full_weights_val = (1.0 - smoothing_factor) * idx + smoothing_factor / N
+        full_weights_val = (
+            1.0 - smoothing_factor
+        ) * idx + smoothing_factor / N
+        weights_total = tl.load(WEIGHT_BUFFER + row)
         if WEIGHTS:
             weight_ptr = weight + cols + BLOCK * start_n
-            weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0).to(buffer_dtype)
+            weights_val = tl.load(
+                weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
+            ).to(buffer_dtype)
             full_weights_val = weights_val * full_weights_val
         probs = probs / full_weights_val
         probs = tl.exp(probs.to(buffer_dtype))
@@ -251,7 +439,9 @@ def _backward(
         weighted_probs_per_class = weighted_probs - full_weights_val
         din = (weighted_probs_per_class) * dout
 
-    tl.store(DIN, din.to(DIN.dtype.element_ty), mask=cols + BLOCK * start_n < N)
+    tl.store(
+        DIN, din.to(DIN.dtype.element_ty), mask=cols + BLOCK * start_n < N
+    )
 
 
 class CrossEntropy(torch.autograd.Function):
@@ -266,7 +456,13 @@ class CrossEntropy(torch.autograd.Function):
         label_smoothing,
     ):
         buffer_dtype = None
-        assert weight is None or (len(weight.shape) == 1 and weight.shape[0] == logits.shape[-1])
+        # make sure we can use triton
+        # assert (
+        #     indices.dtype == torch.int64
+        # ), "Indices are expected to be of type long."
+        assert weight is None or (
+            len(weight.shape) == 1 and weight.shape[0] == logits.shape[-1]
+        )
         # make kernel
         if buffer_dtype is None:
             if logits.dtype in [torch.bfloat16, torch.float16]:
@@ -278,7 +474,10 @@ class CrossEntropy(torch.autograd.Function):
         n_cols = logits.shape[-1]
         # run the kernel
         result = torch.empty((logits.shape[0],), dtype=dtype, device=device)
-        neg_logprobs = torch.empty_like(logits, dtype=buffer_dtype, device=device)
+        # result = torch.empty_like(indices, dtype=dtype, device=device)
+        neg_logprobs = torch.empty_like(
+            logits, dtype=buffer_dtype, device=device
+        )
         weights_buffer = torch.empty_like(result, dtype=buffer_dtype)
         grid = lambda opt: (logits.numel() // n_cols,)
         log_size_logits = int(math.log(math.prod(logits.shape) / n_cols))
@@ -294,6 +493,7 @@ class CrossEntropy(torch.autograd.Function):
             log_size_logits,
             WEIGHTS=(weight is not None),
             CLASS_INDICES=(indices.dtype == torch.int64),
+            LABEL_SMOOTHING=(label_smoothing > 0.0),
             IGNORE_INDEX=ignore_index,
             BUFFER_DTYPE=buffer_dtype_enum,
         )
@@ -304,11 +504,11 @@ class CrossEntropy(torch.autograd.Function):
         ctx.ignore_index = ignore_index
         ctx.reduction = reduction
         ctx.buffer_dtype = buffer_dtype_enum
-        if reduction == "none":
+        if reduction == 'none':
             return result
-        elif reduction == "sum":
+        elif reduction == 'sum':
             return result.sum(dim=0)
-        elif reduction == "mean":
+        elif reduction == 'mean':
             if indices.dtype == torch.int64:
                 denom = (indices != ignore_index).float()
                 if weight is not None:
@@ -329,16 +529,18 @@ class CrossEntropy(torch.autograd.Function):
         """
         # load saved tensors
         reduction = ctx.reduction
-        if reduction == "mean" or reduction == "sum":
+        if reduction == 'mean' or reduction == 'sum':
             dneg_logprobs = dneg_logprobs.expand(1)
         neg_logprobs, indices, weights_buffer = ctx.saved_tensors
         din = torch.empty_like(neg_logprobs)
         weight = ctx.WEIGHT
         buffer_dtype = ctx.buffer_dtype
+        # run the kernel
+        # neg_logprobs will be modified in place to become our gradient:
         n_cols = neg_logprobs.shape[-1]
         grid = lambda opt: (
             neg_logprobs.numel() // n_cols,
-            triton.cdiv(n_cols, opt["BLOCK"]),
+            triton.cdiv(n_cols, opt['BLOCK']),
         )
         log_size_logits = int(math.log(math.prod(neg_logprobs.shape) / n_cols))
         _backward[grid](
@@ -354,30 +556,31 @@ class CrossEntropy(torch.autograd.Function):
             log_size_logits,
             WEIGHTS=(weight is not None),
             CLASS_INDICES=(indices.dtype == torch.int64),
+            LABEL_SMOOTHING=(ctx.label_smoothing > 0.0),
             IGNORE_INDEX=ctx.ignore_index,
             BUFFER_DTYPE=buffer_dtype,
         )
-        if ctx.reduction == "mean":
+        if ctx.reduction == 'mean':
             din /= ctx.denom
         return din, None, None, None, None, None, None
 
 
 def cross_entropy(
-    a,
+    input,
     target,
     weight=None,
     ignore_index=-100,
-    reduction="mean",
+    reduction='mean',
     label_smoothing=0.0,
 ):
-    r"""
+    r'''
     Returns the Cross Entropy loss of input. If the target is class indcies
     then the ignore_index argument is applicable, while the label_smoothing argument
     is not.  On the other hand, if the target is class probabilites, then the
     label_smoothing argument is applicable, while the ignore_index argument is not.
 
     Args:
-        a: Tensor of shape (B, N)
+        input: Tensor of shape (B, N)
             where B is the batch dim and N is the number of classes
         target: Int Tensor of shape (B,), min = 0, max = N-1 or
             Float Tensor of shape (B, N), rows sum to 1.0
@@ -387,9 +590,9 @@ def cross_entropy(
         ignore_index: Int, which class label should be ignored
         reduction: String: ['none', 'sum', 'mean']
         label_smoothing: Float between 0 and 1
-    """
+    '''
     return CrossEntropy.apply(
-        a,
+        input,
         target,
         weight,
         ignore_index,
