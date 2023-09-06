@@ -74,7 +74,7 @@ jobs:
         CI: "true"
       run: |
         coverage run --source thunder -m \
-          pytest thunder/tests/ -v -n 2 --random-order-seed=$GITHUB_RUN_ID
+          pytest thunder/tests/ -v -n 2 --random-order-seed=$GITHUB_RUN_ID --durations=250
 
     - name: Statistics
       run: |
