@@ -11,7 +11,7 @@ import copy
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype
+from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -2200,6 +2200,30 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     return result
 
 
+@register_augmented_forward(prims.PrimIDs.CAT)
+def cat_aug_fwd(tensors: list[TensorProxy], dim: int) -> VJPDual:
+    primal = prims.cat(tensors, dim)
+    residuals = (
+        [t.shape[dim] for t in tensors],
+        dim,
+    )
+
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.CAT)
+def cat_backward(tensor_dim_lens: list[int], dim: int, g: TensorProxy) -> (list[TensorProxy], None):
+    grads = []
+
+    slice_start = 0
+    for dim_len in tensor_dim_lens:
+        grads.append(
+            slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim)
+        )
+        slice_start += dim_len
+    return grads, None
+
+
 @register_augmented_forward("torch.Tensor.contiguous")
 @register_augmented_forward("torch.contiguous")
 def contiguous_aug_fwd(x: TensorProxy, /, *, memory_format: torch.memory_format = torch.contiguous_format) -> VJPDual:
@@ -2461,7 +2485,13 @@ def backward_pass(forward_env, trace, init_cotangents):
             len(result) == len(symbol.args),
             lambda: f"Pullback for {symbol.sym.id} returned {len(result)} values, but expected {len(symbol.args)}",
         )
-        safe_map(write, symbol.args, result)
+
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
+        # This is a temporary workaround.
+        if symbol.sym.id is prims.PrimIDs.CAT:
+            safe_map_flat(write, symbol.args, result)
+        else:
+            safe_map(write, symbol.args, result)
 
     gargs = tree_map(read_with_none, tuple(trace.args))
     gkwargs = tree_map(read_with_none, trace.kwargs)

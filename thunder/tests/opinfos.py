@@ -2298,7 +2298,8 @@ cat_opinfo = OpInfo(
             executors=("nvFuser",),
             active_if=nvfuser_version < "0.0.5",
         ),
-        # vjp and jvp not yet implemented
+        # test_grad cannot handle shape-based ops that do not require any compute.
+        # Grads are tested explicitly in test_grad.py.
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
         DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
