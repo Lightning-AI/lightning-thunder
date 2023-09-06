@@ -26,7 +26,7 @@ from thunder.core.script.graph import (
 from thunder.core.script.instrumentation import verbose_error, record
 from thunder.core.script.python_ir_data import get_instruction, ThunderInstruction, JUMP_ABSOLUTE, X_THUNDER_STORE_ATTR
 from thunder.torch import _torch_to_thunder_complete_map
-from thunder.core.utils import OrderedSet
+from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
 MAX_INLINE_ITERS = 50
 
@@ -582,6 +582,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     for_iter_node.outputs = [for_iter_node.outputs[1]]
 
     for_iter_block_jmp = Node(i=get_instruction(opname="JUMP_ABSOLUTE", arg=None))
+    for_iter_block_jmp.line_no = for_iter_node.line_no
     for_iter_block.nodes.append(for_iter_block_jmp)
     for_iter_block_jmp.jump_targets = [for_iter_node.jump_targets[0]]
     for_iter_node_exit_jump_target = for_iter_node.jump_targets[1]
@@ -594,6 +595,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     exit_block = Block()
     gr.blocks.append(exit_block)
     exit_node = Node(i=get_instruction(opname="JUMP_ABSOLUTE", arg=None))
+    exit_node.line_no = for_iter_node.line_no
     exit_node.jump_targets = [for_iter_node_exit_jump_target]
     target_after_iter = exit_node.jump_targets[0]
     exit_node.jump_targets[0].jump_sources = [
@@ -669,10 +671,15 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
         if i.phi_values:
             exit_block.block_outputs.add(i)
         else:
+            assert isinstance(i, PhiValue)
+            for v in i.values[:]:
+                i.remove_value(v)
             exit_block.block_inputs.remove(i)
 
 
 def find_and_unroll_for_loop(gr: "Graph") -> bool:
+    if debug_asserts_enabled():
+        thunder.core.script.graph.check_graph(gr)
     gr.ensure_links()
 
     for bl in gr.blocks[:]:
@@ -693,12 +700,21 @@ def find_and_unroll_for_loop(gr: "Graph") -> bool:
                     # what about more complex things? in particular enumerate, but zip, ...
                     if isinstance(iterated_module_list, (torch.nn.Sequential, torch.nn.ModuleList)):
                         thunder.core.script.passes.unroll_for_over_modules(gr, for_iter_node)
+                        if debug_asserts_enabled():
+                            thunder.core.script.graph.check_graph(gr)
                         thunder.core.script.passes.merge_blocks_where_possible(gr)
+                        if debug_asserts_enabled():
+                            thunder.core.script.graph.check_graph(gr)
+                        thunder.core.script.graph.check_graph(gr)
                         return True
+    if debug_asserts_enabled():
+        thunder.core.script.graph.check_graph(gr)
     return False
 
 
 def unroll_for_loops_and_inline_modules(gr: "Graph") -> None:
+    if debug_asserts_enabled():
+        thunder.core.script.graph.check_graph(gr)
     iterate = True
     while iterate:
         iterate = find_and_unroll_for_loop(gr)
@@ -713,6 +729,9 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     attr_list: list[str] = []
     attr_values = []
     return_values: Dict[str, Value] = {}  # PhiValues in the return block
+
+    if debug_asserts_enabled():
+        thunder.core.script.graph.check_graph(gr)
 
     def functionalize_value_if_possible(i):
         # TODO: inefficient because it looks twice

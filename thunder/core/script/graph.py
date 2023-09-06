@@ -696,11 +696,12 @@ def _check_graph(gr: Graph) -> None:
         for i in bl.block_inputs:
             assert isinstance(i, PhiValue)
             assert len(i.jump_sources) == len(i.values)
+            assert len(i.values) > 0
             # assert i.block is bl
             pvr = phi_value_refs.get(i, [])
             assert len([v for v in i.values if not (v.is_function_arg or v.is_const or v.is_global)]) == len(
                 pvr
-            ), f"phi value {repr(i)} source count {len(i.values)} does not match sets {pvr}"
+            ), f"phi value {repr(i)} source count {len(i.values)} does not match sets {pvr}, {i.values}"
             if i in phi_value_refs:  # not for function args in first block
                 del phi_value_refs[i]
             for v in i.values:

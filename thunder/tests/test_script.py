@@ -1,11 +1,13 @@
 import inspect
 import math
+import operator
 import sys
 import traceback
 from functools import partial
 
 import pytest
 import torch
+from lightning_utilities import compare_version
 from torch import add as tadd
 from torch.testing import assert_close, make_tensor
 
@@ -16,15 +18,24 @@ import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
 from thunder.core.utils import enable_debug_asserts
 import thunder.torch as ltorch
-from thunder.tests import nanogpt_model, lit_llama_model
+from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
 from thunder.tests.framework import instantiate, requiresNVFuser, IN_CI
 
 from thunder.executors.utils import Executor
+from thunder.tests.lit_gpt_model import configs
 
 torchex = [Executor.TORCH]
 nvfuserex = [Executor.NVFUSER, Executor.TORCH]
 
 enable_debug_asserts()
+
+
+def skipif_not_pytorch_2_1(f):
+    return pytest.mark.skipif(
+        # use_base_version=True allows checking against versions with nightly modifiers
+        compare_version("torch", operator.lt, "2.1.0", use_base_version=True),
+        reason=f"requires PyTorch >= 2.1, got {torch.__version__=}",
+    )(f)
 
 
 def skipif_not_python_3_10(f):
@@ -229,6 +240,32 @@ def test_inline_submodule():
     assert_close(fn(m, x), m(x))
 
     # explicitly check for things to have been inlined?
+
+
+@skipif_not_pytorch_2_1
+@skipif_not_python_3_10
+@pytest.mark.parametrize("name", [config["name"] for config in configs])
+@pytest.mark.parametrize("cls", [
+    lit_gpt_model.GPTAdapted,
+    # if this starts passing, good news, we now support the reference lit-gpt implementation. to update this, delete the
+    # GPTCurrent implementation and use just the reference
+    pytest.param(lit_gpt_model.GPT, marks=pytest.mark.xfail(strict=True))
+])
+@torch.no_grad()
+def test_litgpt_variants(name, cls):
+    model = cls.from_name(name)
+    # compile at the beginning to bubble errors asap
+    tom = thunder.compile(model)
+
+    # use the reference model for the expected value
+    original = lit_gpt_model.GPT.from_name(name)
+    state_dict = original.state_dict()
+    x = torch.randint(0, 200, (5, 5))
+    expected = original(x)
+
+    model.load_state_dict(state_dict, strict=not model.config.shared_attention_norm)
+    actual = tom(x)
+    assert_close(actual, expected)
 
 
 @skipif_not_python_3_10
