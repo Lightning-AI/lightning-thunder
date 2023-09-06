@@ -11,16 +11,20 @@ import math
 import sys
 import argparse
 from dataclasses import dataclass
+import tempfile
+
 
 from lightning_utilities.core.imports import package_available
 
 import torch
 from torch.testing import make_tensor
+import torch.multiprocessing as mp
 
 import thunder
 import thunder.torch as ltorch
 from thunder.cudagraphs import CUDAGraphExecutor
 import thunder.core.dtypes as dtypes
+import thunder.core.devices as Devices
 import thunder.executors as executors
 from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_llama_model
 
@@ -430,20 +434,26 @@ def _prettyprint_stats(
     )
 
 
+def print_rank_0(message):
+    """If distributed is initialized, print only on rank 0."""
+    if torch.distributed.is_initialized():
+        if torch.distributed.get_rank() == 0:
+            print(message)
+    else:
+        print(message)
+
+
 # TODO Consider isolating each benchmark run in a subprocess to avoid cache reuse across benchmarks
 #   (which has been observed, to get around this just run one benchmark at a time)
-def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20):
-    print(f"Running benchmark {benchmark.name}")
-
-    devices: list[str] = benchmark.devices
-    if len(devices) == 0:
-        raise RuntimeError("Found a benchmark with no specified devices")
-
+def _run_benchmark(
+    benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20
+) -> tuple[int, list, list]:
     # Determines the "wait for computation function," to be run after calls to make_batch() and the benchmark
     #   function to ensure that computation has finished
+    devices: list[str] = benchmark.devices
     wait_for_computation_fn = lambda: None
     for device in devices:
-        device = thunder.core.devices.device_from_string(device)
+        device: thunder.core.devices.Device = thunder.core.devices.device_from_string(device)
         if device.devicetype is thunder.core.devices.DeviceType.CUDA:
             wait_for_computation_fn = wait_for_cuda_computation
             break
@@ -463,21 +473,131 @@ def run_benchmark(benchmark: Benchmark, constructor: Callable, *, warmup_iters: 
     stop_time: int = time.time_ns()
     callable_construction_time: int = stop_time - start_time
 
-    _run_benchmark = partial(_benchmark, benchmark, benchmark_callable, wait_for_computation_fn)
+    my_benchmark = partial(_benchmark, benchmark, benchmark_callable, wait_for_computation_fn)
 
     # Performs warmup iters
-    warmup_stats: list[BenchmarkRunStatistics] = _run_benchmark(warmup_iters)
+    warmup_stats: list[BenchmarkRunStatistics] = my_benchmark(warmup_iters)
 
     # Benchmarks
-    benchmark_stats: list[BenchmarkRunStatistics] = _run_benchmark(benchmark_iters)
+    benchmark_stats: list[BenchmarkRunStatistics] = my_benchmark(benchmark_iters)
 
-    # Prints statistics
+    return callable_construction_time, warmup_stats, benchmark_stats
+
+
+def run_benchmark(
+    benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20
+) -> None:
+    print(f"Running benchmark {benchmark.name}")
+    _print_benchmark_arguments(benchmark)
+
+    devices: list[str] = benchmark.devices
+    if len(devices) == 0:
+        raise RuntimeError("Found a benchmark with no specified devices")
+
+    callable_construction_time, warmup_stats, benchmark_stats = _run_benchmark(
+        benchmark, constructor, warmup_iters=warmup_iters, benchmark_iters=benchmark_iters
+    )
+
     _prettyprint_stats(
         benchmark.name,
         callable_construction_time=callable_construction_time,
         warmup_stats=warmup_stats,
         benchmark_stats=benchmark_stats,
     )
+
+
+# TODO Extend this to work with CPU devices, too
+def ddp_runner(args):
+    init_method, world_size, rank, benchmark, ddp_constructor, warmup_iters, benchmark_iters = args
+
+    torch.distributed.init_process_group(
+        init_method=init_method,
+        backend="nccl",
+        rank=rank,
+        world_size=world_size,
+    )
+    benchmark.device = f"cuda:{rank}"
+    torch.cuda.set_device(rank)
+
+    stats = _run_benchmark(benchmark, ddp_constructor(rank), warmup_iters=warmup_iters, benchmark_iters=benchmark_iters)
+    return rank, stats
+
+
+# TODO Consider muting processes other than rank 0 by redirecting their stdout to devnull
+def run_multiprocess_benchmark(
+    benchmark: Benchmark,
+    ddp_constructor: Callable,
+    *,
+    world_size: int = 2,
+    warmup_iters: int = 10,
+    benchmark_iters: int = 20,
+):
+    print(f"Running distributed benchmark {benchmark.name} with {world_size=}")
+    _print_benchmark_arguments(benchmark)
+
+    assert (
+        torch.distributed.is_available()
+    ), f"Trying to run a distributed benchmark, but torch.distributed is not available"
+
+    # Ensures the benchmark is running on a single CUDA device (which is overridden later)
+    assert (
+        len(benchmark.devices) == 1
+        and Devices.device_from_string(benchmark.devices[0]).devicetype == Devices.DeviceType.CUDA
+    ), f"Distributed benchmarking currently only supports benchmarks that run on a single CUDA device"
+
+    # Ensures the benchmark returns a module (because ddp is only supported on modules)
+    benchmark_fn = benchmark.fn()
+    assert isinstance(
+        benchmark_fn, torch.nn.Module
+    ), f"Distributed benchmarking currently only supports module benchmarks"
+
+    # Validates world size
+    assert (
+        world_size <= torch.cuda.device_count()
+    ), f"Requested world size of {world_size} is greater than the number of available cuda devices {torch.cuda.device_count()}"
+
+    FILE_SCHEMA: str = "file://"
+    if sys.platform == "win32":
+        FILE_SCHEMA = "file:///"
+    file_name = tempfile.NamedTemporaryFile(delete=False).name
+    init_method = f"{FILE_SCHEMA}{file_name}"
+
+    input_data = [
+        (init_method, world_size, rank, benchmark, ddp_constructor, warmup_iters, benchmark_iters)
+        for rank in range(world_size)
+    ]
+
+    from concurrent.futures import ProcessPoolExecutor as Pool
+
+    # NOTE This uses the ProcessPoolExecutor because that allows spawning processes within worker threads
+    #   which dynamo relies on
+    # TODO Consider adding a timeout (possibly configurable when calling run_multiprocess_benchmark())
+    # TODO In Python 3.11+ ProcessPoolExecutor has the max_tasks_per_child parameter
+    #   which this should set to 1
+    # TODO Consider defining our own multiprocessing pool that uses max_tasks_per_child and supports dynamo
+    try:
+        pool = Pool(mp_context=mp.get_context("spawn"))
+        results = pool.map(ddp_runner, input_data)
+
+        # Aggregates statistics
+        total_cct: int = 0
+        all_warmup_stats = []
+        all_benchmark_stats = []
+        for rank, (callable_construction_time, warmup_stats, benchmark_stats) in results:
+            total_cct += callable_construction_time
+            all_warmup_stats.extend(warmup_stats)
+            all_benchmark_stats.extend(benchmark_stats)
+
+        avg_cct: int = total_cct // world_size
+
+        _prettyprint_stats(
+            benchmark_name=f"{benchmark.name}-ddp",
+            callable_construction_time=avg_cct,
+            warmup_stats=all_warmup_stats,
+            benchmark_stats=all_benchmark_stats,
+        )
+    finally:
+        pool.shutdown()
 
 
 #
@@ -490,10 +610,27 @@ def default_torch_executor(fn: Callable) -> Callable:
     return fn
 
 
+def default_torch_ddp_executor(_) -> Callable:
+    def func(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return torch.nn.parallel.DistributedDataParallel(fn)
+
+    return func
+
+
 def default_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch._dynamo.reset()
     return torch.compile(fn)
+
+
+def default_torch_compile_ddp_executor(_) -> Callable:
+    def func(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch._dynamo.reset()
+        return torch.compile(torch.nn.parallel.DistributedDataParallel(fn))
+
+    return func
 
 
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
@@ -504,6 +641,20 @@ def default_thunder_always_trace_executor(fn: Callable) -> Callable:
 def default_thunder_static_caching_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(fn, use_static_caching=True, use_generated_backward=True, use_rematerialization=True)
+
+
+def default_thunder_ddp_static_caching_executor(rank) -> Callable:
+    from thunder.distributed import ddp
+
+    def func(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(
+            ddp(fn, rank, broadcast_from=0),
+            use_static_caching=True,
+            use_generated_backward=True,
+        )
+
+    return func
 
 
 def default_thunder_static_caching_executor_no_grad(fn: Callable) -> Callable:
@@ -660,8 +811,6 @@ class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         }
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         def foo(a, b, *, depth):
             for _ in range(depth):
                 a = a + b
@@ -729,8 +878,6 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {"depth": self.depth}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         def foo(a: torch.Tensor, *, depth: int):
             for _ in range(depth):
                 a = a.reshape(32, 32, 8, 4, 2, 16)
@@ -857,8 +1004,6 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         def foo(a):
             return torch.nn.functional.gelu(a, approximate="tanh")
 
@@ -942,8 +1087,6 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x, targets), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         gpt = (
             nanogpt_model.GPT(self.config)
             .to(device=self.device, dtype=self.model_tdtype)
@@ -1036,8 +1179,6 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         return (logits, targets), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         def foo(logits, targets):
             return torch.nn.functional.cross_entropy(
                 logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
@@ -1114,8 +1255,6 @@ class NanoGPTCSABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         gpt_csa = (
             nanogpt_model.CausalSelfAttention(self.config)
             .to(device=self.device, dtype=self.tdtype)
@@ -1192,8 +1331,6 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         gpt_block = (
             nanogpt_model.Block(self.config)
             .to(device=self.device, dtype=self.tdtype)
@@ -1275,8 +1412,6 @@ class NanoGPTBlockLoopBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         class nanoGPTBlockLoop(torch.nn.Module):
             def __init__(slf):
                 super().__init__()
@@ -1367,8 +1502,6 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         gpt_mlp = (
             nanogpt_model.MLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
@@ -1443,8 +1576,6 @@ class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         class nanoGPTLayerNorm(torch.nn.Module):
             def __init__(slf):
                 super().__init__()
@@ -1534,8 +1665,6 @@ class NanoGPTEmbeddingBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (idx,), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         class nanoGPTEmbedding(torch.nn.Module):
             def __init__(slf):
                 super().__init__()
@@ -1631,8 +1760,6 @@ class NanoGPTSDPABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (q, k, v), {"dropout": self.config.dropout}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         class nanoGPTScaledDotProductAttention(torch.nn.Module):
             def __init__(slf):
                 super().__init__()
@@ -1735,8 +1862,6 @@ class HuggingFaceSelfAttnBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         return (a, b), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         bart_model = (
             hf_bart_self_attn.BartAttention(
                 self.embed_dim,
@@ -1829,8 +1954,6 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (a,), {}
 
     def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
         model = (
             lit_llama_model.Block(self.config)
             .to(device=self.device, dtype=self.tdtype)

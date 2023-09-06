@@ -383,8 +383,13 @@ class ddp_wrapper:
                 input_data.append(process_data)
 
             ctx = mp.get_context("spawn")
-            with ctx.Pool(world_size) as p:
-                results = p.map(self.fn, input_data)
+            pool = ctx.Pool(world_size)
+            try:
+                with pool:
+                    results = pool.map(self.fn, input_data)
+            finally:
+                pool.close()
+                pool.join()
 
             # Raises the first assertion if any occurred
             root_results = results[0]
