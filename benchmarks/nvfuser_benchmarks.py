@@ -1289,17 +1289,18 @@ def new_gelu(a):
 
 
 class NanoGPTGeLUBenchmark(GPTBenchMarkBase):
-    benchmark_factory = lambda *_, **__: new_gelu
+    benchmark_factory = lambda *_, **__: torch.nn.GELU(approximate="tanh")
     name_template = "nanogpt-{gpt_config}-gelu"
     extra_args = (
         BenchmarkArg(
-            name="shape",
-            description="The shape of the input. Default is (1024, 1024).",
-            default=(1024, 1024),
+            name="batch_dims",
+            description="The batch dimensions to use for the input. Default is (16,).",
+            default=(16,),
         ),
     )
 
-    def _make_batch(self, shape, device, tdtype, **_) -> tuple[list, dict]:
+    def _make_batch(self, batch_dims, gpt_config, device, tdtype, **_) -> tuple[list, dict]:
+        shape = batch_dims + (gpt_config.seq_len, 4 * gpt_config.n_embd)
         return (make_tensor(shape, device=device, dtype=tdtype, requires_grad=self.backward),), {}
 
 

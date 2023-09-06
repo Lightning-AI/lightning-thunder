@@ -751,8 +751,12 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
-            name="shape",
-            description="The shape of the input. Default is (1024, 1024).",
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
         ),
         BenchmarkArg(
             name="device",
@@ -785,14 +789,16 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        shape: Sequence[int] = (1024, 1024),
+        config: str | "NanoGPTConfig" = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
-        self.shape: Sequence[int] = shape
+        gpt_config = _extract_nanogpt_config(config)
+        self.shape: Sequence[int] = batchdims + (gpt_config.seq_len, 4 * gpt_config.n_embd)
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
@@ -807,7 +813,7 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         _print_benchmark_arguments(self)
 
         def foo(a):
-            return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))
+            return torch.nn.functional.gelu(a, approximate="tanh")
 
         return foo
 
