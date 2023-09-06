@@ -4489,6 +4489,34 @@ group_norm_opinfo = OpInfo(
 nn_ops.append(group_norm_opinfo)
 
 
+def layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
+    for si in layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+        yield si
+
+    make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # batch, seq, embedding
+    cases = (
+        (16, 128, 768),
+        (16, 128, 1024),
+        (16, 128, 1280),
+        (16, 128, 1600),
+        (16, 512, 768),
+        (16, 512, 1024),
+        (16, 512, 1280),
+        (16, 512, 1600),
+    )
+
+    for (batch, seq_len, embedding) in cases:
+        a = make_arg(batch, seq_len, embedding)
+        normalized_shape = (embedding,)
+
+        weight = make_arg(normalized_shape)
+        bias = make_arg(normalized_shape)
+        
+        yield SampleInput(a, normalized_shape, weight, bias, 1e-03)
+
+
 def layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input_shape, normalized_shape, kwargs
     cases = (
@@ -4535,6 +4563,7 @@ layer_norm_opinfo = OpInfo(
     ltorch.layer_norm,
     sample_input_generator=layer_norm_sample_generator,
     error_input_generator=layer_norm_error_generator,
+    reference_input_generator=layer_norm_reference_generator,
     torch_reference=torch.nn.functional.layer_norm,
     # Complex var is not supported yet
     dtypes=(datatypes.floating,),

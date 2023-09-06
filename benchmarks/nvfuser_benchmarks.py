@@ -43,6 +43,10 @@ APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
 if APEX_CROSS_ENTROPY_AVAILABLE:
     from thunder.executors.apex_entropyex import register_apex_entropyex
 
+CUDNN_AVAILABLE = package_available("cudnn")
+if CUDNN_AVAILABLE:
+    from thunder.executors.cudnnex import register_cudnnex
+
 # This file contains custom nvFuser-related benchmarks.
 
 # To use this file, try running it with -v, which will list all available benchmarks, and -h, which will describe
@@ -138,6 +142,7 @@ class Benchmark:
         executor_extensions = executors[1:]
         for extension in executor_extensions:
             assert extension in (
+                "cudnn",
                 "nvfuser",
                 "triton",
                 "apex",
@@ -160,6 +165,13 @@ class Benchmark:
                     APEX_CROSS_ENTROPY_AVAILABLE
                 ), "Trying to run a benchmark with the Apex executor extension, but the xentropy_cuda package is not available"
                 register_apex_entropyex()
+            
+            
+            if extension == "cudnn":
+                assert (
+                    CUDNN_AVAILABLE
+                ), "Trying to run a benchmark with the cudnn extension, but the cudnn package is not available"
+                register_cudnnex()
 
             if extension == "cudagraphs":
                 use_cudagraphs = True
@@ -192,6 +204,7 @@ class Benchmark:
         _executor_extension_map: dict[str, list] = {
             "nvfuser": [thunder.executors.NVFUSER],
             "apex": ["apex_xentropy"],
+            "cudnn": ["cudnn"],
             "triton": ["triton_crossentropy"],
             "cudagraphs": [],
         }
