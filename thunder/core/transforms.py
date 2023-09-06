@@ -2228,6 +2228,18 @@ def where_backward(condition, g):
     return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
 
+@register_augmented_forward(prims.PrimIDs.SQUEEZE)
+def squeeze_aug_fwd(a: TensorProxy, dims: Sequence[int]) -> VJPDual:
+    primal = squeeze(a, dims)
+    residuals = (dims,)
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.SQUEEZE)
+def squeeze_backward(dims: Sequence[int], g: TensorProxy) -> (TensorProxy, None):
+    return unsqueeze(g, dims), None
+
+
 @register_augmented_forward(prims.PrimIDs.TAKE)
 def take_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
     primal = prims.take(x, index, dim)
