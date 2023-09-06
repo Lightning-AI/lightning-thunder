@@ -55,6 +55,10 @@ def cross_entropy_checker(
     if xentropy_cuda is None:
         return False
 
+    probability_target = a.shape == target.shape
+    if probability_target or label_smoothing > 0.0:
+        return False
+
     torch_dtype = ltorch.to_torch_dtype(a.dtype)
     if torch_dtype not in (torch.float16, torch.float32):
         return False
