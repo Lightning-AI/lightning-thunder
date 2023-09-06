@@ -1905,6 +1905,13 @@ def outer(a, b):
 
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention)
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
+    for arg_name, arg in zip(('query', 'key', 'value'), (query, key, value)):
+        utils.check(
+            dtypes.is_float_dtype(arg.dtype),
+            lambda: f"{arg_name}.dtype={arg.dtype} is expected to be a floating type",
+            ValueError
+        )
+
     # Reference implementation:
     # https://github.com/pytorch/pytorch/blob/d62a80a/aten/src/ATen/native/transformers/attention.cpp#L639-L697
     if scale is None:
@@ -1919,15 +1926,23 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
             lambda: "scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True",
             ValueError,
         )
-        L, S = logits.shape[-2:]
-        attn_mask = ones((L, S), device=query.device, dtype=torch.bool).tril()
+        logits = logits.tril(fill_value=-math.inf)
+
     if attn_mask is not None:
-        # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
-        # with a very negative value that should become ~0 after softmax
         if dtypes.is_boolean_dtype(attn_mask.dtype):
-            attn_mask = masked_fill(zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
-        # Otherwise, attn_mask represents an additive attention tensor
-        logits = logits + attn_mask
+            # Boolean mask value False implies logit value set to -inf
+            # to have no effect in the subsequent softmax
+            logits = where(attn_mask, logits, -math.inf)
+        elif dtypes.is_float_dtype(attn_mask.dtype):
+            # Otherwise, attn_mask represents an additive attention tensor
+            logits = logits + attn_mask
+        else:
+            utils.check(
+                False,
+                lambda: f"{attn_mask.dtype=} is expected to be of the boolean or a floating type",
+                ValueError
+            )
+
     attn_weight = softmax(logits, dim=-1)
     attn_weight = dropout(attn_weight, dropout_p)
     return attn_weight @ value

@@ -4803,6 +4803,24 @@ def scaled_dot_product_attention_error_generator(op, device, **kwargs):
         "Explicit attn_mask should not be set when is_causal=True",
     )
 
+    q, k, v = make(1, 1, 1), make(1, 1, 1), make(1, 1, 1, 1)
+    attn_mask = make((1, 1), dtype=torch.cfloat)
+    yield (
+        SampleInput(q, k, v, attn_mask=attn_mask, is_causal=False),
+        ValueError,
+        "attn_mask.dtype=(.*?) is expected to be of the boolean or a floating type"
+    )
+
+    # make q, k, v a non-floating tensor
+    var_names = ("query", "key", "value")
+    for pos, var_name in enumerate(var_names):
+        args = [make(1, 1, 1, dtype=torch.bool) if i == pos else make(1, 1, 1) for i in range(3)]
+        yield (
+            SampleInput(*args),
+            ValueError,
+            f"{var_name}.dtype(.*?) is expected to be a floating type"
+        )
+
 
 sdpa_opinfo = OpInfo(
     ltorch.scaled_dot_product_attention,
