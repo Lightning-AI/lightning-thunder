@@ -10,7 +10,7 @@ import thunder
 
 
 from thunder.tests.opinfos import get_opinfo
-from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet
+from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet, IN_CI
 from thunder.executors import triton_utils
 
 from lightning_utilities.core.imports import package_available
@@ -22,6 +22,7 @@ triton: None | Any = None
 min_triton_version = "2.1"
 if triton_utils.is_triton_version_at_least(min_triton_version):
     from thunder.executors.triton_crossentropy import deregister_triton_entropyex, register_triton_entropyex
+
 
 # NOTE This test modifies the global executor map, so it technically should not
 # be run in parallel with other tests
@@ -91,7 +92,10 @@ def test_triton_cross_entropy_vs_torch_consistency(device, dtype):
 
         ce = thunder.compile(foo)
 
-        for sample in opinfo.reference_inputs(device=device, dtype=dtype, requires_grad=False):
+        # NOTE reference inputs take a long time to run in CI, so this uses sample inputs in CI
+        input_generator = opinfo.reference_inputs if not IN_CI else opinfo.sample_inputs
+
+        for sample in input_generator(device=device, dtype=dtype, requires_grad=False):
             result = run_snippet(
                 snippet_torch_consistency,
                 opinfo,

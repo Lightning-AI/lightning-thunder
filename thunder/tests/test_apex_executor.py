@@ -7,7 +7,7 @@ from torch.testing import assert_close
 import thunder
 from thunder import dtypes
 from thunder.executors.apex_entropyex import deregister_apex_entropyex, register_apex_entropyex
-from thunder.tests.framework import instantiate, requiresCUDA, ops, run_snippet
+from thunder.tests.framework import instantiate, requiresCUDA, ops, run_snippet, IN_CI
 from thunder.tests.opinfos import OpInfo, get_opinfo
 import thunder.core.devices as devices
 
@@ -77,7 +77,11 @@ def test_apex_torch_consistency(device, dtype):
 
         cfn = thunder.compile(fn, executors_list=["apex_xentropy"])
         at_least_one_supported_input = False
-        for sample in op.reference_inputs(device, dtype, requires_grad=False):
+
+        # NOTE reference inputs take a long time to run in CI, so this uses sample inputs in CI
+        input_generator = op.reference_inputs if not IN_CI else op.sample_inputs
+
+        for sample in input_generator(device, dtype, requires_grad=False):
             if not cross_entropy_checker(*sample.args, **sample.kwargs):
                 continue
             at_least_one_supported_input = True
