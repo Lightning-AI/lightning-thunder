@@ -748,76 +748,6 @@ class ReshapeViewBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 #
 
 
-class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
-    _args = (
-        BenchmarkArg(
-            name="config",
-            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
-        ),
-        BenchmarkArg(
-            name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
-        ),
-        BenchmarkArg(
-            name="device",
-            description="A string representing the device to run on. Default is 'cuda'.",
-        ),
-        BenchmarkArg(
-            name="dtype",
-            description="The dtype of the tensors. Default is thunder.float32.",
-        ),
-        BenchmarkArg(
-            name="requires_grad",
-            description="Whether the input tensors require grad. Default is False.",
-        ),
-    )
-
-    @classmethod
-    @property
-    def name(cls) -> str:
-        return "nanogpt-gelu"
-
-    @classmethod
-    @property
-    def description(cls) -> str:
-        return "NanoGPT's 'new GeLU' elementwise unary operation."
-
-    @classmethod
-    @property
-    def args(cls) -> tuple[BenchmarkArg, ...]:
-        return cls._args
-
-    def __init__(
-        self,
-        config: str | "NanoGPTConfig" = "gpt2-medium",
-        batchdims: Sequence[int] = (16,),
-        device: str = "cuda",
-        dtype: dtypes.dtype = thunder.float32,
-        requires_grad: bool = False,
-    ) -> None:
-        super().__init__()
-
-        gpt_config = _extract_nanogpt_config(config)
-        self.shape: Sequence[int] = batchdims + (gpt_config.seq_len, 4 * gpt_config.n_embd)
-        self.device: str = device
-        self.dtype: dtypes.dtype = dtype
-        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
-        self.requires_grad: bool = (requires_grad,)
-
-        self.devices: list[str] = [device]
-
-    def make_batch(self) -> tuple[list, dict]:
-        return (make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),), {}
-
-    def fn(self) -> Callable:
-        _print_benchmark_arguments(self)
-
-        def foo(a):
-            return torch.nn.functional.gelu(a, approximate="tanh")
-
-        return foo
-
-
 # Taken from nanogpt_model.py
 @dataclasses.dataclass
 class NanoGPTConfig:
@@ -863,6 +793,76 @@ def _extract_nanogpt_config(config: str | NanoGPTConfig):
     result: NanoGPTConfig = NanoGPTConfig()
     result.update(**_nanogpt_configs[config])
     return result
+
+
+class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "nanogpt-gelu"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "NanoGPT's 'new GeLU' elementwise unary operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | NanoGPTConfig = "gpt2-medium",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        gpt_config = _extract_nanogpt_config(config)
+        self.shape: Sequence[int] = batchdims + (gpt_config.seq_len, 4 * gpt_config.n_embd)
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = (requires_grad,)
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        return (make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),), {}
+
+    def fn(self) -> Callable:
+        _print_benchmark_arguments(self)
+
+        def foo(a):
+            return torch.nn.functional.gelu(a, approximate="tanh")
+
+        return foo
 
 
 class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):

@@ -10,11 +10,13 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
 import thunder.core.dtypes as datatypes
 import thunder.core.devices as devices
 import thunder.executors as executors
+import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
@@ -28,7 +30,11 @@ class NOTHING:
 
 
 JAX_AVAILABLE = package_available("jax")
-TRITON_AVAILABLE = package_available("triton")
+
+# Require Triton version 2.1 or greater, since our current Triton executor won't run
+#   properly due to an error in 2.0
+TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least("2.1")
+
 NVFUSER_AVAILABLE = executors.nvfuser_available()
 
 IN_CI = os.getenv("CI", None) == "true"

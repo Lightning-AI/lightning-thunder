@@ -1,16 +1,22 @@
 import math
-
 from enum import Enum
+
 import torch
 
+
 import thunder.torch as ltorch
+from thunder.executors import triton_utils
 
-# TODO Make a "triton_utils" and create a function that replaces this
-#   by checking for availability + a minimum version required for Triton
-from lightning_utilities.core.imports import package_available
 
-TRITON_AVAILABLE = package_available("triton")
-assert TRITON_AVAILABLE, "Attempting to import a Triton executor but Triton is not available"
+# Requires triton 2.1 or greater
+min_triton_version = "2.1"
+triton_version: None | str = triton_utils.triton_version()
+assert triton_version is not None, f"Trying to import a Triton executor, but Triton is unavailable"
+TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least(min_triton_version)
+assert (
+    TRITON_AVAILABLE
+), f"Trying to import a Triton executor, but it requires Triton version {min_triton_version} or greater, and the current Triton version is {triton_version}"
+
 
 import triton  # noqa: E402
 import triton.language as tl  # noqa: E402
@@ -72,7 +78,7 @@ def _class_indices_forward(
         row_logits = tl.load(
             logit_ptrs,
             mask=cols < N - (start_n * BLOCK),
-            other=-float('inf'),
+            other=-float("inf"),
         ).to(buffer_dtype)
 
         m_curr = tl.maximum(tl.max(row_logits, 0), m_prev)
@@ -102,9 +108,7 @@ def _class_indices_forward(
             other=l_prev_log + m_prev,
         ).to(buffer_dtype)
         if LABEL_SMOOTHING and WEIGHTS:
-            full_weights_val = tl.load(
-                weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
-            )
+            full_weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
             weights_total += tl.sum(full_weights_val, 0)
 
         row_minus_max = row_logits - m_prev
@@ -141,9 +145,7 @@ def _class_indices_forward(
         probs = weights_val * probs
     if LABEL_SMOOTHING:
         tl.store(WEIGHT_BUFFER + row, weights_total)
-        probs = (1 - smoothing_factor) * probs + smoothing_factor * (
-            sum_total
-        ) / N
+        probs = (1 - smoothing_factor) * probs + smoothing_factor * (sum_total) / N
     probs = probs * (1.0 - use_class)
 
     tl.store(LOSS + row, probs)
@@ -181,7 +183,7 @@ def _class_probs_forward(
         row_logits = tl.load(
             logit_ptrs,
             mask=cols < N - (start_n * BLOCK),
-            other=-float('inf'),
+            other=-float("inf"),
         ).to(buffer_dtype)
 
         m_curr = tl.maximum(tl.max(row_logits, 0), m_prev)
@@ -212,18 +214,12 @@ def _class_probs_forward(
             other=l_prev_log + m_prev,
         ).to(buffer_dtype)
         idx = tl.load(idx_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
-        full_weights_val = (
-            1.0 - smoothing_factor
-        ) * idx + smoothing_factor / N
+        full_weights_val = (1.0 - smoothing_factor) * idx + smoothing_factor / N
         if WEIGHTS:
-            weights_val = tl.load(
-                weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
-            )
+            weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0)
             full_weights_val = weights_val * full_weights_val
         else:
-            full_weights_val = tl.where(
-                cols < N - start_n * BLOCK, full_weights_val, 0.0
-            )
+            full_weights_val = tl.where(cols < N - start_n * BLOCK, full_weights_val, 0.0)
         weights_total += tl.sum(full_weights_val, 0)
 
         row_minus_max = row_logits - m_prev
@@ -261,10 +257,10 @@ def _class_probs_forward(
         # fmt: on
     ],
     key=[
-        'N',
-        'CLASS_INDICES',
-        'log_size_logits',
-        'BUFFER_DTYPE',
+        "N",
+        "CLASS_INDICES",
+        "log_size_logits",
+        "BUFFER_DTYPE",
     ],
 )
 @triton.jit
@@ -334,10 +330,10 @@ def _forward(
         # fmt: on
     ],
     key=[
-        'N',
-        'CLASS_INDICES',
-        'log_size_logits',
-        'BUFFER_DTYPE',
+        "N",
+        "CLASS_INDICES",
+        "log_size_logits",
+        "BUFFER_DTYPE",
     ],
 )
 @triton.jit
@@ -370,7 +366,7 @@ def _backward(
     probs = -tl.load(
         probs_start,
         mask=cols < N - (start_n * BLOCK),
-        other=float('inf'),
+        other=float("inf"),
     ).to(buffer_dtype)
     DIN = DIN + row * N + cols + BLOCK * start_n
     dout = tl.load(DPROBS + row * dprob_stride).to(buffer_dtype)
@@ -386,27 +382,17 @@ def _backward(
         if LABEL_SMOOTHING:
             if WEIGHTS:
                 weight_ptr = weight + cols + BLOCK * start_n
-                full_weights_val = tl.load(
-                    weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
-                ).to(buffer_dtype)
+                full_weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0).to(buffer_dtype)
                 weights_val = tl.load(weight + idx)
                 probs = probs / full_weights_val
             probs = tl.exp(probs)
             if WEIGHTS:
                 weights_total = tl.load(WEIGHT_BUFFER + row)
-                numerator_contrib = (
-                    weights_val * (1.0 - smoothing_factor) * (probs - delta)
-                )
-                mean_contrib = (
-                    ((weights_total * probs) - (full_weights_val))
-                    * smoothing_factor
-                    / N
-                )
+                numerator_contrib = weights_val * (1.0 - smoothing_factor) * (probs - delta)
+                mean_contrib = ((weights_total * probs) - (full_weights_val)) * smoothing_factor / N
             else:
                 numerator_contrib = (1.0 - smoothing_factor) * (probs - delta)
-                mean_contrib = (smoothing_factor * probs) - (
-                    smoothing_factor / N
-                )
+                mean_contrib = (smoothing_factor * probs) - (smoothing_factor / N)
 
             din = (numerator_contrib + mean_contrib) * dout
 
@@ -423,15 +409,11 @@ def _backward(
             mask=cols < N - start_n * BLOCK,
             other=0.0,
         ).to(buffer_dtype)
-        full_weights_val = (
-            1.0 - smoothing_factor
-        ) * idx + smoothing_factor / N
+        full_weights_val = (1.0 - smoothing_factor) * idx + smoothing_factor / N
         weights_total = tl.load(WEIGHT_BUFFER + row)
         if WEIGHTS:
             weight_ptr = weight + cols + BLOCK * start_n
-            weights_val = tl.load(
-                weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0
-            ).to(buffer_dtype)
+            weights_val = tl.load(weight_ptr, mask=cols < N - start_n * BLOCK, other=0.0).to(buffer_dtype)
             full_weights_val = weights_val * full_weights_val
         probs = probs / full_weights_val
         probs = tl.exp(probs.to(buffer_dtype))
@@ -439,9 +421,7 @@ def _backward(
         weighted_probs_per_class = weighted_probs - full_weights_val
         din = (weighted_probs_per_class) * dout
 
-    tl.store(
-        DIN, din.to(DIN.dtype.element_ty), mask=cols + BLOCK * start_n < N
-    )
+    tl.store(DIN, din.to(DIN.dtype.element_ty), mask=cols + BLOCK * start_n < N)
 
 
 class CrossEntropy(torch.autograd.Function):
@@ -460,9 +440,7 @@ class CrossEntropy(torch.autograd.Function):
         # assert (
         #     indices.dtype == torch.int64
         # ), "Indices are expected to be of type long."
-        assert weight is None or (
-            len(weight.shape) == 1 and weight.shape[0] == logits.shape[-1]
-        )
+        assert weight is None or (len(weight.shape) == 1 and weight.shape[0] == logits.shape[-1])
         # make kernel
         if buffer_dtype is None:
             if logits.dtype in [torch.bfloat16, torch.float16]:
@@ -475,9 +453,7 @@ class CrossEntropy(torch.autograd.Function):
         # run the kernel
         result = torch.empty((logits.shape[0],), dtype=dtype, device=device)
         # result = torch.empty_like(indices, dtype=dtype, device=device)
-        neg_logprobs = torch.empty_like(
-            logits, dtype=buffer_dtype, device=device
-        )
+        neg_logprobs = torch.empty_like(logits, dtype=buffer_dtype, device=device)
         weights_buffer = torch.empty_like(result, dtype=buffer_dtype)
         grid = lambda opt: (logits.numel() // n_cols,)
         log_size_logits = int(math.log(math.prod(logits.shape) / n_cols))
@@ -504,11 +480,11 @@ class CrossEntropy(torch.autograd.Function):
         ctx.ignore_index = ignore_index
         ctx.reduction = reduction
         ctx.buffer_dtype = buffer_dtype_enum
-        if reduction == 'none':
+        if reduction == "none":
             return result
-        elif reduction == 'sum':
+        elif reduction == "sum":
             return result.sum(dim=0)
-        elif reduction == 'mean':
+        elif reduction == "mean":
             if indices.dtype == torch.int64:
                 denom = (indices != ignore_index).float()
                 if weight is not None:
@@ -529,7 +505,7 @@ class CrossEntropy(torch.autograd.Function):
         """
         # load saved tensors
         reduction = ctx.reduction
-        if reduction == 'mean' or reduction == 'sum':
+        if reduction == "mean" or reduction == "sum":
             dneg_logprobs = dneg_logprobs.expand(1)
         neg_logprobs, indices, weights_buffer = ctx.saved_tensors
         din = torch.empty_like(neg_logprobs)
@@ -540,7 +516,7 @@ class CrossEntropy(torch.autograd.Function):
         n_cols = neg_logprobs.shape[-1]
         grid = lambda opt: (
             neg_logprobs.numel() // n_cols,
-            triton.cdiv(n_cols, opt['BLOCK']),
+            triton.cdiv(n_cols, opt["BLOCK"]),
         )
         log_size_logits = int(math.log(math.prod(neg_logprobs.shape) / n_cols))
         _backward[grid](
@@ -560,7 +536,7 @@ class CrossEntropy(torch.autograd.Function):
             IGNORE_INDEX=ctx.ignore_index,
             BUFFER_DTYPE=buffer_dtype,
         )
-        if ctx.reduction == 'mean':
+        if ctx.reduction == "mean":
             din /= ctx.denom
         return din, None, None, None, None, None, None
 
@@ -570,10 +546,10 @@ def cross_entropy(
     target,
     weight=None,
     ignore_index=-100,
-    reduction='mean',
+    reduction="mean",
     label_smoothing=0.0,
 ):
-    r'''
+    r"""
     Returns the Cross Entropy loss of input. If the target is class indcies
     then the ignore_index argument is applicable, while the label_smoothing argument
     is not.  On the other hand, if the target is class probabilites, then the
@@ -590,7 +566,7 @@ def cross_entropy(
         ignore_index: Int, which class label should be ignored
         reduction: String: ['none', 'sum', 'mean']
         label_smoothing: Float between 0 and 1
-    '''
+    """
     return CrossEntropy.apply(
         input,
         target,

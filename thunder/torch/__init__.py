@@ -1886,7 +1886,7 @@ def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, inplace: bool = False) -> TensorLike:
     utils.check(not inplace, lambda: f"selu only supports inplace=False", exception_type=NotImplementedError)
-    
+
     alpha = 1.6732632423543772848170429916717
     scale = 1.0507009873554804934193349852946
 

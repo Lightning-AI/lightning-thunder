@@ -1850,6 +1850,7 @@ nextafter_opinfo = OpInfo(
     clang.nextafter,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.nextafter,
+    numpy_reference=np.nextafter,
     # NOTE: nextafter is supported by PyTorch only for bfloat16, float32,
     # and float64 arguments (after normal promotion rules) and by NVFuser
     # only for float32, and float64 arguments (after normal promotion rules).
@@ -1857,8 +1858,21 @@ nextafter_opinfo = OpInfo(
     test_directives=(
         DecorateInfo(
             pytest.mark.skip,
-            "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/972
+        #   PyTorch's nextafter may be causing CUDA illegal memory accesses
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/972
+        #   PyTorch's nextafter may be causing CUDA illegal memory accesses
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("TorchEx",),
+            devicetypes=(devices.DeviceType.CUDA,),
         ),
         DecorateInfo(
             pytest.mark.xfail,

@@ -929,7 +929,8 @@ def compile_data(fn) -> Optional[CompileData]:
     return getattr(fn, "_lc_cd", None)
 
 
-def last_traces(fn) -> Optional[List[TraceCtx]]:
+# TODO We should remove compiledata.last_traces in favor of forward_last_traces and backward_last_traces
+def last_traces(fn) -> None | list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
     if compile_data(fn).forward_last_traces is not None and compile_data(fn).backward_last_traces is not None:
         return compile_data(fn).forward_last_traces, compile_data(fn).backward_last_traces
     return compile_data(fn).last_traces

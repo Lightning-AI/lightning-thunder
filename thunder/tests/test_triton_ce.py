@@ -11,15 +11,17 @@ import thunder
 
 from thunder.tests.opinfos import get_opinfo
 from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet
+from thunder.executors import triton_utils
 
 from lightning_utilities.core.imports import package_available
 
 TRITON_AVAILABLE = package_available("triton")
 
+# Requires triton 2.1 or greater
 triton: None | Any = None
-if TRITON_AVAILABLE:
+min_triton_version = "2.1"
+if triton_utils.is_triton_version_at_least(min_triton_version):
     from thunder.executors.triton_crossentropy import deregister_triton_entropyex, register_triton_entropyex
-
 
 # NOTE This test modifies the global executor map, so it technically should not
 # be run in parallel with other tests
