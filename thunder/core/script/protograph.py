@@ -1,13 +1,13 @@
 import collections
 import dataclasses
-import dis
+import functools
 import inspect
 import itertools
 import marshal
 import textwrap
-from types import CodeType
-from typing import final, Any, Deque, Literal, Optional, NamedTuple
-from collections.abc import Iterable, Iterator
+from types import CodeType, MappingProxyType
+from typing import final, Any, Deque, Literal, NamedTuple, TypeVar
+from collections.abc import Iterable, Iterator, Mapping
 
 import networkx as nx
 
@@ -15,6 +15,7 @@ from thunder.core.script.instrumentation import InstrumentingBase
 from thunder.core.script.python_ir_data import (
     stack_effect_adjusted,
     PushNew,
+    ThunderInstruction,
     VariableScope,
     DEL_OPNAMES,
     LOAD_OPNAMES,
@@ -24,13 +25,7 @@ from thunder.core.script.python_ir_data import (
 )
 from thunder.core.utils import OrderedSet
 
-
-# Aliases to make type annotations more expressive.
-JumpTarget = tuple["ProtoBlock", bool]
-_AbstractValues = tuple["_AbstractValue", ...]
-NodeFlow = tuple[dis.Instruction, _AbstractValues, _AbstractValues]
-EdgeIndex = Literal[0, -1]
-ReplaceMap = dict["_AbstractValue", "_AbstractValue"]
+T = TypeVar("T")
 
 
 class VariableKey(NamedTuple):
@@ -67,11 +62,22 @@ class VariableKey(NamedTuple):
             return marshal.dumps(self.identifier) < marshal.dumps(other.identifier)
 
 
+# =============================================================================
+# == Variables (base classes) =================================================
+# =============================================================================
+ReplaceMap = dict["_AbstractValue", "_AbstractValue"]
+_AbstractValues = tuple["_AbstractValue", ...]
+
+
 class _AbstractValue:
     """Represents a value during instruction parsing. (Prior to type binding.)"""
 
     def __copy__(self) -> "_AbstractValue":
         raise NotImplementedError
+
+    @property
+    def is_detail(self) -> bool:
+        return AbstractValue not in self.__class__.__mro__
 
     @final
     def substitute(self, replace_map: ReplaceMap) -> "_AbstractValue":
@@ -110,7 +116,7 @@ class _AbstractValue:
         G.remove_edges_from(nx.selfloop_edges(G))
         assert nx.is_directed_acyclic_graph(G)
         for cluster in nx.connected_components(G.to_undirected()):
-            (root,) = [i for i in cluster if not G.in_degree(i)]
+            (root,) = (i for i in cluster if not G.in_degree(i))
             replace_map.update({i: root for i in cluster if i is not root})
 
 
@@ -120,82 +126,146 @@ class AbstractValue(_AbstractValue):
     pass
 
 
+# =============================================================================
+# == Intra-ProtoBlock abstract value flow =====================================
+# =============================================================================
+#
+# `ProtoBlocks` employ a dual representation, where node inputs and outputs can
+# be viewed as either a reference based DAG or a sequence of ops with concrete
+# `_AbstractValue` inputs and outputs.
+#
+# At the boundaries of a ProtoBlock values have named (VariableKey) slots;
+# within the ProtoBlock there is no need for such slots (since there is no
+# control flow within a block and those named slots tell you how to build the
+# directed *cyclic* graph for the larger program) so they are stripped during
+# parsing.
+#
+# The inputs of a protoblock are stored as a map of `VariableKey -> _AbstractValue`
+# and act as the intra-block DAG sources. The outputs are stored as references
+# since every ProtoBlock output must have a unique producer. (Either an input
+# or a node within the block.)
+#
+# The canonical representation for intra-block flow is "symbolic" (reference
+# based). If an `_AbstractValue` appear in a symbolic node's outputs that
+# indicates that the node is that value's producer. Otherwise all inputs and
+# outputs are references: inputs reference either the begin state or the
+# outputs of a prior node while output references index into the node's inputs.
+#
+# When analyzing a graph we are generally interested in the concrete properties
+# of values; provenance is generally only important when connecting blocks and
+# performing rewrites. For these cases `IntraBlockFlow` generates a
+# "materialized" flow which resolves all references to `_AbstractValue`s. The
+# symbolic representation is sufficient to emit the materialized representation,
+# but the reverse is not true.
+EdgeIndex = Literal[0, -1]
+
+
+@dataclasses.dataclass(frozen=True, eq=True)
+class _OutputRef:
+    """Identifies the producer of a value within a ProtoBlock."""
+
+    instruction: ThunderInstruction  #  Acts as a key for the producer Flow.
+    idx: int  #                         Indexes the node's outputs.
+
+
 @dataclasses.dataclass(frozen=True, eq=False)
-class ProtoBlock(InstrumentingBase):
-    """Stores abstract data flow for a code block.
+class _Symbolic:
+    """Represents abstract value flow within a ProtoBlock."""
 
-    Notes:
-        `variables` should not contain `VariableScope.CONST` or `VariableScope.STACK`
-        `uses` is indexed WRT block inputs. (This matters for `VariableScope.STACK`)
-    """
+    # VariableKey:      References the value of that variable at the start of the ProtoBlock
+    # OutputRef:        Reference values created by an earlier instruction within the block
+    Input = VariableKey | _OutputRef
+    inputs: tuple[Input, ...]
 
-    raw_instructions: tuple[dis.Instruction, ...]
-    begin_stack: Deque[_AbstractValue]
-    stack_effect: tuple[int, _AbstractValues]
-    variables: dict[VariableKey, _AbstractValues]
-    node_flow: tuple[NodeFlow, ...]
+    # int:              Aliases the input at this position
+    # _AbstractValue:   New value created by this instruction
+    Output = int | _AbstractValue
+    outputs: tuple[Output, ...]
 
-    jump_targets: tuple[JumpTarget, ...] = ()
-    uses: OrderedSet[VariableKey] = dataclasses.field(default_factory=OrderedSet)
 
-    def __repr__(self) -> str:
-        return f"ProtoBlock: {hex(id(self))}"
+@dataclasses.dataclass(frozen=True, eq=False)
+class _Materialized:
+    """Flow element where all symbolic references have been resolved to concrete `_AbstractValue`s."""
 
-    def __hash__(self) -> int:
-        return id(self)
+    inputs: _AbstractValues
+    outputs: _AbstractValues
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class IntraBlockFlow:
+    _flow: Mapping[ThunderInstruction, _Symbolic]
+
+    BeginVariables = Mapping[VariableKey, _AbstractValue]
+    _begin: BeginVariables
+
+    EndVariable = _Symbolic.Input | None
+    EndVariables = Mapping[VariableKey, EndVariable]  # `None` indicates an explicit `del`
+    _end: EndVariables
 
     def __post_init__(self) -> None:
-        self.uses.clear()
-        values_used = set(itertools.chain(*(inputs for _, inputs, _ in self.node_flow)))
-        self.uses.update(k for k, v in self.variable_state(index=0) if v in values_used)
+        object.__setattr__(self, "_flow", MappingProxyType({**self._flow}))
+        object.__setattr__(self, "_begin", MappingProxyType({**self._begin}))
+        object.__setattr__(self, "_end", MappingProxyType({**self._end}))
 
-    def add_jump_target(self, other: "ProtoBlock", jump: bool) -> None:
-        """We need to add jump targets after all ProtoBlocks are initialized."""
+    @property
+    def symbolic(self) -> Iterable[tuple[ThunderInstruction, _Symbolic]]:
+        yield from self._flow.items()
 
-        # Override `frozen=True` for this one limited use case.
-        object.__setattr__(self, "jump_targets", self.jump_targets + ((other, jump),))
+    @functools.cached_property
+    def materialized(self) -> MappingProxyType[ThunderInstruction, _Materialized]:
+        """Walk the flow resolving references as they we encounter them."""
 
-    @staticmethod
-    def from_instructions(instructions: Iterable[dis.Instruction], code: CodeType) -> "ProtoBlock":
-        raw_instructions = tuple(instructions)
+        def resolve(inputs: _AbstractValues, o: _Symbolic.Output) -> _AbstractValue:
+            assert isinstance(o, (int, _AbstractValue))
+            return inputs[o] if isinstance(o, int) else o
 
-        # Parse abstract flow. The inital pass is built using only instructions
-        # in the ProtoBlock. Later passes will extend for block connectivity.
+        result: dict[ThunderInstruction, _Materialized] = {}
+        for instruction, node in self.symbolic:
+            inputs = [self._getitem_impl(0, i, (self._begin, self._end), result) for i in node.inputs]
+            outputs = [resolve(inputs, o) for o in node.outputs]
+            assert all(isinstance(o, _AbstractValue) for o in outputs), outputs
+            result[instruction] = _Materialized(tuple(inputs), tuple(outputs))
+
+        return MappingProxyType(result)
+
+    def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input]) -> _AbstractValue:
+        return self._getitem_impl(*key, (self._begin, self._end), self.materialized)  # __getitem__ packs args
+
+    def variable_state(self, *, index: EdgeIndex) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+        assert index in (0, -1), index
+        for k in sorted(variables := (self._begin, self._end)[index]):
+            assert k.scope != VariableScope.CONST
+            v = variables[k] if index == 0 else self[0, variables[k]]
+            if not isinstance(v, ValueMissing):
+                yield k, v
+
+    @classmethod
+    def from_instructions(cls, instructions: tuple[ThunderInstruction, ...], code: CodeType) -> "IntraBlockFlow":
+        flow: dict[ThunderInstruction, _Symbolic] = {}
+        begin_variables: IntraBlockFlow.BeginVariables = {}
+        end_variables: IntraBlockFlow.EndVariables = {}
         block_inputs: Deque[_AbstractValue] = collections.deque()
-        stack: Deque[_AbstractValue] = collections.deque()
-        variables: dict[VariableKey, list[_AbstractValue]] = {}
-        node_flow: list[NodeFlow] = []
+        stack: Deque[_Symbolic.Input] = collections.deque()
 
-        def peek_stack(pop: bool = False) -> _AbstractValue:
+        def peek_stack(pop: bool = False) -> _Symbolic.Input:
             # If the stack is empty we can infer that we are trying to reference
             # a value was already on the stack at the start of the block.
             if not stack:
-                inferred = _AbstractRef(f"Inferred stack input: {len(block_inputs)}")
-                stack.append(inferred)
-                block_inputs.appendleft(inferred)
+                index = -len(block_inputs) - 1
+                block_inputs.appendleft(_AbstractRef(f"Inferred stack input: {index}"))
+                stack.append(VariableKey(index, VariableScope.STACK))
             return stack.pop() if pop else stack[-1]
 
-        def peek_variable(instr: dis.Instruction, scope: VariableScope) -> list[_AbstractValue]:
-            """
-            Get the _AbstractValue of the variable given by the instruction and variable scope.
-
-            Returns the list of _AbstractValues associated with the variable.
-
-            The first value of the list is created here and should always be an _AbstractRef;
-            if a variable is undefined a later pass will convert it to `ValueMissing`.
-            Local block parsing is too early to make that determination.
-
-            The last value is the current (abstract) value of the variable.
-            """
+        def to_key(instr: ThunderInstruction, scope: VariableScope) -> VariableKey:
             arg = instr.arg
             assert arg is not None
+
             if scope == VariableScope.CONST:
-                identifier = code.co_consts[arg]
-                return [ExternalRef(VariableKey(identifier, scope))]
+                return VariableKey(code.co_consts[arg], scope)
+
             elif scope == VariableScope.LOCAL:
-                identifier = code.co_varnames[arg]
-                default = _AbstractRef(f"Variable initial value: ({identifier} {scope})")
-                return variables.setdefault(VariableKey(identifier, scope), [default])
+                return VariableKey(code.co_varnames[arg], scope)
+
             elif scope == VariableScope.NONLOCAL:
                 # TODO: Support nonlocal variables.
                 # Nonlocal variables load (LOAD_DEREF) from frame->localsplus.
@@ -208,20 +278,36 @@ class ProtoBlock(InstrumentingBase):
               {code.co_name} defined in {code.co_filename}:{code.co_firstlineno}
               line {instr.line_no + code.co_firstlineno}: {source_lines[instr.line_no].rstrip()}"""
                 raise RuntimeError(msg)
+
             elif scope == VariableScope.GLOBAL:
-                identifier = code.co_names[arg]
-                default = _AbstractRef(f"Variable initial value: ({identifier} {scope})")
-                return variables.setdefault(VariableKey(identifier, scope), [default])
+                return VariableKey(code.co_names[arg], scope)
+
             elif scope == VariableScope.STACK:
-                raise RuntimeError("Peeking stack variables is not supported.")
+                raise RuntimeError("Indexing into the stack is not permitted. Use `peek_stack` instead.")
+
             else:
                 raise NotImplementedError("Unknown variable scope: {scope}")
 
-        assert raw_instructions
-        for instruction in raw_instructions:
+        def peek_variable(instr: ThunderInstruction, scope: VariableScope) -> IntraBlockFlow.EndVariable:
+            key = to_key(instr, scope)
+            if scope == VariableScope.CONST:
+                return key
+
+            v = end_variables.get(key, missing := object())
+            assert v is not None, f"Access to deleted variable: {key}"
+            if v is missing:
+                default = _AbstractRef(f"Variable initial value: ({key.identifier} {key.scope})")
+                begin_variables.setdefault(key, default)
+                v = end_variables[key] = key
+
+            return v
+
+        assert instructions
+        for instruction in instructions:
             if instruction.opname == EXTENDED_ARG:
                 # these are already reflexted in the next opcode's argument
                 continue
+
             assert hasattr(instruction, "line_no"), instruction
             pop, push = stack_effect_adjusted(instruction)
 
@@ -231,96 +317,145 @@ class ProtoBlock(InstrumentingBase):
             # Peek at the stack to track variable mutations.
             if (store_scope := STORE_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(1, ())
-                peek_variable(instruction, store_scope).append(peek_stack(pop=False))
+                end_variables[to_key(instruction, store_scope)] = peek_stack(pop=False)
 
             elif (del_scope := DEL_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(1, ())
-                peek_variable(instruction, del_scope).append(ValueMissing())
+                end_variables[to_key(instruction, del_scope)] = None
 
             # Handle stack inputs and outputs.
-            inputs: list[_AbstractValue] = [peek_stack(pop=True) for _ in range(pop)]
-            outputs: list[_AbstractValue]
+            inputs = [peek_stack(pop=True) for _ in range(pop)]
             new_intermediates: list[IntermediateValue] = []
 
-            def lookup(index: int) -> _AbstractValue:
+            def lookup(index: int) -> _Symbolic.Output:
                 """Handle alias resolution and new outputs."""
                 if index < 0:
-                    # Negative values index into the popped values.
-                    return inputs[-1 - index]
+                    # Negative values index into the inputs.
+                    return index
 
-                if index == len(new_intermediates):
+                elif index == len(new_intermediates):
                     new_intermediates.append(IntermediateValue())
 
                 return new_intermediates[index]
 
             if (load_scope := LOAD_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(0, PushNew)
-                outputs = [peek_variable(instruction, load_scope)[-1]]
+                stack.append(peek_variable(instruction, load_scope))
 
-            else:
+            elif not (store_scope or del_scope):
+                # We have already functionalized variable accesses, so we can prune loads and stores.
                 outputs = [lookup(index) for index in push]
+                stack.extend(_OutputRef(instruction, idx) for idx in range(len(outputs)))
+                flow[instruction] = _Symbolic(tuple(reversed(inputs)), tuple(outputs))
 
-            # We have already functionalized variable accesses, so we can prune loads and stores.
-            # Inputs are consumed from the stack so we reverse them to get argument order.
-            if not (store_scope or del_scope or load_scope):
-                node_flow.append((instruction, tuple(reversed(inputs)), tuple(outputs)))
+        for idx, v in enumerate(block_inputs, start=-len(block_inputs)):
+            begin_variables[VariableKey(idx, VariableScope.STACK)] = v
 
-            stack.extend(outputs)
+        for idx, v_ref in enumerate(stack, start=-len(block_inputs)):
+            end_variables[VariableKey(idx, VariableScope.STACK)] = v_ref
 
-        return ProtoBlock(
-            raw_instructions=instructions,
-            begin_stack=block_inputs,
-            stack_effect=(len(block_inputs), tuple(stack)),
-            variables={k: tuple(v) for k, v in variables.items()},
-            node_flow=tuple(node_flow),
+        return cls(flow, begin_variables, end_variables)
+
+    def substitute(self, replace_map: ReplaceMap) -> "IntraBlockFlow":
+        """Replace `_AbstractValue`s within the flow. (Block inputs and producer nodes.)"""
+
+        def replace(x: T) -> T:
+            return x.substitute(replace_map) if isinstance(x, _AbstractValue) else x
+
+        return self.__class__(
+            _flow={k: _Symbolic(v.inputs, tuple(replace(o) for o in v.outputs)) for k, v in self.symbolic},
+            _begin={k: replace(v) for k, v in self._begin.items()},
+            _end=self._end,
         )
 
-    @staticmethod
-    def stack_args(args: Iterable[VariableKey]) -> tuple[int, ...]:
-        stack_args = tuple(sorted([i.identifier for i in args if i.scope == VariableScope.STACK]))
-        assert stack_args == tuple(range(-len(stack_args), 0)), stack_args
-        return stack_args
+    @classmethod
+    def _getitem_impl(
+        cls,
+        index: EdgeIndex,
+        key: _Symbolic.Input,
+        variables: tuple["IntraBlockFlow.BeginVariables", "IntraBlockFlow.EndVariables"],
+        materialized: Mapping[ThunderInstruction, _Materialized],
+    ) -> _AbstractValue:
+        # We need to index while materializing (before `self.materialized` is
+        # available) so we factor the logic into a standlone method.
+        if isinstance(key, _OutputRef):
+            return materialized[key.instruction].outputs[key.idx]
+
+        assert isinstance(key, VariableKey)
+        if key.scope == VariableScope.CONST:
+            return ExternalRef(key)
+
+        assert index in (0, -1)
+        v = variables[index][key]
+        return v if index == 0 else cls._getitem_impl(0, v, variables, materialized)
+
+
+# =============================================================================
+# == Inter-ProtoBlock abstract value flow =====================================
+# =============================================================================
+#
+# ProtoBlocks are weakly coupled by design. The `VariableKey` slots allow edges
+# to be deduced (e.g. `x` at the start of one block must be the same as `x` at
+# the end of the prior block), but there's no strong requirement. (And indeed,
+# the ProtoGraph immediately after parsing has all unconnected `_AbstractRef`s
+# for input values.) Similarly, ProtoGraph serves only to record organize the
+# block topology, check invariants, and provide various helper methods.
+#
+# This weak coupling exists to facilitate graph rewrites and reduce the surface
+# area for self-inconsistent representation. By readily discarding (deduced)
+# information we don't need to carry invariants through complex passes; we can
+# simply decouple the graph, perform whatever local modifications we like, and
+# then reconnect everything. This representation is immutable (notwithstanding
+# a few implementation details), so "decouple" means emitting a new erased
+# graph. (Though simple value replacements can be done directly.)
+JumpTarget = tuple["ProtoBlock", bool]
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class ProtoBlock(InstrumentingBase):
+    """Stores abstract data flow for a code block."""
+
+    raw_instructions: tuple[ThunderInstruction, ...]  # For debugging only.
+    flow: IntraBlockFlow
+    jump_targets: tuple[JumpTarget, ...] = dataclasses.field(default=(), init=False)
+    uses: OrderedSet[VariableKey] = dataclasses.field(default_factory=OrderedSet, init=False)
+
+    def __repr__(self) -> str:
+        return f"ProtoBlock: {hex(id(self))}"
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __post_init__(self) -> None:
+        self.uses.clear()
+        self.uses.update(self._flow_uses)
+
+    def add_jump_target(self, other: "ProtoBlock", jump: bool) -> None:
+        """We need to add jump targets after all ProtoBlocks are initialized."""
+
+        # Override `frozen=True` for this one limited use case.
+        object.__setattr__(self, "jump_targets", self.jump_targets + ((other, jump),))
 
     @property
-    def end_stack(self) -> Iterable[_AbstractValue]:
-        pop, push = self.stack_effect
-        yield from itertools.islice(self.begin_stack, 0, len(self.begin_stack) - pop)
-        yield from push
+    def node_flow(self) -> Iterable[tuple[ThunderInstruction, _Materialized]]:
+        yield from self.flow.materialized.items()
 
-    def variable_state(self, *, index: EdgeIndex) -> Iterator[tuple[VariableKey, _AbstractValue]]:
-        for k, values in sorted(self.variables.items(), key=lambda x: x[0]):
-            v = values[index]
-            assert k.scope not in (VariableScope.CONST, VariableScope.STACK), k
-            assert isinstance(v, _AbstractValue), v
-            yield k, v
+    @property
+    def begin_state(self):
+        return self.flow.variable_state(index=0)
 
-        stack = tuple(self.begin_stack if index == 0 else self.end_stack)
-        for idx, v in enumerate(stack):
-            assert isinstance(v, _AbstractValue), v
-            yield VariableKey(idx - len(stack), VariableScope.STACK), v
+    @property
+    def end_state(self):
+        return self.flow.variable_state(index=-1)
 
-    def transform(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> "ProtoBlock":
+    @property
+    def _flow_uses(self) -> Iterable[VariableKey]:
+        flat_inputs = OrderedSet(itertools.chain(*(n.inputs for _, n in self.flow.symbolic)))
+        yield from (i for i in flat_inputs if isinstance(i, VariableKey))
+
+    def transform(self, replace_map: ReplaceMap) -> "ProtoBlock":
         """Create a copy of `self` but allow values to be substituted."""
-
-        def make_replacement(values: Iterable[_AbstractValue]):
-            cls = values.__class__
-            assert cls in (list, tuple, collections.deque)
-            assert all(isinstance(i, _AbstractValue) for i in values)
-            return cls((i.substitute(replace_map) for i in values))
-
-        pop, push = self.stack_effect
-        node_flow = tuple(
-            (instruction, make_replacement(inputs), make_replacement(outputs))
-            for instruction, inputs, outputs in self.node_flow
-        )
-
-        transformed = ProtoBlock(
-            raw_instructions=self.raw_instructions,
-            begin_stack=make_replacement(self.begin_stack),
-            stack_effect=(pop, make_replacement(push)),
-            variables={k: make_replacement(v) for k, v in self.variables.items()},
-            node_flow=node_flow,
-        )
+        transformed = ProtoBlock(self.raw_instructions, self.flow.substitute(replace_map))
         transformed.uses.update(self.uses)
 
         # NOTE: The caller will need to repopulate `transformed.jump_targets`
@@ -346,8 +481,9 @@ class ProtoGraph:
         assert len(connected_components) == 1, [len(i) for i in connected_components]
 
         # Compute some basic topological features.
-        (self.root,) = [protoblock for protoblock in protoblocks if not G.in_degree(protoblock)]
-        assert not self.root.begin_stack, "Root block should not have stack inputs"
+        (self.root,) = (protoblock for protoblock in protoblocks if not G.in_degree(protoblock))
+        root_stack = [(k, v) for k, v in self.root.begin_state if k.scope == VariableScope.STACK]
+        assert not root_stack, f"Root block should not have stack inputs: {root_stack}"
         self.parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in protoblocks}
 
         # Sort the nodes.
@@ -376,6 +512,11 @@ class ProtoGraph:
             sort_map.update({node: (primary_key, idx) for idx, node in enumerate(nodes)})
 
         self.protoblocks = tuple(sorted(protoblocks, key=lambda x: sort_map[x]))
+
+    @property
+    def edges(self) -> Iterator[tuple[ProtoBlock, ProtoBlock]]:
+        for protoblock in self.protoblocks:
+            yield from ((protoblock, target) for target, _ in protoblock.jump_targets)
 
     def substitute(self, transformed: dict[ProtoBlock, ProtoBlock]) -> "ProtoGraph":
         """Copies the ProtoGraph with block level substitutions while retaining the same topology."""
@@ -425,9 +566,9 @@ class ProtoGraph:
         counter = 0
         idxes = {}
         for pb in self:
-            for _, ivals, ovals in pb.node_flow:
-                for val in itertools.chain(ivals, ovals):
-                    if not val in idxes.keys():
+            for _, node in pb.node_flow:
+                for val in itertools.chain(node.inputs, node.outputs):
+                    if val not in idxes.keys():
                         idxes[val] = counter
                         counter += 1
 
@@ -438,11 +579,14 @@ class ProtoGraph:
         for i, pb in enumerate(self):
             print(f"Protoblock {i}:")
             print(f"{'':>22}Inputs, Outputs")
-            for instr, ivals, ovals in pb.node_flow:
-                print(f" {instr.opname:>20}, {to_index_str(ivals)} -> {to_index_str(ovals)}")
+            for instruction, node in pb.node_flow:
+                print(f" {instruction.opname:>20}, {to_index_str(node.inputs)} -> {to_index_str(node.outputs)}")
             print("\n")
 
 
+# =============================================================================
+# == Normal values ============================================================
+# =============================================================================
 @dataclasses.dataclass(frozen=True, eq=False)
 class _AbstractRef(_AbstractValue):
     """Placeholder value which will be resolved during parsing."""
@@ -477,8 +621,6 @@ class AbstractPhiValue(AbstractValue):
     constituents: tuple[AbstractValue]
 
     def __post_init__(self) -> None:
-        assert all(isinstance(i, AbstractValue) for i in self.constituents), self.constituents
-
         # Flatten nested PhiValues. e.g.
         #   𝜙[𝜙[A, B], 𝜙[A, C]] -> 𝜙[A, B, C]
         constituents = itertools.chain(*[self.flatten(i) for i in self.constituents])
@@ -486,6 +628,7 @@ class AbstractPhiValue(AbstractValue):
         # Ensure a consistent order.
         constituents = tuple(v for _, v in sorted({id(v): v for v in constituents}.items()))
         object.__setattr__(self, "constituents", constituents)
+        assert not any(i.is_detail for i in self.constituents), self.constituents
 
     def _unpack_apply(self, replace_map: ReplaceMap) -> "AbstractValue":
         result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))

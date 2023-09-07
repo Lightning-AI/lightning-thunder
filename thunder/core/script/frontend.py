@@ -1,10 +1,9 @@
-import collections
 import functools
 import dis
 import inspect
 import itertools
 import sys
-from typing import Callable, Optional
+from typing import Callable, Optional, TypeVar
 from collections.abc import Iterable
 
 import networkx as nx
@@ -22,10 +21,13 @@ from thunder.core.script.graph import (
 )
 from thunder.core.script.instrumentation import record
 from thunder.core.script.protograph import (
+    _Materialized,
+    _Symbolic,
     AbstractPhiValue,
     AbstractValue,
     ExternalRef,
     IntermediateValue,
+    IntraBlockFlow,
     ProtoBlock,
     ProtoGraph,
     ValueMissing,
@@ -48,6 +50,8 @@ from thunder.core.script.python_ir_data import (
 )
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
+T = TypeVar("T")
+
 
 class Super:
     pass
@@ -56,7 +60,10 @@ class Super:
 def parse_bytecode(method: Callable) -> ProtoGraph:
     """Given a method, disassemble it to a sequence of simple blocks."""
     bytecode = tuple(ThunderInstruction(*i) for i in dis.get_instructions(method, first_line=0))
-    make_protoblock = functools.partial(ProtoBlock.from_instructions, code=method.__code__)
+
+    def make_protoblock(raw_instructions: Iterable[ThunderInstruction]) -> ProtoBlock:
+        flow = IntraBlockFlow.from_instructions(instructions := tuple(raw_instructions), code=method.__code__)
+        return ProtoBlock(instructions, flow)
 
     # Determine the boundaries for the simple blocks.
     split_after = JUMP_INSTRUCTIONS | RETURN_INSTRUCTIONS
@@ -133,11 +140,41 @@ def parse_bytecode(method: Callable) -> ProtoGraph:
                 if (jump_offset := compute_jump(last_i, end)) is not None:
                     yield from handle_jumps(True, last_i, source, protoblocks[jump_offset])
 
-    return ProtoGraph(iter_protoblocks())
+    # If we convert the stack indices to a common basis then we can ignore stack effect and
+    # treat VariableScope.STACK variables just like any other local.
+    def net_stack_effect(flow: IntraBlockFlow) -> int:
+        begin_stack = {k: v for k, v in flow._begin.items() if k.scope == VariableScope.STACK}
+        assert not any(isinstance(v, ValueMissing) for v in begin_stack.items())
+        return sum(1 for k in flow._end if k.scope == VariableScope.STACK) - len(begin_stack)
+
+    proto_graph = ProtoGraph(iter_protoblocks())
+    offsets = {proto_graph.root: 0}
+    for source, sink in nx.edge_dfs(nx.from_edgelist(proto_graph.edges, nx.DiGraph)):
+        expected = offsets[source] + net_stack_effect(source.flow)
+        actual = offsets.setdefault(sink, expected)
+        assert actual == expected, (actual, expected)
+
+    substitutions: dict[ProtoBlock, ProtoBlock] = {}
+    for protoblock in proto_graph:
+
+        def remap(k: T) -> T:
+            if isinstance(k, VariableKey) and k.scope == VariableScope.STACK:
+                return VariableKey(k.identifier + offsets[protoblock], VariableScope.STACK)
+            return k
+
+        old_flow = protoblock.flow
+        new_flow = IntraBlockFlow(
+            _flow={k: _Symbolic(tuple(remap(i) for i in v.inputs), v.outputs) for k, v in old_flow.symbolic},
+            _begin={remap(k): v for k, v in old_flow._begin.items()},
+            _end={remap(k): remap(v) for k, v in old_flow._end.items()},
+        )
+        substitutions[protoblock] = ProtoBlock(protoblock.raw_instructions, new_flow)
+
+    return proto_graph.substitute(substitutions)
 
 
 def _is_epilogue(protoblock: ProtoBlock) -> bool:
-    return any(isinstance(i, (NoJumpEpilogue, JumpEpilogue)) for i, _, _ in protoblock.node_flow)
+    return any(isinstance(i, (NoJumpEpilogue, JumpEpilogue)) for i, _ in protoblock.node_flow)
 
 
 def _bind_to_graph(
@@ -217,7 +254,7 @@ def _bind_to_graph(
         if key.scope == VariableScope.GLOBAL:
             try:
                 val = func_globals[name]
-            except:
+            except KeyError:
                 raise ValueError(f"Could not resolve global variable: {name=}.")
             return Value(name=name, value=val, is_global=True)
 
@@ -236,24 +273,13 @@ def _bind_to_graph(
             assert not _is_epilogue(protoblock)
         return protoblock
 
-    def fold_epilogue_stack(protoblock: ProtoBlock, epilogue: ProtoBlock):
-        """Combine the stack effect of an instruction and its epilogue."""
-        pop, push = protoblock.stack_effect
-        pop_epilogue, push_epilogue = epilogue.stack_effect
-
-        assert _is_epilogue(epilogue)
-        assert epilogue in {jump_target for jump_target, _ in protoblock.jump_targets}
-        assert len(epilogue.node_flow) == 1
-        assert push_epilogue == epilogue.node_flow[0][2]
-        return pop, (*push[:-pop_epilogue], *push_epilogue)
-
     blocks = {protoblock: Block() for protoblock in proto_graph if not _is_epilogue(protoblock)}
     blocks[proto_graph.root].jump_sources.append(None)
 
     # Block inputs require special handling since we may need to create `PhiValue`s.
     input_conversions = {}
     for protoblock, block in blocks.items():
-        for key, abstract_value in protoblock.variable_state(index=0):
+        for key, abstract_value in protoblock.begin_state:
             if protoblock is proto_graph.root:
                 value = get_initial_value(key)
                 if key.scope == VariableScope.LOCAL and value.value is not NULL:
@@ -271,7 +297,7 @@ def _bind_to_graph(
     @functools.cache  # Again, for correctness
     def convert(value: AbstractValue, protoblock: ProtoBlock) -> Value:
         assert not _is_epilogue(protoblock)
-        assert isinstance(value, AbstractValue), value
+        assert not value.is_detail, value
         if (out := input_conversions.get((value, protoblock), missing := object())) is not missing:
             return out
 
@@ -288,36 +314,45 @@ def _bind_to_graph(
 
         raise ValueError(f"Cannot convert abstract value: {value}, {protoblock} {protoblock is proto_graph.root=}")
 
-    def iter_node_flow(protoblock: ProtoBlock) -> Iterable[Node]:
-        yield from protoblock.node_flow[:-1]
-        instruction, inputs, outputs = protoblock.node_flow[-1]
+    def iter_node_flow(protoblock: ProtoBlock) -> tuple[ThunderInstruction, _Materialized]:
+        node_flow = tuple(protoblock.node_flow)
+        yield from node_flow[:-1]
+
+        last_i, last_node = node_flow[-1]
         if any(_is_epilogue(jump_target) for jump_target, _ in protoblock.jump_targets):
-            assert all(_is_epilogue(target) for target, _ in protoblock.jump_targets)
-            outputs_by_branch = tuple(
-                fold_epilogue_stack(protoblock, jump_target)[1] for jump_target, _ in protoblock.jump_targets
-            )
+            outputs_by_branch = []
+            for target, _ in protoblock.jump_targets:
+                assert _is_epilogue(target)
+                ((epilogue_i, epilogue_node),) = target.node_flow
+                assert epilogue_i.prefix == last_i.opname, (last_i, epilogue_i)
+                outputs = last_node.outputs
+                if epilogue_inputs := epilogue_node.inputs:
+                    assert outputs[-len(epilogue_inputs) :] == epilogue_inputs, (outputs, epilogue_inputs)
+                    outputs = outputs[: -len(epilogue_inputs)]
+                outputs_by_branch.append((*outputs, *epilogue_node.outputs))
 
             merged_outputs = []
             for values in itertools.zip_longest(*outputs_by_branch, fillvalue=None):
                 value_set = set(values).difference({None})
                 assert len(value_set) == 1, value_set
                 merged_outputs.append(value_set.pop())
-            outputs = tuple(merged_outputs)
+            last_node = _Materialized(last_node.inputs, tuple(merged_outputs))
 
-        yield instruction, inputs, outputs
+        yield last_i, last_node
 
     def make_nodes(protoblock: ProtoBlock) -> Iterable[Node]:
-        for instruction, inputs, outputs in iter_node_flow(protoblock):
+        for instruction, node_flow in iter_node_flow(protoblock):
             node = Node(
                 i=instruction,
-                inputs=[convert(v, protoblock) for v in inputs],
-                outputs=[convert(v, protoblock) for v in outputs],
+                inputs=[convert(v, protoblock) for v in node_flow.inputs],
+                outputs=[convert(v, protoblock) for v in node_flow.outputs],
                 line_no=instruction.line_no,
             )
 
             for output in OrderedSet(node.outputs).difference(node.inputs):
-                assert output.node is None, (node, output.node)
-                output.node = node
+                if not (output.is_const or output.is_global):
+                    assert output.node is None, (node, output.node)
+                    output.node = node
 
             if node.i.opname in ("LOAD_ATTR", "LOAD_METHOD"):
                 # Once we set `parent` (so PhiValue can traverse through it)
@@ -331,7 +366,7 @@ def _bind_to_graph(
                 #       such as `super(**{})` or `super_alias = super; super_alias()`
                 #       will not be correctly handled.
                 # TODO(robieta): handle `super` without load bearing names.
-                if instruction.arg == 0 and isinstance(node.inputs[0].value, Super):
+                if node.i.arg == 0 and isinstance(node.inputs[0].value, Super):
                     assert self_value is not None, "super() called in free context"
                     node.outputs[0].value = MROAwareObjectRef(self_value, start_klass=mro_klass)
 
@@ -357,14 +392,14 @@ def _bind_to_graph(
     for protoblock, block in blocks.items():
         block_values = {
             k: v
-            for k, abstract_v in protoblock.variable_state(index=0)
+            for k, abstract_v in protoblock.begin_state
             if isinstance(v := convert(abstract_v, protoblock), PhiValue)
         }
 
         block.block_inputs = list(OrderedSet(block_values.values()))
         for parent in proto_graph.parents[protoblock]:
             parent_key = prologue(parent)
-            parent_state = dict(parent.variable_state(index=-1))
+            parent_state = dict(parent.end_state)
             for key, sink in block_values.items():
                 source = convert(parent_state.get(key, ValueMissing()), parent_key)
                 if source.value is not NULL and source not in sink.values:
@@ -379,7 +414,7 @@ def _bind_to_graph(
 
         block.block_outputs = OrderedSet()
         for boundary_protoblock in boundary_protoblocks:
-            for _, abstract_value in boundary_protoblock.variable_state(index=-1):
+            for _, abstract_value in boundary_protoblock.end_state:
                 # NOTE: the key for convert is `protoblock`, not `boundary_protoblock`
                 if (v := convert(abstract_value, protoblock)).phi_values:
                     block.block_outputs.add(v)

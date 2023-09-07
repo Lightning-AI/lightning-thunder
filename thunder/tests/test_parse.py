@@ -779,15 +779,15 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
 
     flat_node_flow = []
     for block_idx, protoblock in enumerate(proto_graph):
-        for instruction, inputs, outputs in protoblock.node_flow:
-            new_outputs = [o for o in outputs if isinstance(o, frontend.IntermediateValue) and o not in inputs]
-            flat_node_flow.append((block_idx, instruction, inputs, new_outputs))
+        for instruction, n in protoblock.node_flow:
+            new_outputs = [o for o in n.outputs if isinstance(o, protograph.IntermediateValue) and o not in n.inputs]
+            flat_node_flow.append((block_idx, instruction, n.inputs, new_outputs))
 
     # Map function arguments to string names.
     num_args = len(inspect.signature(fn).parameters)
     arg_map = {
         v: name
-        for (name, scope), (v, *_) in proto_graph.root.variables.items()
+        for (name, scope), v in proto_graph.root.begin_state
         if scope == python_ir_data.VariableScope.LOCAL and name in signature.parameters
     }
     assert all(isinstance(v, frontend.ExternalRef) for v in arg_map)
@@ -796,9 +796,7 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     output_map = {}
     for block_idx, instruction, inputs, outputs in flat_node_flow:
         for output in outputs:
-            _, created_by = output_map.setdefault(output, (f"OUTPUT_{len(output_map)}", instruction))
-            assert created_by is instruction, f"{output} has multiple creators"
-    output_map = {k: v for k, (v, _) in output_map.items()}
+            output_map.setdefault(output, f"OUTPUT_{len(output_map)}")
 
     def value_to_key(v):
         MISSING = object()
@@ -967,6 +965,21 @@ def test_parse(fn, parse_spec: Optional[str], flow_spec: Optional[str]):
     assert_parse_matches_spec(frontend.parse_bytecode(fn), extract_parse_spec(expected_blocks))
     if observed_flow is not None:
         assert_flow_matches_spec(observed_flow, tuple(extract_flow_spec(flow_spec)))
+
+
+def test_debug_print_protoflows(capfd):
+    proto_graph = apply_protograph_passes(frontend.parse_bytecode(tuple_fold))
+    _ = capfd.readouterr()
+    proto_graph.debug_print_protoflows()
+    msg = textwrap.dedent(capfd.readouterr().out).strip()
+    expected = textwrap.dedent("""
+        Protoblock 0:
+                              Inputs, Outputs
+                  BUILD_TUPLE, (0, 1) -> (2)
+              UNPACK_SEQUENCE, (2) -> (1, 0)
+                 RETURN_VALUE, (0) -> ()
+    """).strip()
+    assert msg == expected, msg
 
 
 def test_abstract_value():

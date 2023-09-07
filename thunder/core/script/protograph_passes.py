@@ -2,7 +2,8 @@ import collections
 import dataclasses
 import functools
 import itertools
-from typing import Callable, Iterable
+from typing import Callable
+from collections.abc import Iterable
 
 import networkx as nx
 
@@ -11,6 +12,7 @@ from thunder.core.script.protograph import (
     _AbstractValue,
     AbstractPhiValue,
     ExternalRef,
+    IntraBlockFlow,
     ProtoGraph,
     ProtoBlock,
     VariableKey,
@@ -46,31 +48,15 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
     blocks_to_process = collections.deque(protograph)
     while blocks_to_process:
         protoblock = blocks_to_process.popleft()
-        initial_use_count = len(uses[protoblock])
-        final_state = dict(protoblock.variable_state(index=-1))
-
-        # We need to correct the stack indices, because `final_state` is indexed
-        # to the output stack but `uses` is indexed to the input stack.
-        pop, values_pushed = protoblock.stack_effect
-        net_stack_effect = pop - len(values_pushed)
-
-        # Any key that is is `child.uses` but not in `final_state` must be
-        # a purely transitive dependency.
-        child_uses = (uses[target] for target, _ in protoblock.jump_targets)
-        child_keys_used = OrderedSet(itertools.chain(*child_uses))
-        for key in child_keys_used - final_state:
-            if key.scope == VariableScope.STACK:
-                assert isinstance(key.identifier, int)
-                key = VariableKey(key.identifier - net_stack_effect, key.scope)
-            uses[protoblock].add(key)
-
-        # Otherwise we must determine what the appropriate input key is.
-        # (Recall that `uses` is indexed to `.variable_state(index=0)`)
-        edge_values = {v for k, v in final_state.items() if k in child_keys_used}
-        uses[protoblock].update(k for k, v in protoblock.variable_state(index=0) if v in edge_values)
-
-        # If new uses are added then add parents to the queue.
-        if len(uses[protoblock]) > initial_use_count:
+        target_uses = tuple(itertools.chain(*(uses[target] for target, _ in protoblock.jump_targets)))
+        transitive_uses = OrderedSet(
+            source
+            for use in target_uses
+            if isinstance(source := protoblock.flow._end.get(use, use), VariableKey)
+            and source.scope != VariableScope.CONST
+        )
+        if new_uses := transitive_uses - uses[protoblock]:
+            uses[protoblock].update(transitive_uses)
             blocks_to_process.extend(protograph.parents[protoblock])
 
     new_uses = {i: uses_i.difference(i.uses) for i, uses_i in uses.items()}
@@ -89,42 +75,41 @@ def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     not, however, pose an overall soundness problem because we can check for
     state mutations during inlining and rerun flow analysis.
     """
-    protograph = protograph.transform({})
-    missing_transitive = _get_missing_transitive(protograph)
-    for protoblock, new_uses in missing_transitive.items():
-        protoblock.uses.update(new_uses)
-        for key in new_uses:
-            if key.scope == VariableScope.STACK:
-                assert isinstance(key.identifier, int) and key.identifier < 0
-                while -key.identifier > len(protoblock.begin_stack):
-                    protoblock.begin_stack.appendleft(_AbstractRef("Transitive"))
-            else:
-                protoblock.variables.setdefault(key, (_AbstractRef(f"Transitive"),))
-        initial_keys = OrderedSet(k for k, _ in protoblock.variable_state(index=0))
+    substitutions = {}
+    for protoblock, new_uses in _get_missing_transitive(protograph).items():
+        new_flow = IntraBlockFlow(
+            _flow=protoblock.flow._flow,
+            _begin={**{k: _AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
+            _end={**{k: k for k in new_uses}, **protoblock.flow._end},
+        )
+        substitutions[protoblock] = new_protoblock = ProtoBlock(protoblock.raw_instructions, new_flow)
+        new_protoblock.uses.update(protoblock.uses | new_uses)
 
         # Ensure the new transitive dependencies are reflected in the variable state.
+        initial_keys = OrderedSet(k for k, _ in new_protoblock.begin_state)
         assert not (delta := new_uses.difference(initial_keys)), delta
 
-    return protograph, bool(missing_transitive)
+    return protograph.substitute(substitutions), bool(substitutions)
 
 
 def _inter_block_edges(proto_graph: ProtoGraph) -> ValueEdges:
     for protoblock in proto_graph:
         for child, _ in protoblock.jump_targets:
-            outputs = dict(protoblock.variable_state(index=-1))
-            child_inputs = dict(child.variable_state(index=0))
+            outputs = dict(protoblock.end_state)
+            child_inputs = dict(child.begin_state)
             for key, child_input in child_inputs.items():
                 yield outputs.get(key, ValueMissing()), child_input
 
             # `_add_transitive` should ensure the stacks match.
             # (Except for return blocks which may discard the stack.)
             if child.raw_instructions[-1] not in RAISE_RETURN_INSTRUCTIONS:
-                s_out, s_in = [ProtoBlock.stack_args(i) for i in (outputs, child_inputs)]
+                s_out = tuple(sorted(i.identifier for i in outputs if i.scope == VariableScope.STACK))
+                s_in = tuple(sorted(i.identifier for i in child_inputs if i.scope == VariableScope.STACK))
                 assert s_out == s_in, f"{s_out=} != {s_in=}, {child.raw_instructions[-1].opname}"
 
 
 def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
-    for key, (initial_ref, *_) in proto_graph.root.variables.items():
+    for key, initial_ref in proto_graph.root.begin_state:
         if isinstance(initial_ref, ExternalRef):
             continue
 
@@ -246,26 +231,25 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     queries: collections.defaultdict[TupleKey] = collections.defaultdict()
 
     for pb in protograph:
-        for instr, ivals, ovals in pb.node_flow:
-            if instr.opname == "BUILD_TUPLE":
-                assert ivals is not None  # The elements of the tuple
-                assert len(ovals) == 1  # The output tuple
-                tuple_sources.update({TupleKey(ovals[0], _i): i for _i, i in enumerate(reversed(ivals))})
-            elif instr.opname == "BINARY_SUBSCR":
-                assert len(ivals) == 2  # The tuple, and the index
-                assert len(ovals) == 1  # The result of tup[idx]
-                ref = ivals[0]
-                if isinstance(ref, ExternalRef):
+        for instruction, node in pb.node_flow:
+            if (opname := instruction.opname) == "BUILD_TUPLE":
+                assert node.inputs is not None  # The elements of the tuple
+                assert len(node.outputs) == 1  # The output tuple
+                tuple_sources.update({TupleKey(node.outputs[0], _i): i for _i, i in enumerate(reversed(node.inputs))})
+            elif opname == "BINARY_SUBSCR":
+                assert len(node.inputs) == 2  # The tuple, and the index
+                assert len(node.outputs) == 1  # The result of tup[idx]
+                if isinstance(ref := node.inputs[0], ExternalRef):
                     if ref.key.scope == VariableScope.CONST and isinstance(ref.key.identifier, int):
-                        queries.update({TupleKey(ivals[1], ref.key.identifier): ovals[0]})
-            elif instr.opname == "UNPACK_SEQUENCE":
-                assert len(ivals) == 1  # The tuple to unpack
-                assert len(ovals)  # The elements of the tuple, unpacked
-                queries.update({TupleKey(ivals[0], _i): o for _i, o in enumerate(ovals)})
-            elif instr.opname == "UNPACK_EX":
+                        queries.update({TupleKey(node.inputs[1], ref.key.identifier): node.outputs[0]})
+            elif opname == "UNPACK_SEQUENCE":
+                assert len(node.inputs) == 1  # The tuple to unpack
+                assert len(node.outputs)  # The elements of the tuple, unpacked
+                queries.update({TupleKey(node.inputs[0], _i): o for _i, o in enumerate(node.outputs)})
+            elif opname == "UNPACK_EX":
                 continue
-                assert len(ivals) == 1  # The tuple to unpack
-                assert len(ovals) >= 2  # [remaining, unpack...]
+                assert len(node.inputs) == 1  # The tuple to unpack
+                assert len(node.outputs) >= 2  # [remaining, unpack...]
                 # Note: The remaining elements are a list, not a tuple.
                 # That makes this pass technically unsound, as even if an element is updated,
                 # this pass will fold the old value. It's unclear if there's any reason in the language
@@ -273,7 +257,7 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
                 # and editing this list can be made an error in the future.
                 # Another note: It should be possible to fold the remaining elements as well,
                 # but as it is actually a list, let's not track that for now.
-                queries.update({TupleKey(ivals[0], _i): o for _i, o in enumerate(ovals[1:])})
+                queries.update({TupleKey(node.inputs[0], _i): o for _i, o in enumerate(node.outputs[1:])})
 
     if not queries or not tuple_sources:
         return (protograph, False)

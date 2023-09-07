@@ -174,3 +174,32 @@ def loop_add(a, b):
 
 def test_loop_add():
     thunder.compile(loop_add)
+
+
+def transitive_value_alias(z):
+    x = None
+    y = None
+    if z:
+        y = 2
+    elif True:
+        pass
+    print(x, y)
+
+
+def test_transitive_value_alias(capfd):
+    # https://github.com/Lightning-AI/lightning-thunder/issues/855
+    tom = thunder.compile(transitive_value_alias)
+    _ = capfd.readouterr()
+    tom(True)
+    assert "None 2" in capfd.readouterr().out
+    tom(False)
+    assert "None None" in capfd.readouterr().out
+
+
+def apply_context_manager(ctx):
+    with ctx:
+        pass
+
+
+def test_apply_context_manager():
+    thunder.compile(apply_context_manager)
