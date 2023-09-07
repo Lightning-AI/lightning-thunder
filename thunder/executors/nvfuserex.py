@@ -263,6 +263,54 @@ def uniform(
     return fd.ops.uniform(nv_minval, nv_maxval, nvshape, dtype=nvdtype)
 
 
+def _uniform_philox_check(
+    shape: Sequence[int],
+    minval: Number,
+    maxval: Number,
+    *,
+    device: Device,
+    dtype: dtypes.dtype,
+    rng_seed: int,
+    rng_offset: int,
+) -> bool:
+    if nv_version < LooseVersion("0.0.3"):
+        return False
+
+    return is_supported_device(device) and is_supported_dtype(dtype)
+
+
+def uniform_philox(
+    shape: Sequence[int],
+    minval: Number,
+    maxval: Number,
+    *,
+    device: Device,
+    dtype: dtypes.dtype,
+    rng_seed: int,
+    rng_offset: int,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict[Any, Any],
+) -> Any:
+    nvdtype = lcdtype_to_nvdtype(dtype)
+
+    nv_minval = getnv(minval, fd, lc_to_nv_map)
+    nv_maxval = getnv(maxval, fd, lc_to_nv_map)
+
+    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
+
+    nv_rng_seed = getnv(rng_seed, fd, lc_to_nv_map)
+    nv_rng_offset = getnv(rng_offset, fd, lc_to_nv_map)
+
+    return fd.ops.uniform(
+        nv_minval,
+        nv_maxval,
+        nvshape,
+        dtype=nvdtype,
+        rng_seed=nv_rng_seed,
+        rng_offset=nv_rng_offset,
+    )
+
+
 #
 # Functions related to testing if a bound symbol can be fused
 #
@@ -1034,6 +1082,7 @@ _ops_map.update(
         PrimIDs.FULL: (_full_check, full),
         PrimIDs.IOTA: (_iota_check, iota),
         PrimIDs.UNIFORM: (_uniform_check, uniform),
+        PrimIDs.UNIFORM_PHILOX: (_uniform_philox_check, uniform_philox),
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_broadcast_in_dim_check, broadcast_in_dim),
         PrimIDs.CAT: (_cat_check, cat),

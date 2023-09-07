@@ -9,7 +9,7 @@ from functools import partial
 from torch.testing import assert_close
 
 import thunder.core.dtypes as dtypes
-from thunder.tests.framework import ops, run_snippet, requiresJAX
+from thunder.tests.framework import ops, run_snippet, requiresJAX, instantiate
 from thunder.tests.opinfos import OpInfo, SampleInput, TorchTensorComp, opinfos
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_map

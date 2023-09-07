@@ -57,6 +57,7 @@ class PrimIDs(Enum):
     FULL = auto()
     IOTA = auto()
     UNIFORM = auto()
+    UNIFORM_PHILOX = auto()
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
@@ -1437,6 +1438,38 @@ uniform = make_prim(
     PrimIDs.UNIFORM,
     "uniform",
     meta=_uniform_meta,
+)
+
+
+# TODO(crcrpar): We might want to support `rng_seed` and `rng_offset` of `TensorProxy`
+# as the implementation for `torchex` does.
+def _uniform_philox_meta(
+    shape: Sequence[int],
+    minval: float,
+    maxval: float,
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+    rng_seed: int,
+    rng_offset: int,
+) -> TensorProxy:
+    # Checks inputs
+    utils.check_type(minval, float)
+    utils.check_type(maxval, float)
+    utils.check_type(device, devices.Device)
+    utils.check_type(dtype, dtypes.dtype)
+    utils.check_type(rng_seed, int)
+    utils.check_type(rng_offset, int)
+    utils.check(minval < maxval, lambda: f"`minval` must be less than `maxval` but {minval=}, {maxval=}")
+    utils.check_valid_shape(shape)
+
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+uniform_philox = make_prim(
+    PrimIDs.UNIFORM_PHILOX,
+    "uniform_philox",
+    meta=_uniform_philox_meta,
 )
 
 #

@@ -806,6 +806,23 @@ def uniform_like(
     return clang.uniform_like(a, minval, maxval, device=device, dtype=dtype)
 
 
+@torchsymbol(is_method=False, id="torch.uniform_philox")
+def uniform_philox(
+    shape: Sequence[int],
+    minval: Number = 0.0,
+    maxval: Number = 1.0,
+    *,
+    device: DeviceLike,
+    dtype: dtypeLike,
+    rng_seed: int,
+    rng_offset: int,
+) -> TensorLike:
+    device = to_thunder_device(device)
+    dtype = to_thunder_dtype(dtype)
+
+    return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, rng_seed=rng_seed, rng_offset=rng_offset)
+
+
 @torchsymbol(torch.zeros)
 def zeros(
     shape: Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None

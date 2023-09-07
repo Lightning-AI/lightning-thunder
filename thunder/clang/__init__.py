@@ -227,6 +227,25 @@ def uniform_like(
     return prims.uniform(a.shape, minval, maxval, device=device, dtype=dtype)
 
 
+@clang_ctx
+def uniform_philox(
+    shape: Sequence[int],
+    minval: Number = 0.0,
+    maxval: Number = 1.0,
+    *,
+    device: Union[str, devices.Device],
+    dtype: dtypes.dtype,
+    rng_seed: int,
+    rng_offset: int,
+) -> TensorProxy:
+    device = devices.to_device(device)
+
+    return prims.uniform_philox(
+        shape, minval, maxval,
+        device=device, dtype=dtype, rng_seed=rng_seed, rng_offset=rng_offset,
+    )
+
+
 #
 # Shape operations
 #

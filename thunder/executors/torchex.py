@@ -232,6 +232,88 @@ def uniform_prim(
     return sym.bind(shape, minval, maxval, device=torch_device, dtype=torch_dtype, output=bsym.output, _call_ctx=ctx)
 
 
+def _uniform_philox_check(
+    shape: Sequence[int],
+    minval: float,
+    maxval: float,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    rng_seed: torch.Tensor,
+    rng_offset: torch.Tensor,
+) -> bool:
+
+    utils.check(
+        minval == 0.0 and maxval == 1.0,
+        lambda: f"not supported combination of minval and maxval of {(minval, maxval)}",
+    )
+
+    # ref: https://github.com/pytorch/pytorch/blob/b60273b88a25e282728a036dd08d39035a369d1f/aten/src/ATen/cuda/CUDAGeneratorImpl.cpp#L230
+    utils.check(
+        rng_offset % 4 == 0,
+        lambda: f"`rng_offset` must be a multiple of 4 but {rng_offset % 4 = }"
+    )
+
+    utils.check(
+        ltorch.to_thunder_device(device).devicetype == devices.DeviceType.CUDA,
+        lambda: "`uniform_philox` does not support CPU",
+    )
+
+    return True
+
+
+# ref: https://github.com/pytorch/pytorch/blob/b60273b88a25e282728a036dd08d39035a369d1f/test/test_prims.py#L277
+def uniform_philox_helper(
+    shape: Sequence[int],
+    minval: Number,
+    maxval: Number,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    rng_seed: torch.Tensor,
+    rng_offset: torch.Tensor,
+) -> torch.Tensor:
+    result, _ = torch.ops.rngprims.philox_rand(
+        shape,
+        seed=rng_seed,
+        offset=rng_offset,
+        stride=None,
+        device=device,
+        dtype=dtype,
+    )
+    return result
+
+
+def uniform_philox_prim(
+    bsym: BoundSymbol,
+    shape: Sequence[int],
+    minval: Number,
+    maxval: Number,
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+    rng_seed: int,
+    rng_offset: int,
+) -> BoundSymbol:
+    sym = Symbol(name="uniform_philox_helper", meta=None)
+    ctx: dict[str, Any] = {"uniform_philox_helper": uniform_philox_helper}
+
+    torch_device = ltorch.to_torch_device(device)
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    return sym.bind(
+        shape,
+        minval,
+        maxval,
+        device=torch_device,
+        dtype=torch_dtype,
+        rng_seed=torch.tensor(rng_seed),
+        rng_offset=torch.tensor(rng_offset),
+        output=bsym.output,
+        _call_ctx=ctx,
+    )
+
+
 def zeros_like(
     bsym: BoundSymbol,
     a: TensorLike,
@@ -1274,6 +1356,7 @@ _ops_map.update(
         "torch.full_like": (_always_executable, full_like),
         PrimIDs.IOTA: (_always_executable, iota),
         PrimIDs.UNIFORM: (_always_executable, uniform_prim),
+        PrimIDs.UNIFORM_PHILOX: (_uniform_philox_check, uniform_philox_prim),
         "torch.zeros_like": (_always_executable, zeros_like),
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_always_executable, broadcast_in_dim),
