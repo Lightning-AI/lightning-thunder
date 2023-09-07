@@ -496,7 +496,7 @@ def _test_native_ddp_helper(input_data):
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
 @instantiate(dtypes=(thunder.float32,), num_devices=2)
 @ddp_wrapper("test_native_ddp", _test_native_ddp_helper)
-def test_native_ddp():
+def test_native_ddp(executor, devices, dtype):
     pass
 
 

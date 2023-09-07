@@ -972,13 +972,15 @@ def test_debug_print_protoflows(capfd):
     _ = capfd.readouterr()
     proto_graph.debug_print_protoflows()
     msg = textwrap.dedent(capfd.readouterr().out).strip()
-    expected = textwrap.dedent("""
+    expected = textwrap.dedent(
+        """
         Protoblock 0:
                               Inputs, Outputs
                   BUILD_TUPLE, (0, 1) -> (2)
               UNPACK_SEQUENCE, (2) -> (1, 0)
                  RETURN_VALUE, (0) -> ()
-    """).strip()
+    """
+    ).strip()
     assert msg == expected, msg
 
 

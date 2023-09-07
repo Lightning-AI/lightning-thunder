@@ -1,7 +1,7 @@
 import inspect
 import os
 import sys
-from functools import wraps, singledispatchmethod
+from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import Callable, List, Optional
 from collections.abc import Sequence
@@ -176,9 +176,7 @@ def _instantiate_executor_test_template(
     template_name = as_name if as_name is not None else template.__name__
     test_name = "_".join((template_name, executor.name, devicetype_str, str(dtype)))
 
-    def test():
-        result = template(executor, device_str, dtype)
-        return result
+    test = partial(template, executor, device_str, dtype)
 
     # Mimics the instantiated test
     # TODO Review this mimicry -- are there other attributes to mimic?
@@ -304,6 +302,7 @@ class instantiate:
         devicetypes=None,
         dtypes=None,
         num_devices: int = 1,
+        decorators: None | Sequence = None,
         scope=None,
         as_name: Optional[str] = None,
     ):
@@ -316,6 +315,8 @@ class instantiate:
             self.dtypes = datatypes.resolve_dtypes(dtypes) if dtypes is not None else datatypes.all_dtypes
 
         self.num_devices = num_devices
+
+        self.decorators = decorators
 
         # Acquires the caller's global scope
         if scope is None:
@@ -370,6 +371,12 @@ class instantiate:
                     dtype=dtype,
                     as_name=self.as_name,
                 )
+
+                # Applies decorators
+                if self.decorators is not None:
+                    for dec in self.decorators:
+                        test = dec(test)
+
                 # Adds the instantiated test to the requested scope
                 self.scope[test.__name__] = test
 

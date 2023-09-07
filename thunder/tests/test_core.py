@@ -25,12 +25,31 @@ from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol
 
 #
+# Tests related to the test framework itself
+#
+# TODO Move these into a new test_testing.py?
+
+# Using instantiate with parametrize
+
+_parametrize_decorator = pytest.mark.parametrize("num, s", ((2, "hi"), (-5, "bye")))
+
+
+@instantiate(dtypes=NOTHING, decorators=(_parametrize_decorator,))
+def test_instantiate_and_pytest_parametrize(executor, device: str, dtype: dtypes.dtype, num: int, s: str):
+    assert isinstance(num, int)
+    assert isinstance(s, str)
+
+    assert num == 2 or num == -5
+    assert s == "hi" or s == "bye"
+
+
+#
 # Tests related to running valid Python programs
 #
 
 
 @instantiate(dtypes=NOTHING)
-def test_make_callable_from_trace(executor, device: str, _):
+def test_make_callable_from_trace(executor, device: str, dtype: dtypes.dtype):
     def foo(a, b):
         return a + b
 
