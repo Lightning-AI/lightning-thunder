@@ -165,8 +165,8 @@ class Benchmark:
                     APEX_CROSS_ENTROPY_AVAILABLE
                 ), "Trying to run a benchmark with the Apex executor extension, but the xentropy_cuda package is not available"
                 register_apex_entropyex()
-            
-            
+
+
             if extension == "cudnn":
                 assert (
                     CUDNN_AVAILABLE
@@ -235,7 +235,6 @@ class Benchmark:
         forward_fn = thunder.compile(
             self._fn,
             use_static_caching=True,
-            use_generated_backward=True,
             use_rematerialization=True,
             executors_list=executors_list,
         )

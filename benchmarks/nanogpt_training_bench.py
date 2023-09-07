@@ -106,7 +106,7 @@ if compile_mode == "torch":
     model = torch.compile(model)  # pytorch 2.0
 elif compile_mode == "thunder":
     print("Compiling model using thunder.compile...")
-    model = thunder.compile(model, use_rematerialization=True, use_static_caching=True, use_generated_backward=True)
+    model = thunder.compile(model, use_rematerialization=True, use_static_caching=True)
 else:
     raise ValueError(f"Unknown compile_mode: {compile_mode}")
 

@@ -1779,7 +1779,7 @@ def thunder_backward(*, compile_data=None, **compile_config):
     >>> print(f"b.grad: {b.grad}")
     """
 
-    compile_config = compile_config | {"disable_preprocessing": True} | {"use_generated_backward": False}
+    compile_config = compile_config | {"disable_preprocessing": True} | {"disable_torch_autograd_support": True}
 
     def decorator(thunder_func):
         from thunder import compile

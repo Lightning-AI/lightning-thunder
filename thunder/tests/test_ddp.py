@@ -124,7 +124,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/646
     def test_ddp_compile_module(self):
         model = ToyModel().to(self.rank)
-        ddp_model = DDP(thunder.compile(model, use_generated_backward=True), device_ids=[self.rank])
+        ddp_model = DDP(thunder.compile(model), device_ids=[self.rank])
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
@@ -151,7 +151,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             AttributeError,
             "'NoneType' object has no attribute 'zero_'",
         ):
-            thunder.compile(DDP(model, device_ids=[self.rank]), use_generated_backward=True)
+            thunder.compile(DDP(model, device_ids=[self.rank]))
 
     # TODO(crcrpar): Mandate multiple GPUs so that the timing of collectives matters especially for
     # nvfuser executor.
@@ -434,8 +434,6 @@ def _test_native_ddp_helper(input_data):
     cmodel = thunder.compile(
         ddp_model,
         executors_list=executor.executors_list(),
-        use_rematerialization=True,
-        use_generated_backward=True,
         use_static_caching=True,
     )
 

@@ -382,7 +382,7 @@ class CompileData:
         use_static_caching: Optional[bool] = None,
         use_last_executed: Optional[bool] = None,
         use_cudagraphs: bool = False,
-        use_generated_backward: bool = True,
+        disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
     ):
         #
@@ -429,7 +429,7 @@ class CompileData:
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
         self.use_cudagraphs = use_cudagraphs
-        self.use_generated_backward = use_generated_backward
+        self.disable_torch_autograd_support = disable_torch_autograd_support
 
         self.is_module = isinstance(self.fn, pytorch.nn.Module)
 
@@ -616,7 +616,7 @@ def compile(
     use_static_caching: Optional[bool] = None,
     use_last_executed: Optional[bool] = None,
     use_cudagraphs: bool = False,
-    use_generated_backward: bool = True,
+    disable_torch_autograd_support: bool = False,
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
@@ -630,7 +630,7 @@ def compile(
         use_static_caching=use_static_caching,
         use_last_executed=use_last_executed,
         use_cudagraphs=use_cudagraphs,
-        use_generated_backward=use_generated_backward,
+        disable_torch_autograd_support=disable_torch_autograd_support,
         use_rematerialization=use_rematerialization,
         only_execute_prims=only_execute_prims,
         disable_preprocessing=disable_preprocessing,
@@ -678,7 +678,7 @@ def compile(
         flat_args, _ = tree_flatten((args, kwargs))
         tensor_cls = (pytorch.Tensor, TensorProxy)
         requires_grad = any((isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args))
-        if use_generated_backward and requires_grad:
+        if not disable_torch_autograd_support and requires_grad:
             compile_config = {
                 "langctx": langctx,
                 "executors_list": executors_list,
@@ -882,7 +882,7 @@ def compile_torch(
         use_last_executed=use_last_executed,
         use_cudagraphs=use_cudagraphs,
         use_rematerialization=False,
-        use_generated_backward=False,
+        disable_torch_autograd_support=False,
         only_execute_prims=only_execute_prims,
         disable_preprocessing=disable_preprocessing,
     )

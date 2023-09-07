@@ -258,7 +258,7 @@ def test_inline_submodule():
 def test_litgpt_variants(name, cls):
     model = cls.from_name(name)
     # compile at the beginning to bubble errors asap
-    tom = thunder.compile(model, use_generated_backward=False)
+    tom = thunder.compile(model, disable_torch_autograd_support=True)
 
     # use the reference model for the expected value
     original = lit_gpt_model.GPT.from_name(name)
@@ -276,7 +276,7 @@ def test_llama_block_compile():
     m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
     m2 = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
     m2.load_state_dict(m.state_dict())
-    tom = thunder.compile(m2, executors_list=torchex, use_generated_backward=False)
+    tom = thunder.compile(m2, executors_list=torchex, disable_torch_autograd_support=True)
     inp = torch.randn(1, 8, 4096)
     expected_result = m(inp)
 
@@ -466,7 +466,7 @@ def test_functionalization_conditional():
 @skipif_not_python_3_10
 def test_nanogpt_tom():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig(dropout=0.0))
-    tom = thunder.compile(m, executors_list=torchex, use_generated_backward=False)
+    tom = thunder.compile(m, executors_list=torchex, disable_torch_autograd_support=True)
     x = torch.randint(0, 255, (5, 5))
 
     torch.manual_seed(5)

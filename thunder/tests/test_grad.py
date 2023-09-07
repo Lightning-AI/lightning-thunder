@@ -281,12 +281,12 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     # Using finite differences we can compute J u, but we can't compute J* v, without computing full J, which is expensive.
 
     u = tree_map(make_tensor_like, primals)
-    outs_p, J_u = numerical_jvp(executor.make_callable(f))(primals, u)
+    outs_p, J_u = numerical_jvp(executor.make_callable(f, disable_torch_autograd_support=True))(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make_tensor_like, outs_p)
-    _, J_star_v = executor.make_callable(inline(vjp(f)))(primals, v)
+    _, J_star_v = executor.make_callable(inline(vjp(f)), disable_torch_autograd_support=True)(primals, v)
 
     if not multiple_results:
         v = (v,)
@@ -339,10 +339,6 @@ def _make_differentiable_wrapper(func, args):
         return func(*full_args)
 
     filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
-    # Since now torch.autograd.Function is turned on by default, we need to
-    # detach the tensors so that we are testing the correct implementation of
-    # vjp and not requiring double backward to be implemented.
-    filtered_args = tree_map(lambda x: x.detach(), filtered_args)
     return wrapper, filtered_args
 
 
@@ -455,13 +451,13 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         # Compute vjp result using PyTorch
         out = op.torch_reference(*sample.args, **sample.kwargs)
-        v = make_tensor_like(out.detach())
+        v = make_tensor_like(out)
         expected = torch.autograd.grad(out, sample.args[1], v)
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, (gindices, gweight) = executor.make_callable(inline(vjp(filtered_op)))(filtered_args, (v,))
+        actual_out, (gindices, gweight) = executor.make_callable(inline(vjp(filtered_op)), disable_torch_autograd_support=True)(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
@@ -700,7 +696,7 @@ def test_torch_autograd_module(executor, device, _):
         lc = executor.make_callable(
             l,
             disable_preprocessing=False,
-            use_generated_backward=True,
+            disable_torch_autograd_support=False,
             use_static_caching=use_static_caching,
         )
         lc.zero_grad()
@@ -726,7 +722,7 @@ def test_torch_autograd_module_get_compile_data(executor, device, _):
     lc = executor.make_callable(
         l,
         disable_preprocessing=False,
-        use_generated_backward=True,
+        disable_torch_autograd_support=False,
         use_static_caching=True,
     )
     lc.zero_grad()
