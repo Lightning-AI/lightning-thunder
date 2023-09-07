@@ -382,7 +382,7 @@ class CompileData:
         use_static_caching: Optional[bool] = None,
         use_last_executed: Optional[bool] = None,
         use_cudagraphs: bool = False,
-        use_generated_backward: bool = False,
+        use_generated_backward: bool = True,
         use_rematerialization: bool = False,
     ):
         #
@@ -550,13 +550,7 @@ def _wrap_in_tom(
     possibly_processed_function,
     compiled_function,
     compile_data: CompileData,
-    use_cudagraphs: bool = False,
 ) -> ThunderOptimizedModule:
-    if use_cudagraphs:
-        original_module = CUDAGraphExecutor(
-            original_module, num_constant_args=len(compile_data.additional_param_values)
-        )
-
     tom = ThunderOptimizedModule(
         original_module,
         compiled_function,
@@ -579,25 +573,22 @@ def execute_trace(
     *,
     args,
     kwargs,
-    executors_list: Sequence[Any],
-    only_execute_prims: bool,
-    use_cudagraphs: bool,
-    use_rematerialization: bool,
+    compile_data: CompileData,
 ) -> tuple[Any, Callable, list[TraceCtx]]:
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
     extrace, extraces = executors.transform_for_execution(
         trc,
-        executors_list=executors_list,
-        only_execute_prims=only_execute_prims,
-        use_rematerialization=use_rematerialization,
+        executors_list=compile_data.executors_list,
+        only_execute_prims=compile_data.only_execute_prims,
+        use_rematerialization=compile_data.use_rematerialization,
     )
 
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    if use_cudagraphs:
-        c = CUDAGraphExecutor(c)
+    if compile_data.use_cudagraphs:
+        c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 
     # Executes the operation
     result: Any = c(*args, **kwargs)
@@ -625,7 +616,7 @@ def compile(
     use_static_caching: Optional[bool] = None,
     use_last_executed: Optional[bool] = None,
     use_cudagraphs: bool = False,
-    use_generated_backward: bool = False,
+    use_generated_backward: bool = True,
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
@@ -667,7 +658,7 @@ def compile(
                 cd.last_trace_host_stop = cd.last_trace_host_execution_stop
                 return result
         if cd.cache_mode is CACHE_MODES.STATIC:
-            c, traces = cache_get(cd.cache, args[cd.num_constant_args :], kwargs)
+            c, _ = cache_get(cd.cache, args[cd.num_constant_args :], kwargs)
             if c is not None:
                 # Updates statistics before early termination
                 cd.cache_hits += 1
@@ -682,6 +673,36 @@ def compile(
                 return result
         cd.cache_misses += 1
         cd.last_trace_cache_stop = time.time_ns()
+
+        # Determines whether to use autograd.Function or not
+        flat_args, _ = tree_flatten((args, kwargs))
+        tensor_cls = (pytorch.Tensor, TensorProxy)
+        requires_grad = any((isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args))
+        if use_generated_backward and requires_grad:
+            compile_config = {
+                "langctx": langctx,
+                "executors_list": executors_list,
+                "only_execute_prims": only_execute_prims,
+                "always_trace": always_trace,
+                "use_dynamic_caching": use_dynamic_caching,
+                "use_static_caching": use_static_caching,
+                "use_last_executed": use_last_executed,
+                "use_rematerialization": use_rematerialization,
+                "use_cudagraphs": use_cudagraphs,
+            }
+
+            # thunder_backward may recursively call compile and wraps the result in a
+            # torch.autograd.Function to support embedding of Thunder-compiled
+            # functions in PyTorch's Autograd
+            cd.last_trace_host_execution_start = time.time_ns()
+            c = thunder_backward(compile_data=cd, **compile_config)(cd.post_processed_function)
+            result = c(*args, **kwargs)
+            cd.last_trace_host_execution_stop = time.time_ns()
+            cd.last_executed = c
+            if cd.cache_mode is CACHE_MODES.STATIC:
+                cache_put(cd.cache, c, None, args[cd.num_constant_args :], kwargs)
+            cd.last_trace_host_stop = time.time_ns()
+            return result
 
         # TODO Revisit compile() behavior when hit in a trace ctx
         #   This will inline the invocation of compile into the current
@@ -715,10 +736,7 @@ def compile(
             trc,
             args=args,
             kwargs=kwargs,
-            executors_list=executors_list,
-            only_execute_prims=only_execute_prims,
-            use_cudagraphs=(cd.use_cudagraphs and not cd.is_module),
-            use_rematerialization=cd.use_rematerialization,
+            compile_data=cd,
         )
         cd.last_trace_host_execution_stop = time.time_ns()
 
@@ -733,34 +751,12 @@ def compile(
         cd.last_trace_host_stop = time.time_ns()
         return result
 
-    # NOTE This path is completely independent of typical compilation
-    # TODO Refactor these operations so they're not completely disjoint
-    if use_generated_backward:
-        # TODO Test (and probably error) if use_cudagraphs=True
-        compile_config = {
-            "langctx": langctx,
-            "executors_list": executors_list,
-            "only_execute_prims": only_execute_prims,
-            "always_trace": always_trace,
-            "use_dynamic_caching": use_dynamic_caching,
-            "use_static_caching": use_static_caching,
-            "use_last_executed": use_last_executed,
-            "use_rematerialization": use_rematerialization,
-            "use_cudagraphs": use_cudagraphs,
-        }
-
-        # thunder_backward recursively calls compile and wraps the result in a
-        # torch.autograd.Function to support embedding of Thunder-compiled
-        # functions in PyTorch's Autograd
-        _fn = thunder_backward(compile_data=cd, **compile_config)(cd.post_processed_function)
-
     if cd.is_module:
         return _wrap_in_tom(
             original_module=fn,
             possibly_processed_function=cd.post_processed_function,
             compiled_function=_fn,
             compile_data=cd,
-            use_cudagraphs=cd.use_cudagraphs,
         )
 
     # NOTE not is_module

@@ -8,6 +8,7 @@ from numbers import Number
 from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
 import copy
+import inspect
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
@@ -2717,15 +2718,18 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             return (for_autograd, saved_for_backward)
         return result, saved_for_backward
 
+    # Copy the signature of the original function so that the arguments are
+    # named correctly in the augmented forward pass instead of being named
+    # "args" and "kwargs".
+    augmented_forward_fn.__signature__ = inspect.signature(trace.fn)
+
     def ones_like(x):
         if isinstance(x, TensorProxy):
             return full_like(x, fill_value=1)
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
-        elif isinstance(x, Number):
-            return None
         else:
-            raise ValueError(f"forward_and_backward_from_trace: ones_like got an unsupported type {type(x)}")
+            return None
 
     forward_trace = construct_trace()(augmented_forward_fn, *trace.args, **trace.kwargs)
     # We set forward trace to construct proxies because we need these proxies to

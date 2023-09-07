@@ -339,6 +339,10 @@ def _make_differentiable_wrapper(func, args):
         return func(*full_args)
 
     filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
+    # Since now torch.autograd.Function is turned on by default, we need to
+    # detach the tensors so that we are testing the correct implementation of
+    # vjp and not requiring double backward to be implemented.
+    filtered_args = tree_map(lambda x: x.detach(), filtered_args)
     return wrapper, filtered_args
 
 
@@ -451,7 +455,7 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         # Compute vjp result using PyTorch
         out = op.torch_reference(*sample.args, **sample.kwargs)
-        v = make_tensor_like(out)
+        v = make_tensor_like(out.detach())
         expected = torch.autograd.grad(out, sample.args[1], v)
 
         # Compute vjp result using Thunder

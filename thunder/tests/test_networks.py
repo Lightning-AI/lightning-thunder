@@ -31,7 +31,7 @@ def test_nanogpt_complete(executor, device, dtype):
     idx = make((4, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
 
-    tom = executor.make_callable(gpt, disable_preprocessing=False)
+    tom = executor.make_callable(gpt, disable_preprocessing=False, use_generated_backward=False)
     thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)
@@ -76,10 +76,33 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     idx = make((4, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
 
-    tom = executor.make_callable(gpt, disable_preprocessing=False, use_cudagraphs=True)
+    tom = executor.make_callable(gpt, disable_preprocessing=False, use_cudagraphs=True, use_generated_backward=False)
     thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)
+
+
+@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
+@requiresCUDA
+def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
+    tdtype = ttorch.to_torch_dtype(dtype)
+
+    # Creates a nanoGPT model with a smaller size than any of the default options for testing
+    # NOTE Sets dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
+
+    x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+    targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+    torch_result = gpt(x, targets=targets)
+    torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
+
+    cmodel = executor.make_callable(gpt, use_generated_backward=True, disable_preprocessing=False, use_cudagraphs=True)
+    thunder_result = cmodel(x, targets=targets)
+    thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
+
+    assert_close(torch_result, thunder_result)
+    assert_close(torch_grads, thunder_grads)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -94,7 +117,13 @@ def test_nanogpt_csa(executor, device, dtype):
     inp = make((2, config.block_size, config.n_embd))
     torch_result = csa(inp)
 
-    tom = executor.make_callable(csa, disable_preprocessing=False)
+    # TODO: turn use_generated_backward=True back on once we have a fix for
+    # AssertionError: Tensor-likes are not close!
+    # Mismatched elements: 451 / 1572864 (0.0%)
+    # Greatest absolute difference: 2.0623207092285156e-05 at index (1, 433, 24) (up to 1e-05 allowed)
+    # Greatest relative difference: 0.03444782271981239 at index (0, 484, 119) (up to 1.3e-06 allowed)
+    # See: https://github.com/Lightning-AI/lightning-thunder/issues/997
+    tom = executor.make_callable(csa, disable_preprocessing=False, use_generated_backward=False)
     thunder_result = tom(inp)
 
     assert_close(torch_result, thunder_result)

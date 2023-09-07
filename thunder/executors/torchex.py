@@ -1621,13 +1621,21 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.executors.passes import del_last_used
         from thunder.core.rematerialization import rematerialize_forward_and_backward
         from thunder.core.transforms import forward_and_backward_from_trace
+        from thunder.cudagraphs import CUDAGraphExecutor
 
         def make_trace(func):
-            return partial(trace(inline_trace=False), func)
+            return partial(trace(langctx=compile_config.get("langctx"), inline_trace=False), func)
 
         def split_forward_backward(*args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used
             # behind a cache.
+            flat_args, _ = tree_flatten((args, kwargs))
+            tensor_cls = (torch.Tensor, TensorProxy)
+            requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
+            # If none of the inputs require gradients, raise an error
+            if not any(requires_grad_mask):
+                raise RuntimeError("PyTorch's Autograd interface requires at least one tensor input with requires_grad=True")
+
             primal_trace = make_trace(func)(*args, **kwargs)
 
             # torch.autograd.Function doesn't support non-flat outputs, the
@@ -1639,9 +1647,6 @@ class ThunderFunction(torch.autograd.Function):
 
             # Update the backward trace to only compute gradients for the
             # inputs that require gradients
-            flat_args, _ = tree_flatten((args, kwargs))
-            tensor_cls = (torch.Tensor, TensorProxy)
-            requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
             assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
             filtered_grads = tuple(
                 (arg_grad if requires_grad else None)
@@ -1720,6 +1725,11 @@ class ThunderFunction(torch.autograd.Function):
                 compile_data.forward_last_traces = fw_extraces
                 compile_data.backward_last_traces = bw_extraces
 
+                if compile_data.use_cudagraphs or compile_config.get("use_cudagraphs", False):
+                    fw = CUDAGraphExecutor(fw_extrace.python_callable(), num_constant_args=compile_data.num_constant_args)
+                    bw = CUDAGraphExecutor(bw_extrace.python_callable(), num_constant_args=len(bw_extrace.args[0][0]))
+                    return fw, bw
+
             return fw_extrace.python_callable(), bw_extrace.python_callable()
 
         return split_forward_backward
@@ -1769,7 +1779,7 @@ def thunder_backward(*, compile_data=None, **compile_config):
     >>> print(f"b.grad: {b.grad}")
     """
 
-    compile_config = compile_config | {"disable_preprocessing": True}
+    compile_config = compile_config | {"disable_preprocessing": True} | {"use_generated_backward": False}
 
     def decorator(thunder_func):
         from thunder import compile
