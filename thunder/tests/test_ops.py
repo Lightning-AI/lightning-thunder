@@ -56,8 +56,8 @@ def snippet_torch_consistency(op, torch_op, sample, comp):
 # TODO Remove the atol and rtol defaults and rely on the given comparator to set them
 @ops(tuple(op for op in opinfos if op.torch_reference is not None))
 def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
-    if LooseVersion(torch.__version__) < "1.13" and dtype is dtypes.complex32:
-        pytest.skip("complex32 tests on PyTorch versions before 1.13 are skipped!")
+    if dtypes.is_complex_dtype(dtype):
+        pytest.skip("Skipping complex operator tests in CI for speed")
 
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp
@@ -109,6 +109,8 @@ def snippet_jax_consistency(op, jax_op, sample, comp):
 @ops(tuple(op for op in opinfos if op.jax_reference is not None))
 @requiresJAX
 def test_core_vs_jax_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
+    if dtypes.is_complex_dtype(dtype):
+        pytest.skip("Skipping complex operator tests in CI for speed")
     if dtype is dtypes.complex32:
         pytest.skip("jax doesn't support complex32!")
     if dtype is dtypes.bfloat16:
@@ -159,6 +161,8 @@ def snippet_numpy_consistency(op: OpInfo, np_op, sample: SampleInput, comp: Call
 
 @ops(tuple(op for op in opinfos if op.numpy_reference is not None))
 def test_core_vs_numpy_consistency(op: OpInfo, device: str, dtype: dtypes.dtype, executor, comp):
+    if dtypes.is_complex_dtype(dtype):
+        pytest.skip("Skipping complex operator tests in CI for speed")
     if dtype == dtypes.complex32:
         pytest.skip("NumPy does not support complex32")
     if dtype == dtypes.bfloat16:

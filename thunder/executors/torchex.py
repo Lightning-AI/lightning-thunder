@@ -242,17 +242,13 @@ def _uniform_philox_check(
     rng_seed: torch.Tensor,
     rng_offset: torch.Tensor,
 ) -> bool:
-
     utils.check(
         minval == 0.0 and maxval == 1.0,
         lambda: f"not supported combination of minval and maxval of {(minval, maxval)}",
     )
 
     # ref: https://github.com/pytorch/pytorch/blob/b60273b88a25e282728a036dd08d39035a369d1f/aten/src/ATen/cuda/CUDAGeneratorImpl.cpp#L230
-    utils.check(
-        rng_offset % 4 == 0,
-        lambda: f"`rng_offset` must be a multiple of 4 but {rng_offset % 4 = }"
-    )
+    utils.check(rng_offset % 4 == 0, lambda: f"`rng_offset` must be a multiple of 4 but {rng_offset % 4 = }")
 
     utils.check(
         ltorch.to_thunder_device(device).devicetype == devices.DeviceType.CUDA,

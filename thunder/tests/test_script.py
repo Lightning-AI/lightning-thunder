@@ -245,12 +245,15 @@ def test_inline_submodule():
 @skipif_not_pytorch_2_1
 @skipif_not_python_3_10
 @pytest.mark.parametrize("name", [config["name"] for config in configs])
-@pytest.mark.parametrize("cls", [
-    lit_gpt_model.GPTAdapted,
-    # if this starts passing, good news, we now support the reference lit-gpt implementation. to update this, delete the
-    # GPTCurrent implementation and use just the reference
-    pytest.param(lit_gpt_model.GPT, marks=pytest.mark.xfail(strict=True))
-])
+@pytest.mark.parametrize(
+    "cls",
+    [
+        lit_gpt_model.GPTAdapted,
+        # if this starts passing, good news, we now support the reference lit-gpt implementation. to update this, delete the
+        # GPTCurrent implementation and use just the reference
+        pytest.param(lit_gpt_model.GPT, marks=pytest.mark.xfail(strict=True)),
+    ],
+)
 @torch.no_grad()
 def test_litgpt_variants(name, cls):
     model = cls.from_name(name)

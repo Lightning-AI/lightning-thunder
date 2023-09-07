@@ -63,16 +63,20 @@ def test_cudnn_sdpa():
     finally:
         deregister_cudnnex()
 
+
 def layer_norm_fn(*args, **kwargs):
     return thunder.torch.layer_norm(*args, **kwargs)
 
+
 def scaled_dot_product_attention_fn(*args, **kwargs):
     return thunder.torch.scaled_dot_product_attention(*args, **kwargs)
+
 
 op_name_to_fn = {
     "layer_norm": layer_norm_fn,
     "scaled_dot_product_attention": scaled_dot_product_attention_fn,
 }
+
 
 def snippet_torch_consistency(op, torch_op, sample):
     thunder_result = op(*sample.args, **sample.kwargs)
@@ -89,7 +93,10 @@ def snippet_torch_consistency(op, torch_op, sample):
 # TODO The executor passed below is just a "dummy" that actually gets ignored -- we should provide
 #   a way to use decorators like @ops without a particular executor
 @ops(
-    (get_opinfo("layer_norm"), get_opinfo("scaled_dot_product_attention"),),
+    (
+        get_opinfo("layer_norm"),
+        get_opinfo("scaled_dot_product_attention"),
+    ),
     supported_devicetypes=(devices.DeviceType.CUDA,),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_executors=(TorchExecutor,),
@@ -104,6 +111,7 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
         at_least_one_supported_input = False
         for sample in op.reference_inputs(device, dtype, requires_grad=False):
             from thunder.executors.cudnnex import _op_to_cudnn
+
             _, check, _ = _op_to_cudnn.get(op.op.id, (None, None, None))
             if not check(*sample.args, **sample.kwargs):
                 continue

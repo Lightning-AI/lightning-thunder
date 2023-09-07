@@ -2217,9 +2217,7 @@ def cat_backward(tensor_dim_lens: list[int], dim: int, g: TensorProxy) -> (list[
 
     slice_start = 0
     for dim_len in tensor_dim_lens:
-        grads.append(
-            slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim)
-        )
+        grads.append(slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim))
         slice_start += dim_len
     return grads, None
 

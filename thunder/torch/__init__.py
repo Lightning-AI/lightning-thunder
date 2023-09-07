@@ -820,7 +820,9 @@ def uniform_philox(
     device = to_thunder_device(device)
     dtype = to_thunder_dtype(dtype)
 
-    return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, rng_seed=rng_seed, rng_offset=rng_offset)
+    return clang.uniform_philox(
+        shape, minval, maxval, device=device, dtype=dtype, rng_seed=rng_seed, rng_offset=rng_offset
+    )
 
 
 @torchsymbol(torch.zeros)
@@ -1922,11 +1924,11 @@ def outer(a, b):
 
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention)
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
-    for arg_name, arg in zip(('query', 'key', 'value'), (query, key, value)):
+    for arg_name, arg in zip(("query", "key", "value"), (query, key, value)):
         utils.check(
             dtypes.is_float_dtype(arg.dtype),
             lambda: f"{arg_name}.dtype={arg.dtype} is expected to be a floating type",
-            ValueError
+            ValueError,
         )
 
     # Reference implementation:
@@ -1955,9 +1957,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
             logits = logits + attn_mask
         else:
             utils.check(
-                False,
-                lambda: f"{attn_mask.dtype=} is expected to be of the boolean or a floating type",
-                ValueError
+                False, lambda: f"{attn_mask.dtype=} is expected to be of the boolean or a floating type", ValueError
             )
 
     attn_weight = softmax(logits, dim=-1)

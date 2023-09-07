@@ -4508,13 +4508,13 @@ def layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
         (16, 512, 1600),
     )
 
-    for (batch, seq_len, embedding) in cases:
+    for batch, seq_len, embedding in cases:
         a = make_arg(batch, seq_len, embedding)
         normalized_shape = (embedding,)
 
         weight = make_arg(normalized_shape)
         bias = make_arg(normalized_shape)
-        
+
         yield SampleInput(a, normalized_shape, weight, bias, 1e-03)
 
 
@@ -4808,18 +4808,14 @@ def scaled_dot_product_attention_error_generator(op, device, **kwargs):
     yield (
         SampleInput(q, k, v, attn_mask=attn_mask, is_causal=False),
         ValueError,
-        "attn_mask.dtype=(.*?) is expected to be of the boolean or a floating type"
+        "attn_mask.dtype=(.*?) is expected to be of the boolean or a floating type",
     )
 
     # make q, k, v a non-floating tensor
     var_names = ("query", "key", "value")
     for pos, var_name in enumerate(var_names):
         args = [make(1, 1, 1, dtype=torch.bool) if i == pos else make(1, 1, 1) for i in range(3)]
-        yield (
-            SampleInput(*args),
-            ValueError,
-            f"{var_name}.dtype(.*?) is expected to be a floating type"
-        )
+        yield (SampleInput(*args), ValueError, f"{var_name}.dtype(.*?) is expected to be a floating type")
 
 
 sdpa_opinfo = OpInfo(

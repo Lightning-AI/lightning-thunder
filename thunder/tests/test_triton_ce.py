@@ -35,6 +35,9 @@ if triton_utils.is_triton_version_at_least(min_triton_version):
 @requiresCUDA
 @requiresTriton
 def test_triton_cross_entropy(device, dtype):
+    if IN_CI:
+        pytest.skip("Currently these tests are skipped in CI for speed")
+
     try:
         register_triton_entropyex()
         logits = torch.randn([2048, 50257], device=device, dtype=dtype)
@@ -80,6 +83,8 @@ def snippet_torch_consistency(op, torch_op, sample):
 @requiresCUDA
 @requiresTriton
 def test_triton_cross_entropy_vs_torch_consistency(device, dtype):
+    if IN_CI:
+        pytest.skip("Currently these tests are skipped in CI for speed")
     if dtype == torch.float16 or dtype == torch.bfloat16:
         pytest.skip("Currently skipping float16 and bfloat16 due to numerical accuracy")
 

@@ -241,8 +241,13 @@ def uniform_philox(
     device = devices.to_device(device)
 
     return prims.uniform_philox(
-        shape, minval, maxval,
-        device=device, dtype=dtype, rng_seed=rng_seed, rng_offset=rng_offset,
+        shape,
+        minval,
+        maxval,
+        device=device,
+        dtype=dtype,
+        rng_seed=rng_seed,
+        rng_offset=rng_offset,
     )
 
 

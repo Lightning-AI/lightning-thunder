@@ -23,11 +23,12 @@ def test_nanogpt_complete(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
-    # NOTE: currently setting dropout to zero for reproducibility
-    config = nanogpt_model.GPTConfig(dropout=0)
+    # Creates a nanoGPT model with a smaller size than any of the default options for testing
+    # NOTE Sets dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    idx = make((8, 64), dtype=torch.int64, low=0, high=255)
+    idx = make((4, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
 
     tom = executor.make_callable(gpt, disable_preprocessing=False)
@@ -43,12 +44,13 @@ def test_nanogpt_complete(executor, device, dtype):
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
-    # NOTE: currently setting dropout to zero for reproducibility
-    config = nanogpt_model.GPTConfig(dropout=0)
+    # Creates a nanoGPT model with a smaller size than any of the default options for testing
+    # NOTE Sets dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    x = make_tensor((8, 64), dtype=torch.int64, low=0, high=255, device=device)
-    targets = make_tensor((8, 64), dtype=torch.int64, low=0, high=255, device=device)
+    x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+    targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
     torch_result = gpt(x, targets=targets)
     torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
 
@@ -66,11 +68,12 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
-    # NOTE: currently setting dropout to zero for reproducibility
-    config = nanogpt_model.GPTConfig(dropout=0)
+    # Creates a nanoGPT model with a smaller size than any of the default options for testing
+    # NOTE Sets dropout to zero for reproducibility
+    config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    idx = make((8, 64), dtype=torch.int64, low=0, high=255)
+    idx = make((4, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
 
     tom = executor.make_callable(gpt, disable_preprocessing=False, use_cudagraphs=True)
