@@ -1135,3 +1135,18 @@ def test_collision():
 #     torch_result = mlp(a)
 
 #     assert_close(thunder_result, torch_result)
+
+
+def test_method_with_kwarg():
+    class Model(torch.nn.Module):
+        def forward(self, x):
+            return self.thing(x, b=1)
+
+        def thing(self, a, b):
+            return a + b
+
+    m = Model()
+    tom = thunder.compile(m)
+    x = torch.tensor(3)
+    actual = tom(x)
+    assert actual.item() == 4

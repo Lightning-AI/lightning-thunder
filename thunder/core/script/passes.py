@@ -183,7 +183,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
             mod1: object = fn_value
             value_for_self1 = n.inputs[0]
             fn_value = fn_value.forward
-        elif inspect.ismethod(fn_value):
+        elif isinstance(fn_value, types.MethodType):
             mod1 = fn_value.__self__
             value_for_self1 = n.inputs[1]
         else:
@@ -202,10 +202,14 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
             value_for_self1 = n.inputs[0]
             fn_value = fn_value.forward
         else:
-            if not isinstance(fn_value, types.FunctionType):
-                raise NotImplementedError(f"inlining {n}")
-            mod1 = None
-            value_for_self1 = None
+            if isinstance(fn_value, types.FunctionType):
+                mod1 = None
+                value_for_self1 = None
+            elif isinstance(fn_value, types.MethodType):
+                mod1 = fn_value.__self__
+                value_for_self1 = n.inputs[1]
+            else:
+                raise NotImplementedError(f"inlining {n}, found {fn_value}")
     else:
         raise NotImplementedError(f"inlining {n}")
 

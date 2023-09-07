@@ -7,6 +7,7 @@ import itertools
 import re
 import sys
 import textwrap
+import types
 from typing import Callable, List, Optional
 from collections.abc import Iterator
 
@@ -772,7 +773,7 @@ def assert_flow_matches_spec(
 
 
 def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
-    fn = fn.__func__ if inspect.ismethod(fn) else fn
+    fn = fn.__func__ if isinstance(fn, types.MethodType) else fn
     signature = inspect.signature(fn)
 
     proto_graph = apply_protograph_passes(frontend.parse_bytecode(fn))
