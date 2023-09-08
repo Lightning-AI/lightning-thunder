@@ -1680,24 +1680,23 @@ def _var_mean_aug_fwd(a, dim, *, correction):
     return (v, m), (a, dim, correction, m)
 
 
+# TODO: fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
+# by returning zeros_like(a) or similar.
+# TODO: fix grad when correction > n_elem_reduced.
 @register_backward(prims.PrimIDs.VAR_MEAN)
 def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
-    def n_elem_reduced(a, dims):
-        dims = canonicalize_dims(a.ndim, dims)
-        reduction_size = 1
-        for idx, size in enumerate(a.size()):
-            if idx in dims:
-                reduction_size *= size
-        return reduction_size
+    n_elem_reduced = a.numel // mean.numel if a.numel != 0 else 1
 
     def mean_backward(a, dims, grad):
-        mean_local_grad = 1.0 / n_elem_reduced(a, dims)
-        return restore_reduced_dims(grad, dims, a.shape) * mean_local_grad
+        mean_scale = 1.0 / n_elem_reduced
+        grad = restore_reduced_dims(grad, dims, a.shape)
+        return mean_scale * grad
 
     def var_backward(a, dims, correction, mean, grad):
-        # Doing first the multiplication to avoid Python's float division
-        var_local_grad = (2.0 * restore_reduced_dims(grad, dims, a.shape)) / (n_elem_reduced(a, dims) - correction)
-        return var_local_grad * (a - restore_reduced_dims(mean, dims, a.shape))
+        normalization_scalar = n_elem_reduced - correction
+        grad = restore_reduced_dims(grad, dims, a.shape)
+        mean = restore_reduced_dims(mean, dims, a.shape)
+        return (2.0 * grad * (a - mean)) / normalization_scalar
 
     return (
         var_backward(a, dim, correction, mean, grad_v) + mean_backward(a, dim, grad_m),
