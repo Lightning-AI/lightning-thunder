@@ -1893,6 +1893,213 @@ def group_norm(
     return res
 
 
+def _interpolate_scale_factor_helper(
+    a: TensorLike,
+    scale_factor: Sequence[float] | float,
+    mode: str = "nearest",
+) -> TensorLike:
+    assert mode == "nearest"
+
+    # a is assumed to be at least 3D.
+    batch, channels, *spatial_dims = a.shape
+    dim = len(spatial_dims)
+
+    if isinstance(scale_factor, float):
+        utils.check(
+            scale_factor > 0,
+            lambda: f"{scale_factor=} is expected to be strictly positive"
+        )
+        scale_factor = (scale_factor,) * dim
+    else:
+        utils.check(
+            (isinstance(scale_factor, Sequence) and len(scale_factor) == dim
+                and all(isinstance(s, float) and s > 0 for s in scale_factor)),
+            lambda: f"{scale_factor=} is expected to be a strictly positive floating point number or "
+                    f"a sequence of strictly positive floating point numbers of length {dim}"
+        )
+
+    # output_dims stores an approximation of the output shape
+    # that gets refined over the course of the algorithm below.
+    # The very first two dimenions, i.e. the batch and the channels
+    # dimenions are never modified.
+    output_dims = [batch, channels]
+
+    # scale_factor[i - 2] > 1 implies output_dims[i] > a.shape[i].
+    # Then we keep this i'th dim in dims_to_expand for further processing.
+    dims_to_expand = []
+
+    for k, (scale, input_dim) in enumerate(zip(scale_factor, spatial_dims)):
+        output_dim = int(scale * input_dim)
+        utils.check(
+            output_dim > 0,
+            lambda: f"provided scale_factor value {scale} results "
+                    f"in a zero length output at dimension {k + 2}"
+        )
+
+        if output_dim <= input_dim:
+            # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
+            stride = (input_dim + output_dim - 1) // output_dim
+            a = clang.slice_in_dim(a, 0, input_dim, stride=stride, dim=k + 2)
+            output_dims.append(a.shape[k + 2])
+        else:
+            # scale_factor > 1 requires dim expansion.
+            # This one can be potentially non-trivial.
+            dims_to_expand.append(k + 2)
+            output_dims.append(output_dim)
+
+    def dim_expander(t, dim, n_repeats):
+        t = unsqueeze(t, dim + 1)
+        t = expand(t, t.shape[:dim + 1] + (n_repeats,) + t.shape[dim + 2:])
+        return t
+
+    # Iterate over dim_to_expand and only process dims for which
+    # output_dim is a multiple of input_dim.
+    # This dim expansion requires view-only operations!
+    # If output_dim is not a multiple of input_dim, a copy
+    # is unavoidable in this decomposition.
+    # TODO: optimize this decomposition with pool/unpool primitives.
+    n_dims_to_cat_along = 0
+    for k in reversed(dims_to_expand):
+        # NOTE: dims_to_expand store dimensions relative to the output!
+        output_dim = output_dims[k]
+        input_dim = spatial_dims[k - 2]
+        if output_dim % input_dim == 0:
+            n_repeats = output_dim // input_dim
+            a = dim_expander(a, k, n_repeats)
+        else:
+            # output_dim is not a multiple of input_dim,
+            # so a memory copy is needed. We delegate this
+            # to the loop below to reduce memory movements.
+            # Just unsqueeze for easier procesing in the loop below.
+            n_dims_to_cat_along += 1
+            a = unsqueeze(a, k + 1)
+
+    # Short circuit if no complex cat'ing is expected.
+    if n_dims_to_cat_along == 0:
+        a = reshape(a, output_dims)
+        return a
+
+
+    # Process output dims which are not multiples of input dims.
+    # Gotta do some flatten+cat.
+    for i, k in enumerate(reversed(dims_to_expand)):
+        output_dim = output_dims[k]
+        input_dim = spatial_dims[k - 2]
+
+        # This case is already processed
+        if output_dim % input_dim == 0:
+            continue
+        else:
+            # k_offset = the number of dims that got expanded to the left
+            # from the current dimension.
+            k_offset = len(dims_to_expand) - i - 1
+
+            # curr_dim corresponds to dimension k in the original tensor a.
+            curr_dim = k + k_offset
+
+            # Undo the squeeze to re-use the dim_expander method.
+            a = unsqueeze(a, curr_dim + 1)
+
+        # The logic is the same as in tensor_split, i.e.
+        # we want to split output_dim into input_dim chunks.
+        # The first output_dim % input_dim subtensors in demension k
+        # are copied (output_dim // input_dim + 1) times,
+        # and the remaining (input_dim - output_dim % input_dim)
+        # subtensors are copied (output_dim // input_dim) times.
+        # The first part is reffered to as the lower, (i.e. lo) part,
+        # and the remaining as the higher, (i.e. hi part).
+        # Once copies of dimension k are introduced in dimension k + 1,
+        # we need to flatten the lower and the higher parts in dimensions
+        # [k, k + 1] and concatenate them in dimension k.
+        lo_len = output_dim % input_dim
+        hi_n_copies = output_dim // input_dim
+
+        a_lo = clang.slice_in_dim(a, 0, lo_len, dim=curr_dim)
+        a_hi = clang.slice_in_dim(a, lo_len, input_dim, dim=curr_dim)
+
+        a_lo = dim_expander(a_lo, curr_dim, hi_n_copies + 1)
+        a_hi = dim_expander(a_hi, curr_dim, hi_n_copies)
+
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/946.
+        # The broadcast dimension needs to get materialized for nvFuser.
+        # This, however, will not cause performance issues in eager mode
+        # since flatten returns a contiguous copy turning the subsequent
+        # contiguous call into a no-op.
+        a_lo = contiguous(flatten(a_lo, curr_dim, curr_dim + 1))
+        a_hi = contiguous(flatten(a_hi, curr_dim, curr_dim + 1))
+
+        a = cat((a_lo, a_hi), dim=curr_dim)
+
+    a = reshape(a, output_dims)
+
+    return a
+
+
+def _interpolate_size_helper(
+    a: TensorLike,
+    size: Sequence[int] | int,
+    mode: str = "nearest",
+) -> TensorLike:
+    batch, channels, *spatial_dims = a.shape
+    dim = len(spatial_dims)
+
+    if isinstance(size, int):
+        utils.check(
+            size > 0,
+            lambda: f"{size=} is expected to be greater than zero"
+        )
+        size = (size,) * dim
+    else:
+        utils.check(
+            (isinstance(size, Sequence) and len(size) == dim
+                and all(isinstance(s, int) and s > 0 for s in size)),
+            lambda: f"{size=} is expected to be a greater than zero integer "
+                    f"or a sequence of strictly positive integers of length {dim}"
+        )
+
+    scale_factor = tuple(
+        output_size / input_size for output_size, input_size in zip(size, spatial_dims)
+    )
+
+    return _interpolate_scale_factor_helper(a, scale_factor)
+
+
+@torchsymbol(torch.nn.functional.interpolate, is_method=False)
+def interpolate(
+    a: TensorLike,
+    size: int | Sequence[int] | None = None,
+    scale_factor: float | Sequence[float] | None = None,
+    mode: str = "nearest",
+) -> TensorLike:
+    # TODO: implement later {
+    utils.check(
+        mode == "nearest",
+        lambda: f"only mode='nearest' is supported at the moment, but got {mode=}",
+        exception_type=NotImplementedError
+    )
+    # }
+
+    utils.check(
+        a.ndim >= 3,
+        lambda: f"Expected {a.ndim=} >= 3"
+    )
+    utils.check(
+        a.numel > 0,
+        lambda: f"Expected {a.numel=} to be greater than 0"
+    )
+
+    utils.check(
+        (size is not None) ^ (scale_factor is not None),
+        lambda: "Only one of `size` or `scale_factor` has to be specified, but "
+                f"got {size=} and {scale_factor=}"
+    )
+
+    if size is not None:
+        return _interpolate_size_helper(a, size, mode)
+    else:
+        return _interpolate_scale_factor_helper(a, scale_factor, mode)
+
+
 # id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:

@@ -4960,4 +4960,137 @@ cross_entropy_opinfo = OpInfo(
 nn_ops.append(cross_entropy_opinfo)
 
 
+def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Not that much variability in the batch and channels dims
+    # since they are never modified.
+    batch = ((1,), (2,))
+    channels = ((2,),)
+
+    # For shape in dim_options we try size=dim_options[shape]
+    dim_options = {
+        # Nice prime number. We test co-prime with 5 sizes.
+        # NOTE: if the tests take too much time, reducing
+        # the tuple length is the best way to cut it down.
+        5: (2, 3, 4, 7, 8, 9),
+        # Nice even number. We test *0.5 *1, and *2.
+        6: (3, 6, 12),
+    }
+    # Testing 3D-5D inputs only since they are the ones that PyTorch supports.
+    n_spatial_dims = (1, 2, 3)
+
+    # All possible combinations to test that dependencies between dimensions are captured correctly.
+    # Since specifying size will call the scale_factor path, we do not explicitly test scale_factor
+    # in the loop below.
+    for b, c, l, dim in itertools.product(batch, channels, dim_options, n_spatial_dims):
+        for size in itertools.product(dim_options[l], repeat=dim):
+            spatial_dims = (l,) * dim
+            a_shape = b + c + spatial_dims
+
+            yield SampleInput(make(a_shape), size=size)
+
+    # Test scale/scale_factor passed as a scalar
+    yield SampleInput(make(1, 1, 5, 5), scale_factor=0.5)
+    yield SampleInput(make(1, 1, 5, 5), size=10)
+
+    # Let's try some crazy scale_factor
+    yield SampleInput(make(1, 1, 5, 5), scale_factor=(1.37, 0.26))
+    yield SampleInput(make(1, 1, 5, 5), scale_factor=(0.26, 1.37))
+
+
+def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    yield (
+        SampleInput(make(1, 1), scale_factor=2.),
+        RuntimeError,
+        f"Expected (.*?)ndim(.*?) >= 3"
+    )
+    yield (
+        SampleInput(make(1, 1, 0), scale_factor=2.),
+        RuntimeError,
+        f"Expected (.*?)numel(.*?) to be greater than 0"
+    )
+
+    yield (
+        SampleInput(make(1, 1, 1)),
+        RuntimeError,
+        f"Only one of `size` or `scale_factor` has to be specified"
+    )
+    yield (
+        SampleInput(make(1, 1, 1), size=(2,), scale_factor=2.0),
+        RuntimeError,
+        f"Only one of `size` or `scale_factor` has to be specified"
+    )
+
+    yield (
+        SampleInput(make(1, 1, 1), size=0),
+        RuntimeError,
+        f"size(.*?) is expected to be greater than zero"
+    )
+    yield (
+        SampleInput(make(1, 1, 1), size=2.),
+        RuntimeError,
+        f"size(.*?) is expected to be a greater than zero integer"
+    )
+    yield (
+        SampleInput(make(1, 1, 1), size=(2, 2)),
+        RuntimeError,
+        f"size(.*?) is expected to be (.*?) a sequence (.*?) of length 1"
+    )
+    yield (
+        SampleInput(make(1, 1, 1, 1), size=(2., 2)),
+        RuntimeError,
+        f"size(.*?) is expected to be (.*?) a sequence of strictly positive integers"
+    )
+
+    yield (
+        SampleInput(make(1, 1, 1), scale_factor=0.),
+        RuntimeError,
+        f"scale_factor(.*?) is expected to be strictly positive"
+    )
+    yield (
+        SampleInput(make(1, 1, 1), scale_factor=2),
+        RuntimeError,
+        f"scale_factor(.*?) is expected to be a strictly positive floating point number"
+    )
+    yield (
+        SampleInput(make(1, 1, 1), scale_factor=(2., 2.)),
+        RuntimeError,
+        f"scale_factor(.*?) is expected to be (.*?) a sequence (.*?) of length 1"
+    )
+    yield (
+        SampleInput(make(1, 1, 1, 1), scale_factor=(2., 2)),
+        RuntimeError,
+        f"scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers"
+    )
+
+
+interpolate_opinfo = OpInfo(
+    ltorch.interpolate,
+    sample_input_generator=interpolate_sample_generator,
+    error_input_generator=interpolate_error_generator,
+    torch_reference=torch.nn.functional.interpolate,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support CUDA BFloat16 upsample used in interpolate
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # PyTorch does not support CPU Half upsample used in interpolate
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(interpolate_opinfo)
+
+
 opinfos.extend(nn_ops)

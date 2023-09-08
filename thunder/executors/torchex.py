@@ -1180,6 +1180,29 @@ def group_norm(
     return sym.bind(a, num_groups, weight, bias, eps, output=bsym.output)
 
 
+# TODO: add support for other modes and params
+def interpolate(
+    bsym: BoundSymbol,
+    a: TensorProxy,
+    size: int | Sequence[int] | None = None,
+    scale_factor: float | Sequence[float] | None = None,
+    mode: str = "nearest",
+) -> BoundSymbol:
+    sym = Symbol(name="interpolate", meta=None, _module=torch.nn.functional)
+    return sym.bind(a, size, scale_factor, mode, output=bsym.output)
+
+
+def _interpolate_check(
+    a: TensorProxy,
+    size: int | Sequence[int] | None = None,
+    scale_factor: float | Sequence[float] | None = None,
+    mode: str = "nearest",
+) -> bool:
+    # PyTorch only supports 3D to 5D inputs only.
+    # Our decomposition does not have such limitations
+    return 3 <= a.ndim <= 55
+
+
 def layer_norm(bsym: BoundSymbol, a, normalized_shape, weight=None, bias=None, eps: Number = 1e-5):
     sym = Symbol(name="layer_norm", meta=None, _module=torch.nn.functional)
     tbsym = BoundSymbol(sym, args=(a, normalized_shape, weight, bias, eps), kwargs={}, output=bsym.output)
@@ -1534,6 +1557,7 @@ _ops_map.update(
         "torch.nn.functional.embedding": (_always_executable, embedding),
         "torch.nn.functional.gelu": (_always_executable, gelu),
         "torch.nn.functional.group_norm": (_always_executable, group_norm),
+        "torch.nn.functional.interpolate": (_interpolate_check, interpolate),
         "torch.layer_norm": (_always_executable, layer_norm),
         "torch.logsumexp": (_always_executable, logsumexp),
         "torch.log_softmax": (_always_executable, log_softmax),
