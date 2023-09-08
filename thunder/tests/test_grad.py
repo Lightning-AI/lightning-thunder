@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+import itertools
 
 # NOTE: Dependency on fdm and NumPy is temporary.
 # We will remove it once we have a native way to compute numerical derivatives.

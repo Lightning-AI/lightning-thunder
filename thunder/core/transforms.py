@@ -1726,6 +1726,34 @@ def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
     )
 
 
+@register_augmented_forward(prims.PrimIDs.PAD)
+def pad_aug_fwd(a, padding_value, padding_config):
+    return VJPDual(
+        (prims.pad(a, padding_value, padding_config),),
+        (a, padding_config)
+    )
+
+
+@register_backward(prims.PrimIDs.PAD)
+def pad_backward(a, padding_config, g):
+    # Short circuit on empty input.
+    if any (dim == 0 for dim in a.shape):
+        return full_like(a, fill_value=0), None, None
+
+    # Un-pad by padding with zero values
+    zero_padding_config = [
+        (-lo, -hi, 0) for lo, hi, _ in padding_config
+    ]
+
+    g = prims.pad(g, 0.0, zero_padding_config)
+
+    # Un-slice by slicing with a stride of value (dilation + 1)
+    for dim, (_, _, d) in enumerate(padding_config):
+        g = slice_in_dim(g, 0, g.shape[dim], stride=d + 1, dim=dim)
+
+    return g, None, None
+
+
 @register_augmented_forward(prims.PrimIDs.PROD)
 def prod_aug_fwd(x, dims):
     """Augmented prod operation.
