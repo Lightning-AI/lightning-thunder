@@ -26,6 +26,7 @@ from thunder.core.script.graph import (
 from thunder.core.script.instrumentation import verbose_error, record
 from thunder.core.script.python_ir_data import get_instruction, ThunderInstruction, JUMP_ABSOLUTE, X_THUNDER_STORE_ATTR
 from thunder.torch import _torch_to_thunder_complete_map
+from thunder.core.script.noinline import NOINLINE_METHODS
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
 MAX_INLINE_ITERS = 50
@@ -319,42 +320,6 @@ def inline_submodule_calls(gr: "Graph") -> bool:
                     changed = True
 
     return changed
-
-
-NOINLINE_METHODS: ContextVar[set[Callable]] = ContextVar("NOINLINE_METHODS", default=set())
-
-
-def noinline(f: Callable) -> Callable:
-    """
-    Function/Decorator to prevent preprocessing from inlining the function.
-
-    Example:
-    >>> @noinline
-    >>> def foo(x):
-    >>>     return x + 1
-    >>> def bar(x):
-    >>>     return foo(x) + 1
-    >>> thunder.compile(bar)
-    """
-
-    NOINLINE_METHODS.get().add(f)
-    return f
-
-
-@noinline
-def invoke_noinline(f: Callable) -> Callable:
-    """
-    Function to prevent preprocessing from inlining a single invocation of a function.
-
-    Example:
-    >>> def foo(x):
-    >>>     return x + 1
-    >>> def bar(x):
-    >>>     return invoke_noinline(foo)(x) + 1
-    >>> thunder.compile(bar)
-    """
-
-    return f
 
 
 def strongly_inline_functions(gr: "Graph") -> None:

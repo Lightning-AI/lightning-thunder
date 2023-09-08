@@ -15,6 +15,7 @@ import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, pyval, pytype
 from thunder.core.langctx import langctx
 import thunder.core.devices as devices
+from thunder.core.script.noinline import noinline
 
 # This file defines the operations in lightning.compile's "core" language.
 #
@@ -35,7 +36,7 @@ def clang_ctx(fn):
     module_name = clang_ctx.__module__
     module = utils.get_module(module_name)
     _fn = langctx(module)(fn)
-    return _fn
+    return noinline(_fn)
 
 
 #

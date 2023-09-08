@@ -10,6 +10,7 @@ from thunder.core.symbol import Symbol
 import thunder.clang as clang
 from thunder.core.trace import get_tracectx
 import thunder.core.devices as devices
+from thunder.core.script.noinline import noinline
 
 
 __all__ = [
@@ -127,6 +128,7 @@ def numpy_symbol(fn):
     module = utils.get_module(module_name)
     _fn = langctx(module)(fn)
     sym = Symbol(name=fn.__name__, meta=_fn)
+    noinline(_fn)
     return sym
 
 

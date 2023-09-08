@@ -13,13 +13,14 @@ from torch.testing import assert_close, make_tensor
 
 import thunder.core.script.frontend
 import thunder.core.script.passes
-from thunder.core.script.passes import noinline, invoke_noinline
+from thunder.core.script.noinline import noinline, invoke_noinline
 import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
 from thunder.core.utils import enable_debug_asserts
 import thunder.torch as ltorch
 from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
 from thunder.tests.framework import instantiate, requiresNVFuser, IN_CI
+from thunder.core.symbol import Symbol
 
 from thunder.executors.utils import Executor
 from thunder.tests.lit_gpt_model import configs
@@ -731,6 +732,56 @@ def test_invoke_noinline():
 
     assert add2 not in thunder.compile(fn1)._pfn.__code__.co_consts
     assert add2 in thunder.compile(fn2)._pfn.__code__.co_consts
+
+
+@skipif_not_python_3_10
+def test_clang_noinline():
+    def func(a, b):
+        return thunder.clang.add(a, b)
+
+    pfn = thunder.preprocess(func, is_module=False)
+    assert "clang" in pfn.__code__.co_names
+    assert "add" in pfn.__code__.co_names
+
+
+@skipif_not_python_3_10
+def test_torch_noinline():
+    def func(a, b):
+        return thunder.torch.add(a, b)
+
+    pfn = thunder.preprocess(func, is_module=False)
+    assert "torch" in pfn.__code__.co_names
+    assert "add" in pfn.__code__.co_names
+
+
+@skipif_not_python_3_10
+def test_numpy_noinline():
+    def func(a, b):
+        return thunder.numpy.add(a, b)
+
+    pfn = thunder.preprocess(func, is_module=False)
+    assert "numpy" in pfn.__code__.co_names
+    assert "add" in pfn.__code__.co_names
+
+
+@skipif_not_python_3_10
+def test_prims_noinline():
+    def func(a, b):
+        return thunder.core.prims.add(a, b)
+
+    pfn = thunder.preprocess(func, is_module=False)
+    assert "core" in pfn.__code__.co_names
+    assert "prims" in pfn.__code__.co_names
+    assert "add" in pfn.__code__.co_names
+
+
+@skipif_not_python_3_10
+def test_symbol_noinline():
+    def func():
+        return Symbol(name="to", meta=None, _module=torch.Tensor)
+
+    pfn = thunder.preprocess(func, is_module=False)
+    assert Symbol in pfn.__code__.co_consts
 
 
 # TODO: enable me by converting torch inputs to Thunder inputs when proxying
