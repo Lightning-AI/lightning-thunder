@@ -2692,6 +2692,7 @@ def slice_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # shape, start_index, limit_index, stride, dim
     cases = (
+        ((3, 2), 0, 3, 2, 0),
         ((4, 6, 7), 1, 3, 2, 1),
         ((4, 6, 7), 0, -1, 3, 2),
     )

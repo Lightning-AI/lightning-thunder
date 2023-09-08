@@ -1801,7 +1801,7 @@ def slice_meta(
         )
         utils.check(stride >= 1, lambda: f"Expected all the strides in strides={strides} to be strictly positive!")
 
-        new_shape.append(math.floor((stop - start) / stride))
+        new_shape.append((stop - start + stride - 1) // stride)
 
     return TensorProxy(like=a, shape=new_shape)
 
