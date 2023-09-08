@@ -12,7 +12,7 @@ import inspect
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim
+from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim, sqrt
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -1671,6 +1671,28 @@ def sum_aug_fwd(x, dims, output_dtype=None):
 def sum_backward(x_shape, reduced_dims, g):
     # One return per positional argument of prims.sum
     return restore_reduced_dims(g, reduced_dims, x_shape), None
+
+
+@register_augmented_forward(prims.PrimIDs.VAR)
+def var_aug_fwd(a, dim, *, correction):
+    v = prims.var(a, dim, correction=correction)
+    return VJPDual((v,), (a, dim, correction, v))
+
+
+# TODO: fix division by zero when n_elem_reduced == 0 or when v.numel == 0
+# by returning zeros_like(a) or similar.
+# TODO: fix grad when correction > n_elem_reduced.
+@register_backward(prims.PrimIDs.VAR)
+def var_backward(a, dim, correction, v, g):
+    n_elem_reduced = a.numel // v.numel if a.numel != 0 else 1
+    normalization_scalar = n_elem_reduced - correction
+    g = restore_reduced_dims(g, dim, a.shape)
+    mean = prims.sum(a, dim, output_dtype=v.dtype) / n_elem_reduced
+    mean = restore_reduced_dims(mean, dim, a.shape)
+    return (
+        (2 * g * (a - mean)) / normalization_scalar,
+        None
+    )
 
 
 @register_augmented_forward(prims.PrimIDs.VAR_MEAN)
