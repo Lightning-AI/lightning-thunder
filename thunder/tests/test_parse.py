@@ -986,13 +986,13 @@ def test_debug_print_protoflows(capfd):
 
 
 def test_abstract_value():
-    x = protograph._AbstractValue()
+    x = protograph.AbstractValue()
     assert x == x
     assert x in {x}
     with pytest.raises(NotImplementedError):
         copy.copy(x)
 
-    y = protograph._AbstractValue()
+    y = protograph.AbstractValue()
     assert x != y
     assert x not in {y}
     assert x in {x, y}
@@ -1007,7 +1007,6 @@ def test_value_missing():
     assert x in {protograph.ValueMissing()}
 
     # Sanity check that it doesn't always compare equal
-    assert x != protograph._AbstractValue()
     assert x != protograph.AbstractValue()
 
 

@@ -9,8 +9,8 @@ from typing_extensions import ParamSpec
 
 from thunder.core.script.algorithms import compute_condense_map
 from thunder.core.script.protograph import (
-    _AbstractRef,
-    _AbstractValue,
+    AbstractRef,
+    AbstractValue,
     AbstractPhiValue,
     ExternalRef,
     IntraBlockFlow,
@@ -22,7 +22,7 @@ from thunder.core.script.protograph import (
 from thunder.core.script.python_ir_data import VariableScope, RAISE_RETURN_INSTRUCTIONS
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
-ValueEdges = Iterable[tuple[_AbstractValue, _AbstractValue]]
+ValueEdges = Iterable[tuple[AbstractValue, AbstractValue]]
 P = ParamSpec("P")
 IDEMPOTENT_REPEATS = 10  # Check for nondeterministic behavior.
 
@@ -85,7 +85,7 @@ def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     for protoblock, new_uses in _get_missing_transitive(protograph).items():
         new_flow = IntraBlockFlow(
             _flow=protoblock.flow._flow,
-            _begin={**{k: _AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
+            _begin={**{k: AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
             _end={**{k: k for k in new_uses}, **protoblock.flow._end},
         )
         substitutions[protoblock] = new_protoblock = ProtoBlock(protoblock.raw_instructions, new_flow)
@@ -119,7 +119,7 @@ def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
         if isinstance(initial_ref, ExternalRef):
             continue
 
-        assert isinstance(initial_ref, _AbstractRef), initial_ref
+        assert isinstance(initial_ref, AbstractRef), initial_ref
         assert key.scope not in (VariableScope.CONST, VariableScope.STACK)
         yield ExternalRef(key), initial_ref
 
@@ -137,12 +137,12 @@ def _condense_values(
 ) -> tuple[ProtoGraph, bool]:
     edge_sources = (*edge_sources, _phivalue_constituent)
     edges = tuple(itertools.chain(*[fn(proto_graph) for fn in edge_sources]))
-    replace_map: dict[_AbstractValue, _AbstractValue] = {}
+    replace_map: dict[AbstractValue, AbstractValue] = {}
     for v, condensed in compute_condense_map(edges).items():
         # Check invariants.
         assert condensed
         if not isinstance(v, AbstractPhiValue):
-            invariants = (set(condensed) == {v}, not isinstance(v, _AbstractRef))
+            invariants = (set(condensed) == {v}, not isinstance(v, AbstractRef))
             assert all(invariants) or not any(invariants), (invariants, v, condensed)
 
         # `AbstractPhiValue._unpack_apply` will determine if we need an AbstractPhiValue.
@@ -158,20 +158,20 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     Note: The pass, as it is currently written, only folds one layer of tuples, from one known source, the
     `BUILD_TUPLE` instruction. This should be enough for our needs. However, it's easy enough to imagine a world
     where we would want to call this in a loop with other operations that fold values. In other words, tuple folding
-    would be more powerful the more `_AbstractValue`s we can prove to be tuples with a known source.
+    would be more powerful the more `AbstractValue`s we can prove to be tuples with a known source.
     """
 
     @dataclasses.dataclass(slots=True, unsafe_hash=True, eq=True)
     class TupleKey:
-        tup_value: _AbstractValue
+        tup_value: AbstractValue
         idx: int
 
         def __lt__(self, other: "TupleKey") -> bool:
             return self.__hash__() < other.__hash__()
 
     # {(tup, idx): val}
-    tuple_sources: collections.defaultdict[TupleKey, _AbstractValue] = collections.defaultdict()
-    queries: collections.defaultdict[TupleKey, _AbstractValue] = collections.defaultdict()
+    tuple_sources: collections.defaultdict[TupleKey, AbstractValue] = collections.defaultdict()
+    queries: collections.defaultdict[TupleKey, AbstractValue] = collections.defaultdict()
 
     for pb in protograph:
         for instruction, node in pb.node_flow:
@@ -205,7 +205,7 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     if not queries or not tuple_sources:
         return (protograph, False)
 
-    transform_replacements: dict[_AbstractValue, _AbstractValue] = {}
+    transform_replacements: dict[AbstractValue, AbstractValue] = {}
     for query_key, query_value in queries.items():
         if source_value := tuple_sources.get(query_key):
             transform_replacements[query_value] = source_value
@@ -216,7 +216,7 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     return (protograph.transform(transform_replacements), True)
 
 
-def apply_protograph_passes(protograph: "ProtoGraph") -> "ProtoGraph":
+def apply_protograph_passes(protograph: ProtoGraph) -> ProtoGraph:
     protograph, _ = _add_transitive(protograph)
     protograph, _ = _condense_values(protograph, _inter_block_edges, _graph_input_edges)
     protograph, _ = _tuple_fold(protograph)

@@ -23,6 +23,7 @@ from thunder.core.script.instrumentation import record
 from thunder.core.script.protograph import (
     _Materialized,
     _Symbolic,
+    is_detail,
     AbstractPhiValue,
     AbstractValue,
     ExternalRef,
@@ -297,7 +298,7 @@ def _bind_to_graph(
     @functools.cache  # Again, for correctness
     def convert(value: AbstractValue, protoblock: ProtoBlock) -> Value:
         assert not _is_epilogue(protoblock)
-        assert not value.is_detail, value
+        assert not is_detail(value), value
         if (out := input_conversions.get((value, protoblock), missing := object())) is not missing:
             return out
 

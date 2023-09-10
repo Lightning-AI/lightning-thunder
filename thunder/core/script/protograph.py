@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import collections
 import dataclasses
 import functools
@@ -65,22 +67,18 @@ class VariableKey(NamedTuple):
 # =============================================================================
 # == Variables (base classes) =================================================
 # =============================================================================
-ReplaceMap = Mapping["_AbstractValue", "_AbstractValue"]
-_AbstractValues = tuple["_AbstractValue", ...]
+ReplaceMap = Mapping["AbstractValue", "AbstractValue"]
+AbstractValues = tuple["AbstractValue", ...]
 
 
-class _AbstractValue:
+class AbstractValue:
     """Represents a value during instruction parsing. (Prior to type binding.)"""
 
-    def __copy__(self) -> "_AbstractValue":
+    def __copy__(self) -> AbstractValue:
         raise NotImplementedError
 
-    @property
-    def is_detail(self) -> bool:
-        return AbstractValue not in self.__class__.__mro__
-
     @final
-    def substitute(self, replace_map: ReplaceMap) -> "_AbstractValue":
+    def substitute(self, replace_map: ReplaceMap) -> AbstractValue:
         """Find the replacement for `self`, and recursively substitute. (If applicable.)
 
         Some abstract values reference other abstract values. When we make substitution during
@@ -101,15 +99,9 @@ class _AbstractValue:
 
         return new_self._unpack_apply(replace_map)
 
-    def _unpack_apply(self, _: ReplaceMap) -> "_AbstractValue":
+    def _unpack_apply(self, _: ReplaceMap) -> AbstractValue:
         """Recursively update any constituent references in the abstract value."""
         return self
-
-
-class AbstractValue(_AbstractValue):
-    """Abstract value which is suitable for wider use. (Namely Value/PhiValue conversion.)"""
-
-    pass
 
 
 # =============================================================================
@@ -118,7 +110,7 @@ class AbstractValue(_AbstractValue):
 #
 # `ProtoBlocks` employ a dual representation, where node inputs and outputs can
 # be viewed as either a reference based DAG or a sequence of ops with concrete
-# `_AbstractValue` inputs and outputs.
+# `AbstractValue` inputs and outputs.
 #
 # At the boundaries of a ProtoBlock values have named (VariableKey) slots;
 # within the ProtoBlock there is no need for such slots (since there is no
@@ -126,13 +118,13 @@ class AbstractValue(_AbstractValue):
 # directed *cyclic* graph for the larger program) so they are stripped during
 # parsing.
 #
-# The inputs of a protoblock are stored as a map of `VariableKey -> _AbstractValue`
+# The inputs of a protoblock are stored as a map of `VariableKey -> AbstractValue`
 # and act as the intra-block DAG sources. The outputs are stored as references
 # since every ProtoBlock output must have a unique producer. (Either an input
 # or a node within the block.)
 #
 # The canonical representation for intra-block flow is "symbolic" (reference
-# based). If an `_AbstractValue` appear in a symbolic node's outputs that
+# based). If an `AbstractValue` appear in a symbolic node's outputs that
 # indicates that the node is that value's producer. Otherwise all inputs and
 # outputs are references: inputs reference either the begin state or the
 # outputs of a prior node while output references index into the node's inputs.
@@ -140,7 +132,7 @@ class AbstractValue(_AbstractValue):
 # When analyzing a graph we are generally interested in the concrete properties
 # of values; provenance is generally only important when connecting blocks and
 # performing rewrites. For these cases `IntraBlockFlow` generates a
-# "materialized" flow which resolves all references to `_AbstractValue`s. The
+# "materialized" flow which resolves all references to `AbstractValue`s. The
 # symbolic representation is sufficient to emit the materialized representation,
 # but the reverse is not true.
 EdgeIndex = Literal[0, -1]
@@ -164,24 +156,24 @@ class _Symbolic:
     inputs: tuple[Input, ...]
 
     # int:              Aliases the input at this position
-    # _AbstractValue:   New value created by this instruction
-    Output = int | _AbstractValue
+    # AbstractValue:   New value created by this instruction
+    Output = int | AbstractValue
     outputs: tuple[Output, ...]
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class _Materialized:
-    """Flow element where all symbolic references have been resolved to concrete `_AbstractValue`s."""
+    """Flow element where all symbolic references have been resolved to concrete `AbstractValue`s."""
 
-    inputs: _AbstractValues
-    outputs: _AbstractValues
+    inputs: AbstractValues
+    outputs: AbstractValues
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class IntraBlockFlow:
     _flow: Mapping[ThunderInstruction, _Symbolic]
 
-    BeginVariables = Mapping[VariableKey, _AbstractValue]
+    BeginVariables = Mapping[VariableKey, AbstractValue]
     _begin: BeginVariables
 
     EndVariable = _Symbolic.Input | None
@@ -201,28 +193,28 @@ class IntraBlockFlow:
     def materialized(self) -> MappingProxyType[ThunderInstruction, _Materialized]:
         """Walk the flow resolving references as they we encounter them."""
 
-        def resolve(inputs: _AbstractValues, o: _Symbolic.Output) -> _AbstractValue:
-            assert isinstance(o, (int, _AbstractValue))
+        def resolve(inputs: AbstractValues, o: _Symbolic.Output) -> AbstractValue:
+            assert isinstance(o, (int, AbstractValue))
             return inputs[o] if isinstance(o, int) else o
 
         result: dict[ThunderInstruction, _Materialized] = {}
         for instruction, node in self.symbolic:
             inputs = tuple(self._getitem_impl(0, i, (self._begin, self._end), result) for i in node.inputs)
             outputs = [resolve(inputs, o) for o in node.outputs]
-            assert all(isinstance(o, _AbstractValue) for o in outputs), outputs
+            assert all(isinstance(o, AbstractValue) for o in outputs), outputs
             result[instruction] = _Materialized(tuple(inputs), tuple(outputs))
 
         return MappingProxyType(result)
 
-    def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input | None]) -> _AbstractValue:
+    def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input | None]) -> AbstractValue:
         return self._getitem_impl(*key, (self._begin, self._end), self.materialized)  # __getitem__ packs args
 
     @classmethod
-    def from_instructions(cls, instructions: tuple[ThunderInstruction, ...], code: CodeType) -> "IntraBlockFlow":
+    def from_instructions(cls, instructions: tuple[ThunderInstruction, ...], code: CodeType) -> IntraBlockFlow:
         flow: dict[ThunderInstruction, _Symbolic] = {}
-        begin_variables: dict[VariableKey, _AbstractValue] = {}
+        begin_variables: dict[VariableKey, AbstractValue] = {}
         end_variables: dict[VariableKey, IntraBlockFlow.EndVariable] = {}
-        block_inputs: Deque[_AbstractValue] = collections.deque()
+        block_inputs: Deque[AbstractValue] = collections.deque()
         stack: Deque[_Symbolic.Input] = collections.deque()
 
         def peek_stack(pop: bool = False) -> _Symbolic.Input:
@@ -230,7 +222,7 @@ class IntraBlockFlow:
             # a value was already on the stack at the start of the block.
             if not stack:
                 index = -len(block_inputs) - 1
-                block_inputs.appendleft(_AbstractRef(f"Inferred stack input: {index}"))
+                block_inputs.appendleft(AbstractRef(f"Inferred stack input: {index}"))
                 stack.append(VariableKey(index, VariableScope.STACK))
             return stack.pop() if pop else stack[-1]
 
@@ -248,7 +240,7 @@ class IntraBlockFlow:
                 # TODO: Support nonlocal variables.
                 # Nonlocal variables load (LOAD_DEREF) from frame->localsplus.
                 # We cannot model or access the content of stack frames here.
-                # We will have to emit some nonlocal _AbstractValue and resolve it later, once we can prove
+                # We will have to emit some nonlocal AbstractValue and resolve it later, once we can prove
                 # See https://github.com/python/cpython/blob/0ba07b2108d4763273f3fb85544dde34c5acd40a/Include/internal/pycore_code.h#L119-L133
                 # for more explanation of localsplus.
                 source_lines, first_line = inspect.getsourcelines(code)
@@ -274,7 +266,7 @@ class IntraBlockFlow:
             v = end_variables.get(key, missing := object())
             assert v is not None, f"Access to deleted variable: {key}"
             if v is missing:
-                default = _AbstractRef(f"Variable initial value: ({key.identifier} {key.scope})")
+                default = AbstractRef(f"Variable initial value: ({key.identifier} {key.scope})")
                 begin_variables.setdefault(key, default)
                 v = end_variables[key] = key
 
@@ -337,11 +329,11 @@ class IntraBlockFlow:
 
         return cls(flow, begin_variables, end_variables)
 
-    def substitute(self, replace_map: ReplaceMap) -> "IntraBlockFlow":
-        """Replace `_AbstractValue`s within the flow. (Block inputs and producer nodes.)"""
+    def substitute(self, replace_map: ReplaceMap) -> IntraBlockFlow:
+        """Replace `AbstractValue`s within the flow. (Block inputs and producer nodes.)"""
 
         def replace(x: T) -> T:
-            return x.substitute(replace_map) if isinstance(x, _AbstractValue) else x  # type: ignore[return-value]
+            return x.substitute(replace_map) if isinstance(x, AbstractValue) else x  # type: ignore[return-value]
 
         return self.__class__(
             _flow={k: _Symbolic(v.inputs, tuple(replace(o) for o in v.outputs)) for k, v in self.symbolic},
@@ -354,9 +346,9 @@ class IntraBlockFlow:
         cls,
         index: EdgeIndex,
         key: _Symbolic.Input | None,
-        variables: tuple["IntraBlockFlow.BeginVariables", "IntraBlockFlow.EndVariables"],
+        variables: tuple[IntraBlockFlow.BeginVariables, IntraBlockFlow.EndVariables],
         materialized: Mapping[ThunderInstruction, _Materialized],
-    ) -> _AbstractValue:
+    ) -> AbstractValue:
         # We need to index while materializing (before `self.materialized` is
         # available) so we factor the logic into a standlone method.
         if key is None:
@@ -377,8 +369,8 @@ class IntraBlockFlow:
     @staticmethod
     def _boundary_state(
         variables: Mapping[VariableKey, T],
-        resolve: Callable[[T], _AbstractValue],
-    ) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+        resolve: Callable[[T], AbstractValue],
+    ) -> Iterator[tuple[VariableKey, AbstractValue]]:
         for k, v in sorted(variables.items(), key=lambda kv: kv[0]):
             assert k.scope != VariableScope.CONST
             if not isinstance(v_resolved := resolve(v), ValueMissing):
@@ -392,7 +384,7 @@ class IntraBlockFlow:
 # ProtoBlocks are weakly coupled by design. The `VariableKey` slots allow edges
 # to be deduced (e.g. `x` at the start of one block must be the same as `x` at
 # the end of the prior block), but there's no strong requirement. (And indeed,
-# the ProtoGraph immediately after parsing has all unconnected `_AbstractRef`s
+# the ProtoGraph immediately after parsing has all unconnected `AbstractRef`s
 # for input values.) Similarly, ProtoGraph serves only to record organize the
 # block topology, check invariants, and provide various helper methods.
 #
@@ -425,7 +417,7 @@ class ProtoBlock(InstrumentingBase):
         self.uses.clear()
         self.uses.update(self._flow_uses)
 
-    def add_jump_target(self, other: "ProtoBlock", jump: bool) -> None:
+    def add_jump_target(self, other: ProtoBlock, jump: bool) -> None:
         """We need to add jump targets after all ProtoBlocks are initialized."""
 
         # Override `frozen=True` for this one limited use case.
@@ -436,11 +428,11 @@ class ProtoBlock(InstrumentingBase):
         yield from self.flow.materialized.items()
 
     @property
-    def begin_state(self) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+    def begin_state(self) -> Iterator[tuple[VariableKey, AbstractValue]]:
         yield from self.flow._boundary_state(self.flow._begin, lambda v: v)
 
     @property
-    def end_state(self) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+    def end_state(self) -> Iterator[tuple[VariableKey, AbstractValue]]:
         yield from (flow := self.flow)._boundary_state(flow._end, lambda v_ref: flow[0, v_ref])
 
     @property
@@ -448,7 +440,7 @@ class ProtoBlock(InstrumentingBase):
         flat_inputs = OrderedSet(itertools.chain(*(n.inputs for _, n in self.flow.symbolic)))
         yield from (i for i in flat_inputs if isinstance(i, VariableKey))
 
-    def transform(self, replace_map: ReplaceMap) -> "ProtoBlock":
+    def transform(self, replace_map: ReplaceMap) -> ProtoBlock:
         """Create a copy of `self` but allow values to be substituted."""
         transformed = ProtoBlock(self.raw_instructions, self.flow.substitute(replace_map))
         transformed.uses.update(self.uses)
@@ -486,7 +478,7 @@ class ProtoGraph:
         for protoblock in self.protoblocks:
             yield from ((protoblock, target) for target, _ in protoblock.jump_targets)
 
-    def substitute(self, transformed: dict[ProtoBlock, ProtoBlock]) -> "ProtoGraph":
+    def substitute(self, transformed: dict[ProtoBlock, ProtoBlock]) -> ProtoGraph:
         """Copies the ProtoGraph with block level substitutions while retaining the same topology."""
         assert not (delta := OrderedSet(transformed.keys()) - OrderedSet(self)), delta
 
@@ -498,7 +490,7 @@ class ProtoGraph:
 
         return ProtoGraph(transformed.values())
 
-    def transform(self, replace_map: dict[_AbstractValue, _AbstractValue]) -> "ProtoGraph":
+    def transform(self, replace_map: dict[AbstractValue, AbstractValue]) -> ProtoGraph:
         """Copies the ProtoGraph with value replacements.
 
         NOTE: This is strictly a condensing transform, and this is only invertable
@@ -508,12 +500,12 @@ class ProtoGraph:
         replace_map = dict(flatten_map(replace_map))
         return self.substitute({protoblock: protoblock.transform(replace_map) for protoblock in self})
 
-    def unlink(self) -> "ProtoGraph":
+    def unlink(self) -> ProtoGraph:
         """Copies the ProtoGraph but replaces all block inputs with references. (Useful for graph rewrites.)"""
         transformed: dict[ProtoBlock, ProtoBlock] = {}
         for protoblock in self:
-            begin_vars = (v for _, v in protoblock.begin_state if not isinstance(v, _AbstractRef))
-            replace_map = {v: _AbstractRef(f"Unlink: {v}") for v in begin_vars}
+            begin_vars = (v for _, v in protoblock.begin_state if not isinstance(v, AbstractRef))
+            replace_map = {v: AbstractRef(f"Unlink: {v}") for v in begin_vars}
             transformed[protoblock] = new_protoblock = protoblock.transform(replace_map)
             new_protoblock.__post_init__()
         return self.substitute(transformed)
@@ -531,7 +523,7 @@ class ProtoGraph:
         """
 
         counter = 0
-        idxes: dict[_AbstractValue, int] = {}
+        idxes: dict[AbstractValue, int] = {}
         for pb in self:
             for _, node in pb.node_flow:
                 for val in itertools.chain(node.inputs, node.outputs):
@@ -539,7 +531,7 @@ class ProtoGraph:
                         idxes[val] = counter
                         counter += 1
 
-        def to_index_str(values: _AbstractValues) -> str:
+        def to_index_str(values: AbstractValues) -> str:
             indices = (str(idxes[v]) for v in values)
             return f"({', '.join(indices)})"
 
@@ -555,7 +547,7 @@ class ProtoGraph:
 # == Normal values ============================================================
 # =============================================================================
 @dataclasses.dataclass(frozen=True, eq=False)
-class _AbstractRef(_AbstractValue):
+class AbstractRef(AbstractValue):
     """Placeholder value which will be resolved during parsing."""
 
     _debug_info: str = "N/A"
@@ -595,10 +587,9 @@ class AbstractPhiValue(AbstractValue):
         # Ensure a consistent order.
         constituents = tuple(v for _, v in sorted({hash(v): v for v in constituents}.items()))
         object.__setattr__(self, "constituents", constituents)
-        assert not any(i.is_detail for i in self.constituents), self.constituents
 
-    def _unpack_apply(self, replace_map: ReplaceMap) -> "AbstractValue":
-        result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))  # type: ignore[misc]  # Constituent validity is ensured by `__post_init__`.
+    def _unpack_apply(self, replace_map: ReplaceMap) -> AbstractValue:
+        result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))
         return result if len(result.constituents) > 1 else result.constituents[0]
 
     @classmethod
@@ -608,3 +599,9 @@ class AbstractPhiValue(AbstractValue):
                 yield from cls.flatten(i)
         else:
             yield v
+
+
+def is_detail(v: AbstractValue) -> bool:
+    if isinstance(v, AbstractRef) or type(v) is AbstractValue:
+        return True
+    return isinstance(v, AbstractPhiValue) and any(is_detail(i) for i in v.constituents)
