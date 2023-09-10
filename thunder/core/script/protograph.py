@@ -6,11 +6,10 @@ import itertools
 import marshal
 import textwrap
 from types import CodeType, MappingProxyType
-from typing import final, Any, Deque, Literal, NamedTuple, TypeVar
+from typing import cast, final, Any, Deque, Literal, NamedTuple, TypeVar
 from collections.abc import Callable, Iterable, Iterator, Mapping
 
-import networkx as nx
-
+from thunder.core.script.algorithms import TypedDiGraph, flatten_map, sort_adjacent
 from thunder.core.script.instrumentation import InstrumentingBase
 from thunder.core.script.python_ir_data import (
     stack_effect_adjusted,
@@ -19,8 +18,8 @@ from thunder.core.script.python_ir_data import (
     VariableScope,
     DEL_OPNAMES,
     LOAD_OPNAMES,
-    STORE_OPNAMES,
     RETURN_VALUE,
+    STORE_OPNAMES,
     EXTENDED_ARG,
 )
 from thunder.core.utils import OrderedSet
@@ -96,7 +95,7 @@ class _AbstractValue:
                     {self}
                     {new_self}
                     {x}
-                See `_flatten_replace_map`.
+                See `flatten_map`.
             """
             raise ValueError(textwrap.dedent(msg))
 
@@ -105,20 +104,6 @@ class _AbstractValue:
     def _unpack_apply(self, _: ReplaceMap) -> "_AbstractValue":
         """Recursively update any constituent references in the abstract value."""
         return self
-
-    @staticmethod
-    def _flatten_replace_map(replace_map: ReplaceMap) -> None:
-        """Remove intermediate steps in the replace map.
-
-        For example, if we `replace_map` is `{A: B, B: C}` we will update it to `{A: C, B: C}`.
-        (Effectively converting A->B->C to A->C.)
-        """
-        G = nx.from_edgelist(replace_map.items(), nx.DiGraph).reverse()
-        G.remove_edges_from(nx.selfloop_edges(G))
-        assert nx.is_directed_acyclic_graph(G)
-        for cluster in nx.connected_components(G.to_undirected()):
-            (root,) = (i for i in cluster if not G.in_degree(i))
-            replace_map.update({i: root for i in cluster if i is not root})
 
 
 class AbstractValue(_AbstractValue):
@@ -478,50 +463,23 @@ class ProtoGraph:
     parents: dict[ProtoBlock, tuple[ProtoBlock, ...]]
 
     def __init__(self, protoblocks: Iterable[ProtoBlock]) -> None:
-        protoblocks = tuple(protoblocks)
+        G = TypedDiGraph[ProtoBlock]()
+        for protoblock in (protoblocks := tuple(protoblocks)):
+            is_return = tuple(protoblock.flow.symbolic)[-1][0].opname == RETURN_VALUE
+            G.add_node(protoblock, is_return=is_return)
 
-        # Ensure the protoblocks form a single connected graph.
-        G = nx.DiGraph()
-        G.add_nodes_from(protoblocks)
         for protoblock in protoblocks:
-            for destination, _ in protoblock.jump_targets:
-                G.add_edge(protoblock, destination)
-        assert len(G.nodes) == len(protoblocks), f"{len(G.nodes)=} {len(protoblocks)=}"
-        connected_components = tuple(nx.connected_components(G.to_undirected()))
-        assert len(connected_components) == 1, [len(i) for i in connected_components]
+            for destination, jump in protoblock.jump_targets:
+                G.add_edge(protoblock, destination, adjacent=not jump)
 
-        # Compute some basic topological features.
-        (self.root,) = (protoblock for protoblock in protoblocks if not G.in_degree(protoblock))
+        self.protoblocks = tuple(sort_adjacent(G))
+        assert len(G) == len(self.protoblocks) == len(protoblocks), (len(G), len(self.protoblocks), len(protoblocks))
+
+        self.root = self.protoblocks[0]
         root_stack = [(k, v) for k, v in self.root.begin_state if k.scope == VariableScope.STACK]
         assert not root_stack, f"Root block should not have stack inputs: {root_stack}"
-        self.parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in protoblocks}
-
-        # Sort the nodes.
-        #   Topological sort is not defined for cyclic graphs, however we don't
-        #   need a true sort. Rather we need to respect `jump=False` connectivity.
-        #   And because our graph represents a linear instruction stream we are
-        #   guaranteed that a valid sort of just the non-jump graph exists.
-        G = nx.DiGraph()
-        for protoblock in protoblocks:
-            G.add_node(protoblock)
-            for destination, jump in protoblock.jump_targets:
-                if not jump:
-                    G.add_edge(protoblock, destination)
-
-        protoblock_to_idx = {protoblock: idx for idx, protoblock in enumerate(protoblocks)}
-        sort_map = {}
-        for nodes in nx.connected_components(G.to_undirected()):
-            assert all(G.in_degree(node) <= 1 and G.out_degree(node) <= 1 for node in nodes)
-            nodes = tuple(nx.topological_sort(G.subgraph(nodes)))
-            if nodes[0] is self.root:
-                primary_key = -1
-            elif nodes[-1].raw_instructions[-1].opname == RETURN_VALUE:
-                primary_key = len(protoblocks) + 1
-            else:
-                primary_key = protoblock_to_idx[nodes[0]]
-            sort_map.update({node: (primary_key, idx) for idx, node in enumerate(nodes)})
-
-        self.protoblocks = tuple(sorted(protoblocks, key=lambda x: sort_map[x]))
+        nodes = cast(Iterable[ProtoBlock], G.nodes)  # For some reason mypy needs this.
+        self.parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in nodes}
 
     @property
     def edges(self) -> Iterator[tuple[ProtoBlock, ProtoBlock]]:
@@ -547,8 +505,7 @@ class ProtoGraph:
               (using another `.transform` call) in trivial cases.
         """
         assert (v := replace_map.get(ValueMissing(), missing := object())) is missing, v
-        replace_map = replace_map.copy()
-        _AbstractValue._flatten_replace_map(replace_map)
+        replace_map = dict(flatten_map(replace_map))
         return self.substitute({protoblock: protoblock.transform(replace_map) for protoblock in self})
 
     def unlink(self) -> "ProtoGraph":
@@ -636,7 +593,7 @@ class AbstractPhiValue(AbstractValue):
         constituents = itertools.chain(*[self.flatten(i) for i in self.constituents])
 
         # Ensure a consistent order.
-        constituents = tuple(v for _, v in sorted({id(v): v for v in constituents}.items()))
+        constituents = tuple(v for _, v in sorted({hash(v): v for v in constituents}.items()))
         object.__setattr__(self, "constituents", constituents)
         assert not any(i.is_detail for i in self.constituents), self.constituents
 

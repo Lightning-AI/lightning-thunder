@@ -5,9 +5,9 @@ import itertools
 from typing import Callable, Concatenate
 from collections.abc import Iterable
 
-import networkx as nx
 from typing_extensions import ParamSpec
 
+from thunder.core.script.algorithms import compute_condense_map
 from thunder.core.script.protograph import (
     _AbstractRef,
     _AbstractValue,
@@ -24,6 +24,7 @@ from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
 ValueEdges = Iterable[tuple[_AbstractValue, _AbstractValue]]
 P = ParamSpec("P")
+IDEMPOTENT_REPEATS = 10  # Check for nondeterministic behavior.
 
 
 def check_idempotent(
@@ -33,8 +34,9 @@ def check_idempotent(
     def wrapped(protograph: ProtoGraph, /, *args: P.args, **kwargs: P.kwargs) -> tuple[ProtoGraph, bool]:
         protograph, had_effect = f(protograph, *args, **kwargs)
         if debug_asserts_enabled():
-            _, had_effect_on_rerun = f(protograph, *args, **kwargs)
-            assert not had_effect_on_rerun
+            for _ in range(IDEMPOTENT_REPEATS):
+                _, had_effect_on_rerun = f(protograph, *args, **kwargs)
+                assert not had_effect_on_rerun
 
         return protograph, had_effect
 
@@ -122,95 +124,32 @@ def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
         yield ExternalRef(key), initial_ref
 
 
+def _phivalue_constituent(proto_graph: ProtoGraph) -> ValueEdges:
+    for _, initial_ref in proto_graph.root.begin_state:
+        if isinstance(initial_ref, AbstractPhiValue):
+            yield from ((constituent, initial_ref) for constituent in initial_ref.constituents)
+
+
 @check_idempotent
 def _condense_values(
     proto_graph: ProtoGraph,
     *edge_sources: Callable[[ProtoGraph], ValueEdges],
 ) -> tuple[ProtoGraph, bool]:
-    # We only need the block connectivity to pair inputs and outputs. Once that
-    # is done we can operate entirely on the value graph.
-    G = nx.DiGraph()
-    for source, sink in itertools.chain(*[fn(proto_graph) for fn in edge_sources]):
-        G.add_edge(source, sink)
-        if isinstance(source, AbstractPhiValue):
-            for source_constituent in source.constituents:
-                G.add_edge(source_constituent, source)
-    G.remove_edges_from(nx.selfloop_edges(G))
-
-    # While not strictly necessary, it's much easier to debug the intermediate
-    # graph logic if we first convert all values to indices.
-    values = tuple(G.nodes)
-    value_to_idx = {value: idx for idx, value in enumerate(values)}
-    G = nx.from_edgelist(((value_to_idx[source], value_to_idx[sink]) for source, sink in G.edges), nx.DiGraph)
-    index_alias_map: dict[int, set[int]] = {}
-
-    # We can decompose the graph into disjoint use-def chains and analyze them independently.
-    for nodes in nx.connected_components(G.to_undirected()):
-        subgraph = G.subgraph(nodes)
-        equality_edges: set[tuple[int, int]] = {(node, node) for node in subgraph.nodes}
-
-        while True:
-            # Condense pairs in `equality_edges`. For example, given the
-            # following graph and `equality_edges`:
-            #   0 → 1 → 2 → 3 → 4 → 5
-            #               ↑┄──┘
-            #
-            #   equality_edges = {(0, 1), (3, 4)}
-            #
-            # After grouping we're left with:
-            #   {0, 1} → 2 → {3, 4} → 5
-            clusters: dict[int, int] = {}
-            for cluster in nx.connected_components(nx.from_edgelist(equality_edges, nx.Graph)):
-                # The choice of "canonical" index is arbitrary as long as it is consistent.
-                clusters.update({i: min(cluster) for i in cluster})
-            assert len(clusters) == len(subgraph)
-            reduced_subgraph = nx.from_edgelist(((clusters[i], clusters[j]) for i, j in subgraph.edges), nx.DiGraph)
-            reduced_subgraph.remove_edges_from(nx.selfloop_edges(reduced_subgraph))
-            num_equality_edges = len(equality_edges)
-
-            # Condense chains.
-            equality_edges.update(reduced_subgraph.edges)
-
-            # Condense loops.
-            for cycle in nx.simple_cycles(reduced_subgraph):
-                equality_edges.update(zip(cycle, itertools.chain(cycle[1:], cycle[:1])))
-
-            if len(equality_edges) == num_equality_edges:
-                # No progress has been made, exit loop.
-                break
-
-        roots = {idx for idx in cluster if not subgraph.in_degree(idx)}
-        assert roots, [values[idx] for idx in nodes]
-        for idx in roots:
-            successors = nx.dfs_successors(subgraph, idx)
-            for reachable in itertools.chain([idx], *successors.values()):
-                index_alias_map.setdefault(reachable, set()).add(idx)
-
-        # By definition anything that isn't an `_AbstractRef` should not alias another value.
-        for idx in nodes:
-            if isinstance(values[idx], AbstractPhiValue):
-                known_constituents = {value_to_idx[v] for v in values[idx].constituents}
-                index_alias_map[idx] = {i for i in index_alias_map[idx] if i not in known_constituents} | {idx}
-
-            else:
-                is_ref = isinstance(values[idx], _AbstractRef)
-                invariants = (idx in roots, index_alias_map[idx] == {idx}, not is_ref)
-                assert all(invariants) or not any(invariants), (idx, values[idx], invariants)
-
-    # And finally update the block value flows to reflect the changes.
+    edge_sources = (*edge_sources, _phivalue_constituent)
+    edges = tuple(itertools.chain(*[fn(proto_graph) for fn in edge_sources]))
     replace_map: dict[_AbstractValue, _AbstractValue] = {}
-    for idx, source_indices in index_alias_map.items():
-        assert source_indices
-        v = values[idx]
-        if source_indices == {idx}:
-            assert not isinstance(v, _AbstractRef), f"Unhandled reference: {idx} {v}"
-            continue
+    for v, condensed in compute_condense_map(edges).items():
+        # Check invariants.
+        assert condensed
+        if not isinstance(v, AbstractPhiValue):
+            invariants = (set(condensed) == {v}, not isinstance(v, _AbstractRef))
+            assert all(invariants) or not any(invariants), (invariants, v, condensed)
 
-        # `AbstractPhiValue._unpack_apply` will determine if it is needed after deduplication.
-        candidate_constituents = tuple(values[idy] for idy in sorted(source_indices))
-        replace_map[v] = AbstractPhiValue(candidate_constituents).substitute({})
+        # `AbstractPhiValue._unpack_apply` will determine if we need an AbstractPhiValue.
+        if (replacement := AbstractPhiValue(condensed).substitute({})) != v:  # type: ignore
+            replace_map[v] = replacement
 
-    return proto_graph.transform(replace_map), any(v != {k} for k, v in index_alias_map.items())
+    return proto_graph.transform(replace_map), bool(replace_map)
 
 
 def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
