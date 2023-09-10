@@ -3,7 +3,7 @@ import enum
 import logging
 import sys
 from types import CodeType, MappingProxyType
-from typing import Callable, Dict, Optional, Tuple, TypeVar, Union
+from typing import Callable, Optional, TypeVar, Union
 from collections.abc import Iterable
 
 try:
@@ -41,7 +41,7 @@ class ThunderInstruction(dis.Instruction):
         # to instead use identity hashing.
         return id(self)
 
-    def __eq__(self, other) -> int:
+    def __eq__(self, other: object) -> bool:
         return self is other
 
     def modify_copy(self, **kwargs) -> "ThunderInstruction":
@@ -108,7 +108,7 @@ class SyntheticInstruction(ThunderInstruction):
             opname = f"{opname}__{cls.__name__}"
             assert opname not in dis.opmap, opname
 
-        self = super(SyntheticInstruction, cls).__new__(cls, opname, -1, *args)
+        self = super().__new__(cls, opname, -1, *args)
         self.prefix: str = i.prefix if i_is_synthetic else i.opname
         return self
 
@@ -132,7 +132,7 @@ class JumpEpilogue(SyntheticInstruction):
 
 
 # (pop, push)
-StackEffect = Tuple[int, Tuple[int, ...]]
+StackEffect = tuple[int, tuple[int, ...]]
 
 # Common stack effects to make `_STACK_EFFECTS_SPEC` more readable and less bug prone.
 PushNew = (0,)
@@ -165,7 +165,7 @@ def function_detail(*args: list[int]):
     return effect
 
 
-_STACK_EFFECTS_SPEC: Dict[str, Union[StackEffect, EllipsisType, Callable[[int], StackEffect]]] = {
+_STACK_EFFECTS_SPEC: dict[str, Union[StackEffect, EllipsisType, Callable[[int], StackEffect]]] = {
     "NOP": NoStackEffect,  #                            ∅           -> ∅
     "EXTENDED_ARG": NoStackEffect,
     #
@@ -324,7 +324,7 @@ _STACK_EFFECTS_SPEC: Dict[str, Union[StackEffect, EllipsisType, Callable[[int], 
 }
 
 
-_JUMP_DEPENDENT_SPEC: Dict[str, Tuple[StackEffect, StackEffect, StackEffect]] = {
+_JUMP_DEPENDENT_SPEC: dict[str, tuple[StackEffect, StackEffect, StackEffect]] = {
     "FOR_ITER": (PeekTOS, PeekTOS_andPushNew, PopTOS),
     "SETUP_WITH": ((1, range(2)), NoStackEffect, (2, range(-2, 7 - 2))),
     "SETUP_FINALLY": (NoStackEffect, NoStackEffect, (0, range(6))),
@@ -362,9 +362,9 @@ DEL_OPNAMES = mapping(
 )
 
 
-FIXED_STACK_EFFECTS_DETAIL: Dict[str, StackEffect] = {}
-SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL: Dict[str, Callable[[int], StackEffect]] = {}
-JUMP_DEPENDENT_DETAIL: Dict[Tuple[str, bool], Tuple[str, StackEffect]] = {}
+FIXED_STACK_EFFECTS_DETAIL: dict[str, StackEffect] = {}
+SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL: dict[str, Callable[[int], StackEffect]] = {}
+JUMP_DEPENDENT_DETAIL: dict[tuple[str, bool], tuple[str, StackEffect]] = {}
 
 
 def __build_maps():
@@ -461,9 +461,9 @@ def compute_jump(instruction: ThunderInstruction, position: int) -> Optional[int
     return None
 
 
-def debug_compare_functions_print(diffs: dict[str, Tuple[list, list]]):
+def debug_compare_functions_print(diffs: dict[str, tuple[list, list]]):
     for k, (v1, v2) in diffs.items():
-        if not (v1 == None and v2 == None):
+        if not (v1 is None and v2 is None):
             print(f"Differences in: {k}")
             print(f"  CodeObject 1: {v1}")
             print(f"  CodeObject 2: {v2}")
@@ -471,7 +471,7 @@ def debug_compare_functions_print(diffs: dict[str, Tuple[list, list]]):
 
 def debug_compare_functions(
     code1: Union[CodeType, Callable], code2: Union[CodeType, Callable], *, show=False
-) -> dict[str, Tuple[list, list]]:
+) -> dict[str, tuple[list, list]]:
     if not isinstance(code1, CodeType):
         code1 = code1.__code__
     if not isinstance(code2, CodeType):

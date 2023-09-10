@@ -7,7 +7,7 @@ import marshal
 import textwrap
 from types import CodeType, MappingProxyType
 from typing import final, Any, Deque, Literal, NamedTuple, TypeVar
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 
 import networkx as nx
 
@@ -48,11 +48,12 @@ class VariableKey(NamedTuple):
         return (
             isinstance(other, VariableKey)
             and self.scope == other.scope
-            and type(self.identifier) is type(other.identifier)
+            and type(self.identifier) is (_ := type(other.identifier))  # Conflict between `ruff` and `yesqa`
             and self.identifier == other.identifier
         )
 
-    def __lt__(self, other: "VariableKey") -> bool:
+    def __lt__(self, other: tuple[Any, ...]) -> bool:
+        assert isinstance(other, VariableKey), (self, other)
         try:
             return (self.scope.value, self.identifier) < (other.scope.value, other.identifier)
         except TypeError:
@@ -65,7 +66,7 @@ class VariableKey(NamedTuple):
 # =============================================================================
 # == Variables (base classes) =================================================
 # =============================================================================
-ReplaceMap = dict["_AbstractValue", "_AbstractValue"]
+ReplaceMap = Mapping["_AbstractValue", "_AbstractValue"]
 _AbstractValues = tuple["_AbstractValue", ...]
 
 
@@ -221,29 +222,21 @@ class IntraBlockFlow:
 
         result: dict[ThunderInstruction, _Materialized] = {}
         for instruction, node in self.symbolic:
-            inputs = [self._getitem_impl(0, i, (self._begin, self._end), result) for i in node.inputs]
+            inputs = tuple(self._getitem_impl(0, i, (self._begin, self._end), result) for i in node.inputs)
             outputs = [resolve(inputs, o) for o in node.outputs]
             assert all(isinstance(o, _AbstractValue) for o in outputs), outputs
             result[instruction] = _Materialized(tuple(inputs), tuple(outputs))
 
         return MappingProxyType(result)
 
-    def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input]) -> _AbstractValue:
+    def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input | None]) -> _AbstractValue:
         return self._getitem_impl(*key, (self._begin, self._end), self.materialized)  # __getitem__ packs args
-
-    def variable_state(self, *, index: EdgeIndex) -> Iterator[tuple[VariableKey, _AbstractValue]]:
-        assert index in (0, -1), index
-        for k in sorted(variables := (self._begin, self._end)[index]):
-            assert k.scope != VariableScope.CONST
-            v = variables[k] if index == 0 else self[0, variables[k]]
-            if not isinstance(v, ValueMissing):
-                yield k, v
 
     @classmethod
     def from_instructions(cls, instructions: tuple[ThunderInstruction, ...], code: CodeType) -> "IntraBlockFlow":
         flow: dict[ThunderInstruction, _Symbolic] = {}
-        begin_variables: IntraBlockFlow.BeginVariables = {}
-        end_variables: IntraBlockFlow.EndVariables = {}
+        begin_variables: dict[VariableKey, _AbstractValue] = {}
+        end_variables: dict[VariableKey, IntraBlockFlow.EndVariable] = {}
         block_inputs: Deque[_AbstractValue] = collections.deque()
         stack: Deque[_Symbolic.Input] = collections.deque()
 
@@ -300,7 +293,8 @@ class IntraBlockFlow:
                 begin_variables.setdefault(key, default)
                 v = end_variables[key] = key
 
-            return v
+            #           MyPy doesn't understand `missing`
+            return v  # type: ignore[return-value]
 
         assert instructions
         for instruction in instructions:
@@ -311,8 +305,8 @@ class IntraBlockFlow:
             assert hasattr(instruction, "line_no"), instruction
             pop, push = stack_effect_adjusted(instruction)
 
-            def assert_expected_stack_effects(*expected) -> None:
-                assert (pop, push) == tuple(expected), f"{instruction=} {pop=} {push=}"
+            def assert_expected_stack_effects(pop_i: int, push_i: tuple[int, ...]) -> None:
+                assert (pop, push) == (pop_i, push_i), f"{instruction=} {pop=} {push=}"
 
             # Peek at the stack to track variable mutations.
             if (store_scope := STORE_OPNAMES.get(instruction.opname)) is not None:
@@ -340,7 +334,9 @@ class IntraBlockFlow:
 
             if (load_scope := LOAD_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(0, PushNew)
-                stack.append(peek_variable(instruction, load_scope))
+                loaded = peek_variable(instruction, load_scope)
+                assert loaded is not None, instruction
+                stack.append(loaded)
 
             elif not (store_scope or del_scope):
                 # We have already functionalized variable accesses, so we can prune loads and stores.
@@ -360,7 +356,7 @@ class IntraBlockFlow:
         """Replace `_AbstractValue`s within the flow. (Block inputs and producer nodes.)"""
 
         def replace(x: T) -> T:
-            return x.substitute(replace_map) if isinstance(x, _AbstractValue) else x
+            return x.substitute(replace_map) if isinstance(x, _AbstractValue) else x  # type: ignore[return-value]
 
         return self.__class__(
             _flow={k: _Symbolic(v.inputs, tuple(replace(o) for o in v.outputs)) for k, v in self.symbolic},
@@ -372,13 +368,16 @@ class IntraBlockFlow:
     def _getitem_impl(
         cls,
         index: EdgeIndex,
-        key: _Symbolic.Input,
+        key: _Symbolic.Input | None,
         variables: tuple["IntraBlockFlow.BeginVariables", "IntraBlockFlow.EndVariables"],
         materialized: Mapping[ThunderInstruction, _Materialized],
     ) -> _AbstractValue:
         # We need to index while materializing (before `self.materialized` is
         # available) so we factor the logic into a standlone method.
-        if isinstance(key, _OutputRef):
+        if key is None:
+            return ValueMissing()
+
+        elif isinstance(key, _OutputRef):
             return materialized[key.instruction].outputs[key.idx]
 
         assert isinstance(key, VariableKey)
@@ -386,8 +385,19 @@ class IntraBlockFlow:
             return ExternalRef(key)
 
         assert index in (0, -1)
-        v = variables[index][key]
-        return v if index == 0 else cls._getitem_impl(0, v, variables, materialized)
+        if index == 0:
+            return variables[0][key]
+        return cls._getitem_impl(0, variables[1][key], variables, materialized)
+
+    @staticmethod
+    def _boundary_state(
+        variables: Mapping[VariableKey, T],
+        resolve: Callable[[T], _AbstractValue],
+    ) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+        for k, v in sorted(variables.items(), key=lambda kv: kv[0]):
+            assert k.scope != VariableScope.CONST
+            if not isinstance(v_resolved := resolve(v), ValueMissing):
+                yield k, v_resolved
 
 
 # =============================================================================
@@ -441,12 +451,12 @@ class ProtoBlock(InstrumentingBase):
         yield from self.flow.materialized.items()
 
     @property
-    def begin_state(self):
-        return self.flow.variable_state(index=0)
+    def begin_state(self) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+        yield from self.flow._boundary_state(self.flow._begin, lambda v: v)
 
     @property
-    def end_state(self):
-        return self.flow.variable_state(index=-1)
+    def end_state(self) -> Iterator[tuple[VariableKey, _AbstractValue]]:
+        yield from (flow := self.flow)._boundary_state(flow._end, lambda v_ref: flow[0, v_ref])
 
     @property
     def _flow_uses(self) -> Iterable[VariableKey]:
@@ -520,7 +530,7 @@ class ProtoGraph:
 
     def substitute(self, transformed: dict[ProtoBlock, ProtoBlock]) -> "ProtoGraph":
         """Copies the ProtoGraph with block level substitutions while retaining the same topology."""
-        assert not (delta := OrderedSet(transformed.keys()) - self), delta
+        assert not (delta := OrderedSet(transformed.keys()) - OrderedSet(self)), delta
 
         # TODO(robieta): Right now block order is load bearing, so we have to preserve it.
         transformed = {k: transformed.get(k) or k.transform({}) for k in self}
@@ -545,7 +555,7 @@ class ProtoGraph:
         """Copies the ProtoGraph but replaces all block inputs with references. (Useful for graph rewrites.)"""
         transformed: dict[ProtoBlock, ProtoBlock] = {}
         for protoblock in self:
-            begin_vars = (v for _, v in protoblock.variable_state(index=0) if not isinstance(v, _AbstractRef))
+            begin_vars = (v for _, v in protoblock.begin_state if not isinstance(v, _AbstractRef))
             replace_map = {v: _AbstractRef(f"Unlink: {v}") for v in begin_vars}
             transformed[protoblock] = new_protoblock = protoblock.transform(replace_map)
             new_protoblock.__post_init__()
@@ -554,17 +564,17 @@ class ProtoGraph:
     def __iter__(self) -> Iterator[ProtoBlock]:
         yield from self.protoblocks
 
-    def __getitem__(self, index) -> ProtoBlock:
+    def __getitem__(self, index: int) -> ProtoBlock:
         return self.protoblocks[index]
 
-    def debug_print_protoflows(self):
+    def debug_print_protoflows(self) -> None:
         """
         Print out the node_flow for each protoblock in the
         protograph, in a way that's nice to read and debug with.
         """
 
         counter = 0
-        idxes = {}
+        idxes: dict[_AbstractValue, int] = {}
         for pb in self:
             for _, node in pb.node_flow:
                 for val in itertools.chain(node.inputs, node.outputs):
@@ -572,7 +582,7 @@ class ProtoGraph:
                         idxes[val] = counter
                         counter += 1
 
-        def to_index_str(values):
+        def to_index_str(values: _AbstractValues) -> str:
             indices = (str(idxes[v]) for v in values)
             return f"({', '.join(indices)})"
 
@@ -618,7 +628,7 @@ class ExternalRef(AbstractValue):
 class AbstractPhiValue(AbstractValue):
     """A value which aliases one of several inputs."""
 
-    constituents: tuple[AbstractValue]
+    constituents: tuple[AbstractValue, ...]
 
     def __post_init__(self) -> None:
         # Flatten nested PhiValues. e.g.
@@ -631,11 +641,11 @@ class AbstractPhiValue(AbstractValue):
         assert not any(i.is_detail for i in self.constituents), self.constituents
 
     def _unpack_apply(self, replace_map: ReplaceMap) -> "AbstractValue":
-        result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))
+        result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))  # type: ignore[misc]  # Constituent validity is ensured by `__post_init__`.
         return result if len(result.constituents) > 1 else result.constituents[0]
 
     @classmethod
-    def flatten(cls, v: AbstractValue):
+    def flatten(cls, v: AbstractValue) -> Iterable[AbstractValue]:
         if isinstance(v, AbstractPhiValue):
             for i in v.constituents:
                 yield from cls.flatten(i)

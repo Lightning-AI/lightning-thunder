@@ -2,10 +2,11 @@ import collections
 import dataclasses
 import functools
 import itertools
-from typing import Callable
+from typing import Callable, Concatenate
 from collections.abc import Iterable
 
 import networkx as nx
+from typing_extensions import ParamSpec
 
 from thunder.core.script.protograph import (
     _AbstractRef,
@@ -22,11 +23,14 @@ from thunder.core.script.python_ir_data import VariableScope, RAISE_RETURN_INSTR
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
 ValueEdges = Iterable[tuple[_AbstractValue, _AbstractValue]]
+P = ParamSpec("P")
 
 
-def check_idempotent(f: Callable[[ProtoGraph], tuple[ProtoGraph, bool]]):
+def check_idempotent(
+    f: Callable[Concatenate[ProtoGraph, P], tuple[ProtoGraph, bool]]
+) -> Callable[Concatenate[ProtoGraph, P], tuple[ProtoGraph, bool]]:
     @functools.wraps(f)
-    def wrapped(protograph: ProtoGraph, *args, **kwargs):
+    def wrapped(protograph: ProtoGraph, /, *args: P.args, **kwargs: P.kwargs) -> tuple[ProtoGraph, bool]:
         protograph, had_effect = f(protograph, *args, **kwargs)
         if debug_asserts_enabled():
             _, had_effect_on_rerun = f(protograph, *args, **kwargs)
@@ -55,7 +59,7 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
             if isinstance(source := protoblock.flow._end.get(use, use), VariableKey)
             and source.scope != VariableScope.CONST
         )
-        if new_uses := transitive_uses - uses[protoblock]:
+        if transitive_uses - uses[protoblock]:
             uses[protoblock].update(transitive_uses)
             blocks_to_process.extend(protograph.parents[protoblock])
 
@@ -223,12 +227,12 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
         tup_value: _AbstractValue
         idx: int
 
-        def __lt__(self, other):
+        def __lt__(self, other: "TupleKey") -> bool:
             return self.__hash__() < other.__hash__()
 
     # {(tup, idx): val}
-    tuple_sources: collections.defaultdict[TupleKey] = collections.defaultdict()
-    queries: collections.defaultdict[TupleKey] = collections.defaultdict()
+    tuple_sources: collections.defaultdict[TupleKey, _AbstractValue] = collections.defaultdict()
+    queries: collections.defaultdict[TupleKey, _AbstractValue] = collections.defaultdict()
 
     for pb in protograph:
         for instruction, node in pb.node_flow:

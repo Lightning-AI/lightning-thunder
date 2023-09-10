@@ -79,12 +79,12 @@ T1 = TypeVar("T1")
 _DEBUG_ASSERTS = False
 
 
-def enable_debug_asserts():
+def enable_debug_asserts() -> None:
     global _DEBUG_ASSERTS
     _DEBUG_ASSERTS = True
 
 
-def debug_asserts_enabled():
+def debug_asserts_enabled() -> bool:
     return _DEBUG_ASSERTS
 
 
@@ -639,7 +639,7 @@ def check_same_device(*args):
 # ordered
 # NOTE dicts in Python are ordered since Python 3.7
 # TODO Implement additional methods as needed
-class OrderedSet(Generic[T]):
+class OrderedSet(Generic[T], Iterable[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
     def __init__(self, args: Optional[Iterable[T]] = None):
         self.d = {self.canonicalize(k): None for k in args or ()}
@@ -665,30 +665,30 @@ class OrderedSet(Generic[T]):
         return len(self.d)
 
     # -
-    def __sub__(self, other: "OrderedSet") -> "OrderedSet":
+    def __sub__(self, other: "OrderedSet") -> "OrderedSet[T]":
         return self.__class__(k for k in self if k not in other)
 
-    def __and__(self, other: "OrderedSet") -> "OrderedSet":
+    def __and__(self, other: "OrderedSet") -> "OrderedSet[T]":
         return self.__class__(k for k in self if k in other)
 
-    def __or__(self, other: "OrderedSet") -> "OrderedSet":
+    def __or__(self, other: "OrderedSet") -> "OrderedSet[T]":
         return self.__class__(itertools.chain(self, other))
 
     # NOTE: actual set signature is (self, *others)
-    def difference(self, other):
+    def difference(self, other) -> "OrderedSet[T]":
         return self - other
 
-    def add(self, x):
+    def add(self, x: T):
         self.d[self.canonicalize(x)] = None
 
-    def update(self, x):
+    def update(self, x: Iterable[T]) -> None:
         for i in x:
             self.d.setdefault(self.canonicalize(i), None)
 
     def remove(self, x):
         del self.d[self.canonicalize(x)]
 
-    def copy(self) -> "OrderedSet":
+    def copy(self) -> "OrderedSet[T]":
         return self.__class__(self)
 
     def clear(self) -> None:
