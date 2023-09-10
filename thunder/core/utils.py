@@ -695,6 +695,17 @@ class OrderedSet(Generic[T], Iterable[T]):
         self.d.clear()
 
 
+class InferringDict(dict[T, T1]):
+    """Like `defaultdict`, but allows you to use `key` to pick a reasonable default."""
+
+    def __init__(self, missing: Callable[[T], T1]) -> None:
+        self._missing = missing
+
+    def __missing__(self, key: T) -> T1:
+        self[key] = out = self._missing(key)
+        return out
+
+
 #
 # Context-related functions and decorators
 #

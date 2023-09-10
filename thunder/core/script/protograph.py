@@ -24,7 +24,7 @@ from thunder.core.script.python_ir_data import (
     STORE_OPNAMES,
     EXTENDED_ARG,
 )
-from thunder.core.utils import OrderedSet
+from thunder.core.utils import InferringDict, OrderedSet
 
 T = TypeVar("T")
 
@@ -213,7 +213,13 @@ class IntraBlockFlow:
     def from_instructions(cls, instructions: tuple[ThunderInstruction, ...], code: CodeType) -> IntraBlockFlow:
         flow: dict[ThunderInstruction, _Symbolic] = {}
         begin_variables: dict[VariableKey, AbstractValue] = {}
-        end_variables: dict[VariableKey, IntraBlockFlow.EndVariable] = {}
+
+        def end_missing(key: VariableKey) -> IntraBlockFlow.EndVariable:
+            if key.scope != VariableScope.CONST:
+                begin_variables.setdefault(key, AbstractRef(f"Variable initial value: ({key.identifier} {key.scope})"))
+            return key
+
+        end_variables = InferringDict[VariableKey, IntraBlockFlow.EndVariable](end_missing)
         block_inputs: Deque[AbstractValue] = collections.deque()
         stack: Deque[_Symbolic.Input] = collections.deque()
 
@@ -258,21 +264,6 @@ class IntraBlockFlow:
             else:
                 raise NotImplementedError("Unknown variable scope: {scope}")
 
-        def peek_variable(instr: ThunderInstruction, scope: VariableScope) -> IntraBlockFlow.EndVariable:
-            key = to_key(instr, scope)
-            if scope == VariableScope.CONST:
-                return key
-
-            v = end_variables.get(key, missing := object())
-            assert v is not None, f"Access to deleted variable: {key}"
-            if v is missing:
-                default = AbstractRef(f"Variable initial value: ({key.identifier} {key.scope})")
-                begin_variables.setdefault(key, default)
-                v = end_variables[key] = key
-
-            #           MyPy doesn't understand `missing`
-            return v  # type: ignore[return-value]
-
         assert instructions
         for instruction in instructions:
             if instruction.opname == EXTENDED_ARG:
@@ -311,8 +302,8 @@ class IntraBlockFlow:
 
             if (load_scope := LOAD_OPNAMES.get(instruction.opname)) is not None:
                 assert_expected_stack_effects(0, PushNew)
-                loaded = peek_variable(instruction, load_scope)
-                assert loaded is not None, instruction
+                loaded = end_variables[load_key := to_key(instruction, load_scope)]
+                assert loaded is not None, f"Access to deleted variable: {load_key}, {instruction}"
                 stack.append(loaded)
 
             elif not (store_scope or del_scope):
@@ -327,7 +318,7 @@ class IntraBlockFlow:
         for idx, v_ref in enumerate(stack, start=-len(block_inputs)):
             end_variables[VariableKey(idx, VariableScope.STACK)] = v_ref
 
-        return cls(flow, begin_variables, end_variables)
+        return cls(flow, begin_variables, {k: v for k, v in end_variables.items() if k.scope != VariableScope.CONST})
 
     def substitute(self, replace_map: ReplaceMap) -> IntraBlockFlow:
         """Replace `AbstractValue`s within the flow. (Block inputs and producer nodes.)"""
