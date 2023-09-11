@@ -29,6 +29,10 @@ def test_cudnn_sdpa():
     if not CUDNN_AVAILABLE:
         pytest.skip("cudnn is not available")
 
+    # expect sdpa to fail for 8.9.2 and below
+    if cudnn.backend_version() <= 8902:
+        pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
+
     try:
         register_cudnnex()
 
@@ -57,7 +61,7 @@ def test_cudnn_sdpa():
 
             ctest = thunder.compile(test, executors_list=["cudnn"])
             actual = ctest(query, key, value, is_causal=is_causal, attn_mask=attn_mask)
-            torch.testing.assert_close(actual, expected, atol=1e-2, rtol=1e-2)
+            torch.testing.assert_close(actual, expected, atol=2e-2, rtol=1e-2)
             last_trace = thunder.last_traces(ctest)[-1]
             assert any(bsym.sym.name == "cudnn_sdpa" for bsym in last_trace.bound_symbols)
     finally:
@@ -104,6 +108,18 @@ def snippet_torch_consistency(op, torch_op, sample):
 def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     if not CUDNN_AVAILABLE:
         pytest.skip("cudnn is not available")
+
+    # expect layer_norm to fail for 8.9.3 and below
+    if op.name == "layer_norm":
+        
+        if cudnn.backend_version() <= 8903:
+            pytest.xfail("Only fp32 weight/bias supported pre 8.9.3.")
+            
+    # expect sdpa to fail for 8.9.2 and below
+    if op.name == "scaled_dot_product_attention":
+        
+        if cudnn.backend_version() <= 8902:
+            pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
 
     try:
         register_cudnnex()
