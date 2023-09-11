@@ -1,6 +1,7 @@
 import dis
 import inspect
 import opcode
+import sys
 import types
 from typing import Any, Callable, Dict, List, Tuple, Union
 from contextvars import ContextVar
@@ -17,10 +18,12 @@ from thunder.core.script.graph import (
     Graph,
     Block,
     clone_blocks,
+    _generate_raises,
     GraphObject,
     Node,
     PhiValue,
     replace_values,
+    _Undefined,
     Value,
 )
 from thunder.core.script.instrumentation import verbose_error, record
@@ -154,7 +157,10 @@ def find_and_evaluate_method_through_phi_parent(v: Value) -> Union[object, Calla
         if al.startswith("["):
             fn_value = fn_value[int(al[1:-1])]  # non-int lookups?
         else:
-            fn_value = getattr(fn_value, al)
+            value = getattr(fn_value, al, _Undefined)
+            if value is _Undefined:
+                return _Undefined(fn_value, al)
+            fn_value = value
     return fn_value
 
 
@@ -175,6 +181,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     assert found_block
     if n.i.opname == "CALL_METHOD":
         fn_value: Callable = find_and_evaluate_method_through_phi_parent(n.inputs[0])  # type: ignore
+        assert not isinstance(fn_value, _Undefined)
         if fn_value is None:
             raise NotImplementedError("cannot inline non-explicit function")
 
@@ -195,6 +202,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
             raise NotImplementedError("cannot inline built-in (C-implemented) function")
     elif n.i.opname in {"CALL_FUNCTION", "CALL_FUNCTION_KW"}:
         fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])  # type: ignore
+        assert not isinstance(fn_value, _Undefined)
         if fn_value is None:
             raise NotImplementedError("cannot inline non-explicit function")
 
@@ -313,6 +321,17 @@ def inline_submodule_calls(gr: "Graph") -> bool:
         for n in bl.nodes[:]:
             if n.i.opname in {"CALL_METHOD", "CALL_FUNCTION", "CALL_FUNCTION_KW"}:
                 fn_value = find_and_evaluate_method_through_phi_parent(n.inputs[0])
+                if isinstance(fn_value, _Undefined):
+                    # TODO: We could insert a RAISE here if we then delete the return
+                    # value and all (direct or indirect) uses.
+                    methval = Value(
+                        value=_generate_raises(
+                            f"attribute error '{type(fn_value.value)}' object has no attribute '{fn_value.attr}'"
+                        ),
+                        is_const=True,
+                    )
+                    n.i = n.i.modify_copy(opname="CALL_FUNCTION", arg=0)
+                    n.inputs = [methval]
                 if isinstance(fn_value, torch.nn.Module) or (
                     inspect.ismethod(fn_value) and isinstance(fn_value.__self__, torch.nn.Module)
                 ):
@@ -705,6 +724,9 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     def functionalize_value_if_possible(i):
         # TODO: inefficient because it looks twice
         v = find_and_evaluate_method_through_phi_parent(i)
+        # assert not isinstance(v, _Undefined), f"undefined: {v.value} {v.attr}"
+        if isinstance(v, _Undefined):
+            return Value(value=v, is_const=True)
         maybe_self, attrs = find_method_through_phi_parent(i)
 
         attr_string = ".".join(attrs)
@@ -755,6 +777,10 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
         for n in bl.nodes:
             if n.i.opname == "STORE_ATTR":
                 v = find_and_evaluate_method_through_phi_parent(n.inputs[1])
+                if isinstance(v, _Undefined):
+                    n.inputs[1] = Value(value=v, is_const=True)
+                    continue
+                    # assert not isinstance(v, _Undefined), f"undefined: {v.value} {v.attr}"
                 maybe_self, attrs = find_method_through_phi_parent(n.inputs[1])
                 attrs.append(n.i.argval)
                 if maybe_self.value is gr.module:

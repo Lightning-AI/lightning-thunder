@@ -6,6 +6,7 @@ import types
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 
 from thunder.core.script.graph import (
+    _generate_raises,
     Graph,
     GraphSummaryCallback,
     MROAwareObjectRef,
@@ -13,6 +14,7 @@ from thunder.core.script.graph import (
     Value,
     insert_before,
     insert_after,
+    _Undefined,
 )
 from thunder.core.script.python_ir_data import get_instruction, RETURN_VALUE, X_THUNDER_STORE_ATTR
 from thunder.core.utils import OrderedSet
@@ -24,6 +26,22 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
 
     def get_value(v: Value, n: Node, inpidx: Optional[int] = None) -> None:
         if n.i.opname == "CALL_METHOD" and inpidx == 1:
+            return
+        if isinstance(v.value, _Undefined):
+            idx = len(consts)
+            consts.append(
+                _generate_raises(f"attribute error '{type(v.value.value)}' object has no attribute '{v.value.attr}'")
+            )
+            new_n = Node(
+                i=get_instruction(opname="LOAD_CONST", arg=idx),
+                outputs=[Value(value=consts[idx], is_const=True)],
+                inputs=[],
+            )
+            new_n.inserted_for = n
+            insert_before(new_n, n)
+            new_n = Node(i=get_instruction(opname="CALL_FUNCTION", arg=0), outputs=[v], inputs=[consts[idx]])
+            new_n.inserted_for = n
+            insert_before(new_n, n)
             return
         if v.is_const:
             idx = len(consts)

@@ -1106,6 +1106,64 @@ def test_collision():
     assert type(b0) is type(b1) and b0 == b1
 
 
+class ConditionallyDefinedModule(torch.nn.Module):
+    def __init__(self, cond):
+        super().__init__()
+        self.a = torch.nn.Linear(1, 1)
+        if not cond:
+            self.b = torch.nn.Linear(1, 1)
+        self.cond = cond
+
+    def forward(self, x):
+        x = self.a(x)
+        if not self.cond:
+            x = x + self.b(x)
+        return x
+
+
+@skipif_not_python_3_10
+def test_conditionally_defined_module():
+    m = ConditionallyDefinedModule(True)
+    tom = thunder.compile(m)
+    x = torch.tensor([3.0])
+    expected = m(x)
+    result = tom(x)
+    assert_close(expected, result)
+    m.cond = False
+    tom = thunder.compile(m)
+    with pytest.raises(AttributeError, match="ConditionallyDefinedModule.*'b'"):
+        tom(x)
+
+
+class ConditionallyDefinedAttribute(torch.nn.Module):
+    def __init__(self, cond):
+        super().__init__()
+        self.a = torch.nn.Linear(1, 1)
+        if not cond:
+            self.b = torch.nn.Parameter(torch.randn())
+        self.cond = cond
+
+    def forward(self, x):
+        x = self.a(x)
+        if not self.cond:
+            x = x + self.b
+        return x
+
+
+@skipif_not_python_3_10
+def test_conditionally_defined_attribute():
+    m = ConditionallyDefinedAttribute(True)
+    tom = thunder.compile(m)
+    x = torch.tensor([3.0])
+    expected = m(x)
+    result = tom(x)
+    assert_close(expected, result)
+    m.cond = False
+    tom = thunder.compile(m)
+    with pytest.raises(AttributeError, match="ConditionallyDefinedAttribute.*'b'"):
+        tom(x)
+
+
 # @instantiate(dtypes=(thunder.float32,))
 # def test_local_acquired_translation(executor, device, dtype):
 #     tdtype = ltorch.torch_dtype(dtype)

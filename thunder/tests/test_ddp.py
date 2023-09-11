@@ -148,8 +148,8 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     def test_compile_ddp_module(self):
         model = ToyModel().to(self.rank)
         with self.assertRaisesRegex(
-            AttributeError,
-            "'NoneType' object has no attribute 'zero_'",
+            RuntimeError,
+            "nonlocal variables are not supported",
         ):
             thunder.compile(DDP(model, device_ids=[self.rank]))
 

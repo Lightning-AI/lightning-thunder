@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator, Sequence
 
 from thunder.core.script.instrumentation import InstrumentingBase
 from thunder.core.script.python_ir_data import stack_effect_detail, ThunderInstruction
+from thunder.core.script.noinline import noinline
 from thunder.core.utils import OrderedSet
 
 if TYPE_CHECKING:
@@ -64,6 +65,15 @@ class MROAwareObjectRef:  # or as they call it super
         if i >= len(mro):
             raise AttributeError(f"{name} not a member")
         return getattr(mro[i], name)
+
+
+# Represent undefined values e.g. non-existent attrs etc.
+# this can be inserted as a (const) value and will then be
+# translated into raising an error at runtime
+class _Undefined:
+    def __init__(self, value, attr):
+        self.value = value
+        self.attr = attr
 
 
 # Values are
@@ -741,3 +751,11 @@ def check_graph(gr: Graph) -> None:
         print()
         gr.summary(print_lines=True)
         raise
+
+
+def _generate_raises(msg):
+    @noinline
+    def _raise():
+        raise AttributeError(msg)
+
+    return _raise
