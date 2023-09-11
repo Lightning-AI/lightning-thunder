@@ -384,9 +384,20 @@ class ddp_wrapper:
 
             ctx = mp.get_context("spawn")
             pool = ctx.Pool(world_size)
+
+            results: list = []
+
+            def callback(result):
+                pass
+
+            def error_callback(ex):
+                raise ex
+
+            # The seconds to wait before the pool tasks complete
+            TIMEOUT: int = 30
             try:
-                with pool:
-                    results = pool.map(self.fn, input_data)
+                results_future = pool.map_async(self.fn, input_data, 1, callback, error_callback)
+                results = results_future.get(TIMEOUT)
             finally:
                 pool.close()
                 pool.join()
