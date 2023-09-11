@@ -2688,13 +2688,6 @@ pad_opinfo = OpInfo(
     sample_input_generator=pad_sample_generator,
     jax_reference=_jax_pad if JAX_AVAILABLE else None,
     test_directives=(
-        # nvFuser pad is not working properly
-        #   see https://github.com/Lightning-AI/lightning-thunder/issues/886
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-            # dtypes=(datatypes.complexfloating,),
-        ),
         # PyTorch's pad doesn't support complex padding values
         DecorateInfo(
             pytest.mark.xfail,
