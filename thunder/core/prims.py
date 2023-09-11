@@ -61,6 +61,7 @@ class PrimIDs(Enum):
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
+    FLIP = auto()
     PAD = auto()
     RESHAPE = auto()
     SLICE = auto()
@@ -1707,6 +1708,23 @@ convolution = make_prim(
     "convolution",
     meta=convolution_meta,
 )
+
+
+def flip_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
+    # Check types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dims, Sequence)
+    utils.check(
+        all(isinstance(d, int) and 0 <= d < a.ndim for d in dims),
+        lambda: f"Expected {dims=} to be a sequence of integers in [0, {a.ndim} - 1]"
+    )
+
+    utils.check_no_duplicates(dims)
+
+    return TensorProxy(like=a)
+
+
+flip = make_prim(PrimIDs.FLIP, "flip", meta=flip_meta)
 
 
 def pad_meta(a: TensorProxy, padding_value: Number, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:

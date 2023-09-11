@@ -886,6 +886,19 @@ def flatten(a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
     return clang.flatten(a, start_dim, end_dim)
 
 
+@torchsymbol(torch.flip, is_method=True)
+def flip(a: TensorLike, dims: Sequence[int]) -> TensorLike:
+    # PyTorch supports 0-dim inputs with len(dims) <= 1
+    if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
+        utils.check(
+            len(dims) == 1 and isinstance(dims[0], int) and dims[0] in (0, -1),
+            lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1"
+        )
+        return clang.flip(a, ())
+
+    return clang.flip(a, dims)
+
+
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__")
 def get_item(a: TensorLike, /, key) -> TensorLike:
     return clang.get_item(a, key)

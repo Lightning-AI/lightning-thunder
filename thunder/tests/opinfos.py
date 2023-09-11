@@ -443,6 +443,7 @@ def elementwise_unary_generator(
         (4, 4),
         (1024, 1024),
         (64, 64, 64),
+        (4, 2, 4, 5)
     )
 
     # Typical inputs
@@ -2417,6 +2418,74 @@ flatten_opinfo = OpInfo(
     torch_reference=torch.flatten,
 )
 shape_ops.append(flatten_opinfo)
+
+
+def flip_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    for sample in elementwise_unary_generator(op, device, dtype, requires_grad, **kwargs):
+        a, *_ = sample.args
+
+        # No flip
+        yield SampleInput(a, ())
+
+        # Flip everything
+        yield SampleInput(make(a.shape), tuple(range(a.ndim)))
+
+        # Flip last dim, even for scalars.
+        yield SampleInput(make(a.shape), (-1,))
+
+        # 0-1D cases are exhausted above.
+        # Now we can perform more interesting manipulations with ndim > 1
+        if a.ndim > 1:
+            # pos/neg-only dims
+            for dims in (tuple(range(-a.ndim, 0)), tuple(range(a.ndim))):
+                # Flip everything but a single dimension
+                for i, _ in enumerate(dims):
+                    yield SampleInput(make(a.shape), dims[:i] + dims[i + 1:])
+
+
+def flip_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+
+    # Cases with scalar inputs
+    yield (
+        SampleInput(make(), (1, -1)),
+        RuntimeError,
+        "Expected dims(.*?) of length 1"
+    )
+    yield (
+        SampleInput(make(), (-2,)),
+        RuntimeError,
+        "Expected dim(.*?) in range \[-1, 0\]"
+    )
+    yield (
+        SampleInput(make(), (0.,)),
+        RuntimeError,
+        "Expected dim(.*?) to be a sequence of integers"
+    )
+
+    # Cases with non-scalar inputs
+    yield (
+        SampleInput(make(1, 1), (1, -1)),
+        RuntimeError,
+        # 1 and -1 are the same dimesion
+        "Duplicate value in list of dimensions"
+    )
+    yield (
+        SampleInput(make(1, 1), (3,)),
+        IndexError,
+        "Dimension out of range"
+    )
+
+
+flip_opinfo = OpInfo(
+    ltorch.flip,
+    sample_input_generator=flip_sample_generator,
+    error_input_generator=flip_error_generator,
+    torch_reference=torch.flip,
+)
+shape_ops.append(flip_opinfo)
 
 
 def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):

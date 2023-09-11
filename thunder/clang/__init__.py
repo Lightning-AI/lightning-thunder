@@ -335,6 +335,22 @@ def flatten(a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
     return reshape(a, shape)
 
 
+@clang_ctx
+def flip(a: TensorLike, dims: Sequence[int] | int | None = None) -> TensorLike:
+    if dims is not None:
+        if isinstance(dims, int):
+            dims = (dims,)
+        elif isinstance(dims, Sequence) and len(dims) == 0:
+            # Short circuit when dims is an empty Sequence
+            return a
+
+        dims = utils.canonicalize_dims(a.ndim, dims)
+        return prims.flip(a, dims)
+    else:
+        # Flip over all of the dims
+        return prims.flip(a, tuple(range(a.ndim)))
+
+
 # TODO: should this allow negative steps?
 # TODO: we should probably be consistent about start/stop/step vs. start/end/stride language
 # TODO Add type annotations
