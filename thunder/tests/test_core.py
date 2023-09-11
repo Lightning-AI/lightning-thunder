@@ -1606,6 +1606,51 @@ def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
     assert not symbol.are_all_args_constant
 
 
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_bound_symbol_header(executor, device: str, dtype: dtypes.dtype):
+    def foo(x):
+        return clang.sin(x)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    trace = thunder.trace()(foo, a)
+
+    assert len(trace.bound_symbols) == 3
+    sin_symbol = trace.bound_symbols[1]
+    assert sin_symbol.sym.name == "sin"
+
+    # Test setting header with a string
+    sin_symbol.header = "Testing\nThis symbol's\nHeader"
+    assert "# Testing\n# This symbol\'s\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
+    assert "\n  # Testing\n  # This symbol\'s\n  # Header\n  t0 = prims.sin(x)" in str(trace)
+
+    # Test setting header with a list of strings
+    sin_symbol.header = "Testing\nThis symbol's\nHeader".splitlines()
+    assert "# Testing\n# This symbol\'s\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
+    assert "\n  # Testing\n  # This symbol\'s\n  # Header\n  t0 = prims.sin(x)" in str(trace)
+
+
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype):
+    from thunder.core.symbol import bsym_header
+
+    def foo(x):
+        return clang.sin(x)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    header = "Testing\nThis symbol's\nHeader"
+    with bsym_header(header):
+        trace = thunder.trace()(foo, a)
+    print(trace)
+
+    assert len(trace.bound_symbols) == 3
+    sin_symbol = trace.bound_symbols[1]
+    assert sin_symbol.sym.name == "sin"
+    assert "# Testing\n# This symbol\'s\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
+    assert "\n  # Testing\n  # This symbol\'s\n  # Header\n  t0 = prims.sin(x)" in str(trace)
+    assert str(trace).count("Testing") == 1
+
+
 # Check for https://github.com/Lightning-AI/lightning-thunder/issues/471
 @instantiate(dtypes=(thunder.float32,))
 def test_argument_of_none(executor, device, dtype):

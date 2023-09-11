@@ -4,6 +4,7 @@ import functools
 import inspect
 import sys
 from contextvars import ContextVar
+from contextlib import contextmanager
 from itertools import chain
 
 from dataclasses import dataclass, field
@@ -39,6 +40,20 @@ def set_eagerctx(ctx):
     return _eagetctx.set(ctx)
 
 
+_bsym_header = ContextVar("bsym_header", default="")
+
+
+@contextmanager
+def bsym_header(header: str):
+    """Sets the current header for BoundSymbols."""
+
+    token = _bsym_header.set(header)
+    try:
+        yield
+    finally:
+        _bsym_header.reset(token)
+
+
 # TODO THIS IS BROKEN. We need to pass the args and kwargs here, but with placeholders pointing to the Python ctx
 #   where appropriate. That way the other objects can be printed correctly. Otherwise we can't disambiguate between
 #   actual strings, which must be enclosed in quotes, and the placeholders pointing to the ctx, which are currently
@@ -71,6 +86,12 @@ def default_python_printer(
         comment_str = f"  # {codeutils.prettyprint(out_printables, with_type=True)}"
 
     s = f"{result_str}{bsym.name_with_module()}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
+
+    if bsym.header:
+        header_lines = bsym.header if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str) else bsym.header.splitlines()
+        header_lines = (f"# {line}" for line in header_lines)
+        return chain(header_lines, [s])
+
     return s
 
 
@@ -194,7 +215,15 @@ class Symbol:
     def bind(self, *args, output, subsymbols=(), _call_ctx=None, **kwargs) -> BoundSymbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
-        b = BoundSymbol(self, args=args, kwargs=kwargs, output=output, subsymbols=subsymbols, _call_ctx=_call_ctx)
+        b = BoundSymbol(
+            self,
+            args=args,
+            kwargs=kwargs,
+            output=output,
+            subsymbols=subsymbols,
+            header=_bsym_header.get(),
+            _call_ctx=_call_ctx,
+        )
         if self._bind_postprocess:
             self._bind_postprocess(b)
         return b
@@ -270,6 +299,10 @@ class BoundSymbol(BoundSymbolInterface):
     kwargs: dict
     output: Any
     subsymbols: Sequence[BoundSymbol] = ()
+
+    # Header is a string that may be printed before the symbol
+    header: str | list[str] = ""
+
     _call_ctx: Optional[Dict[str, Any]] = None
 
     _import_ctx: dict = field(default_factory=dict)
@@ -294,6 +327,7 @@ class BoundSymbol(BoundSymbolInterface):
             "kwargs": self.kwargs,
             "output": self.output,
             "subsymbols": self.subsymbols,
+            "header": self.header,
             "_call_ctx": self._call_ctx,
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
