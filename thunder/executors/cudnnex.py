@@ -10,6 +10,7 @@ CUDNN_AVAILABLE = package_available("cudnn")
 cudnn: None | Any = None
 if CUDNN_AVAILABLE:
     import cudnn
+
     cudnn_backend_version = cudnn.backend_version()
 
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
@@ -22,51 +23,60 @@ from typing import Union, Dict
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import TensorProxy
 
+
 @dataclass(frozen=True)
 class CudnnTensorAttributes:
     size: tuple
     stride: tuple
     dtype: torch.dtype
 
+
 def make_cacheable_cudnn_graph_inputs(func):
     def wrapper(*args, **kwargs):
         cudnn_input_args = [
-            CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype)
-            if isinstance(arg, torch.Tensor)
-            else arg
+            CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype) if isinstance(arg, torch.Tensor) else arg
             for arg in args
         ]
         return func(*cudnn_input_args, **kwargs)
+
     return wrapper
+
 
 @make_cacheable_cudnn_graph_inputs
 @lru_cache(maxsize=1024)
 def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
-    
     graph = cudnn.pygraph(intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT)
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
     K = graph.tensor(name="K", dim=key.size, stride=key.stride, data_type=torch_to_cudnn_dtype(key.dtype))
     V = graph.tensor(name="V", dim=value.size, stride=value.stride, data_type=torch_to_cudnn_dtype(value.dtype))
-    
+
     Bias = None
     if attn_mask is not None:
         Bias = graph.tensor(
             name="bias", dim=attn_mask.size, stride=attn_mask.stride, data_type=torch_to_cudnn_dtype(attn_mask.dtype)
         )
-    
+
     scalar_dim_stride = tuple([1] * len(query.size))
     dropout_tuple = None
     Seed = None
     Offset = None
     if dropout_p != 0.0:
-        Seed = graph.tensor(name = "Seed", dim = scalar_dim_stride, stride = scalar_dim_stride, data_type = cudnn.data_type.INT64)
-        Offset = graph.tensor(name = "Offset", dim = scalar_dim_stride, stride = scalar_dim_stride, data_type = cudnn.data_type.INT64)
+        Seed = graph.tensor(
+            name="Seed", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT64
+        )
+        Offset = graph.tensor(
+            name="Offset", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.INT64
+        )
         dropout_tuple = (dropout_p, Seed, Offset)
 
     Attn_scale = graph.tensor(
-        name="Attn_scale", dim = scalar_dim_stride, stride = scalar_dim_stride, data_type=cudnn.data_type.FLOAT, is_pass_by_value=True
+        name="Attn_scale",
+        dim=scalar_dim_stride,
+        stride=scalar_dim_stride,
+        data_type=cudnn.data_type.FLOAT,
+        is_pass_by_value=True,
     )
-    
+
     O, _ = graph.scaled_dot_product_flash_attention(
         name="scaled_dot_product_flash_attention",
         q=Q,
@@ -76,7 +86,7 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
         bias=Bias,
         use_causal_mask=is_causal,
         attn_scale=Attn_scale,
-        dropout = dropout_tuple,
+        dropout=dropout_tuple,
     )
 
     O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype))
@@ -85,6 +95,7 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
     graph.build()
 
     return Q, K, V, Attn_scale, Bias, Seed, Offset, O, graph
+
 
 @make_cacheable_cudnn_graph_inputs
 @lru_cache(maxsize=1024)
@@ -134,7 +145,6 @@ def torch_to_cudnn_dtype(lc_dtype: dtypes.dtype):
 
 
 def _transform_sdpa_inputs(query, key, value, attn_mask):
-
     def compute_NHWC_strides(shape):
         strides = [1] * len(shape)
         stride = 1
@@ -162,10 +172,11 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 
 
 def sdpa_impl(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
-
     query_4d, key_4d_T, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
 
-    Q, K, V, Attn_scale, Bias, Seed, Offset, O, graph = _make_cudnn_sdpa_graph(query_4d, key_4d_T, value_4d, attn_mask_4d, dropout_p, is_causal)
+    Q, K, V, Attn_scale, Bias, Seed, Offset, O, graph = _make_cudnn_sdpa_graph(
+        query_4d, key_4d_T, value_4d, attn_mask_4d, dropout_p, is_causal
+    )
 
     b, h, s_q, d_q = query.size()
     _, _, _, d_v = value.size()
@@ -184,10 +195,10 @@ def sdpa_impl(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False,
         cudnn_to_torch_tensor[Bias] = attn_mask
 
     if Seed is not None:
-        cudnn_to_torch_tensor[Seed] = torch.full((1,1,1,1), 123456, dtype=torch.int64, device="cuda")
-        
+        cudnn_to_torch_tensor[Seed] = torch.full((1, 1, 1, 1), 123456, dtype=torch.int64, device="cuda")
+
     if Offset is not None:
-        cudnn_to_torch_tensor[Offset] = torch.full((1,1,1,1), 1, dtype=torch.int64, device="cuda")
+        cudnn_to_torch_tensor[Offset] = torch.full((1, 1, 1, 1), 1, dtype=torch.int64, device="cuda")
 
     graph.execute(cudnn_to_torch_tensor, workspace)
 
@@ -197,9 +208,9 @@ def sdpa_impl(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False,
 def sdpa_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
     if cudnn is None:
         return False
-    
+
     query_4d, key_4d_T, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-    
+
     try:
         _make_cudnn_sdpa_graph(query_4d, key_4d_T, value_4d, attn_mask_4d, dropout_p, is_causal)
     except Exception as e:
@@ -207,10 +218,11 @@ def sdpa_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fal
 
     # Bug in cudnn 8.9.5 and earlier where embedding dim support is missing
     _, h, _, _ = query.size()
-    if h%8 != 0 or h > 128:
+    if h % 8 != 0 or h > 128:
         return False
-    
+
     return True
+
 
 # cudnn only supports following:
 # input tensor shape: N, C, (D), H, W
@@ -228,8 +240,8 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
 
     return a_4d, weight_4d, bias_4d
 
-def layer_norm_impl(a, normalized_shape, weight=None, bias=None, eps=1e-5):
 
+def layer_norm_impl(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
     input, scale, B, epsilon, Y, graph = _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d)
 
@@ -251,7 +263,7 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
         return False
 
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
-    
+
     try:
         _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d)
     except:

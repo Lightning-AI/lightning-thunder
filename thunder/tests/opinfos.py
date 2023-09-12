@@ -443,7 +443,7 @@ def elementwise_unary_generator(
         (4, 4),
         (1024, 1024),
         (64, 64, 64),
-        (4, 2, 4, 5)
+        (4, 2, 4, 5),
     )
 
     # Typical inputs
@@ -2442,41 +2442,25 @@ def flip_sample_generator(op, device, dtype, requires_grad, **kwargs):
             for dims in (tuple(range(-a.ndim, 0)), tuple(range(a.ndim))):
                 # Flip everything but a single dimension
                 for i, _ in enumerate(dims):
-                    yield SampleInput(make(a.shape), dims[:i] + dims[i + 1:])
+                    yield SampleInput(make(a.shape), dims[:i] + dims[i + 1 :])
 
 
 def flip_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, dtype=dtype, device=device)
 
     # Cases with scalar inputs
-    yield (
-        SampleInput(make(), (1, -1)),
-        RuntimeError,
-        "Expected dims(.*?) of length 1"
-    )
-    yield (
-        SampleInput(make(), (-2,)),
-        RuntimeError,
-        "Expected dim(.*?) in range \[-1, 0\]"
-    )
-    yield (
-        SampleInput(make(), (0.,)),
-        RuntimeError,
-        "Expected dim(.*?) to be a sequence of integers"
-    )
+    yield (SampleInput(make(), (1, -1)), RuntimeError, "Expected dims(.*?) of length 1")
+    yield (SampleInput(make(), (-2,)), RuntimeError, "Expected dim(.*?) in range \[-1, 0\]")
+    yield (SampleInput(make(), (0.0,)), RuntimeError, "Expected dim(.*?) to be a sequence of integers")
 
     # Cases with non-scalar inputs
     yield (
         SampleInput(make(1, 1), (1, -1)),
         RuntimeError,
         # 1 and -1 are the same dimesion
-        "Duplicate value in list of dimensions"
+        "Duplicate value in list of dimensions",
     )
-    yield (
-        SampleInput(make(1, 1), (3,)),
-        IndexError,
-        "Dimension out of range"
-    )
+    yield (SampleInput(make(1, 1), (3,)), IndexError, "Dimension out of range")
 
 
 flip_opinfo = OpInfo(
@@ -5059,68 +5043,52 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
-    yield (
-        SampleInput(make(1, 1), scale_factor=2.),
-        RuntimeError,
-        f"Expected (.*?)ndim(.*?) >= 3"
-    )
-    yield (
-        SampleInput(make(1, 1, 0), scale_factor=2.),
-        RuntimeError,
-        f"Expected (.*?)numel(.*?) to be greater than 0"
-    )
+    yield (SampleInput(make(1, 1), scale_factor=2.0), RuntimeError, f"Expected (.*?)ndim(.*?) >= 3")
+    yield (SampleInput(make(1, 1, 0), scale_factor=2.0), RuntimeError, f"Expected (.*?)numel(.*?) to be greater than 0")
 
-    yield (
-        SampleInput(make(1, 1, 1)),
-        RuntimeError,
-        f"Only one of `size` or `scale_factor` has to be specified"
-    )
+    yield (SampleInput(make(1, 1, 1)), RuntimeError, f"Only one of `size` or `scale_factor` has to be specified")
     yield (
         SampleInput(make(1, 1, 1), size=(2,), scale_factor=2.0),
         RuntimeError,
-        f"Only one of `size` or `scale_factor` has to be specified"
+        f"Only one of `size` or `scale_factor` has to be specified",
     )
 
+    yield (SampleInput(make(1, 1, 1), size=0), RuntimeError, f"size(.*?) is expected to be greater than zero")
     yield (
-        SampleInput(make(1, 1, 1), size=0),
+        SampleInput(make(1, 1, 1), size=2.0),
         RuntimeError,
-        f"size(.*?) is expected to be greater than zero"
-    )
-    yield (
-        SampleInput(make(1, 1, 1), size=2.),
-        RuntimeError,
-        f"size(.*?) is expected to be a greater than zero integer"
+        f"size(.*?) is expected to be a greater than zero integer",
     )
     yield (
         SampleInput(make(1, 1, 1), size=(2, 2)),
         RuntimeError,
-        f"size(.*?) is expected to be (.*?) a sequence (.*?) of length 1"
+        f"size(.*?) is expected to be (.*?) a sequence (.*?) of length 1",
     )
     yield (
-        SampleInput(make(1, 1, 1, 1), size=(2., 2)),
+        SampleInput(make(1, 1, 1, 1), size=(2.0, 2)),
         RuntimeError,
-        f"size(.*?) is expected to be (.*?) a sequence of strictly positive integers"
+        f"size(.*?) is expected to be (.*?) a sequence of strictly positive integers",
     )
 
     yield (
-        SampleInput(make(1, 1, 1), scale_factor=0.),
+        SampleInput(make(1, 1, 1), scale_factor=0.0),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be strictly positive"
+        f"scale_factor(.*?) is expected to be strictly positive",
     )
     yield (
         SampleInput(make(1, 1, 1), scale_factor=2),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be a strictly positive floating point number"
+        f"scale_factor(.*?) is expected to be a strictly positive floating point number",
     )
     yield (
-        SampleInput(make(1, 1, 1), scale_factor=(2., 2.)),
+        SampleInput(make(1, 1, 1), scale_factor=(2.0, 2.0)),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be (.*?) a sequence (.*?) of length 1"
+        f"scale_factor(.*?) is expected to be (.*?) a sequence (.*?) of length 1",
     )
     yield (
-        SampleInput(make(1, 1, 1, 1), scale_factor=(2., 2)),
+        SampleInput(make(1, 1, 1, 1), scale_factor=(2.0, 2)),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers"
+        f"scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
     )
 
 

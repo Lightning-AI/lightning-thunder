@@ -111,13 +111,11 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
 
     # expect layer_norm to fail for 8.9.3 and below
     if op.name == "layer_norm":
-        
         if cudnn.backend_version() <= 8903:
             pytest.xfail("Only fp32 weight/bias supported pre 8.9.3.")
-            
+
     # expect sdpa to fail for 8.9.2 and below
     if op.name == "scaled_dot_product_attention":
-        
         if cudnn.backend_version() <= 8902:
             pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
 

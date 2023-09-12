@@ -76,7 +76,9 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     idx = make((4, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
 
-    tom = executor.make_callable(gpt, disable_preprocessing=False, use_cudagraphs=True, disable_torch_autograd_support=True)
+    tom = executor.make_callable(
+        gpt, disable_preprocessing=False, use_cudagraphs=True, disable_torch_autograd_support=True
+    )
     thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)

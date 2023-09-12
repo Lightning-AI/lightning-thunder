@@ -459,7 +459,9 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, (gindices, gweight) = executor.make_callable(inline(vjp(filtered_op)), disable_torch_autograd_support=True)(filtered_args, (v,))
+        actual_out, (gindices, gweight) = executor.make_callable(
+            inline(vjp(filtered_op)), disable_torch_autograd_support=True
+        )(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)

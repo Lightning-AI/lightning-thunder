@@ -1665,7 +1665,9 @@ class ThunderFunction(torch.autograd.Function):
             requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
             # If none of the inputs require gradients, raise an error
             if not any(requires_grad_mask):
-                raise RuntimeError("PyTorch's Autograd interface requires at least one tensor input with requires_grad=True")
+                raise RuntimeError(
+                    "PyTorch's Autograd interface requires at least one tensor input with requires_grad=True"
+                )
 
             primal_trace = make_trace(func)(*args, **kwargs)
 
@@ -1757,7 +1759,9 @@ class ThunderFunction(torch.autograd.Function):
                 compile_data.backward_last_traces = bw_extraces
 
                 if compile_data.use_cudagraphs or compile_config.get("use_cudagraphs", False):
-                    fw = CUDAGraphExecutor(fw_extrace.python_callable(), num_constant_args=compile_data.num_constant_args)
+                    fw = CUDAGraphExecutor(
+                        fw_extrace.python_callable(), num_constant_args=compile_data.num_constant_args
+                    )
                     bw = CUDAGraphExecutor(bw_extrace.python_callable(), num_constant_args=len(bw_extrace.args[0][0]))
                     return fw, bw
 

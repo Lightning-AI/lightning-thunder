@@ -1716,7 +1716,7 @@ def flip_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
     utils.check_type(dims, Sequence)
     utils.check(
         all(isinstance(d, int) and 0 <= d < a.ndim for d in dims),
-        lambda: f"Expected {dims=} to be a sequence of integers in [0, {a.ndim} - 1]"
+        lambda: f"Expected {dims=} to be a sequence of integers in [0, {a.ndim} - 1]",
     )
 
     utils.check_no_duplicates(dims)

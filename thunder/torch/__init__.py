@@ -892,7 +892,7 @@ def flip(a: TensorLike, dims: Sequence[int]) -> TensorLike:
     if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
         utils.check(
             len(dims) == 1 and isinstance(dims[0], int) and dims[0] in (0, -1),
-            lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1"
+            lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
         )
         return clang.flip(a, ())
 
@@ -1918,17 +1918,17 @@ def _interpolate_scale_factor_helper(
     dim = len(spatial_dims)
 
     if isinstance(scale_factor, float):
-        utils.check(
-            scale_factor > 0,
-            lambda: f"{scale_factor=} is expected to be strictly positive"
-        )
+        utils.check(scale_factor > 0, lambda: f"{scale_factor=} is expected to be strictly positive")
         scale_factor = (scale_factor,) * dim
     else:
         utils.check(
-            (isinstance(scale_factor, Sequence) and len(scale_factor) == dim
-                and all(isinstance(s, float) and s > 0 for s in scale_factor)),
+            (
+                isinstance(scale_factor, Sequence)
+                and len(scale_factor) == dim
+                and all(isinstance(s, float) and s > 0 for s in scale_factor)
+            ),
             lambda: f"{scale_factor=} is expected to be a strictly positive floating point number or "
-                    f"a sequence of strictly positive floating point numbers of length {dim}"
+            f"a sequence of strictly positive floating point numbers of length {dim}",
         )
 
     # output_dims stores an approximation of the output shape
@@ -1945,8 +1945,7 @@ def _interpolate_scale_factor_helper(
         output_dim = int(scale * input_dim)
         utils.check(
             output_dim > 0,
-            lambda: f"provided scale_factor value {scale} results "
-                    f"in a zero length output at dimension {k + 2}"
+            lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
         )
 
         if output_dim <= input_dim:
@@ -1962,7 +1961,7 @@ def _interpolate_scale_factor_helper(
 
     def dim_expander(t, dim, n_repeats):
         t = unsqueeze(t, dim + 1)
-        t = expand(t, t.shape[:dim + 1] + (n_repeats,) + t.shape[dim + 2:])
+        t = expand(t, t.shape[: dim + 1] + (n_repeats,) + t.shape[dim + 2 :])
         return t
 
     # Iterate over dim_to_expand and only process dims for which
@@ -1991,7 +1990,6 @@ def _interpolate_scale_factor_helper(
     if n_dims_to_cat_along == 0:
         a = reshape(a, output_dims)
         return a
-
 
     # Process output dims which are not multiples of input dims.
     # Gotta do some flatten+cat.
@@ -2057,22 +2055,16 @@ def _interpolate_size_helper(
     dim = len(spatial_dims)
 
     if isinstance(size, int):
-        utils.check(
-            size > 0,
-            lambda: f"{size=} is expected to be greater than zero"
-        )
+        utils.check(size > 0, lambda: f"{size=} is expected to be greater than zero")
         size = (size,) * dim
     else:
         utils.check(
-            (isinstance(size, Sequence) and len(size) == dim
-                and all(isinstance(s, int) and s > 0 for s in size)),
+            (isinstance(size, Sequence) and len(size) == dim and all(isinstance(s, int) and s > 0 for s in size)),
             lambda: f"{size=} is expected to be a greater than zero integer "
-                    f"or a sequence of strictly positive integers of length {dim}"
+            f"or a sequence of strictly positive integers of length {dim}",
         )
 
-    scale_factor = tuple(
-        output_size / input_size for output_size, input_size in zip(size, spatial_dims)
-    )
+    scale_factor = tuple(output_size / input_size for output_size, input_size in zip(size, spatial_dims))
 
     return _interpolate_scale_factor_helper(a, scale_factor)
 
@@ -2088,23 +2080,16 @@ def interpolate(
     utils.check(
         mode == "nearest",
         lambda: f"only mode='nearest' is supported at the moment, but got {mode=}",
-        exception_type=NotImplementedError
+        exception_type=NotImplementedError,
     )
     # }
 
-    utils.check(
-        a.ndim >= 3,
-        lambda: f"Expected {a.ndim=} >= 3"
-    )
-    utils.check(
-        a.numel > 0,
-        lambda: f"Expected {a.numel=} to be greater than 0"
-    )
+    utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
+    utils.check(a.numel > 0, lambda: f"Expected {a.numel=} to be greater than 0")
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
-        lambda: "Only one of `size` or `scale_factor` has to be specified, but "
-                f"got {size=} and {scale_factor=}"
+        lambda: "Only one of `size` or `scale_factor` has to be specified, but " f"got {size=} and {scale_factor=}",
     )
 
     if size is not None:

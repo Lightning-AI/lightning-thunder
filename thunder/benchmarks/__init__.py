@@ -679,7 +679,9 @@ def default_thunder_triton_executor(fn: Callable) -> Callable:
 
     executors_list = ("triton_crossentropy", executors.NVFUSER, executors.TORCH)
 
-    return thunder.compile(fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True)
+    return thunder.compile(
+        fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True
+    )
 
 
 # TODO Add grad support
@@ -694,7 +696,9 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
     register_apex_entropyex(add_to_default_executors=False)
 
     executors_list = ("apex_xentropy", executors.NVFUSER, executors.TORCH)
-    return thunder.compile(fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True)
+    return thunder.compile(
+        fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True
+    )
 
 
 # TODO Add grad support
@@ -709,7 +713,9 @@ def default_thunder_cudnn_executor(fn: Callable) -> Callable:
     register_cudnnex(add_to_default_executors=False)
 
     executors_list = ("cudnn", executors.NVFUSER, executors.TORCH)
-    return thunder.compile(fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True)
+    return thunder.compile(
+        fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True
+    )
 
 
 # TODO Add grad support
@@ -728,7 +734,11 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
 
     executors_list.extend((executors.NVFUSER, executors.TORCH))
     return thunder.compile(
-        fn, executors_list=executors_list, use_static_caching=True, use_cudagraphs=True, disable_torch_autograd_support=True
+        fn,
+        executors_list=executors_list,
+        use_static_caching=True,
+        use_cudagraphs=True,
+        disable_torch_autograd_support=True,
     )
 
 

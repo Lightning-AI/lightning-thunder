@@ -1691,10 +1691,7 @@ def var_backward(a, dim, correction, v, g):
     g = restore_reduced_dims(g, dim, a.shape)
     mean = prims.sum(a, dim, output_dtype=v.dtype) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
-    return (
-        (2 * g * (a - mean)) / normalization_scalar,
-        None
-    )
+    return ((2 * g * (a - mean)) / normalization_scalar, None)
 
 
 @register_augmented_forward(prims.PrimIDs.VAR_MEAN)
@@ -1730,22 +1727,17 @@ def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
 
 @register_augmented_forward(prims.PrimIDs.PAD)
 def pad_aug_fwd(a, padding_value, padding_config):
-    return VJPDual(
-        (prims.pad(a, padding_value, padding_config),),
-        (a, padding_config)
-    )
+    return VJPDual((prims.pad(a, padding_value, padding_config),), (a, padding_config))
 
 
 @register_backward(prims.PrimIDs.PAD)
 def pad_backward(a, padding_config, g):
     # Short circuit on empty input.
-    if any (dim == 0 for dim in a.shape):
+    if any(dim == 0 for dim in a.shape):
         return full_like(a, fill_value=0), None, None
 
     # Un-pad by padding with zero values
-    zero_padding_config = [
-        (-lo, -hi, 0) for lo, hi, _ in padding_config
-    ]
+    zero_padding_config = [(-lo, -hi, 0) for lo, hi, _ in padding_config]
 
     g = prims.pad(g, 0.0, zero_padding_config)
 

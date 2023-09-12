@@ -1620,13 +1620,13 @@ def test_bound_symbol_header(executor, device: str, dtype: dtypes.dtype):
 
     # Test setting header with a string
     sin_symbol.header = "Testing\nThis symbol's\nHeader"
-    assert "# Testing\n# This symbol\'s\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
-    assert "\n  # Testing\n  # This symbol\'s\n  # Header\n  t0 = prims.sin(x)" in str(trace)
+    assert "# Testing\n# This symbol's\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
+    assert "\n  # Testing\n  # This symbol's\n  # Header\n  t0 = prims.sin(x)" in str(trace)
 
     # Test setting header with a list of strings
     sin_symbol.header = "Testing\nThis symbol's\nHeader".splitlines()
-    assert "# Testing\n# This symbol\'s\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
-    assert "\n  # Testing\n  # This symbol\'s\n  # Header\n  t0 = prims.sin(x)" in str(trace)
+    assert "# Testing\n# This symbol's\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
+    assert "\n  # Testing\n  # This symbol's\n  # Header\n  t0 = prims.sin(x)" in str(trace)
 
 
 @instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
@@ -1646,8 +1646,8 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     assert len(trace.bound_symbols) == 3
     sin_symbol = trace.bound_symbols[1]
     assert sin_symbol.sym.name == "sin"
-    assert "# Testing\n# This symbol\'s\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
-    assert "\n  # Testing\n  # This symbol\'s\n  # Header\n  t0 = prims.sin(x)" in str(trace)
+    assert "# Testing\n# This symbol's\n# Header\nt0 = prims.sin(x)" in str(sin_symbol)
+    assert "\n  # Testing\n  # This symbol's\n  # Header\n  t0 = prims.sin(x)" in str(trace)
     assert str(trace).count("Testing") == 1
 
 

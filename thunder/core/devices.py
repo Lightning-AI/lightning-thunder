@@ -30,25 +30,74 @@ def devicetype_string(devicetype: DeviceType) -> str:
     return _devicetype_prettyprint_map[devicetype]
 
 
-class Device:
-    # TODO Simplify this so string_or_devicetype can be either a string or devicetype regardless of
-    #   whether number is provided
-    def __init__(self, string_or_devicetype: str | DeviceType, number: Number | None = None):
-        if number is not None:
-            baseutils.check_type(number, Number)
-            baseutils.check_type(string_or_devicetype, DeviceType)
-            baseutils.check(number >= 0, lambda: f"Invalid device {number=}")
+# A metaclass that ensures device objects are singletons. When a the Device constructor is called,
+#   this may cause the constructor to return an existing object that already represents the device.
+class DeviceMeta(type):
+    def __call__(cls, *args, **kwargs):
+        cur = cls._cache.get(args, None)
 
-            self.devicetype = string_or_devicetype
-            self.number = number
+        if cur is not None:
+            return cur
+
+        slf = cls.__new__(cls, *args, **kwargs)
+        cls.__init__(slf, *args, **kwargs)
+        cls._cache[args] = slf
+        return slf
+
+    def __init__(cls, name, bases, attributes):
+        super().__init__(name, bases, attributes)
+        cls._cache = {}
+
+
+class Device(metaclass=DeviceMeta):
+    _devicetype: DeviceType
+    _number: int
+
+    def __init__(self, string_or_devicetype: str | DeviceType, number: None | int = None, /):
+        _number = None
+
+        if isinstance(string_or_devicetype, str):
+            self._devicetype, _number = _device_from_string_helper(string_or_devicetype)
         else:
-            baseutils.check_type(string_or_devicetype, str)
-            self.devicetype, self.number = _device_from_string_helper(string_or_devicetype)
+            baseutils.check_type(string_or_devicetype, DeviceType)
+            self._devicetype = string_or_devicetype
+
+        baseutils.check(
+            number is None or _number is None or number == _number,
+            lambda: f"Trying to create a device but the device has two numbers, {_number} and {number}",
+        )
+
+        if _number is None:
+            _number = number
+
+        if _number is None:
+            _number = 0
+
+        self._number = _number
 
         # NOTE While we don't consider it an error to request CPU:1, we also don't pretend
         #   like there are multiple CPU devices.
-        if self.devicetype is DeviceType.CPU:
-            self.number = 0
+        if self._devicetype is DeviceType.CPU:
+            self._number = 0
+
+        baseutils.check_type(self._number, int)
+        baseutils.check(self._number >= 0, lambda: f"Trying to create a device with invalid number {number}")
+
+    @property
+    def devicetype(self) -> DeviceType:
+        return self._devicetype
+
+    # Returns a string representation of the devicetype, consistent with PyTorch's device.type
+    @property
+    def type(self) -> str:
+        return devicetype_string(self.devicetype)
+
+    @property
+    def number(self) -> int:
+        return self._number
+
+    def __hash__(self) -> int:
+        return id(self)
 
     # NOTE This representation is a valid PyTorch device string, which is currently relied upon when
     #   converting Thunder devices to PyTorch devices
@@ -59,14 +108,9 @@ class Device:
         # NOTE self.devicetype == DeviceType.CUDA
         return f"{devicetype_string(self.devicetype)}:{self.number}"
 
-    # TODO Review this
-    def __hash__(self):
-        return hash(self.__repr__())
-
+    # NOTE Because devices are singleton object, this has the luxury of using "is"
     def __eq__(self, other: Device) -> bool:
-        if not isinstance(other, Device):
-            return False
-        return self.devicetype is other.devicetype and self.number == other.number
+        return self is other
 
 
 def available_devices() -> Sequence[Device]:
@@ -76,12 +120,12 @@ def available_devices() -> Sequence[Device]:
 cpu = Device(DeviceType.CPU, 0)
 
 
-def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, int]:
+def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
     if devicestr == "cpu":
-        return DeviceType.CPU, 0
+        return DeviceType.CPU, None
 
     if devicestr == "cuda":
-        return DeviceType.CUDA, 0
+        return DeviceType.CUDA, None
 
     devicetype, deviceno = devicestr.split(":")
     deviceno = int(deviceno)

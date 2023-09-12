@@ -88,7 +88,11 @@ def default_python_printer(
     s = f"{result_str}{bsym.name_with_module()}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
 
     if bsym.header:
-        header_lines = bsym.header if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str) else bsym.header.splitlines()
+        header_lines = (
+            bsym.header
+            if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str)
+            else bsym.header.splitlines()
+        )
         header_lines = (f"# {line}" for line in header_lines)
         return chain(header_lines, [s])
 
