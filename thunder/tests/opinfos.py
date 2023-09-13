@@ -3812,7 +3812,7 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 full_opinfo = OpInfo(
-    clang.full,
+    ltorch.full,
     sample_input_generator=full_sample_generator,
     torch_reference=torch.full,
 )
@@ -3861,6 +3861,7 @@ def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_
 def fixed_value_like_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
+        5,
         (),
         (4, 4),
         (8, 1, 6),

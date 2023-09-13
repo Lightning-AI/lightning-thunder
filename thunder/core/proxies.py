@@ -528,6 +528,9 @@ def _infer_tensor_properties(
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
 
+    if shape is not None:
+        baseutils.check_valid_shape(shape)
+
     _shape = tuple(shape) if shape is not None else _shape
     _device = device if device is not None else _device
     _dtype = dtype if dtype is not None else _dtype
@@ -542,7 +545,6 @@ def _infer_tensor_properties(
     _ndim = len(_shape)
 
     # Validates inputs
-    baseutils.check_valid_shape(_shape)
     baseutils.check_type(_device, devices.Device)
     baseutils.check_type(_dtype, dtypes.dtype)
     baseutils.check_type(_requires_grad, bool)

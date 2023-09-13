@@ -758,10 +758,14 @@ def full_like(
     return clang.full_like(a, fill_value, device=device, dtype=dtype)
 
 
+# NOTE ones, unlike full, can accept an integer shape
 @torchsymbol(torch.ones)
 def ones(
-    shape: Sequence[int], /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+    shape: int | Sequence[int], /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
 ) -> TensorLike:
+    if isinstance(shape, int):
+        shape = (shape,)
+
     return full(shape, 1, device=device, dtype=dtype)
 
 
@@ -825,10 +829,13 @@ def uniform_philox(
     )
 
 
+# NOTE zeros, like ones, and unlike full, can accept an integer shape
 @torchsymbol(torch.zeros)
 def zeros(
-    shape: Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+    shape: int | Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
 ) -> TensorLike:
+    if isinstance(shape, int):
+        shape = (shape,)
     return full(shape, 0, device=device, dtype=dtype)
 
 
