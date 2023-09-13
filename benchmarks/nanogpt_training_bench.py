@@ -99,7 +99,7 @@ if use_ddp:
     else:
         model = torch.nn.parallel.distributed.DistributedDataParallel(model, device_ids=[local_rank])
 
-optimizer = optimizer_ctor(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95))
+optimizer = optimizer_ctor(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95), device_type="cuda")
 
 if compile_mode == "torch":
     print("Compiling model using torch.compile...")
