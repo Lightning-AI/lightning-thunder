@@ -42,6 +42,7 @@ vjp_op_force = {
     "matmul",
     "var",
     "var_mean",
+    "interpolate",
 }
 
 

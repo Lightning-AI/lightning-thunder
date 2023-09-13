@@ -5101,13 +5101,6 @@ interpolate_opinfo = OpInfo(
     torch_reference=torch.nn.functional.interpolate,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # PyTorch does not support CUDA BFloat16 upsample used in interpolate
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
-            devicetypes=(devices.DeviceType.CUDA,),
-        ),
         # PyTorch does not support CPU Half upsample used in interpolate
         DecorateInfo(
             pytest.mark.xfail,
