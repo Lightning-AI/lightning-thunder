@@ -246,28 +246,13 @@ def test_inline_submodule():
 @skipif_not_pytorch_2_1
 @skipif_not_python_3_10
 @pytest.mark.parametrize("name", [config["name"] for config in configs])
-@pytest.mark.parametrize(
-    "cls",
-    [
-        lit_gpt_model.GPTAdapted,
-        # if this starts passing, good news, we now support the reference lit-gpt implementation. to update this, delete the
-        # GPTCurrent implementation and use just the reference
-        pytest.param(lit_gpt_model.GPT, marks=pytest.mark.xfail(strict=True)),
-    ],
-)
 @torch.no_grad()
-def test_litgpt_variants(name, cls):
-    model = cls.from_name(name)
-    # compile at the beginning to bubble errors asap
+def test_litgpt_variants(name):
+    model = lit_gpt_model.GPT.from_name(name)
     tom = thunder.compile(model, disable_torch_autograd_support=True)
 
-    # use the reference model for the expected value
-    original = lit_gpt_model.GPT.from_name(name)
-    state_dict = original.state_dict()
     x = torch.randint(0, 200, (5, 5))
-    expected = original(x)
-
-    model.load_state_dict(state_dict, strict=not model.config.shared_attention_norm)
+    expected = model(x)
     actual = tom(x)
     assert_close(actual, expected)
 

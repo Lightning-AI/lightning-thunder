@@ -352,9 +352,9 @@ def broadcast_in_dim(
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    # Checks that the cat prim is available
-    if nv_version < LooseVersion("0.0.5"):
-        return False
+    # nvFuser cat fusion is currently disabled due to
+    #   https://github.com/Lightning-AI/lightning-thunder/issues/1071
+    return False
 
     # Validates tensors and concatenated dimension lengths
     for t in tensors:
