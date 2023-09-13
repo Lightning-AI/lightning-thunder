@@ -126,15 +126,28 @@ def is_supported_devicetype(devicetype: DeviceType) -> bool:
     return devicetype is DeviceType.CUDA
 
 
-def is_supported_dtype(dtype: Union[type, dtypes.dtype]) -> bool:
+_low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtypes.bfloat16_)
+
+
+def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
     utils.check_type(dtype, (type, dtypes.dtype))
+
+    if not allow_low_precision_floats:
+        if dtype in _low_precision_floats:
+            return False
+
     return dtype in _lcdtype_to_nvdtype_map
 
 
-def is_supported_tensor(a: TensorProxy) -> bool:
+def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = True) -> bool:
     utils.check_type(a, TensorProxy)
     devicetype_supported = a.device.devicetype is DeviceType.CUDA
     dtype_supported = is_supported_dtype(a.dtype)
+
+    if not allow_low_precision_floats:
+        if a.dtype in _low_precision_floats:
+            return False
+
     rank_supported = a.ndim <= 8
     return devicetype_supported and dtype_supported and rank_supported
 
@@ -949,8 +962,8 @@ def where(
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int], *, output_dtype: Optional[dtypes.dtype] = None) -> bool:
-    dtype_supported = output_dtype is None or is_supported_dtype(output_dtype)
-    return is_supported_tensor(a) and dtype_supported
+    dtype_supported = output_dtype is None or is_supported_dtype(output_dtype, allow_low_precision_floats=False)
+    return is_supported_tensor(a, allow_low_precision_floats=False) and dtype_supported
 
 
 # TODO Review if this accepts empty dim sequences
@@ -1025,7 +1038,7 @@ def sum(
 # NOTE https://github.com/NVIDIA/Fuser/pull/121
 #   nvFuser's var operation does not support 0-dim inputs
 def _var_check(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> bool:
-    return is_supported_tensor(a) and len(a.shape) > 0
+    return is_supported_tensor(a, allow_low_precision_floats=False) and len(a.shape) > 0
 
 
 # TODO Add type annotations
@@ -1051,7 +1064,7 @@ def _var_mean_check(
     if nv_version < LooseVersion("0.0.7"):
         return False
 
-    if not is_supported_tensor(a):
+    if not is_supported_tensor(a, allow_low_precision_floats=False):
         return False
 
     if len(a.shape) == 0:
