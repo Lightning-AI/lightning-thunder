@@ -2260,11 +2260,13 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ([(3,)], 0),  # single tensor provided
         # 1D
         ([(2,), (3,)], 0),
+        ([(1,), (1,)], 0),
         ([(2,), (4,)], 0),
         ([(1,), (2,), (3,)], 0),
         ([(0,), (2,)], 0),
         ([(0,), (2,)], -1),
         ([(2, 3), (2, 4)], 1),
+        ([(2, 1), (2, 1)], 1),
         ([(2, 3), (2, 4), (2, 5)], 1),
     ]
 
@@ -2300,10 +2302,6 @@ cat_opinfo = OpInfo(
             executors=("nvFuser",),
             active_if=nvfuser_version < "0.0.5",
         ),
-        # test_grad cannot handle shape-based ops that do not require any compute.
-        # Grads are tested explicitly in test_grad.py.
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
 )
 shape_ops.append(cat_opinfo)

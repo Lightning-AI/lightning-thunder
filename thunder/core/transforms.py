@@ -2249,6 +2249,7 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
 def cat_aug_fwd(tensors: list[TensorProxy], dim: int) -> VJPDual:
     primal = prims.cat(tensors, dim)
     residuals = (
+        type(tensors),
         [t.shape[dim] for t in tensors],
         dim,
     )
@@ -2257,14 +2258,14 @@ def cat_aug_fwd(tensors: list[TensorProxy], dim: int) -> VJPDual:
 
 
 @register_backward(prims.PrimIDs.CAT)
-def cat_backward(tensor_dim_lens: list[int], dim: int, g: TensorProxy) -> (list[TensorProxy], None):
+def cat_backward(tensors_seq_type: Sequence, tensor_dim_lens: list[int], dim: int, g: TensorProxy) -> (list[TensorProxy], None):
     grads = []
 
     slice_start = 0
     for dim_len in tensor_dim_lens:
         grads.append(slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim))
         slice_start += dim_len
-    return grads, None
+    return tensors_seq_type(grads), None
 
 
 @register_augmented_forward("torch.Tensor.contiguous")
@@ -2545,7 +2546,7 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
         # This is a temporary workaround.
-        if symbol.sym.id is prims.PrimIDs.CAT:
+        if symbol.sym.id in (prims.PrimIDs.CAT, "torch.cat"):
             safe_map_flat(write, symbol.args, result)
         else:
             safe_map(write, symbol.args, result)

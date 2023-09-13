@@ -424,29 +424,6 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         raise pytest.skip("No differentiable inputs found")
 
 
-# Cat is a shape-based op for which its Jacobian cannot be approximated with finite differences.
-@ops((get_opinfo("cat"),), supported_dtypes=(dtypes.float64,))
-def test_vjp_correctness_cat_manual(op, device, dtype, executor, comp):
-    for sample in op.sample_inputs(device, dtype, requires_grad=True):
-        tensors, _ = sample.args
-
-        # Compute vjp result using PyTorch
-        torch_out = op.torch_reference(*sample.args, **sample.kwargs)
-        grad = make_tensor_like(torch_out)
-        torch_grads = torch.autograd.grad(torch_out, tensors, grad)
-
-        # Compute vjp result using Thunder
-        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        thunder_out, thunder_grads = executor.make_callable(inline(vjp(filtered_op)))(filtered_args, (grad,))
-
-        assert len(thunder_grads) == len(tensors)
-        assert len(torch_grads) == len(thunder_grads)
-        for torch_grad, thunder_grad in zip(torch_grads, thunder_grads):
-            comp(torch_grad, thunder_grad)
-        comp(thunder_out, torch_out)
-
-
 # Embedding is a special case because its Jacobian product can't be approximated
 # with finite differences
 @ops((op for op in opinfos if op.name == "embedding"), supported_dtypes=(dtypes.float64,))
