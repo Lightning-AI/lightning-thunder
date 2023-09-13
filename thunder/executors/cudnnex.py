@@ -217,9 +217,11 @@ def sdpa_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fal
         return False
 
     # Bug in cudnn 8.9.5 and earlier where embedding dim support is missing
-    _, h, _, _ = query.size()
-    if h % 8 != 0 or h > 128:
-        return False
+    _, _, _, d_q = query.size()
+    _, _, _, d_kv = value.size()
+    for d in [d_q, d_kv]:
+        if d % 8 != 0 or d > 128:
+            return False
 
     return True
 
@@ -274,7 +276,6 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
 
 _op_to_cudnn = {
     "torch.nn.functional.scaled_dot_product_attention": ("cudnn_sdpa", sdpa_checker, sdpa_impl),
-    "torch.layer_norm": ("cudnn_layer_norm", layer_norm_checker, layer_norm_impl),
 }
 
 
