@@ -1945,10 +1945,7 @@ def _interpolate_scale_factor_helper(
         # with the rule i -> int(i * scale)
         # Values at these indices is the result.
         selected_idx = arange(0, output_dim, device=a.device)
-        selected_idx = clang.maybe_convert_to_dtype(
-            selected_idx * scale,
-            selected_idx.dtype
-        )
+        selected_idx = clang.maybe_convert_to_dtype(selected_idx * scale, selected_idx.dtype)
         return clang.take(t, selected_idx, dim=dim)
 
     def dim_expander(t, dim, n_repeats):
@@ -1962,8 +1959,7 @@ def _interpolate_scale_factor_helper(
         output_dim = int(scale * input_dim)
         utils.check(
             output_dim > 0,
-            lambda: f"provided scale_factor value {scale} results "
-                    f"in a zero length output at dimension {k + 2}"
+            lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
         )
         res_output_spatial_dims.append(output_dim)
 
@@ -1980,7 +1976,7 @@ def _interpolate_scale_factor_helper(
                 a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
             else:
                 # In this case slice will not do and explicit downsample is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1. / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
         else:
             if output_dim % input_dim == 0:
                 # In this case we can just expand dim.
@@ -1988,7 +1984,7 @@ def _interpolate_scale_factor_helper(
                 a = dim_expander(a, curr_dim, n_repeats)
             else:
                 # In this case expand will not cut it and explicit upsampling is needed.
-                a = nearest_sampler(a, input_dim, output_dim, scale=1. / scale, dim=curr_dim)
+                a = nearest_sampler(a, input_dim, output_dim, scale=1.0 / scale, dim=curr_dim)
 
     output_shape = [batch, channels] + res_output_spatial_dims[::-1]
     return reshape(a, output_shape)

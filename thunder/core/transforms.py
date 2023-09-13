@@ -2275,7 +2275,9 @@ def cat_aug_fwd(tensors: list[TensorProxy], dim: int) -> VJPDual:
 
 
 @register_backward(prims.PrimIDs.CAT)
-def cat_backward(tensors_seq_type: Sequence, tensor_dim_lens: list[int], dim: int, g: TensorProxy) -> (list[TensorProxy], None):
+def cat_backward(
+    tensors_seq_type: Sequence, tensor_dim_lens: list[int], dim: int, g: TensorProxy
+) -> (list[TensorProxy], None):
     grads = []
 
     slice_start = 0
@@ -2316,10 +2318,7 @@ def where_backward(condition, g):
 @register_augmented_forward(prims.PrimIDs.RECIPROCAL)
 def reciprocal_aug_fwd(a: TensorProxy) -> VJPDual:
     primal = reciprocal(a)
-    return VJPDual(
-        primal,
-        (primal,)
-    )
+    return VJPDual(primal, (primal,))
 
 
 @register_backward(prims.PrimIDs.RECIPROCAL)

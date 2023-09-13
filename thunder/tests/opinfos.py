@@ -2274,6 +2274,11 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shapes, dim in cases:
         yield SampleInput([make(s) for s in shapes], dim)
 
+    # Tests concatenating with a tensor broadcast along the concatenation dimension
+    a = make((5,))
+    b = make((1,)).expand((5,))
+    yield SampleInput((a, b))
+
 
 def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
@@ -2292,18 +2297,10 @@ def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
 
 
 cat_opinfo = OpInfo(
-    clang.cat,
+    ltorch.cat,
     sample_input_generator=cat_sample_generator,
     error_input_generator=cat_error_generator,
     torch_reference=torch.cat,
-    test_directives=(
-        # cat op was introduced in nvFuser 0.0.5
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvFuser",),
-            active_if=nvfuser_version < "0.0.5",
-        ),
-    ),
 )
 shape_ops.append(cat_opinfo)
 

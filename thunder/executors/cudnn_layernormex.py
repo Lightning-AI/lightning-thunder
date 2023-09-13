@@ -10,6 +10,7 @@ CUDNN_AVAILABLE = package_available("cudnn")
 cudnn: None | Any = None
 if CUDNN_AVAILABLE:
     import cudnn
+
     cudnn_backend_version = cudnn.backend_version()
 
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
@@ -24,6 +25,7 @@ from thunder.core.proxies import TensorProxy
 
 from thunder.executors.cudnnex import CudnnTensorAttributes
 from thunder.executors.cudnnex import make_cacheable_cudnn_graph_inputs, torch_to_cudnn_dtype
+
 
 @make_cacheable_cudnn_graph_inputs
 @lru_cache(maxsize=1024)
@@ -75,8 +77,8 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
 
     return a_4d, weight_4d, bias_4d
 
-def layer_norm_impl(a, normalized_shape, weight=None, bias=None, eps=1e-5):
 
+def layer_norm_impl(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
     input, scale, B, epsilon, Y, graph = _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d)
 
@@ -98,7 +100,7 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
         return False
 
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
-    
+
     try:
         _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d)
     except:
