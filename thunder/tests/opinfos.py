@@ -541,6 +541,7 @@ def _abs_torch(x: Union[torch.Tensor, Number]):
 abs_opinfo = ElementwiseUnaryOpInfo(
     ltorch.abs,
     torch_reference=_abs_torch,
+    singularity_fn=lambda x: torch.where(x == 0, 1.0, x),
     test_directives=(
         # complex32 cpu abs is sometimes flaky in CI
         DecorateInfo(

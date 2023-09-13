@@ -683,7 +683,7 @@ def _elementwise_unary_meta_factory(
                 utils.check(False, lambda: f"Unknown {output_dtype_kind=}")
 
             if val is None or number_fn is None:
-                return numberproxy(output_typ, None)
+                return numberproxy(output_type, None)
 
             value = number_fn(a)
             result = numberproxy(type(value), value)

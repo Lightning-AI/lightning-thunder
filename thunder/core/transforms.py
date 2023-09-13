@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import auto, Enum
 from itertools import chain, compress
 from functools import lru_cache, partial, wraps
+import math
 from numbers import Number
 from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
@@ -1515,6 +1516,7 @@ class ZeroBackward:
 # The augmented_primal function takes the primal values and returns the primal
 # result and the residuals (saved values for the backward).
 augmented_forward_impls = {
+    prims.PrimIDs.ABS: lambda x: (prims.abs(x), (x,)),
     prims.PrimIDs.ACOS: lambda x: (prims.acos(x), (x,)),
     prims.PrimIDs.ACOSH: lambda x: (prims.acosh(x), (x,)),
     prims.PrimIDs.ADD: lambda x, y: (prims.add(x, y), tuple()),
@@ -1525,7 +1527,14 @@ augmented_forward_impls = {
     prims.PrimIDs.COS: lambda x: (prims.cos(x), (x,)),
     prims.PrimIDs.COSH: lambda x: (prims.cosh(x), (x,)),
     prims.PrimIDs.DIV: lambda x, y: (prims.div(x, y), (x, y)),
+    prims.PrimIDs.ERF: lambda x: (prims.erf(x), (x,)),
+    prims.PrimIDs.ERFC: lambda x: (prims.erfc(x), (x,)),
+    prims.PrimIDs.ERFINV: lambda x: (prims.erfinv(x), (prims.erfinv(x),)),
+    prims.PrimIDs.ERFCINV: lambda x: (prims.erfcinv(x), (prims.erfcinv(x),)),
+    prims.PrimIDs.EXP2: lambda x: (prims.exp2(x), (prims.exp2(x),)),
+    prims.PrimIDs.EXPM1: lambda x: (prims.expm1(x), (prims.expm1(x),)),
     prims.PrimIDs.MUL: lambda x, y: (prims.mul(x, y), (x, y)),
+    prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
     prims.PrimIDs.SIN: lambda x: (prims.sin(x), (x,)),
     prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
     prims.PrimIDs.SUB: lambda x, y: (prims.sub(x, y), tuple()),
@@ -1545,6 +1554,7 @@ augmented_forward_impls = {
 # The backward function takes the residuals and cotangents and returns the
 # vector-Jacobian products for each argument.
 backward_impls = {
+    prims.PrimIDs.ABS: lambda x, g: g * prims.sign(x),
     prims.PrimIDs.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
     # Duplicates are not allowed in the backward_impls
@@ -1557,7 +1567,14 @@ backward_impls = {
     prims.PrimIDs.COS: lambda x, g: prims.mul(g, -prims.sin(x)),
     prims.PrimIDs.COSH: lambda x, g: prims.mul(g, prims.sinh(x)),
     prims.PrimIDs.DIV: lambda x, y, g: (g / y, -g * x / (y**2)),
+    prims.PrimIDs.ERF: lambda x, g: g * 2.0 / prims.sqrt(math.pi) * prims.exp(-x * x),
+    prims.PrimIDs.ERFC: lambda x, g: -g * 2.0 / prims.sqrt(math.pi) * prims.exp(-x * x),
+    prims.PrimIDs.ERFINV: lambda result, g: g * 0.5 * prims.sqrt(math.pi) * prims.exp(result**2),
+    prims.PrimIDs.ERFCINV: lambda result, g: -g * 0.5 * prims.sqrt(math.pi) * prims.exp(result**2),
+    prims.PrimIDs.EXP2: lambda result, g: g * result * math.log(2.0),
+    prims.PrimIDs.EXPM1: lambda result, g: g * (result + 1.0),
     prims.PrimIDs.MUL: lambda x, y, g: (g * y, g * x),
+    prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(-0.5 * result**2) / prims.sqrt(2.0 * math.pi),
     prims.PrimIDs.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
     prims.PrimIDs.SUB: lambda g: (g, -g),

@@ -36,6 +36,7 @@ op_skip = {
 # Don't rely on the generated list of supported ops.
 # TODO: modify the generated list to support composite ops
 vjp_op_force = {
+    "abs", # There's no clang.abs or prims.abs OpInfo, only torch.abs
     "cross_entropy",
     "softmax",
     "linear",
