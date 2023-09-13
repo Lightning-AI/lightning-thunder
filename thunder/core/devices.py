@@ -5,10 +5,9 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from numbers import Number
-from typing import Optional, Tuple, Union
 from collections.abc import Sequence
 
+import torch
 import thunder.core.baseutils as baseutils
 from thunder.core.langctx import get_default_langctx
 
@@ -24,24 +23,58 @@ _devicetype_prettyprint_map = {
     DeviceType.CPU: "cpu",
     DeviceType.CUDA: "cuda",
 }
+_inverse_devicetype_prettyprint_map = {v: k for k, v in _devicetype_prettyprint_map.items()}
 
 
 def devicetype_string(devicetype: DeviceType) -> str:
     return _devicetype_prettyprint_map[devicetype]
 
 
+def _parse_device_info(
+    string_or_devicetype: str | DeviceType, index: None | int = None, /
+) -> tuple(DeviceType, None | int):
+    _index = None
+
+    if isinstance(string_or_devicetype, str):
+        _devicetype, _index = _device_from_string_helper(string_or_devicetype)
+    else:
+        baseutils.check_type(string_or_devicetype, DeviceType)
+        _devicetype = string_or_devicetype
+
+    baseutils.check(
+        index is None or _index is None or index == _index,
+        lambda: f"Trying to parse a device but was given two distinct indices, {_index} and {index}",
+    )
+
+    if _index is None:
+        _index = index
+
+    if _devicetype is DeviceType.CUDA:
+        if _index is None:
+            _index = 0
+    else:
+        # _devicetype is DeviceType.CPU
+        # NOTE That it's not an error to request cpu:1, but we ignore the index
+        #   This is distinct from PyTorch, where `cpu:3` will have index 3, even though
+        #   all cpu devices refer to the same physical device
+        _index = None
+
+    return _devicetype, _index
+
+
 # A metaclass that ensures device objects are singletons. When a the Device constructor is called,
 #   this may cause the constructor to return an existing object that already represents the device.
 class DeviceMeta(type):
     def __call__(cls, *args, **kwargs):
-        cur = cls._cache.get(args, None)
+        info = _parse_device_info(*args)
+        cur = cls._cache.get(info, None)
 
         if cur is not None:
             return cur
 
         slf = cls.__new__(cls, *args, **kwargs)
         cls.__init__(slf, *args, **kwargs)
-        cls._cache[args] = slf
+        cls._cache[info] = slf
         return slf
 
     def __init__(cls, name, bases, attributes):
@@ -51,37 +84,18 @@ class DeviceMeta(type):
 
 class Device(metaclass=DeviceMeta):
     _devicetype: DeviceType
-    _number: int
+    _index: None | int
 
-    def __init__(self, string_or_devicetype: str | DeviceType, number: None | int = None, /):
-        _number = None
+    def __init__(self, string_or_devicetype: str | DeviceType, index: None | int = None, /):
+        self._devicetype, self._index = _parse_device_info(string_or_devicetype, index)
 
-        if isinstance(string_or_devicetype, str):
-            self._devicetype, _number = _device_from_string_helper(string_or_devicetype)
-        else:
-            baseutils.check_type(string_or_devicetype, DeviceType)
-            self._devicetype = string_or_devicetype
-
-        baseutils.check(
-            number is None or _number is None or number == _number,
-            lambda: f"Trying to create a device but the device has two numbers, {_number} and {number}",
-        )
-
-        if _number is None:
-            _number = number
-
-        if _number is None:
-            _number = 0
-
-        self._number = _number
-
-        # NOTE While we don't consider it an error to request CPU:1, we also don't pretend
-        #   like there are multiple CPU devices.
-        if self._devicetype is DeviceType.CPU:
-            self._number = 0
-
-        baseutils.check_type(self._number, int)
-        baseutils.check(self._number >= 0, lambda: f"Trying to create a device with invalid number {number}")
+        if self._devicetype is DeviceType.CUDA:
+            baseutils.check_type(self._index, int)
+            baseutils.check(self._index >= 0, lambda: f"Trying to create a device with invalid index {index}")
+            baseutils.check(
+                self._index < torch.cuda.device_count(),
+                lambda: f"Trying to create a CUDA device with {index=}, but there are only {torch.cuda.device_count()} CUDA devices available",
+            )
 
     @property
     def devicetype(self) -> DeviceType:
@@ -93,8 +107,8 @@ class Device(metaclass=DeviceMeta):
         return devicetype_string(self.devicetype)
 
     @property
-    def number(self) -> int:
-        return self._number
+    def index(self) -> int:
+        return self._index
 
     def __hash__(self) -> int:
         return id(self)
@@ -106,7 +120,7 @@ class Device(metaclass=DeviceMeta):
             return devicetype_string(self.devicetype)
 
         # NOTE self.devicetype == DeviceType.CUDA
-        return f"{devicetype_string(self.devicetype)}:{self.number}"
+        return f"{devicetype_string(self.devicetype)}:{self.index}"
 
     # NOTE Because devices are singleton object, this has the luxury of using "is"
     def __eq__(self, other: Device) -> bool:
@@ -117,7 +131,7 @@ def available_devices() -> Sequence[Device]:
     return get_default_langctx().available_devices()
 
 
-cpu = Device(DeviceType.CPU, 0)
+cpu = Device(DeviceType.CPU, None)
 
 
 def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
@@ -127,12 +141,10 @@ def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
     if devicestr == "cuda":
         return DeviceType.CUDA, None
 
-    devicetype, deviceno = devicestr.split(":")
-    deviceno = int(deviceno)
+    devicetype, idx_str = devicestr.split(":")
+    idx = int(idx_str)
 
-    baseutils.check(devicetype == "cuda", lambda: f"Unknown devicetype {devicetype}")
-
-    return DeviceType.CUDA, deviceno
+    return _inverse_devicetype_prettyprint_map[devicetype], idx
 
 
 # Translates strings of the form "cpu" or "cuda:x" (for a valid integer x) into a Device object

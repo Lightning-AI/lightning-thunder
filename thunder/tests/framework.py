@@ -268,7 +268,7 @@ class ops:
                 if not executor.supports_devicetype(devicetype):
                     continue
 
-                device = devices.Device(devicetype, 0)
+                device = devices.Device(devicetype, None)
 
                 # TODO Pass device_type to dtypes()
                 dtypes = opinfo.dtypes()
@@ -352,7 +352,7 @@ class instantiate:
 
             device_or_devices = None
             if self.num_devices == 1:
-                device_or_devices = devices.Device(devicetype, 0)
+                device_or_devices = devices.Device(devicetype, None)
             else:
                 device_or_devices = []
                 for idx in range(self.num_devices):
