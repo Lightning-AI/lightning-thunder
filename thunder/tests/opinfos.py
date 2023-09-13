@@ -1426,7 +1426,8 @@ elementwise_unary_ops.append(ndtri_opinfo)
 
 reciprocal_opinfo = OpInfo(
     clang.reciprocal,
-    domain=(0 + eps, math.inf),
+    domain=(0, math.inf),
+    singularity_fn=lambda x: x,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.reciprocal),
     test_directives=(

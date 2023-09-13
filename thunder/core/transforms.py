@@ -12,7 +12,7 @@ import inspect
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim, sqrt
+from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim, sqrt, reciprocal
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -2293,6 +2293,20 @@ def where_aug_fwd(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJP
 @register_backward(prims.PrimIDs.WHERE)
 def where_backward(condition, g):
     return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
+
+
+@register_augmented_forward(prims.PrimIDs.RECIPROCAL)
+def reciprocal_aug_fwd(a: TensorProxy) -> VJPDual:
+    primal = reciprocal(a)
+    return VJPDual(
+        primal,
+        (primal,)
+    )
+
+
+@register_backward(prims.PrimIDs.RECIPROCAL)
+def reciprocal_backward(primal, g):
+    return -g * primal * primal
 
 
 @register_augmented_forward(prims.PrimIDs.SQUEEZE)
