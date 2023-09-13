@@ -227,6 +227,7 @@ def _bind_to_graph(
         msg = f"({', '.join(arg_ordered_parameters)}) != ({', '.join(signature.parameters.keys())})"
         raise NotImplementedError(msg)
 
+    co_name = func.__code__.co_name
     self_key: Optional[VariableKey] = None
     self_value: Optional[Value] = None
     if method_self is not None:
@@ -431,6 +432,7 @@ def _bind_to_graph(
     gr = Graph(list(blocks.values()))
     gr.local_variables_at_start = [get_initial_value(k) for k in param_keys]
 
+    gr.co_name = co_name
     # bound_args = [module.forward.__self__]
     gr.self_value = self_value
     gr.ismethod = self_value is not None

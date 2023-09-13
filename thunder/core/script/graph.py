@@ -398,6 +398,7 @@ class Graph(InstrumentingBase):
         g2.local_variables_at_start = [v.clone() for v in self.local_variables_at_start]
         replace_values(g2, {k: v for k, v in zip(self.local_variables_at_start, g2.local_variables_at_start)})
         g2.ismethod = self.ismethod
+        g2.co_name = self.co_name
         g2.co_argcount = self.co_argcount
         g2.co_flags = self.co_flags
         g2.co_posonlyargcount = self.co_posonlyargcount

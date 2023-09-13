@@ -411,7 +411,7 @@ def generate_function(gr: "Graph") -> Callable:
     co_names = tuple(names)
     co_varnames = tuple(lv_names)
     co_filename = f"<thunder-generated-{id(gr)}>"
-    co_name = f"thunder_{id(gr)}"  # nicer name?
+    co_name = gr.co_name
     co_firstlineno = gr.source_start_line
     co_linetable = linetable_bytes  # XXX
     co_freevars = ()
