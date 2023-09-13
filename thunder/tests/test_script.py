@@ -1246,6 +1246,7 @@ def test_conditionally_defined_attribute():
 #     assert_close(thunder_result, torch_result)
 
 
+@skipif_not_python_3_10
 def test_method_with_kwarg():
     class Model(torch.nn.Module):
         def forward(self, x):
@@ -1259,3 +1260,41 @@ def test_method_with_kwarg():
     x = torch.tensor(3)
     actual = tom(x)
     assert actual.item() == 4
+
+
+@skipif_not_python_3_10
+def test_functionalization_callmethod_nonmethod():
+    class Attention(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.kv_cache = None
+
+        def forward(self, x, use_kv_cache=False):
+            if use_kv_cache:
+                x = self.kv_cache(x)
+            return x
+
+    class Attention2(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.kv_cache = torch.nn.Linear(1, 4)
+            noinline(self.some_fw)
+
+        def forward(self, x, use_kv_cache=False):
+            x = self.some_fw(x)
+            return x
+
+        def some_fw(self, x):
+            return x + 2
+
+    model = Attention()
+    x = torch.tensor([3.0])
+    tom = thunder.compile(model)
+    assert_close(model(x), tom(x))
+
+    # by calling a no-inline method we generate a non-removable reference to self
+    # to check that we don't mess with things that should be using CALL_METHOD
+    model = Attention2()
+    x = torch.tensor([3.0])
+    with pytest.raises(RuntimeError, match="could not eliminate self"):
+        tom = thunder.compile(model)

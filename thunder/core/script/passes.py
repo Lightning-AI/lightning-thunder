@@ -333,7 +333,9 @@ def inline_submodule_calls(gr: "Graph") -> bool:
                     n.i = n.i.modify_copy(opname="CALL_FUNCTION", arg=0)
                     n.inputs = [methval]
                 if isinstance(fn_value, torch.nn.Module) or (
-                    inspect.ismethod(fn_value) and isinstance(fn_value.__self__, torch.nn.Module)
+                    inspect.ismethod(fn_value)
+                    and isinstance(fn_value.__self__, torch.nn.Module)
+                    and (fn_value not in NOINLINE_METHODS.get())
                 ):
                     inline_method_call(gr, n)
                     changed = True
@@ -800,6 +802,16 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
 
     for bl in gr.blocks:
         for n in bl.nodes:
+            if n.i.opname == "CALL_METHOD":
+                if n.inputs[0].parent == n.inputs[1]:
+                    v = find_and_evaluate_method_through_phi_parent(n.inputs[0])
+                    if not isinstance(v, types.MethodType) or v.__self__ != find_and_evaluate_method_through_phi_parent(
+                        n.inputs[1]
+                    ):
+                        # this case (not a proper method call is usually handled in executing the LOAD_METHOD opcode)
+                        n.i = n.i.modify_copy(opname="CALL_FUNCTION", opcode=None)
+                        del n.inputs[1]
+
             for idx_i, i in enumerate(n.inputs):
                 v = functionalize_value_if_possible(i)
                 if v is not None:
