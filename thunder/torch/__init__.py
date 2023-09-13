@@ -1938,119 +1938,60 @@ def _interpolate_scale_factor_helper(
             f"a sequence of strictly positive floating point numbers of length {dim}",
         )
 
-    # output_dims stores an approximation of the output shape
-    # that gets refined over the course of the algorithm below.
-    # The very first two dimenions, i.e. the batch and the channels
-    # dimenions are never modified.
-    output_dims = [batch, channels]
-
-    # scale_factor[i - 2] > 1 implies output_dims[i] > a.shape[i].
-    # Then we keep this i'th dim in dims_to_expand for further processing.
-    dims_to_expand = []
-
-    for k, (scale, input_dim) in enumerate(zip(scale_factor, spatial_dims)):
-        output_dim = int(scale * input_dim)
-        utils.check(
-            output_dim > 0,
-            lambda: f"provided scale_factor value {scale} results " f"in a zero length output at dimension {k + 2}",
+    # perform nearest up/down-sampling
+    def nearest_sampler(t, input_dim, output_dim, *, scale, dim):
+        # It is expected that output_dim = int(input_dim * scale).
+        # Indices [0, ..., output_dim - 1] are mapped to [0, ..., input_dim - 1]
+        # with the rule i -> int(i * scale)
+        # Values at these indices is the result.
+        selected_idx = arange(0, output_dim, device=a.device)
+        selected_idx = clang.maybe_convert_to_dtype(
+            selected_idx * scale,
+            selected_idx.dtype
         )
-
-        if output_dim <= input_dim:
-            # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
-            stride = (input_dim + output_dim - 1) // output_dim
-            a = clang.slice_in_dim(a, 0, input_dim, stride=stride, dim=k + 2)
-            output_dims.append(a.shape[k + 2])
-        else:
-            # scale_factor > 1 requires dim expansion.
-            # This one can be potentially non-trivial.
-            dims_to_expand.append(k + 2)
-            output_dims.append(output_dim)
+        return clang.take(t, selected_idx, dim=dim)
 
     def dim_expander(t, dim, n_repeats):
         t = unsqueeze(t, dim + 1)
         t = expand(t, t.shape[: dim + 1] + (n_repeats,) + t.shape[dim + 2 :])
         return t
 
-    # Iterate over dim_to_expand and only process dims for which
-    # output_dim is a multiple of input_dim.
-    # This dim expansion requires view-only operations!
-    # If output_dim is not a multiple of input_dim, a copy
-    # is unavoidable in this decomposition.
-    # TODO: optimize this decomposition with pool/unpool primitives.
-    n_dims_to_cat_along = 0
-    for k in reversed(dims_to_expand):
-        # NOTE: dims_to_expand store dimensions relative to the output!
-        output_dim = output_dims[k]
-        input_dim = spatial_dims[k - 2]
-        if output_dim % input_dim == 0:
-            n_repeats = output_dim // input_dim
-            a = dim_expander(a, k, n_repeats)
+    res_output_spatial_dims = []
+
+    for k, (scale, input_dim) in enumerate(zip(reversed(scale_factor), reversed(spatial_dims))):
+        output_dim = int(scale * input_dim)
+        utils.check(
+            output_dim > 0,
+            lambda: f"provided scale_factor value {scale} results "
+                    f"in a zero length output at dimension {k + 2}"
+        )
+        res_output_spatial_dims.append(output_dim)
+
+        # k iterates from the end, and we skip the first 2
+        # dimenions corresponding to batches and channels.
+        curr_dim = 2 + (len(spatial_dims) - k - 1)
+
+        if output_dim <= input_dim:
+            if output_dim <= input_dim // 2:
+                # scale_factor <= 1 (i.e. output_dim <= input_dim) implies simple slice
+                # when output_dim <= input_dim // 2.
+                stride = input_dim // output_dim
+                end = input_dim - (input_dim % output_dim)
+                a = clang.slice_in_dim(a, 0, end, stride=stride, dim=curr_dim)
+            else:
+                # In this case slice will not do and explicit downsample is needed.
+                a = nearest_sampler(a, input_dim, output_dim, scale=1. / scale, dim=curr_dim)
         else:
-            # output_dim is not a multiple of input_dim,
-            # so a memory copy is needed. We delegate this
-            # to the loop below to reduce memory movements.
-            # Just unsqueeze for easier procesing in the loop below.
-            n_dims_to_cat_along += 1
-            a = unsqueeze(a, k + 1)
+            if output_dim % input_dim == 0:
+                # In this case we can just expand dim.
+                n_repeats = output_dim // input_dim
+                a = dim_expander(a, curr_dim, n_repeats)
+            else:
+                # In this case expand will not cut it and explicit upsampling is needed.
+                a = nearest_sampler(a, input_dim, output_dim, scale=1. / scale, dim=curr_dim)
 
-    # Short circuit if no complex cat'ing is expected.
-    if n_dims_to_cat_along == 0:
-        a = reshape(a, output_dims)
-        return a
-
-    # Process output dims which are not multiples of input dims.
-    # Gotta do some flatten+cat.
-    for i, k in enumerate(reversed(dims_to_expand)):
-        output_dim = output_dims[k]
-        input_dim = spatial_dims[k - 2]
-
-        # This case is already processed
-        if output_dim % input_dim == 0:
-            continue
-        else:
-            # k_offset = the number of dims that got expanded to the left
-            # from the current dimension.
-            k_offset = len(dims_to_expand) - i - 1
-
-            # curr_dim corresponds to dimension k in the original tensor a.
-            curr_dim = k + k_offset
-
-            # Undo the squeeze to re-use the dim_expander method.
-            a = unsqueeze(a, curr_dim + 1)
-
-        # The logic is the same as in tensor_split, i.e.
-        # we want to split output_dim into input_dim chunks.
-        # The first output_dim % input_dim subtensors in demension k
-        # are copied (output_dim // input_dim + 1) times,
-        # and the remaining (input_dim - output_dim % input_dim)
-        # subtensors are copied (output_dim // input_dim) times.
-        # The first part is reffered to as the lower, (i.e. lo) part,
-        # and the remaining as the higher, (i.e. hi part).
-        # Once copies of dimension k are introduced in dimension k + 1,
-        # we need to flatten the lower and the higher parts in dimensions
-        # [k, k + 1] and concatenate them in dimension k.
-        lo_len = output_dim % input_dim
-        hi_n_copies = output_dim // input_dim
-
-        a_lo = clang.slice_in_dim(a, 0, lo_len, dim=curr_dim)
-        a_hi = clang.slice_in_dim(a, lo_len, input_dim, dim=curr_dim)
-
-        a_lo = dim_expander(a_lo, curr_dim, hi_n_copies + 1)
-        a_hi = dim_expander(a_hi, curr_dim, hi_n_copies)
-
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/946.
-        # The broadcast dimension needs to get materialized for nvFuser.
-        # This, however, will not cause performance issues in eager mode
-        # since flatten returns a contiguous copy turning the subsequent
-        # contiguous call into a no-op.
-        a_lo = contiguous(flatten(a_lo, curr_dim, curr_dim + 1))
-        a_hi = contiguous(flatten(a_hi, curr_dim, curr_dim + 1))
-
-        a = cat((a_lo, a_hi), dim=curr_dim)
-
-    a = reshape(a, output_dims)
-
-    return a
+    output_shape = [batch, channels] + res_output_spatial_dims[::-1]
+    return reshape(a, output_shape)
 
 
 def _interpolate_size_helper(
