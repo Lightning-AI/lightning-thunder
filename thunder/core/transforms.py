@@ -1532,6 +1532,7 @@ augmented_forward_impls = {
     prims.PrimIDs.SQRT: lambda x: (prims.sqrt(x), (prims.sqrt(x),)),
     prims.PrimIDs.EQ: lambda x, y: (prims.eq(x, y), (x, y)),
     prims.PrimIDs.GE: lambda x, y: (prims.ge(x, y), (x, y)),
+    prims.PrimIDs.GT: lambda x, y: (prims.gt(x, y), (x, y)),
     prims.PrimIDs.LT: lambda x, y: (prims.lt(x, y), (x, y)),
     prims.PrimIDs.LOG: lambda x: (prims.log(x), (x,)),
     prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),

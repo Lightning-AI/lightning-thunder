@@ -476,11 +476,13 @@ def _test_native_ddp_helper(input_data):
             pred.mean().backward()
 
             grad_gather_list = None
-            for grad in filter(lambda p: p.grad is not None, cmodel.parameters()):
+            for param_with_grad in filter(lambda p: p.grad is not None, cmodel.parameters()):
                 if rank == 0:
                     grad_gather_list = []
                     for _ in range(world_size):
-                        grad_gather_list.append(torch.empty_like(grad))
+                        grad_gather_list.append(torch.empty_like(param_with_grad))
+
+                grad = param_with_grad.grad
 
                 tdist.gather(grad, grad_gather_list, dst=0, group=pg, async_op=False)
 

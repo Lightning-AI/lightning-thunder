@@ -391,7 +391,7 @@ class CompileData:
 
         # Sets a default tracing mode if one wasn't specified
         if (always_trace, use_dynamic_caching, use_static_caching, use_last_executed) == ((None,) * 4):
-            always_trace = True
+            use_static_caching = True
 
         # Checks that only one tracing mode is set
         always_trace = always_trace if always_trace is not None else False

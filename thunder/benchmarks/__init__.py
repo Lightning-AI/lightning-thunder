@@ -640,7 +640,7 @@ def default_thunder_always_trace_executor(fn: Callable) -> Callable:
 
 def default_thunder_static_caching_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_static_caching=True)
+    return thunder.compile(fn)
 
 
 def default_thunder_ddp_static_caching_executor(rank) -> Callable:
@@ -650,7 +650,6 @@ def default_thunder_ddp_static_caching_executor(rank) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.compile(
             ddp(fn, rank, broadcast_from=0),
-            use_static_caching=True,
         )
 
     return func
@@ -658,7 +657,7 @@ def default_thunder_ddp_static_caching_executor(rank) -> Callable:
 
 def default_thunder_static_caching_executor_no_grad(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_static_caching=True, disable_torch_autograd_support=True)
+    return thunder.compile(fn, disable_torch_autograd_support=True)
 
 
 def default_thunder_last_used_executor(fn: Callable) -> Callable:
@@ -679,9 +678,7 @@ def default_thunder_triton_executor(fn: Callable) -> Callable:
 
     executors_list = ("triton_crossentropy", executors.NVFUSER, executors.TORCH)
 
-    return thunder.compile(
-        fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True
-    )
+    return thunder.compile(fn, executors_list=executors_list, disable_torch_autograd_support=True)
 
 
 # TODO Add grad support
@@ -696,9 +693,7 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
     register_apex_entropyex(add_to_default_executors=False)
 
     executors_list = ("apex_xentropy", executors.NVFUSER, executors.TORCH)
-    return thunder.compile(
-        fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True
-    )
+    return thunder.compile(fn, executors_list=executors_list, disable_torch_autograd_support=True)
 
 
 # TODO Add grad support
@@ -713,9 +708,7 @@ def default_thunder_cudnn_executor(fn: Callable) -> Callable:
     register_cudnnex(add_to_default_executors=False)
 
     executors_list = ("cudnn", executors.NVFUSER, executors.TORCH)
-    return thunder.compile(
-        fn, executors_list=executors_list, use_static_caching=True, disable_torch_autograd_support=True
-    )
+    return thunder.compile(fn, executors_list=executors_list, disable_torch_autograd_support=True)
 
 
 # TODO Add grad support
@@ -736,7 +729,6 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
     return thunder.compile(
         fn,
         executors_list=executors_list,
-        use_static_caching=True,
         use_cudagraphs=True,
         disable_torch_autograd_support=True,
     )
