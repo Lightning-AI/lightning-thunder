@@ -1746,8 +1746,11 @@ def _dropout_helper(a, p):
 #   (Using torch.nn.functional.dropout is just for readability as it's the documented operator)
 @torchsymbol(torch.nn.functional.dropout, id="torch.nn.functional.dropout")
 def dropout(a: TensorProxy, p: Number = 0.5, training: bool = True, inplace: bool = False):
-    if not training or inplace:
-        raise NotImplementedError("Only training=True, inplace=False is currently supported in dropout")
+    if inplace:
+        raise NotImplementedError("Only inplace=False is currently supported in dropout")
+
+    if not training:
+        return a
 
     utils.check(
         p <= 1 and p >= 0,

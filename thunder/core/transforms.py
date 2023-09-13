@@ -2548,7 +2548,7 @@ def backward_pass(forward_env, trace, init_cotangents):
             # Assuming that the dropout symbol has the same output and argument
             # https://github.com/Lightning-AI/lightning-thunder/issues/906
             assert symbol.output.name == symbol.args[0].name, "Dropout symbol has a different output and argument"
-            if symbol.args[1] == 0.0:
+            if symbol.args[1] == 0.0 or symbol.args[2] is False:
                 continue
 
         pullback = backward_impls[symbol.sym.id]
