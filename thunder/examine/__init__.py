@@ -6,8 +6,9 @@ from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map, method_lookup
-
+from thunder.executors.utils import nvfuser_available, is_cuda_available
 import torch
+from warnings import warn
 
 
 # TODO Maybe make collect_into a set?
@@ -153,9 +154,22 @@ def examine(fn: Callable, *args, **kwargs):
     print(f"The function appears to be working as expected")
 
 
+def warn_fusions() -> bool:
+    if not is_cuda_available():
+        warn("CUDA is not available, so no fusions will be created.")
+        return True
+    if not nvfuser_available():
+        warn("nvFuser is not available, so no fusions will be created.")
+        return True
+    return False
+
+
 # Acquires all fusions in the given trace, returning them as a tuple of
 #   (name, fusion) pairs
-def get_fusions(trace: TraceCtx) -> list[tuple[str, Callable]]:
+def get_fusions(trace: TraceCtx, warn_if_fusions_unavailable: bool = True) -> list[tuple[str, Callable]]:
+    if warn_if_fusions_unavailable and warn_fusions():
+        return []
+
     fusions = []
 
     ctx = trace.python_ctx()
@@ -169,7 +183,10 @@ def get_fusions(trace: TraceCtx) -> list[tuple[str, Callable]]:
 
 
 # Acquires all the fusion BoundSymbols in the trace
-def get_fusion_symbols(trace: TraceCtx) -> list[BoundSymbol]:
+def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True) -> list[BoundSymbol]:
+    if warn_if_fusions_unavailable and warn_fusions():
+        return []
+
     fusions = []
 
     for bsym in trace.bound_symbols:
