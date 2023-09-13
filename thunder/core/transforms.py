@@ -1574,7 +1574,7 @@ backward_impls = {
     prims.PrimIDs.EXP2: lambda result, g: g * result * math.log(2.0),
     prims.PrimIDs.EXPM1: lambda result, g: g * (result + 1.0),
     prims.PrimIDs.MUL: lambda x, y, g: (g * y, g * x),
-    prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(-0.5 * result**2) / prims.sqrt(2.0 * math.pi),
+    prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * prims.sqrt(2.0 * math.pi),
     prims.PrimIDs.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
     prims.PrimIDs.SUB: lambda g: (g, -g),
