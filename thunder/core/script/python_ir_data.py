@@ -1,6 +1,7 @@
 import dis
 import enum
 import logging
+import opcode
 import sys
 from types import CodeType, MappingProxyType
 from typing import Callable, Optional, TypeVar, Union
@@ -437,7 +438,12 @@ def stack_effect_detail(instruction: ThunderInstruction, *, jump: bool = False) 
     pop, push = stack_effect_adjusted(instruction)
     if epilogue := get_epilogue(instruction, jump=jump):
         epilogue_pop, epilogue_push = stack_effect_adjusted(epilogue)
-        push = push[:-epilogue_pop] + epilogue_push
+        push = (push[:-epilogue_pop] if epilogue_pop else push) + epilogue_push
+
+    # Python exposes a method to compute stack effect, so while it's not part
+    # of the public API we may as well use it to check our bookkeeping.
+    expected = opcode.stack_effect(instruction.opcode, instruction.arg, jump=jump)
+    assert expected == len(push) - pop, (expected, push, pop)
     return pop, len(push)
 
 

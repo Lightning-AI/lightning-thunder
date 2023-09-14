@@ -51,10 +51,12 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
     value to the prior block and so on.
     """
     uses = {protoblock: protoblock.uses.copy() for protoblock in protograph}
+    end_uses = {protoblock: OrderedSet[VariableKey]() for protoblock in protograph}
     blocks_to_process = collections.deque(protograph)
     while blocks_to_process:
         protoblock = blocks_to_process.popleft()
         target_uses = tuple(itertools.chain(*(uses[target] for target, _ in protoblock.jump_targets)))
+        end_uses[protoblock].update(k for k in target_uses if k.scope != VariableScope.CONST)
         transitive_uses = OrderedSet(
             source
             for use in target_uses
@@ -65,8 +67,8 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
             uses[protoblock].update(transitive_uses)
             blocks_to_process.extend(protograph.parents[protoblock])
 
-    new_uses = {i: uses_i.difference(i.uses) for i, uses_i in uses.items()}
-    return {i: new_uses_i for i, new_uses_i in new_uses.items() if new_uses_i}
+    new_uses = {i: (uses_i.difference(i.uses), end_uses[i]) for i, uses_i in uses.items()}
+    return {i: new_uses_i for i, new_uses_i in new_uses.items() if new_uses_i[0]}
 
 
 @check_idempotent
@@ -82,11 +84,11 @@ def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     state mutations during inlining and rerun flow analysis.
     """
     substitutions = {}
-    for protoblock, new_uses in _get_missing_transitive(protograph).items():
+    for protoblock, (new_uses, end_uses) in _get_missing_transitive(protograph).items():
         new_flow = IntraBlockFlow(
             _flow=protoblock.flow._flow,
             _begin={**{k: AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
-            _end={**{k: k for k in new_uses}, **protoblock.flow._end},
+            _end={**{k: k for k in end_uses}, **protoblock.flow._end},
         )
         substitutions[protoblock] = new_protoblock = ProtoBlock(protoblock.raw_instructions, new_flow)
         new_protoblock.uses.update(protoblock.uses | new_uses)

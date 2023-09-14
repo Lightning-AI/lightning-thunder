@@ -203,3 +203,17 @@ def apply_context_manager(ctx):
 
 def test_apply_context_manager():
     thunder.compile(apply_context_manager)
+
+
+def exotic_jumps(x, y, f):
+    # Distilled from https://github.com/Lightning-AI/lightning-thunder/issues/1064
+    if x:
+        bn_training = True
+    else:
+        bn_training = (y is None) and (y is None)
+
+    return f(1 if not x else None, bn_training)
+
+
+def test_exotic_jumps():
+    thunder.compile(exotic_jumps)
