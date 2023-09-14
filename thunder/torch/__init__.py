@@ -1,23 +1,22 @@
-from numbers import Number
-from typing import Any, Callable, Union, Optional, Tuple, Type
-from collections.abc import Sequence
-from functools import partial, reduce
+import itertools
 import math
 import operator
-from enum import Enum, auto
-import re
-import itertools
+from collections.abc import Sequence
+from enum import Enum
+from functools import partial, reduce
+from numbers import Number
+from typing import Any, Callable, Union, Optional, Tuple
 
-from thunder.core.proxies import TensorProxy, FutureTensorProxy, pytype
-import thunder.core.prims as prims
-import thunder.core.utils as utils
-import thunder.core.dtypes as dtypes
-from thunder.core.langctx import langctx
-from thunder.core.symbol import Symbol
-from thunder.core.pytree import tree_map
-from thunder.core.prims import prim_ctx
 import thunder.clang as clang
 import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
+import thunder.core.prims as prims
+import thunder.core.utils as utils
+from thunder.core.langctx import langctx
+from thunder.core.prims import prim_ctx
+from thunder.core.proxies import TensorProxy, FutureTensorProxy
+from thunder.core.pytree import tree_map
+from thunder.core.symbol import Symbol
 
 __all__ = [
     "is_available",
@@ -761,11 +760,9 @@ def full_like(
 # NOTE ones, unlike full, can accept an integer shape
 @torchsymbol(torch.ones)
 def ones(
-    shape: int | Sequence[int], /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+   *shape: int, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
 ) -> TensorLike:
-    if isinstance(shape, int):
-        shape = (shape,)
-
+    shape = utils.extract_shape_from_varargs(shape)
     return full(shape, 1, device=device, dtype=dtype)
 
 
@@ -832,10 +829,9 @@ def uniform_philox(
 # NOTE zeros, like ones, and unlike full, can accept an integer shape
 @torchsymbol(torch.zeros)
 def zeros(
-    shape: int | Sequence[int], *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
+    *shape: int, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
 ) -> TensorLike:
-    if isinstance(shape, int):
-        shape = (shape,)
+    shape = utils.extract_shape_from_varargs(shape)
     return full(shape, 0, device=device, dtype=dtype)
 
 

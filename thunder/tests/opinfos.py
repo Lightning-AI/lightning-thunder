@@ -2,30 +2,28 @@ import itertools
 import math
 import operator
 from collections import namedtuple
+from collections.abc import Sequence
 from functools import partial, wraps
 from numbers import Number
 from typing import Union, Callable, Optional, Tuple, Generator
-from collections.abc import Sequence
 
 import numpy as np
 import pytest
-
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
-from torch.testing import assert_close
 from looseversion import LooseVersion
+from torch.testing import assert_close
 
+import thunder.clang as clang
 import thunder.core.devices as devices
 import thunder.core.dtypes as datatypes
-import thunder.clang as clang
 import thunder.core.prims as prims
+import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
+from thunder.core.symbol import Symbol
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
 from thunder.tests.make_tensor import make_tensor
-from thunder.core.symbol import Symbol
-
-import thunder.executors as executors
 
 #
 # Helpful constants and utility functions
@@ -3770,24 +3768,26 @@ arange_opinfo = OpInfo(
 tensor_creation_ops.append(arange_opinfo)
 
 
-def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+def vargs_shape_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # these shapes are valid for zeros, ones, empty, and randn
     cases = (
-        # (),  # FIXME: https://github.com/csarofeen/pytorch/issues/2358
         (1,),
         (4, 4),
-        # (2, 0, 3),  # FIXME: nvFuser does not yet support shapes with 0-sized dimensions
+        (2, 0, 3),
         (8, 1, 6),
         (8, 7, 5, 1),
     )
 
+    yield SampleInput((), device=device, dtype=dtype)
     for shape in cases:
         yield SampleInput(shape, device=device, dtype=dtype)
+        yield SampleInput(*shape, device=device, dtype=dtype)
 
 
 # TODO Think of how to test empty (the tensor values cannot be compared as close -- maybe pass custom comparator?)
 # empty_opinfo = OpInfo(
 #     ltorch.empty,
-#     sample_input_generator=empty_sample_generator,
+#     sample_input_generator=vargs_shape_sample_generator,
 #     torch_reference=torch.zeros,
 # )
 # tensor_creation_ops.append(empty_opinfo)
@@ -3870,12 +3870,24 @@ def fixed_value_like_tensor_creation_op_sample_generator(op, device, dtype, requ
         yield SampleInput(a)
 
 
+def varargs_tensor_creation_op_sample_generator(*args, **kwargs):
+    yield from fixed_value_tensor_creation_op_sample_generator(*args, **kwargs)
+    yield from vargs_shape_sample_generator(*args, **kwargs)
+
+
 ones_opinfo = OpInfo(
     ltorch.ones,
-    sample_input_generator=fixed_value_tensor_creation_op_sample_generator,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator,
     torch_reference=torch.ones,
 )
 tensor_creation_ops.append(ones_opinfo)
+
+zeros_opinfo = OpInfo(
+    ltorch.zeros,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator,
+    torch_reference=torch.zeros,
+)
+tensor_creation_ops.append(zeros_opinfo)
 
 zeros_like_opinfo = OpInfo(
     ltorch.zeros_like,

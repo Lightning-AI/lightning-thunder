@@ -1,9 +1,8 @@
-from numbers import Number
 from collections.abc import Iterable
+from numbers import Number
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
-from thunder.core.pytree import tree_flatten
 
 # This file defines Thunder's dtypes (dtypes) and numbertypes and offers utilities for
 #   working with them.

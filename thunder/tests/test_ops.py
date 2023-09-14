@@ -1,19 +1,14 @@
+from typing import Callable
+
 import numpy as np
 import pytest
 import torch
-from looseversion import LooseVersion
-from numbers import Number
-from typing import Callable
-from functools import partial
-
-from torch.testing import assert_close
 
 import thunder.core.dtypes as dtypes
-from thunder.tests.framework import ops, run_snippet, requiresJAX, instantiate
-from thunder.tests.opinfos import OpInfo, SampleInput, TorchTensorComp, opinfos
-import thunder.core.devices as devices
 from thunder.core.pytree import tree_map
-from thunder import compile
+from thunder.tests.framework import ops, run_snippet, requiresJAX
+from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
+
 
 #
 # Generic test templates for all operators
@@ -58,6 +53,8 @@ def snippet_torch_consistency(op, torch_op, sample, comp):
 def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
     if dtypes.is_complex_dtype(dtype):
         pytest.skip("Skipping complex operator tests in CI for speed")
+    if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+        pytest.skip("Your CUDA device does not support bfloat16")
 
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp
@@ -77,7 +74,6 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
 
 
 def snippet_jax_consistency(op, jax_op, sample, comp):
-    import jax
     import jax.numpy as jnp
 
     jax_sample = sample.jax()
