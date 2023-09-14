@@ -23,6 +23,7 @@ from thunder.core.script.python_ir_data import (
     RETURN_VALUE,
     STORE_OPNAMES,
     EXTENDED_ARG,
+    UNSAFE_OPCODES,
 )
 from thunder.core.utils import InferringDict, OrderedSet
 
@@ -232,6 +233,13 @@ class IntraBlockFlow:
                 stack.append(VariableKey(index, VariableScope.STACK))
             return stack.pop() if pop else stack[-1]
 
+        def make_unsupported(msg: str, instruction: ThunderInstruction):
+            source_lines, _ = inspect.getsourcelines(code)
+            msg = f"""{msg}{instruction} found
+            {code.co_name} defined in {code.co_filename}:{code.co_firstlineno}
+            line {instruction.line_no + code.co_firstlineno}: {source_lines[instruction.line_no].rstrip()}"""
+            return RuntimeError(msg)
+
         def to_key(instr: ThunderInstruction, scope: VariableScope) -> VariableKey:
             arg = instr.arg
             assert arg is not None
@@ -249,11 +257,7 @@ class IntraBlockFlow:
                 # We will have to emit some nonlocal AbstractValue and resolve it later, once we can prove
                 # See https://github.com/python/cpython/blob/0ba07b2108d4763273f3fb85544dde34c5acd40a/Include/internal/pycore_code.h#L119-L133
                 # for more explanation of localsplus.
-                source_lines, first_line = inspect.getsourcelines(code)
-                msg = f"""nonlocal variables are not supported but instruction = {instr} found
-              {code.co_name} defined in {code.co_filename}:{code.co_firstlineno}
-              line {instr.line_no + code.co_firstlineno}: {source_lines[instr.line_no].rstrip()}"""
-                raise RuntimeError(msg)
+                raise make_unsupported("nonlocal variables are not supported but instruction = ", instr)
 
             elif scope == VariableScope.GLOBAL:
                 return VariableKey(code.co_names[arg], scope)
@@ -269,6 +273,9 @@ class IntraBlockFlow:
             if instruction.opname == EXTENDED_ARG:
                 # these are already reflexted in the next opcode's argument
                 continue
+
+            elif instruction in UNSAFE_OPCODES:
+                raise make_unsupported("Unsupported instruction = ", instruction)
 
             assert hasattr(instruction, "line_no"), instruction
             pop, push = stack_effect_adjusted(instruction)

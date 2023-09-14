@@ -100,6 +100,9 @@ JUMP_INSTRUCTIONS = InstructionSet((*dis.hasjabs, *dis.hasjrel, *UNCONDITIONAL_J
 RAISE_RETURN_INSTRUCTIONS = InstructionSet(("RAISE_VARARGS", "RERAISE"))
 RETURN_INSTRUCTIONS = InstructionSet((RETURN_VALUE, *RAISE_RETURN_INSTRUCTIONS))
 
+# https://github.com/Lightning-AI/lightning-thunder/issues/1075
+UNSAFE_OPCODES = InstructionSet(("SETUP_WITH", "SETUP_FINALLY"))
+
 
 class SyntheticInstruction(ThunderInstruction):
     def __new__(cls, i: ThunderInstruction) -> "SyntheticInstruction":

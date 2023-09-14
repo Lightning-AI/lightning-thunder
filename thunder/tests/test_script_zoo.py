@@ -202,7 +202,29 @@ def apply_context_manager(ctx):
 
 
 def test_apply_context_manager():
-    thunder.compile(apply_context_manager)
+    with pytest.raises(RuntimeError):
+        thunder.compile(apply_context_manager)
+
+
+def simple_try_except():
+  try:
+    pass
+  except:
+    pass
+
+
+def test_simple_try_except():
+    with pytest.raises(RuntimeError):
+        thunder.compile(test_simple_try_except)
+
+
+def simple_comprehension(x):
+    return [torch.relu(x) for _ in range(1)]
+
+
+def test_simple_comprehension():
+    with pytest.raises(RuntimeError):
+        thunder.compile(simple_comprehension)
 
 
 def exotic_jumps(x, y, f):

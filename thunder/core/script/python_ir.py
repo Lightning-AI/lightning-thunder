@@ -226,7 +226,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                     if o in bl.block_outputs:
                         processed_block_outputs.add(o)
                         last_n = store_phi_values(o, idx, last_n, cur_n=n)
-                if n.i.opname == "STORE_ATTR":  # STORE_ATTR for unknown objs
+                if n.i.opname in ("STORE_ATTR", "IMPORT_NAME"):  # STORE_ATTR for unknown objs
                     # have a utility for this?
                     try:
                         idx = names.index(n.i.argval)
@@ -452,6 +452,11 @@ def generate_function(gr: "Graph") -> Callable:
     lines = gr.source_lines
     size = len("".join(lines))
     inspect.linecache.cache[co_filename] = size, mtime, lines, co_filename
+
+    try:
+        _ = tuple(dis.get_instructions(func))
+    except BaseException as e:
+        raise RuntimeError("Unknown error generating callable") from e
 
     return func
 

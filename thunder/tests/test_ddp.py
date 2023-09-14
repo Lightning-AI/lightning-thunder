@@ -149,7 +149,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         model = ToyModel().to(self.rank)
         with self.assertRaisesRegex(
             RuntimeError,
-            "nonlocal variables are not supported",
+            r"Unsupported instruction = ThunderInstruction\(opname='SETUP_WITH'",
         ):
             thunder.compile(DDP(model, device_ids=[self.rank]))
 

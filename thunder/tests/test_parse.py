@@ -443,55 +443,7 @@ def nested_loop_fn(x, inner):
     return inner.count
 
 
-@add_parse_test(
-    """
-        LOAD_FAST                1 (ctx)              ║    LOAD_FAST                   ctx
-        CALL_FUNCTION            0                    ║    CALL_FUNCTION
-        SETUP_WITH              13 (to 32)            ║    SETUP_WITH
-        STORE_FAST               2 (c)                ║        -> 1(False)
-        LOAD_FAST                0 (x)                ║        -> 3(True)
-        LOAD_CONST               1 (1)                ║
-        INPLACE_ADD                                   ║    SETUP_WITH__NoJumpEpilogue
-        STORE_FAST               0 (x)                ║        -> 2(False)
-        POP_BLOCK                                     ║
-        LOAD_CONST               0 (None)             ║    STORE_FAST                  c
-        DUP_TOP                                       ║    LOAD_FAST                   x
-        DUP_TOP                                       ║    LOAD_CONST                  1
-        CALL_FUNCTION            3                    ║    INPLACE_ADD
-        POP_TOP                                       ║    STORE_FAST                  x
-        LOAD_CONST               0 (None)             ║    POP_BLOCK
-        RETURN_VALUE                                  ║    LOAD_CONST                  None
-                                                      ║    DUP_TOP
->>   32 WITH_EXCEPT_START                             ║    DUP_TOP
-        POP_JUMP_IF_TRUE        19 (to 38)            ║    CALL_FUNCTION
-        RERAISE                  1                    ║    POP_TOP
-                                                      ║    LOAD_CONST                  None
->>   38 POP_TOP                                       ║    JUMP_ABSOLUTE
-        POP_TOP                                       ║        -> 7(True)
-        POP_TOP                                       ║
-        POP_EXCEPT                                    ║    SETUP_WITH__JumpEpilogue
-        POP_TOP                                       ║        -> 4(True)
-        LOAD_CONST               0 (None)             ║
-        RETURN_VALUE                                  ║    WITH_EXCEPT_START
-                                                      ║    POP_JUMP_IF_TRUE
-                                                      ║        -> 5(False)
-                                                      ║        -> 6(True)
-                                                      ║
-                                                      ║    RERAISE
-                                                      ║
-                                                      ║    POP_TOP
-                                                      ║    POP_TOP
-                                                      ║    POP_TOP
-                                                      ║    POP_EXCEPT
-                                                      ║    POP_TOP
-                                                      ║    LOAD_CONST                  None
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 7(True)
-                                                      ║
-                                                      ║    RETURN_VALUE
-""",
-    flow_spec=DONT_CHECK_FLOW,
-)
+# @add_parse_test()
 def context_manager(x, ctx):
     with ctx() as c:
         x += 1
@@ -582,48 +534,7 @@ def make_nonlocal_test():
 # make_nonlocal_test()
 
 
-@add_parse_test(
-    """
-        SETUP_FINALLY           12 (to 26)            ║    SETUP_FINALLY
-        LOAD_FAST                0 (f)                ║        -> 1(False)
-        LOAD_METHOD              0 (write)            ║        -> 3(True)
-        LOAD_CONST               1 ('Test')           ║
-        CALL_METHOD              1                    ║    SETUP_FINALLY__NoJumpEpilogue
-        POP_TOP                                       ║        -> 2(False)
-        POP_BLOCK                                     ║
-        LOAD_FAST                0 (f)                ║    LOAD_FAST                   f
-        LOAD_METHOD              1 (close)            ║    LOAD_METHOD                 write
-        CALL_METHOD              0                    ║    LOAD_CONST                  'Test'
-        POP_TOP                                       ║    CALL_METHOD
-        LOAD_CONST               0 (None)             ║    POP_TOP
-        RETURN_VALUE                                  ║    POP_BLOCK
-                                                      ║    LOAD_FAST                   f
->>   26 LOAD_FAST                0 (f)                ║    LOAD_METHOD                 close
-        LOAD_METHOD              1 (close)            ║    CALL_METHOD
-        CALL_METHOD              0                    ║    POP_TOP
-        POP_TOP                                       ║    LOAD_CONST                  None
-        RERAISE                  0                    ║    RETURN_VALUE
-                                                      ║
-                                                      ║    SETUP_FINALLY__JumpEpilogue
-                                                      ║        -> 4(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   f
-                                                      ║    LOAD_METHOD                 close
-                                                      ║    CALL_METHOD
-                                                      ║    POP_TOP
-                                                      ║    RERAISE
-""",
-    r"""
-2)  LOAD_METHOD:                    (f) -> f_write
-2)  CALL_METHOD:                    (f_write, f, Test) -> write_result
-2)  LOAD_METHOD:                    (f) -> f_close
-2)  CALL_METHOD:                    (f_close, f) -> close_result
-2)  RETURN_VALUE:                   (None) ->
-3)  SETUP_FINALLY__JumpEpilogue:    () -> __unused_0, __unused_1, __unused_2, __unused_3, __unused_4, __unused_5
-4)  LOAD_METHOD:                    (f) -> f_close_finally_branch
-4)  CALL_METHOD:                    (f_close_finally_branch, f) -> close_result_finally_branch
-""",
-)
+# @add_parse_test()
 def try_finally(f):
     try:
         f.write("Test")
@@ -631,84 +542,7 @@ def try_finally(f):
         f.close()
 
 
-@add_parse_test(
-    """
-        SETUP_FINALLY           35 (to 72)            ║    SETUP_FINALLY
-        SETUP_FINALLY            7 (to 18)            ║        -> 1(False)
-        LOAD_FAST                0 (f)                ║        -> 5(True)
-        LOAD_METHOD              0 (write)            ║
-        LOAD_CONST               1 ('Test')           ║    SETUP_FINALLY__NoJumpEpilogue
-        CALL_METHOD              1                    ║        -> 2(False)
-        POP_TOP                                       ║
-        POP_BLOCK                                     ║    SETUP_FINALLY
-        JUMP_FORWARD            13 (to 44)            ║        -> 3(False)
-                                                      ║        -> 6(True)
->>   18 DUP_TOP                                       ║
-        LOAD_GLOBAL              1 (OSError)          ║    SETUP_FINALLY__NoJumpEpilogue
-        JUMP_IF_NOT_EXC_MATCH    21 (to 42)           ║        -> 4(False)
-        POP_TOP                                       ║
-        POP_TOP                                       ║    LOAD_FAST                   f
-        POP_TOP                                       ║    LOAD_METHOD                 write
-        LOAD_FAST                1 (log)              ║    LOAD_CONST                  'Test'
-        LOAD_CONST               2 ('Fail')           ║    CALL_METHOD
-        CALL_FUNCTION            1                    ║    POP_TOP
-        POP_TOP                                       ║    POP_BLOCK
-        POP_EXCEPT                                    ║    JUMP_FORWARD                to 44
-        JUMP_FORWARD             8 (to 58)            ║        -> 12(True)
-                                                      ║
->>   42 RERAISE                  0                    ║    SETUP_FINALLY__JumpEpilogue
-                                                      ║        -> 11(True)
->>   44 POP_BLOCK                                     ║
-        LOAD_FAST                0 (f)                ║    SETUP_FINALLY__JumpEpilogue
-        LOAD_METHOD              2 (close)            ║        -> 7(True)
-        CALL_METHOD              0                    ║
-        POP_TOP                                       ║    DUP_TOP
-        LOAD_CONST               0 (None)             ║    LOAD_GLOBAL                 OSError
-        RETURN_VALUE                                  ║    JUMP_IF_NOT_EXC_MATCH
-                                                      ║        -> 8(False)
->>   58 POP_BLOCK                                     ║        -> 9(True)
-        LOAD_FAST                0 (f)                ║
-        LOAD_METHOD              2 (close)            ║    POP_TOP
-        CALL_METHOD              0                    ║    POP_TOP
-        POP_TOP                                       ║    POP_TOP
-        LOAD_CONST               0 (None)             ║    LOAD_FAST                   log
-        RETURN_VALUE                                  ║    LOAD_CONST                  'Fail'
-                                                      ║    CALL_FUNCTION
->>   72 LOAD_FAST                0 (f)                ║    POP_TOP
-        LOAD_METHOD              2 (close)            ║    POP_EXCEPT
-        CALL_METHOD              0                    ║    JUMP_FORWARD
-        POP_TOP                                       ║        -> 10(True)
-        RERAISE                  0                    ║
-                                                      ║    RERAISE
-                                                      ║
-                                                      ║    POP_BLOCK
-                                                      ║    LOAD_FAST                   f
-                                                      ║    LOAD_METHOD                 close
-                                                      ║    CALL_METHOD
-                                                      ║    POP_TOP
-                                                      ║    LOAD_CONST                  None
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 13(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   f
-                                                      ║    LOAD_METHOD                 close
-                                                      ║    CALL_METHOD
-                                                      ║    POP_TOP
-                                                      ║    RERAISE
-                                                      ║
-                                                      ║    POP_BLOCK
-                                                      ║    LOAD_FAST                   f
-                                                      ║    LOAD_METHOD                 close
-                                                      ║    CALL_METHOD
-                                                      ║    POP_TOP
-                                                      ║    LOAD_CONST                  None
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 13(True)
-                                                      ║
-                                                      ║    RETURN_VALUE
-""",
-    flow_spec=DONT_CHECK_FLOW,
-)
+# @add_parse_test()
 def try_except_finally(f, log):
     try:
         f.write("Test")
