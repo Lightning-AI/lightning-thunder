@@ -1524,6 +1524,7 @@ augmented_forward_impls = {
     prims.PrimIDs.ASINH: lambda x: (prims.asinh(x), (x,)),
     prims.PrimIDs.ATAN: lambda x: (prims.atan(x), (x,)),
     prims.PrimIDs.ATANH: lambda x: (prims.atanh(x), (x,)),
+    prims.PrimIDs.ATAN2: lambda x, y: (prims.atan2(x, y), (x, y)),
     prims.PrimIDs.COS: lambda x: (prims.cos(x), (x,)),
     prims.PrimIDs.COSH: lambda x: (prims.cosh(x), (x,)),
     prims.PrimIDs.DIV: lambda x, y: (prims.div(x, y), (x, y)),
@@ -1664,6 +1665,14 @@ def rsqrt_backward(result, g):
     # where rsqrt(x) and x are saved for the backwards pass.
     # This derivation was selected because it avoids saving the input tensor.
     return -0.5 * g * result**3.0
+
+
+@register_backward(prims.PrimIDs.ATAN2)
+def atan2_backward(x, y, g):
+    alpha = 1.0 / (x * x + y * y)
+    grad_x = g * y * alpha
+    grad_y = g * -x * alpha
+    return grad_x, grad_y
 
 
 @register_augmented_forward(prims.PrimIDs.SUM)

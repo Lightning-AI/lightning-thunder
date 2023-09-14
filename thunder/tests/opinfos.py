@@ -1620,6 +1620,28 @@ add_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(add_opinfo)
 
+atan2_opinfo = OpInfo(
+    clang.atan2,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    # NOTE If x == 0 and y == 0, then atan2(x, y) is undefined.
+    singularity_fn=lambda x: x,
+    torch_reference=torch.atan2,
+    test_directives=(
+        # RuntimeError: "atan2_cpu" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+            devicetypes=(devices.DeviceType.CPU,),
+            dtypes=(datatypes.float16,),
+        ),
+
+    ),
+)
+elementwise_binary_ops.append(atan2_opinfo)
+
+
 # NOTE: nvFuser does not currently support uint8, int8, or int16
 bitwise_and_opinfo = OpInfo(
     clang.bitwise_and,
