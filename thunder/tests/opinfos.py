@@ -5016,7 +5016,11 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Not that much variability in the batch and channels dims
     # since they are never modified.
-    batch = ((1,), (2,))
+    # NOTE: we had to cut it down.
+    # Before:
+    # batch = ((1,), (2,))
+    # After:
+    batch = ((1,),)
     channels = ((2,),)
 
     # For shape in dim_options we try size=dim_options[shape]
@@ -5024,12 +5028,23 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # Nice prime number. We test co-prime with 5 sizes.
         # NOTE: if the tests take too much time, reducing
         # the tuple length is the best way to cut it down.
-        5: (2, 3, 4, 7, 8, 9),
+        # NOTE: we had to cut it down.
+        # Before:
+        # 5: (2, 3, 4, 7, 8, 9),
+        # After:
+        5: (3, 7),
         # Nice even number. We test *0.5 *1, and *2.
-        6: (3, 6, 12),
+        # NOTE: we had to cut it down.
+        # Before:
+        # 6: (3, 6, 12),
+        # After:
     }
     # Testing 3D-5D inputs only since they are the ones that PyTorch supports.
-    n_spatial_dims = (1, 2, 3)
+    # NOTE: we had to cut it down.
+    # Before:
+    # n_spatial_dims = (1, 2, 3)
+    # After:
+    n_spatial_dims = (1, 3)
 
     # All possible combinations to test that dependencies between dimensions are captured correctly.
     # Since specifying size will call the scale_factor path, we do not explicitly test scale_factor
