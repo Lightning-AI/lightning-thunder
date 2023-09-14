@@ -1294,3 +1294,22 @@ def test_functionalization_callmethod_nonmethod():
     x = torch.tensor([3.0])
     with pytest.raises(RuntimeError, match="could not eliminate self"):
         tom = thunder.compile(model)
+
+
+def test_nn_modules():
+    modules_to_test = [
+        (torch.nn.Conv1d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4),)),
+        (torch.nn.Conv2d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4, 4),)),
+        (torch.nn.Conv3d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4, 4, 4),)),
+    ]
+    for cls, clsargs, clskwargs, posinpgen in modules_to_test:
+        m = cls(*clsargs, **clskwargs)
+        m.requires_grad_(False)
+        tom = thunder.compile(m)
+        torch.manual_seed(1234)
+        inps = posinpgen()
+        torch.manual_seed(1234)
+        expected = m(*inps)
+        torch.manual_seed(1234)
+        result = tom(*inps)
+        assert_close(expected, result)

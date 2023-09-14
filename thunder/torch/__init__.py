@@ -101,6 +101,13 @@ _torch_to_thunder_dtype_map = {
     if not utils.is_weak_dtype(k) and not (type(k) is type and issubclass(k, Number))
 }
 
+_torch_noinline_functions = {
+    torch.nn.modules.utils._single,
+    torch.nn.modules.utils._pair,
+    torch.nn.modules.utils._triple,
+    torch.nn.modules.utils._quadruple,
+}
+
 # NOTE This is defined here and populated as functions are defined below
 # It maps torch functions, like torch.foo, to their corresponding functions here
 _torch_to_thunder_function_map = {}
@@ -2461,6 +2468,7 @@ else:
 _torch_to_thunder_complete_map = {
     **_torch_to_thunder_dtype_map,
     **_torch_to_thunder_function_map,
+    **{fn: fn for fn in _torch_noinline_functions},
 }
 
 #
