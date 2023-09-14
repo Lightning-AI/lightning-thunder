@@ -1404,6 +1404,11 @@ elementwise_unary_ops.append(neg_opinfo)
 
 ndtri_opinfo = OpInfo(
     clang.ndtri,
+    # ndtri is well-define in (0, 1), and returns nan outside.
+    # Currently, the vjp tests never fail when nan's are encountered,
+    # so we force the (0, 1) domain to prioritize the grad corretness now.
+    # TODO: change that once vjp can handle nan's.
+    domain=(0, 1),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
     torch_reference=_elementwise_unary_torch(torch.special.ndtri),
     test_directives=(
