@@ -245,7 +245,15 @@ def test_inline_submodule():
 
 @skipif_not_pytorch_2_1
 @skipif_not_python_3_10
-@pytest.mark.parametrize("name", [config["name"] for config in configs])
+@pytest.mark.parametrize("name", (
+    "gpt-neox-like",
+    "llama1-like",
+    "long-context-like",
+    "llama2-like",
+    "falcon-7b-like",
+    "falcon-40b-like",
+    "codellama2-like",
+))
 @torch.no_grad()
 def test_litgpt_variants(name):
     model = lit_gpt_model.GPT.from_name(name)

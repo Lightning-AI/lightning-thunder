@@ -1,11 +1,10 @@
 """Taken from https://github.com/Lightning-AI/lit-gpt/blob/main/lit_gpt/model.py"""
-from dataclasses import dataclass
 import math
-from typing import Any, List, Optional, Tuple, Literal, Type
+from dataclasses import dataclass
+from typing import Any, Optional, Tuple, Literal, Type
 
 import torch
 import torch.nn as nn
-from lightning_utilities.core.imports import RequirementCache
 from typing_extensions import Self
 
 
@@ -108,8 +107,8 @@ class RMSNorm(torch.nn.Module):
         torch.nn.init.ones_(self.weight)
 
 
-# a diverse sample of configs that cover all major checkpoints variants
 configs = [
+    # diverse sample of configs that cover all major checkpoints variants
     dict(name="gpt-neox-like", block_size=128, n_layer=2, n_embd=64, n_head=4, padding_multiple=8),
     dict(
         name="llama1-like",
@@ -197,11 +196,38 @@ configs = [
         intermediate_size=1376,
         rope_base=1000000,
     ),
+    # real configs
+    dict(
+        org="openlm-research",
+        name="open_llama_7b",
+        block_size=2048,
+        vocab_size=32000,
+        padding_multiple=64,
+        n_layer=32,
+        rotary_percentage=1.0,
+        parallel_residual=False,
+        bias=False,
+        _norm_class="RMSNorm",
+        norm_eps=1e-6,
+        _mlp_class="LLaMAMLP",
+        intermediate_size=11008,
+    ),
+    dict(
+        org="meta-llama",
+        name="Llama-2-7b-hf",
+        vocab_size=32000,
+        padding_multiple=64,
+        n_layer=32,
+        rotary_percentage=1.0,
+        parallel_residual=False,
+        bias=False,
+        _norm_class="RMSNorm",
+        _mlp_class="LLaMAMLP",
+        intermediate_size=11008,
+    ),
 ]
 
 name_to_config = {config["name"]: config for config in configs}
-
-FlashAttention2Available = bool(RequirementCache("flash-attn>=2.0.0.post1"))
 
 
 class GPT(nn.Module):
@@ -419,19 +445,6 @@ class CausalSelfAttention(nn.Module):
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: Optional[torch.Tensor] = None
     ):
         scale = 1.0 / math.sqrt(self.config.head_size)
-        if (
-            FlashAttention2Available
-            and mask is None
-            and q.device.type == "cuda"
-            and q.dtype in (torch.float16, torch.bfloat16)
-        ):
-            from flash_attn import flash_attn_func
-
-            # flash-attn requires (B, T, nh, hs)
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
-            return flash_attn_func(q, k, v, dropout_p=0.0, softmax_scale=scale, causal=True)
         y = torch.nn.functional.scaled_dot_product_attention(
             q, k, v, attn_mask=mask, dropout_p=0.0, scale=scale, is_causal=mask is None
         )

@@ -18,9 +18,9 @@ from thunder.benchmarks import (
 
 
 if __name__ == "__main__":
-    # nanoGPT fwd->bwd benchmark
     # gpt2-xl config
     config = NanoGPTConfig(n_layer=48, n_head=25, n_embd=1600)
+    # fwd->bwd benchmark
     b = NanoGPTBenchmark(config, dtype=torch.bfloat16)
 
     print("torch")
@@ -45,7 +45,7 @@ if __name__ == "__main__":
         print("thunder - ddp")
         run_multiprocess_benchmark(b, default_thunder_ddp_static_caching_executor, world_size=2)
 
-    # nanoGPT fwd-only benchmark
+    # fwd-only benchmark
     b = NanoGPTBenchmark(config, dtype=torch.bfloat16, requires_grad=False)
 
     print("torch")
