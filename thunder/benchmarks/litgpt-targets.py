@@ -9,7 +9,10 @@ from thunder.benchmarks import (
     run_benchmark,
     default_torch_executor,
     default_torch_compile_executor,
-    default_thunder_static_caching_executor_no_grad, Benchmark, UserFacingBenchmarkMeta, BenchmarkArg,
+    default_thunder_static_caching_executor_no_grad,
+    Benchmark,
+    UserFacingBenchmarkMeta,
+    BenchmarkArg,
 )
 from thunder.core import dtypes
 from thunder.tests.lit_gpt_model import Config, name_to_config
@@ -89,11 +92,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x,), {}
 
     def fn(self) -> Callable:
-        gpt = (
-            GPT(self.config)
-            .to(device=self.device, dtype=self.model_tdtype)
-            .requires_grad_(self.requires_grad)
-        )
+        gpt = GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(self.requires_grad)
         return gpt
 
     def postprocess_for_backward(self, output: torch.Tensor) -> torch.Tensor:

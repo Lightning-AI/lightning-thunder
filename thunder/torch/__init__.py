@@ -1165,7 +1165,7 @@ def stack(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.stack(tensors, dim)
 
 
-@torchsymbol(torch.index_select)
+@torchsymbol(torch.index_select, is_method=True)
 def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
