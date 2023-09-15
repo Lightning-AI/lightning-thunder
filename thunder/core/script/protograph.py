@@ -236,8 +236,15 @@ class IntraBlockFlow:
         def make_unsupported(msg: str, instruction: ThunderInstruction):
             source_lines, _ = inspect.getsourcelines(code)
             msg = f"""{msg}{instruction} found
-            {code.co_name} defined in {code.co_filename}:{code.co_firstlineno}
+            {code.co_name}() defined in {code.co_filename}:{code.co_firstlineno}
             line {instruction.line_no + code.co_firstlineno}: {source_lines[instruction.line_no].rstrip()}"""
+            return RuntimeError(msg)
+
+        def make_unsupported_cellvar(msg: str):
+            single = len(code.co_cellvars) == 1
+            msg = f"""{msg}
+            {code.co_name}() defined in {code.co_filename}:{code.co_firstlineno}
+            defines nonlocal variable{"" if single else "s"}: {",".join(code.co_cellvars)}"""
             return RuntimeError(msg)
 
         def to_key(instr: ThunderInstruction, scope: VariableScope) -> VariableKey:
@@ -324,6 +331,9 @@ class IntraBlockFlow:
 
         for idx, v_ref in enumerate(stack, start=-len(block_inputs)):
             end_variables[VariableKey(idx, VariableScope.STACK)] = v_ref
+
+        if code.co_cellvars:
+            raise make_unsupported_cellvar("Nonlocal variables are not supported but ")
 
         return cls(flow, begin_variables, {k: v for k, v in end_variables.items() if k.scope != VariableScope.CONST})
 

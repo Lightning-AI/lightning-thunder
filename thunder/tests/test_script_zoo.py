@@ -227,6 +227,16 @@ def test_simple_comprehension():
         thunder.compile(simple_comprehension)
 
 
+def nonlocal_no_instructions(a):
+    def bar():
+        a + a
+
+
+def test_nonlocal_no_instructions():
+    with pytest.raises(RuntimeError):
+        thunder.compile(nonlocal_no_instructions)
+
+
 def exotic_jumps(x, y, f):
     # Distilled from https://github.com/Lightning-AI/lightning-thunder/issues/1064
     if x:
