@@ -3,7 +3,10 @@
 # i.e. without branches
 import collections
 import copy
+import enum
 import inspect
+import linecache
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type, TYPE_CHECKING, Set, Union
 from collections.abc import Iterable, Iterator, Sequence
 
@@ -45,6 +48,21 @@ class NULL:
     """marker for non-existant object."""
 
     pass
+
+
+@dataclass
+class SourceInformation:
+    orig_line_no: int
+    orig_end_line_no: int
+
+    gen_line_no: int
+    gen_end_line_no: int
+    # gen_file_name? --> could be interesting when passing SourceInfo to traces
+
+    col_offset: int
+    end_col_offset: int
+    orig_file_name: str = ""
+    source: Optional[Any] = None
 
 
 class MROAwareObjectRef:  # or as they call it super
@@ -272,13 +290,13 @@ class Node(InstrumentingBase):
         i: ThunderInstruction,
         inputs: Optional[list[Value]] = None,
         outputs: Optional[list[Value]] = None,
-        line_no: Optional[int] = None,
+        source_infos: Optional[list[SourceInformation]] = None,
     ):
         self.i = i
         self.inputs: list[Value] = inputs if inputs is not None else []
         self.outputs: list[Value] = outputs if outputs is not None else []
         self.jump_targets: list[Block] = []
-        self.line_no = line_no
+        self.source_infos: list[SourceInformation] = source_infos if source_infos is not None else []
         self.block: Optional[Block] = None
 
     def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "Node":
@@ -290,7 +308,8 @@ class Node(InstrumentingBase):
         inputs = [i.clone(translation_dict=translation_dict) for i in self.inputs]
         outputs = [o.clone(translation_dict=translation_dict) for o in self.outputs]
         i = copy.copy(self.i)
-        n2 = Node(i=i, inputs=inputs, outputs=outputs, line_no=self.line_no)
+        n2 = Node(i=i, inputs=inputs, outputs=outputs)
+        n2.source_infos = copy.deepcopy(self.source_infos)
         n2.jump_targets = [assert_block(translation_dict.get(bl, bl)) for bl in self.jump_targets]
         if self.block is None:
             n2.block = None
@@ -465,8 +484,16 @@ class Graph(InstrumentingBase):
                 )
             )
             for i, node in enumerate(block.nodes):
-                if (i == 0 or node.line_no != block.nodes[i - 1].line_no) and node.line_no is not None:
-                    line = f"# l{node.line_no + self.source_start_line:3d} {self.source_lines[node.line_no].rstrip()}"
+                if (
+                    i == 0
+                    or node.source_infos
+                    and (
+                        (not block.nodes[i - 1].source_infos)
+                        or node.source_infos[-1] != block.nodes[i - 1].source_infos[-1]
+                    )
+                ):
+                    line_no = node.source_infos[-1].gen_line_no
+                    line = f"# l{line_no + self.source_start_line:3d} {self.source_lines[line_no].rstrip()}"
                 else:
                     line = ""
                 lines_before, lines_after = callback.node(node)
@@ -674,7 +701,7 @@ def _check_graph(gr: Graph) -> None:
             for v in i.phi_values:
                 phi_value_refs[v].append(i)
         for n in bl.nodes:
-            assert n.line_no is not None, f"{n}({n.inputs}) does not have a line number"
+            assert n.source_infos, f"{n}({n.inputs}) does not have source infos"
             n.block = bl
             for i in n.inputs:
                 i_or_p = i
@@ -741,6 +768,15 @@ def _check_graph(gr: Graph) -> None:
 
     assert not any(jump_targets.values()), f"{jump_targets} should be all empty"
     assert tuple(gr.blocks[0].jump_sources) == (None,), gr.blocks[0].jump_sources
+
+
+def repr_source_location(gr: Graph, source_infos: list[SourceInformation]):
+    l = []
+    for si in source_infos:
+        l.append(f"file: {si.orig_file_name}, line {si.orig_line_no}:")
+        ls = linecache.getlines(si.orig_file_name)
+        l.append(ls[max(si.orig_line_no - 1, 0)].rstrip())
+    return "\n".join(l)
 
 
 def check_graph(gr: Graph) -> None:

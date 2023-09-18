@@ -1,4 +1,5 @@
 import dis
+import copy
 import inspect
 import opcode
 import sys
@@ -23,8 +24,10 @@ from thunder.core.script.graph import (
     Node,
     PhiValue,
     replace_values,
+    SourceInformation,
     _Undefined,
     Value,
+    repr_source_location,
 )
 from thunder.core.script.instrumentation import verbose_error, record
 from thunder.core.script.python_ir_data import get_instruction, ThunderInstruction, JUMP_ABSOLUTE, X_THUNDER_STORE_ATTR
@@ -66,9 +69,9 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     bl_jump_node = Node(i=ThunderInstruction.make_jump_absolute(arg=None), inputs=[], outputs=[])
     bl_jump_node.jump_targets = [nbl]
     if bl.nodes:
-        bl_jump_node.line_no = bl.nodes[-1].line_no
+        bl_jump_node.source_infos = copy.deepcopy(bl.nodes[-1].source_infos)
     else:
-        bl_jump_node.line_no = nbl.nodes[0].line_no
+        bl_jump_node.source_infos = copy.deepcopy(nbl.nodes[0].source_infos)
     bl.nodes.append(bl_jump_node)
     nbl.jump_sources.append(bl_jump_node)
     gr.blocks.insert(i + 1, nbl)
@@ -218,7 +221,8 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
                 mod1 = fn_value.__self__
                 value_for_self1 = n.inputs[1]
             else:
-                raise NotImplementedError(f"inlining {n}, found {fn_value}")
+                source_str = repr_source_location(gr, n.source_infos)
+                raise NotImplementedError(f"inlining {fn_value} in instruction {n} at\n{source_str}")
     else:
         raise NotImplementedError(f"inlining {n}")
 
@@ -227,8 +231,13 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
 
     gr1 = acquire_method(fn_value, module=mod1, mro_klass=gr.mro_klass if mod1 == gr.module else None)
     for gr1_n in gr1.nodes():
-        assert isinstance(gr1_n.line_no, int)
-        gr1_n.line_no = gr1_n.line_no + len(gr.source_lines) + 1
+        assert gr1_n.source_infos
+        have_generated = False
+        for si in gr1_n.source_infos:
+            si.gen_line_no = si.gen_line_no + len(gr.source_lines) + 1
+            si.gen_end_line_no = si.gen_end_line_no + len(gr.source_lines) + 1
+        # prepend
+        gr1_n.source_infos[:0] = copy.deepcopy(n.source_infos)
     gr.source_lines.append("\n")
     gr.source_lines += gr1.source_lines
 
@@ -364,6 +373,12 @@ def strongly_inline_functions(gr: "Graph") -> None:
                             loop = True
                         except SkipInlineError:
                             pass
+                        except RuntimeError as e:
+                            (msg,) = e.args
+                            source_str = repr_source_location(gr, n.source_infos)
+                            msg = f"{msg}\nwhile inlining:\n{source_str}"
+                            e.args = (msg,)
+                            raise e
         if not loop:
             return
 
@@ -572,7 +587,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     for_iter_node.outputs = [for_iter_node.outputs[1]]
 
     for_iter_block_jmp = Node(i=get_instruction(opname="JUMP_ABSOLUTE", arg=None))
-    for_iter_block_jmp.line_no = for_iter_node.line_no
+    for_iter_block_jmp.source_infos = copy.deepcopy(for_iter_node.source_infos)
     for_iter_block.nodes.append(for_iter_block_jmp)
     for_iter_block_jmp.jump_targets = [for_iter_node.jump_targets[0]]
     for_iter_node_exit_jump_target = for_iter_node.jump_targets[1]
@@ -585,7 +600,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     exit_block = Block()
     gr.blocks.append(exit_block)
     exit_node = Node(i=get_instruction(opname="JUMP_ABSOLUTE", arg=None))
-    exit_node.line_no = for_iter_node.line_no
+    exit_node.source_infos = copy.deepcopy(for_iter_node.source_infos)
     exit_node.jump_targets = [for_iter_node_exit_jump_target]
     target_after_iter = exit_node.jump_targets[0]
     exit_node.jump_targets[0].jump_sources = [
@@ -823,7 +838,8 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
 
     if return_values:
         bt_extra = Node(
-            i=get_instruction(opname="BUILD_TUPLE", arg=1 + len(return_values)), line_no=return_block.nodes[-1].line_no
+            i=get_instruction(opname="BUILD_TUPLE", arg=1 + len(return_values)),
+            source_infos=copy.deepcopy(return_block.nodes[-1].source_infos),
         )
         bt_extra.inputs = return_block.nodes[-1].inputs + list(return_values.values())
         v_tuple_extra = Value(node=bt_extra)

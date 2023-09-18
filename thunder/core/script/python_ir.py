@@ -11,6 +11,7 @@ from thunder.core.script.graph import (
     GraphSummaryCallback,
     MROAwareObjectRef,
     Node,
+    SourceInformation,
     Value,
     insert_before,
     insert_after,
@@ -350,11 +351,12 @@ def generate_function(gr: "Graph") -> Callable:
                     opcode = dis.opmap[n.i.opname]
                 assert opcode is not None, f"{n} has invalid opcode"
                 # source range instead for 3.11?
-                if n.line_no is not None and n.line_no != line_no:
+                n_line_no = n.source_infos[-1].gen_line_no if n.source_infos else None
+                if n_line_no is not None and n_line_no != line_no:  # really, the last generated one...
                     linetable_update(
-                        n.line_no + gr.source_start_line, address_map[n] * 2
+                        n_line_no + gr.source_start_line, address_map[n] * 2
                     )  # byte offset for Python 3.10, too...
-                    line_no = n.line_no
+                    line_no = n_line_no
                 if opcode in dis.hasjabs:
                     arg = address_map[n.jump_targets[-1].nodes[0]]
                 elif opcode in dis.hasjrel:

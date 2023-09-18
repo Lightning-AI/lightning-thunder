@@ -1,3 +1,4 @@
+import collections
 import functools
 import dis
 import inspect
@@ -17,6 +18,7 @@ from thunder.core.script.graph import (
     Node,
     NULL,
     PhiValue,
+    SourceInformation,
     Value,
 )
 from thunder.core.script.instrumentation import record
@@ -222,6 +224,8 @@ def _bind_to_graph(
     #   allows the interpreter index into a flat args array) so we must respect it
     #   here. (`func.__code__.co_varnames` is the canonical ordering.)
     arg_ordered_parameters = func.__code__.co_varnames[: len(signature.parameters)]
+    source_file_name = inspect.getsourcefile(func)
+    source_start_line = func.__code__.co_firstlineno
     if set(arg_ordered_parameters) != set(signature.parameters):
         assert hasattr(func, "__wrapped__")
         msg = f"({', '.join(arg_ordered_parameters)}) != ({', '.join(signature.parameters.keys())})"
@@ -348,8 +352,18 @@ def _bind_to_graph(
                 i=instruction,
                 inputs=[convert(v, protoblock) for v in node_flow.inputs],
                 outputs=[convert(v, protoblock) for v in node_flow.outputs],
-                line_no=instruction.line_no,
             )
+            node.source_infos = [
+                SourceInformation(
+                    orig_file_name=source_file_name,
+                    orig_line_no=instruction.line_no + source_start_line,
+                    orig_end_line_no=instruction.line_no + source_start_line,
+                    gen_line_no=instruction.line_no,
+                    gen_end_line_no=instruction.line_no,
+                    col_offset=0,
+                    end_col_offset=999,
+                ),
+            ]
 
             for output in OrderedSet(node.outputs).difference(node.inputs):
                 if not (output.is_const or output.is_global):
@@ -565,7 +579,19 @@ def acquire_partial(
 
     if args_for_varargs or kwargs:
         prelude = Block()
-        jump_node = Node(i=ThunderInstruction.make_jump_absolute(None), inputs=[], outputs=[], line_no=0)
+        jump_node = Node(i=ThunderInstruction.make_jump_absolute(None), inputs=[], outputs=[])
+        jump_node.source_infos = [
+            SourceInformation(
+                orig_file_name="",  # filename?
+                orig_line_no=0,
+                orig_end_line_no=0,
+                gen_line_no=0,
+                gen_end_line_no=0,
+                col_offset=0,
+                end_col_offset=999,
+            ),
+        ]
+
         prelude.nodes.append(jump_node)
         jump_target = gr.blocks[0]
         assert jump_target.jump_sources[0] is None
@@ -597,8 +623,19 @@ def acquire_partial(
             i=get_instruction(opname="BINARY_ADD", arg=None),
             inputs=[v_partial_varargs, pv],
             outputs=[v_varargs_new],
-            line_no=0,
-        )  # line number?
+        )
+        # line number?
+        new_n.source_infos = [
+            SourceInformation(
+                orig_file_name="",  # filename?
+                orig_line_no=0,
+                orig_end_line_no=0,
+                gen_line_no=0,
+                gen_end_line_no=0,
+                col_offset=0,
+                end_col_offset=999,
+            ),
+        ]
         prelude.nodes.insert(0, new_n)
         prelude.block_outputs.add(v_varargs_new)
         # replace v_vararg_param with v_varargs_new in remainder
@@ -623,8 +660,19 @@ def acquire_partial(
             i=get_instruction(opname="BINARY_OR", arg=None),
             inputs=[v_partial_kwvarargs, pv],
             outputs=[v_kwvarargs_new],
-            line_no=0,
-        )  # line number?
+        )
+        # line number?
+        new_n.source_infos = [
+            SourceInformation(
+                orig_file_name="",  # filename?
+                orig_line_no=0,
+                orig_end_line_no=0,
+                gen_line_no=0,
+                gen_end_line_no=0,
+                col_offset=0,
+                end_col_offset=999,
+            ),
+        ]
         prelude.nodes.insert(-1, new_n)
         prelude.block_outputs.add(v_kwvarargs_new)
         # replace v_vararg_param with v_varargs_new in remainder
