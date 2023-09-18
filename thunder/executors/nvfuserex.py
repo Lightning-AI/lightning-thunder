@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import partial, lru_cache
 from numbers import Number
 from typing import Union, List, Any, Optional, Dict, Callable, Set, Tuple, Type
@@ -1414,6 +1415,26 @@ def to_descriptors(args):
     )
 
 
+@dataclass
+class FusionDefinitionWrapper:
+    """
+    A callable object wrapping a nvFuser fusion definition.
+    """
+    counter: int
+    get_fd: Callable[[tuple[Union[type, tuple[tuple[int, ...], tuple[bool, ...]]], ...]], FusionDefinition]
+    cache_info: Optional[Callable] = None
+    cache_clear: Optional[Callable] = None
+    last_used: Optional[FusionDefinition] = None
+
+    def __call__(self, *args):
+        fd = self.get_fd(to_descriptors(args))
+        self.last_used = fd
+        return fd.execute(args)
+
+    def __repr__(self):
+        return f"FusionDefinitionWrapper{self.counter}"
+
+
 # NOTE This is part of the executor interface
 # Translates a region to nvFuser, then creates a Python string invoking the call
 def fuse(region: Region) -> List[BoundSymbol]:
@@ -1489,32 +1510,9 @@ def fuse(region: Region) -> List[BoundSymbol]:
     # TODO We should think how to express "static fusion" mode and if we want to
     # throw an error if the static constraint is violated or just require users
     # promise the input is unchanging
-    def fn_(*args, use_static_fusion=False):
-        """Wrapper for nvFuser fusion.
-
-        Args:
-            use_static_fusion (bool, optional):
-                Whether to consider input's metadata consistency with the fusion. Defaults to False.
-
-        Returns:
-            List[Tensor, ...]: Result of a fusion execution.
-        """
-
-        if use_static_fusion:
-            return static_fd.execute(args)
-
-        # Constructs key
-        input_descriptors = to_descriptors(args)
-        fd = get_fd(input_descriptors)
-
-        fn_.last_used = fd
-
-        return fd.execute(args)
+    fn_ = FusionDefinitionWrapper(region.counter, get_fd, get_fd.cache_info, get_fd.cache_clear)
 
     # 4) Creates a BoundSymbol invoking the fusion
-
-    # Initializes last_used
-    fn_.last_used = None
 
     fn_name = f"nvFusion{region.counter}"
     ctx: Dict[str, Any] = {fn_name: fn_}
