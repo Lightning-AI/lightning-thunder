@@ -175,7 +175,7 @@ Calling a Python builtin, standard library operation, or a function that calls i
 
 1. The function must not have side effects. For example, calling print() will execute the print() function while tracing, but since it’s not a thunder operation it will not appear in a trace, and so future cached executions will not execute the print() statement.
 2. The function must not manipulate tensor metadata or data. Since the operation won’t appear in a trace, these manipulations won’t be repeated by thunder, and may even cause a crash while tracing.
-3. The function must not produce different results across invocations. Again, since the operation won’t appear in traces, thunder cannot replicate an operation that produces different results when it’s invoked, like random.random() will. 
+3. The function must not produce different results across invocations. Again, since the operation won’t appear in traces, thunder cannot replicate an operation that produces different results when it’s invoked, like random.random() will.
 
 ..
   Certain op-level behavior

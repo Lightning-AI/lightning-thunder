@@ -6,7 +6,7 @@ This section elaborates on the design of some of *thunder*'s internals.
 Preprocessing
 =============
 
-Preprocessing converts a PyTorch module or function into a traceable module or function, making it easy for practitioners to write natural Python and convert existing PyTorch programs to thunder. 
+Preprocessing converts a PyTorch module or function into a traceable module or function, making it easy for practitioners to write natural Python and convert existing PyTorch programs to thunder.
 
 Preprocessing works by…
 
@@ -15,7 +15,7 @@ Preprocessing works by…
 3. verifying that the original PyTorch module or function can be made traceable
 4. assembling the transformed bytecode into a traceable module or function.
 
-Preprocessing, like the rest of thunder, is being actively developed, and many Python constructs are not yet supported. See the Sharp Edges section for some examples. 
+Preprocessing, like the rest of thunder, is being actively developed, and many Python constructs are not yet supported. See the Sharp Edges section for some examples.
 
 Representing Operations
 =======================

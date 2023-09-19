@@ -27,6 +27,8 @@ jobs:
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
+    env:
+      TORCH_URL: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
 
     steps:
     - uses: actions/checkout@v3
@@ -61,8 +63,6 @@ jobs:
           ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
 
     - name: Install package & dependencies
-      env:
-        TORCH_URL: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
       run: |
         pip --version
         pip install -e '.[test]' -U --find-links ${TORCH_URL}

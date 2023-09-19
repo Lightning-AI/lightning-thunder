@@ -67,27 +67,11 @@ def _transform_changelog(path_in: str, path_out: str) -> None:
         fp.writelines(chlog_lines)
 
 
-def _convert_markdown(path_in: str, path_out: str) -> None:
-    with open(path_in) as fp:
-        readme = fp.read()
-    # TODO: temp fix removing SVG badges and GIF, because PDF cannot show them
-    readme = re.sub(r"(\[!\[.*\))", "", readme)
-    readme = re.sub(r"(!\[.*.gif\))", "", readme)
-    folder_names = (os.path.basename(p) for p in glob.glob(os.path.join(_PATH_ROOT, "*")) if os.path.isdir(p))
-    for dir_name in folder_names:
-        readme = readme.replace("](%s/" % dir_name, "](%s/" % os.path.join(_PATH_ROOT, dir_name))
-    with open(path_out, "w") as fp:
-        fp.write(readme)
-
-
-# export the READme
-_convert_markdown(os.path.join(_PATH_ROOT, "README.md"), "readme.md")
-
 # -- General configuration ---------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
 
-needs_sphinx = "4.0"
+needs_sphinx = "5.3"
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -393,9 +377,6 @@ doctest_global_setup = """
 import importlib
 import os
 import torch
-
-import pytorch_lightning as pl
-from pytorch_lightning import Trainer, LightningModule
 
 """
 coverage_skip_undoc_in_source = True

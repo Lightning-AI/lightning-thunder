@@ -1,4 +1,4 @@
-sphinx >=4.0,<7.0
+sphinx >=5.0,<6.0
 myst-parser >=0.15
 nbsphinx >=0.8.5
 ipython[notebook]
