@@ -1,8 +1,8 @@
 __version__ = "0.0.0dev"
-__author__ = "Lightning-AI et al."
+__author__ = "Lightning-AI et al"
 __author_email__ = "mruberry@lightning.ai"
 __license__ = "Apache 2.0"
-__copyright__ = f"Copyright (c) 2022-2023, {__author__}."
+__copyright__ = f"2023 {__author__}"
 __homepage__ = "https://github.com/Lightning-AI/lightning-thunder"
 __docs__ = "Lightning Thunder project."
 # todo: consider loading Readme here...
