@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, Sequence
+from typing import Callable, Sequence, Optional
 
 import torch
 
@@ -52,7 +52,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     @classmethod
     @property
     def description(cls) -> str:
-        return "LitGPT with targets."
+        return "LitGPT."
 
     @classmethod
     @property
@@ -95,7 +95,9 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         gpt = GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(self.requires_grad)
         return gpt
 
-    def postprocess_for_backward(self, output: torch.Tensor) -> torch.Tensor:
+    def postprocess_for_backward(self, output: torch.Tensor) -> Optional[torch.Tensor]:
+        if not self.requires_grad:
+            return
         logits = output
         targets = make_tensor_like(logits)  # fake targets
         loss = torch.nn.functional.cross_entropy(logits, targets)

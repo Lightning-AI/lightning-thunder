@@ -1,6 +1,6 @@
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, List, Tuple, Sequence
+from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional
 from enum import auto, Enum
 import time
 from functools import partial
@@ -1071,7 +1071,9 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         )
         return gpt
 
-    def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> Any:
+    def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> Optional[torch.Tensor]:
+        if not self.requires_grad:
+            return None
         logits, loss = output
         return loss
 
