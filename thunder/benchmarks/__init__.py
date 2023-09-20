@@ -307,18 +307,15 @@ def _prettyprint_stats(
     callable_construction_time_us: str = ns_to_us(callable_construction_time)
 
     # Computes total warmup time, in nanoseconds, and converts it to a string (in rounded microsecnods)
-    total_warmup_time_ns: int = 0
-    for stat in warmup_stats:
-        total_warmup_time_ns += stat.total_time
+    total_warmup_time_ns: int = sum(stat.total_time for stat in warmup_stats)
     total_warmup_time_us: str = ns_to_us(total_warmup_time_ns)
 
     # Computes average warmup time
-    avg_warmup_time_ns: int = total_warmup_time_ns / len(warmup_stats)
+    avg_warmup_time_ns: float = total_warmup_time_ns / len(warmup_stats)
     avg_warmup_time_us: str = ns_to_us(avg_warmup_time_ns)
 
     # Identifies the median benchmark run
     sorted_benchmark_stats = sorted(benchmark_stats, key=lambda x: x.total_time)
-    median_benchmark_time_ns: int = -1
     median_benchmark_stat: BenchmarkRunStatistics
 
     # Handles the case where there are an odd number of benchmark stats (median is the "middle" run)
@@ -339,99 +336,78 @@ def _prettyprint_stats(
     median_benchmark_time_us: str = ns_to_us(median_benchmark_time_ns)
 
     # Computes the average benchmark run time and estimates initialization time
-    total_backward_calls: int = 0
-    total_benchmark_time_ns: int = 0
-    for stat in benchmark_stats:
-        total_benchmark_time_ns += stat.total_time
-        if stat.called_backward:
-            total_backward_calls += 1
+    total_backward_calls: int = sum(stat.called_backward for stat in benchmark_stats)
+    total_benchmark_time_ns: int = sum(stat.total_time for stat in benchmark_stats)
 
     avg_benchmark_time_ns = total_benchmark_time_ns / len(benchmark_stats)
 
-    initialization_estimate_ns: int = (avg_warmup_time_ns - avg_benchmark_time_ns) * len(warmup_stats)
+    initialization_estimate_ns: float = (avg_warmup_time_ns - avg_benchmark_time_ns) * len(warmup_stats)
     initialization_estimate_us: str = ns_to_us(initialization_estimate_ns)
 
-    total_initialization_time_ns: int = callable_construction_time + initialization_estimate_ns
+    total_initialization_time_ns: float = callable_construction_time + initialization_estimate_ns
     total_initialization_time_us: str = ns_to_us(total_initialization_time_ns)
     callable_construction_percentage: str = f"{round(callable_construction_time / total_initialization_time_ns * 100)}%"
     initialization_percentage: str = f"{round(initialization_estimate_ns / total_initialization_time_ns * 100)}%"
 
-    total_benchmark_time_ns: int = total_warmup_time_ns + total_benchmark_time_ns
-    total_benchmark_time_us: str = ns_to_us(total_benchmark_time_ns)
+    total_time_ns: int = total_warmup_time_ns + total_benchmark_time_ns
+    total_time_us: str = ns_to_us(total_time_ns)
 
     total_host_time_ns: int = median_benchmark_stat.host_stop_time - median_benchmark_stat.start_time
     total_host_time_us: str = ns_to_us(total_host_time_ns)
     host_time_percentage: str = f"{round(total_host_time_ns / median_benchmark_stat.total_time * 100)}%"
 
-    us = "\u03BCs"
-
-    # TODO Refactor the common preamble and then extend with extended statistics when available
-    if not median_benchmark_stat.has_extended_stats:
-        print(
-            textwrap.dedent(
-                f"""\
-            {benchmark_name} benchmark results:
-                The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
-                The estimated callable construction and initialization time is {total_initialization_time_us}.
-                The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
-                Constructing the callable took {callable_construction_time_us}, {callable_construction_percentage} of the total construction and initialization time.
-                The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
-                The total time taken by {len(warmup_stats)} warmup iterations was {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
-                The total time to run all the iterations (warmup and benchmark) was {total_benchmark_time_us}.
-                The benchmark called backward() {total_backward_calls} times.
-        """
-            )
+    preamble = f"""\
+    {benchmark_name} benchmark results:
+        The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
+        The estimated callable construction and initialization time is {total_initialization_time_us}.
+        The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
+        Constructing the callable took {callable_construction_time_us}, {callable_construction_percentage} of the total construction and initialization time.
+        The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
+        The total time taken by {len(warmup_stats)} warmup iterations is {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
+        The total time to run all the iterations (warmup and benchmark) was is {total_time_us}.
+        The benchmark called backward() {total_backward_calls} times.
+    """
+    if median_benchmark_stat.has_extended_stats:
+        # NOTE At this point in the program extended statistics are available
+        trace_time_ns = median_benchmark_stat.last_trace_host_stop - median_benchmark_stat.last_trace_host_start
+        cache_time_ns = median_benchmark_stat.last_trace_cache_stop - median_benchmark_stat.last_trace_cache_start
+        tracing_time_ns = median_benchmark_stat.last_trace_tracing_stop - median_benchmark_stat.last_trace_tracing_start
+        trace_execution_time_ns = (
+            median_benchmark_stat.last_trace_host_execution_stop - median_benchmark_stat.last_trace_host_execution_start
         )
-        return
 
-    # NOTE At this point in the program extended statistics are available
-    trace_time_ns = median_benchmark_stat.last_trace_host_stop - median_benchmark_stat.last_trace_host_start
-    cache_time_ns = median_benchmark_stat.last_trace_cache_stop - median_benchmark_stat.last_trace_cache_start
-    tracing_time_ns = median_benchmark_stat.last_trace_tracing_stop - median_benchmark_stat.last_trace_tracing_start
-    trace_execution_time_ns = (
-        median_benchmark_stat.last_trace_host_execution_stop - median_benchmark_stat.last_trace_host_execution_start
-    )
+        trace_time_us: str = ns_to_us(trace_time_ns)
+        cache_time_us: str = ns_to_us(cache_time_ns)
+        tracing_time_us: str = ns_to_us(tracing_time_ns)
+        trace_execution_time_us: str = ns_to_us(trace_execution_time_ns)
 
-    trace_time_us: str = ns_to_us(trace_time_ns)
-    cache_time_us: str = ns_to_us(cache_time_ns)
-    tracing_time_us: str = ns_to_us(tracing_time_ns)
-    trace_execution_time_us: str = ns_to_us(trace_execution_time_ns)
+        trace_time_percentage: str = f"{round(trace_time_ns / median_benchmark_stat.total_time * 100)}%"
+        cache_time_percentage: str = f"{round(cache_time_ns / median_benchmark_stat.total_time * 100)}%"
+        tracing_time_percentage: str = f"{round(tracing_time_ns / median_benchmark_stat.total_time * 100)}%"
+        trace_execution_time_percentage: str = f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
 
-    trace_time_percentage: str = f"{round(trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-    cache_time_percentage: str = f"{round(cache_time_ns / median_benchmark_stat.total_time * 100)}%"
-    tracing_time_percentage: str = f"{round(tracing_time_ns / median_benchmark_stat.total_time * 100)}%"
-    trace_execution_time_percentage: str = f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
+        before_trace_time_ns = median_benchmark_stat.last_trace_host_start - median_benchmark_stat.start_time
+        after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop
 
-    before_trace_time_ns = median_benchmark_stat.last_trace_host_start - median_benchmark_stat.start_time
-    after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop
+        before_trace_time_us: str = ns_to_us(before_trace_time_ns)
+        after_trace_time_us: str = ns_to_us(after_trace_time_ns)
 
-    before_trace_time_us: str = ns_to_us(before_trace_time_ns)
-    after_trace_time_us: str = ns_to_us(after_trace_time_ns)
+        before_trace_time_percentage: str = f"{round(before_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
+        after_trace_time_percentage: str = f"{round(after_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
 
-    before_trace_time_percentage: str = f"{round(before_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-    after_trace_time_percentage: str = f"{round(after_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-
-    print(
-        textwrap.dedent(
-            f"""\
-        {benchmark_name} benchmark results:
-            The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
-            The estimated callable construction and initialization time is {total_initialization_time_us}.
-            The median benchmark run's host time is {total_host_time_us}, {host_time_percentage} of the total time.
-            Constructing the callable took {callable_construction_time_us}, {callable_construction_percentage} of the total construction and initialization time.
-            The estimated initialization time is {initialization_estimate_us}, {initialization_percentage} of the total construction and initialization time.
-            The total time taken by {len(warmup_stats)} warmup iterations is {total_warmup_time_us} (an average of {avg_warmup_time_us} per iteration).
-            The total time to run all the iterations (warmup and benchmark) is {total_benchmark_time_us}.
-            The benchmark called backward() {total_backward_calls} times.
+        extension = f"""\
             The median benchmark took {before_trace_time_us} ({before_trace_time_percentage} of the total time) to get into the tracing logic.
             The median benchmark took {after_trace_time_us} ({after_trace_time_percentage} of the total time) returning from the tracing logic.
             The median benchmark run's total time in tracing logic is {trace_time_us}, {trace_time_percentage} of the total time.
             The median benchmark run's cache lookup time is {cache_time_us}, {cache_time_percentage} of the total time.
             The median benchmark run's time spent tracing is {tracing_time_us}, {tracing_time_percentage} of the total time.
             The median benchmark run's time to request the traced program be executed is {trace_execution_time_us}, {trace_execution_time_percentage} of the total time.
-    """
-        )
-    )
+        """
+    else:
+        extension = ""
+
+    output = textwrap.dedent(preamble) + textwrap.indent(textwrap.dedent(extension), " " * 4)
+    print(output)
 
 
 def print_rank_0(message):
