@@ -13,7 +13,7 @@ import inspect
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim, sqrt, reciprocal
+from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim, sqrt, reciprocal, convolution
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -2049,6 +2049,231 @@ def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
 def convert_element_type_backward(a_dtype, g):
     # perform cast back to input type during backward
     return prims.convert_element_type(g, a_dtype), None
+
+
+@register_augmented_forward(prims.PrimIDs.CONVOLUTION)
+def convolution_aug_fwd(
+    a: Proxy,
+    weight,
+    bias,
+    stride,
+    padding,
+    dilation,
+    transposed,
+    output_padding,
+    groups,
+):
+    primal = convolution(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups
+    )
+    residuals = (
+        primal,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups
+    )
+    return VJPDual(
+        primal,
+        residuals
+    )
+
+
+@register_backward(prims.PrimIDs.CONVOLUTION)
+def convolution_backward(
+    output: Proxy,
+    input: Proxy,
+    weight,
+    bias,
+    stride,
+    padding,
+    dilation,
+    transposed,
+    output_padding,
+    groups,
+    grad,
+):
+    # Transposed convolution is not supported!
+    assert transposed == 0
+
+    input_grad = None
+    weight_grad = None
+    bias_grad = None
+
+    # Short circuit on zero-dim grad
+    if any(s == 0 for s in grad.shape):
+        input_grad = full_like(input, fill_value=0)
+        weight_grad = full_like(weight, fill_value=0)
+        if bias is not None:
+            bias_grad = full_like(bias, fill_value=0)
+        return (input_grad, weight_grad, bias_grad) + ((None,) * 6)
+
+    batch, in_channels, *spatial_dims = input.shape
+    out_channels, gin_channels, *kernel_dims = weight.shape
+    dim = len(spatial_dims)
+
+    def maybe_expand_seq(s, dim):
+        if len(s) == 1:
+            return (s[0],) * dim
+        else:
+            return s
+
+    stride = maybe_expand_seq(stride, dim)
+    padding = maybe_expand_seq(padding, dim)
+    dilation = maybe_expand_seq(dilation, dim)
+
+    def conv_transpose(t):
+        return prims.transpose(t, (1, 0) + tuple(range(2, t.ndim)))
+
+    # input_grad = {
+    def transpose_and_flip_weight(weight):
+        # The lines below are transposing the channels dims.
+        # We also need to extract the group information and merge it
+        # with the dimension corresponding to the "out_channels" dim.
+        # (out_channels, gin_channels) -> (gin_channels, out_channels)
+        weight = conv_transpose(weight)
+        # Split (out_channels,) -> (groups, out_channels // groups)
+        weight = weight.reshape([gin_channels, groups, out_channels // groups] + kernel_dims)
+        # Moving groups to the left-most position.
+        # (gin_channels, groups, out_channels // groups) -> (groups, gin_channels, out_channels // groups)
+        weight = conv_transpose(weight)
+        # Squash (groups, gin_channels) -> (in_channels)
+        weight = weight.reshape([in_channels, out_channels // groups] + kernel_dims)
+
+        # Flip spatial dimensions
+        weight = prims.flip(weight, tuple(range(2, weight.ndim)))
+        return weight
+
+    # We need to pad the gradient to be able to fit kernel windows.
+    initial_grad_padding = [d * (k - 1) for d, k in zip(dilation, kernel_dims)]
+
+    input_grad = convolution(
+        prims.pad(
+            grad,
+            0.0,
+            # The pixes are stride away from each other in the original input.
+            # Hence we need to dilate the gradient by dilation=stride - 1
+            # so that there are stride - 1 zeros between the pixels.
+            [(0, 0, 0), (0, 0, 0)] + [(0, 0, s - 1) for s in stride]
+        ),
+        transpose_and_flip_weight(weight),
+        None,
+        # Setting stride to 1 as the distance between pixels is taken
+        # care by the pad right above.
+        (1,),
+        initial_grad_padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups
+    )
+
+    def pad_to_input(grad):
+        # We need to unpad the padding done to the input prior to the convolution.
+        # Note that low and high padding are not necessarily equal, so we cannot
+        # absorb it into the convolution just yet, unless the API is modified.
+        pad_config = [(0, 0, 0), (0, 0, 0)]
+        for o, i, g, p in zip(grad.shape[2:], spatial_dims, input_grad.shape[2:], padding):
+            lo = -p
+            # Note that (i + 2 * p) is the size of the padded input,
+            # so the quantity (i + 2 * p) - g tells us by how much
+            # we need to pad the gradient so that the elements outside
+            # of the convolution receive zero gradient.
+            # p is additionally subtracted to negate the input's pad
+            # in forward.
+            hi = (i + 2 * p) - g - p
+            pad_config.append((lo, hi, 0))
+        return prims.pad(grad, 0.0, pad_config)
+
+    input_grad = pad_to_input(input_grad)
+    # }
+
+    # bias_grad = {
+    if bias is not None:
+        import thunder.torch as ltorch
+
+        bias_grad = ltorch.sum(grad, [d for d in range(grad.ndim) if d != 1])
+    # }
+
+    # weight grad = {
+    def pad_transpose_and_push_groups_into_batches(t):
+        # First pad,...
+        # Pad as necessary so that in convolutions we never advance
+        # past relevant inputs.
+        pad_config = [(0, 0, 0), (0, 0, 0)]
+        for o, i, k, p, s, d in zip(grad.shape[2:], spatial_dims, kernel_dims, padding, stride, dilation):
+            # Padding from below is the same.
+            lo = p
+            # There is always the max index idx in the input
+            # the value of which, input[idx], the kernel touches.
+            # The kernel reach, or k_reach, is exactly idx + 1.
+            # We use it to decide by how much we need to pad from above
+            # as to not move past relevant values.
+            k_reach = (o - 1) * s + d * (k - 1) + 1
+            # The pad from above equals k_reach minus the length
+            # of the input padded from below.
+            hi = k_reach - (i + p)
+            pad_config.append((lo, hi, 0))
+        t = prims.pad(t, 0.0, pad_config)
+
+        _, _, *t_spatial_dims = t.shape
+
+        # ... then do the rest.
+        # t.shape == (batch, in_channels, ...)
+        # The result of this function has shape
+        # (in_channels, batch * groups)
+        # (batch, in_channels) -> (in_channels, batch)
+        t = conv_transpose(t)
+        # Split (in_channels,) -> (groups, gin_channels)
+        t = t.reshape([groups, gin_channels, batch] + t_spatial_dims)
+        # Transpose (groups, gin_channels, batch) -> (gin_channels, groups, batch)
+        t = conv_transpose(t)
+        # Flatten (groups, batch) -> (groups * batch,)
+        t = t.reshape([gin_channels, groups * batch] + t_spatial_dims)
+        return t
+
+    # input will have shape (gin_channels, groups * batch)
+    input = pad_transpose_and_push_groups_into_batches(input)
+    # grad will have shape (out_channels, batch)
+    # Note that these shapes are compatible for a group convolution.
+    grad = conv_transpose(grad)
+
+    # Why do we flip stride and dilation?
+    # kernel[i] and kernel[i + 1] are dilation apart from each other,
+    # so dilation becomes the new stride.
+    # All the elements that kernel[i] touches are stride away from each other,
+    # hence stride becomes the new dilation.
+    weight_grad = convolution(
+        input,
+        grad,
+        None,
+        dilation,  # set stride=dilation
+        (0,),
+        stride,  # set dilation=stride
+        transposed,
+        output_padding,
+        groups,
+    )
+
+    # The result of the convolution has shape (gin_channels, out_channels),
+    # so transposition is required.
+    weight_grad = conv_transpose(weight_grad)
+    # }
+
+    return (input_grad, weight_grad, bias_grad) + ((None,) * 6)
 
 
 @register_augmented_forward("torch.nn.functional.cross_entropy")

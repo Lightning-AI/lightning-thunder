@@ -4384,7 +4384,7 @@ def conv3d_error_generator(op, device, dtype=torch.float32, **kwargs):
 
 
 convolution_opinfo = OpInfo(
-    ltorch.convolution,
+    clang.convolution,
     sample_input_generator=convolution_sample_generator,
     error_input_generator=convolution_error_generator,
     torch_reference=torch.convolution,
