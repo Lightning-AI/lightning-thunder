@@ -1,0 +1,21 @@
+documentation:
+  - docs/**/*
+  - dev_tutorials/*
+
+"ci":
+  - .azure/*
+  - .github/*
+  - .github/workflows/*
+  - dockers/**/*
+
+"docker":
+  - dockers/**/*
+
+"install":
+  - setup.py
+  - pyproject.toml
+  - MANIFEST.in
+
+"dependencies":
+  - requirements/*
+  - requirements.txt
