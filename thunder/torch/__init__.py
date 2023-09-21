@@ -766,9 +766,7 @@ def full_like(
 
 # NOTE ones, unlike full, can accept an integer shape
 @torchsymbol(torch.ones)
-def ones(
-   *shape: int, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
-) -> TensorLike:
+def ones(*shape: int, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return full(shape, 1, device=device, dtype=dtype)
 
@@ -835,9 +833,7 @@ def uniform_philox(
 
 # NOTE zeros, like ones, and unlike full, can accept an integer shape
 @torchsymbol(torch.zeros)
-def zeros(
-    *shape: int, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
-) -> TensorLike:
+def zeros(*shape: int, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return full(shape, 0, device=device, dtype=dtype)
 
@@ -932,7 +928,7 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
 # If input is not divisible by n, then the first int(input.size(dim) % n) tensors will have length
 #   int(input.size(dim) / n) + 1 along the split dimension, and the remaining tensors will have
 #   length int(input.size(dim) / n) along the split dimension
-def _split_n(a: TensorLike, n: int, dim: int = 0) -> Tuple[TensorLike, ...]:
+def _split_n(a: TensorLike, n: int, dim: int = 0) -> tuple[TensorLike, ...]:
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     splits = []
@@ -951,7 +947,7 @@ def _split_n(a: TensorLike, n: int, dim: int = 0) -> Tuple[TensorLike, ...]:
 
 # TODO could this (and other things) be revised to combine the slice_in_dim calls?
 # Splits a tensor along a split dimension dim at the indices in indices
-def _split_indices(a: TensorLike, indices: int, dim: int = 0) -> Tuple[TensorLike, ...]:
+def _split_indices(a: TensorLike, indices: int, dim: int = 0) -> tuple[TensorLike, ...]:
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     splits = []
@@ -1038,7 +1034,7 @@ def split(a, size_or_sections, dim=0):
 # TODO Add type annotations
 # See https://pytorch.org/docs/master/generated/torch.squeeze.html
 @torchsymbol(torch.squeeze, is_method=True)
-def squeeze(a: TensorLike, /, dim: Optional[Tuple[int, ...] | int] = None) -> TensorLike:
+def squeeze(a: TensorLike, /, dim: Optional[tuple[int, ...] | int] = None) -> TensorLike:
     # Converts dim to a tuple of numbers
     dims = dim
     if dim is None:

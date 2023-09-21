@@ -958,7 +958,7 @@ def producers_and_consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface
     return producers(trace_or_bsyms), consumers(trace_or_bsyms)
 
 
-def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxies: Sequence[Proxy]) -> Tuple[Any, ...]:
+def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxies: Sequence[Proxy]) -> tuple[Any, ...]:
     """Find the symbols that produce the given proxies.
 
     This function is useful for finding a set of symbols that can be used to

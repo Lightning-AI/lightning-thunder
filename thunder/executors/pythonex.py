@@ -288,7 +288,7 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 # NOTE This is part of the executor interface
 def fuse(region: Region) -> list[BoundSymbol]:
-    bsyms: List[BoundSymbol] = []
+    bsyms: list[BoundSymbol] = []
 
     for bsym in region.bound_symbols:
         # Symbols with Python implementations don't need to be translated

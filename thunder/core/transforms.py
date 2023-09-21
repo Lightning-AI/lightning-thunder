@@ -2857,7 +2857,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     # saved_for_backward results might be re-proxified.
     bw_flat_saved_for_backward, spec = tree_flatten(backward_trace.args[0])
     fw_flat_saved_for_backward, _ = tree_flatten(forward_trace.output[1])
-    used_mask = list((len(consumers.get(x, ())) > 0 for x in bw_flat_saved_for_backward))
+    used_mask = list(len(consumers.get(x, ())) > 0 for x in bw_flat_saved_for_backward)
 
     # Don't use the same variable twice in the backward pass
     seen = set()

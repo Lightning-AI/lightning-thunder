@@ -1,5 +1,6 @@
 from functools import partial
-from typing import Callable, Sequence, Optional
+from typing import Callable, Optional
+from collections.abc import Sequence
 
 import torch
 

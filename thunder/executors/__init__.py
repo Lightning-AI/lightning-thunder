@@ -219,7 +219,7 @@ class OpExecutor:
         return can_execute_
 
     def fuse(self, region: Region) -> list[BoundSymbol]:
-        bsyms: List[BoundSymbol] = []
+        bsyms: list[BoundSymbol] = []
 
         for bsym in region.bound_symbols:
             name, _, impl = self.op_map[bsym.sym.id]

@@ -533,7 +533,7 @@ def test_consistent_boundsymbol_collection_hard_printing():
 # This test verifies that all torch operators have direct lowerings to the torch executor
 #   (or it's OK that they don't)
 def test_direct_torch_lowerings():
-    torch_symbols = set(sym.id for sym in ltorch._torch_to_thunder_function_map.values())
+    torch_symbols = {sym.id for sym in ltorch._torch_to_thunder_function_map.values()}
     direct_torchex_lowerings = set(torchex._ops_map.keys())
 
     # These operators need additional scrutiny for how to directly lower them or have been
@@ -1660,7 +1660,7 @@ def test_argument_of_none(executor, device, dtype):
         return x + y
 
     tdtype = ltorch.to_torch_dtype(dtype)
-    a, b = [make_tensor((1,), device=device, dtype=tdtype) for _ in range(2)]
+    a, b = (make_tensor((1,), device=device, dtype=tdtype) for _ in range(2))
     c = None
     trace = thunder.trace()(foo, a, b, c)
 
@@ -2816,7 +2816,7 @@ def test_thunder_autocast_transform(executor, device, _):
     for func, should_autocast in ((f, True), (g, False), (h, False)):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
-        x, y, z = [torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3)]
+        x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
         compiled = thunder.compile(
             autocast(func, dtype=dtype),
             executors_list=executor.executors_list(),
@@ -2883,7 +2883,7 @@ def test_cse(executor, device, _):
         d = clang.uniform(z.shape, device=device, dtype=thunder.float16)
         return z, w, m, (a, b, c, d)
 
-    x, y = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
+    x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     compiled_func = thunder.compile(
         func,
         disable_preprocessing=True,

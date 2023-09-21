@@ -37,7 +37,7 @@ def assert_block(bl: Union[GraphObject, None]) -> "Block":
 
 
 class GraphSummaryCallback:
-    def node(self, n: "Node") -> Tuple[list[str], list[str]]:
+    def node(self, n: "Node") -> tuple[list[str], list[str]]:
         return [], []
 
     def finish(self) -> list[str]:

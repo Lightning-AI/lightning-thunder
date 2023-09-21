@@ -1,7 +1,8 @@
 from dataclasses import dataclass, replace
 from functools import partial
 from itertools import chain, product
-from typing import Callable, Optional, Sequence, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
+from collections.abc import Sequence
 
 from igraph import Graph
 
@@ -17,7 +18,7 @@ def find_external_producer_outputs(
     trace: TraceCtx,
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
-) -> Tuple[ProxyInterface, ...]:
+) -> tuple[ProxyInterface, ...]:
     """Find producer's outputs that must be included in the output of the
     producer because they are used by other consumers.
 
@@ -47,7 +48,7 @@ def find_external_producer_outputs(
 def find_external_consumer_inputs(
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
-) -> Tuple[ProxyInterface, ...]:
+) -> tuple[ProxyInterface, ...]:
     """Find consumer's inputs that must be included in the input of the
     consumer because they are produced by other producers.
 
@@ -62,10 +63,10 @@ def find_external_consumer_inputs(
     all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
     external_consumer_inputs_names = tuple(
         sorted(
-            set(x.name for x in consumer.args)
-            - set(x.name for x in producer.output)
-            - set(x.name for x in producer.args)
-            - set(x.name for x in all_produced_vars)
+            {x.name for x in consumer.args}
+            - {x.name for x in producer.output}
+            - {x.name for x in producer.args}
+            - {x.name for x in all_produced_vars}
         )
     )
     return tuple(x for x in consumer.args if x.name in external_consumer_inputs_names)
@@ -159,7 +160,7 @@ def apply_rematerialization_for_consumer(
 def find_filtered_producer_consumer_pairs(
     trace: TraceCtx,
     filter_func: Optional[Callable] = None,
-) -> Tuple[Tuple[BoundSymbolInterface, BoundSymbolInterface], ...]:
+) -> tuple[tuple[BoundSymbolInterface, BoundSymbolInterface], ...]:
     """Find producer-consumer pairs among the filtered symbols.
 
     Args:

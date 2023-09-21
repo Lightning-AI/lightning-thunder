@@ -3,7 +3,8 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import Union, Callable, Any, Tuple, Sequence, Optional
+from typing import Union, Callable, Any, Tuple, Optional
+from collections.abc import Sequence
 
 import torch
 from looseversion import LooseVersion
@@ -35,7 +36,7 @@ torch_ctx = {
 
 # NOTE _ops_map is declared here and defined after the callables have been defined
 #   below
-_ops_map: dict[Any, Tuple[Callable, Callable]] = {}
+_ops_map: dict[Any, tuple[Callable, Callable]] = {}
 
 
 # Helper to signal that an operation is always executable

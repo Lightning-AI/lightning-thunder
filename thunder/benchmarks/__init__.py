@@ -1,6 +1,7 @@
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional
+from typing import Any, Callable, Dict, List, Tuple, Optional
+from collections.abc import Sequence
 from enum import auto, Enum
 import time
 from functools import partial
@@ -60,7 +61,7 @@ class BenchmarkArg:
 # Simple metaclass that automatically adds defined benchmarks to the list of benchmarks above
 class UserFacingBenchmarkMeta(type):
     def __new__(metacls, clsname, bases, namespace):
-        return super(UserFacingBenchmarkMeta, metacls).__new__(metacls, clsname, bases, namespace)
+        return super().__new__(metacls, clsname, bases, namespace)
 
     def __init__(cls: type, name: str, bases, namespace: dict) -> None:
         benchmarks.append((name, cls))
@@ -384,7 +385,9 @@ def _prettyprint_stats(
         trace_time_percentage: str = f"{round(trace_time_ns / median_benchmark_stat.total_time * 100)}%"
         cache_time_percentage: str = f"{round(cache_time_ns / median_benchmark_stat.total_time * 100)}%"
         tracing_time_percentage: str = f"{round(tracing_time_ns / median_benchmark_stat.total_time * 100)}%"
-        trace_execution_time_percentage: str = f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
+        trace_execution_time_percentage: str = (
+            f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
+        )
 
         before_trace_time_ns = median_benchmark_stat.last_trace_host_start - median_benchmark_stat.start_time
         after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop

@@ -72,12 +72,12 @@ class Config:
         return cls(**conf_dict)
 
     @property
-    def mlp_class(self) -> Type:
+    def mlp_class(self) -> type:
         # `self._mlp_class` cannot be the type to keep the config json serializable
         return globals()[self._mlp_class]
 
     @property
-    def norm_class(self) -> Type:
+    def norm_class(self) -> type:
         # `self._norm_class` cannot be the type to keep the config json serializable
         if self._norm_class == "RMSNorm":
             return RMSNorm
@@ -306,7 +306,7 @@ class GPT(nn.Module):
     def from_name(cls, name: str, **kwargs: Any) -> Self:
         return cls(Config.from_name(name, **kwargs))
 
-    def rope_cache(self, device: Optional[torch.device] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def rope_cache(self, device: Optional[torch.device] = None) -> tuple[torch.Tensor, torch.Tensor]:
         return build_rope_cache(
             seq_len=self.max_seq_length,
             n_elem=self.config.rope_n_elem,
@@ -507,7 +507,7 @@ def build_rope_cache(
     device: Optional[torch.device] = None,
     base: int = 10000,
     condense_ratio: int = 1,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Enhanced Transformer with Rotary Position Embedding.
 
     Derived from: https://github.com/labmlai/annotated_deep_learning_paper_implementations/blob/master/labml_nn/
@@ -543,8 +543,8 @@ def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.T
 class KVCache(nn.Module):
     def __init__(
         self,
-        k_shape: Tuple[int, int, int, int],
-        v_shape: Tuple[int, int, int, int],
+        k_shape: tuple[int, int, int, int],
+        v_shape: tuple[int, int, int, int],
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ) -> None:
@@ -552,7 +552,7 @@ class KVCache(nn.Module):
         self.register_buffer("k", torch.zeros(k_shape, device=device, dtype=dtype), persistent=False)
         self.register_buffer("v", torch.zeros(v_shape, device=device, dtype=dtype), persistent=False)
 
-    def forward(self, input_pos: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, input_pos: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # move the buffer to the activation dtype for when AMP is used
         self.k = self.k.to(k.dtype)
         self.v = self.v.to(v.dtype)

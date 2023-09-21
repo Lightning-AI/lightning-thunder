@@ -166,7 +166,6 @@ class Benchmark:
                 ), "Trying to run a benchmark with the Apex executor extension, but the xentropy_cuda package is not available"
                 register_apex_entropyex()
 
-
             if extension == "cudnn":
                 assert (
                     CUDNN_AVAILABLE
@@ -1271,7 +1270,9 @@ class nanoGPTScaledDotProductAttention(torch.nn.Module):
         self.dropout = config.dropout
 
     def forward(self, q, k, v):
-        return torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+        return torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True
+        )
 
 
 class NanoGPTScaledDotProductAttentionBenchmark(GPTBenchMarkBase):

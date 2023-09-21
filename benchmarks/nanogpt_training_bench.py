@@ -57,7 +57,8 @@ seq_len = 128
 bias = False
 seed = 1337
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
-dtype = args.dtype  #'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
+#'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
+dtype = args.dtype  # 'float32' or 'bfloat16' or 'float16'
 compile_mode = args.compile_mode
 print_loss = args.print_loss
 use_ddp = False
@@ -95,6 +96,7 @@ optimizer_ctor = model.configure_optimizers
 if use_ddp:
     if compile_mode == "thunder":
         from thunder.distributed import ddp
+
         model = ddp(model, rank=local_rank, broadcast_from=0, process_group=pg)
     else:
         model = torch.nn.parallel.distributed.DistributedDataParallel(model, device_ids=[local_rank])
@@ -123,7 +125,7 @@ for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
             on_trace_ready=torch.profiler.tensorboard_trace_handler(
                 os.path.join(
                     os.path.dirname(os.path.abspath(__file__)),
-                    f"/tensor_board_logs/{compile_mode}{'_ddp' if use_ddp else ''}"
+                    f"/tensor_board_logs/{compile_mode}{'_ddp' if use_ddp else ''}",
                 ),
             ),
         )

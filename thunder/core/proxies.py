@@ -54,10 +54,10 @@ def unvariableify(x: Any) -> Any:
 
 # TODO Document this class
 class Proxy(VariableInterface, ProxyInterface):
-    def __init__(self, name: Optional[str] = None):
+    def __init__(self, name: str | None = None):
         trace = get_tracectx()
         if name is None:
-            prefix: Optional[str] = None
+            prefix: str | None = None
             if isinstance(self, FloatProxy):
                 prefix = "f"
             elif isinstance(self, ComplexProxy):
@@ -86,7 +86,7 @@ class Proxy(VariableInterface, ProxyInterface):
     def name(self) -> str:
         return self._name
 
-    def replace_name(self, name: Optional[str] = None):
+    def replace_name(self, name: str | None = None):
         """Return a copy of this proxy with the given name."""
         return self.__class__(name=name)
 
@@ -144,7 +144,7 @@ class Proxy(VariableInterface, ProxyInterface):
 
 
 class CollectionProxy(Proxy):
-    def __init__(self, coll: Any, *, name: Optional[str] = None):
+    def __init__(self, coll: Any, *, name: str | None = None):
         Proxy.__init__(self, name=name)
         self.coll = coll
 
@@ -158,7 +158,7 @@ class CollectionProxy(Proxy):
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
-    def __init__(self, name: Optional[str] = None, value: Optional[Number] = None, *, python_type: type):
+    def __init__(self, name: str | None = None, value: Number | None = None, *, python_type: type):
         self.value = value
         self.python_type = python_type
 
@@ -418,7 +418,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         raise NotImplementedError
 
 
-def pyval(x: Union[NumberProxy, Number]) -> Number:
+def pyval(x: NumberProxy | Number) -> Number:
     baseutils.check_type(x, (NumberProxy, Number))
 
     # NOTE This has to query NumberProxy, not Number, because NumberProxies are Numbers
@@ -429,7 +429,7 @@ def pyval(x: Union[NumberProxy, Number]) -> Number:
     return x
 
 
-def pytype(x: Union[NumberProxy, Number]) -> type:
+def pytype(x: NumberProxy | Number) -> type:
     baseutils.check_type(x, (NumberProxy, Number))
 
     if isinstance(x, NumberProxy):
@@ -460,13 +460,13 @@ class ComplexProxy(NumberProxy, complex):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy, int):
-    def __new__(cls, *, name: Optional[str] = None, value: Number):
+    def __new__(cls, *, name: str | None = None, value: Number):
         if value is None:
             value = -9999
 
         return int.__new__(cls, value)
 
-    def __init__(self, name: Optional[str] = None, value=None):
+    def __init__(self, name: str | None = None, value=None):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
         NumberProxy.__init__(self, name=name, value=value, python_type=python_type)
@@ -510,11 +510,11 @@ class FloatProxy(NumberProxy, float):
 
 
 def _infer_tensor_properties(
-    like: Optional[TensorProxy | FutureTensorProxy] = None,
-    shape: Optional[ShapeLike] = None,
-    device: Optional[devices.Device] = None,
-    dtype: Optional[dtypes.dtype] = None,
-    requires_grad: Optional[bool] = None,
+    like: TensorProxy | FutureTensorProxy | None = None,
+    shape: ShapeLike | None = None,
+    device: devices.Device | None = None,
+    dtype: dtypes.dtype | None = None,
+    requires_grad: bool | None = None,
 ):
     _shape = None
     _device = None
@@ -561,12 +561,12 @@ def _infer_tensor_properties(
 class FutureTensorProxy(Proxy):
     def __init__(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         *,
-        like: Optional[TensorProxy | FutureTensorProxy] = None,
-        shape: Optional[ShapeLike] = None,
-        device: Optional[devices.Device] = None,
-        dtype: Optional[dtypes.dtype] = None,
+        like: TensorProxy | FutureTensorProxy | None = None,
+        shape: ShapeLike | None = None,
+        device: devices.Device | None = None,
+        dtype: dtypes.dtype | None = None,
     ):
         super().__init__(name)
 
@@ -628,13 +628,13 @@ class FutureTensorProxy(Proxy):
 class TensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         *,
-        like: Optional[TensorProxy | FutureTensorProxy] = None,
-        shape: Optional[ShapeLike] = None,
-        device: Optional[devices.Device] = None,
-        dtype: Optional[dtypes.dtype] = None,
-        requires_grad: Optional[bool] = None,
+        like: TensorProxy | FutureTensorProxy | None = None,
+        shape: ShapeLike | None = None,
+        device: devices.Device | None = None,
+        dtype: dtypes.dtype | None = None,
+        requires_grad: bool | None = None,
     ):
         super().__init__(name)
 
@@ -945,7 +945,7 @@ _cls_to_number_proxy_map = {
 }
 
 
-def numberproxy(cls: type, value: Optional[Number]) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
     return pcls(value=value)
 
@@ -968,7 +968,7 @@ def is_proxyable(x: Any) -> bool:
 # TODO defer to langctx for tensor type -- consider all possible langctxs
 # TODO maybe consider what happens when a proxy is passed to this
 # TODO handle complex number type
-def proxy(x: Any, *, name: Optional[str] = None) -> Any:
+def proxy(x: Any, *, name: str | None = None) -> Any:
     langctx = langctx_for(x)
 
     tensor_cls = langctx.tensor_cls

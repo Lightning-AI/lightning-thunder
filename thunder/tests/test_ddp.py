@@ -230,7 +230,7 @@ import torch.utils.data as tudata
 
 import os
 import copy
-from typing import Sequence
+from collections.abc import Sequence
 from functools import partial, wraps
 import tempfile
 import multiprocessing as mp

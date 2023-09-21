@@ -4,7 +4,8 @@ from functools import reduce
 import operator
 import builtins
 import math
-from typing import Union, Type, Any, List, Dict, Tuple, Optional, Callable, Hashable
+from typing import Union, Type, Any, List, Dict, Tuple, Optional, Callable
+from collections.abc import Hashable
 from collections.abc import Sequence
 
 import torch
@@ -652,7 +653,7 @@ def _elementwise_unary_meta_factory(
     supported_input_dtypes,
     output_dtype_kind,
     numbers_only: bool,
-    number_type_map: Optional[dict[Type, Type]],
+    number_type_map: Optional[dict[type, type]],
 ):
     def meta(a: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
         # Checks that inputs have an expected type
@@ -724,7 +725,7 @@ def _make_elementwise_unary_prim(
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
     output_dtype_kind: ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND = ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     numbers_only: bool = False,
-    number_type_map: Optional[dict[Type, Type]] = None,
+    number_type_map: Optional[dict[type, type]] = None,
 ):
     return make_prim(
         id,

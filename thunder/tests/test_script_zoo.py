@@ -207,10 +207,10 @@ def test_apply_context_manager():
 
 
 def simple_try_except():
-  try:
-    pass
-  except:
-    pass
+    try:
+        pass
+    except:
+        pass
 
 
 def test_simple_try_except():

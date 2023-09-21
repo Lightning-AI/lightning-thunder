@@ -1,4 +1,5 @@
-from typing import Dict, Any, List, Callable, Sequence, Tuple, Optional
+from typing import Dict, Any, List, Callable, Tuple, Optional
+from collections.abc import Sequence
 from collections import deque
 from dataclasses import replace
 from itertools import chain
@@ -19,7 +20,7 @@ from thunder.executors import torchex as TorchEx
 # NOTE Runs a Dead Code Elimination (DCE) pass
 #   Technically this could be a "transform", because it is semantic-preserving.
 # TODO We could look at reconciling the ideas of what a trace produces and the return prim
-def dce(trace: TraceCtx) -> Tuple[TraceCtx, List[TraceCtx]]:
+def dce(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     producers: ProxyDict = cutils.producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)

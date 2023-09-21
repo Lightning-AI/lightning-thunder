@@ -1420,6 +1420,7 @@ class FusionDefinitionWrapper:
     """
     A callable object wrapping a nvFuser fusion definition.
     """
+
     counter: int
     get_fd: Callable[[tuple[Union[type, tuple[tuple[int, ...], tuple[bool, ...]]], ...]], FusionDefinition]
     cache_info: Optional[Callable] = None
@@ -1437,7 +1438,7 @@ class FusionDefinitionWrapper:
 
 # NOTE This is part of the executor interface
 # Translates a region to nvFuser, then creates a Python string invoking the call
-def fuse(region: Region) -> List[BoundSymbol]:
+def fuse(region: Region) -> list[BoundSymbol]:
     utils.check(
         len(region.bound_symbols) > 0,
         lambda: f"Trying to fuse an empty sequence of bound symbols",
@@ -1515,7 +1516,7 @@ def fuse(region: Region) -> List[BoundSymbol]:
     # 4) Creates a BoundSymbol invoking the fusion
 
     fn_name = f"nvFusion{region.counter}"
-    ctx: Dict[str, Any] = {fn_name: fn_}
+    ctx: dict[str, Any] = {fn_name: fn_}
     sym = Symbol(name=fn_name, meta=None, python_printer=nvfusion_printer, is_fusion=True)
 
     # Adds a comment explaining what the fusion (conceptually) does

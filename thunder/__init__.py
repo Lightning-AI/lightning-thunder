@@ -1,6 +1,7 @@
 from functools import wraps, partial
 from numbers import Number
-from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type, Hashable
+from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from collections.abc import Hashable
 from collections.abc import Sequence
 from collections import deque
 from enum import auto, Enum
@@ -677,7 +678,7 @@ def compile(
         # Determines whether to use autograd.Function or not
         flat_args, _ = tree_flatten((args, kwargs))
         tensor_cls = (pytorch.Tensor, TensorProxy)
-        requires_grad = any((isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args))
+        requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
         if not disable_torch_autograd_support and requires_grad:
             compile_config = {
                 "langctx": langctx,

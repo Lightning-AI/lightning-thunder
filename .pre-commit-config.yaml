@@ -21,7 +21,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.4.0
+    rev: v3.11.1
     hooks:
       - id: pyupgrade
         args: [--py39-plus]
@@ -34,13 +34,13 @@ repos:
   #       args: ["--profile", "black", "--filter-files"]
 
   - repo: https://github.com/psf/black
-    rev: 23.3.0
+    rev: 23.9.1
     hooks:
       - id: black
         name: Black code
 
   - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.16
+    rev: 0.7.17
     hooks:
       - id: mdformat
         additional_dependencies:
@@ -49,13 +49,13 @@ repos:
           - mdformat_frontmatter
         exclude: CHANGELOG.md
 
-  - repo: https://github.com/asottile/yesqa
-    rev: v1.4.0
-    hooks:
-      - id: yesqa
+#  - repo: https://github.com/asottile/yesqa
+#    rev: v1.4.0
+#    hooks:
+#      - id: yesqa
 
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.0.270
-    hooks:
-      - id: ruff
-        args: ["--fix"]
+#  - repo: https://github.com/charliermarsh/ruff-pre-commit
+#    rev: v0.0.270
+#    hooks:
+#      - id: ruff
+#        args: ["--fix"]

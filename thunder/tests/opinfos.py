@@ -5,10 +5,12 @@ from collections import namedtuple
 from collections.abc import Sequence
 from functools import partial, wraps
 from numbers import Number
-from typing import Union, Callable, Optional, Tuple, Generator
+from typing import Union, Callable, Optional, Tuple
+from collections.abc import Generator
 
 import numpy as np
 import pytest
+
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
 from looseversion import LooseVersion
@@ -131,7 +133,7 @@ if JAX_AVAILABLE:
     }
 
 
-class TorchTensorComp(object):
+class TorchTensorComp:
     """
     This class provides a very simple wrapper over torch.testing.assert_close,
     and is used as a default comparator for per-SampleInput comparisons.
@@ -1641,7 +1643,6 @@ atan2_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU,),
             dtypes=(datatypes.float16,),
         ),
-
     ),
 )
 elementwise_binary_ops.append(atan2_opinfo)
@@ -2472,7 +2473,7 @@ def flip_error_generator(op, device, dtype=torch.float32, **kwargs):
 
     # Cases with scalar inputs
     yield (SampleInput(make(), (1, -1)), RuntimeError, "Expected dims(.*?) of length 1")
-    yield (SampleInput(make(), (-2,)), RuntimeError, "Expected dim(.*?) in range \[-1, 0\]")
+    yield (SampleInput(make(), (-2,)), RuntimeError, r"Expected dim(.*?) in range \[-1, 0\]")
     yield (SampleInput(make(), (0.0,)), RuntimeError, "Expected dim(.*?) to be a sequence of integers")
 
     # Cases with non-scalar inputs
@@ -4052,7 +4053,7 @@ def convolution_1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Ordered as shapes for input, weight, bias,
     # and a dict of values of (stride, padding, dilation, groups)
-    cases: Tuple = (
+    cases: tuple = (
         ((1, 3, 4), (3, 3, 3), (3,), {"stride": (2,), "padding": 2, "groups": 1}),
         ((2, 4, 8), (2, 2, 3), (2,), {"stride": 3, "padding": 1, "groups": 2, "dilation": 2}),
         ((1, 4, 5), (1, 4, 3), None, {"stride": (2,), "padding": "valid"}),
@@ -4082,7 +4083,7 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
 
     # Ordered as shapes for input, weight, bias,
     # and a dict of values of (stride, padding, dilation, groups)
-    cases: Tuple = (
+    cases: tuple = (
         # groups should be > 0
         ((1, 1, 1), (1, 1, 1), None, {"groups": 0}, "groups(.*?) should be greater than 0"),
         # Wrong weight dim.
@@ -4180,7 +4181,7 @@ def convolution_2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Ordered as shapes for input, weight, bias
     # and a dict of values of (stride, padding, groups, dilation)
-    cases: Tuple = (
+    cases: tuple = (
         ((1, 3, 4, 4), (3, 3, 3, 3), (3,), {"stride": (2, 2), "padding": 2, "groups": 1}),
         ((2, 4, 8, 8), (2, 2, 3, 3), (2,), {"stride": (3, 2), "padding": (2, 1), "groups": 2, "dilation": (4, 4)}),
         ((1, 4, 5, 5), (1, 4, 2, 3), (1,), {"stride": 2, "padding": 1, "groups": 1, "dilation": (2, 3)}),
@@ -4569,8 +4570,7 @@ nn_ops.append(group_norm_opinfo)
 
 
 def layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
-    for si in layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
-        yield si
+    yield from layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs)
 
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -4821,8 +4821,7 @@ nn_ops.append(gelu_opinfo)
 
 
 def scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
-    for si in scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
-        yield si
+    yield from scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs)
 
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

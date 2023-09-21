@@ -24,7 +24,7 @@ get_logger = functools.partial(_lookup_state, "logger", lambda: logging.error)
 
 class InstrumentingBase:
     def __new__(cls, *_, **__) -> "InstrumentingBase":
-        self = super(InstrumentingBase, cls).__new__(cls)
+        self = super().__new__(cls)
         if stack := get_stack():
             get_init_ctx()[id(self)] = (self, tuple(stack))
 

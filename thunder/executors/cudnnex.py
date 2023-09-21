@@ -95,7 +95,7 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
     graph.build()
 
     workspace = torch.empty(graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
-    
+
     if Seed is not None:
         seed_device_tensor = torch.full((1, 1, 1, 1), 123456, dtype=torch.int64, device="cuda")
     else:

@@ -186,8 +186,7 @@ def ddp(
         utils.check(
             not broadcast_from or found_broadcast_process,
             lambda: (
-                f"Trying to broadcast from rank={broadcast_from}, "
-                "but didn't find that rank in the world description"
+                f"Trying to broadcast from rank={broadcast_from}, " "but didn't find that rank in the world description"
             ),
         )
 

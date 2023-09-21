@@ -126,7 +126,7 @@ class Symbol:
     is_fusion: bool = False
     python_printer: Callable = default_python_printer
     _module: Any | None = None
-    _hash: Optional[int] = None
+    _hash: int | None = None
 
     # An optional postprocessing function to modify the bound symbol resulting from bind()
     _bind_postprocess: None | Callable = None
@@ -307,11 +307,11 @@ class BoundSymbol(BoundSymbolInterface):
     # Header is a string that may be printed before the symbol
     header: str | list[str] = ""
 
-    _call_ctx: Optional[Dict[str, Any]] = None
+    _call_ctx: dict[str, Any] | None = None
 
     _import_ctx: dict = field(default_factory=dict)
     _object_ctx: dict = field(default_factory=dict)
-    _executor: Optional[Any] = None
+    _executor: Any | None = None
 
     # TODO: Should we do input validation in post_init?
     # For example, making sure kwargs is empty dict instead on None.
@@ -561,7 +561,7 @@ class BoundSymbol(BoundSymbolInterface):
     # TODO Consider if this should gather contexts recursively
     #   Currently this means that imports required for the subsymbols won't
     #   be printed, even though they're used in the comments
-    def gather_ctxs(self) -> Tuple[dict, dict, dict]:
+    def gather_ctxs(self) -> tuple[dict, dict, dict]:
         return self.import_ctx(), self._get_call_ctx(), self.object_ctx()
 
     def _get_lines(self, indent: int, commented: bool = False):
@@ -610,7 +610,7 @@ class BoundSymbol(BoundSymbolInterface):
 @dataclass(**baseutils.default_dataclass_params)
 class BoundSymbolRHS:
     parent: BoundSymbol
-    _hash: Optional[int] = None
+    _hash: int | None = None
 
     def _do_hash(self) -> int:
         if self.parent.kwargs and len(self.parent.kwargs) > 0:

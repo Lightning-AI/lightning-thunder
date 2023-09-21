@@ -733,7 +733,7 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
     attr_dict: dict[str, int] = {}
     attr_list: list[str] = []
     attr_values = []
-    return_values: Dict[str, Value] = {}  # PhiValues in the return block
+    return_values: dict[str, Value] = {}  # PhiValues in the return block
 
     if debug_asserts_enabled():
         thunder.core.script.graph.check_graph(gr)

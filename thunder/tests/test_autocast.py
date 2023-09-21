@@ -37,7 +37,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
         ((f, True), (g, False), (h, True)), autocast_dtypes
     ):
         autocast_torch_dtype = ltorch.to_torch_dtype(autocast_dtype)
-        x, y, z = [torch.randn((2, 2), device=device, dtype=torch_dtype) for _ in range(3)]
+        x, y, z = (torch.randn((2, 2), device=device, dtype=torch_dtype) for _ in range(3))
         compiled = executor.make_callable(autocast(func, dtype=autocast_dtype))
         out = compiled(x, y, z)
 

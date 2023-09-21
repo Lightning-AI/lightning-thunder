@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Callable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
+from collections.abc import Sequence
 
 import torch
 from torch.cuda.graphs import CUDAGraph
@@ -48,8 +49,8 @@ def to_args_descriptor(*args):
 
 @lru_cache
 def make_cuda_graph(
-    flat_fn: Callable, args_descr: ArgsDescriptor, static_args_mask: Tuple[bool, ...]
-) -> Tuple[CUDAGraph, Sequence[Union[torch.Tensor, Any]], Sequence[Union[torch.Tensor, Any]]]:
+    flat_fn: Callable, args_descr: ArgsDescriptor, static_args_mask: tuple[bool, ...]
+) -> tuple[CUDAGraph, Sequence[Union[torch.Tensor, Any]], Sequence[Union[torch.Tensor, Any]]]:
     """Creates a CUDA graph from a flattened function and its arguments.
 
     Args:
@@ -103,7 +104,7 @@ class CUDAGraphExecutor:
         """
         check(
             isinstance(fn, torch.nn.Module) or callable(fn),
-            lambda f: "Expected a Python callable or nn.Module, but got {}.".format(type(fn)),
+            lambda f: f"Expected a Python callable or nn.Module, but got {type(fn)}.",
         )
         self.fn = fn
         self.copy_outputs = copy_outputs

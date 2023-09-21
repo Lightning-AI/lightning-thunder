@@ -98,7 +98,7 @@ def _test_sort_adjacent(raw_edges, expected, should_end_with_return, sort_fn):
     ids=lambda spec: spec.split("|")[0].strip(),
 )
 def test_sort_adjacent(spec):
-    name, raw_edges, expected, expected_dfs = [i.strip() for i in spec.split("|")]
+    name, raw_edges, expected, expected_dfs = (i.strip() for i in spec.split("|"))
     _test_sort_adjacent(
         raw_edges,
         expected,
@@ -149,7 +149,7 @@ def test_sort_adjacent_raises(raw_edges, E, sort_fn):
     ids=lambda spec: spec.split("|")[0].strip(),
 )
 def test_compute_condense_map(spec):
-    edge_spec, *_, expected = [i.strip() for i in spec.split("|")[1].split("    ")]
+    edge_spec, *_, expected = (i.strip() for i in spec.split("|")[1].split("    "))
     condense_map = compute_condense_map((source, sink) for source, _, sink in _str_to_edges(edge_spec))
     basis = {k for k, v in condense_map.items() if len(v) == 1 and k in v}
 

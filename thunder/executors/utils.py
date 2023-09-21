@@ -31,7 +31,7 @@ def is_cuda_available() -> bool:
     return torch.cuda.is_available()
 
 
-def nvfuser_version() -> Optional[LooseVersion]:
+def nvfuser_version() -> LooseVersion | None:
     # Short-circuits if CUDA isn't available
     if not is_cuda_available():
         return None
@@ -79,7 +79,7 @@ comment_symbols = {
 # TODO Document this better
 # TODO Review non-proxy inputs as being consumed -- currently only proxies can be inputs and outputs of these regions
 class Region:
-    def __init__(self, trace: TraceCtx, producers, consumers, bound_symbols: List[BoundSymbol], executor, counter: int):
+    def __init__(self, trace: TraceCtx, producers, consumers, bound_symbols: list[BoundSymbol], executor, counter: int):
         # Stores input data
         self.trace = trace
         self.bound_symbols = bound_symbols
@@ -153,10 +153,10 @@ class Region:
 #   "root" nodes from which a topological sort could start
 class Graph:
     def __init__(self):
-        self.roots: List[Node] = []
+        self.roots: list[Node] = []
 
         self.producers: dict[Variable, Node] = {}
-        self.consumers: dict[Variable, List[Node]] = {}
+        self.consumers: dict[Variable, list[Node]] = {}
 
 
 # Represents a region and its parents (regions it consumes the output of) and
@@ -167,21 +167,21 @@ class Graph:
 class Node:
     def __init__(self, region):
         self.region = region
-        self.parents: List[Node] = []
-        self.children: List[Node] = []
+        self.parents: list[Node] = []
+        self.children: list[Node] = []
 
 
 # Constructs a graph of regions (regions and edges representing their
 #   producer-consumer relationships)
 # NOTE It is assumed that the list of regions is provided in a
 #   valid topological sort
-def graph_from_regions(regions: List[Region]) -> Graph:
+def graph_from_regions(regions: list[Region]) -> Graph:
     # Constructs the graph, producers, and consumers map
     # NOTE Graph construction is facilitated by creating a mapping from
     #   proxies (wrapped as Variables) to the region (wrapped as Nodes)
     #    producing them
     producers: dict[Variable, Node] = {}
-    consumers: dict[Variable, List[Node]] = {}
+    consumers: dict[Variable, list[Node]] = {}
     g = Graph()
     for region in regions:
         node = Node(region)
@@ -223,7 +223,7 @@ def graph_from_regions(regions: List[Region]) -> Graph:
 
 # A very simple linked list node for use in linearizations
 class LLNode:
-    def __init__(self, node: Node, next: Optional[LLNode]):
+    def __init__(self, node: Node, next: LLNode | None):
         self.node = node
         self._next = next
 
@@ -232,9 +232,9 @@ class LLNode:
 class Linearization:
     def __init__(self, graph: Graph):
         self.graph = graph
-        self.root_node: Optional[LLNode] = None
-        self.cur_node: Optional[LLNode] = None
-        self.tail_node: Optional[LLNode] = None
+        self.root_node: LLNode | None = None
+        self.cur_node: LLNode | None = None
+        self.tail_node: LLNode | None = None
 
     def append(self, Node):
         llnode = LLNode(Node, None)
@@ -251,14 +251,14 @@ class Linearization:
         self.cur_node = self.root_node
         return self.cur_node
 
-    def next(self) -> Optional[Node]:
+    def next(self) -> Node | None:
         if self.cur_node is None:
             return None
 
         self.cur_node = self.cur_node._next
         return self.cur_node
 
-    def peek(self) -> Optional[Node]:
+    def peek(self) -> Node | None:
         return self.cur_node._next
 
     # Merges two regions
@@ -330,11 +330,11 @@ class Linearization:
 #   NOTE This DESTROYS the given graph -- it could be changed
 #       to not to do so
 def toposort(graph: Graph, selector: Callable) -> Linearization:
-    candidates: List[Node] = graph.roots
+    candidates: list[Node] = graph.roots
 
     l = Linearization(graph)
 
-    last_added: Optional[Node] = None
+    last_added: Node | None = None
     while len(candidates) > 0:
         n: Node = selector(last_added, candidates)
 
@@ -357,7 +357,7 @@ def toposort(graph: Graph, selector: Callable) -> Linearization:
 # This function returns a List[Region] which changes the executor of meta regions to torchex
 #
 # NOTE this function assumes bound_symbols in region is toposorted
-def group_bookend_meta_ops(region: Region, producers, consumers) -> List[Region]:
+def group_bookend_meta_ops(region: Region, producers, consumers) -> list[Region]:
     # use TorchEx as meta_executor for meta regions
     meta_executor = TorchEx
 
