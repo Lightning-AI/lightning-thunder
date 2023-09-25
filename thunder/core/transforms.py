@@ -13,7 +13,17 @@ import inspect
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.clang import full, full_like, unsqueeze, squeeze, maybe_convert_to_dtype, slice_in_dim, sqrt, reciprocal, convolution
+from thunder.clang import (
+    full,
+    full_like,
+    unsqueeze,
+    squeeze,
+    maybe_convert_to_dtype,
+    slice_in_dim,
+    sqrt,
+    reciprocal,
+    convolution,
+)
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -2067,33 +2077,9 @@ def convolution_aug_fwd(
     output_padding,
     groups,
 ):
-    primal = convolution(
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        transposed,
-        output_padding,
-        groups
-    )
-    residuals = (
-        primal,
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        transposed,
-        output_padding,
-        groups
-    )
-    return VJPDual(
-        primal,
-        residuals
-    )
+    primal = convolution(a, weight, bias, stride, padding, dilation, transposed, output_padding, groups)
+    residuals = (primal, a, weight, bias, stride, padding, dilation, transposed, output_padding, groups)
+    return VJPDual(primal, residuals)
 
 
 @register_backward(prims.PrimIDs.CONVOLUTION)
@@ -2171,7 +2157,7 @@ def convolution_backward(
             # The pixes are stride away from each other in the original input.
             # Hence we need to dilate the gradient by dilation=stride - 1
             # so that there are stride - 1 zeros between the pixels.
-            [(0, 0, 0), (0, 0, 0)] + [(0, 0, s - 1) for s in stride]
+            [(0, 0, 0), (0, 0, 0)] + [(0, 0, s - 1) for s in stride],
         ),
         transpose_and_flip_weight(weight),
         None,
@@ -2182,7 +2168,7 @@ def convolution_backward(
         dilation,
         transposed,
         output_padding,
-        groups
+        groups,
     )
 
     def pad_to_input(grad):
