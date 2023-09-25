@@ -556,7 +556,6 @@ def test_direct_torch_lowerings():
         "torch.ones_like",
         "torch.nn.functional.linear",
         "torch.Tensor.view",
-        "torch.Tensor.type_as",
         "torch.ops.aten.embedding_backward",
         "torch.index_select",
         "torch.stack",
@@ -567,6 +566,7 @@ def test_direct_torch_lowerings():
         "torch.ones",
         "torch.outer",
         "torch.take_along_dim",
+        "torch.Tensor.type_as",
         # einsum is just a stub so there's nothing to lower atm
         "torch.einsum",
     }

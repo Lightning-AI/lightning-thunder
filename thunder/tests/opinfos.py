@@ -2238,6 +2238,31 @@ to_opinfo = OpInfo(
 )
 data_movement_ops.append(to_opinfo)
 
+
+def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, low=-1, high=1, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = (
+        (),
+        (0,),
+        (2,),
+        (1, 2),
+        (1, 2, 3),
+    )
+
+    for a_shape, b_shape in itertools.product(shapes, shapes):
+        yield SampleInput(make(a_shape), make(b_shape))
+        yield SampleInput(make(a_shape), make(b_shape, dtype=torch.float32))
+
+
+type_as_sample = OpInfo(
+    ltorch.type_as,
+    sample_input_generator=type_as_sample_generator,
+    torch_reference=torch.Tensor.type_as,
+)
+data_movement_ops.append(type_as_sample)
+
+
 opinfos.extend(data_movement_ops)
 
 #
