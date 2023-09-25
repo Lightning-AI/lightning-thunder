@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 import itertools
+from functools import partial
 
 # NOTE: Dependency on fdm and NumPy is temporary.
 # We will remove it once we have a native way to compute numerical derivatives.
@@ -280,16 +281,18 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     # The dot product of J^* v and u is the same as the dot product of v and J u.
     # This function checks that the dot product of J^* v and u is the same as the dot product of v and J u.
     # 〈J u, v〉 == 〈u, J* v〉
-    # Since u and v can be arbitrary, we take u = randn_like(primals), and v = randn_like(f(primals)).
+    # Since u and v can be arbitrary, we take u = rand_like(primals), and v = rand_like(f(primals)).
     # We compute J u using numerical_jvp, and J* v using Thunder's vjp. That way we check correctness of Thunder's vjp.
     # Using finite differences we can compute J u, but we can't compute J* v, without computing full J, which is expensive.
 
-    u = tree_map(make_tensor_like, primals)
+    make = partial(make_tensor_like, low=0, high=1)
+
+    u = tree_map(make, primals)
     outs_p, J_u = numerical_jvp(executor.make_callable(f, disable_torch_autograd_support=True))(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
-    v = tree_map(make_tensor_like, outs_p)
+    v = tree_map(make, outs_p)
     _, J_star_v = executor.make_callable(inline(vjp(f)), disable_torch_autograd_support=True)(primals, v)
 
     if not multiple_results:
