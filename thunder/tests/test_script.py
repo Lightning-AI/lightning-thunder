@@ -47,17 +47,11 @@ def skipif_not_python_3_10(f):
 
 
 def skipif_not_CI(f):
-    return pytest.mark.skipif(
-        not IN_CI,
-        reason=f"Not in CI.",
-    )(f)
+    return pytest.mark.skipif(not IN_CI, reason=f"Not in CI.")(f)
 
 
 def skipif_CI(f):
-    return pytest.mark.skipif(
-        IN_CI,
-        reason=f"In CI.",
-    )(f)
+    return pytest.mark.skipif(IN_CI, reason=f"In CI.")(f)
 
 
 def _helper_get_func_calls(gr):

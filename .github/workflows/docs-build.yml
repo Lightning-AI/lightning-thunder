@@ -9,12 +9,15 @@ defaults:
   run:
     shell: bash
 
+env:
+  TORCH_URL_RC: "https://download.pytorch.org/whl/test/cpu/torch_test.html"
+  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
+  TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
+
 jobs:
   # https://github.com/marketplace/actions/deploy-to-github-pages
   build-docs:
     runs-on: ubuntu-22.04
-    env:
-      TORCH_URL: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v3
@@ -28,7 +31,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}
+          key: pip-${{ hashFiles('requirements/*.txt') }}
           restore-keys: pip-
 
       #- name: install Texlive
@@ -40,8 +43,8 @@ jobs:
       - name: Install package & dependencies
         run: |
           pip --version
-          pip install . -U -r requirements.txt -r requirements/docs.txt \
-            --find-links ${TORCH_URL}
+          pip install --pre "torch>=2.1.0" --find-links="${TORCH_URL_RC}"
+          pip install . -U -r requirements/base.txt -r requirements/docs.txt
           pip list
 
       - name: Make Documentation

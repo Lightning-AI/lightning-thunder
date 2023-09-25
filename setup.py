@@ -23,7 +23,9 @@ def _load_requirements(path_dir: str, file_name: str = "requirements.txt") -> li
     return list(map(str, reqs))
 
 
-def _prepare_extras(requirements_dir: str = _PATH_REQUIRES, skip_files: tuple = ("devel.txt", "docs.txt")) -> dict:
+def _prepare_extras(
+    requirements_dir: str = _PATH_REQUIRES, skip_files: tuple = ("base.txt", "devel.txt", "docs.txt")
+) -> dict:
     # https://setuptools.readthedocs.io/en/latest/setuptools.html#declaring-extras
     # Define package extras. These are only installed if you specify them.
     # From remote, use like `pip install pytorch-lightning[dev, docs]`
@@ -64,7 +66,7 @@ setup(
     keywords=["deep learning", "AI"],
     python_requires=">=3.10, <3.11",
     setup_requires=["wheel"],
-    install_requires=_load_requirements(_PATH_ROOT),
+    install_requires=_load_requirements(_PATH_REQUIRES, file_name="base.txt"),
     extras_require=_prepare_extras(),
     project_urls={
         "Bug Tracker": "https://github.com/Lightning-AI/lightning-thunder/issues",

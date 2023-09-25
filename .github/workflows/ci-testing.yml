@@ -14,6 +14,12 @@ defaults:
   run:
     shell: bash
 
+env:
+  #CI: "true"
+  TORCH_URL_RC: "https://download.pytorch.org/whl/test/cpu/torch_test.html"
+  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
+  TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
+
 jobs:
 
   pytester:
@@ -45,7 +51,7 @@ jobs:
     - name: Set min. dependencies
       if: matrix.requires == 'oldest'
       run: |
-        for fpath in ('requirements.txt', 'requirements/test.txt'):
+        for fpath in ('requirements/base.txt', 'requirements/test.txt'):
             req = open(fpath).read().replace('>=', '==')
             open(fpath, 'w').write(req)
       shell: python
@@ -58,14 +64,15 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements.txt') }}
+        key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements/*.txt') }}
         restore-keys: |
           ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
 
     - name: Install package & dependencies
       run: |
         pip --version
-        pip install -e '.[test]' -U --find-links ${TORCH_URL}
+        pip install -e '.[test]' -U --pre \
+          --find-links=${TORCH_URL_STABLE} --find-links=${TORCH_URL_RC}
         pip list
       shell: bash
 

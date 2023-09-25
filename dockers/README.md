@@ -6,14 +6,14 @@ You can build it on your own, note it takes lots of time, be prepared.
 
 ```bash
 # build with specific arguments
-docker image build -t lightning:base-cuda-py3.10-cuda12.1.1 -f dockers/base-cuda/Dockerfile --build-arg "CUDA_VERSION=12.1.1" .
+docker image build -t lightning:ubuntu-cuda-py3.10-cuda12.1.1 -f dockers/ubuntu-cuda/Dockerfile --build-arg "CUDA_VERSION=12.1.1" .
 ```
 
 To run your docker use
 
 ```bash
 docker image list
-docker run --rm -it pytorch-lightning:base-cuda-py3.10-cuda11.7.0 bash
+docker run --rm -it pytorch-lightning:ubuntu-cuda-py3.10-cuda11.7.0 bash
 ```
 
 ## Run docker image with GPUs
@@ -33,5 +33,5 @@ sudo systemctl restart docker
 and later run the docker image with `--gpus=all`. For example,
 
 ```bash
-docker run --rm -it --gpus=all pytorchlightning/lightning:base-cuda-py3.10-cuda12.1.0
+docker run --rm -it --gpus=all pytorchlightning/lightning:ubuntu-cuda-py3.10-cuda12.1.0
 ```

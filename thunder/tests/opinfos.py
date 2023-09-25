@@ -2172,6 +2172,14 @@ tril_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.complex32,),
         ),
+        # PyTorch 2.0 doesn't support CUDA bfloat16 tril
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CUDA,),
+            dtypes=(datatypes.bfloat16,),
+            active_if=(LooseVersion(torch.__version__) < "2.1"),
+        ),
     ),
 )
 conditional_and_mask_ops.append(tril_opinfo)

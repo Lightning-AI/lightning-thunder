@@ -79,16 +79,17 @@ COPY requirements/ requirements/
 ENV PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages"
 
 RUN \
-    wget https://bootstrap.pypa.io/get-pip.py --progress=bar:force:noscroll --no-check-certificate && \
-    python${PYTHON_VERSION} get-pip.py && \
-    rm get-pip.py && \
+    curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    pip install torch -U --pre -f "https://download.pytorch.org/whl/nightly/cu${CUDA_VERSION_MM//'.'/''}/torch_nightly.html" && \
-    pip install -U -r requirements/test.txt  && \
+    pip install -U -r requirements/base.txt -r requirements/test.txt \
+      --find-links="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}" \
+      --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/torch_test.html" \
+    && \
     rm -rf requirements/
 
 RUN \
     # Show what we have
     pip --version && \
     pip list && \
-    python -c "import sys; ver = sys.version_info ; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver"
+    python -c "import sys; ver = sys.version_info ; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver" && \
+    python -c "import torch; print(torch.__version__)"

@@ -34,6 +34,7 @@ addopts = [
 filterwarnings = [
     "error::FutureWarning",
 ]
+timeout = 900
 # xfail_strict = true  # todo
 junit_duration_report = "call"
 
