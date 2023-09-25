@@ -446,6 +446,23 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         comp(actual_out, out)
 
 
+@ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grad = torch.autograd.grad(out, sample.args[1], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(inline(vjp(flat_op)), disable_torch_autograd_support=True)(flat_args, (v,))
+        assert grad_lhs is None, "grad_lhs should be None"
+        comp(actual_out, out, equal_nan=True)
+        comp(grad_rhs, expected_grad[0], equal_nan=True)
+
+
+
 # TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly

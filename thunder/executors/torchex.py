@@ -727,9 +727,9 @@ def _elementwise_binary_check(a: Union[TensorProxy, Number], b: Union[TensorProx
     return not (isinstance(a, Number) and isinstance(b, Number))
 
 
-def _elementwise_binary_factory(name: str) -> Callable:
+def _elementwise_binary_factory(name: str, *, module=torch) -> Callable:
     def fn(bsym: BoundSymbol, a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> BoundSymbol:
-        sym = Symbol(name=name, meta=None, _module=torch)
+        sym = Symbol(name=name, meta=None, _module=module)
         tbsym = BoundSymbol(sym, args=(a, b), kwargs={}, output=bsym.output)
 
         return tbsym
@@ -796,6 +796,7 @@ pow = _elementwise_binary_factory("pow")
 # TODO Remainder bool isn't implement, so mark it as non-fusible
 remainder = _elementwise_binary_factory("remainder")
 sub = _add_sub_factory("sub")
+zeta = _elementwise_binary_factory("zeta", module=torch.special)
 
 #
 # Conditional and masking operations
@@ -1535,6 +1536,8 @@ _ops_map.update(
         PrimIDs.REMAINDER: (_elementwise_binary_check, remainder),
         "torch.sub": (_add_sub_check, sub),
         PrimIDs.SUB: (_elementwise_binary_check, sub),
+        "torch.special.zeta": (_elementwise_binary_check, zeta),
+        PrimIDs.ZETA: (_elementwise_binary_check, zeta),
         # Conditional and masking operations
         "torch.masked_fill": (_always_executable, masked_fill),
         "torch.tril": (_tril_check, tril),

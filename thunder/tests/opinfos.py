@@ -2046,6 +2046,44 @@ true_divide_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(true_divide_opinfo)
 
+
+zeta_opinfo = OpInfo(
+    clang.zeta,
+    # NOTE The domain for x is any value greater than 1.
+    # y's domain is any value greater than 0.
+    domain=(1.0 + eps, math.inf),
+    sample_input_generator=elementwise_binary_generator,
+    torch_reference=torch.special.zeta,
+    test_directives=(
+        # NOTE Torch does not support zeta with complex, fp16 or bf16 dtypes
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating, datatypes.bfloat16, datatypes.float16),
+        ),
+        # NOTE Skip Nvfuser executor because of segmentation fault
+        # See https://github.com/NVIDIA/Fuser/issues/922 for more details.
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("nvFuser",),
+            dtypes=(datatypes.exact,),
+        ),
+        # NOTE Skip standard vjp test because of issues 1095 and 1104
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("TorchEx",),
+            dtypes=(datatypes.float64,),
+        ),
+        # NOTE zeta(x, y) returns NaN when x < 1
+        DecorateInfo(
+            custom_comparator(partial(assert_close, equal_nan=True)),
+        ),
+    ),
+)
+elementwise_binary_ops.append(zeta_opinfo)
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
 

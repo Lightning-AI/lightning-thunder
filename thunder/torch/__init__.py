@@ -204,6 +204,8 @@ class torchsymbol:
                 id = f"torch.Tensor.{name}"
             elif hasattr(torch.ops.aten, name):
                 id = f"torch.ops.aten.{name}"
+            elif hasattr(torch.special, name):
+                id = f"torch.special.{name}"
             else:
                 utils.check(
                     False,
@@ -659,6 +661,11 @@ def sub(a, b, *, alpha=None):
 @torchsymbol(torch.true_divide, is_method=True)
 def true_divide(a: Number | TensorLike, b: Number | TensorLike) -> Number | TensorLike:
     return clang.true_divide(a, b)
+
+
+@torchsymbol(torch.special.zeta)
+def zeta(a, b):
+    return clang.zeta(a, b)
 
 
 #

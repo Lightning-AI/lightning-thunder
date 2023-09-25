@@ -1525,6 +1525,11 @@ def true_divide(a, b):
         a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
+@clang_ctx
+def zeta(a, b):
+    return _elementwise_binary_wrapper(
+        a, b, prim=prims.zeta, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
 
 #
 # Conditional operators

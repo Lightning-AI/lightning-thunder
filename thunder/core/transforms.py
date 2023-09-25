@@ -42,6 +42,7 @@ from thunder import clang
 
 import torch
 import numpy as np
+import thunder.torch as ltorch
 
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
@@ -1549,7 +1550,9 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.NEG: lambda x: (prims.neg(x), tuple()),
+    prims.PrimIDs.ZETA: lambda x, y: (ltorch.zeta(x, y), (x, y)),
 }
+
 
 # Mapping from symbols to backward functions used in VJP
 # The backward function takes the residuals and cotangents and returns the
@@ -1589,6 +1592,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.NEG: lambda g: -g,
+    prims.PrimIDs.ZETA: lambda x, y, g: (None, g * -x * ltorch.zeta(x + 1., y)),
 }
 
 

@@ -134,6 +134,7 @@ class PrimIDs(Enum):
     POW = auto()
     REMAINDER = auto()
     SUB = auto()
+    ZETA = auto()
     # Conditional prims
     WHERE = auto()
     # Reduction prims
@@ -1275,6 +1276,12 @@ sub = _make_elementwise_binary_prim(
     "sub",
     number_fn=operator.sub,
     supported_input_dtypes=math_dtypes,
+)
+
+zeta = _make_elementwise_binary_prim(
+    PrimIDs.ZETA,
+    "zeta",
+    supported_input_dtypes=fp_math_dtypes,
 )
 
 #
