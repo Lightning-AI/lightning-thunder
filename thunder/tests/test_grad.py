@@ -40,6 +40,7 @@ vjp_op_force = {
     "abs",  # There's no clang.abs or prims.abs OpInfo, only torch.abs
     "cross_entropy",
     "softmax",
+    "to",
     "linear",
     "matmul",
     "var",
@@ -70,16 +71,21 @@ def _generate_supported_op_list(checker):
     Returns:
         generator: A generator of operator info objects that support vjp.
     """
+    from thunder.core.transforms import transform_skip_list
+
     for opinfo in opinfos:
         if opinfo not in tensor_creation_ops and opinfo.name not in op_skip:
             if opinfo.dtypes().intersection({dtypes.float64}) == set():
                 continue
             samples = iter(opinfo.sample_inputs("cpu", dtypes.float64, requires_grad=True))
-            sample = next(samples)
-            trc = thunder.trace()(opinfo.op, *sample.args, **sample.kwargs)
-            all_supported = all(checker(s) for s in trc.bound_symbols)
-            if all_supported:
-                yield opinfo.name
+            while (sample := next(samples, None)) is not None:
+                trc = thunder.trace()(opinfo.op, *sample.args, **sample.kwargs)
+                all_skipped = all(s.sym.id in transform_skip_list for s in trc.bound_symbols)
+                if all_skipped:
+                    continue
+                all_supported = all(checker(s) for s in trc.bound_symbols)
+                if all_supported:
+                    yield opinfo.name
 
 
 def _vjp_symbol_checker(symbol):
@@ -304,7 +310,7 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     if J_u_v.isnan().any():
         # TODO: find a better way to handle NaNs in finite differences
         return  # skip this sample
-    torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol)
+    torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol, check_device=False)
 
 
 def _is_differentiable(x):

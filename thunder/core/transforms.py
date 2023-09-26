@@ -2052,6 +2052,18 @@ def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
     return g, None, None
 
 
+@register_augmented_forward(prims.PrimIDs.DEVICE_PUT)
+def device_put_aug_fwd(a: TensorProxy, device: Device) -> TensorProxy:
+    primal = prims.device_put(a, device)
+    residuals = (a.device,)
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.DEVICE_PUT)
+def device_put_backward(orig_device, g):
+    return prims.device_put(g, orig_device), None
+
+
 @register_augmented_forward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
 def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
     primal = prims.convert_element_type(a, dtype)
@@ -2617,7 +2629,11 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.FULL)
+nondifferentiable_vjp_symbols = (
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.SIGNBIT,
+    prims.PrimIDs.FULL
+)
 
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
@@ -2791,9 +2807,16 @@ def backward_pass(forward_env, trace, init_cotangents):
         else:
             safe_map(write, symbol.args, result)
 
+    def get_inexact_dtype_or_none(x):
+        if isinstance(x, TensorProxy) and dtypes.is_inexact_dtype(x.dtype):
+            return x
+        else:
+            return None
+
     gargs = tree_map(read_with_none, tuple(trace.args))
     gkwargs = tree_map(read_with_none, trace.kwargs)
     gkwargs = {k: v for k, v in gkwargs.items() if v is not None}
+    gargs, gkwargs = tree_map(get_inexact_dtype_or_none, (gargs, gkwargs))
     return gargs + (gkwargs,) if len(gkwargs) != 0 else gargs
 
 
@@ -2915,7 +2938,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
-    unpacking_trace = construct_trace(rename_proxies=False)(unpacking_fn, (saved_tensors, saved_other), cotangents)
+    unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(unpacking_fn, (saved_tensors, saved_other), cotangents)
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
     backward_trace.args = unpacking_trace.args

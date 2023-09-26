@@ -1586,13 +1586,13 @@ def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
     def foo():
-        return clang.maybe_convert_to_dtype(1, dtype)
+        return clang.add(1, 2)
 
     trace = thunder.trace()(foo)
 
     assert len(trace.bound_symbols) == 2
     symbol = trace.bound_symbols[0]
-    assert symbol.sym.name == "convert_element_type"
+    assert symbol.sym.name == "add"
     assert symbol.are_all_args_constant
 
     def bar(a, b):
@@ -1994,7 +1994,6 @@ def test_eval_trace_duplicate_output(executor, device, _):
 
     for foo in [foo1, foo2]:
         foo_trace = thunder.trace()(identity(foo), a)
-        assert len(foo_trace.bound_symbols) == 4
         assert len(foo_trace.output) == 2
         assert foo_trace.output[0].name == foo_trace.output[1].name
 
@@ -2038,9 +2037,8 @@ def test_transforms_identity(executor, device, _):
         assert trace.bound_symbols[-2].sym.id == Transforms.IdentityOp
         trace = trace.bound_symbols[-2].kwargs.get("trace", None)
 
-    assert len(trace.bound_symbols) == 8
-    assert trace.bound_symbols[-5].sym.name == "add"
-    assert trace.bound_symbols[-4].sym.name == "convert_element_type"
+    assert len(trace.bound_symbols) == 7
+    assert trace.bound_symbols[-4].sym.name == "add"
     assert trace.bound_symbols[-3].sym.name == "mul"
     assert trace.bound_symbols[-2].sym.name == "mul"
 
@@ -2074,10 +2072,9 @@ def test_transforms_inline(executor, device, _):
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
 
     inlined_nested_id_trace = thunder.trace()(inline(nested_id_func), a, b)
-    assert len(inlined_nested_id_trace.bound_symbols) == 6
+    assert len(inlined_nested_id_trace.bound_symbols) == 5
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in inlined_nested_id_trace.bound_symbols)
-    assert inlined_nested_id_trace.bound_symbols[-4].sym.name == "add"
-    assert inlined_nested_id_trace.bound_symbols[-3].sym.name == "convert_element_type"
+    assert inlined_nested_id_trace.bound_symbols[-3].sym.name == "add"
     assert inlined_nested_id_trace.bound_symbols[-2].sym.name == "mul"
 
     transforms = (inline, identity, inline, inline, identity, identity, inline)
@@ -2087,7 +2084,7 @@ def test_transforms_inline(executor, device, _):
     # Since the outer-most transform is inline, the trace should not contain
     # any identity transforms.
     transformed_trace = thunder.trace()(transformed_func, a, b)
-    assert len(transformed_trace.bound_symbols) == 6
+    assert len(transformed_trace.bound_symbols) == 5
     assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
 
 
@@ -2863,6 +2860,26 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     assert "torch.nn.functional.scaled_dot_product_attention" in tuple(
         bsym.sym.id for bsym in history[-1].bound_symbols
     )
+
+
+@instantiate(dtypes=NOTHING)
+def test_no_passthrough_symbol(executor, device, _):
+    # A test case for the situation reported in
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1131
+    # When an operation simply passes through its input, we should not
+    # add it to the trace.
+
+    def func(x):
+        return x.type_as(x)
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    compiled = executor.make_callable(func)
+    out = compiled(x)
+    assert out is x
+    initial_trace = thunder.last_traces(compiled)[0]
+    assert len(initial_trace.bound_symbols) == 2
+    assert initial_trace.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
+    assert initial_trace.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
 @instantiate(dtypes=NOTHING)

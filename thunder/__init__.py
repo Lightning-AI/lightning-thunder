@@ -503,6 +503,7 @@ def trace(
     inline_trace: bool = True,
     rename_proxies: bool = True,
     include_return_statement: bool = True,
+    use_dce: bool = True,
 ) -> Callable:
     def _trace(
         fn,
@@ -532,6 +533,8 @@ def trace(
                 prims.python_return(result)
 
             trace.set_output(result)
+            if use_dce:
+                trace, _ = executors.passes.dce(trace)
 
         finally:
             # Resets contexts

@@ -2219,24 +2219,26 @@ data_movement_ops.append(convert_element_type_opinfo)
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    to_dtype = torch.complex128 if dtype.is_complex else torch.float64
+
     # None
     yield SampleInput(make(4, 4))
 
     # device
     yield SampleInput(make(4, 4), device)
     yield SampleInput(make(4, 4), "cpu")
-    yield SampleInput(make(4, 4), "cpu", dtype=torch.complex128)
+    yield SampleInput(make(4, 4), "cpu", dtype=to_dtype)
 
     # dtype
     yield SampleInput(make(4, 4), dtype)
 
     # device and dtype
     yield SampleInput(make(4, 4), device, dtype)
-    yield SampleInput(make(4, 4), "cpu", torch.complex128)
+    yield SampleInput(make(4, 4), "cpu", to_dtype)
 
     # tensor
     yield SampleInput(make(4, 4), make(2, 2))
-    yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=torch.complex128))
+    yield SampleInput(make(4, 4), make(2, 2, device="cpu", dtype=to_dtype))
 
 
 to_opinfo = OpInfo(
@@ -3608,12 +3610,12 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # Randomly select a fraction of the elements in a tensor and set them to specified value
     def _replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
-        flat = torch.flatten(a)
+        flat = torch.flatten(a.detach().clone())
         num_values_to_replace: int = math.floor(flat.numel() * percentage)
         choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
         choice = torch.asarray(choice_np, device=a.device)
         flat[choice] = value
-        return flat.reshape(a.shape)
+        return flat.reshape(a.shape).requires_grad_(a.requires_grad)
 
     for shape, dim, keepdim in cases:
         yield (SampleInput(make(shape), dim, keepdim))
@@ -3622,9 +3624,9 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if dtype.is_floating_point:
             inf_input_tensor = make(shape)
             # Set a quarter of elements to positive infinity
-            _replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
+            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
             # Set a quarter of elements to negative infinity
-            _replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
+            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
             yield (SampleInput(inf_input_tensor, dim, keepdim))
 
 
@@ -4925,7 +4927,7 @@ def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_gr
 
     # mask cases
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1).tril()
+    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
     yield SampleInput(q, k, v, attn_mask=bool_attn_mask, is_causal=False)
 
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -4935,7 +4937,7 @@ def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_gr
     # mask with extra padding: this case will raise if https://github.com/pytorch/pytorch/issues/103749 is fixed
     # when that happens, update the SDPA impl and remove this comment
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1).tril()
+    bool_attn_mask = make((L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
     bool_attn_mask[-1, :] = False
     yield SampleInput(q, k, v, attn_mask=bool_attn_mask, dropout_p=0.0, is_causal=False)
 
