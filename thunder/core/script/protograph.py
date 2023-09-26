@@ -8,8 +8,8 @@ import itertools
 import marshal
 import textwrap
 from types import CodeType, MappingProxyType
-from typing import cast, final, Any, Deque, Literal, NamedTuple, TypeVar
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from typing import cast, final, Any, Callable, Deque, Generic, Literal, NamedTuple, TypeVar
+from collections.abc import Iterable, Iterator, Mapping
 
 from thunder.core.script.algorithms import TypedDiGraph, flatten_map, sort_adjacent
 from thunder.core.script.instrumentation import InstrumentingBase
@@ -94,8 +94,7 @@ class AbstractValue:
                     {self}
                     {new_self}
                     {x}
-                See `flatten_map`.
-            """
+                See `flatten_map`."""
             raise ValueError(textwrap.dedent(msg))
 
         return new_self._unpack_apply(replace_map)
@@ -103,6 +102,27 @@ class AbstractValue:
     def _unpack_apply(self, _: ReplaceMap) -> AbstractValue:
         """Recursively update any constituent references in the abstract value."""
         return self
+
+
+@dataclasses.dataclass(frozen=True, eq=True)
+class _TrivialComposite(AbstractValue, Generic[T]):
+    """Models an AbstractValue that references other (possibly also AbstractValue) state.
+
+    Note: `constituents` should not contain cycles.
+    """
+
+    constituents: tuple[T, ...]
+
+    def __getitem__(self, index: int) -> T:
+        return self.constituents[index]
+
+    def _unpack_apply(self, replace_map: ReplaceMap) -> AbstractValue:
+        return self.__class__(**self._unpack_kwargs(replace_map))
+
+    def _unpack_kwargs(self, replace_map: ReplaceMap) -> dict[str, Any]:
+        """Allow subclasses to participate in `_unpack_apply`."""
+        constituents = (i.substitute(replace_map) if isinstance(i, AbstractValue) else i for i in self.constituents)
+        return dict(constituents=tuple(constituents))
 
 
 # =============================================================================
@@ -137,6 +157,7 @@ class AbstractValue:
 # symbolic representation is sufficient to emit the materialized representation,
 # but the reverse is not true.
 EdgeIndex = Literal[0, -1]
+ValueIndex = int | tuple[int, ...]
 
 
 @dataclasses.dataclass(frozen=True, eq=True)
@@ -144,7 +165,7 @@ class _OutputRef:
     """Identifies the producer of a value within a ProtoBlock."""
 
     instruction: ThunderInstruction  #  Acts as a key for the producer Flow.
-    idx: int  #                         Indexes the node's outputs.
+    idx: ValueIndex  #                  Indexes the node's outputs.
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -156,10 +177,13 @@ class _Symbolic:
     Input = VariableKey | _OutputRef
     inputs: tuple[Input, ...]
 
-    # int:              Aliases the input at this position
+    # ValueIndex:       Aliases the input at this position.
     # AbstractValue:   New value created by this instruction
-    Output = int | AbstractValue
+    Output = ValueIndex | AbstractValue
     outputs: tuple[Output, ...]
+
+    def __post_init__(self) -> None:
+        assert not any(isinstance(o, ExternalRef) for o in self.outputs), self
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -193,15 +217,11 @@ class IntraBlockFlow:
     @functools.cached_property
     def materialized(self) -> MappingProxyType[ThunderInstruction, _Materialized]:
         """Walk the flow resolving references as they we encounter them."""
-
-        def resolve(inputs: AbstractValues, o: _Symbolic.Output) -> AbstractValue:
-            assert isinstance(o, (int, AbstractValue))
-            return inputs[o] if isinstance(o, int) else o
-
         result: dict[ThunderInstruction, _Materialized] = {}
+        unused: IntraBlockFlow.EndVariables = MappingProxyType({})  # `end` should never be needed.
         for instruction, node in self.symbolic:
-            inputs = tuple(self._getitem_impl(0, i, (self._begin, self._end), result) for i in node.inputs)
-            outputs = [resolve(inputs, o) for o in node.outputs]
+            inputs = tuple(self._getitem_impl(0, i, (self._begin, unused), result) for i in node.inputs)
+            outputs = [resolve_composites(inputs, o) for o in node.outputs]
             assert all(isinstance(o, AbstractValue) for o in outputs), outputs
             result[instruction] = _Materialized(tuple(inputs), tuple(outputs))
 
@@ -363,7 +383,7 @@ class IntraBlockFlow:
             return ValueMissing()
 
         elif isinstance(key, _OutputRef):
-            return materialized[key.instruction].outputs[key.idx]
+            return resolve_composites(materialized[key.instruction].outputs, key.idx)
 
         assert isinstance(key, VariableKey)
         if key.scope == VariableScope.CONST:
@@ -486,6 +506,12 @@ class ProtoGraph:
         for protoblock in self.protoblocks:
             yield from ((protoblock, target) for target, _ in protoblock.jump_targets)
 
+    @property
+    def flat_flow(self) -> Iterable[tuple[ThunderInstruction, tuple[_Symbolic, _Materialized]]]:
+        for protoblock in self.protoblocks:
+            for instruction, node in protoblock.flow.symbolic:
+                yield instruction, (node, protoblock.flow.materialized[instruction])
+
     def substitute(self, transformed: dict[ProtoBlock, ProtoBlock]) -> ProtoGraph:
         """Copies the ProtoGraph with block level substitutions while retaining the same topology."""
         assert not (delta := OrderedSet(transformed.keys()) - OrderedSet(self)), delta
@@ -498,14 +524,14 @@ class ProtoGraph:
 
         return ProtoGraph(transformed.values())
 
-    def transform(self, replace_map: dict[AbstractValue, AbstractValue]) -> ProtoGraph:
+    def transform(self, replace_map: ReplaceMap) -> ProtoGraph:
         """Copies the ProtoGraph with value replacements.
 
         NOTE: This is strictly a condensing transform, and this is only invertable
               (using another `.transform` call) in trivial cases.
         """
         assert (v := replace_map.get(ValueMissing(), missing := object())) is missing, v
-        replace_map = dict(flatten_map(replace_map))
+        replace_map: ReplaceMap = dict(flatten_map(replace_map))
         return self.substitute({protoblock: protoblock.transform(replace_map) for protoblock in self})
 
     def unlink(self) -> ProtoGraph:
@@ -517,6 +543,29 @@ class ProtoGraph:
             transformed[protoblock] = new_protoblock = protoblock.transform(replace_map)
             new_protoblock.__post_init__()
         return self.substitute(transformed)
+
+    def replace_symbolic(
+        self,
+        replace_fn: Callable[[ThunderInstruction, _Symbolic], _Symbolic | None],
+        retain_uses: bool = False,
+    ) -> ProtoGraph:
+        replacements: dict[ThunderInstruction, tuple[_Symbolic, _Symbolic]] = {}
+        for instruction, (old_symbolic, _) in self.flat_flow:
+            new_symbolic = replace_fn(instruction, old_symbolic)
+            if new_symbolic is None:
+                continue
+
+            assert len(old_symbolic.inputs) == len(new_symbolic.inputs), (old_symbolic, new_symbolic)
+            assert len(old_symbolic.outputs) == len(new_symbolic.outputs), (old_symbolic, new_symbolic)
+            replacements[instruction] = (old_symbolic, new_symbolic)
+
+        transformed: dict[ProtoBlock, ProtoBlock] = {}
+        for protoblock in (unlinked := self.unlink()):
+            new_symbolic_flow = {k: replacements.get(k, (None, v))[1] for k, v in protoblock.flow.symbolic}
+            new_flow = dataclasses.replace(protoblock.flow, _flow=new_symbolic_flow)
+            transformed[protoblock] = new_protoblock = ProtoBlock(protoblock.raw_instructions, new_flow)
+            new_protoblock.uses.update(protoblock.uses if retain_uses else ())
+        return unlinked.substitute(transformed)
 
     def __iter__(self) -> Iterator[ProtoBlock]:
         yield from self.protoblocks
@@ -581,12 +630,27 @@ class ExternalRef(AbstractValue):
     key: VariableKey
 
 
+# =============================================================================
+# == Composite values =========================================================
+# =============================================================================
 @dataclasses.dataclass(frozen=True, eq=True)
-class AbstractPhiValue(AbstractValue):
-    """A value which aliases one of several inputs."""
+class _Composite(_TrivialComposite[T]):
+    v: AbstractValue
 
-    constituents: tuple[AbstractValue, ...]
+    def _unpack_kwargs(self, replace_map: ReplaceMap) -> dict[str, Any]:
+        return {**super()._unpack_kwargs(replace_map), **dict(v=self.v.substitute(replace_map))}
 
+
+class CompositeRef(_Composite[_Symbolic.Output]):
+    pass
+
+
+class CompositeValue(_Composite[AbstractValue]):
+    pass
+
+
+@dataclasses.dataclass(frozen=True, eq=True)
+class AbstractPhiValue(_TrivialComposite[AbstractValue], AbstractValue):
     def __post_init__(self) -> None:
         # Flatten nested PhiValues. e.g.
         #   𝜙[𝜙[A, B], 𝜙[A, C]] -> 𝜙[A, B, C]
@@ -596,20 +660,48 @@ class AbstractPhiValue(AbstractValue):
         constituents = tuple(v for _, v in sorted({hash(v): v for v in constituents}.items()))
         object.__setattr__(self, "constituents", constituents)
 
+    def __getitem__(self, _: int) -> AbstractValue:
+        # The semantics of indexing into an `AbstractPhiValue`` are not well defined:
+        #  - The order of `constituents` is arbitrary
+        #  - It's unclear if the desire is to select one consitiuent or create a new `AbstractPhiValue`
+        #    which indexes into each constituent.
+        # If a concrete use case emerges we can tackle it; until then we refuse for safety.
+        raise NotImplementedError
+
     def _unpack_apply(self, replace_map: ReplaceMap) -> AbstractValue:
-        result = self.__class__(tuple(i.substitute(replace_map) for i in self.constituents))
+        result = super()._unpack_apply(replace_map)
+        assert isinstance(result, AbstractPhiValue)
         return result if len(result.constituents) > 1 else result.constituents[0]
 
     @classmethod
     def flatten(cls, v: AbstractValue) -> Iterable[AbstractValue]:
-        if isinstance(v, AbstractPhiValue):
-            for i in v.constituents:
-                yield from cls.flatten(i)
-        else:
-            yield v
+        constituents = [cls.flatten(i) for i in v.constituents] if isinstance(v, AbstractPhiValue) else [[v]]
+        yield from itertools.chain(*constituents)
+
+
+def resolve_composites(indexed: AbstractValues, output: _Symbolic.Output) -> AbstractValue:
+    if isinstance(output, int):
+        output = (output,)
+
+    if isinstance(output, tuple):
+        assert output and all(isinstance(idx_i, int) for idx_i in output), output
+        result = indexed[output[0]]
+        for idx_i in output[1:]:
+            assert isinstance(result, _TrivialComposite), result  # We can only unpack a (possibly nested) composite.
+            result = result[idx_i]
+        return result
+
+    elif isinstance(output, CompositeRef):
+        return CompositeValue(tuple(resolve_composites(indexed, i) for i in output.constituents), output.v)
+
+    return output
 
 
 def is_detail(v: AbstractValue) -> bool:
-    if isinstance(v, AbstractRef) or type(v) is AbstractValue:
+    if isinstance(v, (AbstractRef, CompositeRef)) or type(v) in (AbstractValue, _TrivialComposite, _Composite):
         return True
+
+    elif isinstance(v, CompositeValue):
+        return is_detail(v.v) or any(is_detail(i) for i in v.constituents)
+
     return isinstance(v, AbstractPhiValue) and any(is_detail(i) for i in v.constituents)

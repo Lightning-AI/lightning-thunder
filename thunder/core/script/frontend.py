@@ -28,6 +28,7 @@ from thunder.core.script.protograph import (
     is_detail,
     AbstractPhiValue,
     AbstractValue,
+    CompositeValue,
     ExternalRef,
     IntermediateValue,
     IntraBlockFlow,
@@ -310,7 +311,7 @@ def _bind_to_graph(
         if isinstance(value, ValueMissing):
             return Value(value=NULL)
 
-        elif isinstance(value, (IntermediateValue, AbstractPhiValue)):
+        elif isinstance(value, (IntermediateValue, CompositeValue, AbstractPhiValue)):
             # For now we discard any information and just treat them as opaque.
             # TODO(robieta): refine
             return Value()
@@ -366,8 +367,7 @@ def _bind_to_graph(
             ]
 
             for output in OrderedSet(node.outputs).difference(node.inputs):
-                if not (output.is_const or output.is_global):
-                    assert output.node is None, (node, output.node)
+                if output.node is None and not (output.is_const or output.is_global):
                     output.node = node
 
             if node.i.opname in ("LOAD_ATTR", "LOAD_METHOD"):

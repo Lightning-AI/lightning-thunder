@@ -9,17 +9,22 @@ from typing_extensions import ParamSpec
 
 from thunder.core.script.algorithms import compute_condense_map
 from thunder.core.script.protograph import (
+    is_detail,
+    _Symbolic,
+    AbstractPhiValue,
     AbstractRef,
     AbstractValue,
-    AbstractPhiValue,
+    CompositeRef,
+    CompositeValue,
     ExternalRef,
+    IntermediateValue,
     IntraBlockFlow,
     ProtoGraph,
     ProtoBlock,
     VariableKey,
     ValueMissing,
 )
-from thunder.core.script.python_ir_data import VariableScope, RAISE_RETURN_INSTRUCTIONS
+from thunder.core.script.python_ir_data import ThunderInstruction, VariableScope, RAISE_RETURN_INSTRUCTIONS
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
 ValueEdges = Iterable[tuple[AbstractValue, AbstractValue]]
@@ -57,6 +62,9 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
         protoblock = blocks_to_process.popleft()
         target_uses = tuple(itertools.chain(*(uses[target] for target, _ in protoblock.jump_targets)))
         end_uses[protoblock].update(k for k in target_uses if k.scope != VariableScope.CONST)
+
+        # The reason we can ignore ALL `_OutputRef`s (including those that would index into a composite)
+        # is that the (potential) composite's dependencies are already handled by `ProtoBlock._flow_uses`.
         transitive_uses = OrderedSet(
             source
             for use in target_uses
@@ -154,7 +162,17 @@ def _condense_values(
     return proto_graph.transform(replace_map), bool(replace_map)
 
 
-def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
+def _connect_protograph(proto_graph: "ProtoGraph") -> "ProtoGraph":
+    proto_graph, _ = _add_transitive(proto_graph)
+    proto_graph, _ = _condense_values(proto_graph, _inter_block_edges, _graph_input_edges)
+    assert not (missing := _get_missing_transitive(proto_graph)), missing
+    for protoblock in proto_graph:
+        for k, v in protoblock.begin_state:
+            assert not is_detail(v), (k, v)
+    return proto_graph
+
+
+def _tuple_fold(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     """Replace tuple accesses (`BINARY_SUBSCR`, `UNPACK_SEQUENCE` instructions) with their members, if known.
 
     Note: The pass, as it is currently written, only folds one layer of tuples, from one known source, the
@@ -162,64 +180,50 @@ def _tuple_fold(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     where we would want to call this in a loop with other operations that fold values. In other words, tuple folding
     would be more powerful the more `AbstractValue`s we can prove to be tuples with a known source.
     """
+    original_graph = proto_graph
+    replacements: dict[ThunderInstruction, tuple[_Symbolic.Output, ...]] = {}
+    known_tuples: OrderedSet[IntermediateValue] = OrderedSet()
 
-    @dataclasses.dataclass(slots=True, unsafe_hash=True, eq=True)
-    class TupleKey:
-        tup_value: AbstractValue
-        idx: int
+    def replace_fn(instruction: ThunderInstruction, old_symbolic: _Symbolic) -> _Symbolic | None:
+        if (new_outputs := replacements.pop(instruction, None)) is not None:
+            return dataclasses.replace(old_symbolic, outputs=new_outputs)
 
-        def __lt__(self, other: "TupleKey") -> bool:
-            return self.__hash__() < other.__hash__()
+    for instruction, (_, node) in proto_graph.flat_flow:
+        if instruction.opname == "BUILD_TUPLE" and isinstance(output := node.outputs[0], IntermediateValue):
+            assert len(node.outputs) == 1, node.outputs
+            constituents = tuple(range(-len(node.inputs), 0))
+            replacements[instruction] = (CompositeRef(v=output, constituents=constituents),)
+            known_tuples.add(output)
 
-    # {(tup, idx): val}
-    tuple_sources: collections.defaultdict[TupleKey, AbstractValue] = collections.defaultdict()
-    queries: collections.defaultdict[TupleKey, AbstractValue] = collections.defaultdict()
+    while replacements:
+        proto_graph = _connect_protograph(proto_graph.replace_symbolic(replace_fn))
+        assert not replacements, replacements
+        for instruction, (symbolic_node, materialized_node) in proto_graph.flat_flow:
+            if (opname := instruction.opname) == "BINARY_SUBSCR":
+                to_index, index = materialized_node.inputs
+                is_tuple = isinstance(to_index, CompositeValue) and to_index.v in known_tuples
+                is_const_idx = isinstance(index, ExternalRef) and index.key.scope == VariableScope.CONST
+                if is_tuple and is_const_idx and isinstance(idx := index.key.identifier, int):
+                    replacements[instruction] = ((-2, idx),)
 
-    for pb in protograph:
-        for instruction, node in pb.node_flow:
-            if (opname := instruction.opname) == "BUILD_TUPLE":
-                assert node.inputs is not None  # The elements of the tuple
-                assert len(node.outputs) == 1  # The output tuple
-                tuple_sources.update({TupleKey(node.outputs[0], _i): i for _i, i in enumerate(reversed(node.inputs))})
-            elif opname == "BINARY_SUBSCR":
-                assert len(node.inputs) == 2  # The tuple, and the index
-                assert len(node.outputs) == 1  # The result of tup[idx]
-                if isinstance(ref := node.inputs[0], ExternalRef):
-                    if ref.key.scope == VariableScope.CONST and isinstance(ref.key.identifier, int):
-                        queries.update({TupleKey(node.inputs[1], ref.key.identifier): node.outputs[0]})
             elif opname == "UNPACK_SEQUENCE":
-                assert len(node.inputs) == 1  # The tuple to unpack
-                assert len(node.outputs)  # The elements of the tuple, unpacked
-                queries.update({TupleKey(node.inputs[0], _i): o for _i, o in enumerate(node.outputs)})
-            elif opname == "UNPACK_EX":
-                continue
-                assert len(node.inputs) == 1  # The tuple to unpack
-                assert len(node.outputs) >= 2  # [remaining, unpack...]
-                # Note: The remaining elements are a list, not a tuple.
-                # That makes this pass technically unsound, as even if an element is updated,
-                # this pass will fold the old value. It's unclear if there's any reason in the language
-                # why unpacking this way returns a list, but it's unlikely to come up in practice,
-                # and editing this list can be made an error in the future.
-                # Another note: It should be possible to fold the remaining elements as well,
-                # but as it is actually a list, let's not track that for now.
-                queries.update({TupleKey(node.inputs[0], _i): o for _i, o in enumerate(node.outputs[1:])})
+                (to_unpack,) = materialized_node.inputs
+                if isinstance(to_unpack, CompositeValue) and to_unpack.v in known_tuples:
+                    indices = range(-1, -len(materialized_node.outputs) - 1, -1)
+                    replacements[instruction] = tuple((-1, idx) for idx in indices)
 
-    if not queries or not tuple_sources:
-        return (protograph, False)
+            elif instruction.opname == "UNPACK_EX":
+                pass  # TODO(apaz-cli): figure out indexing.
 
-    transform_replacements: dict[AbstractValue, AbstractValue] = {}
-    for query_key, query_value in queries.items():
-        if source_value := tuple_sources.get(query_key):
-            transform_replacements[query_value] = source_value
+            # Remove no-ops so we know when to break out of the loop.
+            if replacements.get(instruction) == symbolic_node.outputs:
+                replacements.pop(instruction)
 
-    if not transform_replacements:
-        return (protograph, False)
-
-    return (protograph.transform(transform_replacements), True)
+    return proto_graph, proto_graph is not original_graph
 
 
 def apply_protograph_passes(protograph: ProtoGraph) -> ProtoGraph:
-    protograph, _ = _add_transitive(protograph)
-    protograph, _ = _condense_values(protograph, _inter_block_edges, _graph_input_edges)
+    protograph = _connect_protograph(protograph)
     protograph, _ = _tuple_fold(protograph)
+    assert not (missing := _get_missing_transitive(protograph)), missing
     return protograph

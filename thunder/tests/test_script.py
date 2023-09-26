@@ -1080,6 +1080,17 @@ def test_tuple_index():
     assert tuple_index(1) == tom(1)
 
 
+def nested_tuple_fold(x):
+    t = ("aaa", ((x, 1), 2))
+    (y, a), b = t[1]
+    return y, t
+
+
+def test_nested_tuple_fold():
+    tom = thunder.compile(nested_tuple_fold)
+    assert nested_tuple_fold(1) == tom(1)
+
+
 def noop(*args):
     return args
 

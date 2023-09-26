@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import itertools
 import textwrap
 from typing import Generic, ParamSpec, TypeVar, cast
@@ -63,7 +63,7 @@ class TypedDiGraph(TypedGraph[T], nx.DiGraph):  # type: ignore[misc]
 # =============================================================================
 # == Graph algorithms =========================================================
 # =============================================================================
-def flatten_map(mapping: dict[T, T]) -> Iterable[tuple[T, T]]:
+def flatten_map(mapping: Mapping[T, T]) -> Iterable[tuple[T, T]]:
     """If one interprets the items as edges of a tree (or forest), return items for a tree of at most depth two.
 
     For example, `{1: 2, 2: 3, 4: 3, 5: 6}` flattens to `{1: 3, 2: 3, 4: 3, 5: 6}`.

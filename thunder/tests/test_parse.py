@@ -385,6 +385,42 @@ def tuple_fold_ex(x):
 
 @add_parse_test(
     """
+        LOAD_CONST               1 ('aaa')      ║
+        LOAD_FAST                0 (x)          ║
+        LOAD_CONST               2 (1)          ║
+        BUILD_TUPLE              2              ║
+        LOAD_CONST               3 (2)          ║
+        BUILD_TUPLE              2              ║
+        BUILD_TUPLE              2              ║
+        STORE_FAST               1 (t)          ║
+        LOAD_FAST                1 (t)          ║
+        LOAD_CONST               2 (1)          ║
+        BINARY_SUBSCR                           ║
+        UNPACK_SEQUENCE          2              ║
+        UNPACK_SEQUENCE          2              ║
+        STORE_FAST               2 (y)          ║
+        STORE_FAST               3 (a)          ║
+        STORE_FAST               4 (b)          ║
+        LOAD_FAST                2 (y)          ║
+        RETURN_VALUE                            ║
+    """,
+    r"""
+    BUILD_TUPLE:     (x, 1) -> innermost
+    BUILD_TUPLE:     (innermost, 2) -> intermediate
+    BUILD_TUPLE:     (aaa, intermediate) -> outermost
+    BINARY_SUBSCR:   (outermost, 1) -> intermediate
+    UNPACK_SEQUENCE: (intermediate) -> innermost
+    RETURN_VALUE:    (x) ->
+    """
+)
+def nested_tuple_fold(x):
+    t = ("aaa", ((x, 1), 2))
+    (y, a), b = t[1]
+    return y
+
+
+@add_parse_test(
+    """
         LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
         POP_JUMP_IF_FALSE       17 (to 34)            ║    POP_JUMP_IF_FALSE
                                                       ║        -> 1(False)
@@ -590,7 +626,6 @@ def assert_flow_matches_spec(
     observed_outputs = tuple(itertools.chain(*(outputs for _, _, _, outputs in observed_flow)))
     expected_outputs = tuple(itertools.chain(*(outputs for _, _, _, outputs in expected_flow)))
     assert len(observed_outputs) == len(expected_outputs)
-    assert len(expected_outputs) == len(set(expected_outputs))
     name_map = {observed: expected for observed, expected in zip(observed_outputs, expected_outputs)}
 
     def to_str(block_idx, opname, inputs, outputs, name_map):
@@ -615,7 +650,7 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     flat_node_flow = []
     for block_idx, protoblock in enumerate(proto_graph):
         for instruction, n in protoblock.node_flow:
-            new_outputs = [o for o in n.outputs if isinstance(o, protograph.IntermediateValue) and o not in n.inputs]
+            new_outputs = [o for o in n.outputs if isinstance(o, (protograph.IntermediateValue, protograph.CompositeValue)) and o not in n.inputs]
             flat_node_flow.append((block_idx, instruction, n.inputs, new_outputs))
 
     # Map function arguments to string names.
@@ -854,8 +889,8 @@ def test_external_ref():
 
 
 def test_abstract_phivalue():
-    x = protograph.AbstractValue()
-    y = protograph.AbstractValue()
+    x = protograph.IntermediateValue()
+    y = protograph.IntermediateValue()
     xy = protograph.AbstractPhiValue((x, y))
 
     # Deduplicate.
