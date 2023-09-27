@@ -47,6 +47,7 @@ vjp_op_force = {
     "var_mean",
     "interpolate",
     "repeat",
+    "split",
 }
 
 

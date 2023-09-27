@@ -2304,6 +2304,22 @@ def cross_entropy_backward(input, target, weight, reduction, ignore_index, label
     return ginput, *((None,) * 7)
 
 
+@register_augmented_forward("torch.split")
+def split_aug_fwd(a: TensorProxy, split_size_or_sections: Union[int, Sequence[int]], dim: int = 0) -> VJPDual:
+    from thunder.torch import split
+
+    primal = split(a, split_size_or_sections, dim)
+    residuals = (dim,)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.split")
+def split_backward(dim, *grads):
+    from thunder.torch import cat
+
+    return cat(grads, dim), None, None
+
+
 @register_augmented_forward("torch.nn.functional.embedding")
 def embedding_aug_fwd(
     a: Proxy,

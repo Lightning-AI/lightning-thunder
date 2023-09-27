@@ -2973,15 +2973,6 @@ split_opinfo = OpInfo(
     ltorch.split,
     sample_input_generator=split_sample_generator,
     torch_reference=torch.split,
-    test_directives=(
-        # nvFuser executor doesn't support pad correctly
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvFuser",),
-        ),
-    ),
 )
 shape_ops.append(split_opinfo)
 

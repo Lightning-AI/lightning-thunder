@@ -1580,7 +1580,7 @@ def cat_meta(tensors: list[TensorProxy], dim: int):
                 lambda: f"Sizes of tensors must match except in dimension {dim}. "
                 f"Expected size {sd} but got size {sad} for tensor number {i+1} in the list.",
             )
-        shape[dim] += ai.shape[dim]
+        shape[dim] = shape[dim] + ai.shape[dim]
 
     requires_grad = any(list([t.requires_grad for t in tensors]))
     return TensorProxy(like=tensors[0], shape=shape, requires_grad=requires_grad)
