@@ -878,3 +878,21 @@ def test_torch_autograd_redundant_casts(executor, device, _):
 
     # This would fail if we didn't update the backward with the new proxies
     func(a, b, c).sum().backward()
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_torch_autograd_optional_args(executor, device, _):
+    # Test that we can define a function with optional arguments
+    # and that we can call it with or without those arguments
+    import thunder.torch as ltorch
+
+    @executor.make_callable
+    def func(a, b, c = None):
+        return ltorch.sin(a) + ltorch.cos(b)
+
+    a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    func(a, b).sum().backward()
+    func(a, b, object()).sum().backward()

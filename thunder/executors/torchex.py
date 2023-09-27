@@ -1672,6 +1672,9 @@ class ThunderFunction(torch.autograd.Function):
         def split_forward_backward(*args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used
             # behind a cache.
+            ba = signature(func).bind(*args, **kwargs)
+            ba.apply_defaults()
+            args, kwargs = ba.args, ba.kwargs
             flat_args, _ = tree_flatten((args, kwargs))
             tensor_cls = (torch.Tensor, TensorProxy)
             requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
@@ -1695,7 +1698,7 @@ class ThunderFunction(torch.autograd.Function):
             assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
             filtered_grads = tuple(
                 (arg_grad if requires_grad else None)
-                for arg_grad, requires_grad in zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
+                for arg_grad, requires_grad in utils.safe_zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
             )
 
             # autograd.Function.backward expects a flat tuple of gradients
