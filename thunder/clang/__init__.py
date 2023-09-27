@@ -1274,6 +1274,19 @@ def trunc(a: TensorLike | Number) -> TensorLike | Number:
     )
 
 
+@clang_ctx
+def real(a: Union[TensorProxy, Number]):
+    # Short-circuits for non-complex types
+    if not dtypes.is_complex_dtype(dtypes.to_dtype(a)):
+        return a
+
+    return _elementwise_unary_wrapper(
+        a,
+        prim=prims.real,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.COMPLEX_TO_FLOAT,
+    )
+
+
 #
 # Elementwise binary operations
 #

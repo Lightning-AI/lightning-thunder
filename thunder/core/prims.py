@@ -115,6 +115,7 @@ class PrimIDs(Enum):
     TAN = auto()
     TANH = auto()
     TRUNC = auto()
+    REAL = auto()
     # Elementwise binary prims
     ADD = auto()
     ATAN2 = auto()
@@ -1009,6 +1010,30 @@ trunc = _make_elementwise_unary_prim(
     "trunc",
     supported_input_dtypes=fp_math_dtypes,
     number_fn=math.trunc,
+)
+
+
+def real_meta(a: complex | TensorProxy) -> float | TensorProxy:
+    # Validates inputs
+    utils.check_type(a, (TensorProxy, complex))
+    dtyp = dtypes.to_dtype(a, true_dtype=True)
+    utils.check(
+        dtyp, lambda: f"real expected a complex tensor or number, but receive a tensor or number with dtype {dtyp}"
+    )
+    output_dtype = dtypes.corresponding_real_dtype(dtyp)
+
+    if isinstance(a, complex):
+        result = utils.get_numberlike_value(a).real
+        return numberproxy(float, result)
+
+    # NOTE a is a TensorProxy
+    return TensorProxy(like=a, dtype=output_dtype)
+
+
+real = make_prim(
+    PrimIDs.REAL,
+    "real",
+    meta=real_meta,
 )
 
 #

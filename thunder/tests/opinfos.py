@@ -1566,6 +1566,14 @@ trunc_opinfo = OpInfo(
 elementwise_unary_ops.append(trunc_opinfo)
 
 
+real_opinfo = OpInfo(
+    clang.real,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.real),
+    test_directives=(),
+)
+elementwise_unary_ops.append(real_opinfo)
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 

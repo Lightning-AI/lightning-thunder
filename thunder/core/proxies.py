@@ -932,6 +932,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
         langctx = get_langctx()
         return langctx.matrix_transpose(self)
 
+    #
+    # Real
+    #
+
+    @property
+    def real(self):
+        langctx = get_langctx()
+        return langctx.real(self)
+
 
 #
 # Helpers for creating and working with proxies

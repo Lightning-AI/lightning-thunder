@@ -746,6 +746,12 @@ def trunc(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
     return fd.ops.trunc(nva)
 
 
+def real(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.real(nva)
+
+
 #
 # Elementwise binary operations
 #
@@ -1152,6 +1158,7 @@ _ops_map.update(
         PrimIDs.TAN: (_elementwise_unary_check, tan),
         PrimIDs.TANH: (_elementwise_unary_check, tanh),
         PrimIDs.TRUNC: (_elementwise_unary_check, trunc),
+        PrimIDs.REAL: (_elementwise_unary_check, real),
         # Elementwise binary operations
         PrimIDs.ADD: (_elementwise_binary_check, add),
         PrimIDs.ATAN2: (_elementwise_binary_check, atan2),

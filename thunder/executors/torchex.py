@@ -720,6 +720,7 @@ sqrt = _elementwise_unary_factory("sqrt")
 tan = _elementwise_unary_factory("tan")
 tanh = _elementwise_unary_factory("tanh")
 trunc = _elementwise_unary_factory("trunc")
+real = _elementwise_unary_factory("real")
 
 #
 # Elementwise binary operations
@@ -1504,6 +1505,8 @@ _ops_map.update(
         PrimIDs.TANH: (_elementwise_unary_check, tanh),
         "torch.trunc": (_elementwise_unary_check, trunc),
         PrimIDs.TRUNC: (_elementwise_unary_check, trunc),
+        "torch.real": (_elementwise_unary_check, real),
+        PrimIDs.REAL: (_elementwise_unary_check, real),
         # Elementwise binary operations
         "torch.add": (_add_sub_check, add),
         PrimIDs.ADD: (_elementwise_binary_check, add),

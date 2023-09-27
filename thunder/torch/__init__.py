@@ -540,6 +540,11 @@ def trunc(a):
     return clang.trunc(a)
 
 
+@torchsymbol(torch.real, is_method=False)
+def real(a):
+    return clang.real(a)
+
+
 #
 # Elementwise binary operations
 #

@@ -88,6 +88,17 @@ def tensor_abs(bsym: BoundSymbol, a: Number) -> BoundSymbol:
     return sym.bind(a, output=bsym.output, _call_ctx=ctx)
 
 
+def real_helper(a: complex) -> float:
+    return a.real
+
+
+def real(bsym: BoundSymbol, a: complex) -> BoundSymbol:
+    sym = Symbol(name="real_helper", meta=None)
+    ctx: dict[str, Any] = {"real_helper": real_helper}
+
+    return sym.bind(a, output=bsym.output, _call_ctx=ctx)
+
+
 acos = _elementwise_unary_factory("acos", math)
 acosh = _elementwise_unary_factory("acosh", math)
 asin = _elementwise_unary_factory("asin", math)
@@ -205,6 +216,7 @@ _ops_map.update(
         PrimIDs.LOG2: (_elementwise_unary_check, log2),
         PrimIDs.NDTRI: (_never_executable, ndtri),
         PrimIDs.NEG: (_elementwise_unary_check, neg),
+        PrimIDs.REAL: (_elementwise_unary_check, real),
         PrimIDs.RECIPROCAL: (_never_executable, reciprocal),
         PrimIDs.ROUND: (_elementwise_unary_check, pythonex_round),
         PrimIDs.RSQRT: (_never_executable, rsqrt),
