@@ -2320,7 +2320,6 @@ else:
     #   https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce
     #   that models the operation as a functional one.
     # TODO Support additional reduction operations
-    # TODO Support do_async=True (maybe by adding the idea of a TensorProxy being a future?)
     # TODO Consider our own distributed calls that don't just wrap PyTorch's
     def all_reduce_meta(
         a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
