@@ -76,7 +76,7 @@ In this example, ``foo`` calls ``bar`` which assigns to a nonlocal variable, but
 
 which can be used to file an issue.
 
-When ``examine`` encounters a module or function with one or more operators it doesn't support, it will specify the operators, like this:
+When ``examine`` encounters a module or function with one or more operators it doesn't support, it will specify the operators, like this::
 
   def foo(a):
     return torch.triu(a)
