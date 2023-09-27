@@ -1318,3 +1318,32 @@ def test_nn_modules():
         torch.manual_seed(1234)
         result = tom(*inps)
         assert_close(expected, result)
+
+
+def test_modulelist_additional_return_names():
+    class Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w = None
+
+        def forward(self, x):
+            self.w = x
+            return self.w
+
+    class MyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = torch.nn.ModuleList(Block() for _ in range(2))
+
+        def forward(self, x):
+            for block in self.blocks:
+                x = block(x)
+            return x
+
+    x = torch.randn(1)
+    model = MyModel()
+    model = thunder.compile(model)
+    # the test was only failing if these are present
+    assert model._additional_return_names
+    out = model(x)
+    assert out.shape == (1,)

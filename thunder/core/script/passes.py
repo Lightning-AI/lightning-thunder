@@ -132,7 +132,7 @@ def find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
             destination = (parent, (name, *attr))
 
         elif (node := v.node) is not None and node.i.opname == "BINARY_SUBSCR" and node.inputs[1].is_const:
-            destination = (node.inputs[0], (f"[{node.inputs[1].value}]", *attr))
+            destination = (node.inputs[0], (repr(node.inputs[1].value), *attr))
 
         for vi in destination[0].resolve():
             edge = ((v, attr), (vi, destination[1]))
@@ -157,13 +157,10 @@ def find_and_evaluate_method_through_phi_parent(v: Value) -> Union[object, Calla
         return None
     fn_value = fn_parent_value.value
     for al in attr_lookups:
-        if al.startswith("["):
-            fn_value = fn_value[int(al[1:-1])]  # non-int lookups?
-        else:
-            value = getattr(fn_value, al, _Undefined)
-            if value is _Undefined:
-                return _Undefined(fn_value, al)
-            fn_value = value
+        value = getattr(fn_value, al, _Undefined)
+        if value is _Undefined:
+            return _Undefined(fn_value, al)
+        fn_value = value
     return fn_value
 
 
