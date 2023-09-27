@@ -459,6 +459,13 @@ def reshape(bsym: BoundSymbol, a, *shape):
     return sym.bind(a, shape, output=bsym.output)
 
 
+def repeat(bsym: BoundSymbol, a, *repeats):
+    repeats = utils.extract_shape_from_varargs(repeats)
+    utils.check_valid_shape(repeats)
+    sym = Symbol(name="repeat", meta=None, _module=torch.Tensor)
+    return sym.bind(a, repeats, output=bsym.output)
+
+
 # TODO Review if nvFuser can handle striding
 def _slice_helper(a, start_indices, end_indices, strides=None):
     _strides = strides if strides is not None else [1] * len(start_indices)
@@ -1401,6 +1408,7 @@ _ops_map.update(
         PrimIDs.PAD: (_always_executable, pad),
         PrimIDs.RESHAPE: (_always_executable, reshape),
         "torch.reshape": (_always_executable, reshape),
+        "torch.Tensor.repeat": (_always_executable, repeat),
         PrimIDs.SLICE: (_always_executable, slice_prim),
         "torch.split": (_always_executable, split),
         "torch.squeeze": (_always_executable, squeeze),

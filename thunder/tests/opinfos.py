@@ -2829,6 +2829,53 @@ reshape_opinfo = OpInfo(
 shape_ops.append(reshape_opinfo)
 
 
+def repeat_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    tensor_shapes = (
+        (),
+        (0,),
+        (2,),
+        (0, 0),
+        (0, 2),
+        (2, 0),
+        (2, 2),
+        (0, 0, 0),
+        (2, 0, 3),
+        (2, 1, 3),
+        (1, 1, 1),
+    )
+
+    for shape in tensor_shapes:
+        # all-zeros repeat with out.ndim == input.ndim
+        repeat_shape = (0,) * len(shape)
+        yield SampleInput(make(shape), repeat_shape)
+
+        # all-zeros repeat with out.ndim == input.ndim + 1
+        repeat_shape = (0,) + repeat_shape
+        yield SampleInput(make(shape), repeat_shape)
+
+        # repeat with out.ndim == input.ndim
+        repeat_shape = tuple(range(1, len(shape) + 1))
+        yield SampleInput(make(shape), repeat_shape)
+
+        # repeat with out.ndim == input.ndim + 1
+        repeat_shape = (2,) + repeat_shape
+        yield SampleInput(make(shape), repeat_shape)
+
+        # repeat with out.ndim == input.ndim + 2
+        repeat_shape = (2,) + repeat_shape
+        yield SampleInput(make(shape), repeat_shape)
+
+
+repeat_opinfo = OpInfo(
+    ltorch.repeat,
+    sample_input_generator=repeat_sample_generator,
+    torch_reference=torch.Tensor.repeat,
+)
+shape_ops.append(repeat_opinfo)
+
+
 def slice_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

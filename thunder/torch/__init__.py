@@ -929,6 +929,32 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.reshape(a, shape)
 
 
+@torchsymbol(torch.Tensor.repeat, is_method=True)
+def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
+    repeats = utils.extract_shape_from_varargs(repeats)
+    utils.check_valid_shape(repeats)
+    utils.check(
+        a.ndim <= len(repeats),
+        f"Expected {a.ndim=} <= {len(repeats)=}"
+    )
+
+    repeats = tuple(repeats)
+    new_dims = len(repeats) - a.ndim
+    out_shape = repeats[:new_dims] + tuple(
+        repeats[i] * a.shape[i] for i in range(-a.ndim, 0)
+    )
+    if 0 in out_shape:
+        return zeros(*out_shape, device=a.device, dtype=a.dtype)
+
+    a_orig_shape = a.shape
+    a = prims.broadcast_in_dim(
+        a,
+        repeats[:new_dims] + tuple(s for pair in zip(repeats[new_dims:], a_orig_shape) for s in pair),
+        tuple(new_dims + offset for offset in range(1, 2 * a.ndim, 2))
+    )
+    return reshape(a, out_shape)
+
+
 # TODO consider revising this to just call _split_indices
 # Splits a tensor along a split dimension dim into n tensors
 # If input is divisible by n then every tensor will have the same length along the split dimension
