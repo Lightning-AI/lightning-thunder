@@ -11,6 +11,7 @@ from thunder.benchmarks import (
     default_torch_executor,
     default_torch_compile_executor,
     default_thunder_static_caching_executor_no_grad,
+    default_thunder_cudnn_executor,
     Benchmark,
     UserFacingBenchmarkMeta,
     BenchmarkArg,
@@ -19,6 +20,10 @@ from thunder.core import dtypes
 from thunder.tests.lit_gpt_model import Config, name_to_config
 from thunder.tests.lit_gpt_model import GPT
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
+
+from lightning_utilities.core.imports import package_available
+
+CUDNN_AVAILABLE = package_available("cudnn")
 
 
 class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
@@ -120,3 +125,7 @@ if __name__ == "__main__":
 
         print(f"thunder {name}")
         run_benchmark(b, default_thunder_static_caching_executor_no_grad)
+
+        if CUDNN_AVAILABLE:
+            print(f"thunder + cudnn {name}")
+            run_benchmark(b, default_thunder_cudnn_executor)
