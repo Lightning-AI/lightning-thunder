@@ -370,8 +370,21 @@ def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
     return True
 
 
+def _stride_order_check(a: TensorProxy, order: Sequence[int]) -> bool:
+    if nv_version < LooseVersion("0.0.20"):
+        return False
+
+    return is_supported_tensor(a)
+
+
+def stride_order(a: TensorProxy, order: Sequence[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.stride_order(nva, order)
+
+
 # NOTEnvFuser's cat prim accepts dim as a Python Number, not a constant
-def cat(tensors: list[TensorProxy], dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> bool:
+def cat(tensors: list[TensorProxy], dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nvtensors = list(getnv(t, fd, lc_to_nv_map) for t in tensors)
 
     return fd.ops.cat(nvtensors, dim)
@@ -1109,6 +1122,7 @@ _ops_map.update(
         # Shape operations
         PrimIDs.BROADCAST_IN_DIM: (_broadcast_in_dim_check, broadcast_in_dim),
         PrimIDs.CAT: (_cat_check, cat),
+        PrimIDs.STRIDE_ORDER: (_stride_order_check, stride_order),
         PrimIDs.PAD: (_pad_check, pad),
         PrimIDs.RESHAPE: (_reshape_check, reshape),
         PrimIDs.SLICE: (_slice_check, nv_slice),
