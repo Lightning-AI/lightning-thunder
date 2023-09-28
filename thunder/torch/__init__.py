@@ -938,16 +938,11 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
 def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
     repeats = utils.extract_shape_from_varargs(repeats)
     utils.check_valid_shape(repeats)
-    utils.check(
-        a.ndim <= len(repeats),
-        f"Expected {a.ndim=} <= {len(repeats)=}"
-    )
+    utils.check(a.ndim <= len(repeats), f"Expected {a.ndim=} <= {len(repeats)=}")
 
     repeats = tuple(repeats)
     new_dims = len(repeats) - a.ndim
-    out_shape = repeats[:new_dims] + tuple(
-        repeats[i] * a.shape[i] for i in range(-a.ndim, 0)
-    )
+    out_shape = repeats[:new_dims] + tuple(repeats[i] * a.shape[i] for i in range(-a.ndim, 0))
     if 0 in out_shape:
         return zeros(*out_shape, device=a.device, dtype=a.dtype)
 
@@ -955,7 +950,7 @@ def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
     a = prims.broadcast_in_dim(
         a,
         repeats[:new_dims] + tuple(s for pair in zip(repeats[new_dims:], a_orig_shape) for s in pair),
-        tuple(new_dims + offset for offset in range(1, 2 * a.ndim, 2))
+        tuple(new_dims + offset for offset in range(1, 2 * a.ndim, 2)),
     )
     return reshape(a, out_shape)
 

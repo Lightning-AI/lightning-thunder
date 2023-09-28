@@ -467,11 +467,12 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(inline(vjp(flat_op)), disable_torch_autograd_support=True)(flat_args, (v,))
+        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(
+            inline(vjp(flat_op)), disable_torch_autograd_support=True
+        )(flat_args, (v,))
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
         comp(grad_rhs, expected_grad[0], equal_nan=True)
-
 
 
 # TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad
@@ -890,7 +891,7 @@ def test_torch_autograd_optional_args(executor, device, _):
     import thunder.torch as ltorch
 
     @executor.make_callable
-    def func(a, b, c = None):
+    def func(a, b, c=None):
         return ltorch.sin(a) + ltorch.cos(b)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)

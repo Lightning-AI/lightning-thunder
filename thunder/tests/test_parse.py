@@ -411,7 +411,7 @@ def tuple_fold_ex(x):
     BINARY_SUBSCR:   (outermost, 1) -> intermediate
     UNPACK_SEQUENCE: (intermediate) -> innermost
     RETURN_VALUE:    (x) ->
-    """
+    """,
 )
 def nested_tuple_fold(x):
     t = ("aaa", ((x, 1), 2))
@@ -650,7 +650,11 @@ def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
     flat_node_flow = []
     for block_idx, protoblock in enumerate(proto_graph):
         for instruction, n in protoblock.node_flow:
-            new_outputs = [o for o in n.outputs if isinstance(o, (protograph.IntermediateValue, protograph.CompositeValue)) and o not in n.inputs]
+            new_outputs = [
+                o
+                for o in n.outputs
+                if isinstance(o, (protograph.IntermediateValue, protograph.CompositeValue)) and o not in n.inputs
+            ]
             flat_node_flow.append((block_idx, instruction, n.inputs, new_outputs))
 
     # Map function arguments to string names.

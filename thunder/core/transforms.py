@@ -1602,7 +1602,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.NEG: lambda g: -g,
-    prims.PrimIDs.ZETA: lambda x, y, g: (None, g * -x * ltorch.zeta(x + 1., y)),
+    prims.PrimIDs.ZETA: lambda x, y, g: (None, g * -x * ltorch.zeta(x + 1.0, y)),
 }
 
 
@@ -2645,11 +2645,7 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (
-    prims.PrimIDs.BITWISE_AND,
-    prims.PrimIDs.SIGNBIT,
-    prims.PrimIDs.FULL
-)
+nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
 
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
@@ -2954,7 +2950,9 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
-    unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(unpacking_fn, (saved_tensors, saved_other), cotangents)
+    unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(
+        unpacking_fn, (saved_tensors, saved_other), cotangents
+    )
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
     backward_trace.args = unpacking_trace.args

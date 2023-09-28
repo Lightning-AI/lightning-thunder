@@ -27,6 +27,13 @@ repos:
         args: [--py39-plus]
         name: Upgrade code
 
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.2.5
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
+        #args: ["--write-changes"] # uncomment if you want to get automatic fixing
+
   # - repo: https://github.com/PyCQA/isort
   #   rev: 5.10.1
   #   hooks:
