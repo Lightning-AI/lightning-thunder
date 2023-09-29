@@ -65,6 +65,7 @@ coverage.xml
 docs/_build/
 docs/source/api/
 docs/source/*.md
+docs/source/notebooks/
 
 # PyBuilder
 target/

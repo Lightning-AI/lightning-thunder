@@ -46,6 +46,8 @@ jobs:
 
       - name: Install package & dependencies
         run: |
+          sudo apt-get update -q --fix-missing
+          sudo apt-get install -y pandoc
           pip --version
           pip install --pre "torch>=2.1.0" --find-links="${TORCH_URL_RC}"
           pip install . -U -r requirements/base.txt -r requirements/docs.txt

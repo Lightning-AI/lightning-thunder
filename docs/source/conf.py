@@ -89,11 +89,11 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.imgmath",
     "myst_parser",
-    "sphinx.ext.autosectionlabel",
     "nbsphinx",
     "sphinx_autodoc_typehints",
+    "sphinx_copybutton",
     "sphinx_paramlinks",
-    "sphinx.ext.githubpages",
+    "sphinx_togglebutton",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -114,12 +114,13 @@ nbsphinx_requirejs_path = ""
 #
 # source_suffix = ['.rst', '.md']
 # source_suffix = ['.rst', '.md', '.ipynb']
-source_suffix = {
-    ".rst": "restructuredtext",
-    ".txt": "markdown",
-    ".md": "markdown",
-    ".ipynb": "nbsphinx",
-}
+# source_suffix = {
+#     ".rst": "restructuredtext",
+#     ".txt": "markdown",
+#     ".md": "markdown",
+#     ".ipynb": "nbsphinx",
+# }
+source_parsers = {".rst": "restructuredtext", ".txt": "markdown", ".md": "markdown", ".ipynb": "nbsphinx"}
 
 # The master toctree document.
 master_doc = "index"
@@ -265,14 +266,13 @@ def setup(app):
     # see: http://z4r.github.io/python/2011/12/02/hides-the-prompts-and-output/
     app.add_js_file("copybutton.js")
 
-# FIXME
 # copy all notebooks to local folder
-# path_nbs = os.path.join(_PATH_HERE, "notebooks")
-# if not os.path.isdir(path_nbs):
-#     os.mkdir(path_nbs)
-# for path_ipynb in glob.glob(os.path.join(_PATH_ROOT, "notebooks", "*.ipynb")):
-#     path_ipynb2 = os.path.join(path_nbs, os.path.basename(path_ipynb))
-#     shutil.copy(path_ipynb, path_ipynb2)
+path_nbs = os.path.join(_PATH_HERE, "notebooks")
+if not os.path.isdir(path_nbs):
+    os.mkdir(path_nbs)
+for path_ipynb in glob.glob(os.path.join(_PATH_ROOT, "notebooks", "*.ipynb")):
+    path_ipynb2 = os.path.join(path_nbs, os.path.basename(path_ipynb))
+    shutil.copy(path_ipynb, path_ipynb2)
 
 
 # Ignoring Third-party packages

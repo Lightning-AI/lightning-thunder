@@ -119,6 +119,9 @@ JAX is a deep learning compiler designed to work with XLA. There are two princip
 
    Inside thunder <advanced/inside_thunder>
    Extending thunder <advanced/extending>
+   notebooks/adding-custom-operator
+   notebooks/adding-custom-operator-backward
+   notebooks/adding-operator-executor
 
 
 Indices and tables
