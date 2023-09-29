@@ -538,6 +538,10 @@ def _infer_tensor_properties(
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
 
+    # Extracts actual values for shape
+    # TODO This will need to be revisited when we add support for dynamic constraints
+    _shape = tuple(pyval(x) for x in _shape)
+
     # Computes derived properties
     _numel = reduce(operator.mul, _shape, 1)
 
