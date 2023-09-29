@@ -1748,9 +1748,23 @@ floor_divide_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(floor_divide_opinfo)
 
+def fmod_sample_input_generator(op, device, dtype, requires_grad, **kwargs):
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    a = make((4, 4), **kwargs)
+    b = make((4, 4), **kwargs)
+    if dtype.is_floating_point or dtype.is_complex:
+        # Fmod is differentiable only in the neighborhood where trunc(x / y) is constant.
+        # We force x + dx never cross trunc(x) to avoid the finite-differences issues when testing the grad.
+        with torch.no_grad():
+            a[torch.fmod(a, b) > b - eps] -= eps
+            b[torch.fmod(a, b) < eps] += eps
+
+    yield SampleInput(a, b)
+
 fmod_opinfo = OpInfo(
     clang.fmod,
-    sample_input_generator=partial(elementwise_binary_generator, exclude_zero=True),
+    sample_input_generator=partial(fmod_sample_input_generator, exclude_zero=True, low=1),
     torch_reference=torch.fmod,
     test_directives=(
         # torch doesn't support bool or complex fmod

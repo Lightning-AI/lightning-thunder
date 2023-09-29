@@ -1560,6 +1560,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.NEG: lambda x: (prims.neg(x), tuple()),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
+    prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
 }
 
 
@@ -1602,6 +1603,7 @@ backward_impls = {
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.NEG: lambda g: -g,
     prims.PrimIDs.ZETA: lambda x, y, g: (None, g * -x * prims.zeta(x + 1.0, y)),
+    prims.PrimIDs.FMOD: lambda x, y, g: (1.0 * g, -g * prims.trunc(x/y)),
 }
 
 
