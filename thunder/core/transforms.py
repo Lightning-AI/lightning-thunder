@@ -2790,7 +2790,7 @@ def backward_pass(forward_env, trace, init_cotangents):
             # We can skip the pullback if all the arguments are constant
             continue
 
-        if len(cotangents) == 1 and cotangents[0] is None:
+        if all(cotangent is None for cotangent in cotangents):
             # We can skip the pullback if the cotangent is None
             safe_map(write, symbol.args, (None,) * len(symbol.args))
             continue

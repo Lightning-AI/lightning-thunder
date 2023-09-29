@@ -1552,6 +1552,7 @@ broadcast_in_dim = make_prim(
 
 def cat_meta(tensors: list[TensorProxy], dim: int):
     utils.check(len(tensors) > 0, lambda: "Cat expects a non-empty list of tensors")
+    utils.check_types(tensors, TensorProxy)
     utils.check_same_device(*tensors)
     utils.check_same_dtype(*tensors)
 

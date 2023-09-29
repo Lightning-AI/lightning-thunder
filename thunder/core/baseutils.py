@@ -105,6 +105,20 @@ def check_type(x: Any, types: type | Sequence[type]):
     )
 
 
+def check_types(xs: Sequence[Any], types: type | Sequence[type]):
+    """
+    Checks that all elements in xs have one of the types in types.
+
+    Raises a ValueError if this is not the case.
+    """
+    for i, x in enumerate(xs):
+        check(
+            isinstance(x, types),
+            lambda: f"Element {i} ({x}) had an unexpected type {type(x)}. Supported types are {types}",
+            exception_type=ValueError,
+        )
+
+
 #
 # Functions related to Python object queries and manipulation
 #

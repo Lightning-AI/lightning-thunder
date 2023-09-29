@@ -898,3 +898,20 @@ def test_torch_autograd_optional_args(executor, device, _):
     b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
     func(a, b).sum().backward()
     func(a, b, object()).sum().backward()
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_backward_none_propagation(executor, device, _):
+    import thunder.torch as ltorch
+    from thunder.core.transforms import inline, vjp
+
+    @executor.make_callable
+    @inline
+    @vjp
+    def func(a):
+        return ltorch.split(a, 1)
+
+    a = make_tensor((2, 4), device=device, dtype=torch.float16)
+    result = func((a,), (None, None))
+    assert result[1][0] is None
