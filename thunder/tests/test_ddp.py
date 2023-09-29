@@ -16,7 +16,7 @@ from torch.testing import assert_close, make_tensor
 import thunder
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 import thunder.torch as ltorch
-from thunder.core import prims
+from thunder.distributed import prims
 
 try:
     import expecttest  # noqa: F401
@@ -206,6 +206,175 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         device = f"cuda:{self.rank}"
         a = make_tensor((2, 2), device=device, dtype=torch.float32)
         b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        process_group = c10d.new_group()
+
+        # NOTE Preprocessing is disabled because we call thunder.torch operations directly
+        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+
+        for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
+            expected = foo(a, b, op, process_group, async_op)
+            actual = cfoo(a, b, op, process_group, async_op)
+
+            self.assertEqual(actual, expected)
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_all_gather(self, executor):
+        _executor = executors_map[executor]
+
+        # NOTE torch.distributed.all_gather is an inplace operation
+        def foo(
+            a,
+            b,
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
+            c = a + b
+            d = torch.empty((c.shape[0] * process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+            handle = torch.distributed.all_gather_into_tensor(d, c, group=process_group, async_op=async_op)
+
+            if async_op:
+                handle.wait()
+
+            e = d + 1
+            return a, e
+
+        # NOTE thunder.torch.all_gather is a functional operation
+        def lc_foo(
+            a,
+            b,
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
+            c = a + b
+
+            d = ltorch.all_gather(c, group=process_group, async_op=async_op)
+
+            if async_op:
+                d = prims.wait(d)
+
+            e = d + 1
+            return a, e
+
+        device = f"cuda:{self.rank}"
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        process_group = c10d.new_group()
+
+        # NOTE Preprocessing is disabled because we call thunder.torch operations directly
+        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+
+        for async_op in (True, False):
+            expected = foo(a, b, process_group, async_op)
+            actual = cfoo(a, b, process_group, async_op)
+
+            self.assertEqual(actual, expected)
+
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_broadcast(self, executor):
+        _executor = executors_map[executor]
+
+        # NOTE torch.distributed.broadcast is an inplace operation
+        def foo(
+            a,
+            b,
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
+            if process_group.rank() == 0:
+                c = a + b
+            else:
+                c = a * b - 888.
+
+            handle = torch.distributed.broadcast(c, 0, group=process_group, async_op=async_op)
+
+            if async_op:
+                handle.wait()
+
+            e = c + 1
+            return a, e
+
+        # NOTE thunder.torch.all_gather is a functional operation
+        def lc_foo(
+            a,
+            b,
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
+            if process_group.rank() == 0:
+                c = a + b
+            else:
+                c = a * b + 888.
+
+            d = ltorch.broadcast(c, 0, group=process_group, async_op=async_op)
+
+            if async_op:
+                d = prims.wait(d)
+
+            e = d + 1
+            return a, e
+
+        device = f"cuda:{self.rank}"
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        process_group = c10d.new_group()
+
+        # NOTE Preprocessing is disabled because we call thunder.torch operations directly
+        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+
+        for async_op in (True, False):
+            expected = foo(a, b, process_group, async_op)
+            actual = cfoo(a, b, process_group, async_op)
+
+            self.assertEqual(actual, expected)
+
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_reduce_scatter(self, executor):
+        _executor = executors_map[executor]
+
+        # NOTE torch.distributed.all_gather is an inplace operation
+        def foo(
+            a,
+            b,
+            op,
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
+            c = a + b
+            d = torch.empty((c.shape[0] // process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+            if op is not None:
+                handle = torch.distributed.reduce_scatter_tensor(d, c, op, group=process_group, async_op=async_op)
+            else:
+                handle = torch.distributed.reduce_scatter_tensor(d, c, group=process_group, async_op=async_op)
+
+            if async_op:
+                handle.wait()
+
+            e = d + 1
+            return a, e
+
+        # NOTE thunder.torch.all_gather is a functional operation
+        def lc_foo(
+            a,
+            b,
+            op,
+            process_group: torch.distributed.ProcessGroup,
+            async_op: bool,
+        ):
+            c = a + b
+
+            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op)
+
+            if async_op:
+                d = prims.wait(d)
+
+            e = d + 1
+            return a, e
+
+        device = f"cuda:{self.rank}"
+        a = make_tensor((4, 2), device=device, dtype=torch.float32)
+        b = make_tensor((4, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly

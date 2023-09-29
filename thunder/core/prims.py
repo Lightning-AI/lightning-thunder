@@ -20,7 +20,6 @@ from thunder.core.proxies import (
     proxy,
     numberproxy,
     pytype,
-    FutureTensorProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -152,9 +151,6 @@ class PrimIDs(Enum):
     CONVOLUTION = auto()
     EMBEDDING = auto()
     EMBEDDING_BACKWARD = auto()
-    # Distributed prims (Experimental!)
-    ALL_REDUCE = auto()
-    WAIT = auto()
 
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
@@ -2276,74 +2272,3 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
-
-#
-# Distributed prims
-#
-import torch.distributed
-
-
-# This enum describes what all_reduce (below) will actually do
-#   These operations are performed elementwise on all the "versions" of
-#   the tensor across processes.
-class DistributedReduceOps(Enum):
-    SUM = auto()
-    # AVG = auto()
-    # PRODUCT = auto()
-    # MIN = auto()
-    # MAX = auto()
-    # BAND = auto()
-    # BOR = auto()
-    # BXOR = auto()
-    # PREMUL_SUM = auto()
-
-
-# NOTE DISTRIBUTED AVAILABILITY
-# PyTorch is often built without distributed support, which can be queried for using
-#   torch.distributed.is_available(). When PyTorch is built without distributed then we
-#   want to avoid accessing any parts of the torch.distributed module except
-#   the is_available() function. Prims that depend on torch.distributed should
-#   define stubs that throw unsupported errors here, and the actual prim implementations
-#   in the else branch below.
-
-if not torch.distributed.is_available():
-
-    def all_reduce_meta(
-        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
-    ) -> None:
-        utils.check(False, lambda: f"PyTorch distributed is not available, {torch.distributed.is_available()=}")
-
-    def wait_meta(a: FutureTensorProxy) -> None:
-        utils.check(False, lambda: f"PyTorch distributed is not available, {torch.distributed.is_available()=}")
-
-else:
-    # NOTE This is essentially a wrapper around
-    #   https://pytorch.org/docs/stable/distributed.html#torch.distributed.all_reduce
-    #   that models the operation as a functional one.
-    # TODO Support additional reduction operations
-    # TODO Consider our own distributed calls that don't just wrap PyTorch's
-    def all_reduce_meta(
-        a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
-    ) -> TensorProxy | FutureTensorProxy:
-        # Checks types
-        utils.check_type(a, TensorProxy)
-        utils.check_type(op, DistributedReduceOps)
-        utils.check_type(group, torch.distributed.ProcessGroup)
-        utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
-
-        if do_async:
-            return FutureTensorProxy(like=a)
-
-        return TensorProxy(like=a)
-
-    # NOTE This is a very particular implementation of wait that may need to be
-    #   generalized in the future
-    def wait_meta(a: FutureTensorProxy) -> TensorProxy:
-        # Checks types
-        utils.check_type(a, FutureTensorProxy)
-
-        return TensorProxy(like=a)
-
-
-all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
-wait = make_prim(PrimIDs.WAIT, "wait", meta=wait_meta)

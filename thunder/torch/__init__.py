@@ -12,6 +12,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 import thunder.core.utils as utils
+import thunder.distributed.prims as dist_prims
 from thunder.core.langctx import langctx
 from thunder.core.prims import prim_ctx
 from thunder.core.proxies import TensorProxy, FutureTensorProxy
@@ -2425,10 +2426,10 @@ def cross_entropy(
 #   the is_available() function.
 
 if torch.distributed.is_available():
-    DistributedReduceOpLike = str | torch.distributed.ReduceOp | prims.DistributedReduceOps
+    DistributedReduceOpLike = str | torch.distributed.ReduceOp | dist_prims.DistributedReduceOps
 
     # string name, PyTorch enum value, lightning.compile enum value
-    _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, prims.DistributedReduceOps.SUM),)
+    _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),)
 
     def to_thunder_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
         if isinstance(op, str):
@@ -2445,10 +2446,13 @@ if torch.distributed.is_available():
 
             utils.check(False, lambda: f"Unknown distributed reduce op {op}")
 
+        if op is None:
+            return dist_prims.DistributedReduceOps.SUM
+
         return op
 
     def to_torch_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
-        if isinstance(op, prims.DistributedReduceOps):
+        if isinstance(op, dist_prims.DistributedReduceOps):
             for s, top, pop in _reduceop_triples:
                 if op is pop:
                     return top
@@ -2457,15 +2461,31 @@ if torch.distributed.is_available():
 
         return op
 
+
+    @torchsymbol(
+        is_method=False,
+        id="functional_all_gather",
+    )
+    def all_gather(
+        a: TensorLike,
+        group: Optional[torch.distributed.ProcessGroup] = None,
+        async_op: bool = False,
+    ) -> TensorLike | FutureTensorLike:
+        group = group if group is not None else torch.distributed.new_group()
+
+        return dist_prims.all_gather(a, group, async_op)
+
+
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
     #   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch
     #   calls directly to this.
+    # PyTorch uses torch.ops.c10d_functional.all_reduce as an ID for a similar operation.
     # This operation is based on torch.distributed.all_reduce, see:
     #   https://pytorch.org/docs/master/distributed.html#torch.distributed.all_reduce
     @torchsymbol(
         is_method=False,
-        id="torch.distributed.functional_all_reduce",
+        id="functional_all_reduce",
     )
     def all_reduce(
         a: TensorLike,
@@ -2476,9 +2496,48 @@ if torch.distributed.is_available():
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
-        return prims.all_reduce(a, op, group, async_op)
+        return dist_prims.all_reduce(a, op, group, async_op)
+
+
+    @torchsymbol(
+        is_method=False,
+        id="functional_broadcast",
+    )
+    def broadcast(
+        a: TensorLike,
+        src: int,
+        group: Optional[torch.distributed.ProcessGroup] = None,
+        async_op: bool = False,
+    ) -> TensorLike | FutureTensorLike:
+        group = group if group is not None else torch.distributed.new_group()
+
+        return dist_prims.broadcast(a, src, group, async_op)
+
+
+    @torchsymbol(
+        is_method=False,
+        id="functional_reduce_scatter",
+    )
+    def reduce_scatter(
+        a: TensorLike,
+        op: Optional[DistributedReduceOpLike] = None,
+        group: Optional[torch.distributed.ProcessGroup] = None,
+        async_op: bool = False,
+    ) -> TensorLike | FutureTensorLike:
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+
+        return dist_prims.reduce_scatter(a, op, group, async_op)
+
 
 else:
+    def all_gather(
+        a: TensorLike,
+        group: Optional[Any] = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
+
     # NOTE torch.distributed is not available
     def all_reduce(
         a: TensorLike,
@@ -2488,6 +2547,21 @@ else:
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
+    def broadcast(
+        a: TensorLike,
+        src: int,
+        group: Optional[Any] = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
+
+    def reduce_scatter(
+        a: TensorLike,
+        op: Any,
+        group: Optional[Any] = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
 
 #
 # torch -> thunder object mapping

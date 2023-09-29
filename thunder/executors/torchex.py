@@ -10,11 +10,13 @@ import torch
 from looseversion import LooseVersion
 
 import thunder.core.dtypes as dtypes
-from thunder.core.prims import PrimIDs, DistributedReduceOps
+from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.distributed.prims import DistributedReduceOps
+import thunder.distributed.prims as dist_prims
 import thunder.core.devices as devices
 import thunder.core.utils as utils
 
@@ -1349,6 +1351,88 @@ if torch.distributed.is_available():
 
         return sym.bind(a, op, group, do_async, output=bsym.output, _call_ctx=ctx)
 
+
+    def all_gather_prim_helper(
+        a: torch.Tensor,
+        group: torch.distributed.ProcessGroup,
+        async_op: bool,
+    ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
+        out = torch.empty((group.size() * a.shape[0],) + a.shape[1:], dtype=a.dtype, device=a.device)
+        handle = torch.distributed.all_gather_into_tensor(out, a, group, async_op)
+        if async_op:
+            return handle, out
+        return out
+
+
+    def all_gather_prim(
+        bsym: BoundSymbol,
+        a: TensorProxy,
+        group: torch.distributed.ProcessGroup,
+        async_op: Number,
+    ) -> BoundSymbol:
+        sym = Symbol(name="all_gather_prim_helper", meta=None)
+        ctx: dict[str, Any] = {"all_gather_prim_helper": all_gather_prim_helper}
+        async_op = bool(async_op)
+
+        return sym.bind(a, group, async_op, output=bsym.output, _call_ctx=ctx)
+
+
+    def broadcast_prim_helper(
+        a: torch.Tensor,
+        src: int,
+        group: torch.distributed.ProcessGroup,
+        async_op: bool,
+    ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
+        out = a.clone()
+        handle = torch.distributed.broadcast(out, src, group, async_op)
+        if async_op:
+            return handle, out
+        return out
+
+
+    def broadcast_prim(
+        bsym: BoundSymbol,
+        a: TensorProxy,
+        src: int,
+        group: torch.distributed.ProcessGroup,
+        async_op: Number,
+    ) -> BoundSymbol:
+        sym = Symbol(name="broadcast_prim_helper", meta=None)
+        ctx: dict[str, Any] = {"broadcast_prim_helper": broadcast_prim_helper}
+        async_op = bool(async_op)
+
+        return sym.bind(a, src, group, async_op, output=bsym.output, _call_ctx=ctx)
+
+
+    def reduce_scatter_prim_helper(
+        a: torch.Tensor,
+        op: torch.distributed.ReduceOp,
+        group: torch.distributed.ProcessGroup,
+        async_op: bool,
+    ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
+        out = torch.empty((a.shape[0] // group.size(),) + a.shape[1:], dtype=a.dtype, device=a.device)
+        handle = torch.distributed.reduce_scatter_tensor(out, a, op, group, async_op)
+        if async_op:
+            return handle, out
+        return out
+
+
+    def reduce_scatter_prim(
+        bsym: BoundSymbol,
+        a: TensorProxy,
+        op: DistributedReduceOps,
+        group: torch.distributed.ProcessGroup,
+        async_op: Number,
+    ) -> BoundSymbol:
+        sym = Symbol(name="reduce_scatter_prim_helper", meta=None)
+        ctx: dict[str, Any] = {"reduce_scatter_prim_helper": reduce_scatter_prim_helper}
+        async_op = bool(async_op)
+
+        op = ltorch.to_torch_distributed_reduce_op(op)
+
+        return sym.bind(a, op, group, async_op, output=bsym.output, _call_ctx=ctx)
+
+
     # NOTE This is a very particular implementation of wait that may need to be
     #   generalized in the future
     # NOTE The implementation of wait actually models the FutureTensorProxy as a tuple
@@ -1368,7 +1452,13 @@ if torch.distributed.is_available():
 
 else:
 
+    def all_gather_prim(bsym: BoundSymbol, a: TensorProxy, group: Any, async_op: bool) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
+
     def all_reduce_prim(bsym: BoundSymbol, a: TensorProxy, op: Any, group: Any, do_async: bool) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
+
+    def broadcast_prim(bsym: BoundSymbol, a: TensorProxy, src: int, group: Any, async_op: bool) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
     def wait_prim(bsym: BoundSymbol, a: FutureTensorProxy) -> BoundSymbol:
@@ -1589,8 +1679,11 @@ _ops_map.update(
             scaled_dot_product_attention,
         ),
         # Distributed operations
-        PrimIDs.ALL_REDUCE: (_always_executable, all_reduce_prim),
-        PrimIDs.WAIT: (_always_executable, wait_prim),
+        dist_prims.PrimIDs.ALL_GATHER: (_always_executable, all_gather_prim),
+        dist_prims.PrimIDs.ALL_REDUCE: (_always_executable, all_reduce_prim),
+        dist_prims.PrimIDs.BROADCAST: (_always_executable, broadcast_prim),
+        dist_prims.PrimIDs.REDUCE_SCATTER: (_always_executable, reduce_scatter_prim),
+        dist_prims.PrimIDs.WAIT: (_always_executable, wait_prim),
     }
 )
 
@@ -1913,7 +2006,7 @@ if torch.distributed.is_available():
                 if sym.id == PrimIDs.RETURN:
                     prims.python_return(
                         *[
-                            prims.wait(grad_to_future[grad]) if isinstance(grad, TensorProxy) else None
+                            dist_prims.wait(grad_to_future[grad]) if isinstance(grad, TensorProxy) else None
                             for grad in gradients
                         ]
                     )
