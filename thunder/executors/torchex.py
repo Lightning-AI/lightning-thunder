@@ -1351,7 +1351,6 @@ if torch.distributed.is_available():
 
         return sym.bind(a, op, group, do_async, output=bsym.output, _call_ctx=ctx)
 
-
     def all_gather_prim_helper(
         a: torch.Tensor,
         group: torch.distributed.ProcessGroup,
@@ -1362,7 +1361,6 @@ if torch.distributed.is_available():
         if async_op:
             return handle, out
         return out
-
 
     def all_gather_prim(
         bsym: BoundSymbol,
@@ -1376,7 +1374,6 @@ if torch.distributed.is_available():
 
         return sym.bind(a, group, async_op, output=bsym.output, _call_ctx=ctx)
 
-
     def broadcast_prim_helper(
         a: torch.Tensor,
         src: int,
@@ -1388,7 +1385,6 @@ if torch.distributed.is_available():
         if async_op:
             return handle, out
         return out
-
 
     def broadcast_prim(
         bsym: BoundSymbol,
@@ -1403,7 +1399,6 @@ if torch.distributed.is_available():
 
         return sym.bind(a, src, group, async_op, output=bsym.output, _call_ctx=ctx)
 
-
     def reduce_scatter_prim_helper(
         a: torch.Tensor,
         op: torch.distributed.ReduceOp,
@@ -1415,7 +1410,6 @@ if torch.distributed.is_available():
         if async_op:
             return handle, out
         return out
-
 
     def reduce_scatter_prim(
         bsym: BoundSymbol,
@@ -1431,7 +1425,6 @@ if torch.distributed.is_available():
         op = ltorch.to_torch_distributed_reduce_op(op)
 
         return sym.bind(a, op, group, async_op, output=bsym.output, _call_ctx=ctx)
-
 
     # NOTE This is a very particular implementation of wait that may need to be
     #   generalized in the future

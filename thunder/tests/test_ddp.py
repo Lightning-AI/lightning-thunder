@@ -269,7 +269,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
             self.assertEqual(actual, expected)
 
-
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_broadcast(self, executor):
         _executor = executors_map[executor]
@@ -284,7 +283,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             if process_group.rank() == 0:
                 c = a + b
             else:
-                c = a * b - 888.
+                c = a * b - 888.0
 
             handle = torch.distributed.broadcast(c, 0, group=process_group, async_op=async_op)
 
@@ -304,7 +303,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             if process_group.rank() == 0:
                 c = a + b
             else:
-                c = a * b + 888.
+                c = a * b + 888.0
 
             d = ltorch.broadcast(c, 0, group=process_group, async_op=async_op)
 
@@ -327,7 +326,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             actual = cfoo(a, b, process_group, async_op)
 
             self.assertEqual(actual, expected)
-
 
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_reduce_scatter(self, executor):

@@ -1748,8 +1748,8 @@ floor_divide_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(floor_divide_opinfo)
 
-def fmod_sample_input_generator(op, device, dtype, requires_grad, **kwargs):
 
+def fmod_sample_input_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     a = make((4, 4), **kwargs)
     b = make((4, 4), **kwargs)
@@ -1761,6 +1761,7 @@ def fmod_sample_input_generator(op, device, dtype, requires_grad, **kwargs):
             b[torch.fmod(a, b) < eps] += eps
 
     yield SampleInput(a, b)
+
 
 fmod_opinfo = OpInfo(
     clang.fmod,

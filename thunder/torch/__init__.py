@@ -2461,7 +2461,6 @@ if torch.distributed.is_available():
 
         return op
 
-
     @torchsymbol(
         is_method=False,
         id="functional_all_gather",
@@ -2474,7 +2473,6 @@ if torch.distributed.is_available():
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.all_gather(a, group, async_op)
-
 
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
@@ -2498,7 +2496,6 @@ if torch.distributed.is_available():
 
         return dist_prims.all_reduce(a, op, group, async_op)
 
-
     @torchsymbol(
         is_method=False,
         id="functional_broadcast",
@@ -2512,7 +2509,6 @@ if torch.distributed.is_available():
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.broadcast(a, src, group, async_op)
-
 
     @torchsymbol(
         is_method=False,
@@ -2529,8 +2525,8 @@ if torch.distributed.is_available():
 
         return dist_prims.reduce_scatter(a, op, group, async_op)
 
-
 else:
+
     def all_gather(
         a: TensorLike,
         group: Optional[Any] = None,
@@ -2562,6 +2558,7 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
 
 #
 # torch -> thunder object mapping

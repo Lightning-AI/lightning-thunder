@@ -266,6 +266,7 @@ def setup(app):
     # see: http://z4r.github.io/python/2011/12/02/hides-the-prompts-and-output/
     app.add_js_file("copybutton.js")
 
+
 # copy all notebooks to local folder
 path_nbs = os.path.join(_PATH_HERE, "notebooks")
 if not os.path.isdir(path_nbs):

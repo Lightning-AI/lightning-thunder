@@ -899,6 +899,7 @@ def test_torch_autograd_optional_args(executor, device, _):
     func(a, b).sum().backward()
     func(a, b, object()).sum().backward()
 
+
 @instantiate(
     dtypes=NOTHING,
 )

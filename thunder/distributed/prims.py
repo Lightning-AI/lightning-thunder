@@ -89,7 +89,9 @@ def broadcast_meta(a: TensorProxy, root: int, group: torch.distributed.ProcessGr
     return TensorProxy(like=a)
 
 
-def reduce_scatter(a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number) -> TensorProxy:
+def reduce_scatter(
+    a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(op, DistributedReduceOps)
