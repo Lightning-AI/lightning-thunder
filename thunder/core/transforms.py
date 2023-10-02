@@ -2968,7 +2968,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
             prims.PrimIDs.UNPACK_TRIVIAL,
         )
     )
-    backward_trace.bound_symbols = tuple((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
+    backward_trace.bound_symbols = list((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
 
 
 # NOTE: Returning namedtuples from compiled functions doesn't work. See:

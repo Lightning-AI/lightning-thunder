@@ -1,4 +1,5 @@
 import operator
+from dataclasses import replace
 from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
@@ -1794,7 +1795,7 @@ class ThunderFunction(torch.autograd.Function):
             )
 
             # autograd.Function.backward expects a flat tuple of gradients
-            bw_trace.bound_symbols[-1].args = (filtered_grads,)
+            bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
             bw_trace.output = (filtered_grads,)
 
             # Now we can run the optimization passes on the forward trace
