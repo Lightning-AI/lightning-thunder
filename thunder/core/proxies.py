@@ -627,6 +627,10 @@ class FutureTensorProxy(Proxy):
         langctx = get_langctx()
         return langctx.size(self)
 
+    def wait(self) -> TensorProxy:
+        from thunder.distributed.prims import wait
+        return wait(self)
+
 
 # TODO Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
