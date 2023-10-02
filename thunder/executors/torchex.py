@@ -1454,6 +1454,9 @@ else:
     def broadcast_prim(bsym: BoundSymbol, a: TensorProxy, src: int, group: Any, async_op: bool) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
+    def reduce_scatter_prim(bsym: BoundSymbol, a: TensorProxy, op: Any, group: Any, async_op: bool) -> None:
+        utils.check(False, lambda: f"torch.distributed is not available")
+
     def wait_prim(bsym: BoundSymbol, a: FutureTensorProxy) -> BoundSymbol:
         utils.check(False, lambda: f"torch.distributed is not available")
 
