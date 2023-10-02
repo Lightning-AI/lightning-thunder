@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG UBUNTU_VERSION=22.04
-ARG CUDA_VERSION=11.7.0
-ARG CUDNN_VERSION=8
+ARG UBUNTU_VERSION="22.04"
+ARG CUDA_VERSION="11.8.0"
 # select devel | runtime
-ARG IMAGE_TYPE=devel
+ARG IMAGE_TYPE="devel"
 
+FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn${CUDNN_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
-
-ARG PYTHON_VERSION=3.10
+ARG CUDNN_VERSION="8.9.5.29-1"
+ARG CUDNN_FRONTEND_BRANCH="1.0/pre_release_2"
+ARG PYTHON_VERSION="3.10"
+ARG TORCH_CHECKOUT="v2.1.0-rc6"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -34,17 +35,7 @@ ENV \
     MAKEFLAGS="-j$(nproc)"
 
 RUN \
-    # TODO: Remove the manual key installation once the base image is updated.
-    # https://github.com/NVIDIA/nvidia-docker/issues/1631
-    # https://github.com/NVIDIA/nvidia-docker/issues/1631#issuecomment-1264715214
-    apt-get update && apt-get install -y wget && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub && \
-    mkdir -p /etc/apt/keyrings/ && mv 3bf863cc.pub /etc/apt/keyrings/ && \
-    echo "deb [signed-by=/etc/apt/keyrings/3bf863cc.pub] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" /etc/apt/sources.list.d/cuda.list && \
     apt-get update -qq --fix-missing && \
-    NCCL_VER=$(dpkg -s libnccl2 | grep '^Version:' | awk -F ' ' '{print $2}' | awk -F '-' '{print $1}' | grep -ve '^\s*$') && \
-    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    TO_INSTALL_NCCL=$(echo -e "$MAX_ALLOWED_NCCL\n$NCCL_VER" | sort -V  | head -n1)-1+cuda${CUDA_VERSION_MM} && \
     apt-get install -y --no-install-recommends --allow-downgrades --allow-change-held-packages \
         build-essential \
         ca-certificates \
@@ -58,7 +49,8 @@ RUN \
         libopenmpi-dev \
         openmpi-bin \
         graphviz \
-        ssh && \
+        ssh \
+    && \
     # Install python
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get install -y \
@@ -68,23 +60,48 @@ RUN \
     && \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
+    curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /root/.cache && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* \
+
+RUN \
+    echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
+    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+    CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
+    CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \
+    apt update && \
+    apt upgrade -y --allow-change-held-packages \
+      libcudnn${CUDNN_BASE_VER}=${CUDNN_PACKAGE_VER} \
+      libcudnn${CUDNN_BASE_VER}-dev=${CUDNN_PACKAGE_VER} \
+    && \
+    rm -rf /root/.cache && \
+    rm -rf /var/lib/apt/lists/* && \
+    git clone --branch ${CUDNN_FRONTEND_BRANCH} https://github.com/NVIDIA/cudnn-frontend.git && \
+    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
+    rm -rf cudnn-frontend
 
 COPY requirements/ requirements/
 
 ENV PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages"
 
 RUN \
-    curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
+    git clone --recursive https://github.com/pytorch/pytorch && \
+    cd pytorch && \
+    git checkout ${TORCH_CHECKOUT} && \
+    git submodule sync && \
+    git submodule update --init --recursive && \
+    TORCH_CUDA_ARCH_LIST="5.0" pip install . && \
+    cd .. && \
+    rm -rf pytorch && \
+    python -c "import torch; print(f'PyTorch@{torch.__version__ } with {torch.cuda.device_count()} GPUs')"
+
+RUN \
+    ls -lh requirements/ && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    pip install -U -r requirements/base.txt -r requirements/test.txt \
-      --find-links="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}" \
-      --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/torch_test.html" \
-    && \
+    pip install -U -r requirements/test.txt && \
     rm -rf requirements/
 
 RUN \

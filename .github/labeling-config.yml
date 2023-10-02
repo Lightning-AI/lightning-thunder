@@ -10,6 +10,7 @@ documentation:
 
 "docker":
   - dockers/**/*
+  - .azure/docker-build.yml
 
 "install":
   - setup.py
