@@ -675,6 +675,37 @@ def zeta(a, b):
 
 
 #
+# Elementwise Ternary operations
+#
+
+# For calculate op1(a, op2(value, op2(b, c))) by promoting all input tensors at once
+# NOTE use this explicit type promotion because a direct combination of add/mul will have a redundant cast,
+# which may lead to accuracy problems, see:
+# https://github.com/Lightning-AI/lightning-thunder/pull/1155#discussion_r1342653591 for details
+# TODO remove this when the optimization pass is ready: https://github.com/Lightning-AI/lightning-thunder/issues/1178 
+def addcmul_addcdiv_helper(a, b, c, op1, op2, *, value=None, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
+    inputs = [a, b, c]
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(*inputs, type_promotion_kind=type_promotion_kind)
+    a, b, c = map(partial(clang.maybe_convert_to_dtype, dtype=computation_dtype), inputs)
+
+    d = op2(b, c)
+    if value is not None:
+        d = value * d
+    result = op1(a, d)
+    return clang.maybe_convert_to_dtype(result, result_dtype)
+
+
+@torchsymbol(torch.addcmul, is_method=True)
+def addcmul(a: TensorLike, b: TensorLike, c: TensorLike, *, value: Optional[Number] = None) -> TensorLike:
+    return addcmul_addcdiv_helper(a, b, c, add, mul, value=value)
+
+
+@torchsymbol(torch.addcdiv, is_method=True)
+def addcdiv(a: TensorLike, b: TensorLike, c: TensorLike, *, value: Optional[Number] = None) -> TensorLike:
+    return addcmul_addcdiv_helper(a, b, c, add, true_divide, value=value)
+
+
+#
 # Conditional operations and masking operations
 #
 # TODO Can this be a method?

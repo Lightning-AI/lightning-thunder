@@ -809,6 +809,85 @@ remainder = _elementwise_binary_factory("remainder")
 sub = _add_sub_factory("sub")
 zeta = _elementwise_binary_factory("zeta", module=torch.special)
 
+
+def _addcmul_check(
+    a: TensorLike,
+    b: TensorLike,
+    c: TensorLike,
+    *,
+    value: Optional[Number] = None
+) -> bool:
+    # PyTorch doesn't support non-tensor inputs for torch.addcmul
+    if not (all(isinstance(arg, TensorLike) for arg in [a,b,c]) and isinstance(value, (Number, type(None)))):
+        return False
+
+    common_dtype, _ = utils.elementwise_type_promotion(a, b, c, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT)
+    common_dtype = dtypes.to_strong_dtype(common_dtype)
+    # PyTorch doesn't support bool or complex32 inputs for torch.addcmul
+    if dtypes.is_boolean_dtype(common_dtype) or common_dtype is dtypes.complex32:
+        return False
+
+    # here the promotion is different from torch.addcmul,
+    # the type promotion also considers the type of value
+    if value is not None:
+        if not utils.can_safe_cast_to(cast_from=utils.to_dtype(value), cast_to=common_dtype):
+            return False
+    return True
+
+
+def _addcdiv_check(
+    a: TensorLike,
+    b: TensorLike,
+    c: TensorLike,
+    *,
+    value: Optional[Number] = None
+) -> bool:
+    # PyTorch doesn't support non-tensor inputs for torch.addcdiv
+    if not (all(isinstance(arg, TensorLike) for arg in [a,b,c]) and isinstance(value, (Number, type(None)))):
+        return False
+
+    # PyTorch doesn't support Integer division with torch.addcdiv
+    if dtypes.is_exact_dtype(dtypes.to_dtype(b)) and dtypes.is_exact_dtype(dtypes.to_dtype(c)):
+        return False
+
+    common_dtype, _ = utils.elementwise_type_promotion(a, b, c, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT)
+    common_dtype = dtypes.to_strong_dtype(common_dtype)
+    not_supported_types = (dtypes.complex32, dtypes.float16, dtypes.bfloat16)
+    if common_dtype in not_supported_types:
+        return False
+
+    # here the promotion is different from torch.addcdiv,
+    # the type promotion also considers the type of value
+    if value is not None:
+        if not utils.can_safe_cast_to(cast_from=utils.to_dtype(value), cast_to=common_dtype):
+            return False
+    return True
+
+
+def _addcmul_addcdiv_factory(name: str) -> Callable:
+    def fn(
+        bsym: BoundSymbol,
+        a: TensorLike,
+        b: TensorLike,
+        c: TensorLike,
+        *,
+        value: Optional[Number] = None
+    ) -> BoundSymbol:
+        sym = Symbol(name=name, meta=None, _module=torch)
+
+        if value is not None:
+            tbsym = sym.bind(a, b, c, value=value, output=bsym.output)
+        else:
+            tbsym = sym.bind(a, b, c, output=bsym.output)
+        return tbsym
+
+    return fn
+
+
+addcmul = _addcmul_addcdiv_factory("addcmul")
+addcdiv = _addcmul_addcdiv_factory("addcdiv")
+
+
 #
 # Conditional and masking operations
 #
@@ -1636,6 +1715,8 @@ _ops_map.update(
         PrimIDs.SUB: (_elementwise_binary_check, sub),
         "torch.special.zeta": (_elementwise_binary_check, zeta),
         PrimIDs.ZETA: (_elementwise_binary_check, zeta),
+        "torch.addcmul": (_addcmul_check, addcmul),
+        "torch.addcdiv": (_addcdiv_check, addcdiv),
         # Conditional and masking operations
         "torch.masked_fill": (_always_executable, masked_fill),
         "torch.tril": (_tril_check, tril),

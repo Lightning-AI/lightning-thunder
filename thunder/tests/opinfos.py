@@ -2110,6 +2110,84 @@ elementwise_binary_ops.append(zeta_opinfo)
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
 
+
+def addcmul_addcdiv_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    S = 4
+    cases = (
+        ((S,), (S,), (S,)),
+        ((S, S), (S, S), (S, S)),
+        ((S, 1), (1, S), (S, 1)),
+    )
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    number = partial(make_number, dtype=dtype)
+    for s0, s1, s2 in cases:
+        yield SampleInput(make(s0), make(s1), make(s2))
+        val = number(**kwargs)
+        yield SampleInput(make(s0), make(s1), make(s2), value=val)
+
+
+addcmul_opinfo = OpInfo(
+    ltorch.addcmul,
+    sample_input_generator=addcmul_addcdiv_sample_generator,
+    torch_reference=torch.addcmul,
+    dtypes=(datatypes.exact, datatypes.inexact),
+    test_directives=(
+        # torch.addcmul doesn't support bool8
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+        ),
+        # torch.addcmul doesn't support complex32 on CUDA
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # complex32 has flaky accuracy fails
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+            dtypes=(datatypes.complex32,),
+        ),
+    ),
+)
+opinfos.append(addcmul_opinfo)
+
+
+addcdiv_opinfo = OpInfo(
+    ltorch.addcdiv,
+    sample_input_generator=addcmul_addcdiv_sample_generator,
+    torch_reference=torch.addcdiv,
+    dtypes=(datatypes.exact, datatypes.inexact),
+    test_directives=(
+        # torch.addcdiv doesn't support half on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("TorchEx",),
+            devicetypes=(devices.DeviceType.CPU,),
+            dtypes=(datatypes.float16,),
+        ),
+        # torch.addcdiv doesn't support complex32
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+        # torch.addcdiv doesn't support Integer division
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.exact,),
+        ),
+    ),
+)
+opinfos.append(addcdiv_opinfo)
+
+
 #
 # Conditional and masking operations
 #
