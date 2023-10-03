@@ -75,7 +75,7 @@ def test_find_producer_symbols(executor, device, _):
 
     # We need to find the producer of __c and __d that is not in subsymbols of nvfuser_symbol
     # We will search for the producer of __c and __d in the flattened trace
-    flattened_trace = next(filter(lambda x: str(x._provenance) == "# Constructed by Flatten", traces))
+    flattened_trace = next(filter(lambda x: str(x._provenance).startswith("# Constructed by Flatten"), traces))
 
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region

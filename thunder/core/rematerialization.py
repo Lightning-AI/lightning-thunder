@@ -3,6 +3,7 @@ from functools import partial
 from itertools import chain, product
 from typing import Callable, Optional, Tuple, Union
 from collections.abc import Sequence
+import time
 
 from igraph import Graph
 
@@ -414,9 +415,9 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             rematerialized traces.
     """
     import copy
+    start_time_ns = time.time_ns()
 
     rematerialized_trace = from_trace(trace)
-    rematerialized_trace.set_provenance(TraceProvenance("Rematerialization"))
     rematerialized_trace.bound_symbols = copy.copy(trace.bound_symbols)
 
     def replace_bound_symbol(bsym, new_bsyms):
@@ -460,6 +461,11 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             replace_bound_symbol(bsym, new_bsyms) for bsym in rematerialized_trace.bound_symbols
         )
 
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+
+    rematerialized_trace.set_provenance(TraceProvenance(f"Rematerialization (took {elapsed_time_millis} milliseconds)"))
     return rematerialized_trace, [rematerialized_trace]
 
 

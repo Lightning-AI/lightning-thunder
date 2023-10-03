@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import replace
 from itertools import chain
 from functools import partial
+import time
 
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
@@ -21,6 +22,8 @@ from thunder.executors import torchex as TorchEx
 #   Technically this could be a "transform", because it is semantic-preserving.
 # TODO We could look at reconciling the ideas of what a trace produces and the return prim
 def dce(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    start_time_ns = time.time_ns()
+
     producers: ProxyDict = cutils.producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
@@ -73,7 +76,12 @@ def dce(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
-    dcetrace.set_provenance(TraceProvenance("Dead Code Elimination"))
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+
+    dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
 
     return dcetrace, [dcetrace]
 
@@ -90,6 +98,8 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     Returns:
         list: transformed trace
     """
+    start_time_ns = time.time_ns()
+
     del_trace = from_trace(trace)
     bsyms = deque()
 
@@ -123,7 +133,12 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         bsyms.appendleft(bsym)
 
     del_trace.bound_symbols = list(bsyms)
-    del_trace.set_provenance(TraceProvenance("Delete Last Used"))
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+
+    del_trace.set_provenance(TraceProvenance(f"Delete Last Used (took {elapsed_time_millis} milliseconds)"))
 
     return del_trace, [del_trace]
 
@@ -182,6 +197,8 @@ def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False
 
 
 def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
+    start_time_ns = time.time_ns()
+    
     flattenedtrace = from_trace(trace)
     flattened: list[BoundSymbol] = []
 
@@ -206,7 +223,11 @@ def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, lis
         _flatten(bsym)
 
     flattenedtrace.bound_symbols = flattened
-    flattenedtrace.set_provenance(TraceProvenance("Flatten"))
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    flattenedtrace.set_provenance(TraceProvenance(f"Flatten (took {elapsed_time_millis} milliseconds)"))
 
     return flattenedtrace, [flattenedtrace]
 
@@ -316,6 +337,8 @@ def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     Returns:
         :class:`TraceCtx` with common subexpression eliminated.
     """
+    start_time_ns = time.time_ns()
+
     cse_trace = from_trace(trace)
 
     cse_trace_bound_symbols = []
@@ -363,11 +386,17 @@ def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     new_trace_output = tree_map(map_redundant, trace.output)
     cse_trace.output = new_trace_output
 
-    cse_trace.set_provenance(TraceProvenance("Common Subexpression Elimination"))
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    cse_trace.set_provenance(TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)"))
     return cse_trace, [cse_trace]
 
 
 def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    start_time_ns = time.time_ns()
+
     fusedtrace = from_trace(trace)
     fused_bsyms = []
 
@@ -481,7 +510,11 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
     # Constructs the new trace
     fusedtrace.bound_symbols = fused_bsyms
-    fusedtrace.set_provenance(TraceProvenance("Fusion"))
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
 
     return fusedtrace, [fusedtrace]
 
@@ -494,6 +527,8 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 #   by other Symbols, like torch.to, which may be unflattened
 # TODO This could be extended to non-float conversions, like complex -> complex conversions
 def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    start_time_ns = time.time_ns()
+    
     rrctrace = from_trace(trace)
 
     # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)
@@ -615,5 +650,8 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     new_trace_output = tree_map(map_redundant, trace.output)
     rrctrace.output = new_trace_output
 
-    rrctrace.set_provenance(TraceProvenance("Remove redundant casts"))
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
     return rrctrace, [rrctrace]

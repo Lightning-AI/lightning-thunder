@@ -138,12 +138,8 @@ def transform_for_execution(
 
     traces: list[TraceCtx] = []
 
-    try:
-        dce_trace, dce_traces = passes.dce(trace)
-        traces.extend(dce_traces)
-    except Exception as e:
-        print(f"The dead code elimination pass failed when invoked on:\n{trace}")
-        raise e
+    dce_trace, dce_traces = passes.dce(trace)
+    traces.extend(dce_traces)
 
     claimed_trace, claimed_traces = passes.claim(dce_trace, executors_list, prims_only=only_execute_prims)
     traces.extend(claimed_traces)
