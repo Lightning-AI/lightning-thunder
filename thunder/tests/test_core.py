@@ -1323,9 +1323,9 @@ def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
 
     from thunder.core.transforms import bsym_list_to_dag, TOPOSORT_ORDER, toposort_bsym_dag, Node
 
-    nodes, return_node = bsym_list_to_dag(trc.bound_symbols)
-    top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
-    bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
+    roots, leaves = bsym_list_to_dag(trc.bound_symbols)
+    top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
+    bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
     top_down_add_bsym = top_down_bsyms[2]
     bottom_up_sub_bsym = bottom_up_bsyms[2]
@@ -1340,7 +1340,7 @@ def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
 
         return 0
 
-    sub_preferring_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN, prefer_sub_selector)
+    sub_preferring_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN, prefer_sub_selector)
     sub_preferring_sub_bsym = sub_preferring_bsyms[2]
 
     assert sub_preferring_sub_bsym.sym.id == "torch.sub"
@@ -1359,9 +1359,9 @@ def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
     traces = thunder.last_traces(cbar)
     trc = traces[0]
 
-    nodes, return_node = bsym_list_to_dag(trc.bound_symbols)
-    top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
-    bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
+    roots, leaves = bsym_list_to_dag(trc.bound_symbols)
+    top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
+    bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
     top_down_reshape_bsym = top_down_bsyms[5]
     bottom_up_reshape_bsym = bottom_up_bsyms[4]
@@ -1377,9 +1377,9 @@ def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
         if trc.get_provenance() is not None and "Flatten" in str(trc.get_provenance()):
             flat_trace = trc
 
-    nodes, return_node = bsym_list_to_dag(flat_trace.bound_symbols)
-    top_down_bsyms = toposort_bsym_dag(nodes, TOPOSORT_ORDER.TOP_DOWN)
-    bottom_up_bsyms = toposort_bsym_dag([return_node], TOPOSORT_ORDER.BOTTOM_UP)
+    roots, leaves = bsym_list_to_dag(flat_trace.bound_symbols)
+    top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
+    bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
     for bsyms in (top_down_bsyms, bottom_up_bsyms):
         flat_trace.bound_symbols = top_down_bsyms

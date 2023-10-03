@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Union, Optional
 from collections.abc import Sequence
 import copy
 import inspect
+import time
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
@@ -28,7 +29,7 @@ from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.symbol import BoundSymbolInterface, Symbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
@@ -45,7 +46,6 @@ from thunder.core.utils import (
     canonicalize_dims,
     ProxyDict,
 )
-from thunder.executors.passes import dce
 from thunder import clang
 
 # from thunder.executors.torch import ops_to_torch_ops_map
@@ -60,6 +60,79 @@ def construct_trace(inline_trace=False, **extra_kwargs):
     import thunder
 
     return thunder.trace(inline_trace=inline_trace, **extra_kwargs)
+
+
+#
+# Common optimization and transform passes
+#
+# NOTE This avoids transforms depending on passes, since passes depend on transforms
+
+# NOTE Runs a Dead Code Elimination (DCE) pass
+#   Technically this could be a "transform", because it is semantic-preserving.
+# TODO We could look at reconciling the ideas of what a trace produces and the return prim
+# TODO This calls variableify(), but we could directly construct Variable objects instead
+def dce(trace: Trace) -> tuple[Trace, list[Trace]]:
+    start_time_ns = time.time_ns()
+
+    producers: ProxyDict = utils.producers(trace)
+
+    flat_trace_outputs, _ = tree_flatten(trace.output)
+    needed_proxies = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    dced = []
+
+    # NOTE These primitives are marked to not be collected because they dictate the function's output
+    #   (RETURN), have side effects (PRINT), or are comments (COMMENT, UNPACK_TRIVIAL)
+    dont_collect = {
+        prims.PrimIDs.RETURN,
+        prims.PrimIDs.COMMENT,
+        prims.PrimIDs.PRINT,
+        prims.PrimIDs.UNPACK_TRIVIAL,
+    }
+
+    bsym: BoundSymbol
+    for bsym in reversed(trace.bound_symbols):
+        # Preserves symbols that should never be collected
+        if bsym.sym.id in dont_collect:
+            needed = True
+        else:
+            needed = False
+
+        # NOTE This block is run even if we know we're preserving the operation, because it
+        #   may mark some of the operation's outputs as unused
+        some_unused = False
+        for out in bsym.flat_proxy_outs:
+            if variableify(out) in needed_proxies and producers[out] == bsym:
+                needed = True
+            else:
+                some_unused = True
+
+        if needed:
+            nbsym: BoundSymbol = bsym
+
+            # Replaces unused Proxy outputs with None
+            if some_unused:
+
+                def _helper(x):
+                    if isinstance(x, Proxy) and (variableify(x) not in needed_proxies or producers[x] != bsym):
+                        return None
+                    return x
+
+                nbsym_output = tree_map(_helper, bsym.output)
+                nbsym = bsym.from_bsym(output=nbsym_output)
+
+            dced.append(nbsym)
+            for x in chain(nbsym.flat_proxy_args, nbsym.flat_proxy_kwargs):
+                needed_proxies.add(variableify(x))
+
+    dcetrace = from_trace(trace)
+    dcetrace.bound_symbols = list(reversed(dced))
+    
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
+
+    return dcetrace, [dcetrace]
 
 
 #
@@ -96,13 +169,19 @@ class Node:
 # Returns a tuple of
 #   - a list of all Nodes corresponding to bound symbols without parents
 #   - an optional Node corresponding to the RETURN bound symbol, which must be unique or not in the list of bound symbols
-def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node], Node | None]:
-    nodes_without_parents: list[Node] = []
+def bsym_list_to_dag(
+        bsyms: Sequence[BoundSymbolInterface],
+        *,
+        producers: None | ProxyDict = None,
+        consumers: None | ProxyDict = None) -> tuple[list[Node], None | Node]:
+    roots: list[Node] = []
+    leaves: list[Node] = []
     return_node: None | Node = None
+    
+    producers = producers if producers is not None else utils.producers(bsyms)
+    consumers = consumers if consumers is not None else utils.consumers(bsyms)
 
-    # Constructs dag
-    producers, consumers = utils.producers_and_consumers(bsyms)
-
+    # Constructs a node per bsym, and a bsym -> node mapping
     bsym_to_node_map: dict[BoundSymbolInterface, Node] = {}
     for bsym in bsyms:
         node = Node(bsym)
@@ -115,6 +194,7 @@ def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node],
             )
             return_node = node
 
+    # Adds edges between nodes
     for bsym, node in bsym_to_node_map.items():
         has_parents: bool = False
         for inp in chain(bsym._flat_args, bsym._flat_kwargs):
@@ -137,20 +217,24 @@ def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node],
             has_parents = True
 
         if not has_parents:
-            nodes_without_parents.append(node)
+            roots.append(node)
 
+        has_children: bool = False
+        
+        vargs = tuple(variableify(x) for x in bsym._flat_args)
+        vkwargs = tuple(variableify(x) for x in bsym._flat_kwargs)
         for out in bsym._flat_outs:
             if not isinstance(out, Proxy):
                 continue
 
             # Checks that the output is actually produced by this function, and not an input to it
-            if variableify(out) in chain(
-                (variableify(x) for x in bsym._flat_args), (variableify(x) for x in bsym._flat_kwargs)
-            ):
+            vout = variableify(out)
+            if vout in vargs or vout in vkwargs:
                 continue
 
             children = consumers.get(out, [])
             for child in children:
+                has_children = True
                 child_node = bsym_to_node_map[child]
 
                 # Checks if the node was already a child to avoid multiple edges between two nodes
@@ -163,7 +247,10 @@ def bsym_list_to_dag(bsyms: Sequence[BoundSymbolInterface]) -> tuple[list[Node],
                 if not already_has_child:
                     node.children.append(child_node)
 
-    return nodes_without_parents, return_node
+        if not has_children:
+            leaves.append(node)
+
+    return roots, leaves
 
 
 class TOPOSORT_ORDER(Enum):

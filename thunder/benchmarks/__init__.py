@@ -390,17 +390,17 @@ def _prettyprint_stats(
         )
 
         before_trace_time_ns = median_benchmark_stat.last_trace_host_start - median_benchmark_stat.start_time
-        after_trace_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop
+        accelerator_wait_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop
 
         before_trace_time_us: str = ns_to_us(before_trace_time_ns)
-        after_trace_time_us: str = ns_to_us(after_trace_time_ns)
+        accelerator_wait_time_us: str = ns_to_us(accelerator_wait_time_ns)
 
         before_trace_time_percentage: str = f"{round(before_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-        after_trace_time_percentage: str = f"{round(after_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
+        accelerator_wait_time_percentage: str = f"{round(accelerator_wait_time_ns / median_benchmark_stat.total_time * 100)}%"
 
         extension = f"""\
-            The median benchmark took {before_trace_time_us} ({before_trace_time_percentage} of the total time) to get into the tracing logic.
-            The median benchmark took {after_trace_time_us} ({after_trace_time_percentage} of the total time) returning from the tracing logic.
+            The median benchmark took {before_trace_time_us} to get into the tracing logic, {before_trace_time_percentage} of the total time.
+            The median benchmark took {accelerator_wait_time_us} waiting for the accelerator's computation to finish, {accelerator_wait_time_percentage} of the total time.
             The median benchmark run's total time in tracing logic is {trace_time_us}, {trace_time_percentage} of the total time.
             The median benchmark run's cache lookup time is {cache_time_us}, {cache_time_percentage} of the total time.
             The median benchmark run's time spent tracing is {tracing_time_us}, {tracing_time_percentage} of the total time.

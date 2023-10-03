@@ -47,6 +47,7 @@ import thunder.core.script.passes
 import thunder.core.script as script
 import thunder.core.script.python_ir
 
+import thunder.core.transforms as transforms
 from thunder.core.transforms import pytorch_grad_transform
 
 import thunder.torch as ltorch
@@ -534,7 +535,7 @@ def trace(
 
             trace.set_output(result)
             if use_dce:
-                trace, _ = executors.passes.dce(trace)
+                trace, _ = transforms.dce(trace)
 
         finally:
             # Resets contexts
