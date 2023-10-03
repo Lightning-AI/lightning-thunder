@@ -17,7 +17,7 @@ from thunder.benchmarks import (
     BenchmarkArg,
 )
 from thunder.core import dtypes
-from thunder.tests.lit_gpt_model import Config, name_to_config
+from thunder.tests.lit_gpt_model import Config
 from thunder.tests.lit_gpt_model import GPT
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
@@ -112,8 +112,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
 if __name__ == "__main__":
     for name in ("open_llama_7b", "Llama-2-7b-hf"):
-        config = Config(name_to_config[name])
-
+        config = Config.from_name(name)
         # fwd-only benchmark
         b = LitGPTBenchmark(config, dtype=torch.bfloat16, requires_grad=False)
 
