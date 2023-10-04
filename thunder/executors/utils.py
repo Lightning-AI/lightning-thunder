@@ -366,7 +366,7 @@ def group_bookend_meta_ops(region: Region, producers, consumers) -> list[Region]
     rear_meta_cluster = list()
     region_inputs = copy(region.inputs)
 
-    # bsym can be moved to the front if all their inputs are a direct region inputs
+    # bsym can be moved to the front if all their inputs are direct region inputs
     def can_move_to_front(bsym: BoundSymbol) -> bool:
         # non proxy don't need to be checked here.
         for x in chain(bsym._flat_args, bsym._flat_kwargs):

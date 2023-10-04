@@ -123,6 +123,7 @@ class Symbol:
     python_impl: Callable | None = None
     id: Any | None = None
     is_prim: bool = False
+    tags: None | list[Any] = None
     is_fusion: bool = False
     python_printer: Callable = default_python_printer
     _module: Any | None = None
@@ -148,9 +149,9 @@ class Symbol:
         return self._hash
 
     # Symbols are equal if they have the same id (if present),
-    # or name and module if id is not present.
-    # Note: does not check if they have the same meta, impls,
-    # if they are prims, or have the same printer, etc.
+    #   or name and module if id is not present.
+    # NOTE This does not check if the two Symbol objects have the same meta, impls,
+    #   if they are prims, if they have the same executor, or if they have the same printer, etc.
     # TODO Catch and warn when people construct symbols violating these assumptions
     def __eq__(self, other: Symbol) -> int:
         if not isinstance(other, Symbol):

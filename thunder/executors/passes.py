@@ -102,28 +102,39 @@ def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False
         for sbsym in bsym.subsymbols:
             _set_executor(sbsym, ex)
 
-    def _find_executor(bsym: BoundSymbol) -> tuple[BoundSymbol, bool]:
-        # Attempts to find an executor for the symbol
-        for ex in executors_list:
-            if ex.can_execute(bsym, prims_only=prims_only):
-                _set_executor(bsym, ex)
-                return True
-
-        # If no executors can execute the symbol directly, find
-        #   executors for the sub-symbols
+    def _can_execute(executor, bsym: BoundSymbol) -> bool:
+        if executor.can_execute(bsym):
+            return True
+        
         if len(bsym.subsymbols) == 0:
             return False
-
+        
         for sbsym in bsym.subsymbols:
-            found = _find_executor(sbsym)
-            if not found:
+            can_executor_subsymbol = _can_execute(executor, sbsym)
+            if not can_executor_subsymbol:
                 return False
-
+            
         return True
 
+    # TODO Refactor this to be an nvFuser executor function
+    # NOTE Today this doesn't do anything special
+    def nvFuserClaim(executor):
+        for bsym in trace.bound_symbols:
+            if bsym._executor is None and _can_execute(executor, bsym):
+                _set_executor(bsym, executor)
+
+    # TODO Refactor this to be a call to each executor to claim
+    for executor in executors_list:
+        if executor.name() is Executor.NVFUSER:
+            nvFuserClaim(executor)
+        else:
+            for bsym in trace.bound_symbols:
+                if bsym._executor is None and _can_execute(executor, bsym):
+                    _set_executor(bsym, executor)
+
+    # Verifies all bound symbols are claimed
     for bsym in trace.bound_symbols:
-        found = _find_executor(bsym)
-        cutils.check(found, lambda: f"Could not find executor for bound symbol {bsym}")
+        cutils.check(bsym._executor is not None, lambda: f"Could not find an executor for bound symbol {bsym}")
 
     return trace, []
 
@@ -295,7 +306,7 @@ def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
                 skip_subsymbols=True,
             )
         ).rhs()
-        if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None:
+        if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
             # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
             for src, dst in zip(bsym._flat_outs, prior_bsym._flat_outs):
                 redundant_map[variableify(src)] = dst
