@@ -170,7 +170,6 @@ def make_prim(
     python_printer=default_python_printer,
     python_impl=None,
     _bind_postprocess: None | Callable = None,
-    **kwargs,
 ):
     sym = Symbol(
         name=name,
@@ -180,7 +179,6 @@ def make_prim(
         is_prim=True,
         python_printer=python_printer,
         _bind_postprocess=_bind_postprocess,
-        **kwargs,
     )
     return sym
 

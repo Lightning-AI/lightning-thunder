@@ -19,7 +19,7 @@ from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify, FutureTensorProxy
+from thunder.core.proxies import Proxy, NumberProxy, variableify
 
 from thunder.core.trace import (
     get_tracectx,
@@ -125,7 +125,6 @@ class Symbol:
     is_prim: bool = False
     is_fusion: bool = False
     python_printer: Callable = default_python_printer
-    _insert_wait_for_future: bool = True
     _module: Any | None = None
     _hash: int | None = None
 
@@ -253,16 +252,6 @@ class Symbol:
             return ceager(*args, **kwargs)
 
         baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
-
-        # We might receive a FutureTensorProxy as an argument, which we need to unwrap
-        # into a TensorProxy before we can use it.
-        if self._insert_wait_for_future:
-            def unwrap_future(x):
-                if isinstance(x, FutureTensorProxy):
-                    return x.wait()
-                return x
-            args, kwargs = tree_map(unwrap_future, (args, kwargs))
-
         result: Any
         subsymbols = []
         if self.is_prim:

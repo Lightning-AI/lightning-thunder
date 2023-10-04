@@ -2087,7 +2087,7 @@ if torch.distributed.is_available():
                 if sym.id == PrimIDs.RETURN:
                     prims.python_return(
                         *[
-                            grad_to_future.get(grad, grad)
+                            dist_prims.wait(grad_to_future[grad]) if isinstance(grad, TensorProxy) else None
                             for grad in gradients
                         ]
                     )
