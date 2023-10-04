@@ -746,6 +746,52 @@ cosh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(cosh_opinfo)
 
+# digamma is defined for all complex numbers EXCEPT negative integers and zero
+digamma_opinfo = OpInfo(
+    clang.digamma,
+    # NOTE: Restrict domain to avoid singularities because of Issue 1138
+    domain=(eps, math.inf),
+    # NOTE: digamma returns NaN for all negative integers. It returns -Inf when x = 0.
+    singularity_fn=lambda x: x if x > 0 else (x - round(x)),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.digamma),
+    test_directives=(
+        # NOTE: Torch doesn't support CPU float16 digamma prior to v2.1
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+            active_if=LooseVersion(torch.__version__) < LooseVersion("2.1.0")
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("TorchEx"),
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+            active_if=LooseVersion(torch.__version__) < LooseVersion("2.1.0")
+        ),
+        # NOTE Neither Torch nor NvFuser supports bfloat16 digamma
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # NOTE Torch doesn't support complex digamma
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating,),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("TorchEx"),
+            dtypes=(datatypes.complexfloating,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(digamma_opinfo)
+
 erf_opinfo = OpInfo(
     clang.erf,
     sample_input_generator=elementwise_unary_generator,
@@ -1247,7 +1293,7 @@ elementwise_unary_ops.append(tanh_opinfo)
 # lgamma is defined for all complex numbers EXCEPT negative integers and zero
 lgamma_opinfo = OpInfo(
     clang.lgamma,
-    domain=(-1.0 + eps, math.inf),
+    domain=(eps, math.inf),
     sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
     torch_reference=_elementwise_unary_torch(torch.lgamma),
     test_directives=(
@@ -2106,6 +2152,7 @@ zeta_opinfo = OpInfo(
     ),
 )
 elementwise_binary_ops.append(zeta_opinfo)
+
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)

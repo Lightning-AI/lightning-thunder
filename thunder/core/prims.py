@@ -87,6 +87,7 @@ class PrimIDs(Enum):
     CEIL = auto()
     COS = auto()
     COSH = auto()
+    DIGAMMA = auto()
     ERF = auto()
     ERFC = auto()
     ERFCINV = auto()
@@ -769,6 +770,13 @@ acos = _make_elementwise_unary_prim(
 )
 
 acosh = _make_elementwise_unary_prim(PrimIDs.ACOSH, "acosh", supported_input_dtypes=fp_math_dtypes)
+
+digamma = _make_elementwise_unary_prim(
+    PrimIDs.DIGAMMA,
+    "digamma",
+    supported_input_dtypes=fp_math_dtypes,
+)
+
 
 asin = _make_elementwise_unary_prim(
     PrimIDs.ASIN,

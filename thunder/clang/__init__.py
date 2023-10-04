@@ -1041,6 +1041,13 @@ def cosh(a):
 
 
 @clang_ctx
+def digamma(a):
+    return _elementwise_unary_wrapper(
+        a, prim=prims.digamma, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
+    )
+
+
+@clang_ctx
 def erf(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.erf, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT

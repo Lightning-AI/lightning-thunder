@@ -402,6 +402,11 @@ def cosh(a):
     return clang.cosh(a)
 
 
+@torchsymbol(torch.digamma, torch.special.digamma, is_method=True)
+def digamma(a):
+    return clang.digamma(a)
+
+
 @torchsymbol(torch.erf, is_method=True)
 def erf(a):
     return clang.erf(a)

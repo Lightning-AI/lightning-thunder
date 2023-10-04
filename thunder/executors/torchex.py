@@ -691,6 +691,7 @@ bitwise_not = _elementwise_unary_factory("bitwise_not")
 ceil = _elementwise_unary_factory("ceil")
 cos = _elementwise_unary_factory("cos")
 cosh = _elementwise_unary_factory("cosh")
+digamma = _elementwise_unary_factory("digamma")
 erf = _elementwise_unary_factory("erf")
 erfc = _elementwise_unary_factory("erfc")
 # NOTE PyTorch doesn't have erfcinv, although it can be implemented using erfinv
@@ -1617,6 +1618,8 @@ _ops_map.update(
         PrimIDs.COS: (_elementwise_unary_check, cos),
         "torch.cosh": (_elementwise_unary_check, cosh),
         PrimIDs.COSH: (_elementwise_unary_check, cosh),
+        "torch.digamma": (_elementwise_unary_check, digamma),
+        PrimIDs.DIGAMMA: (_elementwise_unary_check, digamma),
         "torch.erf": (_elementwise_unary_check, erf),
         PrimIDs.ERF: (_elementwise_unary_check, erf),
         "torch.erfc": (_elementwise_unary_check, erfc),
