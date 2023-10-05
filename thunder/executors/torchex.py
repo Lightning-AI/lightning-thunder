@@ -1337,6 +1337,13 @@ def relu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
     return sym.bind(a, output=bsym.output)
 
 
+def relu6(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
+    sym = Symbol(name="relu6", meta=None, _module=torch.nn.functional)
+    # NOTE: inplace is ignored since only
+    # inplace=False is supported and it has a default value.
+    return sym.bind(a, output=bsym.output)
+
+
 def selu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
     sym = Symbol(name="selu", meta=None, _module=torch.nn.functional)
     # NOTE: inplace is ignored since only
@@ -1663,6 +1670,7 @@ _ops_map.update(
         "torch.reciprocal": (_elementwise_unary_check, reciprocal),
         PrimIDs.RECIPROCAL: (_elementwise_unary_check, reciprocal),
         "torch.relu": (_always_executable, relu),
+        "torch.relu6": (_always_executable, relu6),
         "torch.selu": (_always_executable, selu),
         "torch.round": (_elementwise_unary_check, torch_round),
         PrimIDs.ROUND: (_elementwise_unary_check, torch_round),

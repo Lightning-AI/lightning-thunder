@@ -2143,6 +2143,14 @@ def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:
     return where(a > 0, a, 0)
 
 
+# id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
+@torchsymbol(torch.nn.functional.relu6, id="torch.relu6", is_method=False)
+def relu6(a: TensorProxy, inplace: bool = False) -> TensorLike:
+    utils.check(not inplace, lambda: f"relu6 only supports inplace=False", exception_type=NotImplementedError)
+
+    return where(a < 0, 0, where(a > 6, 6, a))
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, inplace: bool = False) -> TensorLike:

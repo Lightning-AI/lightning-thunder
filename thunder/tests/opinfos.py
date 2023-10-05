@@ -1501,6 +1501,11 @@ def relu_error_generator(op, device, dtype=torch.float32, **kwargs):
     yield (SampleInput(a, inplace=True), NotImplementedError, "relu only supports inplace=False")
 
 
+def relu6_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "relu6 only supports inplace=False")
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
@@ -1524,6 +1529,22 @@ relu_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(relu_opinfo)
+
+relu6_opinfo = OpInfo(
+    ltorch.relu6,
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=relu6_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.relu6),
+    test_directives=(
+        # PyTorch does not support bool for both CPU and CUDA relu6
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+        ),
+    ),
+)
+elementwise_unary_ops.append(relu6_opinfo)
 
 
 def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
