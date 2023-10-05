@@ -866,6 +866,7 @@ erfinv = _make_elementwise_unary_prim(
 exp = _make_elementwise_unary_prim(
     PrimIDs.EXP,
     "exp",
+    number_fn=math.exp,
     supported_input_dtypes=fp_math_dtypes,
 )
 
@@ -901,6 +902,7 @@ isfinite = _make_elementwise_unary_prim(
 lgamma = _make_elementwise_unary_prim(
     PrimIDs.LGAMMA,
     "lgamma",
+    number_fn=math.lgamma,
     supported_input_dtypes=fp_math_dtypes,
 )
 

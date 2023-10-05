@@ -786,6 +786,11 @@ def _add_sub_factory(name: str) -> Callable:
     return fn
 
 
+def polygamma(bsym: BoundSymbol, n: int, a: TensorLike)-> BoundSymbol:
+    sym = Symbol(name="polygamma", meta=None, _module=torch)
+    return sym.bind(n, a, output=bsym.output)
+
+
 add = _add_sub_factory("add")
 atan2 = _elementwise_binary_factory("atan2")
 bitwise_and = _elementwise_binary_factory("bitwise_and")
@@ -1710,6 +1715,7 @@ _ops_map.update(
         PrimIDs.NE: (_elementwise_binary_check, ne),
         "torch.nextafter": (_elementwise_binary_check, nextafter),
         PrimIDs.NEXTAFTER: (_elementwise_binary_check, nextafter),
+        "torch.polygamma": (_always_executable, polygamma),
         "torch.pow": (_elementwise_binary_check, pow),
         PrimIDs.POW: (_elementwise_binary_check, pow),
         "torch.remainder": (_elementwise_binary_check, remainder),

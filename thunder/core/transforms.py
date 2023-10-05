@@ -1746,6 +1746,20 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
     return clang.expand(unsqueezed, original_shape)
 
 
+@register_augmented_forward("torch.polygamma")
+def polygamma_aug_fwd(n: int, a: Proxy):
+    from thunder.torch import polygamma
+    primal = polygamma(n, a)
+    residuals = (n, a)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.polygamma")
+def polygamma_backward(n: int, a: Proxy, g):
+    from thunder.torch import polygamma
+    return None, g * polygamma(n + 1, a)
+
+
 @register_augmented_forward(prims.PrimIDs.RSQRT)
 def rsqrt_augmented(x):
     """Augmented rsqrt operation.

@@ -651,6 +651,21 @@ def nextafter(a, b):
     return clang.nextafter(a, b)
 
 
+@torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
+def polygamma(n: int, a: TensorLike) -> TensorLike:
+    utils.check(isinstance(n, int), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
+    utils.check(n >= 0, lambda: f"polygamma(n, a) does not support negative {n=}.")
+
+    # NOTE Use digamma for n == 0 case; otherwise zeta(1, a) returns math.inf
+    if n == 0:
+        return digamma(a)
+
+    sign = 1 if (n % 2) == 1 else -1
+    # Compute in log-space for numerical stability
+    factorial_mul_zeta = exp(lgamma(n + 1.) + log(zeta(n + 1., a)))
+    return sign * factorial_mul_zeta 
+
+
 @torchsymbol(torch.pow, is_method=True)
 def pow(a, b):
     return clang.pow(a, b)

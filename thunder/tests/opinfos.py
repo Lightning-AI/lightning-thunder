@@ -746,10 +746,12 @@ cosh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(cosh_opinfo)
 
+
 # digamma is defined for all complex numbers EXCEPT negative integers and zero
 digamma_opinfo = OpInfo(
     clang.digamma,
-    # NOTE: Restrict domain to avoid singularities because of Issue 1138
+    # NOTE: Restrict domain to avoid singularities because of
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1138
     domain=(eps, math.inf),
     # NOTE: digamma returns NaN for all negative integers. It returns -Inf when x = 0.
     singularity_fn=lambda x: x if x > 0 else (x - round(x)),
@@ -1980,6 +1982,40 @@ nextafter_opinfo = OpInfo(
     ),
 )
 elementwise_binary_ops.append(nextafter_opinfo)
+
+
+def polygamma_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
+    rhs_generator = elementwise_unary_generator(op, device, dtype, requires_grad, exclude_zero=True)
+    # NOTE Polygamma grows very fast because of factorial term; Limit lhs values to avoid extremal values.
+    lhs_generator = range(5)
+
+    for n, rhs_arg in itertools.product(lhs_generator, rhs_generator):
+        yield SampleInput(n, rhs_arg.args[0])
+
+
+polygamma_opinfo = OpInfo(
+    ltorch.polygamma,
+    # NOTE: Restrict domain to avoid singularities because of 
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1138
+    # NOTE: polygamma returns NaN, -Inf, or Inf for all negative integers.
+    domain=(eps, math.inf),
+    sample_input_generator=polygamma_sample_input_generator,
+    torch_reference=torch.polygamma,
+    test_directives=(
+        # NOTE Torch does not support complex, fp16, or bf16 polygamma
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complexfloating, datatypes.bfloat16, datatypes.float16),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("TorchEx"),
+            dtypes=(datatypes.complexfloating, datatypes.bfloat16, datatypes.float16),
+        ),
+    ),
+)
+elementwise_binary_ops.append(polygamma_opinfo)
 
 
 def pow_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
