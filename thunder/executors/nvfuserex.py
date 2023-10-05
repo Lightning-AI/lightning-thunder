@@ -392,7 +392,7 @@ def cat(tensors: list[TensorProxy], dim: int, *, fd: FusionDefinition, lc_to_nv_
 
 # NOTE nvFuser does not support dilation > 0
 def _pad_check(a: TensorProxy, padding_value: Number, padding_config: tuple[int, int, int]) -> bool:
-    if a.numel == 0:
+    if a.numel == 0 and nv_version < LooseVersion("0.0.21"):
         return False
 
     if nv_version < LooseVersion("0.0.6"):
