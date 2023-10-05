@@ -956,6 +956,12 @@ def flatten(a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
     return clang.flatten(a, start_dim, end_dim)
 
 
+@torchsymbol(torch.unbind, is_method=True)
+def unbind(a: TensorLike, dim: int = 0) -> tuple[TensorLike, ...]:
+    utils.check(len(a.size()) > 0,lambda: f"Dimension specified as={dim} but tensor has no dimensions.",)
+    return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
+
+
 @torchsymbol(torch.flip, is_method=True)
 def flip(a: TensorLike, dims: Sequence[int]) -> TensorLike:
     # PyTorch supports 0-dim inputs with len(dims) <= 1

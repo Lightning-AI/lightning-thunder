@@ -2700,6 +2700,30 @@ flatten_opinfo = OpInfo(
 shape_ops.append(flatten_opinfo)
 
 
+def unbind_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, dim
+    cases = (
+        ((1, 3), 0),
+        ((1, 3), -1),
+        ((2), 0),
+        ((3, 7, 4, 2, 5, 2), 1),
+        ((3, 7, 4, 2, 5, 2), 3),
+    )
+
+    for shape, dim in cases:
+        yield SampleInput(make(shape), dim)
+
+
+unbind_opinfo = OpInfo(
+    ltorch.unbind,
+    sample_input_generator=unbind_sample_generator,
+    torch_reference=torch.unbind,
+)
+shape_ops.append(unbind_opinfo)
+
+
 def flip_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 

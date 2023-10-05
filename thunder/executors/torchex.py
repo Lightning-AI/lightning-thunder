@@ -389,6 +389,10 @@ def flatten(bsym: BoundSymbol, a: TensorLike, start_dim: int = 0, end_dim: int =
     sym = Symbol(name="flatten", meta=None, _module=torch)
     return sym.bind(a, start_dim, end_dim, output=bsym.output)
 
+def unbind(bsym: BoundSymbol, a: TensorLike, dim: int = 0) -> TensorLike:
+    sym = Symbol(name="unbind", meta=None, _module=torch)
+    return sym.bind(a, dim, output=bsym.output)
+
 
 def flip(bsym: BoundSymbol, a: TensorLike, dims: Sequence[int]) -> TensorLike:
     sym = Symbol(name="flip", meta=None, _module=torch)
@@ -1576,6 +1580,7 @@ _ops_map.update(
         "torch.diagonal": (_always_executable, diagonal),
         "torch.Tensor.expand": (_always_executable, expand),
         "torch.flatten": (_always_executable, flatten),
+        "torch.unbind": (_always_executable, unbind),
         "torch.Tensor.__getitem__": (_always_executable, getitem),
         "torch.movedim": (_always_executable, movedim),
         PrimIDs.PAD: (_always_executable, pad),
