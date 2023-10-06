@@ -2244,6 +2244,147 @@ def log_softmax(a: TensorLike, dim: int, *, dtype=None):
     return converted
 
 
+# This helper function implements the aten nll_loss_forward, which returns the primal and total_weight tensors.
+# The total_weight tensor is used in the backward pass.
+def _nll_loss_helper(a: TensorProxy,
+                     target: TensorProxy,
+                     weight: Optional[TensorProxy],
+                     ignore_index: int,
+                     reduction: str) -> Tuple[TensorProxy, None | TensorLike]:
+
+    utils.check(
+        reduction in ("none", "sum", "mean"),
+        lambda: f"Expected reduction string to be \"none\", \"sum\", or \"mean\", but it is {reduction}.",
+        exception_type=ValueError,
+    )
+
+    # NOTE This short-circuit is subject to change and is placed ahead of other input checks to match PyTorch behavior.
+    # The expected behavior when the target and input have zero elements:
+    #   reduction = 'none' --- tensor([], shape) or tensor(0.)
+    #   reduction = 'sum'  --- tensor(0.)
+    #   reduction = 'mean' --- tensor(nan)
+    # Mean reduction on empty tensors produces NaN.
+    if a.numel == 0 and target.numel == 0:
+        if reduction == "none":
+            # Keep target shape if it is non-trivial
+            result_shape = target.shape if target.shape != (0,) else []
+            return full(result_shape, fill_value:=0.0, device=a.device, dtype=a.dtype), None
+        elif reduction == "sum":
+            return full(result_shape:=[], fill_value:=0.0, device=a.device, dtype=a.dtype), None
+        elif reduction == "mean":
+            return full(result_shape:=[], fill_value:=float("nan"), device=a.device, dtype=a.dtype), None
+
+    utils.check(
+        utils.is_integer_dtype(target.dtype),
+        lambda: f"Expected target to be a tensor with an integer dtype, but it has dtype {target.dtype}.",
+    )
+
+    utils.check(
+        a.ndim >= 1,
+        lambda: f"Expected the input tensor to have more than 1 dimension, but it has {a.ndim} dimensions.",
+    )
+
+    utils.check(
+        a.ndim == target.ndim + 1,
+        lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
+    )
+
+    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    channels_dim = 1 if a.ndim >= 2 else 0
+    num_channels = a.shape[channels_dim]
+    # target should match input in dims which do not correspond to the channels dim, i.e.
+    # (input.shape[:channels_dim] + input.shape[channels_dim + 1:]) == target.shape <=> True
+    expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1:]
+
+    utils.check(
+        expected_target_shape == target.shape,
+        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+            {expected_target_shape}, but it has shape {target.shape}.",
+    )
+
+    utils.check(
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_channels),
+        lambda: f"Expected a 1D tensor with {num_channels} elements for weight argument, \
+            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
+    )
+
+    # NOTE: [Handling of 'ignore_index' parameter]
+    # What does it mean to ignore an index?
+    #   The 'ignore_index' parameter specifies a target value that does not contribute to input gradient.
+    # 'ignore_index' can be outside of the [0, num_channels) range, which can cause out-of-bounds errors when gathering
+    # values from input tensor.
+    #
+    # What does ATen do?
+    #   ATen prevents nll_loss from having these errors by skipping target values that match ignore_index first before
+    # indexing the input tensor.
+    #
+    # What do we do?
+    #   We mask the ignore_index entries on the output tensor from take_along_axis because we expect the targets to be
+    # within [0, num_channels) range.
+    #
+    # Why do we like our approach better?
+    #   Mimicking Aten behavior requires masking the target tensor before calling take_along_axis, which would add more
+    # operations to the fusion. We should follow this approach until we see real examples where ignore_index is
+    # out-of-bounds of [0, num_channels) range.
+    #
+    # What are the alternative options?
+    #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
+    # The jax.numpy.take_along_axis has this feature.
+
+    out = -a
+
+    if weight is not None:
+        bcast_weight = reshape(weight, [num_channels] + [1 for _ in range(2, a.ndim)])
+        out = out * bcast_weight
+
+    # Make target broadcastable with output, which has same shape as input tensor.
+    bcast_target = unsqueeze(target, channels_dim)
+
+    out = take_along_dim(out, bcast_target, channels_dim)
+    selected_target_mask = (bcast_target != ignore_index)
+    out = where(selected_target_mask, out, 0)
+
+    # This section handles applying the reduction parameter to the output.
+    # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
+    if reduction == "none":
+        return squeeze(out, channels_dim), None
+    elif reduction == "sum":
+        return sum(out), None
+    elif reduction == "mean":
+        reduced_sum = sum(out)
+        if weight is not None:
+            # Gather the weights for each target class.
+            # Mask the ignored target classes.
+            # Sum together all target weights.
+            expanded_weight = expand(bcast_weight, a.shape)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
+            selected_weight = where(selected_target_mask, selected_weight, 0)
+            bcast_weight_sum = sum(selected_weight)
+            return (reduced_sum / bcast_weight_sum), bcast_weight_sum
+        else:
+            # The weight tensor is none, so the total weight is the number of valid target elements not equal to
+            # ignore_index argument
+            total_weight = sum(selected_target_mask)
+            out = reduced_sum / total_weight
+            return out, total_weight
+
+
+# Aten nll_loss_forward returns primal and total_weight tensors. The total_weight tensor is used in the backwards pass.
+# PyTorch nll_loss only returns primal, so a helper function is used in the augmented forward function.
+@torchsymbol(torch.nn.functional.nll_loss)
+def nll_loss(a: TensorProxy,
+        target: TensorProxy,
+        weight: Optional[TensorProxy] = None,
+        ignore_index: int = None,
+        reduction: str = "mean") -> TensorProxy:
+    # Resolve ignore_index if it is not specified by user.
+    if ignore_index is None:
+        ignore_index = -1
+    result, _ = _nll_loss_helper(a, target, weight, ignore_index, reduction)
+    return result
+
+
 # The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward
 # primitive. Executors can override the primitive using internal implementations.
 # See https://github.com/Lightning-AI/lightning-thunder/issues/660

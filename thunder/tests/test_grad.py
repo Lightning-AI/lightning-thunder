@@ -475,6 +475,26 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
         comp(grad_rhs, expected_grad[0], equal_nan=True)
 
 
+@ops((get_opinfo("nll_loss"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Traced backwards function does not follow PyTorch nll_loss behavior with zero element tensors
+        if sample.args[0].numel() == 0:
+            continue
+
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grad = torch.autograd.grad(out, sample.args[0], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        actual_out, grad_out = executor.make_callable(inline(vjp(flat_op)), disable_torch_autograd_support=True)(flat_args, (v,))
+
+        comp(actual_out, out)
+        comp(grad_out[0], expected_grad[0])
+
+
 # TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly

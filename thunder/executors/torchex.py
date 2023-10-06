@@ -1145,6 +1145,42 @@ def cross_entropy(
     )
 
 
+def _nll_loss_check(
+    a: TensorProxy,
+    target: TensorProxy,
+    weight: Optional[TensorProxy] = None,
+    size_average: Optional[bool] = None,
+    ignore_index: Number = -1,
+    reduce: Optional[bool] = None,
+    reduction: str = "mean",
+) -> bool:
+    # NOTE size_average parameter is deprecated in PyTorch
+    if size_average != None:
+        return False
+
+    # NOTE reduce parameter is deprecated in PyTorch.
+    if reduce != None:
+        return False
+
+    return True
+
+
+def nll_loss(
+    bsym: BoundSymbol,
+    a: TensorProxy,
+    target: TensorProxy,
+    weight: Optional[TensorProxy] = None,
+    size_average: Optional[bool] = None,
+    ignore_index: Number = -1,
+    reduce: Optional[bool] = None,
+    reduction: str = "mean",
+) -> BoundSymbol:
+    sym = Symbol(name="nll_loss", _module=torch.nn.functional)
+    return sym.bind(
+        a, target, weight, size_average, ignore_index, reduce, reduction, output=bsym.output
+    )
+
+
 def _cross_entropy_backward_helper(
     g: torch.Tensor,
     input: torch.Tensor,
@@ -1761,6 +1797,7 @@ _ops_map.update(
         "torch.nn.functional.conv3d": (_always_executable, conv3d),
         "torch.nn.functional.cross_entropy": (_always_executable, cross_entropy),
         "cross_entropy_backward": (_always_executable, cross_entropy_backward),
+        "torch.nn.functional.nll_loss": (_nll_loss_check, nll_loss),
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.CONVOLUTION: (_always_executable, convolution),
         "torch.convolution": (_always_executable, convolution),

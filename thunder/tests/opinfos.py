@@ -5376,6 +5376,150 @@ cross_entropy_opinfo = OpInfo(
 )
 nn_ops.append(cross_entropy_opinfo)
 
+def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input_shape, target_shape
+    shapes = (
+        ((7, 18), (7,)),
+        ((3, 4, 2, 3), (3, 2, 3)),
+        ((5,), ()),
+        ((3, 4, 0), (3, 0)),
+    )
+
+    weight_options = (True, False)
+    reduction_options = ("none", "mean", "sum")
+    ignore_index_options = (-100, 3)
+
+    # NOTE: The size_average and reduce parameters are not tested because they are deprecated.
+    for shape, weight_flag, reduction_str, ignore_index in itertools.product(
+        shapes, weight_options, reduction_options, ignore_index_options
+    ):
+        # NOTE According to pytorch/pytorch#64572, nll_loss should return NaN when reduction = "mean"
+        # and the whole target is equal to ignore_index. However, if the inputs are cuda tensors, PyTorch returns 0.
+        # Skip this case because we are consistent across devices.
+        if torch.device(device).type == "cuda" and reduction_str == "mean" and ignore_index > 0:
+            continue
+
+        input_shape, target_shape = shape
+        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+        yield SampleInput(
+            a := make(input_shape),
+            target := make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False),
+            weight=make(C, requires_grad=False) if weight_flag else None,
+            ignore_index=ignore_index,
+            reduction=reduction_str,
+        )
+
+    # Test empty input and target tensor short-circuit
+    for reduction_str, ignore_index in itertools.product(reduction_options, ignore_index_options):
+        yield SampleInput(
+            empty_input_tensor := torch.tensor([], device=device, dtype=dtype),
+            empty_target_tensor := torch.tensor([], device=device, dtype=torch.long),
+            ignore_index=ignore_index,
+            reduction=reduction_str,
+        )
+
+def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    input_shape = (7, 18)
+    target_shape = (7,)
+    C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+    valid_input = make(input_shape)
+    valid_target = make(
+        target_shape, low=0, high=C, dtype=torch.long, requires_grad=False
+    )
+
+    # unexpected reduction string argument
+    yield (
+        SampleInput(valid_input, valid_target, reduction="foo"),
+        ValueError,
+        'Expected reduction string to be "none", "sum", or "mean", but it is (.*?).',
+    )
+
+    # target tensor is not integer dtype
+    float_target = make(
+        target_shape, low=0, high=C, dtype=torch.float, requires_grad=False
+    )
+    yield (
+        SampleInput(valid_input, float_target),
+        RuntimeError,
+        "Expected target to be a tensor with an integer dtype, but it has dtype (.*?).",
+    )
+
+    # input tensor has 0 dimensions
+    scalar_input = make(scalar_shape := ())
+    yield (
+        SampleInput(scalar_input, valid_target),
+        RuntimeError,
+        f"Expected the input tensor to have more than 1 dimension, but it has {scalar_input.ndim} dimensions.",
+    )
+
+    # input ndims != (target ndims + 1)
+    extra_dim_input = make(input_shape + (10,))
+    yield (
+        SampleInput(extra_dim_input, valid_target),
+        RuntimeError,
+        "Expected the input tensor to have (.*?) dimensions, but it has (.*?) dimensions.",
+    )
+
+    # target shape is input shape except channels dimension
+    incorrect_batch_target = make(
+        (10,), low=0, high=C, dtype=torch.long, requires_grad=False
+    )
+    yield (
+        SampleInput(valid_input, incorrect_batch_target),
+        RuntimeError,
+        "Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+            (.*?), but it has shape (.*?)."
+    )
+
+    # weight tensor has more than 1 dimension
+    multiple_dim_weight = make((C, 10), requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_target, weight=multiple_dim_weight),
+        RuntimeError,
+        f"Expected a 1D tensor with {C} elements for weight argument, \
+            but found a tensor with {multiple_dim_weight.ndim} dimensions and {multiple_dim_weight.shape[0]} elements.",
+    )
+
+    # weight tensor numel != C
+    incorrect_numel_weight = make((C + 10,), requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_target, weight=incorrect_numel_weight),
+        RuntimeError,
+        f"Expected a 1D tensor with {C} elements for weight argument, \
+            but found a tensor with {incorrect_numel_weight.ndim} dimensions and {incorrect_numel_weight.shape[0]} elements.",
+    )
+
+
+nll_loss_opinfo = OpInfo(
+    ltorch.nll_loss,
+    sample_input_generator=nll_loss_sample_generator,
+    error_input_generator=nll_loss_error_generator,
+    torch_reference=torch.nn.functional.nll_loss,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # take_along_axis is disabled with NvFuser, which this operator relies on.
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvFuser",),
+        ),
+        # FP16: RuntimeError: "nll_loss_out_frame" not implemented for 'Half'
+        # BF16: AssertionError: Scalars are not close!
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.float16, datatypes.bfloat16,),
+        ),
+        # NOTE PyTorch returns NaN if ignore_index == target_index and reduction='mean'
+        DecorateInfo(
+            custom_comparator(partial(assert_close, equal_nan=True)),
+        ),
+    ),
+)
+nn_ops.append(nll_loss_opinfo)
+
 
 def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
