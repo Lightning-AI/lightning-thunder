@@ -420,7 +420,7 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     rematerialized_trace = from_trace(trace)
     rematerialized_trace.bound_symbols = copy.copy(trace.bound_symbols)
 
-    def replace_bound_symbol(bsym, new_bsyms):
+    def replace_bsym_and_update_call_ctx(bsym, new_bsyms):
         new_bsym = new_bsyms.get(bsym, None)
         if new_bsym is not None:
             return _update_nvfusion_call_ctx(rematerialized_trace, new_bsym)
@@ -455,11 +455,18 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             new_bsyms[producer] = None
             new_bsyms[consumer] = None
 
-        # TODO: New bound symbols are still incorrect. Its _ctx_call dict points
-        # to the old nvFuser fusion. We need to update it to use the new definition.
+        # We need to update the trace with the new producer and consumer so that
+        # the next iteration can use the updated bound symbols for
+        # `find_external_producer_outputs` function.
         rematerialized_trace.bound_symbols = tuple(
-            replace_bound_symbol(bsym, new_bsyms) for bsym in rematerialized_trace.bound_symbols
+            new_bsyms.get(bsym, bsym) for bsym in rematerialized_trace.bound_symbols
         )
+
+    # New bound symbols are still incorrect. Its _ctx_call dict points to the
+    # old nvFuser fusion. We need to update it to use the new definition.
+    rematerialized_trace.bound_symbols = tuple(
+        replace_bsym_and_update_call_ctx(bsym, new_bsyms) for bsym in trace.bound_symbols
+    )
 
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
