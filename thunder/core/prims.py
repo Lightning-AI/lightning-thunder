@@ -1766,6 +1766,11 @@ def take_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check(index.ndim <= 1, lambda: f"Expected index to a 1-D or 0-D tensor, but index.ndim={index.ndim}!")
     utils.validate_idx(a.ndim, dim)
 
+    utils.check(
+        not (a.shape[dim] == 0 and index.numel > 0),
+        lambda: "Attempting to index a 0-length dimension {dim=} with a non-empty index"
+    )
+
     l = index.shape[0] if index.ndim == 1 else 1
     new_shape = a.shape[:dim] + (l,) + a.shape[dim + 1 :]
 
