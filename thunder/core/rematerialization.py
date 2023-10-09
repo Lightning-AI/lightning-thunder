@@ -74,9 +74,8 @@ def find_external_consumer_inputs(
 
 
 def apply_rematerialization_for_producer(
-    trace: TraceCtx,
+    external_producer_outputs,
     producer: BoundSymbolInterface,
-    consumer: BoundSymbolInterface,
     cut: Sequence[Union[ProxyInterface, str]],
 ) -> BoundSymbolInterface:
     """Update the producer node with the cut information.
@@ -91,7 +90,6 @@ def apply_rematerialization_for_producer(
     # It's simple to update the producer node, all we need to do is to update
     # the producer's output with the cut information and the external outputs.
     cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
-    external_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
     new_producer_output_names = tuple(x.name for x in external_producer_outputs) + cut_names
     # Remove the producer's inputs from the new producer's output.
     new_producer_output_names = tuple(
@@ -209,7 +207,7 @@ REMATERIALIZATION_BLOCK_LIST = {
 
 
 def find_cut(
-    trace: TraceCtx,
+    external_producer_outputs: Sequence[ProxyInterface],
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
 ) -> Sequence[Union[ProxyInterface, str]]:
@@ -236,9 +234,6 @@ def find_cut(
     # "source" node and a "sink" node to our graph. We also disallow the cut to
     # be in the consumer's part of the graph to avoid balancing the graph into
     # the producer from the consumer.
-
-    # Determine which producer's outputs can be rematerialized
-    external_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
 
     # Required producer variables. These are the variables that are required to
     # be connected to the "source" node.
@@ -432,13 +427,15 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     consumers = {consumer for _, consumer in pairs}
     new_bsyms = {bsym: bsym for bsym in producers | consumers}
     for producer, consumer in pairs:
-        # Find the minimal cut between the producer and the consumer
-        cut = find_cut(rematerialized_trace, producer, consumer)
         current_producer = new_bsyms.get(producer, None) or producer
         current_consumer = new_bsyms.get(consumer, None) or consumer
+        # Determine which producer's outputs cannot be rematerialized
+        external_producer_outputs = find_external_producer_outputs(rematerialized_trace, current_producer, current_consumer)
+        # Find the minimal cut between the producer and the consumer
+        cut = find_cut(external_producer_outputs, current_producer, current_consumer)
         if cut:
             updated_producer = apply_rematerialization_for_producer(
-                rematerialized_trace, current_producer, current_consumer, cut
+                external_producer_outputs, current_producer, cut
             )
             updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
             # As we replace bound symbols of the input trace with updated ones every iteration,

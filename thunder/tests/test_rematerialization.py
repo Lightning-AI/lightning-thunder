@@ -10,8 +10,8 @@ from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
     find_cut,
+    find_external_producer_outputs,
     find_nvfuser_producer_consumer_pairs,
-    find_cut,
 )
 from thunder.core.transforms import inline, value_and_grad
 from thunder.examine import get_fusions
@@ -114,7 +114,7 @@ def test_apply_rematerialization_producer(executor, device, _):
     assert cut[1] in map(lambda x: x.name, producer.output)
 
     external_producer_outputs = ("t1", "t4")
-    new_producer = apply_rematerialization_for_producer(trace, producer, consumer, cut)
+    new_producer = apply_rematerialization_for_producer(external_producer_outputs, producer, cut)
     assert new_producer.sym.name == producer.sym.name
     assert new_producer.args == producer.args
     assert new_producer.subsymbols == producer.subsymbols
@@ -223,7 +223,8 @@ def test_find_cut(executor, device, _):
 
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
-    cut = find_cut(trace, producer, consumer)
+    ext_external_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
+    cut = find_cut(ext_external_producer_outputs, producer, consumer)
     assert cut == ("t0", "t4")
 
 
@@ -242,7 +243,8 @@ def test_find_cut_dropout(executor, device, _):
 
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
-    cut = find_cut(trace, producer, consumer)
+    ext_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
+    cut = find_cut(ext_producer_outputs, producer, consumer)
     # Note t5 is the boolean mask for dropout. It should be chosen over the t6
     # that is the float32 mask. See this issue for the original problem:
     # https://github.com/Lightning-AI/lightning-thunder/issues/706
@@ -275,7 +277,8 @@ def test_find_cut_one_producer_op_no_args(executor, device, _):
 
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[-1]
-    cut = find_cut(trace, producer, consumer)
+    ext_producer_outputs = find_external_producer_outputs(trace, producer, consumer)
+    cut = find_cut(ext_producer_outputs, producer, consumer)
     assert not cut
 
 
