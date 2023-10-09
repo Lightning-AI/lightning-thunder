@@ -279,12 +279,10 @@ def find_cut(
     capacities = []
 
     def add_edge(src, dst, capacity):
-        if src not in name_to_id:
-            name_to_id[src] = len(name_to_id)
-        if dst not in name_to_id:
-            name_to_id[dst] = len(name_to_id)
-        src, dst = name_to_id[src], name_to_id[dst]
-        edges.append((src, dst))
+        edges.append((
+            name_to_id.setdefault(src, len(name_to_id)),
+            name_to_id.setdefault(dst, len(name_to_id))
+        ))
         capacities.append(capacity)
 
     utils.check(
@@ -343,24 +341,22 @@ def find_cut(
     )
     source = name_to_id["source"]
     sink = name_to_id["sink"]
-    partition = g.mincut(source, sink, "capacity").partition
-
-    reachable, non_reachable = partition
-    cutset = set()
-    for u, nbrs in ((n, g.neighbors(n, mode="out")) for n in reachable):
-        cutset.update((u, v) for v in nbrs if v in non_reachable)
 
     id_to_name = dict(map(reversed, name_to_id.items()))
-    cutset = ((id_to_name[u], id_to_name[v]) for u, v in cutset)
+
+    g_edges = g.get_edgelist()
+    cut = g.mincut(source, sink, "capacity").cut
     cut_nodes = set()
-    for node_in, node_out in cutset:
+    for cut_edge_id in cut:
+        u, v = g_edges[cut_edge_id]
+        node_in, node_out = id_to_name[u], id_to_name[v]
         if node_out == "sink":
             continue
         assert node_in.endswith("_in")
         assert node_out.endswith("_out")
         assert node_in[:-3] == node_out[:-4]
-        node_name = node_in[:-3]
-        cut_nodes.add(node_name)
+        var_name = node_in[:-3]
+        cut_nodes.add(var_name)
     return tuple(sorted(cut_nodes))
 
 
