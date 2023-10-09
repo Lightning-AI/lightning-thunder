@@ -22,7 +22,7 @@ FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 ARG CUDNN_VERSION="8.9.5.29-1"
 ARG CUDNN_FRONTEND_BRANCH="1.0/pre_release_2"
 ARG PYTHON_VERSION="3.10"
-ARG TORCH_CHECKOUT="v2.1.0-rc6"
+ARG TORCH_CHECKOUT="v2.1.0"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -42,6 +42,7 @@ RUN \
         software-properties-common \
         pkg-config \
         cmake \
+        ninja-build \
         git \
         wget \
         curl \
@@ -49,6 +50,8 @@ RUN \
         libopenmpi-dev \
         openmpi-bin \
         graphviz \
+        libnccl2 \
+        libnccl-dev \
         ssh \
     && \
     # Install python
@@ -85,7 +88,10 @@ RUN \
 
 COPY requirements/ requirements/
 
-ENV PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages"
+ENV \
+    PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages" \
+    TORCH_CUDA_ARCH_LIST="8.0" \
+    CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
 RUN \
     git clone --recursive https://github.com/pytorch/pytorch && \
@@ -93,10 +99,20 @@ RUN \
     git checkout ${TORCH_CHECKOUT} && \
     git submodule sync && \
     git submodule update --init --recursive && \
-    TORCH_CUDA_ARCH_LIST="5.0" pip install . && \
+    pip install . && \
+    make triton && \
     cd .. && \
-    rm -rf pytorch && \
-    python -c "import torch; print(f'PyTorch@{torch.__version__ } with {torch.cuda.device_count()} GPUs')"
+    rm -rf pytorch
+
+RUN \
+    # building nvFuser from source
+    git clone https://github.com/NVIDIA/Fuser.git && \
+    cd Fuser && \
+    git submodule update --init --recursive && \
+    pip install -r requirements.txt && \
+    python setup.py install --no-test --no-benchmark && \
+    cd .. && \
+    rm -rf Fuser
 
 RUN \
     ls -lh requirements/ && \
@@ -109,4 +125,6 @@ RUN \
     pip --version && \
     pip list && \
     python -c "import sys; ver = sys.version_info ; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver" && \
-    python -c "import torch; print(torch.__version__)"
+    python -c "import torch; print(f'PyTorch=={torch.__version__} with {torch.cuda.device_count()} GPUs')" && \
+    python -c "import nvfuser; print(f'nvFuser=={nvfuser.version()}')" && \
+    python -c "import triton; print(f'Triton=={triton.__version__}')"
