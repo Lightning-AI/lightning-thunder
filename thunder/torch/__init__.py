@@ -177,7 +177,7 @@ def method_lookup(name: str) -> Optional[Symbol]:
 
 # A wrapper that executes the operations within the torch language context
 # NOTE because this module defines the torch language context, a reference to itself
-#   is aquired by inspecting the __module__ attribute of the is_available function defined
+#   is acquired by inspecting the __module__ attribute of the is_available function defined
 #   above
 # NOTE Functions that set is_method=True must be able to accept a tensor as their first positional input
 class torchsymbol:
