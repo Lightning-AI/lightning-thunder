@@ -73,6 +73,8 @@ RUN \
 RUN \
     echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+    # there is missing cudnn for 12.1 so use 12.2 instead
+    CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
     CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
     CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \
     apt update && \
@@ -90,8 +92,8 @@ COPY requirements/ requirements/
 
 ENV \
     PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages" \
-    TORCH_CUDA_ARCH_LIST="8.0" \
-    CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
+    TORCH_CUDA_ARCH_LIST="9.0" \
+    CUDA_SELECT_NVCC_ARCH_FLAGS="9.0"
 
 RUN \
     git clone --recursive https://github.com/pytorch/pytorch && \
