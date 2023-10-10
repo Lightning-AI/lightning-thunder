@@ -746,7 +746,6 @@ cosh_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(cosh_opinfo)
 
-
 # digamma is defined for all complex numbers EXCEPT negative integers and zero
 digamma_opinfo = OpInfo(
     clang.digamma,
@@ -754,7 +753,7 @@ digamma_opinfo = OpInfo(
     # https://github.com/Lightning-AI/lightning-thunder/issues/1138
     domain=(eps, math.inf),
     # NOTE: digamma returns NaN for all negative integers. It returns -Inf when x = 0.
-    singularity_fn=lambda x: x if x > 0 else (x - round(x)),
+    singularity_fn=lambda x: torch.where(x > 0, x, (x - torch.round(x))),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.digamma),
     test_directives=(
@@ -2171,7 +2170,6 @@ true_divide_opinfo = OpInfo(
     ),
 )
 elementwise_binary_ops.append(true_divide_opinfo)
-
 
 zeta_opinfo = OpInfo(
     clang.zeta,

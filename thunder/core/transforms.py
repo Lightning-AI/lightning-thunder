@@ -1624,6 +1624,7 @@ augmented_forward_impls = {
     prims.PrimIDs.ATAN2: lambda x, y: (prims.atan2(x, y), (x, y)),
     prims.PrimIDs.COS: lambda x: (prims.cos(x), (x,)),
     prims.PrimIDs.COSH: lambda x: (prims.cosh(x), (x,)),
+    prims.PrimIDs.DIGAMMA: lambda x: (prims.digamma(x), (x,)),
     prims.PrimIDs.DIV: lambda x, y: (prims.div(x, y), (x, y)),
     prims.PrimIDs.ERF: lambda x: (prims.erf(x), (x,)),
     prims.PrimIDs.ERFC: lambda x: (prims.erfc(x), (x,)),
@@ -1631,6 +1632,7 @@ augmented_forward_impls = {
     prims.PrimIDs.ERFCINV: lambda x: (prims.erfcinv(x), (prims.erfcinv(x),)),
     prims.PrimIDs.EXP2: lambda x: (prims.exp2(x), (prims.exp2(x),)),
     prims.PrimIDs.EXPM1: lambda x: (prims.expm1(x), (prims.expm1(x),)),
+    prims.PrimIDs.LGAMMA: lambda x: (prims.lgamma(x), (x,)),
     prims.PrimIDs.MUL: lambda x, y: (prims.mul(x, y), (x, y)),
     prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
     prims.PrimIDs.SIN: lambda x: (prims.sin(x), (x,)),
@@ -1675,6 +1677,7 @@ backward_impls = {
     prims.PrimIDs.ERFCINV: lambda result, g: -g * 0.5 * prims.sqrt(math.pi) * prims.exp(result**2),
     prims.PrimIDs.EXP2: lambda result, g: g * result * math.log(2.0),
     prims.PrimIDs.EXPM1: lambda result, g: g * (result + 1.0),
+    prims.PrimIDs.LGAMMA: lambda x, g: g * prims.digamma(x),
     prims.PrimIDs.MUL: lambda x, y, g: (g * y, g * x),
     prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * prims.sqrt(2.0 * math.pi),
     prims.PrimIDs.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
@@ -1746,6 +1749,12 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
 
     unsqueezed = clang.unsqueeze(x, reduced_dims)
     return clang.expand(unsqueezed, original_shape)
+
+
+@register_backward(prims.PrimIDs.DIGAMMA)
+def digamma_backward(a: Proxy, g):
+    from thunder.torch import polygamma
+    return g * polygamma(1, a)
 
 
 @register_augmented_forward("torch.polygamma")
