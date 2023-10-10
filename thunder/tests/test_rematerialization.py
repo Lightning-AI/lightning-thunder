@@ -107,20 +107,19 @@ def test_apply_rematerialization_producer(executor, device, _):
     # We call them producer and consumer because the last region consumes some
     # outputs of the first region
     producer = nvfuser_symbols[0]
-    consumer = nvfuser_symbols[-1]
 
     cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
     assert cut[1] in map(lambda x: x.name, producer.output)
 
-    external_producer_outputs = ("t1", "t4")
+    external_producer_outputs = tuple(x for x in producer.output if x.name in ("t1", "t4"))
     new_producer = apply_rematerialization_for_producer(external_producer_outputs, producer, cut)
     assert new_producer.sym.name == producer.sym.name
     assert new_producer.args == producer.args
     assert new_producer.subsymbols == producer.subsymbols
     assert len(new_producer.output) == 2
     assert cut[1] in (x.name for x in new_producer.output)
-    assert external_producer_outputs[0] in (x.name for x in new_producer.output)
+    assert external_producer_outputs[0].name in (x.name for x in new_producer.output)
 
 
 @instantiate(
