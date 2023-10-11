@@ -2172,6 +2172,139 @@ def outer(a, b):
     return clang.mul(a[:, None], b[None, :])
 
 
+def _input_check_scaled_dot_product_efficient_attention(
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    attn_mask: Optional[TensorLike]):
+    # Restrict input tensors to 4 dimension
+    utils.check(
+        query.ndim == 4,
+        lambda: f"grad_forward_sdpa: Expected query tensor to have 4 dimension, but it has {query.ndim}.",
+    )
+    utils.check(
+        key.ndim == 4,
+        lambda: f"grad_forward_sdpa: Expected key tensor to have 4 dimension, but it has {key.ndim}.",
+    )
+    utils.check(
+        value.ndim == 4,
+        lambda: f"grad_forward_sdpa: Expected value tensor to have 4 dimension, but it has {value.ndim}.",
+    )
+    utils.check(
+        attn_mask is None or attn_mask.ndim == 4,
+        lambda: f"grad_forward_sdpa: Expected attn_mask tensor to have 4 dimension, but it has {attn_mask.ndim}.",
+    )
+
+    # FP64 is not supported by aten implementation
+    supported_dtypes = (dtypes.float32, dtypes.float16, dtypes.bfloat16)
+    utils.check(
+        query.dtype in supported_dtypes,
+        lambda: f"grad_forward_sdpa: Only fp32, half & bf16 dtypes are supported, but query has {query.dtype}.",
+    )
+    utils.check(
+        key.dtype in supported_dtypes,
+        lambda: f"grad_forward_sdpa: Only fp32, half & bf16 dtypes are supported, but key has {key.dtype}.",
+    )
+    utils.check(
+        value.dtype in supported_dtypes,
+        lambda: f"grad_forward_sdpa: Only fp32, half & bf16 dtypes are supported, but value has {value.dtype}.",
+    )
+
+    # query (batch_size, num_heads, query_seq_len, E)
+    # key (batch_size, num_heads, key_seq_len, E)
+    # value (batch_size, num_heads, key_seq_len, Ev)
+    # attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
+    inputs = [query, key, value]
+    if attn_mask is not None:
+        inputs.append(attn_mask)
+
+    # NOTE aten::scaled_dot_product_efficient_attention does not support broadcastable batch size.
+    utils.check(all(a.shape[0] == inputs[0].shape[0] for a in inputs),
+            lambda: "grad_forward_sdpa: Expected all inputs to have same batch_size.")
+
+    # Check for the same number of heads
+    utils.check(all(a.shape[1] == inputs[0].shape[1] for a in inputs),
+            lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads.")
+
+
+
+# This helper function maps to aten::_scaled_dot_product_efficient_attention function.
+@torchsymbol(
+    "grad_forward_scaled_dot_product_efficient_attention",
+    id="grad_forward_scaled_dot_product_efficient_attention",
+    is_prim=True,
+)
+def grad_forward_scaled_dot_product_efficient_attention(
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    attn_mask: Optional[TensorLike],
+    dropout_p: float = 0.0,
+    is_causal=False,
+    *,
+    scale: Optional[float] = None,
+) -> (TensorProxy, TensorProxy, TensorProxy, TensorProxy):
+    # Reference metadata:
+    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4863-L4899
+    # * query (batch_size, num_heads, query_seq_len, E)
+    # * key (batch_size, num_heads, key_seq_len, E)
+    # * value (batch_size, num_heads, key_seq_len, Ev)
+    # * attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
+    # * output (batch_size, num_heads, query_seq_len, Ev)
+    _input_check_scaled_dot_product_efficient_attention(query, key, value, attn_mask)
+
+    batch_size, num_heads, query_seq_len, E = query.shape
+    key_seq_len = key.shape[-2]
+    Ev = value.shape[-1]
+    logsumexp_dim = math.ceil(query_seq_len / 32) * 32
+
+    return (
+        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, Ev)),
+        log_sumexp := TensorProxy(
+            shape=(batch_size, num_heads, logsumexp_dim), dtype=dtypes.float32, device=query.device, requires_grad=False
+        ),
+        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+    )
+
+
+# The backward decomposition of scaled_dot_product_attention cannot be efficiently fused, so we have this
+# scaled_dot_product_efficient_attention_backward primitive. Executors can override the primitive using
+# internal implementations.
+@torchsymbol(
+    "scaled_dot_product_efficient_attention_backward",
+    id="scaled_dot_product_efficient_attention_backward",
+    is_prim=True,
+)
+def scaled_dot_product_efficient_attention_backward(
+    grad_out: TensorLike,
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    attn_mask: Optional[TensorLike],
+    out: TensorLike,
+    logsumexp: TensorLike,
+    philox_seed: TensorLike,
+    philox_offset: TensorLike,
+    dropout_p: float,
+    is_causal: bool = False,
+    *,
+    scale: Optional[float] = None,
+) -> (TensorProxy, TensorProxy, TensorProxy, None | TensorProxy):
+    _input_check_scaled_dot_product_efficient_attention(query, key, value, attn_mask)
+
+    # Reference metadata:
+    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4907-L4956
+    grad_query = TensorProxy(like=query, shape=query.shape)
+    grad_key = TensorProxy(like=key, shape=key.shape)
+    grad_value = TensorProxy(like=value, shape=value.shape)
+    grad_attn_mask = None
+    if attn_mask is not None:
+        grad_attn_mask = TensorProxy(like=attn_mask, shape=attn_mask.shape)
+    # Return gradients for query, key, value, and attn_mask tensor inputs
+    return (grad_query, grad_key, grad_value, grad_attn_mask)
+
+
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention)
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
     for arg_name, arg in zip(("query", "key", "value"), (query, key, value)):

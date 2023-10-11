@@ -38,10 +38,13 @@ def test_nanogpt_complete(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
+# NOTE: Disable test for CPU because sdpa kernel is not implemented for CPU backend
+# NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
+# NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
 # https://github.com/Lightning-AI/lightning-thunder/issues/907
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -132,7 +135,10 @@ def test_nanogpt_csa(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+# NOTE: Disable test for CPU because sdpa kernel is not implemented for CPU backend
+# NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
+# NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
+@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 def test_nanogpt_block(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)

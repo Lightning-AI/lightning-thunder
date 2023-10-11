@@ -2365,6 +2365,87 @@ def linear_backward(a, b, c, g):
     return ga, gb, gc
 
 
+@register_augmented_forward("torch.nn.functional.scaled_dot_product_attention")
+def scaled_dot_product_attention(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: Optional[Proxy],
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    scale: Optional[float] = None,
+) -> VJPDual:
+    from thunder.torch import grad_forward_scaled_dot_product_efficient_attention
+
+    (
+        primal,
+        logsumexp,
+        philox_seed,
+        philox_offset,
+    ) = grad_forward_scaled_dot_product_efficient_attention(
+        query,
+        key,
+        value,
+        attn_mask,
+        dropout_p,
+        is_causal,
+        scale=scale,
+    )
+    residuals = (
+        query,
+        key,
+        value,
+        attn_mask,
+        primal,
+        logsumexp,
+        philox_seed,
+        philox_offset,
+        dropout_p,
+        is_causal,
+        scale,
+    )
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.nn.functional.scaled_dot_product_attention")
+def scaled_dot_product_attention_backward(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: Optional[Proxy],
+    out: Proxy,
+    logsumexp: Proxy,
+    philox_seed: Proxy,
+    philox_offset: Proxy,
+    dropout_p,
+    is_causal: bool,
+    scale: Optional[float],
+    grad_out: Proxy,
+):
+    from thunder.torch import scaled_dot_product_efficient_attention_backward
+
+    (
+        grad_query,
+        grad_key,
+        grad_val,
+        grad_attn_mask,
+    ) = scaled_dot_product_efficient_attention_backward(
+        grad_out,
+        query,
+        key,
+        value,
+        attn_mask,
+        out,
+        logsumexp,
+        philox_seed,
+        philox_offset,
+        dropout_p,
+        is_causal,
+        scale=scale,
+    )
+    return grad_query, grad_key, grad_val, grad_attn_mask, *((None,) * 3)
+
+
 def iter_bound_symbols(bound_symbols):
     """Iterate over bound symbols, skipping symbols that are not supported by
     the transforms infrastructure.

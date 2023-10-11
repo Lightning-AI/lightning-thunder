@@ -10,6 +10,7 @@ from collections.abc import Generator
 
 import numpy as np
 import pytest
+import random
 
 # TODO: make this import conditional on Torch being available and querying if should test with torch
 import torch
@@ -5259,9 +5260,86 @@ sdpa_opinfo = OpInfo(
                 devices.DeviceType.CUDA,
             ),
         ),
+        # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
+        # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("TorchEx",),
+            devicetypes=(
+                devices.DeviceType.CPU,
+            ),
+        ),
+        # RuntimeError: Only fp32, half & bf16 supported at the moment
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            dtypes=(datatypes.float64,),
+        ),
     ),
 )
 nn_ops.append(sdpa_opinfo)
+
+
+def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # Reference metadata:
+    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4863-L4899
+    # * query (batch_size, num_heads, query_seq_len, E)
+    # * key (batch_size, num_heads, key_seq_len, E)
+    # * value (batch_size, num_heads, key_seq_len, Ev)
+    # * attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
+
+    # NOTE: aten::scaled_dot_product_efficient_attention does not support broadcastable batch sizes.
+    n_head = 3
+    N = 2
+
+    # NOTE: Last dimension of inputs is divisible by alignment factor.
+    dtype_to_alignment_map = {
+        torch.float64: 8,
+        torch.float32: 4,
+        torch.bfloat16: 2,
+        torch.float16: 2,
+    }
+    L, S, E, Ev = [
+        random.randint(1, 4) * dtype_to_alignment_map[dtype] for _ in range(4)
+    ]
+
+    # 4-dim (multiheaded) causal cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := True)
+
+    # test the scale factor which was added in torch 2.1
+    if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
+        q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := True, scale=0.123)
+
+    # mask cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    bool_attn_mask = make((N, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+    yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
+    yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+
+
+# NOTE When calculating the gradient in the backwards pass, the torch executor calls
+# 'aten::_scaled_dot_product_efficient_attention' and 'aten::_scaled_dot_product_efficient_attention_backward'.
+# This opinfo test creates inputs that are valid for those functions.
+grad_sdpa_opinfo = OpInfo(
+    ltorch.scaled_dot_product_attention,
+    name="grad_forward_scaled_dot_product_efficient_attention",
+    sample_input_generator=grad_scaled_dot_product_attention_sample_generator,
+    torch_reference=torch.nn.functional.scaled_dot_product_attention,
+    # RuntimeError: Only fp32, half & bf16 supported at the moment
+    dtypes=(datatypes.float32, datatypes.float16, datatypes.bfloat16,),
+    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
+    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
+    devicetypes=(devices.DeviceType.CUDA,),
+)
+nn_ops.append(grad_sdpa_opinfo)
 
 
 # TODO When more bwd support is added merge the logic (but not all the cases) for sample generation

@@ -11,6 +11,7 @@ import torch
 
 import thunder
 import thunder.core.dtypes as dtypes
+import thunder.core.devices as devices
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype
@@ -455,6 +456,38 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
+
+
+# NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
+# RuntimeError: Only fp32, half & bf16 supported at the moment
+@ops(
+    (get_opinfo("grad_forward_scaled_dot_product_efficient_attention"),),
+    supported_dtypes=(dtypes.float32,),
+    supported_devicetypes=(devices.DeviceType.CUDA,),
+)
+def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # query, key, value
+        grad_inputs = list(sample.args[:3])
+        if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
+            grad_inputs.append(attn_mask)
+
+        # Compute vjp result using PyTorch
+        expect_out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(expect_out)
+        expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        actual_out, actual_grad = executor.make_callable(
+            inline(vjp(filtered_op)), disable_torch_autograd_support=True
+        )(filtered_args, (v,))
+        comp(actual_out, expect_out)
+
+        # compare gradients of query, key, value, and attn_mask
+        for eg, ag in zip(expected_grad, actual_grad):
+            comp(eg, ag)
 
 
 @ops((get_opinfo("zeta"),), supported_dtypes=(dtypes.float64,))

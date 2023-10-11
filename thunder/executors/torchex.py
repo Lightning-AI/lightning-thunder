@@ -8,9 +8,11 @@ from typing import Union, Callable, Any, Tuple, Optional
 from collections.abc import Sequence
 
 import torch
+import math
 from looseversion import LooseVersion
 
 import thunder.core.dtypes as dtypes
+import thunder.core.devices as devices
 from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
@@ -1440,6 +1442,198 @@ def scaled_dot_product_attention(
     return tbsym
 
 
+def _grad_forward_scaled_dot_product_attention_check(
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    attn_mask: Optional[TensorLike] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: Optional[float] = None,
+) -> bool:
+    tensor_inputs = [query, key, value]
+    if attn_mask is not None:
+        tensor_inputs.append(attn_mask)
+
+    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
+    if any(map(lambda a: a.device is devices.cpu, tensor_inputs)):
+        return False
+
+    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
+        return False
+    return True
+
+
+def grad_forward_scaled_dot_product_efficient_attention_helper(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: Optional[float] = None,
+) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+    # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
+    # with a very negative value that should become ~0 after softmax
+    if attn_mask is not None and attn_mask.dtype == torch.bool:
+        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
+
+    # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
+    return torch.ops.aten._scaled_dot_product_efficient_attention(
+        query,
+        key,
+        value,
+        attn_mask,
+        compute_logsumexp := True,
+        dropout_p,
+        is_causal,
+        scale=scale,
+    )
+
+
+def grad_forward_scaled_dot_product_efficient_attention(
+    bsym: BoundSymbol,
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: Optional[TensorProxy] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: Optional[float] = None,
+) -> BoundSymbol:
+    sym = Symbol(name="grad_forward_scaled_dot_product_efficient_attention", meta=None)
+    ctx: Dict[str, Any] = {
+        "grad_forward_scaled_dot_product_efficient_attention": grad_forward_scaled_dot_product_efficient_attention_helper
+    }
+    return sym.bind(
+        query,
+        key,
+        value,
+        attn_mask,
+        dropout_p,
+        is_causal,
+        scale=scale,
+        output=bsym.output,
+        _call_ctx=ctx,
+    )
+
+
+def _scaled_dot_product_efficient_attention_backward_helper(
+    grad_out: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor],
+    out: torch.Tensor,
+    logsumexp: torch.Tensor,
+    philox_seed: torch.Tensor,
+    philox_offset: torch.Tensor,
+    dropout_p: float,
+    is_causal: bool,
+    *,
+    scale: Optional[float],
+) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+    grad_input_mask = [a.requires_grad for a in (query, key, value)]
+    if attn_mask is None:
+        grad_input_mask.append(False)
+    else:
+        grad_input_mask.append(attn_mask.requires_grad)
+        # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
+        # with a very negative value that should become ~0 after softmax
+        if attn_mask.dtype == torch.bool:
+            attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
+
+    # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
+    return torch.ops.aten._scaled_dot_product_efficient_attention_backward(
+        grad_out,
+        query,
+        key,
+        value,
+        attn_mask,
+        out,
+        logsumexp,
+        philox_seed,
+        philox_offset,
+        dropout_p,
+        grad_input_mask,
+        is_causal,
+        scale=scale,
+    )
+
+
+def _scaled_dot_product_efficient_attention_backward_check(
+    grad_out: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor],
+    out: torch.Tensor,
+    logsumexp: torch.Tensor,
+    philox_seed: torch.Tensor,
+    philox_offset: torch.Tensor,
+    dropout_p: float,
+    is_causal: bool = False,
+    *,
+    scale: Optional[float] = None,
+) -> bool:
+    tensor_inputs = [query, key, value]
+    if attn_mask is not None:
+        tensor_inputs.append(attn_mask)
+
+    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
+    if any(map(lambda a: a.device is devices.cpu, tensor_inputs)):
+        return False
+
+    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
+        return False
+    return True
+
+
+def scaled_dot_product_efficient_attention_backward(
+    bsym: BoundSymbol,
+    grad_out: TensorProxy,
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: Optional[TensorProxy],
+    out: TensorProxy,
+    logsumexp: TensorProxy,
+    philox_seed: TensorProxy,
+    philox_offset: TensorProxy,
+    dropout_p: float,
+    is_causal: bool,
+    *,
+    scale: Optional[float],
+) -> BoundSymbol:
+    sym = Symbol(name="scaled_dot_product_efficient_attention_backward", meta=None)
+    ctx: Dict[str, Any] = {
+        "scaled_dot_product_efficient_attention_backward": _scaled_dot_product_efficient_attention_backward_helper
+    }
+    return sym.bind(
+        grad_out,
+        query,
+        key,
+        value,
+        attn_mask,
+        out,
+        logsumexp,
+        philox_seed,
+        philox_offset,
+        dropout_p,
+        is_causal,
+        scale=scale,
+        output=bsym.output,
+        _call_ctx=ctx,
+    )
+
+
 #
 # Distributed Operations
 #
@@ -1814,6 +2008,14 @@ _ops_map.update(
         "torch.nn.functional.scaled_dot_product_attention": (
             _scaled_dot_product_attention_check,
             scaled_dot_product_attention,
+        ),
+        "scaled_dot_product_efficient_attention_backward": (
+            _scaled_dot_product_efficient_attention_backward_check,
+            scaled_dot_product_efficient_attention_backward,
+        ),
+        "grad_forward_scaled_dot_product_efficient_attention": (
+            _grad_forward_scaled_dot_product_attention_check,
+            grad_forward_scaled_dot_product_efficient_attention,
         ),
         # Distributed operations
         dist_prims.PrimIDs.ALL_GATHER: (_always_executable, all_gather_prim),
