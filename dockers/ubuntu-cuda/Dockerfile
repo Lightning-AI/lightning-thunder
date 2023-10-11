@@ -92,8 +92,8 @@ COPY requirements/ requirements/
 
 ENV \
     PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages" \
-    TORCH_CUDA_ARCH_LIST="9.0" \
-    CUDA_SELECT_NVCC_ARCH_FLAGS="9.0"
+    TORCH_CUDA_ARCH_LIST="8.0" \
+    CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
 RUN \
     git clone --recursive https://github.com/pytorch/pytorch && \
