@@ -18,9 +18,3 @@ def is_triton_version_at_least(minimum_version: str) -> bool:
         return False
 
     return LooseVersion(version) >= minimum_version
-
-
-def assert_triton_unavailable_or_too_old(msg: str) -> None:
-    version = triton_version()
-
-    assert version is not None, ""
