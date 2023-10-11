@@ -612,7 +612,6 @@ def _test_native_ddp_helper(input_data):
     cmodel = thunder.compile(
         ddp_model,
         executors_list=executor.executors_list(),
-        use_static_caching=True,
     )
 
     comparison_exceptions = []

@@ -9,9 +9,9 @@ from thunder.benchmarks import (
     default_torch_compile_executor,
     default_torch_ddp_executor,
     default_torch_compile_ddp_executor,
-    default_thunder_static_caching_executor,
-    default_thunder_static_caching_executor_no_grad,
-    default_thunder_ddp_static_caching_executor,
+    default_thunder_dynamic_strides_executor,
+    default_thunder_dynamic_strides_executor_no_grad,
+    default_thunder_ddp_dynamic_strides_executor,
     default_thunder_apex_executor,
     default_thunder_triton_executor,
 )
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     run_benchmark(b, default_torch_compile_executor)
 
     print("thunder")
-    run_benchmark(b, default_thunder_static_caching_executor)
+    run_benchmark(b, default_thunder_dynamic_strides_executor)
 
     if torch.distributed.is_available() and torch.cuda.device_count() > 1:
         # you can set the num of devices via `CUDA_VISIBLE_DEVICES` env var.
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         run_multiprocess_benchmark(b, default_torch_compile_ddp_executor, world_size=2)
 
         print("thunder - ddp")
-        run_multiprocess_benchmark(b, default_thunder_ddp_static_caching_executor, world_size=2)
+        run_multiprocess_benchmark(b, default_thunder_ddp_dynamic_strides_executor, world_size=2)
 
     # fwd-only benchmark
     b = NanoGPTBenchmark(config, dtype=torch.bfloat16, requires_grad=False)
@@ -55,7 +55,7 @@ if __name__ == "__main__":
     run_benchmark(b, default_torch_compile_executor)
 
     print("thunder")
-    run_benchmark(b, default_thunder_static_caching_executor_no_grad)
+    run_benchmark(b, default_thunder_dynamic_strides_executor_no_grad)
 
     # NOTE The apex and triton executors only support fwd at the moment
     print("thunder+apex")

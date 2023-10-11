@@ -10,7 +10,7 @@ from thunder.benchmarks import (
     run_benchmark,
     default_torch_executor,
     default_torch_compile_executor,
-    default_thunder_static_caching_executor_no_grad,
+    default_thunder_dynamic_strides_executor_no_grad,
     default_thunder_cudnn_executor,
     Benchmark,
     UserFacingBenchmarkMeta,
@@ -123,7 +123,7 @@ if __name__ == "__main__":
         run_benchmark(b, default_torch_compile_executor)
 
         print(f"thunder {name}")
-        run_benchmark(b, default_thunder_static_caching_executor_no_grad)
+        run_benchmark(b, default_thunder_dynamic_strides_executor_no_grad)
 
         if CUDNN_AVAILABLE:
             print(f"thunder + cudnn {name}")

@@ -132,21 +132,20 @@ def test_sequential():
 
 
 @skipif_not_python_3_10
-@pytest.mark.parametrize("use_static_caching", (True, None))
-def test_thunder_compile(use_static_caching):
+def test_thunder_compile():
     model = torch.nn.Sequential(
         torch.nn.Linear(3, 5),
         torch.nn.Tanh(),
         torch.nn.Linear(5, 3),
     )
-    tom = thunder.compile(model, use_static_caching=use_static_caching)
+    tom = thunder.compile(model)
 
     # several times for caching
     a = torch.randn(2, 3)
     for _ in range(3):
         assert_close(model(a), tom(a))
 
-    tfn = thunder.compile(new_gelu, use_static_caching=use_static_caching)
+    tfn = thunder.compile(new_gelu)
     for _ in range(3):
         assert_close(new_gelu(a), tfn(a))
 

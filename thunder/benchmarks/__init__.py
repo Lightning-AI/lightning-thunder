@@ -257,7 +257,7 @@ def _benchmark(
         wait_for_computation()
         stop: int = time.time_ns()
 
-        cd = thunder.compile_data(fn)
+        cs = thunder.compile_stats(fn)
         stat = BenchmarkRunStatistics(
             total_time=(stop - start),
             start_time=start,
@@ -267,16 +267,16 @@ def _benchmark(
         )
 
         # TODO Ensure the compile data statistics are always populated
-        if cd is not None and cd.last_trace_host_start > 0:
+        if cs is not None and cs.last_trace_host_start > 0:
             stat.has_extended_stats = True
-            stat.last_trace_host_start = cd.last_trace_host_start
-            stat.last_trace_host_stop = cd.last_trace_host_stop
-            stat.last_trace_cache_start = cd.last_trace_cache_start
-            stat.last_trace_cache_stop = cd.last_trace_cache_stop
-            stat.last_trace_tracing_start = cd.last_trace_tracing_start
-            stat.last_trace_tracing_stop = cd.last_trace_tracing_stop
-            stat.last_trace_host_execution_start = cd.last_trace_host_execution_start
-            stat.last_trace_host_execution_stop = cd.last_trace_host_execution_stop
+            stat.last_trace_host_start = cs.last_trace_host_start
+            stat.last_trace_host_stop = cs.last_trace_host_stop
+            stat.last_trace_cache_start = cs.last_trace_cache_start
+            stat.last_trace_cache_stop = cs.last_trace_cache_stop
+            stat.last_trace_tracing_start = cs.last_trace_tracing_start
+            stat.last_trace_tracing_stop = cs.last_trace_tracing_stop
+            stat.last_trace_host_execution_start = cs.last_trace_host_execution_start
+            stat.last_trace_host_execution_stop = cs.last_trace_host_execution_stop
 
         stats.append(stat)
 
@@ -614,34 +614,35 @@ def default_torch_compile_ddp_executor(_) -> Callable:
 
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn)
+    return thunder.compile(fn, cache_mode="always trace")
 
 
-def default_thunder_static_caching_executor(fn: Callable) -> Callable:
+def default_thunder_dynamic_strides_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn)
+    return thunder.compile(fn, cache_mode="dynamic strides")
 
 
-def default_thunder_ddp_static_caching_executor(rank) -> Callable:
+def default_thunder_ddp_dynamic_strides_executor(rank) -> Callable:
     from thunder.distributed import ddp
 
     def func(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.compile(
             ddp(fn, rank, broadcast_from=0),
+            cache_mode="dynamic strides",
         )
 
     return func
 
 
-def default_thunder_static_caching_executor_no_grad(fn: Callable) -> Callable:
+def default_thunder_dynamic_strides_executor_no_grad(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(fn, disable_torch_autograd_support=True)
 
 
-def default_thunder_last_used_executor(fn: Callable) -> Callable:
+def default_thunder_fixed_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, use_last_executed=True)
+    return thunder.compile(fn, cache_mode="fixed")
 
 
 # TODO Add grad support

@@ -8,7 +8,7 @@ import thunder.executors.torchex as torchex
 import thunder.executors.pythonex as pythonex
 from thunder.executors.utils import Executor, nvfuser_available, nvfuser_version
 import thunder.executors.passes as passes
-import thunder.core.transforms as transforms
+from thunder.core.transform_common import dce
 
 
 # NOTE This import must be guarded because nvFuser is not always available
@@ -139,7 +139,7 @@ def transform_for_execution(
 
     traces: list[TraceCtx] = []
 
-    dce_trace, dce_traces = transforms.dce(trace)
+    dce_trace, dce_traces = dce(trace)
     traces.extend(dce_traces)
 
     claimed_trace, claimed_traces = passes.claim(dce_trace, executors_list, prims_only=only_execute_prims)
@@ -151,7 +151,7 @@ def transform_for_execution(
     redundant_removed, redundant_removed_traces = passes.remove_redundant_casts(flattened_trace)
     traces.extend(redundant_removed_traces)
 
-    postflatten_dce_trace, postflatten_dce_traces = transforms.dce(redundant_removed)
+    postflatten_dce_trace, postflatten_dce_traces = dce(redundant_removed)
     traces.extend(postflatten_dce_traces)
 
     flattened_dcs_cse_trace, flattened_dcs_cse_traces = passes.cse(postflatten_dce_trace)

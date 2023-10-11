@@ -724,12 +724,12 @@ def test_torch_autograd_module(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    for use_static_caching in (True, None):
+    for cache_mode in ("dynamic strides", "always trace"):
         lc = executor.make_callable(
             l,
             disable_preprocessing=False,
             disable_torch_autograd_support=False,
-            use_static_caching=use_static_caching,
+            cache_mode=cache_mode,
         )
         lc.zero_grad()
         a.grad = None
@@ -743,9 +743,9 @@ def test_torch_autograd_module(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
-def test_torch_autograd_module_get_compile_data(executor, device, _):
+def test_torch_autograd_module_get_compile_stats(executor, device, _):
     from thunder.core.trace import TraceCtx
-    from thunder import compile_data
+    from thunder import compile_stats
 
     l = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
@@ -755,17 +755,16 @@ def test_torch_autograd_module_get_compile_data(executor, device, _):
         l,
         disable_preprocessing=False,
         disable_torch_autograd_support=False,
-        use_static_caching=True,
     )
     lc.zero_grad()
     a.grad = None
     out = lc(a)
     out.backward(g)
 
-    compile_data = compile_data(lc)
-    primal_trace = compile_data.primal_trace
-    forward_traces = compile_data.forward_last_traces
-    backward_traces = compile_data.backward_last_traces
+    compile_stats = compile_stats(lc)
+    primal_trace = compile_stats.primal_trace
+    forward_traces = compile_stats.forward_last_traces
+    backward_traces = compile_stats.backward_last_traces
     assert isinstance(forward_traces, list)
     assert len(forward_traces) > 1
     assert isinstance(backward_traces, list)
@@ -786,7 +785,6 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
 
     @thunder_backward(
         executors_list=executor.executors_list(),
-        use_static_caching=True,
     )
     def func(a, b):
         return a - b

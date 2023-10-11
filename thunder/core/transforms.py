@@ -14,17 +14,6 @@ import time
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.clang import (
-    full,
-    full_like,
-    unsqueeze,
-    squeeze,
-    maybe_convert_to_dtype,
-    slice_in_dim,
-    sqrt,
-    reciprocal,
-    convolution,
-)
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -35,7 +24,6 @@ from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
     check,
-    consumers,
     flatten_func,
     safe_map,
     safe_map_flat,
@@ -43,12 +31,20 @@ from thunder.core.utils import (
     unzip2,
     const_as,
     sequencify,
-    canonicalize_dims,
     ProxyDict,
 )
-from thunder import clang
-
-# from thunder.executors.torch import ops_to_torch_ops_map
+import thunder.clang as clang
+from thunder.clang import (
+    full,
+    full_like,
+    unsqueeze,
+    squeeze,
+    maybe_convert_to_dtype,
+    slice_in_dim,
+    reciprocal,
+    convolution,
+)
+from thunder.core.transform_common import dce
 
 import torch
 import numpy as np
@@ -60,80 +56,6 @@ def construct_trace(inline_trace=False, **extra_kwargs):
     import thunder
 
     return thunder.trace(inline_trace=inline_trace, **extra_kwargs)
-
-
-#
-# Common optimization and transform passes
-#
-# NOTE This avoids transforms depending on passes, since passes depend on transforms
-
-# NOTE Runs a Dead Code Elimination (DCE) pass
-#   Technically this could be a "transform", because it is semantic-preserving.
-# TODO We could look at reconciling the ideas of what a trace produces and the return prim
-# TODO This calls variableify(), but we could directly construct Variable objects instead
-def dce(trace: Trace) -> tuple[Trace, list[Trace]]:
-    start_time_ns = time.time_ns()
-
-    producers: ProxyDict = utils.producers(trace)
-
-    flat_trace_outputs, _ = tree_flatten(trace.output)
-    needed_proxies = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
-    dced = []
-
-    # NOTE These primitives are marked to not be collected because they dictate the function's output
-    #   (RETURN), have side effects (PRINT), or are comments (COMMENT, UNPACK_TRIVIAL)
-    dont_collect = {
-        prims.PrimIDs.RETURN,
-        prims.PrimIDs.COMMENT,
-        prims.PrimIDs.PRINT,
-        prims.PrimIDs.UNPACK_TRIVIAL,
-    }
-
-    bsym: BoundSymbol
-    for bsym in reversed(trace.bound_symbols):
-        # Preserves symbols that should never be collected
-        if bsym.sym.id in dont_collect:
-            needed = True
-        else:
-            needed = False
-
-        # NOTE This block is run even if we know we're preserving the operation, because it
-        #   may mark some of the operation's outputs as unused
-        some_unused = False
-        for out in bsym.flat_proxy_outs:
-            if variableify(out) in needed_proxies and producers[out] == bsym:
-                needed = True
-            else:
-                some_unused = True
-
-        if needed:
-            nbsym: BoundSymbol = bsym
-
-            # Replaces unused Proxy outputs with None
-            if some_unused:
-
-                def _helper(x):
-                    if isinstance(x, Proxy) and (variableify(x) not in needed_proxies or producers[x] != bsym):
-                        return None
-                    return x
-
-                nbsym_output = tree_map(_helper, bsym.output)
-                nbsym = bsym.from_bsym(output=nbsym_output)
-
-            dced.append(nbsym)
-            for x in chain(nbsym.flat_proxy_args, nbsym.flat_proxy_kwargs):
-                needed_proxies.add(variableify(x))
-
-    dcetrace = from_trace(trace)
-    dcetrace.bound_symbols = list(reversed(dced))
-    
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
-
-    return dcetrace, [dcetrace]
-
 
 #
 # Functions related to converting lists of bound symbols to and from DAGs, and operations on
@@ -460,220 +382,74 @@ def visitor_transform(
     finally:
         reset_tracectx(tracectx_tok)
 
-
-# NOTE Associating fwd->bwd gradients
-#   Consider a function f(inp) -> out, where inp and out are any objects. What should the signature
-#   for its corresponding fwd and bwd functions be, and how do we understand how to call bwd and how to associate its
-#   output with gradients?
 #
-#   We define fwd(inp) -> (out, some_saved_stuff) and bwd(some_saved_stuff, gout) -> ginp,
-#   where gout and ginp are pytrees with the same structure as out and inp (respectively),
-#   but with gradient values inplace of the fwd values. One caveat of this approach is that
-#   bwd has to be able to infer the structure of inp from (some_saved_stuff, gout).
+# The no-op transform
 #
-#   To determine how to associate grads, inp and ginp are flattened and corresponding tensors identified.
-#   For example, if mul(a, b) -> c is called, then ginp is a tuple of two tensors, (ga, gb). When inp and ginp
-#   are flattened and zipped together, this yields pairs (a, ga), (b, gb).
+# A trivial composable transform, only useful as an example.
+
+def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
+    start_time_ns = time.time_ns()
+    noop_trace = from_trace(trace)
+
+    tracectx_tok: Any
+    try:
+        tracectx_tok = set_tracectx(noop_trace)
+        prims.comment("This comment added by the no-op transform")
+    finally:
+        reset_tracectx(tracectx_tok)
+
+    noop_trace.bound_symbols.extend(trace.bound_symbols)
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    noop_trace.set_provenance(TraceProvenance(f"No-op transform (took {elapsed_time_millis} milliseconds)"))
+
+    return noop_trace, [noop_trace]
+
+def noop(cfn: Callable) -> Callable:
+    from thunder.common import _create_callable, CompileData, CompileStats
+    cd: None | Any = getattr(cfn, '_lc_cd', None)
+
+    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+
+    cs = CompileStats()
+    transforms = cfn._lc_transforms + [_noop_transform]
+    
+    ncfn = _create_callable(cd, cs, transforms=transforms)
+    return ncfn
+
 #
-#   One thing to be aware of with this approach is that different calling conventions could confuse
-#   this logic. For example, the input of sub(b=a, a=b) also flattens to (a, b), and sub_bwd would
-#   naturally produce (gb, ga), and our desired association would be incorrect. This is addressed by
-#   canonicalizing a BoundSymbol's args and kwargs so that BoundSymbols are always called in the same way. That is,
-#   we canonicalize sub(b=a, a=b) to sub(b, a), and the association of gradients then works as expected.
+# Phantom grad transform
+#
+# TODO WIP
 
+# TODO Use the clang ctx -- define in clang/__init__.py?
+def mul_grad(a: Number | TensorProxy, b: Number | TensorProxy):
+    fwd = prims.mul(a, b)
 
-def _unpack_trivial_fwd(x: Any, *, name: Optional[str] = None) -> Any:
-    fwd_result = prims.unpack_trivial(x, name=name)
+    g = prims.grad_for(fwd)
 
-    return fwd_result, []
+    a_grad = prims.mul(a, g)
+    b_grad = prims.mul(b, g)
 
+    prims.grads((a, b), (a_grad, b_grad))
 
-# NOTE Doesn't set the grad context -- RETURN doesn't differentiate like other ops
-def _return_fwd(*args) -> Any:
-    fwd_result = prims.python_return(*args)
+    return fwd
 
-    return fwd_result, []
+# The default grad extractor for the grad transform.
+#   Extractors return which output tensor or tensors from a function should be used
+#   to compute the grad.
+#   This default grad extractor ensures the function's output is a single tensor that requires grad,
+#   and it uses that to compute the grad.
+def _grad_extractor_default(x):
+    utils.check(isinstance(x, TensorProxy) and x.requires_grad, lambda: f"The default grad extractor expects a single tensor that requires grad as the function's output. Use a custom grad extractor for functions with other outputs.")
+    return x
 
-
-def _mul_fwd(
-    a: Number | TensorProxy, b: Number | TensorProxy
-) -> tuple[Number | TensorProxy, list[Number | TensorProxy, Number | TensorProxy]]:
-    fwd_result = (prims.mul(a, b),)
-
-    return fwd_result, [a, b]
-
-
-# NOTE Alternative implementation of augmented_forward_impls just to look at elaborating the code
-# TODO Provide an extensibility mechanism for this map
-# TODO Think about which of these entries should be symbols (if any)
-_explicit_fwd_map = {
-    # Unpack prims
-    prims.PrimIDs.UNPACK_TRIVIAL: _unpack_trivial_fwd,
-    # Utility prims
-    prims.PrimIDs.RETURN: _return_fwd,
-    # Elementwise binary prims
-    prims.PrimIDs.MUL: _mul_fwd,
-}
-
-# def _mul_prim_bwd(output, saved)
-
-_explicit_bwd_map = {
-    # Elementwise binary prims
-    # prims.PrimIDs.MUL: _mul_prim_bwd,
-}
-
-
-# WIP -- This will apply the grad transform to forward and create the appropriate grad backward
-def pytorch_grad_transform(trc: Trace) -> Trace:
-    remap = ProxyDict()
-
-    def try_remap(x):
-        if not isinstance(x, Proxy):
-            return x
-
-        return remap.get(x, x)
-
-    def update_remap(old, new):
-        for a, b in zip(old, new):
-            if not isinstance(a, Proxy):
-                continue
-
-            remap[a] = b
-
-    def fwd(remap: ProxyDict, bsym: BoundSymbolInterface) -> Any:
-        sym = bsym.sym
-        remapped_args = tree_map(try_remap, bsym.args)
-        remapped_kwargs = tree_map(try_remap, bsym.kwargs)
-
-        # Short circuits if the function has an explicit fwd impl
-        explicit_fwd_grad = _explicit_fwd_map.get(sym.id, None)
-        if explicit_fwd_grad is not None:
-            result, saved = explicit_fwd_grad(*remapped_args, **remapped_kwargs)
-
-            # Updates remap
-            flat_outs, _ = tree_flatten(bsym.output)
-            flat_results, _ = tree_flatten(result)
-            update_remap(flat_outs, flat_results)
-
-            return result, saved
-
-        check(
-            not sym.is_prim,
-            lambda: f"Failed to find an explicit forward grad implementation for a primitive operation {sym.name}",
-        )
-
-        # NOTE In this case the symbol has no explicit fwd impl, so we create an implicit one
-        # NOTE We intentionally pass the unused args and kwargs so that they are recorded as inputs in the trace
-        def fn_(*args, **kwargs) -> Any:
-            total_saved = []
-            for sbsym in bsym.subsymbols:
-                _, saved = fwd(remap, sbsym)
-                total_saved.extend(saved)
-
-            remapped_outs = tree_map(try_remap, bsym.output)
-            return remapped_outs, total_saved
-
-        implicit_fwd_name: str = f"{sym.name}_implicit_fwd"
-        implicit_fwd = Symbol(name=implicit_fwd_name, meta=fn_, _module=None, _phantom=True)
-        results, saved = implicit_fwd(*remapped_args, **remapped_kwargs)
-
-        # Updates remap
-        flat_outs, _ = tree_flatten(bsym.output)
-        flat_results, _ = tree_flatten(results)
-        update_remap(flat_outs, flat_results)
-
-        return results, saved
-
-    # Constructs the start of a new fwd->bwd trace, updating all calls in the original
-    #   forward trace to be fwd calls instead (possibly construction an implicit forward)
-    def visit(bsym: BoundSymbolInterface) -> VISIT_TYPE:
-        result, saved = fwd(remap, bsym)
-        return VISIT_TYPE.REPLACE
-
-    ntrc = visitor_transform(
-        trace_from=trc,
-        provenance="Forward Grad Transform",
-        visit=visit,
-    )
-
-    # A proxy -> [bsym, bsym, bsym...] mapping, where each bsym is a consumer of the proxy
-    consumer_map = consumers(ntrc)
-
-    # TODO Give grads more useful names, like "g0"
-    # TODO Add a comment annotation (in the trace) to this exogenous_like call to explain
-    #   it models the introduction of gradients
-    # NOTE This looks a little weird, because we have
-    #   RETURN
-    #   EXOGENOUS_LIKE
-    #   And of course functions don't usually continue after RETURN, but today we need the RETURN statement still
-    #   because we want the trace to understand the data dependency. If we didn't keep RETURN then outputs that don't
-    #   require grad might be DCEd, or their creation could be reordered after the EXOGENOUS_LIKE primitive.
-    return_bsym: BoundSymbolInterface = ntrc.bound_symbols[-1]
-    grad_outputs = []
-    for x in return_bsym._flat_args:
-        if not isinstance(x, TensorProxy) or not x.requires_grad:
-            continue
-
-        grad_outputs.append(x)
-
-    # WIP
-    # def grad_for_output(grad_map: ProxyDict, out: Any) -> Any:
-    #     flat, spec = tree_flatten(out)
-
-    #     grads = []
-    #     for f in flat:
-    #         g = None
-    #         if isinstance(f, TensorProxy) and f.requires_grad:
-    #             g = grad_map.get(f, None)
-
-    #         if g is None:
-    #             g.append(None)
-    #             continue
-
-    #         total_grad = g[0]
-    #         for grad in g[1:]:
-    #             total_grad = total_grad + grad
-
-    #         grads.append(total_grad)
-
-    #     return tree_unflatten(grads, spec)
-
-    # def bwd(grad_map: ProxyDict, bsym: BoundSymbolInterface) -> Any:
-    #     sym = bsym.sym
-    #     out, saved = bsym.output
-    #     inp = grad_for_output(grad_map, out)
-
-    #     explicit_bwd_grad = _explicit_bwd_map.get(sym.id, None)
-
-    #     pass
-
-    # A proxy -> [grad, grad, grad...] mapping, where each grad is generated from a consumer of the proxy
-    grad_map = ProxyDict()
-    with tracectx(ntrc):
-        grads = prims.exogenous_like(grad_outputs)
-        for g, o in zip(grads, grad_outputs):
-            grad_map.append(g, o)
-
-        # Constructs backward
-        # TODO NOTE About operations that produce multiple tensors and tensors in collections
-        # TODO NOTE About tensors not requiring grad
-        # TODO NOTE About outputs that are never differentiable
-
-        # Iterates over the augmented forward bound symbols in reverse
-        # NOTE That this is continuing to modify ntrc.bound_symbols (by appending more bound symbols to it),
-        #   so the iteration has to independent of those mutation
-        # NOTE range is (start, stop, step) (it doesn't accept keyword arguments), and the stop must be -1
-        #   because the interval is [start, stop)
-        # NOTE That start is -3 because -1 would be the end of the list of bound symbols, and this skips
-        #   the EXOGENOUS_LIKE and RETURN statements that terminate fwd
-        # num_bsyms = len(ntrc.bound_symbols)
-        # for idx in range(num_bsyms - 3, -1, -1):
-        #     bsym = ntrc.bound_symbols[idx]
-        #     bwd(grad_map, bsym)
-
-    # WIP Construct the full forward->backward trace
-
-    return ntrc
+# TODO WIP
+def grad(cfn, grad_extractor: Callable = _grad_extractor_default):
+    return cfn
 
 
 class Transforms(Enum):
@@ -681,7 +457,6 @@ class Transforms(Enum):
     VmapOp = auto()
     JvpOp = auto()
     VjpOp = auto()
-
 
 # TODO: We are hitting a problem here that langctx might be set to None
 # inside make_prim. This is because we are calling make_prim for transform call definition.

@@ -705,15 +705,6 @@ def test_int_to_float_type_promotion(executor, device, _):
 #
 
 
-def test_static_caching_errors():
-    def foo():
-        pass
-
-    # Verifies that multiple cache types cannot be specified simultaneously
-    with pytest.raises(RuntimeError):
-        thunder.compile(foo, use_static_caching=True, use_last_executed=True)
-
-
 @instantiate(dtypes=(thunder.float32,))
 def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
@@ -728,9 +719,9 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
         def foo(a, b):
             return a + b
 
-        cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, use_static_caching=True)
+        cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, cache_mode="dynamic strides")
 
-        assert cache_mode(cfoo) == thunder.CACHE_MODES.STATIC
+        assert cache_mode(cfoo) == thunder.CACHE_MODES.DYNAMIC_STRIDES
 
         # Tensor x tensor
         result = cfoo(a, b)
@@ -795,7 +786,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def bar(a, b):
         return a, b
 
-    cbar = thunder.compile(bar, use_static_caching=True)
+    cbar = thunder.compile(bar, cache_mode="dynamic strides")
 
     astr = "a"
     bstr = "b"
@@ -828,7 +819,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     # Module tests
     m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
-    cm = thunder.compile(m, use_static_caching=True)
+    cm = thunder.compile(m, cache_mode="dynamic strides")
 
     inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
 
@@ -879,7 +870,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
             accum += x
         return accum
 
-    ccaz = thunder.compile(caz, use_static_caching=True)
+    ccaz = thunder.compile(caz, cache_mode="dynamic strides")
 
     inp0 = [5, 3, 7]
     thunder_result = ccaz(inp0)
@@ -926,7 +917,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def daz(*, a, b):
         return a + b
 
-    cdaz = thunder.compile(daz, use_static_caching=True)
+    cdaz = thunder.compile(daz, cache_mode="dynamic strides")
 
     inp0 = {"a": a, "b": b}
     thunder_result = cdaz(**inp0)
