@@ -1416,7 +1416,7 @@ def test_visitor_transform():
         prims.comment(f"{bsym.sym.id}")
         return VISIT_TYPE.INSERT_BEFORE
 
-    transformed_trc = visitor_transform(trc, "Add comments", add_comments)
+    transformed_trc = visitor_transform(trc, add_comments, provenance="Add comments")
 
     first_comment = transformed_trc.bound_symbols[0]
     second_comment = transformed_trc.bound_symbols[2]
@@ -1443,7 +1443,7 @@ def test_visitor_transform():
         # NOTE In this case either of INSERT_BEFORE or INSERT_AFTER is fine (both just preserve the bsym)
         return VISIT_TYPE.INSERT_BEFORE
 
-    transformed_trc = visitor_transform(trc, "Comment add results", comment_add_results)
+    transformed_trc = visitor_transform(trc, comment_add_results, provenance="Comment add results")
 
     comment = transformed_trc.bound_symbols[3]
     assert comment.sym.id is prims.PrimIDs.COMMENT

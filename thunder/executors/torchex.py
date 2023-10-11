@@ -2161,7 +2161,7 @@ if torch.distributed.is_available():
 
         backward_trace_with_grads_allreduced = visitor_transform(
             trace_from=backward_trace,
-            provenance="All-reduce gradients tranform",
             visit=AllReduceGradVisitor(),
+            provenance="All-reduce gradients tranform",
         )
         return backward_trace_with_grads_allreduced

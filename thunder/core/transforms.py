@@ -336,8 +336,9 @@ class VISIT_TYPE(Enum):
 # `thunder.executors.transform_for_execution`.
 def visitor_transform(
     trace_from: Trace,
-    provenance: str,
     visit: Callable,
+    *,
+    provenance: None | str= None
 ) -> Trace:
     trc: Trace = from_trace(trace_from)
 
@@ -375,7 +376,8 @@ def visitor_transform(
         )
         trc.output = return_bsym.output
 
-        trc.set_provenance(TraceProvenance(provenance))
+        if provenance is not None:
+            trc.set_provenance(TraceProvenance(provenance))
 
         return trc
 
@@ -383,10 +385,41 @@ def visitor_transform(
         reset_tracectx(tracectx_tok)
 
 #
-# The no-op transform
+# Composable transforms
 #
-# A trivial composable transform, only useful as an example.
 
+# Helper function to add a transform
+def add_transform(cfn: Callable, transform: Callable) -> Callable:
+    from thunder.common import _create_callable, CompileData, CompileStats
+    cd: None | Any = getattr(cfn, '_lc_cd', None)
+
+    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+
+    cs = CompileStats()
+    transforms = cfn._lc_transforms + [transform]
+    potransforms = cfn._lc_post_optimization_transforms
+    
+    ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
+    return ncfn
+
+# TODO Consider refactoring this with the above
+# Helper function to add a post-optimization transform
+def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Callable:
+    from thunder.common import _create_callable, CompileData, CompileStats
+    cd: None | Any = getattr(cfn, '_lc_cd', None)
+
+    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+
+    cs = CompileStats()
+    transforms = cfn._lc_transforms
+    potransforms = cfn._lc_post_optimization_transforms + [transform]
+    
+    ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
+    return ncfn
+
+# The no-op transform. A trivial composable transform, only useful as an example.
 def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
     start_time_ns = time.time_ns()
     noop_trace = from_trace(trace)
@@ -403,22 +436,40 @@ def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    noop_trace.set_provenance(TraceProvenance(f"No-op transform (took {elapsed_time_millis} milliseconds)"))
+    noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
     return noop_trace, [noop_trace]
 
 def noop(cfn: Callable) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
-    cd: None | Any = getattr(cfn, '_lc_cd', None)
+    return add_transform(cfn, _noop_transform)
 
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
-    utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+# The comment fusions transform. Just adds a comment before and after each fusion.
+def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
+    start_time_ns = time.time_ns()
+    commented_trace = from_trace(trace)
 
-    cs = CompileStats()
-    transforms = cfn._lc_transforms + [_noop_transform]
+    nbsyms: list[BoundSymbol] = []        
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion:
+            fusion_name = bsym.sym.name
+            pre_comment_bsym = prims.comment.bind(f"Before {fusion_name}", output=None)
+            post_comment_bsym = prims.comment.bind(f"After {fusion_name}", output=None)
+            
+            nbsyms.extend([pre_comment_bsym, bsym, post_comment_bsym])
+        else:
+            nbsyms.append(bsym)
+
+    commented_trace.bound_symbols = nbsyms
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
     
-    ncfn = _create_callable(cd, cs, transforms=transforms)
-    return ncfn
+    commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
+
+    return commented_trace, [commented_trace]
+
+def comment_fusions(cfn: Callable) -> Callable:
+    return add_post_optimization_transform(cfn, _comment_fusions_transform)
 
 #
 # Phantom grad transform

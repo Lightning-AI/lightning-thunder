@@ -468,6 +468,7 @@ def _execute_trace(
     args,
     kwargs,
     compile_data: CompileData,
+    post_optimization_transforms: list[Callable]=[],
 ) -> tuple[Any, Callable, list[TraceCtx]]:
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
@@ -477,6 +478,11 @@ def _execute_trace(
         only_execute_prims=compile_data.only_execute_prims,
         use_rematerialization=compile_data.use_rematerialization,
     )
+
+    # Applies post-optimization transforms
+    for transform in post_optimization_transforms:
+        extrace, seq = transform(extrace)
+        extraces.extend(seq)
 
     # Constructs the Python callable
     c = extrace.python_callable()
@@ -501,7 +507,12 @@ def _execute_trace(
 #   a helper to convert torch tensors to NumPy arrays on output?
 # TODO Provide an option to not preprocess (for debugging)
 
-def _create_callable(cd: CompileData, cs: CompileStats, *, transforms: list[Callable]=[]) -> Callable:
+def _create_callable(
+        cd: CompileData, 
+        cs: CompileStats, 
+        *, 
+        transforms: list[Callable]=[], 
+        post_optimization_transforms: list[Callable]=[]) -> Callable:
     @wraps(cd.processed_function)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()
@@ -607,6 +618,7 @@ def _create_callable(cd: CompileData, cs: CompileStats, *, transforms: list[Call
             args=args,
             kwargs=kwargs,
             compile_data=cd,
+            post_optimization_transforms=post_optimization_transforms,
         )
         cs.last_trace_host_execution_stop = time.time_ns()
 
@@ -636,5 +648,6 @@ def _create_callable(cd: CompileData, cs: CompileStats, *, transforms: list[Call
     _fn._lc_cd = cd
     _fn._lc_cs = cs
     _fn._lc_transforms = transforms
+    _fn._lc_post_optimization_transforms = post_optimization_transforms
     
     return _fn
