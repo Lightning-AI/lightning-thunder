@@ -219,7 +219,6 @@ class Benchmark:
         if not self.backward:
             tom = thunder.compile(
                 self._fn,
-                use_static_caching=True,
                 use_cudagraphs=use_cudagraphs,
                 executors_list=executors_list,
             )
@@ -233,7 +232,6 @@ class Benchmark:
         # Benchmark forward+backward embedded into PyTorch's Autograd
         forward_fn = thunder.compile(
             self._fn,
-            use_static_caching=True,
             use_rematerialization=True,
             executors_list=executors_list,
         )
