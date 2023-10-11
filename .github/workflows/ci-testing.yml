@@ -79,7 +79,10 @@ jobs:
     - name: Tests
       run: |
         coverage run --source thunder -m \
-          pytest thunder/tests/ -v -n 2 --random-order-seed=$GITHUB_RUN_ID --durations=250
+          pytest thunder/tests/ \
+            -v  --datefmt="%Y%m%d-%H:%M:%S.%f" \
+             --random-order-seed=$GITHUB_RUN_ID \
+            -n 2 --durations=250
 
     - name: Statistics
       run: |
