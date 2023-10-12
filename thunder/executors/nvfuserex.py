@@ -441,7 +441,10 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
 
-    return fd.ops.reshape(nv_a, a.shape, shape)
+    if nv_version < LooseVersion("0.0.22"):
+        return fd.ops.reshape(nv_a, a.shape, shape)
+    else:
+        return fd.ops.reshape(nv_a, shape)
 
 
 # NOTE nvFuser's slice operation only supports all strides == 1
