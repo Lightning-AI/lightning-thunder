@@ -865,10 +865,9 @@ class ProxyDict:
     # Helper when values are lists
     def append(self, key: Proxy, val: Any) -> None:
         key_ = key.name
-        vals = self._dict.get(key_, [])
+        vals = self._dict.setdefault(key_, [])
         check_type(vals, list)
         vals.append(val)
-        self._dict[key_] = vals
 
     def remove(self, key: Proxy, val: Any) -> None:
         raise NotImplementedError
