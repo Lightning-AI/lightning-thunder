@@ -12,6 +12,7 @@ from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 
 
@@ -190,22 +191,6 @@ find_nvfuser_producer_consumer_pairs = partial(
 )
 
 
-# TODO: Consider moving this to the prims attribute
-REMATERIALIZATION_BLOCK_LIST = {
-    # We don't want to rematerialize the following primitives
-    # Random primitives
-    prims.PrimIDs.UNIFORM,
-    # Reduction primitives
-    prims.PrimIDs.SUM,
-    prims.PrimIDs.VAR,
-    prims.PrimIDs.VAR_MEAN,
-    prims.PrimIDs.AMAX,
-    prims.PrimIDs.AMIN,
-    prims.PrimIDs.PROD,
-    "torch.var_mean",
-}
-
-
 def find_cut(
     external_producer_outputs: Sequence[ProxyInterface],
     producer: BoundSymbolInterface,
@@ -241,9 +226,10 @@ def find_cut(
     required_producer_vars += tuple(x for x in external_producer_outputs)
 
     # This is needed to avoid rematerializing random or reduction primitives.
+    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP}
     required_producer_vars += tuple(
         chain.from_iterable(
-            (y for y in x._flat_outs) for x in producer.subsymbols if x.sym.id in REMATERIALIZATION_BLOCK_LIST
+            (y for y in x._flat_outs) for x in producer.subsymbols if has_tags(x, tags)
         )
     )
 

@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from itertools import chain
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, List, Type, Tuple
+from typing import Any, Callable, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
@@ -28,6 +28,9 @@ from thunder.core.trace import (
     VariableInterface,
     wrap_in_trace_variable,
 )
+
+if TYPE_CHECKING:
+    from thunder.core.prims import OpTags
 
 # NOTE Context variables for eager execution
 #   Expected to be set only once
@@ -602,6 +605,20 @@ class BoundSymbol(BoundSymbolInterface):
 
     def __repr__(self) -> str:
         return "\n".join(self.python(indent=0, print_depth=-1))
+
+
+def gather_tags(bsym: BoundSymbol) -> set[OpTags]:
+    tags = set(bsym.sym.tags) if bsym.sym.tags is not None else set()
+
+    for sbsym in bsym.subsymbols:
+        tags |= gather_tags(sbsym)
+
+    return tags
+
+
+def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
+    """:obj:`True` if `bsym` and its subsymbols has any of ``tags``."""
+    return not tags.isdisjoint(gather_tags(bsym))
 
 
 # NOTE: A wrapper class that hashes and equates only the right hand side of a BoundSymbol.

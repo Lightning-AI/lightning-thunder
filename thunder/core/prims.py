@@ -155,10 +155,12 @@ class PrimIDs(Enum):
 
 class OpTags(Enum):
     # TODO -- Consider renaming this tag
-    # The operation manipulates a tensor's shape 
+    # The operation manipulates a tensor's shape
     #   These operations may return a view or a new tensor in PyTorch
     #   e.g. slice, squeeze, transpose, view, reshape
     SHAPE_OP = auto()
+    REDUCTION_OP = auto()
+    RANDOM_OP = auto()
 
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
@@ -1487,6 +1489,7 @@ uniform = make_prim(
     PrimIDs.UNIFORM,
     "uniform",
     meta=_uniform_meta,
+    tags=(OpTags.RANDOM_OP,),
 )
 
 
@@ -1945,13 +1948,13 @@ def _reduction_meta(a: TensorProxy, dims: Sequence[int], *, output_dtype: Option
 
 
 # TODO: review if reduction meta is OK for amax
-amax = make_prim(PrimIDs.AMAX, "amax", meta=_reduction_meta)
+amax = make_prim(PrimIDs.AMAX, "amax", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
-amin = make_prim(PrimIDs.AMIN, "amin", meta=_reduction_meta)
+amin = make_prim(PrimIDs.AMIN, "amin", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
-prod = make_prim(PrimIDs.PROD, "prod", meta=_reduction_meta)
+prod = make_prim(PrimIDs.PROD, "prod", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
-sum = make_prim(PrimIDs.SUM, "sum", meta=_reduction_meta)
+sum = make_prim(PrimIDs.SUM, "sum", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
 
 # TODO Add comment for why var doesn't use _reduction_meta
@@ -1983,8 +1986,8 @@ def _var_mean_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -
     return (var, mean)
 
 
-var = make_prim(PrimIDs.VAR, "var", meta=_var_meta)
-var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta)
+var = make_prim(PrimIDs.VAR, "var", meta=_var_meta, tags=(OpTags.REDUCTION_OP,))
+var_mean = make_prim(PrimIDs.VAR_MEAN, "var_mean", meta=_var_mean_meta, tags=(OpTags.REDUCTION_OP,))
 
 #
 # Linear algebra prims

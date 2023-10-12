@@ -181,13 +181,14 @@ def method_lookup(name: str) -> Optional[Symbol]:
 #   above
 # NOTE Functions that set is_method=True must be able to accept a tensor as their first positional input
 class torchsymbol:
-    def __init__(self, *torchfns, is_method: bool = False, id: Optional[str] = None, is_prim: bool = False):
+    def __init__(self, *torchfns, is_method: bool = False, id: Optional[str] = None, is_prim: bool = False, tags: None | list[Any] = None):
         self.torchfns = torchfns
         self.is_method = is_method
         self.id = id
         # When is_prim is True, the function is treated as a primitive, so that
         # executors must execute it directly without decomposition.
         self.is_prim = is_prim
+        self.tags = tags
 
     def __call__(self, fn: Callable) -> Symbol:
         module_name = torchsymbol.__module__
@@ -217,9 +218,9 @@ class torchsymbol:
             id = self.id
 
         if self.is_prim:
-            sym = Symbol(name=fn.__name__, meta=prim_ctx(_fn), id=id, is_prim=self.is_prim)
+            sym = Symbol(name=fn.__name__, meta=prim_ctx(_fn), id=id, is_prim=self.is_prim, tags=self.tags)
         else:
-            sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim)
+            sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
         if self.is_method:
             _torch_methods[sym.name] = sym
@@ -663,7 +664,7 @@ def polygamma(n: int, a: TensorLike) -> TensorLike:
     sign = 1 if (n % 2) == 1 else -1
     # Compute in log-space for numerical stability
     factorial_mul_zeta = exp(lgamma(n + 1.) + log(zeta(n + 1., a)))
-    return sign * factorial_mul_zeta 
+    return sign * factorial_mul_zeta
 
 
 @torchsymbol(torch.pow, is_method=True)
@@ -702,7 +703,7 @@ def zeta(a, b):
 # NOTE use this explicit type promotion because a direct combination of add/mul will have a redundant cast,
 # which may lead to accuracy problems, see:
 # https://github.com/Lightning-AI/lightning-thunder/pull/1155#discussion_r1342653591 for details
-# TODO remove this when the optimization pass is ready: https://github.com/Lightning-AI/lightning-thunder/issues/1178 
+# TODO remove this when the optimization pass is ready: https://github.com/Lightning-AI/lightning-thunder/issues/1178
 def addcmul_addcdiv_helper(a, b, c, op1, op2, *, value=None, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
     inputs = [a, b, c]
     computation_dtype, result_dtype = utils.elementwise_type_promotion(*inputs, type_promotion_kind=type_promotion_kind)
@@ -1692,7 +1693,7 @@ def var(
 
 
 # TODO: consider being more aggressive about kwarg-only
-@torchsymbol(torch.var_mean)
+@torchsymbol(torch.var_mean, tags=(prims.OpTags.REDUCTION_OP,))
 def var_mean(
     a: TensorProxy,
     dim=None,
