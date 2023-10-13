@@ -173,17 +173,23 @@ def find_filtered_producer_consumer_pairs(
     filter_func = filter_func or (lambda x: True)
     proxy_to_consumers = utils.consumers(trace)
     producer_consumer_pairs = set()
+    order_in_trace = {
+        bsym: i for i, bsym in enumerate(filter(filter_func, trace.bound_symbols))
+    }
 
     # We are looking for special producer-consumer pairs among the filtered symbols
     for producer in filter(filter_func, trace.bound_symbols):
         for out in producer._flat_outs:
             consumers = proxy_to_consumers.get(out, tuple())
-            # We only care about producer's outputs with a single fusion consumer
-            # prims.del is a special case that we don't care about
-            consumers = tuple(filter(lambda x: x.sym.name != "del", consumers))
-            if len(consumers) == 1 and filter_func(consumer := consumers[0]):
+            consumers = filter(filter_func, consumers)
+            for consumer in consumers:
                 producer_consumer_pairs.add((producer, consumer))
-    return tuple(sorted(producer_consumer_pairs, key=lambda x: x[0].sym.name))
+    return tuple(
+        sorted(
+            producer_consumer_pairs,
+            key=lambda pair: (order_in_trace[pair[0]], order_in_trace[pair[1]]),
+        )
+    )
 
 
 find_nvfuser_producer_consumer_pairs = partial(

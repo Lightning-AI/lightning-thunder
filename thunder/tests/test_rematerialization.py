@@ -1,4 +1,5 @@
 import pytest
+from functools import partial
 
 import torch
 
@@ -11,11 +12,12 @@ from thunder.core.rematerialization import (
     apply_rematerialization_for_producer,
     find_cut,
     find_external_producer_outputs,
+    find_filtered_producer_consumer_pairs,
     find_nvfuser_producer_consumer_pairs,
 )
 from thunder.core.transforms import inline, value_and_grad
 from thunder.examine import get_fusions
-from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor
+from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
 from thunder.tests.make_tensor import make_tensor
 
 
@@ -191,6 +193,16 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
     pairs = find_nvfuser_producer_consumer_pairs(trace)
     assert len(pairs) == n_fusion_regions
 
+    # Test that the order of pairs follows the order of nvFuser regions in the
+    # trace
+    nvfuser_regions = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    producers_trace_order = tuple(filter(lambda x: x in map(lambda x: x[0], pairs), nvfuser_regions))
+    consumers_trace_order = tuple(filter(lambda x: x in map(lambda x: x[1], pairs), nvfuser_regions))
+    # Consumers order is reversed because the consumer of the first nvFuser
+    # block is the last nvFuser block and so on
+    assert consumers_trace_order == tuple(map(lambda x: x[1], reversed(pairs)))
+    assert producers_trace_order == tuple(map(lambda x: x[0], pairs))
+
     # Test that each producer is unique
     producers = set(map(lambda x: x[0], pairs))
     assert len(producers) == n_fusion_regions
@@ -203,6 +215,46 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
     # of the producer
     for producer, consumer in pairs:
         producer_output_names = map(lambda x: x.name, producer.output)
+        consumer_input_names = map(lambda x: x.name, consumer.args)
+        assert set(producer_output_names).intersection(set(consumer_input_names))
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(TorchExecutor,),
+)
+def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, device, _):
+    from thunder.core import prims
+
+    find_pairs = partial(
+        find_filtered_producer_consumer_pairs, filter_func=lambda bsym: bsym.sym.id == prims.PrimIDs.ADD
+    )
+
+    def func(t0):
+        t1 = prims.exp(t0)
+        t2 = prims.add(t0, t0) # one filtered producer
+        t3 = prims.add(t2, t0) # first filtered consumer
+        t4 = prims.add(t2, t1) # second filtered consumer
+        return t3, t4
+
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    compiled_func = executor.make_callable(func)
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
+    trace = traces[0]
+    pairs = find_pairs(trace)
+    assert len(pairs) == 2
+
+    # Check the order of pairs
+    first_consumer = trace.bound_symbols[-3]
+    second_consumer = trace.bound_symbols[-2]
+    assert pairs[0][1] == first_consumer
+    assert pairs[1][1] == second_consumer
+
+    # Check that pairs are valid, i.e. the consumer really consumes the output
+    # of the producer
+    for producer, consumer in pairs:
+        producer_output_names = map(lambda x: x.name, utils.sequencify(producer.output))
         consumer_input_names = map(lambda x: x.name, consumer.args)
         assert set(producer_output_names).intersection(set(consumer_input_names))
 
