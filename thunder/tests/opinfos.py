@@ -2839,6 +2839,33 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # Addtl. cases
         ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),
         ((11, 7, 9, 5), (None, slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None, None)),
+        # Basic cases + advanced indexing that dispatches to basic indexing
+        ((5,), ([-1],)),
+        ((5,), (..., [-1])),
+        ((5,), ([-1], ...)),
+        ((5, 5), (slice(1, 3, 1), [-1])),
+        ((5, 5), (slice(1, 3, 1), [-3])),
+        ((2, 2, 2), (slice(None, None), (-1,), slice(None, None))),
+        ((2, 2), (..., [-1])),
+        # This sample shows inconsistencies between PyTorch and Numpy
+        # >>> t = torch.rand(2, 2, 2)
+        # >>> n = np.random.rand(2, 2, 2)
+        # >>> t.shape; n.shape
+        # torch.Size([2, 2, 2])
+        # (2, 2, 2)
+        # >>> t.shape
+        # torch.Size([2, 2, 2])
+        # >>> n.shape
+        # (2, 2, 2)
+        # >>> t[0, ..., [-1]].shape
+        # torch.Size([2, 1])
+        # >>> n[0, ..., [-1]].shape
+        # (1, 2)
+        # ((2, 2, 2), (0, ..., [-1])),
+        ((1, 5, 3), ([-1], None, None, 0, None, 2, ..., None, None, None)),
+        ((1, 5, 3), (None, [-1], None, 0, None, 2, ..., None, None, None)),
+        ((1, 5, 3), (None, None, 0, None, 2, ..., [-1], None, None, None)),
+        ((1, 5, 3), (None, None, 0, [-1], None, 2, ..., None, None, None)),
     )
 
     for shape, key in basic_indexing_cases:
