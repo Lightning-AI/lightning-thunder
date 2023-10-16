@@ -473,7 +473,7 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
     # TODO: Should this happen automatically in replace_values?
     #       Should we also replace values in bl1?
     for o in bl1.block_outputs:
-        for pv in o.phi_values:
+        for pv in o.phi_values[:]:
             if pv in replacements:
                 pv.remove_value(o)
     bl1.block_outputs = OrderedSet(o for o in bl1.block_outputs if o.phi_values)
