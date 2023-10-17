@@ -216,7 +216,8 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
                 value_for_self1 = None
             elif isinstance(fn_value, types.MethodType):
                 mod1 = fn_value.__self__
-                value_for_self1 = n.inputs[1]
+                value_for_self1 = n.inputs[0].parent
+                assert value_for_self1 is not None
             else:
                 source_str = repr_source_location(gr, n.source_infos)
                 raise NotImplementedError(f"inlining {fn_value} in instruction {n} at\n{source_str}")

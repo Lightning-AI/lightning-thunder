@@ -1300,8 +1300,15 @@ def test_functionalization_callmethod_nonmethod():
         tom = thunder.compile(model)
 
 
+class Conv1d(torch.nn.Conv1d):
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return self._conv_forward(input, weight=self.weight, bias=self.bias)
+
+
 def test_nn_modules():
     modules_to_test = [
+        (Conv1d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4),)),
         (torch.nn.Conv1d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4),)),
         (torch.nn.Conv2d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4, 4),)),
         (torch.nn.Conv3d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4, 4, 4),)),
