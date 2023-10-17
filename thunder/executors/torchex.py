@@ -933,6 +933,33 @@ def _elementwise_ternary_factory(name: str) -> Callable:
 where = _elementwise_ternary_factory("where")
 
 
+def _clamp_check(
+    a: TensorLike,
+    min: None | Number | TensorLike = None,
+    max: None | Number | TensorLike = None,
+) -> bool:
+    # torch supports combination of arguments:
+    # (Tensor input, Tensor min, Tensor max)
+    # (Tensor input, Number min, Number max)
+    if isinstance(min, TensorLike) and isinstance(max, Number):
+        return False
+    if isinstance(min, Number) and isinstance(max, TensorLike):
+        return False
+    return True
+
+
+def clamp(
+    bsym: BoundSymbol,
+    a: TensorLike,
+    min: None | Number | TensorLike = None,
+    max: None | Number | TensorLike = None,
+) -> BoundSymbol:
+    sym = Symbol(name="clamp", meta=None, _module=torch)
+
+    tbsym = sym.bind(a, min, max, output=bsym.output)
+    return tbsym
+
+
 def masked_fill(bsym: BoundSymbol, a, mask, value):
     sym = Symbol(name="masked_fill", meta=None, _module=torch)
     tbsym = BoundSymbol(sym, args=(a, mask, value), kwargs={}, output=bsym.output)
@@ -1974,6 +2001,7 @@ _ops_map.update(
         "torch.tril": (_tril_check, tril),
         PrimIDs.WHERE: (_elementwise_ternary_check, where),
         "torch.where": (_elementwise_ternary_check, where),
+        "torch.clamp": (_clamp_check, clamp),
         # Reduction operators
         PrimIDs.AMAX: (_always_executable, amax_prim),
         PrimIDs.AMIN: (_always_executable, amin_prim),

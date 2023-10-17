@@ -2347,6 +2347,67 @@ where_opinfo = OpInfo(
 conditional_and_mask_ops.append(where_opinfo)
 
 
+def clamp_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    cases = (
+        ((5,), (5,), (5,)),
+        ((3, 1, 2), (1, 2, 2), (3, 2, 1)),
+    )
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    number = partial(make_number, dtype=dtype)
+
+    for a_shape, min_shape, max_shape in cases:
+        yield SampleInput(make(a_shape), make(min_shape), make(max_shape))
+        # Generates sample inputs with None and number min/max values
+        for min_vals, max_vals in itertools.product((min_shape, None, number()), (max_shape, None, number())):
+            # skip the type combination Torch doesn't support
+            if not isinstance(min_vals, type(max_vals)) or (min_vals is None and max_vals is None):
+                continue
+            if isinstance(min_vals, tuple):
+                min_vals = make(min_vals)
+            if isinstance(max_vals, tuple):
+                max_vals = make(max_vals)
+            yield SampleInput(make(a_shape), min_vals, max_vals)
+
+    # Generates samples contain nan and inf
+    if dtype.is_floating_point:
+        # Generates extremal value samples
+        inf, neginf, nan = float("inf"), float("-inf"), float("nan")
+        values = (inf, neginf, nan, 1.0)
+
+        # Constructs all ternary combinations of values
+        avals, bvals, cvals = [], [], []
+        for a, b, c in itertools.product(values, values, values):
+            avals.append(a)
+            bvals.append(b)
+            cvals.append(c)
+
+        tensor = partial(torch.tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+        # Generates extremal value combinations, including numbers
+        for min_vals, max_vals in itertools.product(
+            (bvals, None, inf, neginf, nan, 1.0), (cvals, None, inf, neginf, nan, 1.0)
+        ):
+            # skip the type combination Torch doesn't support
+            if not isinstance(min_vals, type(max_vals)) or (min_vals is None and max_vals is None):
+                continue
+            if isinstance(min_vals, list):
+                min_vals = tensor(min_vals)
+
+            if isinstance(max_vals, list):
+                max_vals = tensor(max_vals)
+
+            yield SampleInput(tensor(avals), min_vals, max_vals)
+
+
+clamp_opinfo = OpInfo(
+    ltorch.clamp,
+    sample_input_generator=clamp_sample_generator,
+    torch_reference=torch.clamp,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+)
+conditional_and_mask_ops.append(clamp_opinfo)
+
+
 def tril_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     make_diagonal = partial(make_number, dtype=torch.long)

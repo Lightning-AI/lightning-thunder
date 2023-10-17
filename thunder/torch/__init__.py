@@ -735,6 +735,40 @@ def where(pred: TensorLike, /, a: Number | TensorLike, b: Number | TensorLike) -
     return clang.where(pred, a, b)
 
 
+@torchsymbol(torch.clamp, is_method=True)
+def clamp(
+    a: TensorLike,
+    min: None | Number | TensorLike = None,
+    max: None | Number | TensorLike = None,
+) -> TensorLike:
+    utils.check(
+        min is not None or max is not None,
+        lambda: f"clamp: At least one of 'min' or 'max' must not be None",
+        ValueError,
+    )
+    input_types = [to_dtype(x) for x in [a, min, max] if x is not None]
+    # Bool and complex are not supported
+    utils.check(
+        not all(dtypes.is_boolean_dtype(input_type) for input_type in input_types),
+        lambda: f"clamp is not supported for boolean type",
+    )
+    utils.check(
+        not any(utils.is_complex_dtype(input_type) for input_type in input_types),
+        lambda: f"clamp is not supported for complex types",
+    )
+
+    # torch.clamp outputs nan when one of a, min, max is nan
+    # when min is greater than max, outputs max
+    if min is not None:
+        # nan in min is handled by keeping min's nan when not a>min
+        a = where(a != a, a, where(a > min, a, min))
+
+    if max is not None:
+        a = where(a != a, a, where(a < max, a, max))
+
+    return a
+
+
 def _mask_tensor(a, mask, fill_value):
     utils.check(
         dtypes.is_boolean_dtype(mask.dtype), lambda: f"_mask_tensor: mask ({mask.dtype=}) must have a boolean dtype"
@@ -2148,8 +2182,7 @@ def relu(a: TensorProxy, inplace: bool = False) -> TensorLike:
 @torchsymbol(torch.nn.functional.relu6, id="torch.relu6", is_method=False)
 def relu6(a: TensorProxy, inplace: bool = False) -> TensorLike:
     utils.check(not inplace, lambda: f"relu6 only supports inplace=False", exception_type=NotImplementedError)
-
-    return where(a < 0, 0, where(a > 6, 6, a))
+    return clamp(a, 0, 6)
 
 
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
