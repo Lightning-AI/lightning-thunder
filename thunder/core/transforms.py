@@ -2426,7 +2426,6 @@ def linear_backward(a, b, c, g):
     return ga, gb, gc
 
 
-@register_augmented_forward("torch.nn.functional.scaled_dot_product_attention")
 def scaled_dot_product_attention(
     query: Proxy,
     key: Proxy,
@@ -2466,6 +2465,52 @@ def scaled_dot_product_attention(
         scale,
     )
     return VJPDual(primal, residuals)
+
+def scaled_dot_product_efficient_attention_rule_check(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: None | Proxy,
+    dropout_p: float,
+    is_causal: bool,
+    scale: None | float,
+) -> bool:
+    # query (batch_size, num_heads, query_seq_len, E)
+    # key (batch_size, num_heads, key_seq_len, E)
+    # value (batch_size, num_heads, key_seq_len, Ev)
+    # attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
+
+    batch_size, num_heads, _, _ = query.shape
+
+    tensor_inputs = [query, key, value]
+    if attn_mask is not None:
+        tensor_inputs.append(attn_mask)
+
+    if any(map(lambda a: a.device is cpu, tensor_inputs)):
+        return False
+
+    # NOTE Expected query, key, value, and attn_mask tensor to have 4 dimensions
+    if any(map(lambda a: a.ndim != 4, tensor_inputs)):
+        return False
+
+    # NOTE FP64 is not supported by aten implementation
+    supported_dtypes = (dtypes.float32, dtypes.float16, dtypes.bfloat16)
+    if any(map(lambda a: a.dtype not in supported_dtypes, [query, key, value])):
+        return False
+
+    # NOTE aten::scaled_dot_product_efficient_attention does not support broadcastable batch size.
+    if any(map(lambda a: a.shape[0] != batch_size, tensor_inputs)):
+        return False
+
+    # NOTE Expected all inputs to have same number of attention heads.
+    if any(map(lambda a: a.shape[1] != num_heads, tensor_inputs)):
+        return False
+
+    return True
+
+register_augmented_forward_with_checker("torch.nn.functional.scaled_dot_product_attention",
+                                        scaled_dot_product_efficient_attention_rule_check,
+                                        scaled_dot_product_attention)
 
 
 @register_backward("torch.nn.functional.scaled_dot_product_attention")
