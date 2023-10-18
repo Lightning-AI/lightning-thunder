@@ -623,7 +623,7 @@ def test_multiple_output_vjp(executor, device, _):
         out, (g,) = executor.make_callable(vjp(func))((x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
-    with pytest.raises(RuntimeError, match="Pullback for sincos returned 2 values, but expected 1"):
+    with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected 1"):
         out, (g,) = executor.make_callable(vjp(func))((x,), (v, v))
 
     # Let's define a correct sincos_backward function

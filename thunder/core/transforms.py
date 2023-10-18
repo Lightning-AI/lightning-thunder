@@ -14,6 +14,7 @@ import time
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
+from thunder.core.baseutils import default_dataclass_params
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
@@ -99,7 +100,7 @@ def bsym_list_to_dag(
     roots: list[Node] = []
     leaves: list[Node] = []
     return_node: None | Node = None
-    
+
     producers = producers if producers is not None else utils.producers(bsyms)
     consumers = consumers if consumers is not None else utils.consumers(bsyms)
 
@@ -142,7 +143,7 @@ def bsym_list_to_dag(
             roots.append(node)
 
         has_children: bool = False
-        
+
         vargs = tuple(variableify(x) for x in bsym._flat_args)
         vkwargs = tuple(variableify(x) for x in bsym._flat_kwargs)
         for out in bsym._flat_outs:
@@ -399,7 +400,7 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
     cs = CompileStats()
     transforms = cfn._lc_transforms + [transform]
     potransforms = cfn._lc_post_optimization_transforms
-    
+
     ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
     return ncfn
 
@@ -415,7 +416,7 @@ def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Calla
     cs = CompileStats()
     transforms = cfn._lc_transforms
     potransforms = cfn._lc_post_optimization_transforms + [transform]
-    
+
     ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
     return ncfn
 
@@ -448,13 +449,13 @@ def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
     start_time_ns = time.time_ns()
     commented_trace = from_trace(trace)
 
-    nbsyms: list[BoundSymbol] = []        
+    nbsyms: list[BoundSymbol] = []
     for bsym in trace.bound_symbols:
         if bsym.sym.is_fusion:
             fusion_name = bsym.sym.name
             pre_comment_bsym = prims.comment.bind(f"Before {fusion_name}", output=None)
             post_comment_bsym = prims.comment.bind(f"After {fusion_name}", output=None)
-            
+
             nbsyms.extend([pre_comment_bsym, bsym, post_comment_bsym])
         else:
             nbsyms.append(bsym)
@@ -463,7 +464,7 @@ def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    
+
     commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
 
     return commented_trace, [commented_trace]
@@ -1525,6 +1526,12 @@ backward_impls = {
 }
 
 
+@dataclass(**default_dataclass_params)
+class RuleInfo:
+    checker: Callable
+    rule: Callable
+
+
 def register_augmented_forward(op):
     """Decorator to register an augmented forward implementation for a symbol.
 
@@ -1542,6 +1549,29 @@ def register_augmented_forward(op):
     return decorator
 
 
+def register_augmented_forward_with_checker(op, checker, rule):
+    """Decorator to register an augmented forward implementation for a symbol.
+
+    Args:
+        op (Ops): Symbol for which to register the augmented forward implementation.
+        checker (Callable): Function that checks if the rule should be applied.
+        rule (Callable): Function that applies the rule.
+    """
+    augmented_forward_impls[op] = RuleInfo(checker, rule)
+
+
+def deregister_augmented_forward(op):
+    """Deregisters an augmented forward implementation for a symbol.
+
+    Args:
+        op (Ops): Symbol for which to deregister the augmented forward implementation.
+
+    Returns:
+        None
+    """
+    del augmented_forward_impls[op]
+
+
 def register_backward(op):
     """Decorator to register a backward implementation for a symbol.
 
@@ -1557,6 +1587,18 @@ def register_backward(op):
         return func
 
     return decorator
+
+
+def deregister_backward(op):
+    """Deregisters a backward implementation for a symbol.
+
+    Args:
+        op (Ops): Symbol for which to deregister the backward implementation.
+
+    Returns:
+        None
+    """
+    del backward_impls[op]
 
 
 def restore_reduced_dims(x, reduced_dims, original_shape):
@@ -1680,6 +1722,19 @@ def _var_mean_aug_fwd(a, dim, *, correction):
 
     return (v, m), (a, dim, correction, m)
 
+def n_elem_reduced(a_ndim, a_shape, dims):
+    dims = canonicalize_dims(a_ndim, dims)
+    reduction_size = 1
+    for idx, size in enumerate(a_shape):
+        if idx in dims:
+            reduction_size *= size
+    return reduction_size
+
+
+def mean_backward(a_ndim, a_shape, dims, grad):
+    mean_local_grad = 1.0 / n_elem_reduced(a_ndim, a_shape, dims)
+    return restore_reduced_dims(grad, dims, a_shape) * mean_local_grad
+
 
 # TODO: fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 # by returning zeros_like(a) or similar.
@@ -1781,12 +1836,15 @@ register_backward(prims.PrimIDs.AMIN)(grad_chooser_pullback)
 
 # TODO: exact same for amin, argmax, argmin
 @register_augmented_forward(prims.PrimIDs.AMAX)
-def amax_aug_fwd(x, dims):
+def amax_aug_fwd(x, dims, *, output_dtype=None):
     """Augmented amax operation.
 
     Args:
         x (Variable): Tensor to compute amax on.
         dims (Tuple[int, ...]): Dimensions to compute amax over.
+
+    Keyword Args:
+        output_dtype (str, optional): Output data type. Defaults to None.
 
     Returns:
         VJPDual: Primal and residuals.
@@ -1804,12 +1862,15 @@ def amax_aug_fwd(x, dims):
 
 
 @register_augmented_forward(prims.PrimIDs.AMIN)
-def amin_aug_fwd(x, dims):
+def amin_aug_fwd(x, dims, *, output_dtype=None):
     """Augmented amin operation.
 
     Args:
         x (Variable): Tensor to compute amin on.
         dims (Tuple[int, ...]): Dimensions to compute amin over.
+
+    Keyword Args:
+        output_dtype (str, optional): Output data type. Defaults to None.
 
     Returns:
         VJPDual: Primal and residuals.
@@ -2693,11 +2754,19 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
+
+    if isinstance(vjp_impl, RuleInfo):
+        # We should use this rule only if checker returns True for the current
+        # symbol's arguments
+        if vjp_impl.checker(*symbol.args, **symbol.kwargs):
+            vjp_impl = vjp_impl.rule
+        else:
+            vjp_impl = None
+
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
         if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
             vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.sym.__call__)
-            register_backward(symbol.sym.id)(partial(decomposed_fn_backward_rule, symbol.sym.__call__))
         else:
             # We could not find a VJP for this symbol and we could not decompose it
             # It could be a torch.dropout with 0.0 probability, so we skip it
@@ -2823,13 +2892,26 @@ def backward_pass(forward_env, trace, init_cotangents):
             if symbol.args[1] == 0.0 or symbol.args[2] is False:
                 continue
 
-        pullback = backward_impls[symbol.sym.id]
-        result = pullback(*residuals, *cotangents)
+        backward = backward_impls.get(symbol.sym.id)
+        aug_forward = augmented_forward_impls.get(symbol.sym.id)
+
+        if isinstance(aug_forward, RuleInfo):
+            backward = None if not aug_forward.checker(*symbol.args, **symbol.kwargs) else backward
+
+        if backward is None:
+            if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
+                # We could not find a backward for this symbol, so we try to decompose it
+                backward = partial(decomposed_fn_backward_rule, symbol.sym.__call__)
+            else:
+                # We could not find a backward for this symbol and we could not decompose it
+                raise NotImplementedError(f"Backward for {symbol.sym.id} is not implemented")
+
+        result = backward(*residuals, *cotangents)
         if not isinstance(result, Sequence):
             result = (result,)
         check(
             len(result) == len(symbol.args),
-            lambda: f"Pullback for {symbol.sym.id} returned {len(result)} values, but expected {len(symbol.args)}",
+            lambda: f"Backward for {symbol.sym.id} returned {len(result)} values, but expected {len(symbol.args)}",
         )
 
         # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
