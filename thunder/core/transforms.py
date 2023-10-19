@@ -2885,7 +2885,7 @@ def backward_pass(forward_env, trace, init_cotangents):
     """
     env = {}
 
-    def read_with_none(x: Variable):
+    def get_grad(x: Variable):
         if isinstance(x, Variable):
             # Return None if the variable was not used in the computation and
             # hence not in the env
@@ -2893,7 +2893,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         else:
             return x
 
-    def write(v: Variable, val: Any) -> None:
+    def put_grad(v: Variable, val: Any) -> None:
         if isinstance(v, Variable):
             if v.name in env:
                 if val is None:
@@ -2907,20 +2907,20 @@ def backward_pass(forward_env, trace, init_cotangents):
             pass
         elif isinstance(v, Sequence) and val is None:
             # broadcast None to the right shape
-            safe_map(write, v, [0] * len(v))
+            safe_map(put_grad, v, [0] * len(v))
         else:
             # Skip writing to constants
             pass
 
     if isinstance(init_cotangents, Sequence) and len(init_cotangents) == 1 and not isinstance(trace.output, Sequence):
         init_cotangents = init_cotangents[0]
-    safe_map_flat(write, trace.output, init_cotangents)
+    safe_map_flat(put_grad, trace.output, init_cotangents)
 
     for symbol in reversed(trace.bound_symbols):
         if symbol.sym.id in transform_skip_list:
             continue
         symbol_output = sequencify(symbol.output)
-        cotangents = safe_map(read_with_none, symbol_output)
+        cotangents = tree_map(get_grad, symbol_output)
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
@@ -2931,7 +2931,7 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         if all(cotangent is None for cotangent in cotangents):
             # We can skip the pullback if the cotangent is None
-            safe_map(write, symbol.args, (None,) * len(symbol.args))
+            safe_map(put_grad, symbol.args, (None,) * len(symbol.args))
             continue
 
         if symbol.sym.id == "torch.nn.functional.dropout" and not symbol.subsymbols:
@@ -3010,9 +3010,9 @@ def backward_pass(forward_env, trace, init_cotangents):
         # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
         # This is a temporary workaround.
         if symbol.sym.id in (prims.PrimIDs.CAT, "torch.cat"):
-            safe_map_flat(write, symbol.args, result)
+            safe_map_flat(put_grad, symbol.args, result)
         else:
-            safe_map(write, symbol.args, result)
+            safe_map(put_grad, symbol.args, result)
 
     def get_inexact_dtype_or_none(x):
         if isinstance(x, TensorProxy) and dtypes.is_inexact_dtype(x.dtype):
@@ -3020,8 +3020,8 @@ def backward_pass(forward_env, trace, init_cotangents):
         else:
             return None
 
-    gargs = tree_map(read_with_none, tuple(trace.args))
-    gkwargs = tree_map(read_with_none, trace.kwargs)
+    gargs = tree_map(get_grad, tuple(trace.args))
+    gkwargs = tree_map(get_grad, trace.kwargs)
     gkwargs = {k: v for k, v in gkwargs.items() if v is not None}
     gargs, gkwargs = tree_map(get_inexact_dtype_or_none, (gargs, gkwargs))
     return gargs + (gkwargs,) if len(gkwargs) != 0 else gargs
