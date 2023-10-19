@@ -39,6 +39,9 @@ op_skip = {
 # TODO: modify the generated list to support composite ops
 vjp_op_force = {
     "abs",  # There's no clang.abs or prims.abs OpInfo, only torch.abs
+    "amax",
+    "amin",
+    "cat",
     "cross_entropy",
     "softmax",
     "to",
@@ -47,6 +50,7 @@ vjp_op_force = {
     "var",
     "var_mean",
     "interpolate",
+    "prod",
     "repeat",
     "split",
 }
@@ -623,7 +627,7 @@ def test_multiple_output_vjp(executor, device, _):
         out, (g,) = executor.make_callable(vjp(func))((x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
-    with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected 1"):
+    with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected at most 1"):
         out, (g,) = executor.make_callable(vjp(func))((x,), (v, v))
 
     # Let's define a correct sincos_backward function

@@ -1713,7 +1713,7 @@ def var_backward(a, dim, correction, v, g):
     g = restore_reduced_dims(g, dim, a.shape)
     mean = prims.sum(a, dim, output_dtype=v.dtype) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
-    return ((2 * g * (a - mean)) / normalization_scalar, None)
+    return (2 * g * (a - mean)) / normalization_scalar
 
 
 @register_augmented_forward(prims.PrimIDs.VAR_MEAN)
@@ -1754,10 +1754,7 @@ def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
         mean = restore_reduced_dims(mean, dims, a.shape)
         return (2.0 * grad * (a - mean)) / normalization_scalar
 
-    return (
-        var_backward(a, dim, correction, mean, grad_v) + mean_backward(a, dim, grad_m),
-        None,
-    )
+    return var_backward(a, dim, correction, mean, grad_v) + mean_backward(a, dim, grad_m)
 
 
 @register_augmented_forward(prims.PrimIDs.PAD)
@@ -1769,7 +1766,7 @@ def pad_aug_fwd(a, padding_value, padding_config):
 def pad_backward(a, padding_config, g):
     # Short circuit on empty input.
     if any(dim == 0 for dim in a.shape):
-        return full_like(a, fill_value=0), None, None
+        return full_like(a, fill_value=0)
 
     # Un-pad by padding with zero values
     zero_padding_config = [(-lo, -hi, 0) for lo, hi, _ in padding_config]
@@ -1780,11 +1777,11 @@ def pad_backward(a, padding_config, g):
     for dim, (_, _, d) in enumerate(padding_config):
         g = slice_in_dim(g, 0, g.shape[dim], stride=d + 1, dim=dim)
 
-    return g, None, None
+    return g
 
 
 @register_augmented_forward(prims.PrimIDs.PROD)
-def prod_aug_fwd(x, dims):
+def prod_aug_fwd(x, dims, *, output_dtype=None):
     """Augmented prod operation.
 
     Args:
@@ -1794,7 +1791,7 @@ def prod_aug_fwd(x, dims):
     Returns:
         VJPDual: Primal and residuals.
     """
-    primal = prims.prod(x, dims)
+    primal = prims.prod(x, dims, output_dtype=output_dtype)
 
     residuals = (
         primal,
@@ -1807,8 +1804,7 @@ def prod_aug_fwd(x, dims):
 
 @register_backward(prims.PrimIDs.PROD)
 def prod_pullback(primal, x, x_shape, reduced_dims, g):
-    # One return per positional argument of prims.prod
-    return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x), None
+    return prims.div(restore_reduced_dims(primal * g, reduced_dims, x_shape), x)
 
 
 def keepdim_reduction(reduction_fn, x, dims):
@@ -1820,18 +1816,18 @@ def keepdim_reduction(reduction_fn, x, dims):
 
 
 # Inspired from https://github.com/HIPS/autograd/blob/master/autograd/numpy/numpy_vjps.py#L353
-def grad_chooser_pullback(primal, x, x_shape, reduced_dims, g):
+def grad_chooser_backward(primal, x, x_shape, reduced_dims, g):
     """Builds gradient of functions that choose a single item, such as min or max."""
     g_repeated = restore_reduced_dims(g, reduced_dims, x_shape)
     primal_repeated = restore_reduced_dims(primal, reduced_dims, x_shape)
     argmax_locations = x == primal_repeated
     argmax_sum = keepdim_reduction(prims.sum, argmax_locations, reduced_dims)
     out = g_repeated * argmax_locations / argmax_sum
-    return out, None
+    return out
 
 
-register_backward(prims.PrimIDs.AMAX)(grad_chooser_pullback)
-register_backward(prims.PrimIDs.AMIN)(grad_chooser_pullback)
+register_backward(prims.PrimIDs.AMAX)(grad_chooser_backward)
+register_backward(prims.PrimIDs.AMIN)(grad_chooser_backward)
 
 
 # TODO: exact same for amin, argmax, argmin
@@ -1986,7 +1982,7 @@ def transpose_aug_fwd(a, permutation):
 @register_backward(prims.PrimIDs.TRANSPOSE)
 def transpose_backward(permutation, g):
     undo = _argsort(permutation)
-    return prims.transpose(g, undo), None
+    return prims.transpose(g, undo)
 
 
 @register_augmented_forward(prims.PrimIDs.RESHAPE)
@@ -1998,7 +1994,7 @@ def reshape_aug_fwd(a, shape):
 
 @register_backward(prims.PrimIDs.RESHAPE)
 def reshape_backward(orig_shape, g):
-    return prims.reshape(g, orig_shape), None
+    return prims.reshape(g, orig_shape)
 
 
 @register_augmented_forward(prims.PrimIDs.SLICE)
@@ -2010,7 +2006,7 @@ def slice_aug_fwd(a, start_indices, end_indices, strides):
 
 # Adapted from https://github.com/google/jax/blob/main/jax/_src/lax/slicing.py#L768
 @register_backward(prims.PrimIDs.SLICE)
-def pullback(shape, start_indices, end_indices, strides, g):
+def slice_backward(shape, start_indices, end_indices, strides, g):
     padding = None
     if strides is None or np.all(np.equal(strides, 1)):
         padding = tuple(zip(start_indices, np.subtract(shape, end_indices), (0,) * len(start_indices)))
@@ -2025,7 +2021,7 @@ def pullback(shape, start_indices, end_indices, strides, g):
     padding = tree_map(int, padding)
     result = prims.pad(g, const_as(0, g.dtype), padding)
 
-    return result, None, None, None
+    return result
 
 
 @register_augmented_forward(prims.PrimIDs.BROADCAST_IN_DIM)
@@ -2048,8 +2044,7 @@ def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
     reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
     g = sum(g, reduce_dims)
     g = unsqueeze(g, unit_dims)
-    # One return per positional argument of prims.broadcast_in_dim
-    return g, None, None
+    return g
 
 
 @register_augmented_forward(prims.PrimIDs.DEVICE_PUT)
@@ -2275,7 +2270,7 @@ def convolution_backward(
     weight_grad = conv_transpose(weight_grad)
     # }
 
-    return (input_grad, weight_grad, bias_grad) + ((None,) * 6)
+    return (input_grad, weight_grad, bias_grad)
 
 
 @register_augmented_forward("torch.nn.functional.cross_entropy")
@@ -2301,7 +2296,7 @@ def cross_entropy_backward(input, target, weight, reduction, ignore_index, label
     from thunder.torch import cross_entropy_backward
 
     ginput = cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing)
-    return ginput, *((None,) * 7)
+    return ginput
 
 
 @register_augmented_forward("torch.split")
@@ -2317,7 +2312,7 @@ def split_aug_fwd(a: TensorProxy, split_size_or_sections: Union[int, Sequence[in
 def split_backward(dim, *grads):
     from thunder.torch import cat
 
-    return cat(grads, dim), None, None
+    return cat(grads, dim)
 
 
 @register_augmented_forward("torch.nn.functional.embedding")
@@ -2351,7 +2346,7 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
 
     padding_idx = -1 if padding_idx is None else padding_idx
     gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
-    return None, gweight, None, None, None, None, None
+    return gweight
 
 
 @register_augmented_forward("torch.softmax")
@@ -2365,7 +2360,7 @@ def softmax_aug_fwd(a: Proxy, dim: int, dtype: Optional[dtypes.dtype] = None) ->
 
 @register_backward("torch.softmax")
 def softmax_backward(primal, dim, g):
-    return primal * (g - (primal * g).sum(dim, keepdim=True)), None, None
+    return primal * (g - (primal * g).sum(dim, keepdim=True))
 
 
 @register_augmented_forward(prims.PrimIDs.MATMUL)
@@ -2654,15 +2649,15 @@ def cat_aug_fwd(tensors: list[TensorProxy], dim: int) -> VJPDual:
 
 @register_backward(prims.PrimIDs.CAT)
 def cat_backward(
-    tensors_seq_type: Sequence, tensor_dim_lens: list[int], dim: int, g: TensorProxy
-) -> (list[TensorProxy], None):
+    tensors_seq_type: type, tensor_dim_lens: list[int], dim: int, g: TensorProxy
+) -> tuple[Sequence[TensorProxy]]:
     grads = []
 
     slice_start = 0
     for dim_len in tensor_dim_lens:
         grads.append(slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim))
         slice_start += dim_len
-    return tensors_seq_type(grads), None
+    return tensors_seq_type(grads),
 
 
 @register_augmented_forward("torch.Tensor.contiguous")
@@ -2690,7 +2685,7 @@ def where_aug_fwd(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJP
 
 @register_backward(prims.PrimIDs.WHERE)
 def where_backward(condition, g):
-    return None, prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
+    return prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
 
 
 @register_augmented_forward(prims.PrimIDs.RECIPROCAL)
@@ -2712,8 +2707,8 @@ def squeeze_aug_fwd(a: TensorProxy, dims: Sequence[int]) -> VJPDual:
 
 
 @register_backward(prims.PrimIDs.SQUEEZE)
-def squeeze_backward(dims: Sequence[int], g: TensorProxy) -> (TensorProxy, None):
-    return unsqueeze(g, dims), None
+def squeeze_backward(dims: Sequence[int], g: TensorProxy) -> TensorProxy:
+    return unsqueeze(g, dims)
 
 
 @register_augmented_forward(prims.PrimIDs.TAKE)
@@ -2733,7 +2728,7 @@ def take_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
 def take_backward(
     shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy
 ):
-    return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
+    return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim)
 
 
 @register_augmented_forward(prims.PrimIDs.TAKE_ALONG_AXIS)
@@ -2753,7 +2748,7 @@ def take_along_axis_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJP
 def take_along_axis_backward(
     shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy
 ):
-    return prims.scatter_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim), None, None
+    return prims.scatter_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim)
 
 
 @register_augmented_forward(prims.PrimIDs.UNIFORM)
@@ -2954,10 +2949,34 @@ def backward_pass(forward_env, trace, init_cotangents):
         result = backward(*residuals, *cotangents)
         if not isinstance(result, Sequence):
             result = (result,)
-        check(
-            len(result) == len(symbol.args),
-            lambda: f"Backward for {symbol.sym.id} returned {len(result)} values, but expected {len(symbol.args)}",
-        )
+
+        def is_differentiable(arg):
+            match arg:
+                case TensorProxy():
+                    return dtypes.is_inexact_dtype(arg.dtype)
+                case Sequence():
+                    return arg and all(isinstance(x, TensorProxy) and dtypes.is_inexact_dtype(x.dtype) for x in arg)
+                case _:
+                    return False
+
+        if len(symbol.args) != (orig_res_len := len(result)):
+            check(
+                orig_res_len <= len(symbol.args),
+                lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} values, "
+                + f"but expected at most {len(symbol.args)}",
+            )
+            # Assuming that the non-differentiable arguments were dropped from
+            # the backward function, we are going to append None to the result
+            # to match the number of arguments. Alternatively, we could just
+            # have a for-loop with a conditional when writing to the
+            # environment.
+            iter_result = iter(result)
+            result = tuple(next(iter_result) if is_differentiable(arg) else None for arg in symbol.args)
+            check(
+                len(result) == len(symbol.args),
+                lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} values, "
+                + f"but expected {len([is_differentiable(arg) for arg in symbol.args])}",
+            )
 
         # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
         # This is a temporary workaround.
