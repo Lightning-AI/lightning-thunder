@@ -1521,7 +1521,6 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.NEG: lambda g: -g,
-    prims.PrimIDs.ZETA: lambda x, y, g: (None, g * -x * prims.zeta(x + 1.0, y)),
     prims.PrimIDs.FMOD: lambda x, y, g: (1.0 * g, -g * prims.trunc(x / y)),
 }
 
@@ -1617,6 +1616,17 @@ def restore_reduced_dims(x, reduced_dims, original_shape):
 
     unsqueezed = clang.unsqueeze(x, reduced_dims)
     return clang.expand(unsqueezed, original_shape)
+
+
+@register_backward(prims.PrimIDs.ZETA)
+def zeta_backward(x, y, g):
+    # The derivative wrt the first argument is not expressible in terms of zeta or
+    # other special functions
+    # Therefore, we compute only the derivative wrt the second argument
+    gy = g * -x * prims.zeta(x + 1.0, y)
+
+    # Return a mappping from the forward arguments to the gradients
+    return {"y": gy}
 
 
 @register_backward(prims.PrimIDs.DIGAMMA)
@@ -2947,6 +2957,25 @@ def backward_pass(forward_env, trace, init_cotangents):
                 raise NotImplementedError(f"Backward for {symbol.sym.id} is not implemented")
 
         result = backward(*residuals, *cotangents)
+
+        if isinstance(result, dict):
+            # If the backward returns a dict, we assume that it is a dict of
+            # forward arguments to the corresponding
+            # gradients/cotangents/adjoints/sensitivities.
+            for i, (k, v) in enumerate(inspect.signature(aug_forward).parameters.items()):
+                if v.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                    write(symbol.args[i], result.get(k, None))
+
+            # For developer convenience, we allow using the name from the
+            # forward meta in addition to the name from the augmented forward
+            # signature.
+            # If both names are used, the one from the forward meta takes
+            # precedence.
+            for i, (k, v) in enumerate(inspect.signature(symbol.sym.meta).parameters.items()):
+                if v.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                    write(symbol.args[i], result.get(k, None))
+            continue
+
         if not isinstance(result, Sequence):
             result = (result,)
 
