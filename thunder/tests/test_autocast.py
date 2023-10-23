@@ -18,8 +18,11 @@ def test_thunder_autocast_transform(executor, device, dtype):
 
     # TODO: Consider adding support for device specific dtypes in the test
     # instantiator.
-    if torch.device(device).type == "cpu" and dtype == dtypes.float16:
+    torch_device = torch.device(device)
+    if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
+    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+        pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
 
     def f(a, b, c):
         return a @ (b + c)
@@ -32,7 +35,12 @@ def test_thunder_autocast_transform(executor, device, dtype):
         return (a @ b) + c
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    autocast_dtypes = (thunder.bfloat16, thunder.float16) if device == devices.DeviceType.CUDA else (thunder.bfloat16,)
+    if torch_device.type == "cpu":
+        autocast_dtypes = (thunder.bfloat16,)
+    elif torch_device.type == "cuda":
+        autocast_dtypes = (thunder.bfloat16, thunder.float16) if torch.cuda.is_bf16_supported() else (thunder.float16,)
+    else:
+        pytest.fail(f"Invalid combination of parameters: {executor=}, {device=}, {dtype=}")
     for (func, should_autocast), autocast_dtype in itertools.product(
         ((f, True), (g, False), (h, True)), autocast_dtypes
     ):
