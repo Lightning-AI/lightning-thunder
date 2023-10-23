@@ -2964,7 +2964,7 @@ def backward_pass(forward_env, trace, init_cotangents):
             # gradients/cotangents/adjoints/sensitivities.
             for i, (k, v) in enumerate(inspect.signature(aug_forward).parameters.items()):
                 if v.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-                    write(symbol.args[i], result.get(k, None))
+                    put_grad(symbol.args[i], result.get(k, None))
 
             # For developer convenience, we allow using the name from the
             # forward meta in addition to the name from the augmented forward
@@ -2973,7 +2973,7 @@ def backward_pass(forward_env, trace, init_cotangents):
             # precedence.
             for i, (k, v) in enumerate(inspect.signature(symbol.sym.meta).parameters.items()):
                 if v.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-                    write(symbol.args[i], result.get(k, None))
+                    put_grad(symbol.args[i], result.get(k, None))
             continue
 
         if not isinstance(result, Sequence):
