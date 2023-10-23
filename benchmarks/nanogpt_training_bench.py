@@ -51,7 +51,7 @@ parser.add_argument("--profile", action="store_true")
 parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.keys()))
 args = parser.parse_args()
 # -----------------------------------------------------------------------------
-config = "gpt2-medium"
+config = args.model
 batch_size = 16
 seq_len = 128
 bias = False
@@ -91,7 +91,8 @@ gptconf = GPTConfig(
     **_configs[config],
 )
 model = GPT(gptconf)
-model.to(device=device)
+ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
+model.to(device=device).to(dtype=ptdtype)
 optimizer_ctor = model.configure_optimizers
 if use_ddp:
     if compile_mode == "thunder":
