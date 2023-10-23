@@ -1529,6 +1529,8 @@ backward_impls = {
 class RuleInfo:
     checker: Callable
     rule: Callable
+    fw_fallback: Callable
+    bw_fallback: Callable
 
 
 def register_augmented_forward(op):
@@ -1556,19 +1558,29 @@ def register_augmented_forward_with_checker(op, checker, rule):
         checker (Callable): Function that checks if the rule should be applied.
         rule (Callable): Function that applies the rule.
     """
-    augmented_forward_impls[op] = RuleInfo(checker, rule)
+    fw_fallback = augmented_forward_impls.get(op, None)
+    bw_fallback = backward_impls.get(op, None)
+    augmented_forward_impls[op] = RuleInfo(checker, rule, fw_fallback, bw_fallback)
 
 
-def deregister_augmented_forward(op):
-    """Deregisters an augmented forward implementation for a symbol.
+def deregister_augmented_forward_and_backward(op):
+    """Deregisters an augmented forward implementation and a backward
+    implementation for a symbol.
 
     Args:
-        op (Ops): Symbol for which to deregister the augmented forward implementation.
+        op (Ops): Symbol for which to deregister the augmented forward
+        implementation and the backward implementation.
 
     Returns:
         None
     """
-    del augmented_forward_impls[op]
+    # Restore the fallback implementation if it exists
+    if isinstance(augmented_forward_impls[op], RuleInfo):
+        backward_impls[op] = augmented_forward_impls[op].bw_fallback
+        augmented_forward_impls[op] = augmented_forward_impls[op].fw_fallback
+    else:
+        del augmented_forward_impls[op]
+        del backward_impls[op]
 
 
 def register_backward(op):
@@ -1586,18 +1598,6 @@ def register_backward(op):
         return func
 
     return decorator
-
-
-def deregister_backward(op):
-    """Deregisters a backward implementation for a symbol.
-
-    Args:
-        op (Ops): Symbol for which to deregister the backward implementation.
-
-    Returns:
-        None
-    """
-    del backward_impls[op]
 
 
 def restore_reduced_dims(x, reduced_dims, original_shape):
@@ -1733,7 +1733,7 @@ def _var_mean_aug_fwd(a, dim, *, correction):
     return (v, m), (a, dim, correction, m)
 
 def n_elem_reduced(a_ndim, a_shape, dims):
-    dims = canonicalize_dims(a_ndim, dims)
+    dims = utils.canonicalize_dims(a_ndim, dims)
     reduction_size = 1
     for idx, size in enumerate(a_shape):
         if idx in dims:
@@ -2811,7 +2811,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         if vjp_impl.checker(*symbol.args, **symbol.kwargs):
             vjp_impl = vjp_impl.rule
         else:
-            vjp_impl = None
+            vjp_impl = vjp_impl.fw_fallback
 
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
@@ -2946,7 +2946,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
 
         if isinstance(aug_forward, RuleInfo):
-            backward = None if not aug_forward.checker(*symbol.args, **symbol.kwargs) else backward
+            backward = aug_forward.bw_fallback if not aug_forward.checker(*symbol.args, **symbol.kwargs) else backward
 
         if backward is None:
             if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):

@@ -118,8 +118,6 @@ def test_apex_cross_entropy_backward(device, dtype):
             [2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True
         )
         labels = torch.randint(0, 50257, [2048], device=device)
-        expected = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
-        expected_grad = torch.autograd.grad(expected, logits)[0]
 
         # -1 is supported by apex cross entropy but 1 is not. The case of 1 is
         # used to test that the conditional rules are working correctly and that
@@ -133,8 +131,15 @@ def test_apex_cross_entropy_backward(device, dtype):
             def test(logits, labels):
                 return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
 
-            ctest = thunder.compile(test, executors_list=["apex_xentropy", TORCH], disable_preprocessing=True)
+            ctest = thunder.compile(
+                test,
+                executors_list=["apex_xentropy", TORCH],
+                disable_preprocessing=True,
+                disable_torch_autograd_support=True,
+            )
             actual = ctest(logits, labels)
+            expected = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
+            expected_grad = torch.autograd.grad(expected, logits)[0]
             torch.testing.assert_close(actual[0], expected)
             torch.testing.assert_close(actual[1][0], expected_grad)
             last_trace = thunder.last_traces(ctest)[-1]

@@ -10,8 +10,7 @@ from thunder.core.prims import prim_ctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import (
-    deregister_augmented_forward,
-    deregister_backward,
+    deregister_augmented_forward_and_backward,
     register_augmented_forward_with_checker,
     register_backward,
 )
@@ -298,7 +297,6 @@ def register_apex_entropyex(*, add_to_default_executors: bool = True) -> None:
 def deregister_apex_entropyex() -> None:
     from thunder.executors import remove_operator_executor
 
-    deregister_augmented_forward("torch.nn.functional.cross_entropy")
-    deregister_backward("torch.nn.functional.cross_entropy")
+    deregister_augmented_forward_and_backward("torch.nn.functional.cross_entropy")
 
     return remove_operator_executor("apex_xentropy")
