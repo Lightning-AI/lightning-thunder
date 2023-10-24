@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import auto, Enum
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Sequence
@@ -509,17 +510,25 @@ class FloatProxy(NumberProxy, float):
         return f"[FloatProxy name={self.name}, value={self.value}]"
 
 
+class DDPType(Enum):
+    NONE = auto()
+    REPLICATED = auto()
+    # FULLY_SHARDED = auto()
+
+
 def _infer_tensor_properties(
     like: TensorProxy | FutureTensorProxy | None = None,
     shape: ShapeLike | None = None,
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
+    ddp_type: DDPType | None = None,
 ):
     _shape = None
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
+    _ddp_type = DDPType.NONE
 
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
@@ -527,6 +536,7 @@ def _infer_tensor_properties(
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
+        _ddp_type = getattr(like, "ddp_type", DDPType.NONE)
 
     if shape is not None:
         baseutils.check_valid_shape(shape)
@@ -537,6 +547,7 @@ def _infer_tensor_properties(
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
+    _ddp_type = ddp_type if ddp_type is not None else _ddp_type
 
     # Extracts actual values for shape
     # TODO This will need to be revisited when we add support for dynamic constraints
@@ -552,13 +563,14 @@ def _infer_tensor_properties(
     baseutils.check_type(_device, devices.Device)
     baseutils.check_type(_dtype, dtypes.dtype)
     baseutils.check_type(_requires_grad, bool)
+    baseutils.check_type(_ddp_type, DDPType)
 
     # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
     #   the true_dtype property
     _true_dtype = _dtype
     _dtype = dtypes.to_strong_dtype(_dtype)
 
-    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad
+    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad, _ddp_type
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
@@ -583,6 +595,7 @@ class FutureTensorProxy(Proxy):
             self._numel,
             self._ndim,
             self._requires_grad,
+            _,
         ) = _infer_tensor_properties(
             like,
             shape,
@@ -590,6 +603,10 @@ class FutureTensorProxy(Proxy):
             dtype,
             False,
         )
+
+        trace = get_tracectx()
+        if trace is not None:
+            trace._any_future_tensors = True
 
     @property
     def shape(self):
@@ -627,6 +644,10 @@ class FutureTensorProxy(Proxy):
         langctx = get_langctx()
         return langctx.size(self)
 
+    def wait(self) -> TensorProxy:
+        from thunder.distributed.prims import wait
+        return wait(self)
+
 
 # TODO Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
@@ -639,6 +660,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
         requires_grad: bool | None = None,
+        ddp_type: DDPType | None = None,
     ):
         super().__init__(name)
 
@@ -650,7 +672,8 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
-        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad)
+            self._ddp_type,
+        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type)
 
     @property
     def shape(self):
@@ -681,13 +704,18 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._requires_grad
 
     @property
+    def ddp_type(self):
+        return self._ddp_type
+
+    @property
     def size(self):
         langctx = get_langctx()
         return langctx.size(self)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
-        return TensorProxy(name, like=self)
+        langctx = get_langctx()
+        return langctx.tensorproxy(name, self)
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"

@@ -81,6 +81,8 @@ class TraceCtx:
         # TODO Improve "freezing" traces
         self._complete = False
 
+        self._any_future_tensors = False
+
     #
     # Methods related to the trace's signature
     #

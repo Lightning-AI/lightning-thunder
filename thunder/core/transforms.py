@@ -17,7 +17,7 @@ from thunder.core import dtypes, prims
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify, FutureTensorProxy
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -3062,7 +3062,7 @@ def backward_pass(forward_env, trace, init_cotangents):
             safe_map(put_grad, symbol.args, result)
 
     def get_inexact_dtype_or_none(x):
-        if isinstance(x, TensorProxy) and dtypes.is_inexact_dtype(x.dtype):
+        if isinstance(x, (TensorProxy, FutureTensorProxy)) and dtypes.is_inexact_dtype(x.dtype):
             return x
         else:
             return None

@@ -2226,9 +2226,10 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.core.rematerialization import rematerialize_forward_and_backward
         from thunder.core.transforms import forward_and_backward_from_trace
         from thunder.cudagraphs import CUDAGraphExecutor
+        from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs
 
         def make_trace(func):
-            return partial(trace(langctx=compile_config.get("langctx"), inline_trace=False), func)
+            return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=True), func)
 
         def split_forward_backward(*args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used
@@ -2246,6 +2247,7 @@ class ThunderFunction(torch.autograd.Function):
                 )
 
             primal_trace = make_trace(func)(*args, **kwargs)
+            primal_trace = sort_data_parallel_syncs(primal_trace)
 
             # torch.autograd.Function doesn't support non-flat outputs, the
             # grads wouldn't be propagated and backward receives None for each
@@ -2299,17 +2301,6 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
-            if compile_data is not None and getattr(compile_data.fn, "use_ddp", False):
-                # note(crcrpar): If this transformation happens after `claim`, we'd reach
-                # https://github.com/Lightning-AI/lightning-thunder/blob/abef76e/thunder/core/symbol.py#L201-L214
-                # and it errors out. With that said, the call being here could create another nvfuserion
-                # only for pre-averaging. This could be mitigated by dodged by using NCCL's premul_sum
-                # e.g. `torch.distributed.all_reduce(tensor, op=c10d._make_nccl_premul_sum(scale))`
-                # see: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/ops.html#c.ncclRedOpCreatePreMulSum.
-                bw_trace = insert_bsym_to_allreduce_grads(
-                    bw_trace,
-                    process_group=getattr(compile_data.fn, "process_group_for_ddp", None),
-                )
 
             # Now we can run the optimization passes on the backward trace
             bw_extrace, bw_extraces = transform_for_execution(
@@ -2322,6 +2313,10 @@ class ThunderFunction(torch.autograd.Function):
 
             fw_extrace, bw_extrace = fw_extraces[-1], bw_extraces[-1]
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+
+            # We need to sort the waits in the backward trace to overlap
+            # computation with communication
+            bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace, _ = del_last_used(fw_extrace)
             fw_extraces.append(fw_extrace)

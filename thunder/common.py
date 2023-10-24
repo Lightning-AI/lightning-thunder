@@ -11,7 +11,7 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.executors import transform_for_execution
 from thunder.executors.torchex import thunder_backward
-from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
+from thunder.core.langctx import set_langctx, reset_langctx, get_langctx
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
     TraceCtx,
@@ -19,9 +19,10 @@ from thunder.core.trace import (
     set_tracectx,
     reset_tracectx,
 )
-from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy
+from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy, DDPType, FutureTensorProxy
 from thunder.core.transform_common import dce
 import thunder.core.prims as prims
+import thunder.distributed as dist
 import thunder.torch as ltorch
 
 import torch as torch
@@ -157,6 +158,10 @@ class CompileData:
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
 
+        # We set the process_group_for_ddp attribute on the module when
+        # thunder.distributed.ddp(module) is called.
+        self.process_group_for_ddp = getattr(self.fn, "process_group_for_ddp", None)
+
         #
         # Possibly processes the function
         #
@@ -273,6 +278,17 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
         self._model = model
         self._forward_fn = fn
         self._tfn = tfn
+
+        # Note [DistributedDataParallel and ddp_type]
+        # If model was wrapped with thunder.distributed.ddp it would have a
+        # .use_ddp attribute set to True and all parameters would be already
+        # broadcasted to all other processes. So that our tracing is aware of
+        # this we need to mark the ddp_type of model's parameters as
+        # thunder.proxies.DDPType.REPLICATED
+        if getattr(model, "use_ddp", False):
+            for v in additional_param_values:
+                v.ddp_type = DDPType.REPLICATED
+
         self._additional_param_values = additional_param_values
         self._additional_param_names = additional_param_names
         self._additional_return_names = additional_return_names
@@ -407,18 +423,21 @@ def cache_get(cache: dict, args, kwargs) -> tuple[None | Callable, None | Sequen
 #   to separate the traced function's args and kwargs from this function's kwargs
 
 def trace(
-    langctx: None | Any = None,
+    compile_data: None | CompileData = None,
     inline_trace: bool = True,
     rename_proxies: bool = True,
     include_return_statement: bool = True,
     use_dce: bool = True,
+    insert_ddp_syncs: bool = False,
 ) -> Callable:
     def _trace(
         fn,
         *args,
         **kwargs,
     ) -> Any | TraceCtx:
-        langctx_ = langctx if langctx is not None else get_default_langctx()
+        langctx_ = (
+            compile_data.langctx if compile_data is not None and compile_data.langctx is not None else get_langctx()
+        )
 
         try:
             langctx_tok = set_langctx(langctx_)
@@ -435,13 +454,35 @@ def trace(
             proxyargs, proxykwargs = _unpack_inputs(fn, trace, args, kwargs, rename_proxies=rename_proxies)
             trace.args, trace.kwargs = proxyargs, proxykwargs
 
+            if insert_ddp_syncs:
+
+                def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
+                    if isinstance(arg, TensorProxy) and arg.ddp_type in (
+                        DDPType.REPLICATED, # or DDPType.FULLY_SHARDED
+                    ):
+                        return dist.prims.synchronize(arg, compile_data.process_group_for_ddp)
+                    else:
+                        return arg
+
+                proxyargs, proxykwargs = tree_map(ddp_sync, (proxyargs, proxykwargs))
+
             result = fn(*proxyargs, **proxykwargs)
 
             if include_return_statement:
+                def wait_for_future(f: FutureTensorProxy) -> TensorProxy:
+                    if isinstance(f, FutureTensorProxy):
+                        return f.wait()
+                    return f
+
+                # It's a safety check to make sure that we don't return a future
+                # tensor from a traced function.
+                if trace._any_future_tensors:
+                    result = tree_map(wait_for_future, result)
+
                 prims.python_return(result)
 
             trace.set_output(result)
-            
+
             # TODO Stop calling this here and make it a separate trace in the sequence
             #   of traces
             if use_dce:
@@ -508,10 +549,10 @@ def _execute_trace(
 # TODO Provide an option to not preprocess (for debugging)
 
 def _create_callable(
-        cd: CompileData, 
-        cs: CompileStats, 
-        *, 
-        transforms: list[Callable]=[], 
+        cd: CompileData,
+        cs: CompileStats,
+        *,
+        transforms: list[Callable]=[],
         post_optimization_transforms: list[Callable]=[]) -> Callable:
     @wraps(cd.processed_function)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
@@ -587,7 +628,7 @@ def _create_callable(
         # Acquires the trace OR inlines the trace into an existing trace and
         #   returns the (proxied) result of the operation
         cs.last_trace_tracing_start = time.time_ns()
-        trc_or_result = trace(langctx=cd.langctx)(cd.processed_function, *args, **kwargs)
+        trc_or_result = trace(compile_data=cd)(cd.processed_function, *args, **kwargs)
         cs.last_trace_tracing_stop = time.time_ns()
 
         # Checks for inlined transforms
@@ -599,7 +640,7 @@ def _create_callable(
             result = trc_or_result
             return result
 
-        # Starts recording a sequence of traces (this is not inlined)        
+        # Starts recording a sequence of traces (this is not inlined)
         trc: TraceCtx = trc_or_result
         traces: list[TraceCtx] = [trc]
 
@@ -632,7 +673,7 @@ def _create_callable(
 
         cs.last_trace_host_stop = time.time_ns()
         return result
-    
+
     if cd.is_module:
         _fn = ThunderOptimizedModule(
             cd.fn,
@@ -642,12 +683,12 @@ def _create_callable(
             cd.additional_param_values,
             cd.additional_return_names,
         )
-    
+
     # NOTE not is_module
     _fn._pfn = cd.processed_function
     _fn._lc_cd = cd
     _fn._lc_cs = cs
     _fn._lc_transforms = transforms
     _fn._lc_post_optimization_transforms = post_optimization_transforms
-    
+
     return _fn

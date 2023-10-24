@@ -558,7 +558,10 @@ class ddp_wrapper:
                 pass
 
             def error_callback(ex):
-                raise ex
+                # NOTE: Don't raise the exception here, because it will be
+                # raised in the main process. Raising it here will cause a
+                # deadlock.
+                pass
 
             # The seconds to wait before the pool tasks complete
             TIMEOUT: int = 30

@@ -141,9 +141,10 @@ tensor_cls = torch.Tensor
 def tensorproxy(name: Optional[str], t: torch.Tensor) -> TensorProxy:
     device = devices.device_from_string(str(t.device))
     dtype = to_thunder_dtype(t.dtype)
-
+    # See Note [DistributedDataParallel and ddp_type]
+    ddp_type = getattr(t, "ddp_type", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-    return TensorProxy(name, shape=tuple(t.shape), device=device, dtype=dtype, requires_grad=t.requires_grad)
+    return TensorProxy(name, shape=tuple(t.shape), device=device, dtype=dtype, requires_grad=t.requires_grad, ddp_type=ddp_type)
 
 
 # Convers from a torch device, or a string representing such a device, to a Thunder device
