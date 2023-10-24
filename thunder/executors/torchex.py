@@ -1174,42 +1174,6 @@ def cross_entropy(
     )
 
 
-def _nll_loss_check(
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: Optional[TensorProxy] = None,
-    size_average: Optional[bool] = None,
-    ignore_index: Number = -1,
-    reduce: Optional[bool] = None,
-    reduction: str = "mean",
-) -> bool:
-    # NOTE size_average parameter is deprecated in PyTorch
-    if size_average != None:
-        return False
-
-    # NOTE reduce parameter is deprecated in PyTorch.
-    if reduce != None:
-        return False
-
-    return True
-
-
-def nll_loss(
-    bsym: BoundSymbol,
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: Optional[TensorProxy] = None,
-    size_average: Optional[bool] = None,
-    ignore_index: Number = -1,
-    reduce: Optional[bool] = None,
-    reduction: str = "mean",
-) -> BoundSymbol:
-    sym = Symbol(name="nll_loss", _module=torch.nn.functional)
-    return sym.bind(
-        a, target, weight, size_average, ignore_index, reduce, reduction, output=bsym.output
-    )
-
-
 def _cross_entropy_backward_helper(
     g: torch.Tensor,
     input: torch.Tensor,
@@ -1393,6 +1357,138 @@ def log_softmax(bsym: BoundSymbol, a: TensorProxy, dim: Number, dtype=None) -> B
         torch_dtype = ltorch.to_torch_dtype(dtype)
     sym = Symbol(name="log_softmax", meta=None, _module=torch)
     return sym.bind(a, dim, dtype=torch_dtype, output=bsym.output)
+
+
+def _log_softmax_backward_helper(g: torch.Tensor,
+                          output: torch.Tensor,
+                          dim: Number,
+                          dtype) -> torch.Tensor:
+    return torch.ops.aten._log_softmax_backward_data(g, output, dim, dtype)
+
+
+def log_softmax_backward(bsym: BoundSymbol, grad: TensorProxy, output: TensorProxy, dim: Number, dtype) -> BoundSymbol:
+    torch_dtype = None
+    if dtype is not None:
+        torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    sym = Symbol(name="log_softmax_backward", meta=None)
+    ctx: Dict[str, Any] = {"log_softmax_backward": _log_softmax_backward_helper}
+    return sym.bind(grad, output, dim, torch_dtype, output=bsym.output, _call_ctx=ctx)
+
+
+def _nll_loss_check(
+    a: TensorProxy,
+    target: TensorProxy,
+    weight: Optional[TensorProxy] = None,
+    size_average: Optional[bool] = None,
+    ignore_index: Number = -1,
+    reduce: Optional[bool] = None,
+    reduction: str = "mean",
+) -> bool:
+    # NOTE size_average parameter is deprecated in PyTorch
+    if size_average != None:
+        return False
+
+    # NOTE reduce parameter is deprecated in PyTorch.
+    if reduce != None:
+        return False
+
+    return True
+
+
+def nll_loss(
+    bsym: BoundSymbol,
+    a: TensorProxy,
+    target: TensorProxy,
+    weight: Optional[TensorProxy] = None,
+    size_average: Optional[bool] = None,
+    ignore_index: Number = -1,
+    reduce: Optional[bool] = None,
+    reduction: str = "mean",
+) -> BoundSymbol:
+    sym = Symbol(name="nll_loss", _module=torch.nn.functional)
+    return sym.bind(
+        a, target, weight, size_average, ignore_index, reduce, reduction, output=bsym.output
+    )
+
+
+def _nll_loss_backward_helper(g: torch.Tensor,
+                          input: torch.Tensor,
+                          target: torch.Tensor,
+                          weight: torch.Tensor,
+                          reduction: str,
+                          ignore_index: int,
+                          total_weight: torch.Tensor) -> torch.Tensor:
+    if reduction == "none":
+        reduction_idx = 0
+    elif reduction == "mean":
+        reduction_idx = 1
+    elif reduction == "sum":
+        reduction_idx = 2
+    else:
+        reduction_idx = -1
+
+    utils.check(
+        reduction_idx > -1 and reduction_idx < 3,
+        lambda: f"{reduction} is not a valid value for reduction parameter.",
+    )
+
+    if total_weight is None:
+        total_weight = torch.tensor(0., dtype=torch.float64, device=input.device)
+    else:
+        # ATen expect total weight to have double dtype
+        total_weight = total_weight.to(dtype=input.dtype)
+
+    if input.ndim <= 2:
+        return torch.ops.aten.nll_loss_backward(g, input, target, weight, reduction_idx, ignore_index, total_weight)
+    elif input.ndim == 4:
+        return torch.ops.aten.nll_loss2d_backward(g, input, target, weight, reduction_idx, ignore_index, total_weight)
+    else:
+        # input.ndim == 3 or input.ndim > 4
+        # extract shape information
+        N = input.shape[0]
+        C = input.shape[1]
+        no_C_shape = list(input.shape)
+        C_dim = 1 if input.ndim >= 2 else 0
+        no_C_shape.pop(C_dim)
+
+        # support empty batches, see #15870
+        if input.numel() > 0:
+            input_ = input.reshape([N, C, 1, -1])
+        else:
+            input_ = input.reshape([N, C, 0, 0])
+
+        if target.numel() > 0:
+            target_ = target.reshape([N, 1, -1])
+        else:
+            target_ = target.reshape([N, 0, 0])
+
+        if reduction != "none":
+            return torch.ops.aten.nll_loss2d_backward(g, input_, target_, weight, reduction_idx, ignore_index, total_weight)
+        else:
+            # g must have same dimension as target.
+            if g.numel() > 0:
+                g_ = g.reshape([N, 1, -1])
+            else:
+                g_ = g.reshape([N, 0, 0])
+
+            result = torch.ops.aten.nll_loss2d_backward(g_, input_, target_, weight, reduction_idx, ignore_index, total_weight)
+            return result.reshape(no_C_shape)
+
+
+def nll_loss_backward(
+    bsym: BoundSymbol,
+    grad: TensorProxy,
+    input: TensorProxy,
+    target: TensorProxy,
+    weight: TensorProxy,
+    reduction: str,
+    ignore_index: int,
+    total_weight: TensorProxy,
+) -> BoundSymbol:
+    sym = Symbol(name="nll_loss_backward", meta=None)
+    ctx: Dict[str, Any] = {"nll_loss_backward": _nll_loss_backward_helper}
+    return sym.bind(grad, input, target, weight, reduction, ignore_index, total_weight, output=bsym.output, _call_ctx=ctx)
 
 
 def relu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
@@ -2019,7 +2115,6 @@ _ops_map.update(
         "torch.nn.functional.conv3d": (_always_executable, conv3d),
         "torch.nn.functional.cross_entropy": (_always_executable, cross_entropy),
         "cross_entropy_backward": (_always_executable, cross_entropy_backward),
-        "torch.nn.functional.nll_loss": (_nll_loss_check, nll_loss),
         "torch.nn.functional.dropout": (_always_executable, dropout),
         PrimIDs.CONVOLUTION: (_always_executable, convolution),
         "torch.convolution": (_always_executable, convolution),
@@ -2032,6 +2127,9 @@ _ops_map.update(
         "torch.layer_norm": (_always_executable, layer_norm),
         "torch.logsumexp": (_always_executable, logsumexp),
         "torch.log_softmax": (_always_executable, log_softmax),
+        "log_softmax_backward": (_always_executable, log_softmax_backward),
+        "torch.nn.functional.nll_loss": (_nll_loss_check, nll_loss),
+        "nll_loss_backward": (_always_executable, nll_loss_backward),
         "torch.softmax": (_always_executable, softmax),
         "torch.nn.functional.scaled_dot_product_attention": (
             _scaled_dot_product_attention_check,

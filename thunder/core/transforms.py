@@ -2309,6 +2309,53 @@ def cross_entropy_backward(input, target, weight, reduction, ignore_index, label
     return ginput
 
 
+@register_augmented_forward("torch.log_softmax")
+def log_softmax_aug_fwd(
+    input: TensorProxy,
+    dim: int,
+    *,
+    dtype=None
+) -> VJPDual:
+    from thunder.torch import log_softmax
+    primal = log_softmax(input, dim=dim, dtype=dtype)
+    residuals = (primal, dim, input.dtype)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.log_softmax")
+def log_softmax_backward(primal, dim, dtype, g):
+    from thunder.torch import log_softmax_backward
+    return log_softmax_backward(g, primal, dim, dtype)
+
+
+@register_augmented_forward("torch.nn.functional.nll_loss")
+def nll_loss_aug_fwd(
+    input: Proxy,
+    target: Proxy,
+    weight: None | Proxy,
+    ignore_index: int,
+    reduction: str,
+) -> VJPDual:
+    from thunder.torch import _nll_loss_helper
+    primal, total_weight = _nll_loss_helper(
+        input,
+        target,
+        weight,
+        ignore_index,
+        reduction,
+    )
+    residuals = (input, target, weight, reduction, ignore_index, total_weight)
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.nn.functional.nll_loss")
+def nll_loss_backward(input, target, weight, reduction, ignore_index, total_weight, g):
+    from thunder.torch import nll_loss_backward
+
+    ginput = nll_loss_backward(g, input, target, weight, reduction, ignore_index, total_weight)
+    return ginput, *((None,) * 4)
+
+
 @register_augmented_forward("torch.split")
 def split_aug_fwd(a: TensorProxy, split_size_or_sections: Union[int, Sequence[int]], dim: int = 0) -> VJPDual:
     from thunder.torch import split

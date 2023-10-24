@@ -2411,6 +2411,15 @@ def log_softmax(a: TensorLike, dim: int, *, dtype=None):
     return converted
 
 
+# We improve the efficiency of cross_entropy backward decomposition by adding the log_softmax_backward
+# and nll_loss_backward primitives. Executors can override the primitives using internal implementations.
+# See https://github.com/Lightning-AI/lightning-thunder/issues/660
+@torchsymbol("log_softmax_backward", id="log_softmax_backward")
+def log_softmax_backward(g: TensorProxy, output: TensorProxy, dim: int, dtype):
+    g_input = g - exp(output) * sum(g, dim=dim, keepdim=True)
+    return clang.maybe_convert_to_dtype(g_input, dtype)
+
+
 # This helper function implements the aten nll_loss_forward, which returns the primal and total_weight tensors.
 # The total_weight tensor is used in the backward pass.
 def _nll_loss_helper(a: TensorProxy,
@@ -2550,6 +2559,12 @@ def nll_loss(a: TensorProxy,
         ignore_index = -1
     result, _ = _nll_loss_helper(a, target, weight, ignore_index, reduction)
     return result
+
+
+# The decomposition of `nll_loss_backward` requires a scatter operation
+@torchsymbol("nll_loss_backward", id="nll_loss_backward", is_prim=True)
+def nll_loss_backward(g, input, target, weight, reduction, ignore_index, total_weight):
+    return TensorProxy(like=g, shape=input.shape)
 
 
 # The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward

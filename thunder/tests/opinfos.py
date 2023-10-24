@@ -5684,6 +5684,13 @@ nll_loss_opinfo = OpInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.float16, datatypes.bfloat16,),
         ),
+        # NOTE Skip standard vjp test because of issue 1104
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("TorchEx",),
+            dtypes=(datatypes.float64,),
+        ),
         # NOTE PyTorch returns NaN if ignore_index == target_index and reduction='mean'
         DecorateInfo(
             custom_comparator(partial(assert_close, equal_nan=True)),
