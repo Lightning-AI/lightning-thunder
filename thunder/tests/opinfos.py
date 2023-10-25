@@ -2194,11 +2194,10 @@ zeta_opinfo = OpInfo(
             executors=("nvFuser",),
             dtypes=(datatypes.exact,),
         ),
-        # NOTE Skip standard vjp test because of issues 1095 and 1104
+        # NOTE See issues 1095 and 1104
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
-            executors=("TorchEx",),
             dtypes=(datatypes.float64,),
         ),
         # NOTE zeta(x, y) returns NaN when x < 1
