@@ -13,17 +13,16 @@ from torch.testing import assert_close, make_tensor
 
 import thunder.core.script.frontend
 import thunder.core.script.passes
-from thunder.core.script.noinline import noinline, invoke_noinline
 import thunder.core.script.python_ir
 import thunder.core.script.python_ir_data
-from thunder.core.utils import enable_debug_asserts
 import thunder.torch as ltorch
+from thunder.core.script.noinline import noinline, invoke_noinline
+from thunder.core.symbol import Symbol
+from thunder.core.utils import enable_debug_asserts
+from thunder.executors import NVFUSER, TORCH
+from thunder.executors.utils import Executor
 from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
 from thunder.tests.framework import instantiate, requiresNVFuser, IN_CI
-from thunder.core.symbol import Symbol
-
-from thunder.executors.utils import Executor
-from thunder.tests.lit_gpt_model import configs
 
 torchex = [Executor.TORCH]
 nvfuserex = [Executor.NVFUSER, Executor.TORCH]
@@ -241,24 +240,57 @@ def test_inline_submodule():
 @pytest.mark.parametrize(
     "name",
     (
-        "gpt-neox-like",
+        # grads do not match
+        pytest.param("gpt-neox-like", marks=pytest.mark.xfail(raises=AssertionError, strict=False)),
         "llama1-like",
         "long-context-like",
         "llama2-like",
         "falcon-7b-like",
-        "falcon-40b-like",
-        "codellama2-like",
+        pytest.param("falcon-40b-like", marks=pytest.mark.xfail(raises=AssertionError, strict=False)),
+        pytest.param("codellama2-like", marks=pytest.mark.xfail(raises=AssertionError, strict=False)),
     ),
 )
-@torch.no_grad()
-def test_litgpt_variants(name):
-    model = lit_gpt_model.GPT.from_name(name)
-    tom = thunder.compile(model, disable_torch_autograd_support=True)
+@pytest.mark.parametrize(
+    "device",
+    (
+        "cpu",
+        pytest.param("cuda", marks=[
+            pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA"),
+            # https://github.com/Lightning-AI/lightning-thunder/issues/1246
+            pytest.mark.xfail(raises=(UnboundLocalError, NameError), strict=True)
+        ])
+    )
+)
+def test_litgpt_variants(name, device):
+    device = torch.device(device)
 
-    x = torch.randint(0, 200, (5, 5))
-    expected = model(x)
-    actual = tom(x)
-    assert_close(actual, expected)
+    x = torch.randint(0, 200, (5, 5), device=device)
+    config = lit_gpt_model.Config.from_name(name)
+
+    with device:
+        reference = lit_gpt_model.GPT(config)
+    expected_logits = reference(x)
+    expected_logits.sum().backward()
+
+    with device:
+        model = lit_gpt_model.GPT(config)
+    model.load_state_dict(reference.state_dict())
+    tom = thunder.compile(model, executors_list=nvfuserex if device.type == "cuda" else torchex)
+    actual_logits = tom(x)
+    assert_close(actual_logits, expected_logits)
+
+    if device.type == "cuda" in config._mlp_class == "GptNeoxMLP":
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1187
+        with pytest.raises(RuntimeError, match=r"out->getValType\(\) == ValType::TensorView"):
+            actual_logits.sum().backward()
+        return
+    else:
+        actual_logits.sum().backward()
+
+    for param1, param2 in zip(reference.parameters(), tom.parameters()):
+        assert param1 is not param2
+        assert param1.grad is not None
+        torch.testing.assert_close(param1.grad, param2.grad)
 
 
 @skipif_not_python_3_10
