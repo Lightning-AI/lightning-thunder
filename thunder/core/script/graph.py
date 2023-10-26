@@ -116,6 +116,7 @@ class Value(InstrumentingBase):
         self,
         *,
         node: Optional["Node"] = None,
+        block: Optional["Block"] = None,
         nr: Optional[int] = None,
         typ: Optional[type] = None,
         value: Any = None,
@@ -126,6 +127,7 @@ class Value(InstrumentingBase):
         is_function_arg: bool = False,
     ):
         self.node = node
+        self.block = block
         self.nr = nr
         self.typ = typ if typ is not None or value in (None, NULL) else type(value)
         self.value = value
@@ -135,6 +137,7 @@ class Value(InstrumentingBase):
         self.is_const = is_const
         self.is_function_arg = is_function_arg
         self.phi_values: list["PhiValue"] = []
+        assert not (block is None and not (is_global or is_const or is_function_arg))
 
     def resolve(self) -> tuple["Value", ...]:
         return (self,)
@@ -157,6 +160,7 @@ class Value(InstrumentingBase):
                 parent = parent.clone(translation_dict=translation_dict)
         v = Value(
             node=self.node,
+            block=self.block,
             nr=self.nr,
             typ=self.typ,
             value=self.value,
@@ -184,6 +188,8 @@ class Value(InstrumentingBase):
             parts.append("const")
         if self.is_global:
             parts.append("global")
+        # if self.block is None:
+        #    parts.append("block-None")
         if self.parent is not None:
             parts.append(f"parent={_value_printer(self.parent)}")
         return f"""{type(self).__name__} {hex(id(self))} ({' '.join(parts)})"""
@@ -201,9 +207,9 @@ class PhiValue(Value):
         block: "Block",
         _unfinished_clone: bool = False,
     ):
-        super().__init__()
+        super().__init__(block=block)
+        self.block: Block = block  # duplicate assignment / declaration?
         self._unfinished_clone = _unfinished_clone
-        self.block: Block = block
         self._set_values_jump_sourcess(values, jump_sources)
 
     def _set_values_jump_sourcess(self, values: list[Value], jump_sources: Sequence[Optional["Node"]]) -> None:

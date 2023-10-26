@@ -239,20 +239,33 @@ def _bind_to_graph(
         self_key = VariableKey(arg_ordered_parameters[0], VariableScope.LOCAL)
         self_value = Value(value=method_self, name=self_key.identifier, is_function_arg=True)
 
-    @functools.cache  # This is for correctness, not performance.
-    def get_initial_value(key: VariableKey) -> Value:
+    get_initial_value_cache = {}
+
+    def get_initial_value(key: VariableKey, block: Optional[Block] = None) -> Value:
+        if key in get_initial_value_cache:
+            v = get_initial_value_cache[key]
+            assert not (((block is None or block != v.block) and not (v.is_global or v.is_const or v.is_function_arg)))
+            return v
         if key.scope == VariableScope.CONST:
-            return Value(value=key.identifier, is_const=True)
+            v = Value(value=key.identifier, is_const=True)
+            get_initial_value_cache[key] = v
+            return v
 
         elif key == self_key:
-            return self_value
+            v = self_value
+            get_initial_value_cache[key] = v
+            return v
 
         name = key.identifier
         assert isinstance(name, str)
         if key.scope == VariableScope.LOCAL:
             if (p := signature.parameters.get(name)) is not None:
-                return Value(typ=p.annotation, name=name, is_function_arg=True)
-            return Value(value=NULL, name=name)
+                v = Value(typ=p.annotation, name=name, is_function_arg=True)
+                get_initial_value_cache[key] = v
+                return v
+            v = Value(value=NULL, name=name, block=block)
+            get_initial_value_cache[key] = v
+            return v
 
         if key.scope == VariableScope.NONLOCAL:
             msg = f"nonlocal variables are not supported but (key, name) = ({key}, {name}) found"
@@ -263,7 +276,9 @@ def _bind_to_graph(
                 val = func_globals[name]
             except KeyError:
                 raise ValueError(f"Could not resolve global variable: {name=}.")
-            return Value(name=name, value=val, is_global=True)
+            v = Value(name=name, value=val, is_global=True)
+            get_initial_value_cache[key] = v
+            return v
 
         raise ValueError(f"Unhandled key: {key=}, name: {name=}")
 
@@ -288,7 +303,7 @@ def _bind_to_graph(
     for protoblock, block in blocks.items():
         for key, abstract_value in protoblock.begin_state:
             if protoblock is proto_graph.root:
-                value = get_initial_value(key)
+                value = get_initial_value(key, block=block)
                 if key.scope == VariableScope.LOCAL and value.value is not NULL:
                     assert isinstance(abstract_value, ExternalRef), abstract_value
                     value = PhiValue([value], [None], block)
@@ -297,29 +312,45 @@ def _bind_to_graph(
                 value = PhiValue([], [], block)
 
             else:
-                value = Value(value=NULL)
+                value = Value(value=NULL, block=block)
 
             input_conversions[(abstract_value, protoblock)] = value
 
-    @functools.cache  # Again, for correctness
-    def convert(value: AbstractValue, protoblock: ProtoBlock) -> Value:
-        assert not _is_epilogue(protoblock)
-        assert not is_detail(value), value
-        if (out := input_conversions.get((value, protoblock), missing := object())) is not missing:
-            return out
+    convert_cache = {}
 
-        if isinstance(value, ValueMissing):
-            return Value(value=NULL)
+    def convert(value: AbstractValue, protoblock: ProtoBlock, block: Block) -> Value:
+        v = convert_cache.get((value, protoblock))
+        if v is not None:
+            if (
+                v.block != block
+                and block is not None
+                and not (v.is_global or v.is_function_arg or v.is_const or v.value == NULL)
+            ):
+                raise AssertionError("ohoh, this should not happen")
+            return v
 
-        elif isinstance(value, (IntermediateValue, CompositeValue, AbstractPhiValue)):
-            # For now we discard any information and just treat them as opaque.
-            # TODO(robieta): refine
-            return Value()
+        def _convert(value: AbstractValue, protoblock: ProtoBlock) -> Value:
+            assert not _is_epilogue(protoblock)
+            assert not is_detail(value), value
+            if (out := input_conversions.get((value, protoblock), missing := object())) is not missing:
+                return out
 
-        elif isinstance(value, ExternalRef) and value.key.scope == VariableScope.CONST:
-            return get_initial_value(value.key)
+            if isinstance(value, ValueMissing):
+                return Value(value=NULL, block=block)
 
-        raise ValueError(f"Cannot convert abstract value: {value}, {protoblock} {protoblock is proto_graph.root=}")
+            elif isinstance(value, (IntermediateValue, CompositeValue, AbstractPhiValue)):
+                # For now we discard any information and just treat them as opaque.
+                # TODO(robieta): refine
+                return Value(block=block)
+
+            elif isinstance(value, ExternalRef) and value.key.scope == VariableScope.CONST:
+                return get_initial_value(value.key, block=block)
+
+            raise ValueError(f"Cannot convert abstract value: {value}, {protoblock} {protoblock is proto_graph.root=}")
+
+        v = _convert(value, protoblock)
+        convert_cache[(value, protoblock)] = v
+        return v
 
     def iter_node_flow(protoblock: ProtoBlock) -> tuple[ThunderInstruction, _Materialized]:
         node_flow = tuple(protoblock.node_flow)
@@ -347,12 +378,12 @@ def _bind_to_graph(
 
         yield last_i, last_node
 
-    def make_nodes(protoblock: ProtoBlock) -> Iterable[Node]:
+    def make_nodes(protoblock: ProtoBlock, block: Block) -> Iterable[Node]:
         for instruction, node_flow in iter_node_flow(protoblock):
             node = Node(
                 i=instruction,
-                inputs=[convert(v, protoblock) for v in node_flow.inputs],
-                outputs=[convert(v, protoblock) for v in node_flow.outputs],
+                inputs=[convert(v, protoblock, block) for v in node_flow.inputs],
+                outputs=[convert(v, protoblock, block) for v in node_flow.outputs],
             )
             node.source_infos = [
                 SourceInformation(
@@ -367,7 +398,8 @@ def _bind_to_graph(
             ]
 
             for output in OrderedSet(node.outputs).difference(node.inputs):
-                if output.node is None and not (output.is_const or output.is_global):
+                if not (output.node or output.is_const or output.is_global):
+                    # output.node can be populated when we deconstruct a previously constructed value (e.g. binary_idx into a tuple from build_tuple)
                     output.node = node
 
             if node.i.opname in ("LOAD_ATTR", "LOAD_METHOD"):
@@ -394,7 +426,7 @@ def _bind_to_graph(
 
     # First pass: populate nodes and jump targets.
     for protoblock, block in blocks.items():
-        block.nodes = list(make_nodes(protoblock))
+        block.nodes = list(make_nodes(protoblock, block))
         for target, _ in protoblock.jump_targets:
             if _is_epilogue(target):
                 ((target, _),) = target.jump_targets
@@ -409,7 +441,7 @@ def _bind_to_graph(
         block_values = {
             k: v
             for k, abstract_v in protoblock.begin_state
-            if isinstance(v := convert(abstract_v, protoblock), PhiValue)
+            if isinstance(v := convert(abstract_v, protoblock, block), PhiValue)
         }
 
         block.block_inputs = list(OrderedSet(block_values.values()))
@@ -417,7 +449,7 @@ def _bind_to_graph(
             parent_key = prologue(parent)
             parent_state = dict(parent.end_state)
             for key, sink in block_values.items():
-                source = convert(parent_state.get(key, ValueMissing()), parent_key)
+                source = convert(parent_state.get(key, ValueMissing()), parent_key, block=None)
                 if source.value is not NULL and source not in sink.values:
                     sink.add_missing_value(v=source, jump_source=blocks[parent_key].nodes[-1])
 
@@ -432,7 +464,7 @@ def _bind_to_graph(
         for boundary_protoblock in boundary_protoblocks:
             for _, abstract_value in boundary_protoblock.end_state:
                 # NOTE: the key for convert is `protoblock`, not `boundary_protoblock`
-                if (v := convert(abstract_value, protoblock)).phi_values:
+                if (v := convert(abstract_value, protoblock, block)).phi_values:
                     block.block_outputs.add(v)
 
     param_keys = tuple(VariableKey(p, VariableScope.LOCAL) for p in arg_ordered_parameters)
@@ -617,7 +649,7 @@ def acquire_partial(
         # the variable for varargs is at gr.co_argcount + gr.co_kwonlyargcount
         v_vararg_param = gr.local_variables_at_start[gr.co_argcount + gr.co_kwonlyargcount]
         v_partial_varargs = Value(name="partial_varargs", value=tuple(args_for_varargs), is_const=True)
-        v_varargs_new = Value(name="varargs_with_partial")  # type is tuple
+        v_varargs_new = Value(name="varargs_with_partial", block=prelude)  # type is tuple
         pv = PhiValue([v_vararg_param], [None], block=prelude)
         new_n = Node(
             i=get_instruction(opname="BINARY_ADD", arg=None),
@@ -654,7 +686,7 @@ def acquire_partial(
             gr.co_argcount + gr.co_kwonlyargcount + (1 if gr.co_flags & inspect.CO_VARARGS else 0)
         ]
         v_partial_kwvarargs = Value(name="partial_kwvarargs", value=kwargs, is_const=True)
-        v_kwvarargs_new = Value(name="kwvarargs_with_partial")  # type is dict
+        v_kwvarargs_new = Value(name="kwvarargs_with_partial", block=prelude)  # type is dict
         pv = PhiValue([v_kwvararg_param], [None], block=prelude)
         new_n = Node(
             i=get_instruction(opname="BINARY_OR", arg=None),

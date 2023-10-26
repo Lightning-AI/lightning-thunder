@@ -525,6 +525,8 @@ def find_blocks_of_for(gr: "Graph", for_block: "Block") -> list[Block]:
 
 def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     gr.ensure_links()
+    if debug_asserts_enabled():
+        thunder.core.script.graph.check_graph(gr)
     get_iter_node = for_iter_node.inputs[0].values[0].node
     assert get_iter_node.i.opname == "GET_ITER"
 
@@ -678,6 +680,8 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
             for v in i.values[:]:
                 i.remove_value(v)
             exit_block.block_inputs.remove(i)
+    if debug_asserts_enabled():
+        thunder.core.script.graph.check_graph(gr)
 
 
 def find_and_unroll_for_loop(gr: "Graph") -> bool:
@@ -807,7 +811,7 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
                         pv.name = attr_string
                         return_values[attr_string] = pv
                         return_block.block_inputs.append(pv)
-                    v = Value(node=n, name=attr_string)  # disambiguate?
+                    v = Value(node=n, name=attr_string, block=bl)  # disambiguate?
                     pv.add_missing_value(v, jump_source=bl.nodes[-1])
                     n.outputs = [v]
                     bl.block_outputs.add(v)
@@ -840,7 +844,7 @@ def module_to_function(gr: "Graph") -> tuple[list[str], list[torch.Tensor]]:
             source_infos=copy.deepcopy(return_block.nodes[-1].source_infos),
         )
         bt_extra.inputs = return_block.nodes[-1].inputs + list(return_values.values())
-        v_tuple_extra = Value(node=bt_extra)
+        v_tuple_extra = Value(node=bt_extra, block=return_block)
         bt_extra.outputs = [v_tuple_extra]
         return_block.nodes.insert(-1, bt_extra)
         return_block.nodes[-1].inputs = [v_tuple_extra]

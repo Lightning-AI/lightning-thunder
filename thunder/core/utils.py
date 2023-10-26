@@ -1,4 +1,5 @@
 import sys
+import os
 from enum import Enum
 from functools import reduce, wraps
 import itertools
@@ -76,7 +77,7 @@ T1 = TypeVar("T1")
 #
 # Error checking helpers
 #
-_DEBUG_ASSERTS = False
+_DEBUG_ASSERTS = os.environ.get("THUNDER_DEBUG_ASSERTS", "") in {"Y", "1", "y"}
 
 
 def enable_debug_asserts() -> None:
