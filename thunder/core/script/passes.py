@@ -4,7 +4,7 @@ import inspect
 import opcode
 import sys
 import types
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, Hashable, List, Tuple, Union
 from contextvars import ContextVar
 
 import networkx as nx
@@ -337,7 +337,7 @@ def inline_submodule_calls(gr: "Graph") -> bool:
                         ),
                         is_const=True,
                     )
-                    n.i = n.i.modify_copy(opname="CALL_FUNCTION", arg=0)
+                    n.i = n.i.modify_copy(opname="CALL_FUNCTION", arg=0, opcode=None)
                     n.inputs = [methval]
                 if isinstance(fn_value, torch.nn.Module) or (
                     inspect.ismethod(fn_value)
@@ -411,10 +411,13 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
                 done = False
                 fill_in_value(i, OrderedSet())
                 i_or_parent = i
-                while i_or_parent.value not in _torch_to_thunder_complete_map and i_or_parent.parent is not None:
+                while (
+                    not isinstance(i_or_parent.value, Hashable)
+                    or i_or_parent.value not in _torch_to_thunder_complete_map
+                ) and i_or_parent.parent is not None:
                     i_or_parent = i_or_parent.parent
 
-                if i_or_parent.value in _torch_to_thunder_complete_map:
+                if isinstance(i_or_parent.value, Hashable) and i_or_parent.value in _torch_to_thunder_complete_map:
                     i_or_parent.value = _torch_to_thunder_complete_map[i.value]
                     # we reinstantiate because we don't want a PhiValue here
                     i_new = Value(

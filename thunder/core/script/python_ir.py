@@ -3,7 +3,7 @@ import dis
 import inspect
 import sys
 import types
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
+from typing import Any, Dict, Hashable, List, Optional, Tuple, Union, Callable
 
 from thunder.core.script.graph import (
     _generate_raises,
@@ -87,7 +87,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
                 )
                 new_n.inserted_for = n
                 insert_before(new_n, n)
-        elif v.is_global and v.value in __builtins__:
+        elif v.is_global and isinstance(v.value, Hashable) and v.value in __builtins__:
             # Builtins are unmarshallable and meant to be loaded globally. If they are
             # included in co_consts, the resulting function cannot go into a .pyc file.
             # Originally, the plan was to check if the value is a builtin by checking

@@ -22,7 +22,7 @@ from thunder.core.utils import enable_debug_asserts
 from thunder.executors import NVFUSER, TORCH
 from thunder.executors.utils import Executor
 from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
-from thunder.tests.framework import instantiate, requiresNVFuser, IN_CI
+from thunder.tests.framework import instantiate, requiresCUDA, requiresNVFuser, IN_CI
 
 torchex = [Executor.TORCH]
 nvfuserex = [Executor.NVFUSER, Executor.TORCH]
@@ -1387,3 +1387,26 @@ def test_modulelist_additional_return_names():
     assert model._additional_return_names
     out = model(x)
     assert out.shape == (1,)
+
+
+@skipif_not_python_3_10
+@requiresCUDA
+def test_non_hashable():
+    def foo(a, b):
+        return thunder.prims.device_put(a, thunder.devices.device_from_string("cuda"))
+
+    cfoo = thunder.compile(foo)
+    a = torch.randn((2, 2), device="cpu", dtype=torch.float32, requires_grad=False)
+    b = cfoo(a, 1)
+    assert_close(a.to("cuda"), b)
+
+
+@skipif_not_python_3_10
+def test_raises_exception_opcode():
+    # previously this left the opcode at CALL_FUNCTION_KW and segfaulted
+    def foo(a, b):
+        return torch.this_does_not_exist((2, 2), device="cpu", dtype=torch.bfloat16)
+
+    cfoo = thunder.compile(foo)
+    with pytest.raises(AttributeError, match="no attribute.*this_does_not_exist"):
+        cfoo(1, 1)
