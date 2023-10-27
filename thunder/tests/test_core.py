@@ -2513,9 +2513,10 @@ def test_bookend_meta_optimization(executor, device, _):
                     ssym = sbsym.sym
                     if ssym.id is prims.PrimIDs.TRANSPOSE:
                         transposes_in_fusions += 1
-        
 
-        assert transposes_in_fusions == n, f"Expected {n} prims.transpose operations in fusions, but found {transposes_in_fusions} transpose in fusions in the trace {traces[-1]}"
+        assert (
+            transposes_in_fusions == n
+        ), f"Expected {n} prims.transpose operations in fusions, but found {transposes_in_fusions} transpose in fusions in the trace {traces[-1]}"
 
     # one transpose at the beginning
     # should be moved out of fusion
@@ -2698,6 +2699,7 @@ def test_bookend_meta_optimization(executor, device, _):
         return t4, t6, t7, t8, t10, t13
 
     subtest(func_12, 1)
+
 
 @instantiate(dtypes=NOTHING)
 def test_inplace(executor, device, _):

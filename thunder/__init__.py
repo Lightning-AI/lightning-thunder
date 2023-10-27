@@ -19,6 +19,7 @@ import thunder.core.devices as devices
 from thunder.common import CACHE_MODES, CompileData, CompileStats, _create_callable, trace, preprocess
 
 import thunder.torch as ltorch
+
 torchlangctx = ltorch
 
 
@@ -91,6 +92,7 @@ list_default_executors = executors.list_default_executors
 set_default_executors = executors.set_default_executors
 add_operator_executor = executors.add_operator_executor
 
+
 def compile(
     fn: Callable,
     *,
@@ -103,7 +105,6 @@ def compile(
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
 ) -> Callable:
-    
     cd = CompileData(
         fn=fn,
         langctx=langctx,
@@ -120,8 +121,10 @@ def compile(
     _fn = _create_callable(cd, cs)
     return _fn
 
+
 def compile_data(fn) -> Optional[CompileData]:
     return getattr(fn, "_lc_cd", None)
+
 
 def compile_stats(fn) -> Optional[CompileStats]:
     return getattr(fn, "_lc_cs", None)
@@ -130,7 +133,7 @@ def compile_stats(fn) -> Optional[CompileStats]:
 # TODO We should remove compiledata.last_traces in favor of forward_last_traces and backward_last_traces
 def last_traces(fn) -> None | list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
     cs = compile_stats(fn)
-    
+
     if cs.forward_last_traces is not None and cs.backward_last_traces is not None:
         return cs.forward_last_traces, cs.backward_last_traces
     return cs.last_traces
@@ -146,6 +149,7 @@ def cache_hits(fn) -> int:
 
 def cache_misses(fn) -> int:
     return compile_stats(fn).cache_misses
+
 
 def list_transforms(fn) -> list:
     return fn._lc_transforms

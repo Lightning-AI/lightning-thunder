@@ -391,6 +391,7 @@ def flatten(bsym: BoundSymbol, a: TensorLike, start_dim: int = 0, end_dim: int =
     sym = Symbol(name="flatten", meta=None, _module=torch)
     return sym.bind(a, start_dim, end_dim, output=bsym.output)
 
+
 def unbind(bsym: BoundSymbol, a: TensorLike, dim: int = 0) -> TensorLike:
     sym = Symbol(name="unbind", meta=None, _module=torch)
     return sym.bind(a, dim, output=bsym.output)
@@ -792,7 +793,7 @@ def _add_sub_factory(name: str) -> Callable:
     return fn
 
 
-def polygamma(bsym: BoundSymbol, n: int, a: TensorLike)-> BoundSymbol:
+def polygamma(bsym: BoundSymbol, n: int, a: TensorLike) -> BoundSymbol:
     sym = Symbol(name="polygamma", meta=None, _module=torch)
     return sym.bind(n, a, output=bsym.output)
 
@@ -822,18 +823,14 @@ sub = _add_sub_factory("sub")
 zeta = _elementwise_binary_factory("zeta", module=torch.special)
 
 
-def _addcmul_check(
-    a: TensorLike,
-    b: TensorLike,
-    c: TensorLike,
-    *,
-    value: Optional[Number] = None
-) -> bool:
+def _addcmul_check(a: TensorLike, b: TensorLike, c: TensorLike, *, value: Optional[Number] = None) -> bool:
     # PyTorch doesn't support non-tensor inputs for torch.addcmul
-    if not (all(isinstance(arg, TensorLike) for arg in [a,b,c]) and isinstance(value, (Number, type(None)))):
+    if not (all(isinstance(arg, TensorLike) for arg in [a, b, c]) and isinstance(value, (Number, type(None)))):
         return False
 
-    common_dtype, _ = utils.elementwise_type_promotion(a, b, c, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT)
+    common_dtype, _ = utils.elementwise_type_promotion(
+        a, b, c, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
     common_dtype = dtypes.to_strong_dtype(common_dtype)
     # PyTorch doesn't support bool or complex32 inputs for torch.addcmul
     if dtypes.is_boolean_dtype(common_dtype) or common_dtype is dtypes.complex32:
@@ -847,22 +844,18 @@ def _addcmul_check(
     return True
 
 
-def _addcdiv_check(
-    a: TensorLike,
-    b: TensorLike,
-    c: TensorLike,
-    *,
-    value: Optional[Number] = None
-) -> bool:
+def _addcdiv_check(a: TensorLike, b: TensorLike, c: TensorLike, *, value: Optional[Number] = None) -> bool:
     # PyTorch doesn't support non-tensor inputs for torch.addcdiv
-    if not (all(isinstance(arg, TensorLike) for arg in [a,b,c]) and isinstance(value, (Number, type(None)))):
+    if not (all(isinstance(arg, TensorLike) for arg in [a, b, c]) and isinstance(value, (Number, type(None)))):
         return False
 
     # PyTorch doesn't support Integer division with torch.addcdiv
     if dtypes.is_exact_dtype(dtypes.to_dtype(b)) and dtypes.is_exact_dtype(dtypes.to_dtype(c)):
         return False
 
-    common_dtype, _ = utils.elementwise_type_promotion(a, b, c, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT)
+    common_dtype, _ = utils.elementwise_type_promotion(
+        a, b, c, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
     common_dtype = dtypes.to_strong_dtype(common_dtype)
     not_supported_types = (dtypes.complex32, dtypes.float16, dtypes.bfloat16)
     if common_dtype in not_supported_types:
@@ -878,12 +871,7 @@ def _addcdiv_check(
 
 def _addcmul_addcdiv_factory(name: str) -> Callable:
     def fn(
-        bsym: BoundSymbol,
-        a: TensorLike,
-        b: TensorLike,
-        c: TensorLike,
-        *,
-        value: Optional[Number] = None
+        bsym: BoundSymbol, a: TensorLike, b: TensorLike, c: TensorLike, *, value: Optional[Number] = None
     ) -> BoundSymbol:
         sym = Symbol(name=name, meta=None, _module=torch)
 
@@ -1359,10 +1347,7 @@ def log_softmax(bsym: BoundSymbol, a: TensorProxy, dim: Number, dtype=None) -> B
     return sym.bind(a, dim, dtype=torch_dtype, output=bsym.output)
 
 
-def _log_softmax_backward_helper(g: torch.Tensor,
-                          output: torch.Tensor,
-                          dim: Number,
-                          dtype) -> torch.Tensor:
+def _log_softmax_backward_helper(g: torch.Tensor, output: torch.Tensor, dim: Number, dtype) -> torch.Tensor:
     return torch.ops.aten._log_softmax_backward_data(g, output, dim, dtype)
 
 
@@ -1407,18 +1392,18 @@ def nll_loss(
     reduction: str = "mean",
 ) -> BoundSymbol:
     sym = Symbol(name="nll_loss", _module=torch.nn.functional)
-    return sym.bind(
-        a, target, weight, size_average, ignore_index, reduce, reduction, output=bsym.output
-    )
+    return sym.bind(a, target, weight, size_average, ignore_index, reduce, reduction, output=bsym.output)
 
 
-def _nll_loss_backward_helper(g: torch.Tensor,
-                          input: torch.Tensor,
-                          target: torch.Tensor,
-                          weight: torch.Tensor,
-                          reduction: str,
-                          ignore_index: int,
-                          total_weight: torch.Tensor) -> torch.Tensor:
+def _nll_loss_backward_helper(
+    g: torch.Tensor,
+    input: torch.Tensor,
+    target: torch.Tensor,
+    weight: torch.Tensor,
+    reduction: str,
+    ignore_index: int,
+    total_weight: torch.Tensor,
+) -> torch.Tensor:
     if reduction == "none":
         reduction_idx = 0
     elif reduction == "mean":
@@ -1434,7 +1419,7 @@ def _nll_loss_backward_helper(g: torch.Tensor,
     )
 
     if total_weight is None:
-        total_weight = torch.tensor(0., dtype=torch.float64, device=input.device)
+        total_weight = torch.tensor(0.0, dtype=torch.float64, device=input.device)
     else:
         # ATen expect total weight to have double dtype
         total_weight = total_weight.to(dtype=input.dtype)
@@ -1464,7 +1449,9 @@ def _nll_loss_backward_helper(g: torch.Tensor,
             target_ = target.reshape([N, 0, 0])
 
         if reduction != "none":
-            return torch.ops.aten.nll_loss2d_backward(g, input_, target_, weight, reduction_idx, ignore_index, total_weight)
+            return torch.ops.aten.nll_loss2d_backward(
+                g, input_, target_, weight, reduction_idx, ignore_index, total_weight
+            )
         else:
             # g must have same dimension as target.
             if g.numel() > 0:
@@ -1472,7 +1459,9 @@ def _nll_loss_backward_helper(g: torch.Tensor,
             else:
                 g_ = g.reshape([N, 0, 0])
 
-            result = torch.ops.aten.nll_loss2d_backward(g_, input_, target_, weight, reduction_idx, ignore_index, total_weight)
+            result = torch.ops.aten.nll_loss2d_backward(
+                g_, input_, target_, weight, reduction_idx, ignore_index, total_weight
+            )
             return result.reshape(no_C_shape)
 
 
@@ -1488,7 +1477,9 @@ def nll_loss_backward(
 ) -> BoundSymbol:
     sym = Symbol(name="nll_loss_backward", meta=None)
     ctx: Dict[str, Any] = {"nll_loss_backward": _nll_loss_backward_helper}
-    return sym.bind(grad, input, target, weight, reduction, ignore_index, total_weight, output=bsym.output, _call_ctx=ctx)
+    return sym.bind(
+        grad, input, target, weight, reduction, ignore_index, total_weight, output=bsym.output, _call_ctx=ctx
+    )
 
 
 def relu(bsym: BoundSymbol, a: TensorProxy, inplace=False) -> BoundSymbol:
@@ -2393,7 +2384,9 @@ def thunder_backward(*, compile_data=None, compile_stats=None, **compile_config)
         # Compile's caching only works for many calls to the same compiled function
         # It does not work if the same function is compiled many times, so we must
         # decorate the augmented forward pass once with compile once and reuse it
-        split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_config, compile_data, compile_stats)
+        split_fw_bw = ThunderFunction.get_forward_backward_splitter(
+            thunder_func, compile_config, compile_data, compile_stats
+        )
         compiled_split_fw_bw = compile(
             split_fw_bw,
             **compile_config,

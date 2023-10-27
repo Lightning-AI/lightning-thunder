@@ -244,7 +244,7 @@ def _bind_to_graph(
     def get_initial_value(key: VariableKey, block: Optional[Block] = None) -> Value:
         if key in get_initial_value_cache:
             v = get_initial_value_cache[key]
-            assert not (((block is None or block != v.block) and not (v.is_global or v.is_const or v.is_function_arg)))
+            assert not ((block is None or block != v.block) and not (v.is_global or v.is_const or v.is_function_arg))
             return v
         if key.scope == VariableScope.CONST:
             v = Value(value=key.identifier, is_const=True)

@@ -373,6 +373,7 @@ def flip(a: TensorLike, dims: Sequence[int] | int | None = None) -> TensorLike:
 # See _get_indexing_signature for more on what constitutes a basic indexing.
 IndexingSignature = namedtuple("IndexingSignature", ["basic", "advanced", "unsqueeze"])
 
+
 # Given an indexing key, partition it into regions of basic/advanced indexing
 # and a region that corresponds to newly inserted dimensions.
 # Returns IndexingSignature.
@@ -406,7 +407,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
     # i = 0, ..., (position of Ellipsis) (left-to-right indexing of key), and
     # i = -1, ..., (negative position of Ellipsis + 1) (right-to-left indexing of key
     # with negative indices).
-    class IndexingKeyIter(object):
+    class IndexingKeyIter:
         def __init__(self, k):
             self.k = k
 
@@ -417,7 +418,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
         def __next__(self):
             i, v = next(self.k_iter)
             if v is Ellipsis:
-                rest_k = self.k[i + 1:]
+                rest_k = self.k[i + 1 :]
                 self.k_iter = zip(range(-1, -len(rest_k) - 1, -1), reversed(rest_k))
             return i, v
 
@@ -709,9 +710,8 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 def get_item(a: TensorLike, /, key) -> TensorLike:
     sig = _get_indexing_signature(key)
     utils.check(
-        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or
-        (a.ndim >= len(sig.basic) + len(sig.advanced)),
-        lambda: f"{key=} tries to index more dimensions than {a.ndim=}"
+        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
+        lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     )
 
     # We do not support mixing basic and advanced indexing together yet,
@@ -730,13 +730,13 @@ def get_item(a: TensorLike, /, key) -> TensorLike:
                 else:
                     end = start + 1
                 # 1-len Sequence -> a slice
-                key = tuple(key[:key_idx]) + (slice(start, end),) + tuple(key[key_idx + 1:])
+                key = tuple(key[:key_idx]) + (slice(start, end),) + tuple(key[key_idx + 1 :])
                 return _basic_indexing(a, key)
 
     utils.check(
         not (len(sig.basic) > 0 and len(sig.advanced) > 0),
         lambda: f"{key=} mixes basic and advanced indexing that is not currently supported",
-        NotImplementedError
+        NotImplementedError,
     )
 
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):

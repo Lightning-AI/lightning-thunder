@@ -254,12 +254,15 @@ def test_inline_submodule():
     "device",
     (
         "cpu",
-        pytest.param("cuda", marks=[
-            pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA"),
-            # https://github.com/Lightning-AI/lightning-thunder/issues/1246
-            pytest.mark.xfail(raises=(UnboundLocalError, NameError), strict=True)
-        ])
-    )
+        pytest.param(
+            "cuda",
+            marks=[
+                pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA"),
+                # https://github.com/Lightning-AI/lightning-thunder/issues/1246
+                pytest.mark.xfail(raises=(UnboundLocalError, NameError), strict=True),
+            ],
+        ),
+    ),
 )
 def test_litgpt_variants(name, device):
     device = torch.device(device)
@@ -1333,7 +1336,6 @@ def test_functionalization_callmethod_nonmethod():
 
 
 class Conv1d(torch.nn.Conv1d):
-
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return self._conv_forward(input, weight=self.weight, bias=self.bias)
 

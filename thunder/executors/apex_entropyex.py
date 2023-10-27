@@ -21,6 +21,7 @@ xentropy_cuda: None | Any = None
 if APEX_CROSS_ENTROPY_AVAILABLE:
     import xentropy_cuda
 
+
 # This function wraps the xentropy_cuda.forward function for concrete execution.
 # It accepts and returns real PyTorch tensors.
 def cross_entropy_impl(
@@ -131,8 +132,8 @@ def cross_entropy_checker(
 
 
 class apexsymbol:
-    """Decorator for registering a custom Symbol for Apex cross entropy executor.
-    """
+    """Decorator for registering a custom Symbol for Apex cross entropy executor."""
+
     def __init__(self, id: str):
         self.id = id
 
@@ -207,6 +208,7 @@ _op_to_xentropy = {
         apex_cross_entropy_backward_impl,
     ),
 }
+
 
 # Check out
 # https://github.com/Lightning-AI/lightning-thunder/blob/main/dev_tutorials/thunder-add-vjp-rule.md

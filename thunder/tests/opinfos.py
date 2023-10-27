@@ -764,14 +764,14 @@ digamma_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
-            active_if=LooseVersion(torch.__version__) < LooseVersion("2.1.0")
+            active_if=LooseVersion(torch.__version__) < LooseVersion("2.1.0"),
         ),
         DecorateInfo(
             pytest.mark.xfail,
             executors=("TorchEx"),
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
-            active_if=LooseVersion(torch.__version__) < LooseVersion("2.1.0")
+            active_if=LooseVersion(torch.__version__) < LooseVersion("2.1.0"),
         ),
         # NOTE Neither Torch nor NvFuser supports bfloat16 digamma
         DecorateInfo(
@@ -2016,7 +2016,7 @@ def polygamma_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs
 
 polygamma_opinfo = OpInfo(
     ltorch.polygamma,
-    # NOTE: Restrict domain to avoid singularities because of 
+    # NOTE: Restrict domain to avoid singularities because of
     # https://github.com/Lightning-AI/lightning-thunder/issues/1138
     # NOTE: polygamma returns NaN, -Inf, or Inf for all negative integers.
     domain=(eps, math.inf),
@@ -5353,9 +5353,7 @@ sdpa_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
             executors=("TorchEx",),
-            devicetypes=(
-                devices.DeviceType.CPU,
-            ),
+            devicetypes=(devices.DeviceType.CPU,),
         ),
         # RuntimeError: Only fp32, half & bf16 supported at the moment
         DecorateInfo(
@@ -5389,9 +5387,7 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
         torch.bfloat16: 2,
         torch.float16: 2,
     }
-    L, S, E, Ev = [
-        random.randint(1, 4) * dtype_to_alignment_map[dtype] for _ in range(4)
-    ]
+    L, S, E, Ev = (random.randint(1, 4) * dtype_to_alignment_map[dtype] for _ in range(4))
 
     # 4-dim (multiheaded) causal cases
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
@@ -5421,7 +5417,11 @@ grad_sdpa_opinfo = OpInfo(
     sample_input_generator=grad_scaled_dot_product_attention_sample_generator,
     torch_reference=torch.nn.functional.scaled_dot_product_attention,
     # RuntimeError: Only fp32, half & bf16 supported at the moment
-    dtypes=(datatypes.float32, datatypes.float16, datatypes.bfloat16,),
+    dtypes=(
+        datatypes.float32,
+        datatypes.float16,
+        datatypes.bfloat16,
+    ),
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
@@ -5539,6 +5539,7 @@ cross_entropy_opinfo = OpInfo(
 )
 nn_ops.append(cross_entropy_opinfo)
 
+
 def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -5591,6 +5592,7 @@ def nll_loss_sample_generator(op, device, dtype, requires_grad, **kwargs):
             reduction=reduction_str,
         )
 
+
 def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
 
@@ -5598,9 +5600,7 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     target_shape = (7,)
     C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
     valid_input = make(input_shape)
-    valid_target = make(
-        target_shape, low=0, high=C, dtype=torch.long, requires_grad=False
-    )
+    valid_target = make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
 
     # unexpected reduction string argument
     yield (
@@ -5610,9 +5610,7 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # target tensor is not integer dtype
-    float_target = make(
-        target_shape, low=0, high=C, dtype=torch.float, requires_grad=False
-    )
+    float_target = make(target_shape, low=0, high=C, dtype=torch.float, requires_grad=False)
     yield (
         SampleInput(valid_input, float_target),
         RuntimeError,
@@ -5636,14 +5634,12 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # target shape is input shape except channels dimension
-    incorrect_batch_target = make(
-        (10,), low=0, high=C, dtype=torch.long, requires_grad=False
-    )
+    incorrect_batch_target = make((10,), low=0, high=C, dtype=torch.long, requires_grad=False)
     yield (
         SampleInput(valid_input, incorrect_batch_target),
         RuntimeError,
         "Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
-            (.*?), but it has shape (.*?)."
+            (.*?), but it has shape (.*?).",
     )
 
     # weight tensor has more than 1 dimension
@@ -5681,7 +5677,10 @@ nll_loss_opinfo = OpInfo(
         # BF16: AssertionError: Scalars are not close!
         DecorateInfo(
             pytest.mark.xfail,
-            dtypes=(datatypes.float16, datatypes.bfloat16,),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
         ),
         # NOTE Skip standard vjp test because of issue 1104
         DecorateInfo(

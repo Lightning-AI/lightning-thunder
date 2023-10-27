@@ -32,10 +32,12 @@ import numpy as np
 # Datastructures for caching
 #
 
+
 class CACHE_MODES(Enum):
     ALWAYS_TRACE = auto()
     FIXED = auto()
     DYNAMIC_STRIDES = auto()
+
 
 _string_to_cache_mode_map = {
     "always trace": CACHE_MODES.ALWAYS_TRACE,
@@ -43,20 +45,24 @@ _string_to_cache_mode_map = {
     "dynamic strides": CACHE_MODES.DYNAMIC_STRIDES,
 }
 
+
 def string_to_cache_mode(s: str):
-    check(s in _string_to_cache_mode_map, lambda: f"Unknown cache mode {s}, supported strings are {_string_to_cache_mode_map.keys()}")
+    check(
+        s in _string_to_cache_mode_map,
+        lambda: f"Unknown cache mode {s}, supported strings are {_string_to_cache_mode_map.keys()}",
+    )
 
     return _string_to_cache_mode_map[s]
+
 
 #
 # Datastructures for compiled functions
 #
 
+
 # Holds statistics and caches for a compiled function
 class CompileStats:
-
     def __init__(self):
-
         # Callables and traces
         self.last_executed = None
         self.last_traces = None
@@ -82,10 +88,12 @@ class CompileStats:
         self.cache_hits: int = 0
         self.cache_misses: int = 0
 
+
 import thunder.core.script.frontend as script_frontend
 import thunder.core.script.instrumentation as script_instrumentation
 import thunder.core.script.passes as passes
 import thunder.core.script.python_ir as python_ir
+
 
 # Preprocesses function
 # Currently tries to map torch.foo lookups to thunder.torch.foo lookups
@@ -112,6 +120,7 @@ def preprocess(fn, is_module):
         thunder_fn._additional_param_values = None
         thunder_fn._additional_return_names = None
     return thunder_fn
+
 
 # A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
@@ -182,6 +191,7 @@ class CompileData:
                 self.additional_param_values = self.processed_function._additional_param_values
                 self.additional_return_names = self.processed_function._additional_return_names
                 self.num_constant_args = len(self.additional_param_values)
+
 
 # Common UX functions
 def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool):
@@ -270,6 +280,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
     tracectx.unpacked()
     return proxyargs, proxykwargs
 
+
 class ThunderOptimizedModule(torch.nn.Module):  # TOM
     # todo: subclass nn.Module or forward things like .state_dict() to the
     #       model
@@ -319,6 +330,7 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
 # Caching objects and functions
 #
 # TODO We could look at supporting non-hashable inputs, like dicts
+
 
 # TODO Update cacheable types
 def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
@@ -403,8 +415,6 @@ def cache_get(cache: dict, args, kwargs) -> tuple[None | Callable, None | Sequen
     return cache.get(key, (None, None))
 
 
-
-
 # Produces a trace of the given function with the given args and kwargs
 # If inline_trace is True and this is called while tracing then
 #   the trace will be inlined into the current trace, and instead of a trace
@@ -421,6 +431,7 @@ def cache_get(cache: dict, args, kwargs) -> tuple[None | Callable, None | Sequen
 # TODO Consider modeling additional calls to trace()
 # TODO Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
+
 
 def trace(
     compile_data: None | CompileData = None,
@@ -458,7 +469,7 @@ def trace(
 
                 def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
                     if isinstance(arg, TensorProxy) and arg.ddp_type in (
-                        DDPType.REPLICATED, # or DDPType.FULLY_SHARDED
+                        DDPType.REPLICATED,  # or DDPType.FULLY_SHARDED
                     ):
                         return dist.prims.synchronize(arg, compile_data.process_group_for_ddp)
                     else:
@@ -469,6 +480,7 @@ def trace(
             result = fn(*proxyargs, **proxykwargs)
 
             if include_return_statement:
+
                 def wait_for_future(f: FutureTensorProxy) -> TensorProxy:
                     if isinstance(f, FutureTensorProxy):
                         return f.wait()
@@ -509,7 +521,7 @@ def _execute_trace(
     args,
     kwargs,
     compile_data: CompileData,
-    post_optimization_transforms: list[Callable]=[],
+    post_optimization_transforms: list[Callable] = [],
 ) -> tuple[Any, Callable, list[TraceCtx]]:
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
@@ -548,12 +560,14 @@ def _execute_trace(
 #   a helper to convert torch tensors to NumPy arrays on output?
 # TODO Provide an option to not preprocess (for debugging)
 
+
 def _create_callable(
-        cd: CompileData,
-        cs: CompileStats,
-        *,
-        transforms: list[Callable]=[],
-        post_optimization_transforms: list[Callable]=[]) -> Callable:
+    cd: CompileData,
+    cs: CompileStats,
+    *,
+    transforms: list[Callable] = [],
+    post_optimization_transforms: list[Callable] = [],
+) -> Callable:
     @wraps(cd.processed_function)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()
@@ -633,7 +647,11 @@ def _create_callable(
 
         # Checks for inlined transforms
         current_trace = get_tracectx()
-        check(current_trace is None or len(transforms) == 0, lambda: f"Inlining transformed traces is not yet supported", exception_type=NotImplementedError)
+        check(
+            current_trace is None or len(transforms) == 0,
+            lambda: f"Inlining transformed traces is not yet supported",
+            exception_type=NotImplementedError,
+        )
 
         # Returns the (proxied) result if this call to compile was inlined
         if current_trace is not None:

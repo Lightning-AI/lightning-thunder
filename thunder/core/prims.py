@@ -153,6 +153,7 @@ class PrimIDs(Enum):
     EMBEDDING = auto()
     EMBEDDING_BACKWARD = auto()
 
+
 class OpTags(Enum):
     # TODO -- Consider renaming this tag
     # The operation manipulates a tensor's shape
@@ -1612,6 +1613,7 @@ cat = make_prim(
     meta=cat_meta,
 )
 
+
 def flip_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
     # Check types
     utils.check_type(a, TensorProxy)
@@ -1771,7 +1773,7 @@ def take_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
 
     utils.check(
         not (a.shape[dim] == 0 and index.numel > 0),
-        lambda: "Attempting to index a 0-length dimension {dim=} with a non-empty index"
+        lambda: "Attempting to index a 0-length dimension {dim=} with a non-empty index",
     )
 
     l = index.shape[0] if index.ndim == 1 else 1
@@ -2121,6 +2123,7 @@ matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta)
 # NN prims
 #
 
+
 # TODO: model transpose and layout (channels last and alike)
 def convolution_meta(
     a: TensorProxy,
@@ -2269,6 +2272,7 @@ convolution = make_prim(
     "convolution",
     meta=convolution_meta,
 )
+
 
 def embedding_meta(a, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
     # TODO: canonicalize and validating padding idx with weight.shape[0]

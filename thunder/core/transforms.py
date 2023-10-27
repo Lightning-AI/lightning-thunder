@@ -58,6 +58,7 @@ def construct_trace(inline_trace=False, **extra_kwargs):
 
     return thunder.trace(inline_trace=inline_trace, **extra_kwargs)
 
+
 #
 # Functions related to converting lists of bound symbols to and from DAGs, and operations on
 #   DAGs of bound symbols
@@ -93,10 +94,8 @@ class Node:
 #   - a list of all Nodes corresponding to bound symbols without parents
 #   - an optional Node corresponding to the RETURN bound symbol, which must be unique or not in the list of bound symbols
 def bsym_list_to_dag(
-        bsyms: Sequence[BoundSymbolInterface],
-        *,
-        producers: None | ProxyDict = None,
-        consumers: None | ProxyDict = None) -> tuple[list[Node], None | Node]:
+    bsyms: Sequence[BoundSymbolInterface], *, producers: None | ProxyDict = None, consumers: None | ProxyDict = None
+) -> tuple[list[Node], None | Node]:
     roots: list[Node] = []
     leaves: list[Node] = []
     return_node: None | Node = None
@@ -335,12 +334,7 @@ class VISIT_TYPE(Enum):
 #   approach. Perhaps both passing the scope directly to visit() and adding record() would be helpful.
 # TODO(crcrpar): Think about providing a guide how to let thunder "claim" if this is called after
 # `thunder.executors.transform_for_execution`.
-def visitor_transform(
-    trace_from: Trace,
-    visit: Callable,
-    *,
-    provenance: None | str= None
-) -> Trace:
+def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | str = None) -> Trace:
     trc: Trace = from_trace(trace_from)
 
     try:
@@ -385,14 +379,17 @@ def visitor_transform(
     finally:
         reset_tracectx(tracectx_tok)
 
+
 #
 # Composable transforms
 #
 
+
 # Helper function to add a transform
 def add_transform(cfn: Callable, transform: Callable) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
-    cd: None | Any = getattr(cfn, '_lc_cd', None)
+
+    cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
@@ -404,11 +401,13 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
     ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
     return ncfn
 
+
 # TODO Consider refactoring this with the above
 # Helper function to add a post-optimization transform
 def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
-    cd: None | Any = getattr(cfn, '_lc_cd', None)
+
+    cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
@@ -419,6 +418,7 @@ def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Calla
 
     ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
     return ncfn
+
 
 # The no-op transform. A trivial composable transform, only useful as an example.
 def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
@@ -441,8 +441,10 @@ def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
 
     return noop_trace, [noop_trace]
 
+
 def noop(cfn: Callable) -> Callable:
     return add_transform(cfn, _noop_transform)
+
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
 def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
@@ -469,13 +471,16 @@ def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
 
     return commented_trace, [commented_trace]
 
+
 def comment_fusions(cfn: Callable) -> Callable:
     return add_post_optimization_transform(cfn, _comment_fusions_transform)
+
 
 #
 # Phantom grad transform
 #
 # TODO WIP
+
 
 # TODO Use the clang ctx -- define in clang/__init__.py?
 def mul_grad(a: Number | TensorProxy, b: Number | TensorProxy):
@@ -490,14 +495,19 @@ def mul_grad(a: Number | TensorProxy, b: Number | TensorProxy):
 
     return fwd
 
+
 # The default grad extractor for the grad transform.
 #   Extractors return which output tensor or tensors from a function should be used
 #   to compute the grad.
 #   This default grad extractor ensures the function's output is a single tensor that requires grad,
 #   and it uses that to compute the grad.
 def _grad_extractor_default(x):
-    utils.check(isinstance(x, TensorProxy) and x.requires_grad, lambda: f"The default grad extractor expects a single tensor that requires grad as the function's output. Use a custom grad extractor for functions with other outputs.")
+    utils.check(
+        isinstance(x, TensorProxy) and x.requires_grad,
+        lambda: f"The default grad extractor expects a single tensor that requires grad as the function's output. Use a custom grad extractor for functions with other outputs.",
+    )
     return x
+
 
 # TODO WIP
 def grad(cfn, grad_extractor: Callable = _grad_extractor_default):
@@ -509,6 +519,7 @@ class Transforms(Enum):
     VmapOp = auto()
     JvpOp = auto()
     VjpOp = auto()
+
 
 # TODO: We are hitting a problem here that langctx might be set to None
 # inside make_prim. This is because we are calling make_prim for transform call definition.
@@ -1632,12 +1643,14 @@ def zeta_backward(x, y, g):
 @register_backward(prims.PrimIDs.DIGAMMA)
 def digamma_backward(a: Proxy, g):
     from thunder.torch import polygamma
+
     return g * polygamma(1, a)
 
 
 @register_augmented_forward("torch.polygamma")
 def polygamma_aug_fwd(n: int, a: Proxy):
     from thunder.torch import polygamma
+
     primal = polygamma(n, a)
     residuals = (n, a)
     return VJPDual(primal, residuals)
@@ -1646,6 +1659,7 @@ def polygamma_aug_fwd(n: int, a: Proxy):
 @register_backward("torch.polygamma")
 def polygamma_backward(n: int, a: Proxy, g):
     from thunder.torch import polygamma
+
     return None, g * polygamma(n + 1, a)
 
 
@@ -1731,6 +1745,7 @@ def _var_mean_aug_fwd(a, dim, *, correction):
     v, m = prims.var_mean(a, dim, correction=correction)
 
     return (v, m), (a, dim, correction, m)
+
 
 def n_elem_reduced(a_ndim, a_shape, dims):
     dims = utils.canonicalize_dims(a_ndim, dims)
@@ -2310,13 +2325,9 @@ def cross_entropy_backward(input, target, weight, reduction, ignore_index, label
 
 
 @register_augmented_forward("torch.log_softmax")
-def log_softmax_aug_fwd(
-    input: TensorProxy,
-    dim: int,
-    *,
-    dtype=None
-) -> VJPDual:
+def log_softmax_aug_fwd(input: TensorProxy, dim: int, *, dtype=None) -> VJPDual:
     from thunder.torch import log_softmax
+
     primal = log_softmax(input, dim=dim, dtype=dtype)
     residuals = (primal, dim, input.dtype)
     return VJPDual(primal, residuals)
@@ -2325,6 +2336,7 @@ def log_softmax_aug_fwd(
 @register_backward("torch.log_softmax")
 def log_softmax_backward(primal, dim, dtype, g):
     from thunder.torch import log_softmax_backward
+
     return log_softmax_backward(g, primal, dim, dtype)
 
 
@@ -2337,6 +2349,7 @@ def nll_loss_aug_fwd(
     reduction: str,
 ) -> VJPDual:
     from thunder.torch import _nll_loss_helper
+
     primal, total_weight = _nll_loss_helper(
         input,
         target,
@@ -2518,6 +2531,7 @@ def scaled_dot_product_attention(
     )
     return VJPDual(primal, residuals)
 
+
 def scaled_dot_product_efficient_attention_rule_check(
     query: Proxy,
     key: Proxy,
@@ -2560,9 +2574,12 @@ def scaled_dot_product_efficient_attention_rule_check(
 
     return True
 
-register_augmented_forward_with_checker("torch.nn.functional.scaled_dot_product_attention",
-                                        scaled_dot_product_efficient_attention_rule_check,
-                                        scaled_dot_product_attention)
+
+register_augmented_forward_with_checker(
+    "torch.nn.functional.scaled_dot_product_attention",
+    scaled_dot_product_efficient_attention_rule_check,
+    scaled_dot_product_attention,
+)
 
 
 @register_backward("torch.nn.functional.scaled_dot_product_attention")
@@ -2714,7 +2731,7 @@ def cat_backward(
     for dim_len in tensor_dim_lens:
         grads.append(slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim))
         slice_start += dim_len
-    return tensors_seq_type(grads),
+    return (tensors_seq_type(grads),)
 
 
 @register_augmented_forward("torch.Tensor.contiguous")

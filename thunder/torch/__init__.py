@@ -144,7 +144,9 @@ def tensorproxy(name: Optional[str], t: torch.Tensor) -> TensorProxy:
     # See Note [DistributedDataParallel and ddp_type]
     ddp_type = getattr(t, "ddp_type", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-    return TensorProxy(name, shape=tuple(t.shape), device=device, dtype=dtype, requires_grad=t.requires_grad, ddp_type=ddp_type)
+    return TensorProxy(
+        name, shape=tuple(t.shape), device=device, dtype=dtype, requires_grad=t.requires_grad, ddp_type=ddp_type
+    )
 
 
 # Convers from a torch device, or a string representing such a device, to a Thunder device
@@ -182,7 +184,14 @@ def method_lookup(name: str) -> Optional[Symbol]:
 #   above
 # NOTE Functions that set is_method=True must be able to accept a tensor as their first positional input
 class torchsymbol:
-    def __init__(self, *torchfns, is_method: bool = False, id: Optional[str] = None, is_prim: bool = False, tags: None | list[Any] = None):
+    def __init__(
+        self,
+        *torchfns,
+        is_method: bool = False,
+        id: Optional[str] = None,
+        is_prim: bool = False,
+        tags: None | list[Any] = None,
+    ):
         self.torchfns = torchfns
         self.is_method = is_method
         self.id = id
@@ -664,7 +673,7 @@ def polygamma(n: int, a: TensorLike) -> TensorLike:
 
     sign = 1 if (n % 2) == 1 else -1
     # Compute in log-space for numerical stability
-    factorial_mul_zeta = exp(lgamma(n + 1.) + log(zeta(n + 1., a)))
+    factorial_mul_zeta = exp(lgamma(n + 1.0) + log(zeta(n + 1.0, a)))
     return sign * factorial_mul_zeta
 
 
@@ -700,12 +709,15 @@ def zeta(a, b):
 # Elementwise Ternary operations
 #
 
+
 # For calculate op1(a, op2(value, op2(b, c))) by promoting all input tensors at once
 # NOTE use this explicit type promotion because a direct combination of add/mul will have a redundant cast,
 # which may lead to accuracy problems, see:
 # https://github.com/Lightning-AI/lightning-thunder/pull/1155#discussion_r1342653591 for details
 # TODO remove this when the optimization pass is ready: https://github.com/Lightning-AI/lightning-thunder/issues/1178
-def addcmul_addcdiv_helper(a, b, c, op1, op2, *, value=None, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
+def addcmul_addcdiv_helper(
+    a, b, c, op1, op2, *, value=None, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+):
     inputs = [a, b, c]
     computation_dtype, result_dtype = utils.elementwise_type_promotion(*inputs, type_promotion_kind=type_promotion_kind)
     a, b, c = map(partial(clang.maybe_convert_to_dtype, dtype=computation_dtype), inputs)
@@ -994,7 +1006,10 @@ def flatten(a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
 
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, dim: int = 0) -> tuple[TensorLike, ...]:
-    utils.check(len(a.size()) > 0,lambda: f"Dimension specified as={dim} but tensor has no dimensions.",)
+    utils.check(
+        len(a.size()) > 0,
+        lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
+    )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
 
 
@@ -2208,10 +2223,8 @@ def outer(a, b):
 
 
 def _input_check_scaled_dot_product_efficient_attention(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: Optional[TensorLike]):
+    query: TensorLike, key: TensorLike, value: TensorLike, attn_mask: Optional[TensorLike]
+):
     # Restrict input tensors to 4 dimension
     utils.check(
         query.ndim == 4,
@@ -2254,13 +2267,16 @@ def _input_check_scaled_dot_product_efficient_attention(
         inputs.append(attn_mask)
 
     # NOTE aten::scaled_dot_product_efficient_attention does not support broadcastable batch size.
-    utils.check(all(a.shape[0] == inputs[0].shape[0] for a in inputs),
-            lambda: "grad_forward_sdpa: Expected all inputs to have same batch_size.")
+    utils.check(
+        all(a.shape[0] == inputs[0].shape[0] for a in inputs),
+        lambda: "grad_forward_sdpa: Expected all inputs to have same batch_size.",
+    )
 
     # Check for the same number of heads
-    utils.check(all(a.shape[1] == inputs[0].shape[1] for a in inputs),
-            lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads.")
-
+    utils.check(
+        all(a.shape[1] == inputs[0].shape[1] for a in inputs),
+        lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads.",
+    )
 
 
 # This helper function maps to aten::_scaled_dot_product_efficient_attention function.
@@ -2423,15 +2439,12 @@ def log_softmax_backward(g: TensorProxy, output: TensorProxy, dim: int, dtype):
 
 # This helper function implements the aten nll_loss_forward, which returns the primal and total_weight tensors.
 # The total_weight tensor is used in the backward pass.
-def _nll_loss_helper(a: TensorProxy,
-                     target: TensorProxy,
-                     weight: Optional[TensorProxy],
-                     ignore_index: int,
-                     reduction: str) -> Tuple[TensorProxy, None | TensorLike]:
-
+def _nll_loss_helper(
+    a: TensorProxy, target: TensorProxy, weight: Optional[TensorProxy], ignore_index: int, reduction: str
+) -> tuple[TensorProxy, None | TensorLike]:
     utils.check(
         reduction in ("none", "sum", "mean"),
-        lambda: f"Expected reduction string to be \"none\", \"sum\", or \"mean\", but it is {reduction}.",
+        lambda: f'Expected reduction string to be "none", "sum", or "mean", but it is {reduction}.',
         exception_type=ValueError,
     )
 
@@ -2445,11 +2458,11 @@ def _nll_loss_helper(a: TensorProxy,
         if reduction == "none":
             # Keep target shape if it is non-trivial
             result_shape = target.shape if target.shape != (0,) else []
-            return full(result_shape, fill_value:=0.0, device=a.device, dtype=a.dtype), None
+            return full(result_shape, fill_value := 0.0, device=a.device, dtype=a.dtype), None
         elif reduction == "sum":
-            return full(result_shape:=[], fill_value:=0.0, device=a.device, dtype=a.dtype), None
+            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype), None
         elif reduction == "mean":
-            return full(result_shape:=[], fill_value:=float("nan"), device=a.device, dtype=a.dtype), None
+            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype), None
 
     utils.check(
         utils.is_integer_dtype(target.dtype),
@@ -2472,7 +2485,7 @@ def _nll_loss_helper(a: TensorProxy,
     num_channels = a.shape[channels_dim]
     # target should match input in dims which do not correspond to the channels dim, i.e.
     # (input.shape[:channels_dim] + input.shape[channels_dim + 1:]) == target.shape <=> True
-    expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1:]
+    expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1 :]
 
     utils.check(
         expected_target_shape == target.shape,
@@ -2519,7 +2532,7 @@ def _nll_loss_helper(a: TensorProxy,
     bcast_target = unsqueeze(target, channels_dim)
 
     out = take_along_dim(out, bcast_target, channels_dim)
-    selected_target_mask = (bcast_target != ignore_index)
+    selected_target_mask = bcast_target != ignore_index
     out = where(selected_target_mask, out, 0)
 
     # This section handles applying the reduction parameter to the output.
@@ -2550,11 +2563,13 @@ def _nll_loss_helper(a: TensorProxy,
 # Aten nll_loss_forward returns primal and total_weight tensors. The total_weight tensor is used in the backwards pass.
 # PyTorch nll_loss only returns primal, so a helper function is used in the augmented forward function.
 @torchsymbol(torch.nn.functional.nll_loss)
-def nll_loss(a: TensorProxy,
-        target: TensorProxy,
-        weight: Optional[TensorProxy] = None,
-        ignore_index: int = None,
-        reduction: str = "mean") -> TensorProxy:
+def nll_loss(
+    a: TensorProxy,
+    target: TensorProxy,
+    weight: Optional[TensorProxy] = None,
+    ignore_index: int = None,
+    reduction: str = "mean",
+) -> TensorProxy:
     # Resolve ignore_index if it is not specified by user.
     if ignore_index is None:
         ignore_index = -1

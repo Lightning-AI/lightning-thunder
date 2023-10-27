@@ -396,7 +396,9 @@ def _prettyprint_stats(
         accelerator_wait_time_us: str = ns_to_us(accelerator_wait_time_ns)
 
         before_trace_time_percentage: str = f"{round(before_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-        accelerator_wait_time_percentage: str = f"{round(accelerator_wait_time_ns / median_benchmark_stat.total_time * 100)}%"
+        accelerator_wait_time_percentage: str = (
+            f"{round(accelerator_wait_time_ns / median_benchmark_stat.total_time * 100)}%"
+        )
 
         extension = f"""\
             The median benchmark took {before_trace_time_us} to get into the tracing logic, {before_trace_time_percentage} of the total time.

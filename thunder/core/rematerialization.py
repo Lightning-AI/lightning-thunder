@@ -173,9 +173,7 @@ def find_filtered_producer_consumer_pairs(
     filter_func = filter_func or (lambda x: True)
     proxy_to_consumers = utils.consumers(trace)
     producer_consumer_pairs = set()
-    order_in_trace = {
-        bsym: i for i, bsym in enumerate(filter(filter_func, trace.bound_symbols))
-    }
+    order_in_trace = {bsym: i for i, bsym in enumerate(filter(filter_func, trace.bound_symbols))}
 
     # We are looking for special producer-consumer pairs among the filtered symbols
     for producer in filter(filter_func, trace.bound_symbols):
@@ -234,9 +232,7 @@ def find_cut(
     # This is needed to avoid rematerializing random or reduction primitives.
     tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP}
     required_producer_vars += tuple(
-        chain.from_iterable(
-            (y for y in x._flat_outs) for x in producer.subsymbols if has_tags(x, tags)
-        )
+        chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
 
     # Required consumer variables. These are the variables that are required to
@@ -266,10 +262,7 @@ def find_cut(
     capacities = []
 
     def add_edge(src, dst, capacity):
-        edges.append((
-            name_to_id.setdefault(src, len(name_to_id)),
-            name_to_id.setdefault(dst, len(name_to_id))
-        ))
+        edges.append((name_to_id.setdefault(src, len(name_to_id)), name_to_id.setdefault(dst, len(name_to_id))))
         capacities.append(capacity)
 
     utils.check(
@@ -398,6 +391,7 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             rematerialized traces.
     """
     import copy
+
     start_time_ns = time.time_ns()
 
     rematerialized_trace = from_trace(trace)
@@ -422,13 +416,13 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         current_producer = new_bsyms.get(producer, None) or producer
         current_consumer = new_bsyms.get(consumer, None) or consumer
         # Determine which producer's outputs cannot be rematerialized
-        external_producer_outputs = find_external_producer_outputs(rematerialized_trace, current_producer, current_consumer)
+        external_producer_outputs = find_external_producer_outputs(
+            rematerialized_trace, current_producer, current_consumer
+        )
         # Find the minimal cut between the producer and the consumer
         cut = find_cut(external_producer_outputs, current_producer, current_consumer)
         if cut:
-            updated_producer = apply_rematerialization_for_producer(
-                external_producer_outputs, current_producer, cut
-            )
+            updated_producer = apply_rematerialization_for_producer(external_producer_outputs, current_producer, cut)
             updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
             # As we replace bound symbols of the input trace with updated ones every iteration,
             # we should keep track of the map of `current` to `updated` as well as `producer`/`consumer`

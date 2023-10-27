@@ -105,15 +105,15 @@ def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False
     def _can_execute(executor, bsym: BoundSymbol) -> bool:
         if executor.can_execute(bsym):
             return True
-        
+
         if len(bsym.subsymbols) == 0:
             return False
-        
+
         for sbsym in bsym.subsymbols:
             can_executor_subsymbol = _can_execute(executor, sbsym)
             if not can_executor_subsymbol:
                 return False
-            
+
         return True
 
     # TODO Refactor this to be an nvFuser executor function
@@ -141,7 +141,7 @@ def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False
 
 def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
     start_time_ns = time.time_ns()
-    
+
     flattenedtrace = from_trace(trace)
     flattened: list[BoundSymbol] = []
 
@@ -329,12 +329,14 @@ def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     new_trace_output = tree_map(map_redundant, trace.output)
     cse_trace.output = new_trace_output
 
-
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    cse_trace.set_provenance(TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)"))
+    cse_trace.set_provenance(
+        TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
+    )
     return cse_trace, [cse_trace]
+
 
 # Constructs execution regions that are as large as possible for each executor.
 #   Uses a greedy top-down toposort to associated nodes with common executors.
@@ -472,7 +474,7 @@ def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 # TODO This could be extended to non-float conversions, like complex -> complex conversions
 def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     start_time_ns = time.time_ns()
-    
+
     rrctrace = from_trace(trace)
 
     # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)

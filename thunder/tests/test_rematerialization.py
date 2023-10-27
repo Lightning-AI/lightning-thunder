@@ -232,9 +232,9 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
 
     def func(t0):
         t1 = prims.exp(t0)
-        t2 = prims.add(t0, t0) # one filtered producer
-        t3 = prims.add(t2, t0) # first filtered consumer
-        t4 = prims.add(t2, t1) # second filtered consumer
+        t2 = prims.add(t0, t0)  # one filtered producer
+        t3 = prims.add(t2, t0)  # first filtered consumer
+        t4 = prims.add(t2, t1)  # second filtered consumer
         return t3, t4
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)

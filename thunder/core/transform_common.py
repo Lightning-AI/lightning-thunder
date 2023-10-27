@@ -14,6 +14,7 @@ from thunder.core.utils import ProxyDict, producers
 #
 # NOTE This avoids transforms depending on passes, since passes depend on transforms
 
+
 # NOTE Runs a Dead Code Elimination (DCE) pass
 #   Technically this could be a "transform", because it is semantic-preserving.
 # TODO We could look at reconciling the ideas of what a trace produces and the return prim
@@ -73,7 +74,7 @@ def dce(trace: Trace) -> tuple[Trace, list[Trace]]:
 
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
-    
+
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000

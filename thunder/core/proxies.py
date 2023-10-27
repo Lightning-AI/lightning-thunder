@@ -646,6 +646,7 @@ class FutureTensorProxy(Proxy):
 
     def wait(self) -> TensorProxy:
         from thunder.distributed.prims import wait
+
         return wait(self)
 
 
