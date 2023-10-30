@@ -548,20 +548,13 @@ def make_transform_prim(
 
 @lru_cache(maxsize=None)
 def symbol_to_eval(bound_symbol):
-    """Map a symbol to a function that evaluates it.
+    """Map a BoundSymbol to a function that evaluates it.
 
     Args:
-        symbol: symbol to map
+        bound_symbol: BoundSymbol to map
     """
-    symbol = bound_symbol.sym
-    if isinstance(symbol.id, prims.PrimIDs):
-        prim_func = getattr(prims, symbol.name, None)
-        if prim_func is not None:
-            return prim_func
-
-    # meta_func = prims.ops_to_meta_functions_map[symbol.op]
-    # return prims.eval_meta_and_record_symbol_fn(meta_func, symbol.op, symbol.name)
-    return symbol.__call__
+    # Symbol is callable
+    return bound_symbol.sym
 
 
 # TODO: Currently we use trace.args and trace.kwargs to get the arguments
@@ -916,7 +909,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
     vmap_impl = vmap_impls.get(symbol.sym.id)
     if vmap_impl is None:
         if len(symbol.subsymbols) > 0:
-            vmap_impl = partial(decomposed_fn_vmap_rule, fn=symbol.sym.__call__)
+            vmap_impl = partial(decomposed_fn_vmap_rule, fn=symbol.sym)
         else:
             raise NotImplementedError(f"vmap for {symbol.sym.id} is not implemented")
 
@@ -2839,7 +2832,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
         if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
-            vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.sym.__call__)
+            vjp_impl = partial(decomposed_fn_aug_fwd_rule, decomposed_fn=symbol.sym)
         else:
             # We could not find a VJP for this symbol and we could not decompose it
             # It could be a torch.dropout with 0.0 probability, so we skip it
@@ -2974,7 +2967,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         if backward is None:
             if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
                 # We could not find a backward for this symbol, so we try to decompose it
-                backward = partial(decomposed_fn_backward_rule, symbol.sym.__call__)
+                backward = partial(decomposed_fn_backward_rule, symbol.sym)
             else:
                 # We could not find a backward for this symbol and we could not decompose it
                 raise NotImplementedError(f"Backward for {symbol.sym.id} is not implemented")
@@ -3401,8 +3394,8 @@ def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dty
     """
     autocast_impl: Optional[Callable] = autocast_impls.get(bound_symbol.sym.id)
     if autocast_impl is None and bound_symbol.subsymbols:
-        return partial(decomposed_fn_autocast_rule, fn=bound_symbol.sym.__call__, dtype=dtype)
-    return bound_symbol.sym.__call__ if autocast_impl is None else partial(autocast_impl, dtype=dtype)
+        return partial(decomposed_fn_autocast_rule, fn=bound_symbol.sym, dtype=dtype)
+    return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)
 
 
 def autocast(func: Callable, dtype: dtypes.dtype):
