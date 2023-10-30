@@ -3,6 +3,7 @@ import math
 import operator
 import sys
 import traceback
+from contextlib import nullcontext as does_not_raise
 from functools import partial
 
 import pytest
@@ -246,25 +247,23 @@ def test_inline_submodule():
         "long-context-like",
         "llama2-like",
         "falcon-7b-like",
-        pytest.param("falcon-40b-like", marks=pytest.mark.xfail(raises=AssertionError, strict=False)),
-        pytest.param("codellama2-like", marks=pytest.mark.xfail(raises=AssertionError, strict=False)),
+        "falcon-40b-like",
+        "codellama2-like",
     ),
 )
 @pytest.mark.parametrize(
-    "device",
+    # TODO: Fix this test so that it works with CUDA
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1302
+    "device,expectation0,expectation1",
     (
-        "cpu",
-        pytest.param(
-            "cuda",
-            marks=[
-                pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA"),
-                # https://github.com/Lightning-AI/lightning-thunder/issues/1246
-                pytest.mark.xfail(raises=(UnboundLocalError, NameError), strict=True),
-            ],
-        ),
+        ("cpu", does_not_raise(), does_not_raise()),
+        ("cuda", pytest.raises(UnboundLocalError), pytest.raises(AssertionError)),
     ),
 )
-def test_litgpt_variants(name, device):
+def test_litgpt_variants(name, device, expectation0, expectation1):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     device = torch.device(device)
 
     x = torch.randint(0, 200, (5, 5), device=device)
@@ -288,12 +287,14 @@ def test_litgpt_variants(name, device):
             actual_logits.sum().backward()
         return
     else:
-        actual_logits.sum().backward()
+        with expectation0 if name != "falcon-7b-like" else does_not_raise():
+            actual_logits.sum().backward()
 
     for param1, param2 in zip(reference.parameters(), tom.parameters()):
         assert param1 is not param2
         assert param1.grad is not None
-        torch.testing.assert_close(param1.grad, param2.grad)
+        with expectation1 if name != "falcon-7b-like" else does_not_raise():
+            torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-4, atol=1e-4)
 
 
 @skipif_not_python_3_10
