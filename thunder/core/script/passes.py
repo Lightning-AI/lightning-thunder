@@ -4,7 +4,8 @@ import inspect
 import opcode
 import sys
 import types
-from typing import Any, Callable, Dict, Hashable, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple, Union
+from collections.abc import Hashable
 from contextvars import ContextVar
 
 import networkx as nx

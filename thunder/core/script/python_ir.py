@@ -3,7 +3,8 @@ import dis
 import inspect
 import sys
 import types
-from typing import Any, Dict, Hashable, List, Optional, Tuple, Union, Callable
+from typing import Any, Dict, List, Optional, Tuple, Union, Callable
+from collections.abc import Hashable
 
 from thunder.core.script.graph import (
     _generate_raises,
