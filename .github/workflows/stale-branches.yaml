@@ -1,0 +1,40 @@
+name: Delete abandoned branches
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/stale-branches.yaml"
+  # Run daily at midnight
+  schedule:
+    - cron: "0 0 * * *"
+  # Allow workflow to be manually run from the GitHub UI
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup-old-branches:
+    runs-on: ubuntu-latest
+    name: Satisfy my repo CDO
+    env:
+      DRY_RUN: no
+    steps:
+      - name: Set dry run
+        if: ${{ github.event_name == 'pull_request' }}
+        run: echo "DRY_RUN=yes" >> $GITHUB_ENV
+      - name: Delete those pesky dead branches
+        uses: phpdocker-io/github-actions-delete-abandoned-branches@v1
+        id: delete_stuff
+        with:
+          github_token: ${{ github.token }}
+          last_commit_age_days: 90
+          ignore_branches: main
+          # Disable dry run and actually get stuff deleted
+          # For a PR, always perform dry run
+          dry_run: ${{ env.DRY_RUN }}
+
+      - name: Get output
+        run: "echo 'Deleted branches: ${{ steps.delete_stuff.outputs.deleted_branches }}'"
