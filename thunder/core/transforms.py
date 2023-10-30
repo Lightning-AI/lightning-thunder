@@ -633,47 +633,6 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
     return tree_map(read, trace.output)
 
 
-def lower_to_prims_mapper(symbol: prims.Symbol):
-    """For a given symbol, returns its prim decomposition.
-
-    Args:
-        symbol (prims.Symbol): The symbol to lower.
-
-    Returns:
-        Callable: The prim that implements the symbol
-    """
-
-    # If the symbol is a core primitive, then we don't need to do anything
-    prim_func = getattr(prims, symbol.name, None)
-    if prim_func is not None:
-        return prim_func
-
-    # SLICE primitive doesn't use `symbol.name` to avoid collisions with
-    # Python's `slice``, so we need to explicitly map the symbol to its prim
-    # function which is called `slice_prim`
-    if symbol.sym.id == prims.PrimIDs.SLICE:
-        return prims.slice_prim
-
-    # All other symbols are treated as composite functions
-    # We decompose them into primitives
-    decomposed_fn = symbol.__call__
-    return lower_to_prims(decomposed_fn)
-
-
-def lower_to_prims(func):
-    """Converts PyTorch functions to core Thunder primitives.
-
-    Args:
-        func (Callable): A Thunder function to be transformed.
-    """
-
-    def wrapper(*args, **kwargs):
-        trace = construct_trace()(func, *args, **kwargs)
-        return eval_trace(trace, *args, **kwargs, symbol_mapper=lower_to_prims_mapper)
-
-    return wrapper
-
-
 def _identity_call_metafunc(*args, trace: Trace, **kwargs):
     with detached_trace():
         return eval_trace(trace, *args, **kwargs)
