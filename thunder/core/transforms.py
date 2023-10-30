@@ -601,11 +601,6 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
     safe_map_flat(write, list(trace.args), list(args))
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
-    # Duplicates are allowed for jvp_call symbols
-    # Because the transformed trace is empty in this case and it's no-op
-    allow_duplicates_list = (Transforms.JvpOp, Transforms.VjpOp, "torch.contiguous", "torch.Tensor.contiguous")
-    write_with_duplicates = partial(write, allow_duplicates=True)
-
     for symbol in trace.bound_symbols:
         if symbol.sym.id in transform_skip_list:
             continue
@@ -615,9 +610,6 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
-        if symbol.sym.id in allow_duplicates_list:
-            safe_map_flat(write_with_duplicates, list(sequencify(symbol.output)), list(sequencify(result)))
-            continue
         safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
 
     if with_env:
