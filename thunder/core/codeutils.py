@@ -387,7 +387,11 @@ def get_siginfo(fn: Callable, args, kwargs) -> SigInfo:
     #   objects created with functools.partial
     # TODO Is there a better way to extract the name here?
 
-    name = fn_.__name__
+    match fn_:
+        case functools.partial():
+            name = fn_.func.__name__
+        case _:
+            name = fn_.__name__
 
     si = SigInfo(name)
 
