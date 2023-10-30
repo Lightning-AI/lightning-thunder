@@ -521,31 +521,6 @@ class Transforms(Enum):
     VjpOp = auto()
 
 
-# TODO: We are hitting a problem here that langctx might be set to None
-# inside make_prim. This is because we are calling make_prim for transform call definition.
-# We need to figure out a way to fix this.
-# For now we are setting langctx to default langctx
-# See https://github.com/Lightning-AI/lightning-thunder/issues/436
-def make_transform_prim(
-    id,
-    name,
-    *,
-    meta,
-):
-    def wrapper_fixing_langctx(fn):
-        @wraps(fn)
-        def wrapper(*args, **kwargs):
-            token = set_langctx(get_langctx() or get_default_langctx())
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                reset_langctx(token)
-
-        return wrapper
-
-    return prims.make_prim(id, name, meta=wrapper_fixing_langctx(meta))
-
-
 @lru_cache(maxsize=None)
 def symbol_to_eval(bound_symbol):
     """Map a BoundSymbol to a function that evaluates it.
@@ -623,7 +598,7 @@ def _identity_call_metafunc(*args, trace: Trace, **kwargs):
         return eval_trace(trace, *args, **kwargs)
 
 
-identity_call = make_transform_prim(Transforms.IdentityOp, "identity_call", meta=_identity_call_metafunc)
+identity_call = Symbol(id=Transforms.IdentityOp, name="identity_call", meta=_identity_call_metafunc)
 
 
 def identity(func):
@@ -658,42 +633,6 @@ def _identity_call_pytorch(*args, trace: Trace, **kwargs):
 
 # Register the identity call for PyTorch executor.
 # ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
-
-
-# Inline transform
-# ----------------
-# The inline transform is a special case of the identity transform.
-# It is used to inline the transformation of a function in the trace without
-# removing separate transform primitives from the trace.
-inline_transforms_map: dict[prims.Symbol, Callable] = dict()
-
-
-def inline_symbol_mapper(bound_symbol):
-    if bound_symbol.sym.id in inline_transforms_map:
-        return inline_transforms_map[bound_symbol.sym.id]
-
-    return symbol_to_eval(bound_symbol)
-
-
-def _identity_call_inline(*args, trace: Trace, **kwargs):
-    return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
-
-
-inline_transforms_map[Transforms.IdentityOp] = _identity_call_inline
-
-
-def inline(func):
-    """Inline transform for a Thunder function.
-
-    Args:
-        func (Callable): A Thunder function to be transformed.
-    """
-
-    def wrapper(*args, **kwargs):
-        trace = construct_trace()(func, *args, **kwargs)
-        return eval_trace(trace, *args, **kwargs, symbol_mapper=inline_symbol_mapper)
-
-    return wrapper
 
 
 # VMAP transform
@@ -850,7 +789,7 @@ def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
     unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
     trace = construct_trace()(fn, *unbatched_args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
-    outs = _vmap_call_metafunc(False, args, in_dims, 0, axis_size, trace=trace, **kwargs)
+    outs = _vmap_call_metafunc(False, args, in_dims, 0, axis_size, function_trace=trace, **kwargs)
     if isinstance(outs, Sequence):
         out_dims = (0,) * len(outs)
         return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
@@ -928,7 +867,7 @@ def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0) -> TensorProxy:
 
 # TODO: in JAX args, in_dims are flattened the same way
 # TODO: in JAX out_dims are flattened as well
-def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, trace: Trace, **kwargs):
+def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, function_trace: Trace, **kwargs):
     """Metafunction for vmap call.
 
     Args:
@@ -936,7 +875,7 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, trac
         args (Tuple[Proxy]): Arguments to the function.
         in_dims (Tuple[int]): Batch dimension for each argument.
         out_dims (Tuple[int]): Batch dimension for return values.
-        trace (Trace): Trace to use for the function.
+        function_trace (Trace): Trace to use for the function.
         kwargs: Keyword arguments.
 
     Raises:
@@ -960,7 +899,7 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, trac
         # We propagate the BatchValue through the trace, and then unwrap it at the end
         batched_args = safe_map(pair_to_batched_value, safe_zip(args, in_dims))
         result = eval_trace(
-            trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size), **kwargs
+            function_trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size), **kwargs
         )
         # Unwrapping the BatchedValue's
         if isinstance(result, Sequence):
@@ -983,8 +922,7 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, trac
         return out
 
 
-vmap_call = make_transform_prim(Transforms.VmapOp, "vmap_call", meta=partial(_vmap_call_metafunc, True))
-inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, False)
+vmap_call = Symbol(id=Transforms.VmapOp, name="vmap_call", meta=partial(_vmap_call_metafunc, False))
 
 
 # TODO: how should we handle out_dims here?
@@ -995,7 +933,7 @@ inline_transforms_map[Transforms.VmapOp] = partial(_vmap_call_metafunc, False)
 def _identity_call_vmap(axis_size, *batched_args, trace: Trace, **kwargs):
     args, in_dims = unzip2(batched_args)
     out_dims = 0  # Fixme
-    outs, out_dims = _vmap_call_metafunc(False, args, in_dims, out_dims, axis_size, trace=trace, **kwargs)
+    outs, out_dims = _vmap_call_metafunc(False, args, in_dims, out_dims, axis_size, function_trace=trace, **kwargs)
     if isinstance(outs, Sequence):
         return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
     return BatchedValue(outs, out_dims)
@@ -1004,11 +942,11 @@ def _identity_call_vmap(axis_size, *batched_args, trace: Trace, **kwargs):
 vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
 
 
-def _jvp_call_vmap(axis_size, batched_primals, batched_tangents, trace: Trace, **kwargs):
+def _jvp_call_vmap(axis_size, batched_primals, batched_tangents, *, function_trace: Trace, **kwargs):
     primals, primals_bdims = safe_zip(*batched_primals)
     tangents, tangents_bdims = safe_zip(*batched_tangents)
-    jvp_func = inline(partial(jvp_call, trace=trace))
-    vmapped_jvp_func = inline(vmap(jvp_func, in_dims=(primals_bdims, tangents_bdims), axis_size=axis_size))
+    jvp_func = partial(_jvp_call_metafunc, False, function_trace=function_trace)
+    vmapped_jvp_func = vmap(jvp_func, in_dims=(primals_bdims, tangents_bdims), axis_size=axis_size)
     result = vmapped_jvp_func(primals, tangents, **kwargs)
     return tree_map(lambda x: BatchedValue(x, 0), result)
 
@@ -1049,7 +987,7 @@ def vmap(func, in_dims=0, out_dims=0, axis_size=None):
             assert len(in_dims_flat) == len(args_flat), "in_dims must have the same length as args, kwargs"
         unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
         trace = construct_trace()(func_flat, *unbatched_args_flat)
-        outs = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, trace=trace)
+        outs = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, function_trace=trace)
         return outs
 
     return wrapper
@@ -1070,7 +1008,7 @@ def vmap(func, in_dims=0, out_dims=0, axis_size=None):
 #     # TODO: fix this - not all args may be batched
 #     # TODO: here we assume batch axis is 0
 #     vmap_trace = make_trace(
-#         inline(vmap(func, in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), executor=executor,
+#         vmap(func, in_dims=in_dims, out_dims=out_dims, axis_size=axis_size), executor=executor,
 #         *args)
 #     vmap_traced = make_traced(partial(eval_trace, vmap_trace), executor=executor)
 #     return vmap_traced(*args)
@@ -1225,14 +1163,14 @@ def jvp_symbol_mapper(symbol: prims.Symbol):
     return _jvp_impl
 
 
-def _jvp_call_metafunc(detached: bool, primals, tangents, trace: Trace, **kwargs):
+def _jvp_call_metafunc(detached: bool, primals, tangents, *, function_trace: Trace, **kwargs):
     """Metafunction for the JVP transform.
 
     Args:
         detached (bool): Whether to detach the trace.
         primals (Tuple[Proxy]): Primal values.
         tangents (Tuple[Proxy]): Tangent values.
-        trace (Trace): Trace of the function to be transformed.
+        function_trace (Trace): Trace of the function to be transformed.
         kwargs: Keyword arguments.
 
     Raises:
@@ -1249,7 +1187,7 @@ def _jvp_call_metafunc(detached: bool, primals, tangents, trace: Trace, **kwargs
         # the code more readable
         # We propagate the JVPDuals through the trace, and then unwrap them at the end
         primals_tangents_duals = safe_map(pair_to_jvp_dual, safe_zip(primals, tangents))
-        result = eval_trace(trace, *primals_tangents_duals, symbol_mapper=jvp_symbol_mapper)
+        result = eval_trace(function_trace, *primals_tangents_duals, symbol_mapper=jvp_symbol_mapper)
         # Unwrapping the JVPDuals
         if isinstance(result, Sequence):
             assert all(isinstance(x, JVPDual) for x in result)
@@ -1259,8 +1197,7 @@ def _jvp_call_metafunc(detached: bool, primals, tangents, trace: Trace, **kwargs
         return result.primal, result.tangent
 
 
-jvp_call = make_transform_prim(Transforms.JvpOp, "jvp_call", meta=partial(_jvp_call_metafunc, True))
-inline_transforms_map[Transforms.JvpOp] = partial(_jvp_call_metafunc, False)
+jvp_call = Symbol(id=Transforms.JvpOp, name="jvp_call", meta=partial(_jvp_call_metafunc, False))
 
 
 def _identity_call_jvp(*args: JVPDual, trace: Trace, **kwargs):
@@ -1279,10 +1216,10 @@ def _vmap_call_jvp(args: JVPDual, in_dims, out_dims, axis_size, trace: Trace, **
     in_dims, _ = safe_zip(*in_dims)
     out_dims, _ = safe_zip(*out_dims)
     vmapped_trace = construct_trace()(
-        inline(vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size)), *primals
+        vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size), *primals
     )
     vmapped_func = partial(eval_trace, vmapped_trace)
-    out_primals, out_tangents = inline(jvp(vmapped_func))(primals, tangents, **kwargs)
+    out_primals, out_tangents = jvp(vmapped_func)(primals, tangents, **kwargs)
     if isinstance(out_primals, Sequence):
         return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
     return JVPDual(out_primals, out_tangents)
@@ -1304,7 +1241,7 @@ def jvp(func):
 
     def wrapper(primals, tangents):
         trace = construct_trace()(func, *primals)
-        return jvp_call(primals, tangents, trace=trace)
+        return jvp_call(primals, tangents, function_trace=trace)
 
     return wrapper
 
@@ -3050,9 +2987,9 @@ def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwarg
         )
         return result, backward_pass(env, trace, cotangents)
 
-
-vjp_call = make_transform_prim(Transforms.VjpOp, "vjp_call", meta=partial(vjp_call_metafunc, True))
-inline_transforms_map[Transforms.VjpOp] = partial(vjp_call_metafunc, False)
+# TODO: Can't use a Symbol here because mixed executor sybsymbols seem to be
+# unsupported. See https://github.com/Lightning-AI/lightning-thunder/issues/1308
+vjp_call = partial(vjp_call_metafunc, False) # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
 
 
 def vjp(func):

@@ -16,7 +16,7 @@ import thunder.core.devices as devices
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map, tree_flatten
-from thunder.core.transforms import jvp, vjp, inline
+from thunder.core.transforms import jvp, vjp
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
 from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
@@ -227,7 +227,7 @@ def check_jvp(f, *primals, executor, atol=None, rtol=None):
         AssertionError: If the Jacobian-vector product is not correct.
     """
     tangents = tree_map(make_tensor_like, primals)
-    actual_p, actual_t = executor.make_callable(inline(jvp(f)))(primals, tangents)
+    actual_p, actual_t = executor.make_callable(jvp(f))(primals, tangents)
     expected_p, expected_t = numerical_jvp(executor.make_callable(f))(primals, tangents)
     torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
     torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
@@ -306,7 +306,7 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    _, J_star_v = executor.make_callable(inline(vjp(f)), disable_torch_autograd_support=True)(primals, v)
+    _, J_star_v = executor.make_callable(vjp(f), disable_torch_autograd_support=True)(primals, v)
 
     if not multiple_results:
         v = (v,)
@@ -455,7 +455,7 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         actual_out, (gindices, gweight) = executor.make_callable(
-            inline(vjp(filtered_op)), disable_torch_autograd_support=True
+            vjp(filtered_op), disable_torch_autograd_support=True
         )(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
@@ -484,7 +484,7 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, actual_grad = executor.make_callable(inline(vjp(filtered_op)), disable_torch_autograd_support=True)(
+        actual_out, actual_grad = executor.make_callable(vjp(filtered_op), disable_torch_autograd_support=True)(
             filtered_args, (v,)
         )
         comp(actual_out, expect_out)
@@ -505,7 +505,7 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         actual_out, (grad_lhs, grad_rhs) = executor.make_callable(
-            inline(vjp(flat_op)), disable_torch_autograd_support=True
+            vjp(flat_op), disable_torch_autograd_support=True
         )(flat_args, (v,))
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
@@ -526,7 +526,7 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, grad_out = executor.make_callable(inline(vjp(flat_op)), disable_torch_autograd_support=True)(
+        actual_out, grad_out = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
             flat_args, (v,)
         )
 
@@ -582,11 +582,10 @@ def test_requires_grad(executor, device, dtype):
 )
 def test_convert_element_type_with_float(executor, device, _):
     # Verifies a fix for https://github.com/Lightning-AI/lightning-thunder/issues/537
-    from thunder.core.transforms import inline, value_and_grad
+    from thunder.core.transforms import value_and_grad
 
     a = make_tensor([5], dtype=torch.float32, device=device)
 
-    @inline
     @value_and_grad
     def fn(t0):
         return t0 / 2
@@ -601,7 +600,7 @@ def test_convert_element_type_with_float(executor, device, _):
 )
 def test_multiple_output_vjp(executor, device, _):
     from thunder.core.prims import cos, make_prim, sin
-    from thunder.core.transforms import inline, register_augmented_forward, register_backward, vjp
+    from thunder.core.transforms import register_augmented_forward, register_backward, vjp
 
     def sincos_meta(x):
         return sin(x), cos(x)
@@ -642,7 +641,7 @@ def test_multiple_output_vjp(executor, device, _):
     # a string of code with something like "out1, out2 = <lambda>(input)"
     # ops_to_torch_ops_map["sincos"] = lambda x: (torch.sin(x), torch.cos(x))
     # Therefore here we'll just check that the trace is correct
-    trace = thunder.trace()(inline(vjp(func)), (x,), (v, v))
+    trace = thunder.trace()(vjp(func), (x,), (v, v))
     # Length of outputs should be two
     assert len(trace.output) == 2
     # Length of the first output should be two
@@ -845,14 +844,14 @@ def test_forward_and_backward_from_trace(executor, device, _):
     from thunder import trace
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, inline, value_and_grad
+    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
 
     def func(a, b, *, c):
         d = a + b + c
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
-    expected_vjp_func = executor.make_callable(inline(value_and_grad(func)))
+    expected_vjp_func = executor.make_callable(value_and_grad(func))
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -877,7 +876,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor, device
     from thunder import trace
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, inline, value_and_grad
+    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
     from thunder.executors import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
 
@@ -886,7 +885,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor, device
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
-    expected_vjp_func = executor.make_callable(inline(value_and_grad(func)))
+    expected_vjp_func = executor.make_callable(value_and_grad(func))
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -962,10 +961,9 @@ def test_torch_autograd_optional_args(executor, device, _):
 )
 def test_backward_none_propagation(executor, device, _):
     import thunder.torch as ltorch
-    from thunder.core.transforms import inline, vjp
+    from thunder.core.transforms import vjp
 
     @executor.make_callable
-    @inline
     @vjp
     def func(a):
         return ltorch.split(a, 1)

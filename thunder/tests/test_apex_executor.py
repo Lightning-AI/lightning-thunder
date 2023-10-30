@@ -110,7 +110,7 @@ def test_apex_cross_entropy_backward(device, dtype):
         pytest.skip("Apex cross entropy is not available")
 
     try:
-        from thunder.core.transforms import inline, value_and_grad
+        from thunder.core.transforms import value_and_grad
         from thunder.executors import TORCH
 
         register_apex_entropyex()
@@ -126,7 +126,6 @@ def test_apex_cross_entropy_backward(device, dtype):
 
         for ignore_index in ignore_indices:
 
-            @inline
             @value_and_grad
             def test(logits, labels):
                 return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)

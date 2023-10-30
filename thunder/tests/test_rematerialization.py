@@ -15,13 +15,12 @@ from thunder.core.rematerialization import (
     find_filtered_producer_consumer_pairs,
     find_nvfuser_producer_consumer_pairs,
 )
-from thunder.core.transforms import inline, value_and_grad
+from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
 from thunder.tests.make_tensor import make_tensor
 
 
-@inline
 @value_and_grad
 def func(t0):
     t1 = ttorch.exp(t0)
@@ -31,7 +30,6 @@ def func(t0):
     return t4
 
 
-@inline
 @value_and_grad
 def func_with_dropout(t0):
     t1 = ttorch.exp(t0)
@@ -174,7 +172,6 @@ def test_apply_rematerialization_consumer(executor, device, _):
 def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
     n_fusion_regions = 7
 
-    @inline
     @value_and_grad
     def func(t0):
         for _ in range(n_fusion_regions):
@@ -340,7 +337,6 @@ def test_find_cut_one_producer_op_no_args(executor, device, _):
 def test_rematerialization(executor, device, _):
     n_fusion_regions = 7
 
-    @inline
     @value_and_grad
     def func(t0):
         for _ in range(n_fusion_regions):

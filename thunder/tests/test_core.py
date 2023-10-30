@@ -2043,57 +2043,19 @@ def test_transforms_identity(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
-    executors=[
-        TorchExecutor,
-    ],
-)
-def test_transforms_inline(executor, device, _):
-    # This test ensures that inline() can be called from within a traced
-    # function removing (inlining) all identity() transforms.
-    # Also tests that inline() can be nested.
-    # Also tests that inline() can be used with "torch" executor.
-    from thunder.core.transforms import identity, inline, Transforms
-
-    def func(a, b):
-        return clang.mul(clang.add(a, b), 1)
-
-    nested_id_func = identity(identity(identity(func)))
-
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
-
-    inlined_nested_id_trace = thunder.trace()(inline(nested_id_func), a, b)
-    assert len(inlined_nested_id_trace.bound_symbols) == 5
-    assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in inlined_nested_id_trace.bound_symbols)
-    assert inlined_nested_id_trace.bound_symbols[-3].sym.name == "add"
-    assert inlined_nested_id_trace.bound_symbols[-2].sym.name == "mul"
-
-    transforms = (inline, identity, inline, inline, identity, identity, inline)
-    for transform in transforms:
-        transformed_func = transform(func)
-
-    # Since the outer-most transform is inline, the trace should not contain
-    # any identity transforms.
-    transformed_trace = thunder.trace()(transformed_func, a, b)
-    assert len(transformed_trace.bound_symbols) == 5
-    assert not any(symbol.sym.id == Transforms.IdentityOp for symbol in transformed_trace.bound_symbols)
-
-
-@instantiate(
-    dtypes=NOTHING,
     executors=(
         TorchExecutor,
         # TODO: nvFuser executor does not support full(shape=()) yet
     ),
 )
 def test_transforms_vmap_axis_size(executor, device, _):
-    from thunder.core.transforms import inline, vmap
+    from thunder.core.transforms import vmap
 
-    actual = executor.make_callable(inline(vmap(lambda: 2, axis_size=4)))()
+    actual = executor.make_callable(vmap(lambda: 2, axis_size=4))()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = executor.make_callable(inline(vmap(lambda x: x, axis_size=4)))(2)
+    actual = executor.make_callable(vmap(lambda x: x, axis_size=4))(2)
     assert_close(actual, expected)
 
 
@@ -2138,7 +2100,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
     dtypes=NOTHING,
 )
 def test_transforms_vjp_1_2(executor, device, _):
-    from thunder.core.transforms import inline, vjp
+    from thunder.core.transforms import vjp
 
     # 1 input, 2 outputs
     def func_1_2(x):
@@ -2152,7 +2114,7 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = executor.make_callable(inline(vjp(func_1_2)))
+    vjp_eager = executor.make_callable(vjp(func_1_2))
 
     primals = (a,)
     cotangents = (g1, g2)
@@ -2181,7 +2143,7 @@ def test_transforms_vjp_1_2(executor, device, _):
 def test_transforms_vjp_2_2_kwarg(executor, device, _):
     # This test ensures that combination of positional and keyword arguments
     # is differentiable.
-    from thunder.core.transforms import inline, vjp
+    from thunder.core.transforms import vjp
 
     # 2 inputs, 1 kwarg, 2 outputs
     def func_2_2(x, y, *, z):
@@ -2203,7 +2165,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = executor.make_callable(inline(vjp(func_2_2)))
+    vjp_eager = executor.make_callable(vjp(func_2_2))
 
     primals = (x, y)
     primal_kwargs = {"z": z}
@@ -2244,7 +2206,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     dtypes=NOTHING,
 )
 def test_transforms_vjp_2_1(executor, device, _):
-    from thunder.core.transforms import inline, vjp
+    from thunder.core.transforms import vjp
 
     def pt_func_2_1(x, y):
         a = torch.sin(x + y)
@@ -2258,7 +2220,7 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = clang.asin(b)
         return c
 
-    vjp_eager = executor.make_callable(inline(vjp(func_2_1)))
+    vjp_eager = executor.make_callable(vjp(func_2_1))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
@@ -2290,7 +2252,7 @@ def test_transforms_vjp_2_1(executor, device, _):
 #     # For applications see
 #     # https://jax.readthedocs.io/en/latest/jax-101/04-advanced-autodiff.html#per-example-gradients
 #     # https://pytorch.org/functorch/stable/notebooks/per_sample_grads.html
-#     from thunder.core.transforms import inline, value_and_grad, vmap
+#     from thunder.core.transforms import value_and_grad, vmap
 #     from thunder.core import prims
 
 #     def func(x):
@@ -2298,12 +2260,12 @@ def test_transforms_vjp_2_1(executor, device, _):
 #         a = prims.sum(a, ())
 #         return prims.sum(a, tuple(range(a.ndim)))
 
-#     vjp_func = executor.make_callable(inline(value_and_grad(func)))
+#     vjp_func = executor.make_callable(value_and_grad(func))
 #     a = make_tensor((2, 3), device=device, dtype=torch.float32)
 #     single_out, (single_grad,) = vjp_func(a)
 
 #     aaa = torch.stack([a, a, a])
-#     vmap_inline_vjp = executor.make_callable(inline(vmap(inline(value_and_grad(func)))))
+#     vmap_inline_vjp = executor.make_callable(vmap(value_and_grad(func)))
 #     batched_out, (batched_grad,) = vmap_inline_vjp(aaa)
 #     for i in range(3):
 #         assert_close(single_out, batched_out[i])
@@ -2356,7 +2318,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = executor.make_callable(inline(jvp(inline(vmap(func)))))(args, args)
+    out_p, out_t = executor.make_callable(jvp(vmap(func)))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -2367,7 +2329,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     dtypes=NOTHING,
 )
 def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-    from thunder.core.transforms import vmap, jvp, inline
+    from thunder.core.transforms import vmap, jvp
 
     def func(a, b):
         assert isinstance(a, proxies.TensorProxy)
@@ -2381,7 +2343,7 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = executor.make_callable(inline(vmap(inline(jvp(func)), out_dims=(0, 0))))(args, args)
+    out_p, out_t = executor.make_callable(vmap(jvp(func), out_dims=(0, 0)))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -2988,7 +2950,7 @@ def test_cse(executor, device, _):
 
 #     primals = (a, b)
 #     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(inline(identity(jvp(identity(func)))), executor=executor)(primals, tangents)
+#     out_p, out_t = thunder.make_traced(identity(jvp(identity(func))), executor=executor)(primals, tangents)
 #     expected_out_p = torch.sin(a) + b
 #     expected_out_t = torch.cos(a) + b
 #     assert_close(out_p, expected_out_p)
@@ -3055,7 +3017,7 @@ def test_cse(executor, device, _):
 
 #         primals = (a,)
 #         tangents = (a,)
-#         out_p, out_t = thunder.make_traced(inline(jvp(func)), executor=executor)(primals, tangents)
+#         out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
 
 #         expected_out_p = a * scalar
 #         expected_out_t = a * scalar
