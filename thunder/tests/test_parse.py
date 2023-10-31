@@ -1,17 +1,11 @@
 import copy
-import difflib
 import dis
-import io
-import inspect
 import itertools
 import re
 import sys
 import textwrap
-import types
-from typing import Callable, List, Optional
-from collections.abc import Iterator
 
-import thunder.core.script.frontend as frontend
+from thunder.core.script import parse
 import thunder.core.script.protograph as protograph
 from thunder.core.script.protograph_passes import apply_protograph_passes
 import thunder.core.script.python_ir_data as python_ir_data
@@ -20,67 +14,48 @@ from thunder.core.utils import enable_debug_asserts
 import pytest
 
 enable_debug_asserts()
-
-PARSE_SPECIFICATION = list[
-    tuple[list[tuple[str, str]], list[tuple[int, bool]]]  # (opname, argrepr)  # (target_index, is_jump)
-]
-
-# Block index (optional), opname, inputs, outputs
-FLOW_SPECIFICATION_ENTRY = tuple[Optional[int], str, tuple[tuple[str, ...], ...], tuple[str, ...]]
-FLOW_SPECIFICATION = tuple[FLOW_SPECIFICATION_ENTRY, ...]
-
 TEST_CASES = []
-DONT_CHECK_FLOW = "DONT_CHECK_FLOW"
 
 
-def add_parse_test(parse_spec: Optional[str] = None, flow_spec: Optional[str] = None):
+def add_parse_test(spec: str | None = None):
     def wrapper(f):
-        TEST_CASES.append((f, parse_spec, flow_spec))
+        TEST_CASES.append((f, spec))
         return f
 
     return wrapper
 
 
 @add_parse_test(
-    """
-    LOAD_FAST                0 (x)                    ║    LOAD_FAST                   x
-    LOAD_CONST               1 (1)                    ║    LOAD_CONST                  1
-    BINARY_ADD                                        ║    BINARY_ADD
-    RETURN_VALUE                                      ║    RETURN_VALUE
-""",
     r"""
-    BINARY_ADD:      (x, 1) -> out
-    RETURN_VALUE:    (out) ->
-""",
+Block 0:  [] => []
+  LOAD[x, 1: CONST]
+  BINARY_ADD . . . . . .  (x, 1) -> v0
+  RETURN_VALUE . . . . .  (v0) ->
+"""
 )
 def simple_fn(x):
     return x + 1
 
 
 @add_parse_test(
-    """
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
-        POP_JUMP_IF_FALSE        6 (to 12)            ║    POP_JUMP_IF_FALSE
-        LOAD_FAST                0 (x)                ║        -> 1(False)
-        LOAD_CONST               1 (2)                ║        -> 2(True)
-        INPLACE_ADD                                   ║
-        STORE_FAST               0 (x)                ║    LOAD_FAST                   x
-                                                      ║    LOAD_CONST                  2
->>   12 LOAD_FAST                0 (x)                ║    INPLACE_ADD
-        LOAD_CONST               2 (1)                ║    STORE_FAST                  x
-        BINARY_ADD                                    ║    JUMP_ABSOLUTE
-        RETURN_VALUE                                  ║        -> 2(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   x
-                                                      ║    LOAD_CONST                  1
-                                                      ║    BINARY_ADD
-                                                      ║    RETURN_VALUE
-""",
     r"""
-    1)  INPLACE_ADD:     (x, 2) -> x_1
-    2)  BINARY_ADD:      (U[x_1, x], 1) -> out
-    2)  RETURN_VALUE:    (out) ->
-""",
+Block 0:  [] => []
+  LOAD[x]
+  POP_JUMP_IF_FALSE . . . (x) ->
+      -> 1, 2(Jump)
+
+Block 1:  [] => []
+  LOAD[x, 2: CONST]
+  INPLACE_ADD . . . . . . (x, 2) -> v0
+  STORE[x]
+  JUMP_ABSOLUTE*
+      -> 2(Jump)
+
+Block 2:  [] => []
+  LOAD[x, 1: CONST]
+  BINARY_ADD . . . . . .  (x, 1) -> v0
+  RETURN_VALUE . . . . .  (v0) ->             
+"""
 )
 def simple_if_fn(x):
     if x:
@@ -89,59 +64,52 @@ def simple_if_fn(x):
 
 
 @add_parse_test(
-    """
-        LOAD_FAST                1 (mask)             ║    LOAD_FAST                   mask
-        LOAD_METHOD              0 (any)              ║    LOAD_METHOD                 any
-        CALL_METHOD              0                    ║    CALL_METHOD
-        STORE_FAST               4 (has_mask)         ║    STORE_FAST                  has_mask
-        LOAD_FAST                2 (layer_0)          ║    LOAD_FAST                   layer_0
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
-        LOAD_FAST                4 (has_mask)         ║    LOAD_FAST                   has_mask
-        POP_JUMP_IF_FALSE       10 (to 20)            ║    POP_JUMP_IF_FALSE
-        LOAD_FAST                1 (mask)             ║        -> 1(False)
-        JUMP_FORWARD             1 (to 22)            ║        -> 2(True)
-                                                      ║
->>   20 LOAD_CONST               0 (None)             ║    LOAD_FAST                   mask
-                                                      ║    JUMP_FORWARD
->>   22 CALL_FUNCTION            2                    ║        -> 3(True)
-        STORE_FAST               0 (x)                ║
-        LOAD_FAST                3 (layer_1)          ║    LOAD_CONST                  None
-        LOAD_FAST                0 (x)                ║    JUMP_ABSOLUTE
-        LOAD_FAST                4 (has_mask)         ║        -> 3(True)
-        POP_JUMP_IF_FALSE       22 (to 44)            ║
-        LOAD_FAST                1 (mask)             ║    CALL_FUNCTION
-        CALL_FUNCTION            2                    ║    STORE_FAST                  x
-        STORE_FAST               0 (x)                ║    LOAD_FAST                   layer_1
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
-        RETURN_VALUE                                  ║    LOAD_FAST                   has_mask
-                                                      ║    POP_JUMP_IF_FALSE
->>   44 LOAD_CONST               0 (None)             ║        -> 4(False)
-        CALL_FUNCTION            2                    ║        -> 5(True)
-        STORE_FAST               0 (x)                ║
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   mask
-        RETURN_VALUE                                  ║    CALL_FUNCTION
-                                                      ║    STORE_FAST                  x
-                                                      ║    LOAD_FAST                   x
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 6(True)
-                                                      ║
-                                                      ║    LOAD_CONST                  None
-                                                      ║    CALL_FUNCTION
-                                                      ║    STORE_FAST                  x
-                                                      ║    LOAD_FAST                   x
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 6(True)
-                                                      ║
-                                                      ║    RETURN_VALUE
-""",
     r"""
-    0)  LOAD_METHOD:     (mask) -> any
-    0)  CALL_METHOD:     (any, mask) -> has_mask
-    3)  CALL_FUNCTION:   (layer_0, x, U[mask, None]) -> x_1
-    4)  CALL_FUNCTION:   (layer_1, x_1, mask) -> x_2_mask
-    5)  CALL_FUNCTION:   (layer_1, x_1, None) -> x_2_no_mask
-    6)  RETURN_VALUE:    (U[x_2_mask, x_2_no_mask]) ->
-""",
+Block 0:  [] => [layer_0, x]
+  LOAD[mask]
+  LOAD_METHOD . . . . . . . . . . . . . . . .  (mask) -> v0, v1
+  CALL_METHOD . . . . . . . . . . . . . . . .  (v0, v1) -> v2
+  STORE[has_mask]
+  LOAD[layer_0, x, has_mask]
+  POP_JUMP_IF_FALSE . . . . . . . . . . . . .  (v2) ->
+      -> 1, 2(Jump)
+
+Block 1:  [⓵ , ⓶ ] => [⓵ , ⓶ , mask]
+  LOAD[mask]
+  JUMP_FORWARD
+      -> 3(Jump)
+
+Block 2:  [⓵ , ⓶ ] => [⓵ , ⓶ , None]
+  LOAD[None: CONST]
+  JUMP_ABSOLUTE*
+      -> 3(Jump)
+
+Block 3:  [⓵ , ⓶ , ⓷ ] => [layer_1, v0]
+  CALL_FUNCTION . . . . . . . . . . . . . . .  (⓵ , ⓶ , ⓷ ) -> v0
+  STORE[x]
+  LOAD[layer_1, x, has_mask]
+  POP_JUMP_IF_FALSE . . . . . . . . . . . . .  (has_mask) ->
+      -> 4, 5(Jump)
+
+Block 4:  [⓵ , ⓶ ] => [v0]
+  LOAD[mask]
+  CALL_FUNCTION . . . . . . . . . . . . . . .  (⓵ , ⓶ , mask) -> v0
+  STORE[x]
+  LOAD[x]
+  JUMP_ABSOLUTE*
+      -> 6(Jump)
+
+Block 5:  [⓵ , ⓶ ] => [v0]
+  LOAD[None: CONST]
+  CALL_FUNCTION . . . . . . . . . . . . . . .  (⓵ , ⓶ , None) -> v0
+  STORE[x]
+  LOAD[x]
+  JUMP_ABSOLUTE*
+      -> 6(Jump)
+
+Block 6:  [⓵ ] => []
+  RETURN_VALUE* . . . . . . . . . . . . . . .  (⓵ ) ->
+"""
 )
 def cse_candidate(x, mask, layer_0, layer_1):
     has_mask = mask.any()
@@ -151,42 +119,36 @@ def cse_candidate(x, mask, layer_0, layer_1):
 
 
 @add_parse_test(
-    """
-        LOAD_GLOBAL              0 (range)            ║    LOAD_GLOBAL                 range
-        LOAD_CONST               1 (4)                ║    LOAD_CONST                  4
-        CALL_FUNCTION            1                    ║    CALL_FUNCTION
-        GET_ITER                                      ║    GET_ITER
-                                                      ║    JUMP_ABSOLUTE
->>    8 FOR_ITER                 6 (to 22)            ║        -> 1(True)
-        STORE_FAST               2 (_)                ║
-        LOAD_FAST                0 (x)                ║    FOR_ITER
-        LOAD_FAST                1 (y)                ║        -> 2(False)
-        INPLACE_ADD                                   ║        -> 4(True)
-        STORE_FAST               0 (x)                ║
-        JUMP_ABSOLUTE            4 (to 8)             ║    FOR_ITER__NoJumpEpilogue
-                                                      ║        -> 3(False)
->>   22 LOAD_FAST                0 (x)                ║
-        RETURN_VALUE                                  ║    STORE_FAST                  _
-                                                      ║    LOAD_FAST                   x
-                                                      ║    LOAD_FAST                   y
-                                                      ║    INPLACE_ADD
-                                                      ║    STORE_FAST                  x
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 1(True)
-                                                      ║
-                                                      ║    FOR_ITER__JumpEpilogue
-                                                      ║        -> 5(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   x
-                                                      ║    RETURN_VALUE
-""",
     r"""
-    0)  CALL_FUNCTION:              (range, 4) -> range_generator
-    0)  GET_ITER:                   (range_generator) -> range_iter
-    2)  FOR_ITER__NoJumpEpilogue:   (range_iter) -> _
-    3)  INPLACE_ADD:                (U[x_1, x], y) -> x_1
-    5)  RETURN_VALUE:               (U[x_1, x]) ->
-""",
+Block 0:  [] => [v1]
+  LOAD[range: GLOBAL, 4: CONST]
+  CALL_FUNCTION . . . . . . . . . .  (range, 4) -> v0
+  GET_ITER . . . . . . . . . . . . . (v0) -> v1
+  JUMP_ABSOLUTE*
+      -> 1(Jump)
+
+Block 1:  [⓵ ] => [v0, v1]
+  FOR_ITER . . . . . . . . . . . . . (⓵ ) -> v0, v1
+      -> 2, 4(Jump)
+
+Block 2:  [⓵ , ⓶ ] => [⓵ ]
+  STORE[_]
+  LOAD[x, y]
+  INPLACE_ADD . . . . . . . . . . .  (x, y) -> v0
+  STORE[x]
+  JUMP_ABSOLUTE
+      -> 1(Jump)
+
+Block 3:  [] => []
+  LOAD[x]
+  RETURN_VALUE . . . . . . . . . . . (x) ->
+
+Block 4:  [⓵ , ⓶ ] => []
+  POP_TOP* . . . . . . . . . . . . . (⓶ ) ->
+  POP_TOP* . . . . . . . . . . . . . (⓵ ) ->
+  JUMP_ABSOLUTE*
+      -> 3(Jump)
+"""
 )
 def simple_loop_fn(x, y):
     # NOTE:
@@ -199,53 +161,49 @@ def simple_loop_fn(x, y):
 
 
 @add_parse_test(
-    """
-        LOAD_GLOBAL              0 (range)            ║    LOAD_GLOBAL                 range
-        LOAD_CONST               1 (10)               ║    LOAD_CONST                  10
-        CALL_FUNCTION            1                    ║    CALL_FUNCTION
-        GET_ITER                                      ║    GET_ITER
-                                                      ║    JUMP_ABSOLUTE
->>    8 FOR_ITER                 9 (to 28)            ║        -> 1(True)
-        STORE_FAST               1 (i)                ║
-        LOAD_FAST                1 (i)                ║    FOR_ITER
-        LOAD_FAST                0 (x)                ║        -> 2(False)
-        COMPARE_OP               4 (>)                ║        -> 5(True)
-        POP_JUMP_IF_FALSE       13 (to 26)            ║
-        POP_TOP                                       ║    FOR_ITER__NoJumpEpilogue
-        LOAD_FAST                1 (i)                ║        -> 3(False)
-        RETURN_VALUE                                  ║
-                                                      ║    STORE_FAST                  i
->>   26 JUMP_ABSOLUTE            4 (to 8)             ║    LOAD_FAST                   i
-                                                      ║    LOAD_FAST                   x
->>   28 LOAD_FAST                1 (i)                ║    COMPARE_OP                  >
-        RETURN_VALUE                                  ║    POP_JUMP_IF_FALSE
-                                                      ║        -> 4(False)
-                                                      ║        -> 6(True)
-                                                      ║
-                                                      ║    POP_TOP
-                                                      ║    LOAD_FAST                   i
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 8(True)
-                                                      ║
-                                                      ║    FOR_ITER__JumpEpilogue
-                                                      ║        -> 7(True)
-                                                      ║
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 1(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   i
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 8(True)
-                                                      ║
-                                                      ║    RETURN_VALUE
-""",
     r"""
-    0)  CALL_FUNCTION:              (range, 10) -> range_generator
-    0)  GET_ITER:                   (range_generator) -> range_iter
-    2)  FOR_ITER__NoJumpEpilogue:   (range_iter) -> i
-    3)  COMPARE_OP:                 (i, x) -> cmp
-    8)  RETURN_VALUE:               (U[MISSING, i]) ->
-""",
+Block 0:  [] => [v1]
+  LOAD[range: GLOBAL, 10: CONST]
+  CALL_FUNCTION . . . . . . . . . . . (range, 10) -> v0
+  GET_ITER . . . . . . . . . . . . .  (v0) -> v1
+  JUMP_ABSOLUTE*
+      -> 1(Jump)
+
+Block 1:  [⓵ ] => [v0, v1]
+  FOR_ITER . . . . . . . . . . . . .  (⓵ ) -> v0, v1
+      -> 2, 7(Jump)
+
+Block 2:  [⓵ , ⓶ ] => [⓵ ]
+  STORE[i]
+  LOAD[i, x]
+  COMPARE_OP . . . . . . . . . . . .  (⓶ , x) -> v0
+  POP_JUMP_IF_FALSE . . . . . . . . . (v0) ->
+      -> 3, 4(Jump)
+
+Block 3:  [⓵ ] => [i]
+  POP_TOP . . . . . . . . . . . . . . (⓵ ) ->
+  LOAD[i]
+  JUMP_ABSOLUTE*
+      -> 6(Jump)
+
+Block 4:  [⓵ ] => [⓵ ]
+  JUMP_ABSOLUTE
+      -> 1(Jump)
+
+Block 5:  [] => [i]
+  LOAD[i]
+  JUMP_ABSOLUTE*
+      -> 6(Jump)
+
+Block 6:  [⓵ ] => []
+  RETURN_VALUE* . . . . . . . . . . . (⓵ ) ->
+
+Block 7:  [⓵ , ⓶ ] => []
+  POP_TOP* . . . . . . . . . . . . .  (⓶ ) ->
+  POP_TOP* . . . . . . . . . . . . .  (⓵ ) ->
+  JUMP_ABSOLUTE*
+      -> 5(Jump)
+"""
 )
 def loop_with_break(x):
     for i in range(10):
@@ -255,65 +213,57 @@ def loop_with_break(x):
 
 
 @add_parse_test(
-    """
-        LOAD_FAST                1 (k)                ║    LOAD_FAST                   k
-        GET_ITER                                      ║    GET_ITER
-                                                      ║    JUMP_ABSOLUTE               2
->>    4 FOR_ITER                17 (to 40)            ║        -> 1(True)
-        STORE_FAST               2 (_)                ║
-        LOAD_FAST                0 (x)                ║    FOR_ITER
-        LOAD_CONST               1 (1)                ║        -> 2(False)
-        INPLACE_ADD                                   ║        -> 5(True)
-        STORE_FAST               0 (x)                ║
-        LOAD_GLOBAL              0 (done_fn)          ║    FOR_ITER__NoJumpEpilogue
-        LOAD_FAST                1 (k)                ║        -> 3(False)
-        CALL_FUNCTION            1                    ║
-        POP_JUMP_IF_FALSE       19 (to 38)            ║    STORE_FAST                  _
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
-        LOAD_CONST               2 (2)                ║    LOAD_CONST                  1
-        INPLACE_MULTIPLY                              ║    INPLACE_ADD
-        STORE_FAST               0 (x)                ║    STORE_FAST                  x
-        POP_TOP                                       ║    LOAD_GLOBAL                 done_fn
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   k
-        RETURN_VALUE                                  ║    CALL_FUNCTION
-                                                      ║    POP_JUMP_IF_FALSE
->>   38 JUMP_ABSOLUTE            2 (to 4)             ║        -> 4(False)
-                                                      ║        -> 6(True)
->>   40 LOAD_FAST                0 (x)                ║
-        LOAD_CONST               1 (1)                ║    LOAD_FAST                   x
-        INPLACE_SUBTRACT                              ║    LOAD_CONST                  2
-        STORE_FAST               0 (x)                ║    INPLACE_MULTIPLY
-        LOAD_FAST                0 (x)                ║    STORE_FAST                  x
-        RETURN_VALUE                                  ║    POP_TOP
-                                                      ║    LOAD_FAST                   x
-                                                      ║    JUMP_ABSOLUTE               27
-                                                      ║        -> 8(True)
-                                                      ║
-                                                      ║    FOR_ITER__JumpEpilogue
-                                                      ║        -> 7(True)
-                                                      ║
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 1(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   x
-                                                      ║    LOAD_CONST                  1
-                                                      ║    INPLACE_SUBTRACT
-                                                      ║    STORE_FAST                  x
-                                                      ║    LOAD_FAST                   x
-                                                      ║    JUMP_ABSOLUTE
-                                                      ║        -> 8(True)
-                                                      ║
-                                                      ║    RETURN_VALUE
-""",
     r"""
-    0)  GET_ITER:                   (k) -> k_iter
-    2)  FOR_ITER__NoJumpEpilogue:   (k_iter) -> _
-    3)  INPLACE_ADD:                (U[x, x_1], 1) -> x_1
-    3)  CALL_FUNCTION:              (done_fn, k) -> break_cnd
-    4)  INPLACE_MULTIPLY:           (x_1, 2) -> x_break_path
-    7)  INPLACE_SUBTRACT:           (U[x, x_1], 1) -> x_normal_path
-    8)  RETURN_VALUE:               (U[x_break_path, x_normal_path]) ->
-""",
+Block 0:  [] => [v0]
+  LOAD[k]
+  GET_ITER . . . . . . . . . . .  (k) -> v0
+  JUMP_ABSOLUTE*
+      -> 1(Jump)
+
+Block 1:  [⓵ ] => [v0, v1]
+  FOR_ITER . . . . . . . . . . .  (⓵ ) -> v0, v1
+      -> 2, 7(Jump)
+
+Block 2:  [⓵ , ⓶ ] => [⓵ ]
+  STORE[_]
+  LOAD[x, 1: CONST]
+  INPLACE_ADD . . . . . . . . . . (x, 1) -> v0
+  STORE[x]
+  LOAD[done_fn: GLOBAL, k]
+  CALL_FUNCTION . . . . . . . . . (done_fn, k) -> v1
+  POP_JUMP_IF_FALSE . . . . . . . (v1) ->
+      -> 3, 4(Jump)
+
+Block 3:  [⓵ ] => [v0]
+  LOAD[x, 2: CONST]
+  INPLACE_MULTIPLY . . . . . . .  (x, 2) -> v0
+  STORE[x]
+  POP_TOP . . . . . . . . . . . . (⓵ ) ->
+  LOAD[x]
+  JUMP_ABSOLUTE*
+      -> 6(Jump)
+
+Block 4:  [⓵ ] => [⓵ ]
+  JUMP_ABSOLUTE
+      -> 1(Jump)
+
+Block 5:  [] => [v0]
+  LOAD[x, 1: CONST]
+  INPLACE_SUBTRACT . . . . . . .  (x, 1) -> v0
+  STORE[x]
+  LOAD[x]
+  JUMP_ABSOLUTE*
+      -> 6(Jump)
+
+Block 6:  [⓵ ] => []
+  RETURN_VALUE* . . . . . . . . . (⓵ ) ->
+
+Block 7:  [⓵ , ⓶ ] => []
+  POP_TOP* . . . . . . . . . . .  (⓶ ) ->
+  POP_TOP* . . . . . . . . . . .  (⓵ ) ->
+  JUMP_ABSOLUTE*
+      -> 5(Jump)
+"""
 )
 def loop_with_else(x, k):
     for _ in k:
@@ -338,22 +288,17 @@ def done_fn(_):
 
 
 @add_parse_test(
-    """
-        LOAD_FAST                0 (x)       ║
-        LOAD_CONST               1 (2)       ║
-        BUILD_TUPLE              2           ║
-        STORE_FAST               1 (t)       ║
-        LOAD_FAST                1 (t)       ║
-        UNPACK_SEQUENCE          2           ║
-        STORE_FAST               2 (a)       ║
-        STORE_FAST               3 (_)       ║
-        LOAD_FAST                2 (a)       ║
-        RETURN_VALUE                         ║
-        """,
-    """
-        0)  BUILD_TUPLE:     (x, 2) -> OUTPUT_0
-        0)  RETURN_VALUE:    (x) ->
-        """,
+    r"""
+Block 0:  [] => []
+  LOAD[x, 2: CONST]
+  BUILD_TUPLE . . . . . . (x, 2) -> v0
+  STORE[t]
+  LOAD[t]
+  UNPACK_SEQUENCE . . . . (v0) -> v1, v2
+  STORE[a, _]
+  LOAD[a]
+  RETURN_VALUE . . . . .  (v2) ->
+"""
 )
 def tuple_fold(x):
     t = (x, 2)
@@ -362,20 +307,17 @@ def tuple_fold(x):
 
 
 @add_parse_test(
-    """
-        LOAD_FAST                0 (x)       ║
-        LOAD_CONST               1 (2)       ║
-        BUILD_TUPLE              2           ║
-        STORE_FAST               1 (t)       ║
-        LOAD_FAST                1 (t)       ║
-        UNPACK_EX                1           ║
-        STORE_FAST               2 (a)       ║
-        STORE_FAST               3 (_)       ║
-        LOAD_FAST                2 (a)       ║
-        RETURN_VALUE                         ║
-        """,
-    # TODO(robieta, apaz-cli): Figure out UNPACK_EX indexing.
-    flow_spec=DONT_CHECK_FLOW,
+    r"""
+Block 0:  [] => []
+  LOAD[x, 2: CONST]
+  BUILD_TUPLE . . . . . . (x, 2) -> v0
+  STORE[t]
+  LOAD[t]
+  UNPACK_EX . . . . . . . (v0) -> v1, v2
+  STORE[a, _]
+  LOAD[a]
+  RETURN_VALUE . . . . .  (v2) ->
+"""
 )
 def tuple_fold_ex(x):
     t = (x, 2)
@@ -384,34 +326,22 @@ def tuple_fold_ex(x):
 
 
 @add_parse_test(
-    """
-        LOAD_CONST               1 ('aaa')      ║
-        LOAD_FAST                0 (x)          ║
-        LOAD_CONST               2 (1)          ║
-        BUILD_TUPLE              2              ║
-        LOAD_CONST               3 (2)          ║
-        BUILD_TUPLE              2              ║
-        BUILD_TUPLE              2              ║
-        STORE_FAST               1 (t)          ║
-        LOAD_FAST                1 (t)          ║
-        LOAD_CONST               2 (1)          ║
-        BINARY_SUBSCR                           ║
-        UNPACK_SEQUENCE          2              ║
-        UNPACK_SEQUENCE          2              ║
-        STORE_FAST               2 (y)          ║
-        STORE_FAST               3 (a)          ║
-        STORE_FAST               4 (b)          ║
-        LOAD_FAST                2 (y)          ║
-        RETURN_VALUE                            ║
-    """,
     r"""
-    BUILD_TUPLE:     (x, 1) -> innermost
-    BUILD_TUPLE:     (innermost, 2) -> intermediate
-    BUILD_TUPLE:     (aaa, intermediate) -> outermost
-    BINARY_SUBSCR:   (outermost, 1) -> intermediate
-    UNPACK_SEQUENCE: (intermediate) -> innermost
-    RETURN_VALUE:    (x) ->
-    """,
+Block 0:  [] => []
+  LOAD[aaa: CONST, x, 1: CONST]
+  BUILD_TUPLE . . . . . . . . . . .  (x, 1) -> v0
+  LOAD[2: CONST]
+  BUILD_TUPLE . . . . . . . . . . .  (v0, 2) -> v1
+  BUILD_TUPLE . . . . . . . . . . .  (aaa, v1) -> v2
+  STORE[t]
+  LOAD[t, 1: CONST]
+  BINARY_SUBSCR . . . . . . . . . .  (v2, 1) -> v3
+  UNPACK_SEQUENCE . . . . . . . . .  (v3) -> v4, v5
+  UNPACK_SEQUENCE . . . . . . . . .  (v5) -> v6, v7
+  STORE[y, a, b]
+  LOAD[y]
+  RETURN_VALUE . . . . . . . . . . . (v7) ->
+"""
 )
 def nested_tuple_fold(x):
     t = ("aaa", ((x, 1), 2))
@@ -420,56 +350,49 @@ def nested_tuple_fold(x):
 
 
 @add_parse_test(
-    """
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
-        POP_JUMP_IF_FALSE       17 (to 34)            ║    POP_JUMP_IF_FALSE
-                                                      ║        -> 1(False)
->>    4 LOAD_FAST                1 (inner)            ║        -> 7(True)
-        GET_ITER                                      ║
-                                                      ║    LOAD_FAST                   inner
->>    8 FOR_ITER                 6 (to 22)            ║    GET_ITER
-        STORE_FAST               2 (_)                ║    JUMP_ABSOLUTE
-        LOAD_FAST                0 (x)                ║        -> 2(True)
-        LOAD_CONST               1 (2)                ║
-        INPLACE_TRUE_DIVIDE                           ║    FOR_ITER
-        STORE_FAST               0 (x)                ║        -> 3(False)
-        JUMP_ABSOLUTE            4 (to 8)             ║        -> 5(True)
-                                                      ║
->>   22 LOAD_FAST                0 (x)                ║    FOR_ITER__NoJumpEpilogue
-        LOAD_CONST               2 (1)                ║        -> 4(False)
-        INPLACE_FLOOR_DIVIDE                          ║
-        STORE_FAST               0 (x)                ║    STORE_FAST                  _
-        LOAD_FAST                0 (x)                ║    LOAD_FAST                   x
-        POP_JUMP_IF_TRUE         2 (to 4)             ║    LOAD_CONST                  2
-                                                      ║    INPLACE_TRUE_DIVIDE
->>   34 LOAD_FAST                1 (inner)            ║    STORE_FAST                  x
-        LOAD_ATTR                0 (count)            ║    JUMP_ABSOLUTE               to 8
-        RETURN_VALUE                                  ║        -> 2(True)
-                                                      ║
-                                                      ║    FOR_ITER__JumpEpilogue
-                                                      ║        -> 6(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   x
-                                                      ║    LOAD_CONST                  1
-                                                      ║    INPLACE_FLOOR_DIVIDE
-                                                      ║    STORE_FAST                  x
-                                                      ║    LOAD_FAST                   x
-                                                      ║    POP_JUMP_IF_TRUE
-                                                      ║        -> 7(False)
-                                                      ║        -> 1(True)
-                                                      ║
-                                                      ║    LOAD_FAST                   inner
-                                                      ║    LOAD_ATTR                   count
-                                                      ║    RETURN_VALUE
-""",
     r"""
-    GET_ITER:                   (inner) -> inner_iter
-    FOR_ITER__NoJumpEpilogue:   (inner_iter) -> _
-    INPLACE_TRUE_DIVIDE:        (U[x_2, x_1, x], 2) -> x_1
-    INPLACE_FLOOR_DIVIDE:       (U[x_2, x_1, x], 1) -> x_2
-    LOAD_ATTR:                  (inner) -> inner_count
-    RETURN_VALUE:               (inner_count) ->
-""",
+Block 0:  [] => []
+  LOAD[x]
+  POP_JUMP_IF_FALSE . . . . . . . (x) ->
+      -> 1, 5(Jump)
+
+Block 1:  [] => [v0]
+  LOAD[inner]
+  GET_ITER . . . . . . . . . . .  (inner) -> v0
+  JUMP_ABSOLUTE*
+      -> 2(Jump)
+
+Block 2:  [⓵ ] => [v0, v1]
+  FOR_ITER . . . . . . . . . . .  (⓵ ) -> v0, v1
+      -> 3, 6(Jump)
+
+Block 3:  [⓵ , ⓶ ] => [⓵ ]
+  STORE[_]
+  LOAD[x, 2: CONST]
+  INPLACE_TRUE_DIVIDE . . . . . . (x, 2) -> v0
+  STORE[x]
+  JUMP_ABSOLUTE
+      -> 2(Jump)
+
+Block 4:  [] => []
+  LOAD[x, 1: CONST]
+  INPLACE_FLOOR_DIVIDE . . . . .  (x, 1) -> v0
+  STORE[x]
+  LOAD[x]
+  POP_JUMP_IF_TRUE . . . . . . .  (v0) ->
+      -> 5, 1(Jump)
+
+Block 5:  [] => []
+  LOAD[inner]
+  LOAD_ATTR . . . . . . . . . . . (inner) -> v0
+  RETURN_VALUE . . . . . . . . .  (v0) ->
+
+Block 6:  [⓵ , ⓶ ] => []
+  POP_TOP* . . . . . . . . . . .  (⓶ ) ->
+  POP_TOP* . . . . . . . . . . .  (⓵ ) ->
+  JUMP_ABSOLUTE*
+      -> 4(Jump)
+"""
 )
 def nested_loop_fn(x, inner):
     while x:
@@ -502,18 +425,14 @@ class TestClass:
 
 
 add_parse_test(
-    """
-    LOAD_FAST                0 (self)                     ║    LOAD_FAST                   self
-    LOAD_ATTR                0 (__name__)                 ║    LOAD_ATTR                   __name__
-    LOAD_FAST                1 (x)                        ║    LOAD_FAST                   x
-    BINARY_ADD                                            ║    BINARY_ADD
-    RETURN_VALUE                                          ║    RETURN_VALUE
-""",
     r"""
-    LOAD_ATTR:       (self) -> self_name
-    BINARY_ADD:      (self_name, x) -> result
-    RETURN_VALUE:    (result) ->
-""",
+Block 0:  [] => []
+  LOAD[self]
+  LOAD_ATTR . . . . . . . (self) -> v0
+  LOAD[x]
+  BINARY_ADD . . . . . .  (v0, x) -> v1
+  RETURN_VALUE . . . . .  (v1) ->
+"""
 )(TestClass().f)
 
 
@@ -523,43 +442,24 @@ class TestClassWithSuper(TestClass):
 
 
 add_parse_test(
-    """
-    LOAD_GLOBAL              0 (super)                    ║    LOAD_GLOBAL                 super
-    CALL_FUNCTION            0                            ║    CALL_FUNCTION
-    LOAD_METHOD              1 (f)                        ║    LOAD_METHOD                 f
-    LOAD_FAST                1 (x)                        ║    LOAD_FAST                   x
-    CALL_METHOD              1                            ║    CALL_METHOD
-    LOAD_CONST               1 (1)                        ║    LOAD_CONST                  1
-    BINARY_ADD                                            ║    BINARY_ADD
-    RETURN_VALUE                                          ║    RETURN_VALUE
-""",
     r"""
-    CALL_FUNCTION:   (super) -> super_self
-    LOAD_METHOD:     (super_self) -> f
-    CALL_METHOD:     (f, super_self, x) -> f_result
-    BINARY_ADD:      (f_result, 1) -> output
-    RETURN_VALUE:    (output) ->
-""",
+Block 0:  [] => []
+  LOAD[super: GLOBAL]
+  CALL_FUNCTION . . . . .  (super) -> v0
+  LOAD_METHOD . . . . . .  (v0) -> v1, v2
+  LOAD[x]
+  CALL_METHOD . . . . . .  (v1, v2, x) -> v3
+  LOAD[1: CONST]
+  BINARY_ADD . . . . . . . (v3, 1) -> v4
+  RETURN_VALUE . . . . . . (v4) ->
+"""
 )(TestClassWithSuper().f)
 
 
 def make_nonlocal_test():
     x: int
 
-    @add_parse_test(
-        """
-    LOAD_DEREF               0 (x)                        ║    LOAD_DEREF                  x
-    LOAD_CONST               1 (1)                        ║    LOAD_CONST                  1
-    ROT_TWO                                               ║    ROT_TWO
-    STORE_FAST               0 (y)                        ║    STORE_FAST                  y
-    STORE_DEREF              0 (x)                        ║    STORE_DEREF                 x
-    LOAD_FAST                0 (y)                        ║    LOAD_FAST                   y
-    RETURN_VALUE                                          ║    RETURN_VALUE
-    """,
-        r"""
-    RETURN_VALUE:    (x) ->
-    """,
-    )
+    @add_parse_test()
     def access_nonlocal():
         nonlocal x
         y, x = x, 1
@@ -588,261 +488,76 @@ def try_except_finally(f, log):
         f.close()
 
 
-def assert_parse_matches_spec(proto_graph: protograph.ProtoGraph, expected: PARSE_SPECIFICATION) -> None:
-    block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
-    assert len(tuple(proto_graph)) == len(block_to_index)
-    assert len(block_to_index) == len(expected)
-    for protoblock, (expected_instructions, expected_jumps) in zip(proto_graph, expected):
-        # It's tedious to include every arg in the spec (particularly since a
-        # lot of them are just indicies that distract from visual inspection),
-        # so we allow them to be omitted.
-        for i, (opname, argrepr) in zip(protoblock.raw_instructions, expected_instructions):
-            assert i.opname == opname
-            assert i.argrepr == argrepr or not argrepr
-        assert tuple((block_to_index[target], is_jump) for target, is_jump in protoblock.jump_targets) == tuple(
-            expected_jumps
-        )
-
-
-def suggest_parse_spec(proto_graph: protograph.ProtoGraph):
-    block_to_index = {protoblock: idx for idx, protoblock in enumerate(proto_graph)}
-
-    lines = []
-    for protoblock in proto_graph:
-        lines.extend(f"{i.opname:<27} {i.argrepr}" for i in protoblock.raw_instructions)
-        lines.extend(f"    -> {block_to_index[target]}({is_jump})" for target, is_jump in protoblock.jump_targets)
-        lines.append("")
-
-    assert not lines[-1]
-    return lines[:-1]
-
-
-def assert_flow_matches_spec(
-    observed_flow: FLOW_SPECIFICATION,
-    expected_flow: FLOW_SPECIFICATION,
-) -> None:
-    assert len(observed_flow) == len(expected_flow)
-
-    observed_outputs = tuple(itertools.chain(*(outputs for _, _, _, outputs in observed_flow)))
-    expected_outputs = tuple(itertools.chain(*(outputs for _, _, _, outputs in expected_flow)))
-    assert len(observed_outputs) == len(expected_outputs)
-    name_map = {observed: expected for observed, expected in zip(observed_outputs, expected_outputs)}
-
-    def to_str(block_idx, opname, inputs, outputs, name_map):
-        block_segment = f"{block_idx})  " if block_idx is not None else ""
-        inputs = tuple(tuple(name_map.get(i, i) for i in inputs_i) for inputs_i in inputs)
-        inputs_block = ", ".join(f"U[{', '.join(sorted(i))}]" if len(i) > 1 else i[0] for i in inputs)
-        outputs_block = ", ".join(name_map.get(i, i) for i in outputs)
-        return f"{block_segment}{opname}: ({inputs_block}) -> {outputs_block}"
-
-    for (observed_block_idx, *observed), (expected_block_idx, *expected) in zip(observed_flow, expected_flow):
-        # Allow block to be omitted.
-        observed_block_idx = observed_block_idx if expected_block_idx is not None else None
-        assert to_str(observed_block_idx, *observed, name_map) == to_str(expected_block_idx, *expected, {})
-
-
-def flow_spec_for_fn(fn: Callable) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
-    fn = fn.__func__ if isinstance(fn, types.MethodType) else fn
-    signature = inspect.signature(fn)
-
-    proto_graph = apply_protograph_passes(frontend.parse_bytecode(fn))
-
-    flat_node_flow = []
-    for block_idx, protoblock in enumerate(proto_graph):
-        for instruction, n in protoblock.node_flow:
-            new_outputs = [
-                o
-                for o in n.outputs
-                if isinstance(o, (protograph.IntermediateValue, protograph.CompositeValue)) and o not in n.inputs
-            ]
-            flat_node_flow.append((block_idx, instruction, n.inputs, new_outputs))
-
-    # Map function arguments to string names.
-    num_args = len(inspect.signature(fn).parameters)
-    arg_map = {
-        v: name
-        for (name, scope), v in proto_graph.root.begin_state
-        if scope == python_ir_data.VariableScope.LOCAL and name in signature.parameters
-    }
-    assert all(isinstance(v, frontend.ExternalRef) for v in arg_map)
-
-    # Check that values have a single producer and assign them placeholder names.
-    output_map = {}
-    for block_idx, instruction, inputs, outputs in flat_node_flow:
-        for output in outputs:
-            output_map.setdefault(output, f"OUTPUT_{len(output_map)}")
-
-    def value_to_key(v):
-        MISSING = object()
-        if (out := arg_map.get(v, MISSING)) is not MISSING:
-            return (out,)
-
-        elif (out := output_map.get(v, MISSING)) is not MISSING:
-            return (out,)
-
-        elif isinstance(v, frontend.AbstractPhiValue):
-            constituents = [value_to_key(vi) for vi in v.constituents]
-            assert all(len(i) == 1 for i in constituents)
-            return tuple(i[0] for i in constituents)
-
-        elif isinstance(v, frontend.ExternalRef):
-            if v.key.scope == python_ir_data.VariableScope.CONST:
-                return (str(v.key.identifier),)
-            elif v.key.scope == python_ir_data.VariableScope.LOCAL and v.key.identifier not in signature.parameters:
-                return ("MISSING",)
-            return (v.key.identifier,)
-
-        elif isinstance(v, frontend.ValueMissing):
-            return ("MISSING",)
-
-        else:
-            raise ValueError(f"Unknown value: {v}")
-
-    # Filter to instructions which produced a new value. (Or "RETURN_VALUE")
-    for block_idx, instruction, inputs, outputs in flat_node_flow:
-        if outputs or instruction.opname == "RETURN_VALUE":
-            yield (
-                block_idx,
-                instruction.opname,
-                tuple(value_to_key(i) for i in inputs),
-                tuple(output_map[output] for output in outputs),
-            )
-
-
 # =============================================================================
-# == String manipulation helpers ==============================================
-# =============================================================================
-def dis_str(fn: Callable) -> str:
-    dis.dis(fn, file=(file := io.StringIO()))
-    file.seek(0)
-    raw_lines = file.read().splitlines(keepends=False)
-    pattern = re.compile(r"(^\s*[0-9]*\s*).")
-    index = min(len(match.groups()[0]) for line in raw_lines if (match := pattern.search(line)))
-
-    # Remove line numbers and empty lines.
-    lines = [line[index:].rstrip() for line in raw_lines if line.strip()]
-
-    # Remove instruction numbers (except for jump targets) since all instructions
-    # are now the same size.
-    pattern = re.compile(r"^\s*(>>\s)?\s*([0-9]+)\s(.*)$")
-    new_lines = []
-    for line in lines:
-        match = pattern.search(line)
-        assert pattern
-        jump_target_prefix, instruction_number, remainder = match.groups()
-        if jump_target_prefix is None:
-            new_lines.append(f"{' ' * 8}{remainder}")
-        else:
-            new_lines.extend(("", f">> {instruction_number:>4} {remainder}"))
-
-    return "\n".join(new_lines)
-
-
-def split_column_blocks(s: str, split_sequence: str):
-    segments = tuple(l.split(split_sequence) for l in s.splitlines(keepends=False))
-    return tuple(
-        "\n".join(l.rstrip() for l in column_lines) for column_lines in itertools.zip_longest(*segments, fillvalue="")
-    )
-
-
-def extract_parse_spec(spec_str: str) -> tuple[str, PARSE_SPECIFICATION]:
-    spec_lines = spec_str.splitlines(keepends=False)
-    expected = [([], [])]
-    instruction_pattern = re.compile(r"^([a-zA-Z_]+)(.*)$")
-    jump_pattern = re.compile(r"^\s*-> ([0-9]+)\((True|False)\)\s*$")
-    for line in textwrap.dedent("\n".join(spec_lines)).strip().splitlines(keepends=False):
-        instructions, jumps = expected[-1]
-        if match := instruction_pattern.search(line):
-            opname, arg = match.groups()
-            instructions.append((opname, arg.strip()))
-        elif match := jump_pattern.search(line):
-            jump_index, is_jump = match.groups()
-            jump_index = int(jump_index)
-            is_jump = {"True": True, "False": False}[is_jump]
-            if not is_jump:
-                assert jump_index == len(expected), "Invalid spec: Fallthrough does not point to the next block"
-            jumps.append((jump_index, is_jump))
-        else:
-            assert not line.strip(), line
-            expected.append(([], []))
-
-    return expected
-
-
-def extract_flow_spec(spec_str: str) -> Iterator[FLOW_SPECIFICATION_ENTRY]:
-    line_pattern = re.compile(r"^([0-9]+\))?\s*([a-zA-Z_]+):\s+\((.*)\)\s+->\s+(.*)$")
-    for line in textwrap.dedent(spec_str).strip().splitlines(keepends=False):
-        if match := line_pattern.search(line.strip()):
-            block, opname, inputs, outputs = match.groups()
-        elif return_match := re.search(r"RETURN_VALUE:\s+\((.*)\).*$", line):
-            block, opname, inputs, outputs = (None, "RETURN_VALUE", return_match.groups()[0], "")
-        else:
-            raise ValueError(f"Unrecognized line: {line}")
-
-        remaining = inputs
-        parsed_inputs = []
-        while match := re.search(r"^([^\[^\]+]*)U\[([^\]]+)\](.*)$", remaining):
-            prefix, union, remaining = match.groups()
-            parsed_inputs.extend((i,) for i in prefix.split(", ") if i)
-            parsed_inputs.append(tuple(union.split(", ")))
-        parsed_inputs.extend((i,) for i in remaining.split(", ") if i)
-        outputs = tuple(i for i in outputs.split(", ") if i)
-
-        yield int(block[:-1]) if block else None, opname, tuple(parsed_inputs), outputs
-
-
-# =============================================================================
-# == Paramerized tests ========================================================
+# == Parametrized tests ========================================================
 # =============================================================================
 @pytest.mark.skipif(
     not python_ir_data.SUPPORTS_PREPROCESSING,
     reason=f"Python version {sys.version_info=} does not support preprocessing",
 )
 @pytest.mark.parametrize(
-    ("fn", "parse_spec", "flow_spec"),
+    ("fn", "spec"),
     TEST_CASES,
     ids=[
         f"test_parse_{fn.__self__.__class__.__name__ + '().' if hasattr(fn, '__self__') else ''}{fn.__name__}"
-        for fn, _, _ in TEST_CASES
+        for fn, _ in TEST_CASES
     ],
 )
-def test_parse(fn, parse_spec: Optional[str], flow_spec: Optional[str]):
-    fn_dis = textwrap.dedent(dis_str(fn)).rstrip()
-    if parse_spec is None:
-        dis_lines = fn_dis.splitlines(keepends=False)
-        parse_lines = suggest_parse_spec(frontend.parse_bytecode(fn))
-
-        print(f"\nProposed spec: {fn.__name__}\n{'-' * 80}")
-        for dis_line, parse_line in itertools.zip_longest(dis_lines, parse_lines, fillvalue=""):
-            print(f"{dis_line:<50}    ║    {parse_line}")
-
+def test_parse(fn, spec: str | None):
+    _, _, summary = parse.functionalize_blocks(fn.__code__)
+    if spec is None:
+        print(f"\n\n{summary}")
         pytest.skip("No parse spec provided.")
 
-    expected_dis, expected_blocks = split_column_blocks(parse_spec, "    ║")
-    expected_dis = textwrap.dedent(expected_dis).rstrip()
-    if fn_dis.strip() != expected_dis.strip():
-        diff = "\n".join(difflib.unified_diff(fn_dis.splitlines(), expected_dis.splitlines()))
-        pytest.skip(
-            f"Disassembed input does not match:\n{diff}\nCannot test using this Python version. {sys.version_info}"
+    # Check if the raw bytecode matches. (If it doesn't there's no point in testing anything else.)
+    pattern = re.compile(r"^  ([A-Z_]+\*?)(.*)$")
+    recovered_bytecode: list[str] = []
+    for line in spec.splitlines():
+        if match := pattern.match(line):
+            opname, remainder = match.groups()
+            if remainder and remainder.startswith("["):
+                assert opname in ("LOAD", "STORE", "DELETE"), line
+                assert remainder.endswith("]"), line
+                for i in remainder[1:-1].split(", "):
+                    recovered_bytecode.append(f"{opname}_{(i.split(': ')[1:] or ['FAST'])[0]}")
+            else:
+                recovered_bytecode.append(opname)
+
+    bytecode = {idx: i.opname for idx, i in enumerate(dis.get_instructions(fn))}
+    adjusted: list[str] = []
+    for recovered in recovered_bytecode:
+        corrected: str | None = (
+            {
+                "JUMP_ABSOLUTE*": {"RETURN_VALUE": "RETURN_VALUE"},
+                "RETURN_VALUE*": {},
+            }
+            .get(recovered, {recovered: recovered})
+            .get(bytecode.get(len(adjusted), ""))
+        )
+        if corrected is not None:
+            adjusted.append(corrected)
+
+    if "\n".join(adjusted) != "\n".join(bytecode.values()):
+        zipped = itertools.zip_longest(adjusted, bytecode.values(), fillvalue="")
+        delta = "\n".join(f"  {i:<25} {'' if j == i else j}" for i, j in zipped)
+        msg = (
+            f"Disassembled input does not match:\n{delta}\n"
+            f"Cannot test using this Python version: {sys.version_info}"
         )
 
-    observed_flow = tuple(flow_spec_for_fn(fn)) if flow_spec != DONT_CHECK_FLOW else None
-    if flow_spec is None and observed_flow is not None:
-        print(f"\nProposed flow: {fn.__name__}\n{'-' * 80}")
-        for block_idx, opname, inputs, outputs in observed_flow:
-            inputs = ", ".join(i[0] if len(i) == 1 else f"U[{', '.join(i)}]" for i in inputs)
-            print(f"{block_idx})  {opname + ':':<16} ({inputs}) -> {', '.join(outputs)}")
+        # For some unfathomable reason, pytest will muck with spaces in error messages.
+        # (Sometimes deleting them, sometimes adding newlines???) Thus, whenever we want
+        # to align we need to use a non-breaking space.
+        pytest.skip(msg.replace(" ", "\u00A0"))
 
-        # breakpoint()
-        pytest.skip("No flow spec provided.")
+    def clean(s: str):
+        return "\n".join(l.rstrip() for l in textwrap.dedent(s).strip().splitlines(False))
 
-    assert_parse_matches_spec(frontend.parse_bytecode(fn), extract_parse_spec(expected_blocks))
-    if observed_flow is not None:
-        assert_flow_matches_spec(observed_flow, tuple(extract_flow_spec(flow_spec)))
+    assert clean(summary) == clean(spec)
 
 
 def test_debug_print_protoflows(capfd):
-    proto_graph = apply_protograph_passes(frontend.parse_bytecode(tuple_fold))
+    proto_graph = apply_protograph_passes(protograph.ProtoGraph.from_code(tuple_fold.__code__))
     _ = capfd.readouterr()
     proto_graph.debug_print_protoflows()
     msg = textwrap.dedent(capfd.readouterr().out).strip()
@@ -875,16 +590,16 @@ def test_abstract_value():
 
 
 def test_value_missing():
-    x = protograph.ValueMissing()
-    assert x == protograph.ValueMissing()
-    assert x in {protograph.ValueMissing()}
+    x = protograph.NonPyObject(protograph.NonPyObject.Tag.MISSING)
+    assert x == protograph.NonPyObject(protograph.NonPyObject.Tag.MISSING)
+    assert x in {protograph.NonPyObject(protograph.NonPyObject.Tag.MISSING)}
 
     # Sanity check that it doesn't always compare equal
     assert x != protograph.AbstractValue()
 
 
 def test_external_ref():
-    key = protograph.VariableKey("self", python_ir_data.VariableScope.LOCAL)
+    key = parse.VariableKey("self", parse.VariableScope.LOCAL)
     x = protograph.ExternalRef(key)
     y = protograph.ExternalRef(key)
 

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from typing_extensions import ParamSpec
 
-from thunder.core.script.algorithms import compute_condense_map
+from thunder.core.script import algorithms, parse
 from thunder.core.script.protograph import (
     is_detail,
     _Symbolic,
@@ -19,12 +19,10 @@ from thunder.core.script.protograph import (
     ExternalRef,
     IntermediateValue,
     IntraBlockFlow,
+    NonPyObject,
     ProtoGraph,
     ProtoBlock,
-    VariableKey,
-    ValueMissing,
 )
-from thunder.core.script.python_ir_data import ThunderInstruction, VariableScope, RAISE_RETURN_INSTRUCTIONS
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
 ValueEdges = Iterable[tuple[AbstractValue, AbstractValue]]
@@ -48,7 +46,7 @@ def check_idempotent(
     return wrapped
 
 
-def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedSet[VariableKey]]:
+def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedSet[parse.VariableKey]]:
     """Identify new transitive value dependencies.
 
     The process is more involved than simply checking for mismatches because
@@ -56,20 +54,20 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
     value to the prior block and so on.
     """
     uses = {protoblock: protoblock.uses.copy() for protoblock in protograph}
-    end_uses = {protoblock: OrderedSet[VariableKey]() for protoblock in protograph}
+    end_uses = {protoblock: OrderedSet[parse.VariableKey]() for protoblock in protograph}
     blocks_to_process = collections.deque(protograph)
     while blocks_to_process:
         protoblock = blocks_to_process.popleft()
         target_uses = tuple(itertools.chain(*(uses[target] for target, _ in protoblock.jump_targets)))
-        end_uses[protoblock].update(k for k in target_uses if k.scope != VariableScope.CONST)
+        end_uses[protoblock].update(k for k in target_uses if not k.is_const)
 
         # The reason we can ignore ALL `_OutputRef`s (including those that would index into a composite)
         # is that the (potential) composite's dependencies are already handled by `ProtoBlock._flow_uses`.
         transitive_uses = OrderedSet(
             source
             for use in target_uses
-            if isinstance(source := protoblock.flow._end.get(use, use), VariableKey)
-            and source.scope != VariableScope.CONST
+            if isinstance(source := protoblock.flow._end.get(use, use), parse.VariableKey)
+            and not source.is_const
         )
         if transitive_uses - uses[protoblock]:
             uses[protoblock].update(transitive_uses)
@@ -98,7 +96,7 @@ def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
             _begin={**{k: AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
             _end={**{k: k for k in end_uses}, **protoblock.flow._end},
         )
-        substitutions[protoblock] = new_protoblock = ProtoBlock(protoblock.raw_instructions, new_flow)
+        substitutions[protoblock] = new_protoblock = ProtoBlock(new_flow)
         new_protoblock.uses.update(protoblock.uses | new_uses)
 
         # Ensure the new transitive dependencies are reflected in the variable state.
@@ -114,14 +112,15 @@ def _inter_block_edges(proto_graph: ProtoGraph) -> ValueEdges:
             outputs = dict(protoblock.end_state)
             child_inputs = dict(child.begin_state)
             for key, child_input in child_inputs.items():
-                yield outputs.get(key, ValueMissing()), child_input
+                yield outputs.get(key, NonPyObject(NonPyObject.Tag.MISSING)), child_input
 
             # `_add_transitive` should ensure the stacks match.
             # (Except for return blocks which may discard the stack.)
-            if child.raw_instructions[-1] not in RAISE_RETURN_INSTRUCTIONS:
-                s_out = tuple(sorted(i.identifier for i in outputs if i.scope == VariableScope.STACK))
-                s_in = tuple(sorted(i.identifier for i in child_inputs if i.scope == VariableScope.STACK))
-                assert s_out == s_in, f"{s_out=} != {s_in=}, {child.raw_instructions[-1].opname}"
+            last_child_opname = tuple(child.flow.symbolic)[-1][0].opname
+            if last_child_opname not in parse.RAISE_RETURN_INSTRUCTIONS:
+                s_out = tuple(sorted(i.identifier for i in outputs if i.scope == parse.VariableScope.STACK))
+                s_in = tuple(sorted(i.identifier for i in child_inputs if i.scope == parse.VariableScope.STACK))
+                assert s_out == s_in, f"{s_out=} != {s_in=}, {last_child_opname}"
 
 
 def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
@@ -130,7 +129,7 @@ def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
             continue
 
         assert isinstance(initial_ref, AbstractRef), initial_ref
-        assert key.scope not in (VariableScope.CONST, VariableScope.STACK)
+        assert key.scope not in (parse.VariableScope.CONST, parse.VariableScope.STACK)
         yield ExternalRef(key), initial_ref
 
 
@@ -148,7 +147,7 @@ def _condense_values(
     edge_sources = (*edge_sources, _phivalue_constituent)
     edges = tuple(itertools.chain(*[fn(proto_graph) for fn in edge_sources]))
     replace_map: dict[AbstractValue, AbstractValue] = {}
-    for v, condensed in compute_condense_map(edges).items():
+    for v, condensed in algorithms.compute_condense_map(edges).items():
         # Check invariants.
         assert condensed
         if not isinstance(v, AbstractPhiValue):
@@ -181,10 +180,10 @@ def _tuple_fold(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     would be more powerful the more `AbstractValue`s we can prove to be tuples with a known source.
     """
     original_graph = proto_graph
-    replacements: dict[ThunderInstruction, tuple[_Symbolic.Output, ...]] = {}
+    replacements: dict[parse.ThunderInstruction, tuple[_Symbolic.Output, ...]] = {}
     known_tuples: OrderedSet[IntermediateValue] = OrderedSet()
 
-    def replace_fn(instruction: ThunderInstruction, old_symbolic: _Symbolic) -> _Symbolic | None:
+    def replace_fn(instruction: parse.ThunderInstruction, old_symbolic: _Symbolic) -> _Symbolic | None:
         if (new_outputs := replacements.pop(instruction, None)) is not None:
             return dataclasses.replace(old_symbolic, outputs=new_outputs)
 
@@ -202,7 +201,7 @@ def _tuple_fold(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
             if (opname := instruction.opname) == "BINARY_SUBSCR":
                 to_index, index = materialized_node.inputs
                 is_tuple = isinstance(to_index, CompositeValue) and to_index.v in known_tuples
-                is_const_idx = isinstance(index, ExternalRef) and index.key.scope == VariableScope.CONST
+                is_const_idx = isinstance(index, ExternalRef) and index.key.is_const
                 if is_tuple and is_const_idx and isinstance(idx := index.key.identifier, int):
                     replacements[instruction] = ((-2, idx),)
 

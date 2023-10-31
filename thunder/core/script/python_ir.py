@@ -18,7 +18,8 @@ from thunder.core.script.graph import (
     insert_after,
     _Undefined,
 )
-from thunder.core.script.python_ir_data import get_instruction, RETURN_VALUE, X_THUNDER_STORE_ATTR
+from thunder.core.script.parse import RETURN_VALUE
+from thunder.core.script.python_ir_data import get_instruction, X_THUNDER_STORE_ATTR
 from thunder.core.utils import OrderedSet
 
 

@@ -31,7 +31,8 @@ from thunder.core.script.graph import (
     repr_source_location,
 )
 from thunder.core.script.instrumentation import verbose_error, record
-from thunder.core.script.python_ir_data import get_instruction, ThunderInstruction, JUMP_ABSOLUTE, X_THUNDER_STORE_ATTR
+from thunder.core.script.parse import ThunderInstruction, JUMP_ABSOLUTE
+from thunder.core.script.python_ir_data import get_instruction, X_THUNDER_STORE_ATTR
 from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.script.noinline import NOINLINE_METHODS
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
@@ -297,6 +298,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
         offset=ret_node.i.offset,
         starts_line=ret_node.i.starts_line,
         is_jump_target=ret_node.i.is_jump_target,
+        line_no=ret_node.i.line_no,
     )
     bl.nodes[-1].jump_targets = [gr1.blocks[0]]
     gr1.blocks[0].jump_sources = [bl.nodes[-1]]

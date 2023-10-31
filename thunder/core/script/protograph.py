@@ -1,68 +1,21 @@
 from __future__ import annotations
 
-import collections
 import dataclasses
+import enum
 import functools
-import inspect
 import itertools
-import marshal
+import sys
 import textwrap
 from types import CodeType
-from typing import cast, final, Any, Callable, Deque, Generic, Literal, NamedTuple, TypeVar
+from typing import cast, final, Any, Callable, Deque, Generic, Literal, TypeVar
 from collections.abc import Iterable, Iterator, Mapping
 
+from thunder.core.script import parse
 from thunder.core.script.algorithms import TypedDiGraph, flatten_map, sort_adjacent
 from thunder.core.script.instrumentation import InstrumentingBase
-from thunder.core.script.python_ir_data import (
-    stack_effect_adjusted,
-    PushNew,
-    ThunderInstruction,
-    VariableScope,
-    DEL_OPNAMES,
-    LOAD_OPNAMES,
-    RETURN_VALUE,
-    STORE_OPNAMES,
-    EXTENDED_ARG,
-    UNSAFE_OPCODES,
-)
-from thunder.core.utils import FrozenDict, InferringDict, OrderedSet
+from thunder.core.utils import safe_zip, FrozenDict, OrderedSet
 
 T = TypeVar("T")
-
-
-class VariableKey(NamedTuple):
-    """Denotes the location of a variable.
-    For example, `x = 5` assigns the variable stored in `VariableKey(5, VariableScope.CONST)`
-    to the location `VariableKey("x", VariableScope.LOCAL)`. (Provided `x` is a local variable.)
-    The type of `identifier` varies based on `scope`:
-        `marshal`able   VariableScope.CONST
-        str             VariableScope.LOCAL / NONLOCAL / GLOBAL
-        int             VariableScope.STACK
-    """
-
-    identifier: Any
-    scope: VariableScope
-
-    def __repr__(self) -> str:
-        return f"VariableKey({self.identifier}, scope={self.scope.name})"
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, VariableKey)
-            and self.scope == other.scope
-            and type(self.identifier) is (_ := type(other.identifier))  # Conflict between `ruff` and `yesqa`
-            and self.identifier == other.identifier
-        )
-
-    def __lt__(self, other: tuple[Any, ...]) -> bool:
-        assert isinstance(other, VariableKey), (self, other)
-        try:
-            return (self.scope.value, self.identifier) < (other.scope.value, other.identifier)
-        except TypeError:
-            # We prefer to use native ordering. However for unorderable types (e.g. CodeType)
-            # `marshal` at least provides a consistent ordering.
-            assert self.scope == VariableScope.CONST and other.scope == VariableScope.CONST
-            return marshal.dumps(self.identifier) < marshal.dumps(other.identifier)
 
 
 # =============================================================================
@@ -164,8 +117,8 @@ ValueIndex = int | tuple[int, ...]
 class _OutputRef:
     """Identifies the producer of a value within a ProtoBlock."""
 
-    instruction: ThunderInstruction  #  Acts as a key for the producer Flow.
-    idx: ValueIndex  #                  Indexes the node's outputs.
+    instruction: parse.ThunderInstruction  #  Acts as a key for the producer Flow.
+    idx: ValueIndex  #                        Indexes the node's outputs.
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -174,13 +127,17 @@ class _Symbolic:
 
     # VariableKey:      References the value of that variable at the start of the ProtoBlock
     # OutputRef:        Reference values created by an earlier instruction within the block
-    Input = VariableKey | _OutputRef
+    Input = parse.VariableKey | _OutputRef
     inputs: tuple[Input, ...]
 
     # ValueIndex:       Aliases the input at this position.
     # AbstractValue:   New value created by this instruction
     Output = ValueIndex | AbstractValue
     outputs: tuple[Output, ...]
+
+    BeginState = FrozenDict[parse.VariableKey, AbstractValue]
+    EndState = FrozenDict[parse.VariableKey, Input]
+    Block = tuple[FrozenDict[parse.ThunderInstruction, "_Symbolic"], BeginState, EndState]
 
     def __post_init__(self) -> None:
         assert not any(isinstance(o, ExternalRef) for o in self.outputs), self
@@ -196,13 +153,13 @@ class _Materialized:
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class IntraBlockFlow:
-    _flow: FrozenDict[ThunderInstruction, _Symbolic]
+    _flow: FrozenDict[parse.ThunderInstruction, _Symbolic]
 
-    BeginVariables = FrozenDict[VariableKey, AbstractValue]
+    BeginVariables = FrozenDict[parse.VariableKey, AbstractValue]
     _begin: BeginVariables
 
     EndVariable = _Symbolic.Input | None
-    EndVariables = FrozenDict[VariableKey, EndVariable]  # `None` indicates an explicit `del`
+    EndVariables = FrozenDict[parse.VariableKey, EndVariable]  # `None` indicates an explicit `del`
     _end: EndVariables
 
     def __post_init__(self) -> None:
@@ -211,13 +168,13 @@ class IntraBlockFlow:
         object.__setattr__(self, "_end", FrozenDict({**self._end}))
 
     @property
-    def symbolic(self) -> Iterable[tuple[ThunderInstruction, _Symbolic]]:
+    def symbolic(self) -> Iterable[tuple[parse.ThunderInstruction, _Symbolic]]:
         yield from self._flow.items()
 
     @functools.cached_property
-    def materialized(self) -> FrozenDict[ThunderInstruction, _Materialized]:
+    def materialized(self) -> FrozenDict[parse.ThunderInstruction, _Materialized]:
         """Walk the flow resolving references as they we encounter them."""
-        result: dict[ThunderInstruction, _Materialized] = {}
+        result: dict[parse.ThunderInstruction, _Materialized] = {}
         unused: IntraBlockFlow.EndVariables = FrozenDict({})  # `end` should never be needed.
         for instruction, node in self.symbolic:
             inputs = tuple(self._getitem_impl(0, i, (self._begin, unused), result) for i in node.inputs)
@@ -229,133 +186,6 @@ class IntraBlockFlow:
 
     def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input | None]) -> AbstractValue:
         return self._getitem_impl(*key, (self._begin, self._end), self.materialized)  # __getitem__ packs args
-
-    @classmethod
-    def from_instructions(cls, instructions: tuple[ThunderInstruction, ...], code: CodeType) -> IntraBlockFlow:
-        flow: dict[ThunderInstruction, _Symbolic] = {}
-        begin_variables: dict[VariableKey, AbstractValue] = {}
-
-        def end_missing(key: VariableKey) -> IntraBlockFlow.EndVariable:
-            if key.scope != VariableScope.CONST:
-                begin_variables.setdefault(key, AbstractRef(f"Variable initial value: ({key.identifier} {key.scope})"))
-            return key
-
-        end_variables = InferringDict[VariableKey, IntraBlockFlow.EndVariable](end_missing)
-        block_inputs: Deque[AbstractValue] = collections.deque()
-        stack: Deque[_Symbolic.Input] = collections.deque()
-
-        def peek_stack(pop: bool = False) -> _Symbolic.Input:
-            # If the stack is empty we can infer that we are trying to reference
-            # a value was already on the stack at the start of the block.
-            if not stack:
-                index = -len(block_inputs) - 1
-                block_inputs.appendleft(AbstractRef(f"Inferred stack input: {index}"))
-                stack.append(VariableKey(index, VariableScope.STACK))
-            return stack.pop() if pop else stack[-1]
-
-        def make_unsupported(msg: str, instruction: ThunderInstruction):
-            source_lines, _ = inspect.getsourcelines(code)
-            msg = f"""{msg}{instruction} found
-            {code.co_name}() defined in {code.co_filename}:{code.co_firstlineno}
-            line {instruction.line_no + code.co_firstlineno}: {source_lines[instruction.line_no].rstrip()}"""
-            return RuntimeError(msg)
-
-        def make_unsupported_cellvar(msg: str):
-            single = len(code.co_cellvars) == 1
-            msg = f"""{msg}
-            {code.co_name}() defined in {code.co_filename}:{code.co_firstlineno}
-            defines nonlocal variable{"" if single else "s"}: {",".join(code.co_cellvars)}"""
-            return RuntimeError(msg)
-
-        def to_key(instr: ThunderInstruction, scope: VariableScope) -> VariableKey:
-            arg = instr.arg
-            assert arg is not None
-
-            if scope == VariableScope.CONST:
-                return VariableKey(code.co_consts[arg], scope)
-
-            elif scope == VariableScope.LOCAL:
-                return VariableKey(code.co_varnames[arg], scope)
-
-            elif scope == VariableScope.NONLOCAL:
-                # TODO: Support nonlocal variables.
-                # Nonlocal variables load (LOAD_DEREF) from frame->localsplus.
-                # We cannot model or access the content of stack frames here.
-                # We will have to emit some nonlocal AbstractValue and resolve it later, once we can prove
-                # See https://github.com/python/cpython/blob/0ba07b2108d4763273f3fb85544dde34c5acd40a/Include/internal/pycore_code.h#L119-L133
-                # for more explanation of localsplus.
-                raise make_unsupported("nonlocal variables are not supported but instruction = ", instr)
-
-            elif scope == VariableScope.GLOBAL:
-                return VariableKey(code.co_names[arg], scope)
-
-            elif scope == VariableScope.STACK:
-                raise RuntimeError("Indexing into the stack is not permitted. Use `peek_stack` instead.")
-
-            else:
-                raise NotImplementedError("Unknown variable scope: {scope}")
-
-        assert instructions
-        for instruction in instructions:
-            if instruction.opname == EXTENDED_ARG:
-                # these are already reflexted in the next opcode's argument
-                continue
-
-            elif instruction in UNSAFE_OPCODES:
-                raise make_unsupported("Unsupported instruction = ", instruction)
-
-            assert hasattr(instruction, "line_no"), instruction
-            pop, push = stack_effect_adjusted(instruction)
-
-            def assert_expected_stack_effects(pop_i: int, push_i: tuple[int, ...]) -> None:
-                assert (pop, push) == (pop_i, push_i), f"{instruction=} {pop=} {push=}"
-
-            # Peek at the stack to track variable mutations.
-            if (store_scope := STORE_OPNAMES.get(instruction.opname)) is not None:
-                assert_expected_stack_effects(1, ())
-                end_variables[to_key(instruction, store_scope)] = peek_stack(pop=False)
-
-            elif (del_scope := DEL_OPNAMES.get(instruction.opname)) is not None:
-                assert_expected_stack_effects(1, ())
-                end_variables[to_key(instruction, del_scope)] = None
-
-            # Handle stack inputs and outputs.
-            inputs = [peek_stack(pop=True) for _ in range(pop)]
-            new_intermediates: list[IntermediateValue] = []
-
-            def lookup(index: int) -> _Symbolic.Output:
-                """Handle alias resolution and new outputs."""
-                if index < 0:
-                    # Negative values index into the inputs.
-                    return index
-
-                elif index == len(new_intermediates):
-                    new_intermediates.append(IntermediateValue())
-
-                return new_intermediates[index]
-
-            if (load_scope := LOAD_OPNAMES.get(instruction.opname)) is not None:
-                assert_expected_stack_effects(0, PushNew)
-                loaded = end_variables[load_key := to_key(instruction, load_scope)]
-                assert loaded is not None, f"Access to deleted variable: {load_key}, {instruction}"
-                stack.append(loaded)
-
-            elif not (store_scope or del_scope):
-                # We have already functionalized variable accesses, so we can prune loads and stores.
-                outputs = [lookup(index) for index in push]
-                stack.extend(_OutputRef(instruction, idx) for idx in range(len(outputs)))
-                flow[instruction] = _Symbolic(tuple(reversed(inputs)), tuple(outputs))
-
-        for idx, v in enumerate(block_inputs, start=-len(block_inputs)):
-            begin_variables[VariableKey(idx, VariableScope.STACK)] = v
-
-        for idx, v_ref in enumerate(stack, start=-len(block_inputs)):
-            end_variables[VariableKey(idx, VariableScope.STACK)] = v_ref
-
-        if code.co_cellvars:
-            raise make_unsupported_cellvar("Nonlocal variables are not supported but ")
-
-        return cls(flow, begin_variables, {k: v for k, v in end_variables.items() if k.scope != VariableScope.CONST})
 
     def substitute(self, replace_map: ReplaceMap) -> IntraBlockFlow:
         """Replace `AbstractValue`s within the flow. (Block inputs and producer nodes.)"""
@@ -375,18 +205,18 @@ class IntraBlockFlow:
         index: EdgeIndex,
         key: _Symbolic.Input | None,
         variables: tuple[IntraBlockFlow.BeginVariables, IntraBlockFlow.EndVariables],
-        materialized: Mapping[ThunderInstruction, _Materialized],
+        materialized: Mapping[parse.ThunderInstruction, _Materialized],
     ) -> AbstractValue:
         # We need to index while materializing (before `self.materialized` is
         # available) so we factor the logic into a standlone method.
         if key is None:
-            return ValueMissing()
+            return NonPyObject(NonPyObject.Tag.MISSING)
 
         elif isinstance(key, _OutputRef):
             return resolve_composites(materialized[key.instruction].outputs, key.idx)
 
-        assert isinstance(key, VariableKey)
-        if key.scope == VariableScope.CONST:
+        assert isinstance(key, parse.VariableKey)
+        if key.is_const:
             return ExternalRef(key)
 
         assert index in (0, -1)
@@ -396,12 +226,12 @@ class IntraBlockFlow:
 
     @staticmethod
     def _boundary_state(
-        variables: Mapping[VariableKey, T],
+        variables: Mapping[parse.VariableKey, T],
         resolve: Callable[[T], AbstractValue],
-    ) -> Iterator[tuple[VariableKey, AbstractValue]]:
+    ) -> Iterator[tuple[parse.VariableKey, AbstractValue]]:
         for k, v in sorted(variables.items(), key=lambda kv: kv[0]):
-            assert k.scope != VariableScope.CONST
-            if not isinstance(v_resolved := resolve(v), ValueMissing):
+            assert not k.is_const, k
+            if not isinstance(v_resolved := resolve(v), NonPyObject):
                 yield k, v_resolved
 
 
@@ -430,10 +260,9 @@ JumpTarget = tuple["ProtoBlock", bool]
 class ProtoBlock(InstrumentingBase):
     """Stores abstract data flow for a code block."""
 
-    raw_instructions: tuple[ThunderInstruction, ...]  # For debugging only.
     flow: IntraBlockFlow
     jump_targets: tuple[JumpTarget, ...] = dataclasses.field(default=(), init=False)
-    uses: OrderedSet[VariableKey] = dataclasses.field(default_factory=OrderedSet, init=False)
+    uses: OrderedSet[parse.VariableKey] = dataclasses.field(default_factory=OrderedSet, init=False)
 
     def __repr__(self) -> str:
         return f"ProtoBlock: {hex(id(self))}"
@@ -452,25 +281,25 @@ class ProtoBlock(InstrumentingBase):
         object.__setattr__(self, "jump_targets", self.jump_targets + ((other, jump),))
 
     @property
-    def node_flow(self) -> Iterable[tuple[ThunderInstruction, _Materialized]]:
+    def node_flow(self) -> Iterable[tuple[parse.ThunderInstruction, _Materialized]]:
         yield from self.flow.materialized.items()
 
     @property
-    def begin_state(self) -> Iterator[tuple[VariableKey, AbstractValue]]:
+    def begin_state(self) -> Iterator[tuple[parse.VariableKey, AbstractValue]]:
         yield from self.flow._boundary_state(self.flow._begin, lambda v: v)
 
     @property
-    def end_state(self) -> Iterator[tuple[VariableKey, AbstractValue]]:
+    def end_state(self) -> Iterator[tuple[parse.VariableKey, AbstractValue]]:
         yield from (flow := self.flow)._boundary_state(flow._end, lambda v_ref: flow[0, v_ref])
 
     @property
-    def _flow_uses(self) -> Iterable[VariableKey]:
+    def _flow_uses(self) -> Iterable[parse.VariableKey]:
         flat_inputs = OrderedSet(itertools.chain(*(n.inputs for _, n in self.flow.symbolic)))
-        yield from (i for i in flat_inputs if isinstance(i, VariableKey))
+        yield from (i for i in flat_inputs if isinstance(i, parse.VariableKey))
 
     def transform(self, replace_map: ReplaceMap) -> ProtoBlock:
         """Create a copy of `self` but allow values to be substituted."""
-        transformed = ProtoBlock(self.raw_instructions, self.flow.substitute(replace_map))
+        transformed = ProtoBlock(self.flow.substitute(replace_map))
         transformed.uses.update(self.uses)
 
         # NOTE: The caller will need to repopulate `transformed.jump_targets`
@@ -485,7 +314,7 @@ class ProtoGraph:
     def __init__(self, protoblocks: Iterable[ProtoBlock]) -> None:
         G = TypedDiGraph[ProtoBlock]()
         for protoblock in (protoblocks := tuple(protoblocks)):
-            is_return = tuple(protoblock.flow.symbolic)[-1][0].opname == RETURN_VALUE
+            is_return = tuple(protoblock.flow.symbolic)[-1][0].opname == parse.RETURN_VALUE
             G.add_node(protoblock, is_return=is_return)
 
         for protoblock in protoblocks:
@@ -496,10 +325,23 @@ class ProtoGraph:
         assert len(G) == len(self.protoblocks) == len(protoblocks), (len(G), len(self.protoblocks), len(protoblocks))
 
         self.root = self.protoblocks[0]
-        root_stack = [(k, v) for k, v in self.root.begin_state if k.scope == VariableScope.STACK]
+        root_stack = [(k, v) for k, v in self.root.begin_state if k.scope == parse.VariableScope.STACK]
         assert not root_stack, f"Root block should not have stack inputs: {root_stack}"
         nodes = cast(Iterable[ProtoBlock], G.nodes)  # For some reason mypy needs this.
         self.parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in nodes}
+
+    @classmethod
+    def from_code(cls, co: CodeType) -> ProtoGraph:
+        """Given a method, disassemble it to a sequence of simple blocks."""
+        raw_blocks, edges, _ = parse.functionalize_blocks(co)
+        protoblocks = tuple(
+            ProtoBlock(IntraBlockFlow(symbolic, begin, end))
+            for symbolic, begin, end in make_symbolic(raw_blocks)
+        )
+        for source, sink, jump in edges:
+            protoblocks[source].add_jump_target(protoblocks[sink], jump)
+
+        return cls(protoblocks)
 
     @property
     def edges(self) -> Iterator[tuple[ProtoBlock, ProtoBlock]]:
@@ -507,7 +349,7 @@ class ProtoGraph:
             yield from ((protoblock, target) for target, _ in protoblock.jump_targets)
 
     @property
-    def flat_flow(self) -> Iterable[tuple[ThunderInstruction, tuple[_Symbolic, _Materialized]]]:
+    def flat_flow(self) -> Iterable[tuple[parse.ThunderInstruction, tuple[_Symbolic, _Materialized]]]:
         for protoblock in self.protoblocks:
             for instruction, node in protoblock.flow.symbolic:
                 yield instruction, (node, protoblock.flow.materialized[instruction])
@@ -530,7 +372,7 @@ class ProtoGraph:
         NOTE: This is strictly a condensing transform, and this is only invertable
               (using another `.transform` call) in trivial cases.
         """
-        assert (v := replace_map.get(ValueMissing(), missing := object())) is missing, v
+        assert not any(isinstance(k, NonPyObject) for k in replace_map), replace_map.keys()
         replace_map: ReplaceMap = dict(flatten_map(replace_map))
         return self.substitute({protoblock: protoblock.transform(replace_map) for protoblock in self})
 
@@ -546,10 +388,10 @@ class ProtoGraph:
 
     def replace_symbolic(
         self,
-        replace_fn: Callable[[ThunderInstruction, _Symbolic], _Symbolic | None],
+        replace_fn: Callable[[parse.ThunderInstruction, _Symbolic], _Symbolic | None],
         retain_uses: bool = False,
     ) -> ProtoGraph:
-        replacements: dict[ThunderInstruction, tuple[_Symbolic, _Symbolic]] = {}
+        replacements: dict[parse.ThunderInstruction, tuple[_Symbolic, _Symbolic]] = {}
         for instruction, (old_symbolic, _) in self.flat_flow:
             new_symbolic = replace_fn(instruction, old_symbolic)
             if new_symbolic is None:
@@ -563,7 +405,7 @@ class ProtoGraph:
         for protoblock in (unlinked := self.unlink()):
             new_symbolic_flow = {k: replacements.get(k, (None, v))[1] for k, v in protoblock.flow.symbolic}
             new_flow = dataclasses.replace(protoblock.flow, _flow=new_symbolic_flow)
-            transformed[protoblock] = new_protoblock = ProtoBlock(protoblock.raw_instructions, new_flow)
+            transformed[protoblock] = new_protoblock = ProtoBlock(new_flow)
             new_protoblock.uses.update(protoblock.uses if retain_uses else ())
         return unlinked.substitute(transformed)
 
@@ -611,10 +453,18 @@ class AbstractRef(AbstractValue):
 
 
 @dataclasses.dataclass(frozen=True, eq=True)
-class ValueMissing(AbstractValue):
-    """Models `del` and similar operations. (But NOT `= None`)"""
+class NonPyObject(AbstractValue):
+    """Singleton values used to signal some special interpreter state."""
 
-    pass
+    class Tag(enum.Enum):
+        DELETED = enum.auto()
+        MISSING = enum.auto()
+        NULL = enum.auto()
+
+    tag: Tag
+
+    def __repr__(self) -> str:
+        return self.tag.name
 
 
 class IntermediateValue(AbstractValue):
@@ -627,7 +477,7 @@ class IntermediateValue(AbstractValue):
 class ExternalRef(AbstractValue):
     """Reference values outside of the parsed code. (Arguments, constants, globals, etc.)"""
 
-    key: VariableKey
+    key: parse.VariableKey
 
 
 # =============================================================================
@@ -705,3 +555,80 @@ def is_detail(v: AbstractValue) -> bool:
         return is_detail(v.v) or any(is_detail(i) for i in v.constituents)
 
     return isinstance(v, AbstractPhiValue) and any(is_detail(i) for i in v.constituents)
+
+
+# =============================================================================
+# == Conversion from parsed representation ====================================
+# =============================================================================
+def rotate_N(oparg: int) -> tuple[int, ...]:
+    return (-1,) + tuple(range(-oparg, -1))
+
+
+_AliasMask = tuple[int | None, ...]
+ALIAS_OPCODES = FrozenDict[str, Callable[[int], _AliasMask]](
+    parse.fill_ellipses(
+        #
+        # Stack manipulation
+        ROT_N=rotate_N,  #                              A,B,...,Z   -> Z,A,B,...
+        ROT_FOUR=rotate_N,
+        ROT_THREE=rotate_N,
+        ROT_TWO=rotate_N,
+        DUP_TOP=(-1, -1),  #                            A           -> A,A
+        DUP_TOP_TWO=(-2, -1) * 2,  #                    A,B         -> A,B,A,B
+        #
+        # Insertion leaves container on the stack       A,B         -> A
+        SET_ADD=(-2,),
+        SET_UPDATE=...,
+        LIST_APPEND=...,
+        LIST_EXTEND=...,
+        MAP_ADD=...,
+        DICT_MERGE=...,
+        DICT_UPDATE=...,
+        COPY_DICT_WITHOUT_KEYS=(-2, None),  #           A,B         -> A,C  (I am unsure...)
+        #
+        # Misc.
+        GET_LEN=(-1, None),
+        MATCH_MAPPING=(-1, None),
+        MATCH_SEQUENCE=...,
+        MATCH_KEYS=(-1, -2, None) + () if sys.version_info >= (3, 11) else (None,),
+        #
+        # Jump dependent
+        FOR_ITER=(-1, None),
+        # NOTE: These instructions have been removed since they are extraneous special cases.
+        #       https://github.com/faster-cpython/ideas/issues/567
+        #       https://github.com/python/cpython/issues/102859
+        JUMP_IF_TRUE_OR_POP=(-1,),
+        JUMP_IF_FALSE_OR_POP=(-1,),
+        #
+        # This isn't actually correct. `LOAD_METHOD` will return either
+        #   A -> B, A
+        #   A -> B, NULL
+        # However the `A | NULL` is only consumed by `CALL_METHOD`, so it's ok to use this alias.
+        LOAD_METHOD=(None, -1),  #                      A           -> B,A
+    )
+)
+
+
+def make_symbolic(blocks: tuple[parse.FunctionalizedBlock, ...]) -> Iterator[_Symbolic.Block]:
+    for block, begin_state, end_state in blocks:
+        # `functionalize_blocks` produces unique values, so provenance is unambiguous.
+        producers: dict[parse.PlaceholderValue | None, _Symbolic.Input] = {v: k for k, v in begin_state.items()}
+        producers[None] = NonPyObject.Tag.DELETED
+        assert len(producers) == len(begin_state) + 1, (producers, end_state)
+
+        symbolic_blocks: dict[parse.ThunderInstruction, _Symbolic] = {}
+        for instruction, raw_inputs, raw_outputs in block:
+            for idx, o in enumerate(raw_outputs):
+                assert o not in producers
+                producers[o] = _OutputRef(instruction, idx)
+
+            outputs: tuple[_Symbolic.Output, ...] = tuple(IntermediateValue() for _ in raw_outputs)
+            if alias := ALIAS_OPCODES.get(instruction.opname):
+                mask = alias(len(outputs)) if callable(alias) else alias
+                mask = (i if i is not None else i for i in mask)
+                outputs = tuple(o if o_mask is None else o_mask for o, o_mask in safe_zip(outputs, mask))
+            symbolic_blocks[instruction] = _Symbolic(tuple(producers[i] for i in raw_inputs), outputs)
+
+        begin = {k: AbstractRef(v) for k, v in begin_state.items() if not k.is_const}
+        end = {k: producers[v] for k, v in end_state.items() if not k.is_const}
+        yield (FrozenDict(symbolic_blocks), FrozenDict(begin), FrozenDict(end))

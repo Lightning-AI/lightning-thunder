@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TYPE_CHECKING, Set, U
 from collections.abc import Iterable, Iterator, Sequence
 
 from thunder.core.script.instrumentation import InstrumentingBase
-from thunder.core.script.python_ir_data import stack_effect_detail, ThunderInstruction
+from thunder.core.script.parse import ThunderInstruction
 from thunder.core.script.noinline import noinline
 from thunder.core.utils import OrderedSet
 

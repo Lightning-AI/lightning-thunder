@@ -1,20 +1,10 @@
 import re
 import textwrap
 
-from thunder.core.script.python_ir_data import FIXED_STACK_EFFECTS_DETAIL, SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL
+from thunder.core.script.protograph import ALIAS_OPCODES
 
 import pytest
 
-
-JUMP_DEPENDENT = {
-    "FOR_ITER",
-    "JUMP_IF_TRUE_OR_POP",
-    "JUMP_IF_FALSE_OR_POP",
-    "SETUP_WITH",
-    "SETUP_FINALLY",
-    "SETUP_ASYNC_WITH",
-}
-OPNAMES_TO_TEST = {*FIXED_STACK_EFFECTS_DETAIL.keys(), *SIMPLE_VARIABLE_STACK_EFFECTS_DETAIL.keys()} - JUMP_DEPENDENT
 
 # Populate with the contents of `https://github.com/python/cpython/blob/74a2b79c6265c92ef381b5ff0dc63903bf0178ac/Python/bytecodes.c#L2090`
 BYTECODES_C = """
@@ -51,8 +41,7 @@ def generate():
     for line in BYTECODES_C.splitlines(keepends=False):
         if match := inst_pattern.search(line):
             opname, effect = match.groups()
-            if opname in OPNAMES_TO_TEST:
-                reference_effects.append((opname, effect.strip()))
+            reference_effects.append((opname, effect.strip()))
 
     for opname, effect in sorted(reference_effects):
         print(f"    {opname:<30} {effect}")
@@ -128,47 +117,37 @@ RAW_EFFECTS = """
     WITH_EXCEPT_START              exit_func, lasti, unused, val -- exit_func, lasti, unused, val, res
 """
 
+
 EXPECTED = {}
 effect_pattern = re.compile(r"^([A-Z_]+)\s*(.*)--(.*)$")
 for line in textwrap.dedent(RAW_EFFECTS).strip().splitlines(keepends=False):
     opname, pop, push = effect_pattern.search(line).groups()
 
-    # For now only test fixed effects.
-    # TODO(robieta): expand testing.
-    if opname not in FIXED_STACK_EFFECTS_DETAIL:
-        continue
-
     # We cannot handle repeated inputs (`unused/1, unused/1, unused/1, unused/1`)
     if opname == "LOAD_GLOBAL":
         continue
 
-    if opname in OPNAMES_TO_TEST:
-        inputs = tuple(j for i in pop.split(",") if (j := i.strip()))
-        idx_map = {name: idx - len(inputs) for idx, name in enumerate(inputs)}
-        assert len(inputs) == len(idx_map), (opname, inputs)
-        push_values = tuple(
-            idx_map.setdefault(j, len(idx_map) - len(inputs)) for i in push.split(",") if (j := i.strip())
-        )
-        EXPECTED[opname] = (len(inputs), push_values)
+    inputs = tuple(j for i in pop.split(",") if (j := i.strip()))
+    idx_map = {name: idx - len(inputs) for idx, name in enumerate(inputs)}
+    assert len(inputs) == len(idx_map), (opname, inputs)
+    push_values = tuple(idx_map.setdefault(j, len(idx_map) - len(inputs)) for i in push.split(",") if (j := i.strip()))
+    if any(i < 0 for i in push_values) or isinstance(ALIAS_OPCODES.get(opname), tuple):
+        EXPECTED[opname] = push_values
 
 
 # TODO(robieta): Investigate
 KNOWN_FAILURES = {
-    "BINARY_SUBSCR",
-    "COMPARE_OP",
     "DICT_MERGE",
     "DICT_UPDATE",
     "LIST_APPEND",
     "LIST_EXTEND",
-    "LOAD_ATTR",
+    "FOR_ITER",
+    "GET_LEN",
     "MAP_ADD",
     "MATCH_KEYS",
-    "POP_EXCEPT",
     "RERAISE",
     "SET_ADD",
     "SET_UPDATE",
-    "STORE_ATTR",
-    "STORE_SUBSCR",
     "WITH_EXCEPT_START",
 }
 
@@ -178,7 +157,8 @@ def test_stack_effects(opname):
     if opname in KNOWN_FAILURES:
         pytest.xfail()
 
-    assert EXPECTED[opname] == FIXED_STACK_EFFECTS_DETAIL[opname]
+    expected = tuple(None if i >= 0 else i for i in EXPECTED[opname])
+    assert expected == ALIAS_OPCODES.get(opname)
 
 
 if __name__ == "__main__":
