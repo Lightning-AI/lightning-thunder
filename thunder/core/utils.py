@@ -3,12 +3,12 @@ import os
 from enum import Enum
 from functools import reduce, wraps
 import itertools
-from itertools import zip_longest, chain
+from itertools import chain
 from numbers import Number
-from typing import Callable, Dict, Generic, List, Optional, Type, TypeVar, Tuple
-from collections.abc import Iterable, Sequence
+from typing import Callable, Generic, Optional, TypeVar
+from collections.abc import Iterable, Iterator, Sequence
 
-from looseversion import LooseVersion
+from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -640,12 +640,12 @@ def check_same_device(*args):
 # ordered
 # NOTE dicts in Python are ordered since Python 3.7
 # TODO Implement additional methods as needed
-class OrderedSet(Generic[T], Iterable[T]):
+class _OrderedSet(Generic[T, T1], Iterable[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
-    def __init__(self, args: Optional[Iterable[T]] = None):
+    def __init__(self, args: Optional[Iterable[T | T1]] = None):
         self.d = {self.canonicalize(k): None for k in args or ()}
 
-    def canonicalize(self, v: T) -> T:
+    def canonicalize(self, v: T | T1) -> T:
         """Subclasses can override to coerce to a common type."""
         return v
 
@@ -653,47 +653,52 @@ class OrderedSet(Generic[T], Iterable[T]):
         contents = ", ".join(repr(i) for i in self)
         return f"{self.__class__.__name__}{{ {contents} }}"
 
-    def __contains__(self, x: T) -> bool:
+    def __contains__(self, x: T | T1) -> bool:
         return self.canonicalize(x) in self.d
 
     def __bool__(self) -> bool:
         return bool(self.d)
 
-    def __iter__(self) -> Iterable[T]:
+    def __iter__(self) -> Iterator[T]:
         return iter(self.d.keys())
 
     def __len__(self) -> int:
         return len(self.d)
 
     # -
-    def __sub__(self, other: "OrderedSet") -> "OrderedSet[T]":
+    def __sub__(self, other: "_OrderedSet") -> Self:
         return self.__class__(k for k in self if k not in other)
 
-    def __and__(self, other: "OrderedSet") -> "OrderedSet[T]":
+    def __and__(self, other: "_OrderedSet") -> Self:
         return self.__class__(k for k in self if k in other)
 
-    def __or__(self, other: "OrderedSet") -> "OrderedSet[T]":
+    def __or__(self, other: "_OrderedSet") -> Self:
         return self.__class__(itertools.chain(self, other))
 
     # NOTE: actual set signature is (self, *others)
-    def difference(self, other) -> "OrderedSet[T]":
+    def difference(self, other: "_OrderedSet") -> Self:
         return self - other
 
-    def add(self, x: T):
+    def add(self, x: T | T1):
         self.d[self.canonicalize(x)] = None
 
-    def update(self, x: Iterable[T]) -> None:
+    def update(self, x: Iterable[T | T1]) -> None:
         for i in x:
             self.d.setdefault(self.canonicalize(i), None)
 
-    def remove(self, x):
+    def remove(self, x: T | T1):
         del self.d[self.canonicalize(x)]
 
-    def copy(self) -> "OrderedSet[T]":
+    def copy(self) -> Self:
         return self.__class__(self)
 
     def clear(self) -> None:
         self.d.clear()
+
+
+# PEP 696 would make this simpler, but it isn't available until 3.12
+class OrderedSet(_OrderedSet[T, T]):
+    pass
 
 
 class InferringDict(dict[T, T1]):

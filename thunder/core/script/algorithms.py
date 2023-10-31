@@ -18,7 +18,7 @@ T = TypeVar("T")
 # =============================================================================
 # == nx.(Di)Graph, but with more safety =======================================
 # =============================================================================
-class TypedGraph(nx.Graph, Generic[T]):  # type: ignore[misc]
+class TypedGraph(nx.Graph, Generic[T]):  # type: ignore[misc, no-any-unimported]
     def __init__(self, edgelist: Iterable[tuple[T, T]] = ()) -> None:
         super().__init__()
         self.add_edges_from(edgelist)
@@ -45,7 +45,7 @@ class TypedGraph(nx.Graph, Generic[T]):  # type: ignore[misc]
         return TypedDiGraph[T]
 
 
-class TypedDiGraph(TypedGraph[T], nx.DiGraph):  # type: ignore[misc]
+class TypedDiGraph(TypedGraph[T], nx.DiGraph):  # type: ignore[misc, no-any-unimported]
     def assert_directed_acyclic(self) -> None:
         if not nx.is_directed_acyclic_graph(self):
             cycle = "\n".join(f"{node}" for node, _ in nx.find_cycle(self))
