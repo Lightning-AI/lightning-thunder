@@ -1588,7 +1588,6 @@ def grad_forward_scaled_dot_product_efficient_attention_helper(
     attn_mask: Optional[torch.Tensor] = None,
     dropout_p: float = 0.0,
     is_causal: bool = False,
-    *,
     scale: Optional[float] = None,
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
     # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
@@ -1631,7 +1630,7 @@ def grad_forward_scaled_dot_product_efficient_attention(
         attn_mask,
         dropout_p,
         is_causal,
-        scale=scale,
+        scale,
         output=bsym.output,
         _call_ctx=ctx,
     )
@@ -1649,7 +1648,6 @@ def _scaled_dot_product_efficient_attention_backward_helper(
     philox_offset: torch.Tensor,
     dropout_p: float,
     is_causal: bool,
-    *,
     scale: Optional[float],
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
     grad_input_mask = [a.requires_grad for a in (query, key, value)]
@@ -1742,7 +1740,7 @@ def scaled_dot_product_efficient_attention_backward(
         philox_offset,
         dropout_p,
         is_causal,
-        scale=scale,
+        scale,
         output=bsym.output,
         _call_ctx=ctx,
     )

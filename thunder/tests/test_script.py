@@ -241,8 +241,7 @@ def test_inline_submodule():
 @pytest.mark.parametrize(
     "name",
     (
-        # grads do not match
-        pytest.param("gpt-neox-like", marks=pytest.mark.xfail(raises=AssertionError, strict=False)),
+        "gpt-neox-like",
         "llama1-like",
         "long-context-like",
         "llama2-like",
@@ -252,15 +251,10 @@ def test_inline_submodule():
     ),
 )
 @pytest.mark.parametrize(
-    # TODO: Fix this test so that it works with CUDA
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1302
-    "device,expectation0,expectation1",
-    (
-        ("cpu", does_not_raise(), does_not_raise()),
-        ("cuda", pytest.raises(UnboundLocalError), pytest.raises(AssertionError)),
-    ),
+    "device",
+    ("cpu", "cuda"),
 )
-def test_litgpt_variants(name, device, expectation0, expectation1):
+def test_litgpt_variants(name, device):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
@@ -287,14 +281,12 @@ def test_litgpt_variants(name, device, expectation0, expectation1):
             actual_logits.sum().backward()
         return
     else:
-        with expectation0 if name != "falcon-7b-like" else does_not_raise():
-            actual_logits.sum().backward()
+        actual_logits.sum().backward()
 
     for param1, param2 in zip(reference.parameters(), tom.parameters()):
         assert param1 is not param2
         assert param1.grad is not None
-        with expectation1 if name != "falcon-7b-like" else does_not_raise():
-            torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-4, atol=1e-4)
 
 
 @skipif_not_python_3_10
