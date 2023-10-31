@@ -3,7 +3,7 @@ import enum
 import logging
 import opcode
 import sys
-from types import CodeType, MappingProxyType
+from types import CodeType
 from typing import Callable, Optional, TypeVar, Union
 from collections.abc import Iterable
 
@@ -13,7 +13,7 @@ except ImportError:
     # EllipsisType was introduced in 3.10
     EllipsisType = type(...)
 
-from thunder.core.utils import OrderedSet
+from thunder.core.utils import FrozenDict, OrderedSet
 
 logger = logging.getLogger(__name__)
 SUPPORTS_PREPROCESSING = (3, 9) <= sys.version_info < (3, 11)
@@ -342,24 +342,20 @@ _JUMP_DEPENDENT_SPEC: dict[str, tuple[StackEffect, StackEffect, StackEffect]] = 
 }
 
 
-def mapping(**kwargs: T) -> MappingProxyType[str, T]:
-    return MappingProxyType(kwargs)
-
-
-LOAD_OPNAMES = mapping(
+LOAD_OPNAMES = FrozenDict[str, VariableScope](
     LOAD_CONST=VariableScope.CONST,
     LOAD_FAST=VariableScope.LOCAL,
     LOAD_DEREF=VariableScope.NONLOCAL,
     LOAD_GLOBAL=VariableScope.GLOBAL,
 )
 
-STORE_OPNAMES = mapping(
+STORE_OPNAMES = FrozenDict[str, VariableScope](
     STORE_FAST=VariableScope.LOCAL,
     STORE_DEREF=VariableScope.NONLOCAL,
     STORE_GLOBAL=VariableScope.GLOBAL,
 )
 
-DEL_OPNAMES = mapping(
+DEL_OPNAMES = FrozenDict[str, VariableScope](
     DELETE_FAST=VariableScope.LOCAL,
     DELETE_DEREF=VariableScope.NONLOCAL,
     DELETE_GLOBAL=VariableScope.GLOBAL,

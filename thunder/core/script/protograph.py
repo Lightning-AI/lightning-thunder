@@ -7,7 +7,7 @@ import inspect
 import itertools
 import marshal
 import textwrap
-from types import CodeType, MappingProxyType
+from types import CodeType
 from typing import cast, final, Any, Callable, Deque, Generic, Literal, NamedTuple, TypeVar
 from collections.abc import Iterable, Iterator, Mapping
 
@@ -25,7 +25,7 @@ from thunder.core.script.python_ir_data import (
     EXTENDED_ARG,
     UNSAFE_OPCODES,
 )
-from thunder.core.utils import InferringDict, OrderedSet
+from thunder.core.utils import FrozenDict, InferringDict, OrderedSet
 
 T = TypeVar("T")
 
@@ -196,36 +196,36 @@ class _Materialized:
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class IntraBlockFlow:
-    _flow: Mapping[ThunderInstruction, _Symbolic]
+    _flow: FrozenDict[ThunderInstruction, _Symbolic]
 
-    BeginVariables = Mapping[VariableKey, AbstractValue]
+    BeginVariables = FrozenDict[VariableKey, AbstractValue]
     _begin: BeginVariables
 
     EndVariable = _Symbolic.Input | None
-    EndVariables = Mapping[VariableKey, EndVariable]  # `None` indicates an explicit `del`
+    EndVariables = FrozenDict[VariableKey, EndVariable]  # `None` indicates an explicit `del`
     _end: EndVariables
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_flow", MappingProxyType({**self._flow}))
-        object.__setattr__(self, "_begin", MappingProxyType({**self._begin}))
-        object.__setattr__(self, "_end", MappingProxyType({**self._end}))
+        object.__setattr__(self, "_flow", FrozenDict({**self._flow}))
+        object.__setattr__(self, "_begin", FrozenDict({**self._begin}))
+        object.__setattr__(self, "_end", FrozenDict({**self._end}))
 
     @property
     def symbolic(self) -> Iterable[tuple[ThunderInstruction, _Symbolic]]:
         yield from self._flow.items()
 
     @functools.cached_property
-    def materialized(self) -> MappingProxyType[ThunderInstruction, _Materialized]:
+    def materialized(self) -> FrozenDict[ThunderInstruction, _Materialized]:
         """Walk the flow resolving references as they we encounter them."""
         result: dict[ThunderInstruction, _Materialized] = {}
-        unused: IntraBlockFlow.EndVariables = MappingProxyType({})  # `end` should never be needed.
+        unused: IntraBlockFlow.EndVariables = FrozenDict({})  # `end` should never be needed.
         for instruction, node in self.symbolic:
             inputs = tuple(self._getitem_impl(0, i, (self._begin, unused), result) for i in node.inputs)
             outputs = [resolve_composites(inputs, o) for o in node.outputs]
             assert all(isinstance(o, AbstractValue) for o in outputs), outputs
             result[instruction] = _Materialized(tuple(inputs), tuple(outputs))
 
-        return MappingProxyType(result)
+        return FrozenDict(result)
 
     def __getitem__(self, key: tuple[EdgeIndex, _Symbolic.Input | None]) -> AbstractValue:
         return self._getitem_impl(*key, (self._begin, self._end), self.materialized)  # __getitem__ packs args

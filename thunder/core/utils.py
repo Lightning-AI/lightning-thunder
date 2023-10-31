@@ -5,7 +5,7 @@ from functools import reduce, wraps
 import itertools
 from itertools import chain
 from numbers import Number
-from typing import Callable, Generic, Optional, TypeVar
+from typing import overload, Callable, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Iterable, Iterator, Sequence
 
 from typing_extensions import Self
@@ -67,6 +67,7 @@ __all__ = [
     "check_same_device",
     # Helpful classes
     "OrderedSet",
+    "FrozenDict",
     # Context-related functions and decorators
     "langctx",
 ]
@@ -710,6 +711,39 @@ class InferringDict(dict[T, T1]):
     def __missing__(self, key: T) -> T1:
         self[key] = out = self._missing(key)
         return out
+
+
+# Unfortunately `UserDict` destroys generic deduction, so if we don't do this MyPy
+# will treat `FrozenDict[A, B]` as interchangeable with `FrozenDict[C, D]`.
+if TYPE_CHECKING:
+    _UserDictT = dict
+else:
+    _UserDictT = collections.UserDict
+
+
+class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
+    """Simple wrapper around `MappingProxyType` with various sugar.
+    (More permissive ctor, type checking, etc.)
+    """
+
+    @overload
+    def __init__(self, data: Mapping[T, T1]) -> None:
+        ...
+
+    @overload
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        ...
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.data = MappingProxyType({**self.data})
+
+    def __repr__(self) -> str:
+        body = ", ".join(f"{k}: {v}" for k, v in self.items())
+        return f"{self.__class__.__name__}({{{body}}})"
+
+    def __hash__(self) -> int:
+        return hash(frozenset(self.items()))
 
 
 #
