@@ -53,6 +53,7 @@ vjp_op_force = {
     "prod",
     "repeat",
     "split",
+    "stack",
 }
 
 

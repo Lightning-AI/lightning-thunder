@@ -2954,7 +2954,7 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
         # This is a temporary workaround.
-        if symbol.sym.id in (prims.PrimIDs.CAT, "torch.cat"):
+        if symbol.sym.id in (prims.PrimIDs.CAT, "torch.cat", "torch.stack"):
             safe_map_flat(put_grad, symbol.args, result)
         else:
             safe_map(put_grad, symbol.args, result)

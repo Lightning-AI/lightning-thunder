@@ -3438,13 +3438,12 @@ def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
 
 
 stack_opinfo = OpInfo(
-    clang.stack,
+    ltorch.stack,
     sample_input_generator=stack_sample_generator,
     error_input_generator=stack_error_generator,
     torch_reference=torch.stack,
     test_directives=(
         # vjp and jvp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
         DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
 )
