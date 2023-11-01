@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace
 from functools import partial
-from itertools import chain, product
+from itertools import chain, product, takewhile
 from typing import Callable, Optional, Tuple, Union
 from collections.abc import Sequence
 import time
@@ -17,7 +17,8 @@ from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 
 
 def find_external_producer_outputs(
-    trace: TraceCtx,
+    proxy_to_consumers: dict[ProxyInterface, tuple[BoundSymbolInterface, ...]],
+    next_consumers: Sequence[BoundSymbolInterface],
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
 ) -> tuple[ProxyInterface, ...]:
@@ -25,7 +26,10 @@ def find_external_producer_outputs(
     producer because they are used by other consumers.
 
     Args:
-        trace (TraceCtx): Trace object.
+        proxy_to_consumers (dict[ProxyInterface, tuple[BoundSymbolInterface, ...]]): A dictionary that maps a producer's
+            output to the consumers that use it.
+        next_consumers (Sequence[BoundSymbolInterface]): Other consumers that
+            use the producer's output.
         producer (BoundSymbolInterface): Producer node.
         consumer (BoundSymbolInterface): Consumer node.
 
@@ -33,16 +37,33 @@ def find_external_producer_outputs(
         Tuple[ProxyInterface, ...]: Producer's outputs that must be included in
         the output of the producer.
     """
-    proxy_to_consumers = utils.consumers(trace)
+    local_consumer_info = utils.consumers(list(chain((producer, consumer), next_consumers)))
 
-    def filter_func(out: ProxyInterface):
-        consumers = proxy_to_consumers.get(out, tuple())
-        if len(consumers) == 0:
+    def is_rematerializable(out: ProxyInterface):
+        # First check local information to see if the output is used by other
+        # consumers.
+        local_consumers = local_consumer_info.get(out, tuple())
+        if len(local_consumers) > 1:
+            return False
+
+        # If the output is not used by fusion consumers, check global information
+        # to see if the output is used by other consumers.
+        global_consumers = proxy_to_consumers.get(out, tuple())
+        global_consumers = tuple(
+            x for x in global_consumers if x.sym.name != "del" and x not in chain((consumer,), next_consumers)
+        )
+
+        # If the output is used by other global consumers, it's not rematerializable.
+        if len(global_consumers) > 0:
+            return False
+
+        if len(local_consumers) == 0:
             return True
-        consumers = tuple(filter(lambda x: x.sym.name != "del", consumers))
-        return len(consumers) == 1 and out.name in (x.name for x in consumer.args)
 
-    rematerializable_producer_outputs = tuple(filter(filter_func, producer.output))
+        # If the output is used by a single local consumer, it's rematerializable
+        return len(local_consumers) == 1 and out.name in (x.name for x in consumer.args)
+
+    rematerializable_producer_outputs = tuple(filter(is_rematerializable, producer.output))
 
     return tuple(x for x in producer.output if x.name not in (y.name for y in rematerializable_producer_outputs))
 
@@ -160,6 +181,8 @@ def apply_rematerialization_for_consumer(
 def find_filtered_producer_consumer_pairs(
     trace: TraceCtx,
     filter_func: Optional[Callable] = None,
+    *,
+    proxy_to_consumers = None,
 ) -> tuple[tuple[BoundSymbolInterface, BoundSymbolInterface], ...]:
     """Find producer-consumer pairs among the filtered symbols.
 
@@ -171,7 +194,7 @@ def find_filtered_producer_consumer_pairs(
         Tuple[Tuple[BoundSymbolInterface, BoundSymbolInterface], ...]: Producer-consumer bound symbol pairs.
     """
     filter_func = filter_func or (lambda x: True)
-    proxy_to_consumers = utils.consumers(trace)
+    proxy_to_consumers = utils.consumers(trace) if proxy_to_consumers is None else proxy_to_consumers
     producer_consumer_pairs = set()
     order_in_trace = {bsym: i for i, bsym in enumerate(filter(filter_func, trace.bound_symbols))}
 
@@ -390,21 +413,18 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         tuple[TraceCtx, list[TraceCtx]]: Rematerialized trace and the list of
             rematerialized traces.
     """
-    import copy
-
     start_time_ns = time.time_ns()
-
-    rematerialized_trace = from_trace(trace)
-    rematerialized_trace.bound_symbols = copy.copy(trace.bound_symbols)
 
     def replace_bsym_and_update_call_ctx(bsym, new_bsyms):
         new_bsym = new_bsyms.get(bsym, None)
         if new_bsym is not None:
-            return _update_nvfusion_call_ctx(rematerialized_trace, new_bsym)
+            return _update_nvfusion_call_ctx(trace, new_bsym)
         return bsym
 
+    static_consumer_info = utils.consumers(trace)
+
     # Find all the producers and consumers
-    pairs = find_nvfuser_producer_consumer_pairs(rematerialized_trace)
+    pairs = find_nvfuser_producer_consumer_pairs(trace, proxy_to_consumers=static_consumer_info)
 
     # Pairs of producer and consumer are not unique. Each update to the producer
     # or consumer may affect the other. We need to update the producer and
@@ -412,12 +432,15 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     producers = {producer for producer, _ in pairs}
     consumers = {consumer for _, consumer in pairs}
     new_bsyms = {bsym: bsym for bsym in producers | consumers}
-    for producer, consumer in pairs:
+    for i, (producer, consumer) in enumerate(pairs):
         current_producer = new_bsyms.get(producer, None) or producer
         current_consumer = new_bsyms.get(consumer, None) or consumer
         # Determine which producer's outputs cannot be rematerialized
+        next_consumers = takewhile(lambda x: x[0] == producer, pairs[i + 1 :])
+        next_consumers = tuple(consumer for _, consumer in next_consumers)
+        next_consumers = tuple(new_bsyms.get(bsym, bsym) for bsym in next_consumers)
         external_producer_outputs = find_external_producer_outputs(
-            rematerialized_trace, current_producer, current_consumer
+            static_consumer_info, next_consumers, current_producer, current_consumer
         )
         # Find the minimal cut between the producer and the consumer
         cut = find_cut(external_producer_outputs, current_producer, current_consumer)
@@ -430,19 +453,10 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             # ref: https://github.com/Lightning-AI/lightning-thunder/pull/868#discussion_r1305640813
             new_bsyms[producer] = new_bsyms[current_producer] = updated_producer
             new_bsyms[consumer] = new_bsyms[current_consumer] = updated_consumer
-        else:
-            new_bsyms[producer] = None
-            new_bsyms[consumer] = None
-
-        # We need to update the trace with the new producer and consumer so that
-        # the next iteration can use the updated bound symbols for
-        # `find_external_producer_outputs` function.
-        rematerialized_trace.bound_symbols = tuple(
-            new_bsyms.get(bsym, bsym) for bsym in rematerialized_trace.bound_symbols
-        )
 
     # New bound symbols are still incorrect. Its _ctx_call dict points to the
     # old nvFuser fusion. We need to update it to use the new definition.
+    rematerialized_trace = from_trace(trace)
     rematerialized_trace.bound_symbols = tuple(
         replace_bsym_and_update_call_ctx(bsym, new_bsyms) for bsym in trace.bound_symbols
     )
