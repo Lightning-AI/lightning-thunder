@@ -89,10 +89,13 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
         dropout=dropout_tuple,
     )
 
-    O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype))
+    # TODO: update to do tensor.stride_order when available from FE
+    _, h, s_q, _ = query.size
+    _, _, _, d_v = value.size
+    stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
+    O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_stride(stride_o)
 
-    graph.check_support()
-    graph.build()
+    graph.build([cudnn.heur_mode.A])
 
     workspace = torch.empty(graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
 
@@ -133,11 +136,7 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 
     query_4d = CudnnTensorAttributes(query.shape, compute_NHWC_strides(query.shape), query.dtype)
 
-    # Cudnn does not do a transpose operation for key
-    strides_4d = compute_NHWC_strides(key.shape)
-    shape_4d_T = (*key.shape[:-2], key.shape[-1], key.shape[-2])
-    strides_4d_T = (*strides_4d[:-2], strides_4d[-1], strides_4d[-2])
-    key_4d_T = CudnnTensorAttributes(shape_4d_T, strides_4d_T, key.dtype)
+    key_4d = CudnnTensorAttributes(key.shape, compute_NHWC_strides(key.shape), key.dtype)
 
     value_4d = CudnnTensorAttributes(value.shape, compute_NHWC_strides(value.shape), value.dtype)
 
@@ -146,14 +145,14 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
         attn_mask_shape = (1, 1, *attn_mask.shape)
         attn_mask_4d = CudnnTensorAttributes(attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask.dtype)
 
-    return query_4d, key_4d_T, value_4d, attn_mask_4d
+    return query_4d, key_4d, value_4d, attn_mask_4d
 
 
 def sdpa_impl(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
-    query_4d, key_4d_T, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
+    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
 
     Q, K, V, Attn_scale, Bias, Seed, seed_tensor, Offset, offset_tensor, O, workspace, graph = _make_cudnn_sdpa_graph(
-        query_4d, key_4d_T, value_4d, attn_mask_4d, dropout_p, is_causal
+        query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal
     )
 
     b, h, s_q, d_q = query.size()
@@ -185,10 +184,10 @@ def sdpa_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fal
     if cudnn is None:
         return False
 
-    query_4d, key_4d_T, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
+    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
 
     try:
-        _make_cudnn_sdpa_graph(query_4d, key_4d_T, value_4d, attn_mask_4d, dropout_p, is_causal)
+        _make_cudnn_sdpa_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
     except Exception as e:
         return False
 

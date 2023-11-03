@@ -55,8 +55,7 @@ def _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d):
 
     Y.set_output(True).set_data_type(torch_to_cudnn_dtype(a_4d.dtype)).set_stride(a_4d.stride)
 
-    graph.check_support()
-    graph.build()
+    graph.build([cudnn.heur_mode.A])
 
     return input, scale, bias, epsilon, Y, graph
 
