@@ -1,7 +1,7 @@
 import re
 import textwrap
 
-from thunder.core.script.protograph import ALIAS_OPCODES
+from thunder.core.script.values.symbolic import ALIAS_OPCODES
 
 import pytest
 

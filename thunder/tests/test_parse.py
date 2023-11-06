@@ -5,7 +5,7 @@ import re
 import sys
 import textwrap
 
-from thunder.core.script import parse
+from thunder.core.script import parse, values
 import thunder.core.script.protograph as protograph
 from thunder.core.script.protograph_passes import apply_protograph_passes
 import thunder.core.script.python_ir_data as python_ir_data
@@ -574,63 +574,63 @@ def test_debug_print_protoflows(capfd):
 
 
 def test_abstract_value():
-    x = protograph.AbstractValue()
+    x = values.AbstractValue()
     assert x == x
     assert x in {x}
     with pytest.raises(NotImplementedError):
         copy.copy(x)
 
-    y = protograph.AbstractValue()
+    y = values.AbstractValue()
     assert x != y
     assert x not in {y}
     assert x in {x, y}
     assert len({x, y}) == 2
 
-    assert x.substitute({x: y}) == y
+    assert values.substitute_value(x, {x: y}) == y
 
 
 def test_value_missing():
-    x = protograph.NonPyObject(protograph.NonPyObject.Tag.MISSING)
-    assert x == protograph.NonPyObject(protograph.NonPyObject.Tag.MISSING)
-    assert x in {protograph.NonPyObject(protograph.NonPyObject.Tag.MISSING)}
+    x = values.NonPyObject(values.NonPyObject.Tag.MISSING)
+    assert x == values.NonPyObject(values.NonPyObject.Tag.MISSING)
+    assert x in {values.NonPyObject(values.NonPyObject.Tag.MISSING)}
 
     # Sanity check that it doesn't always compare equal
-    assert x != protograph.AbstractValue()
+    assert x != values.AbstractValue()
 
 
 def test_external_ref():
     key = parse.VariableKey("self", parse.VariableScope.LOCAL)
-    x = protograph.ExternalRef(key)
-    y = protograph.ExternalRef(key)
+    x = values.ExternalRef(key)
+    y = values.ExternalRef(key)
 
     assert x == y
     assert x in {y}
 
 
 def test_abstract_phivalue():
-    x = protograph.IntermediateValue()
-    y = protograph.IntermediateValue()
-    xy = protograph.AbstractPhiValue((x, y))
+    x = values.IntermediateValue()
+    y = values.IntermediateValue()
+    xy = values.AbstractPhiValue((x, y))
 
     # Deduplicate.
     assert len(xy.constituents) == 2
-    assert protograph.AbstractPhiValue((x, x, y)) == xy
+    assert values.AbstractPhiValue((x, x, y)) == xy
 
     # Flatten.
-    assert xy == protograph.AbstractPhiValue((x, protograph.AbstractPhiValue((x, y))))
+    assert xy == values.AbstractPhiValue((x, values.AbstractPhiValue((x, y))))
 
     # Replace constituents.
-    x_prime = protograph.IntermediateValue()
-    y_prime = protograph.IntermediateValue()
-    xy_prime = xy.substitute({x: x_prime, y: y_prime})
-    assert xy_prime == protograph.AbstractPhiValue((x_prime, y_prime))
+    x_prime = values.IntermediateValue()
+    y_prime = values.IntermediateValue()
+    xy_prime = values.substitute_value(xy, {x: x_prime, y: y_prime})
+    assert xy_prime == values.AbstractPhiValue((x_prime, y_prime))
 
     # Direct replacement takes precidence.
-    z = protograph.IntermediateValue()
-    assert xy.substitute({x: x_prime, y: y_prime, xy: z}) is z
+    z = values.IntermediateValue()
+    assert values.substitute_value(xy, {x: x_prime, y: y_prime, xy: z}) is z
 
     # Direct replacements still need to propagate.
-    a = protograph.IntermediateValue()
-    b = protograph.IntermediateValue()
-    ab = protograph.AbstractPhiValue((a, b))
-    assert xy.substitute({xy: xy_prime, x_prime: a, y_prime: b}) == ab
+    a = values.IntermediateValue()
+    b = values.IntermediateValue()
+    ab = values.AbstractPhiValue((a, b))
+    assert values.substitute_value(xy, {xy: xy_prime, x_prime: a, y_prime: b}) == ab

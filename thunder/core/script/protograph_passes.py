@@ -7,25 +7,11 @@ from collections.abc import Iterable
 
 from typing_extensions import ParamSpec
 
-from thunder.core.script import algorithms, parse
-from thunder.core.script.protograph import (
-    is_detail,
-    _Symbolic,
-    AbstractPhiValue,
-    AbstractRef,
-    AbstractValue,
-    CompositeRef,
-    CompositeValue,
-    ExternalRef,
-    IntermediateValue,
-    IntraBlockFlow,
-    NonPyObject,
-    ProtoGraph,
-    ProtoBlock,
-)
+from thunder.core.script import algorithms, parse, values
+from thunder.core.script.protograph import ProtoGraph, ProtoBlock
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
-ValueEdges = Iterable[tuple[AbstractValue, AbstractValue]]
+ValueEdges = Iterable[tuple[values.AbstractValue, values.AbstractValue]]
 P = ParamSpec("P")
 IDEMPOTENT_REPEATS = 10  # Check for nondeterministic behavior.
 
@@ -66,8 +52,7 @@ def _get_missing_transitive(protograph: ProtoGraph) -> dict[ProtoBlock, OrderedS
         transitive_uses = OrderedSet(
             source
             for use in target_uses
-            if isinstance(source := protoblock.flow._end.get(use, use), parse.VariableKey)
-            and not source.is_const
+            if isinstance(source := protoblock.flow._end.get(use, use), parse.VariableKey) and not source.is_const
         )
         if transitive_uses - uses[protoblock]:
             uses[protoblock].update(transitive_uses)
@@ -91,9 +76,9 @@ def _add_transitive(protograph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     """
     substitutions = {}
     for protoblock, (new_uses, end_uses) in _get_missing_transitive(protograph).items():
-        new_flow = IntraBlockFlow(
-            _flow=protoblock.flow._flow,
-            _begin={**{k: AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
+        new_flow = dataclasses.replace(
+            protoblock.flow,
+            _begin={**{k: values.AbstractRef("Transitive") for k in new_uses}, **protoblock.flow._begin},
             _end={**{k: k for k in end_uses}, **protoblock.flow._end},
         )
         substitutions[protoblock] = new_protoblock = ProtoBlock(new_flow)
@@ -112,7 +97,7 @@ def _inter_block_edges(proto_graph: ProtoGraph) -> ValueEdges:
             outputs = dict(protoblock.end_state)
             child_inputs = dict(child.begin_state)
             for key, child_input in child_inputs.items():
-                yield outputs.get(key, NonPyObject(NonPyObject.Tag.MISSING)), child_input
+                yield outputs.get(key, values.NonPyObject(values.NonPyObject.Tag.MISSING)), child_input
 
             # `_add_transitive` should ensure the stacks match.
             # (Except for return blocks which may discard the stack.)
@@ -125,17 +110,17 @@ def _inter_block_edges(proto_graph: ProtoGraph) -> ValueEdges:
 
 def _graph_input_edges(proto_graph: ProtoGraph) -> ValueEdges:
     for key, initial_ref in proto_graph.root.begin_state:
-        if isinstance(initial_ref, ExternalRef):
+        if isinstance(initial_ref, values.ExternalRef):
             continue
 
-        assert isinstance(initial_ref, AbstractRef), initial_ref
+        assert isinstance(initial_ref, values.AbstractRef), initial_ref
         assert key.scope not in (parse.VariableScope.CONST, parse.VariableScope.STACK)
-        yield ExternalRef(key), initial_ref
+        yield values.ExternalRef(key), initial_ref
 
 
 def _phivalue_constituent(proto_graph: ProtoGraph) -> ValueEdges:
     for _, initial_ref in proto_graph.root.begin_state:
-        if isinstance(initial_ref, AbstractPhiValue):
+        if isinstance(initial_ref, values.AbstractPhiValue):
             yield from ((constituent, initial_ref) for constituent in initial_ref.constituents)
 
 
@@ -146,16 +131,16 @@ def _condense_values(
 ) -> tuple[ProtoGraph, bool]:
     edge_sources = (*edge_sources, _phivalue_constituent)
     edges = tuple(itertools.chain(*[fn(proto_graph) for fn in edge_sources]))
-    replace_map: dict[AbstractValue, AbstractValue] = {}
+    replace_map: dict[values.AbstractValue, values.AbstractValue] = {}
     for v, condensed in algorithms.compute_condense_map(edges).items():
         # Check invariants.
         assert condensed
-        if not isinstance(v, AbstractPhiValue):
-            invariants = (set(condensed) == {v}, not isinstance(v, AbstractRef))
+        if not isinstance(v, values.AbstractPhiValue):
+            invariants = (set(condensed) == {v}, not isinstance(v, values.AbstractRef))
             assert all(invariants) or not any(invariants), (invariants, v, condensed)
 
         # `AbstractPhiValue._unpack_apply` will determine if we need an AbstractPhiValue.
-        if (replacement := AbstractPhiValue(condensed).substitute({})) != v:  # type: ignore
+        if (replacement := values.substitute_value(values.AbstractPhiValue(condensed), {})) != v:
             replace_map[v] = replacement
 
     return proto_graph.transform(replace_map), bool(replace_map)
@@ -167,7 +152,7 @@ def _connect_protograph(proto_graph: "ProtoGraph") -> "ProtoGraph":
     assert not (missing := _get_missing_transitive(proto_graph)), missing
     for protoblock in proto_graph:
         for k, v in protoblock.begin_state:
-            assert not is_detail(v), (k, v)
+            assert not v.is_detail, (k, v)
     return proto_graph
 
 
@@ -180,18 +165,18 @@ def _tuple_fold(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
     would be more powerful the more `AbstractValue`s we can prove to be tuples with a known source.
     """
     original_graph = proto_graph
-    replacements: dict[parse.ThunderInstruction, tuple[_Symbolic.Output, ...]] = {}
-    known_tuples: OrderedSet[IntermediateValue] = OrderedSet()
+    replacements: dict[parse.ThunderInstruction, tuple[values.Symbolic.Output, ...]] = {}
+    known_tuples: OrderedSet[values.IntermediateValue] = OrderedSet()
 
-    def replace_fn(instruction: parse.ThunderInstruction, old_symbolic: _Symbolic) -> _Symbolic | None:
+    def replace_fn(instruction: parse.ThunderInstruction, old_symbolic: values.Symbolic) -> values.Symbolic | None:
         if (new_outputs := replacements.pop(instruction, None)) is not None:
             return dataclasses.replace(old_symbolic, outputs=new_outputs)
 
     for instruction, (_, node) in proto_graph.flat_flow:
-        if instruction.opname == "BUILD_TUPLE" and isinstance(output := node.outputs[0], IntermediateValue):
+        if instruction.opname == "BUILD_TUPLE" and isinstance(output := node.outputs[0], values.IntermediateValue):
             assert len(node.outputs) == 1, node.outputs
-            constituents = tuple(range(-len(node.inputs), 0))
-            replacements[instruction] = (CompositeRef(v=output, constituents=constituents),)
+            ordered = tuple(range(-len(node.inputs.ordered), 0))
+            replacements[instruction] = (values.CompositeRef(ordered=ordered).add_identity(output),)
             known_tuples.add(output)
 
     while replacements:
@@ -200,14 +185,14 @@ def _tuple_fold(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
         for instruction, (symbolic_node, materialized_node) in proto_graph.flat_flow:
             if (opname := instruction.opname) == "BINARY_SUBSCR":
                 to_index, index = materialized_node.inputs
-                is_tuple = isinstance(to_index, CompositeValue) and to_index.v in known_tuples
-                is_const_idx = isinstance(index, ExternalRef) and index.key.is_const
+                is_tuple = isinstance(to_index, values.CompositeValue) and to_index.identity in known_tuples
+                is_const_idx = isinstance(index, values.ExternalRef) and index.key.is_const
                 if is_tuple and is_const_idx and isinstance(idx := index.key.identifier, int):
                     replacements[instruction] = ((-2, idx),)
 
             elif opname == "UNPACK_SEQUENCE":
                 (to_unpack,) = materialized_node.inputs
-                if isinstance(to_unpack, CompositeValue) and to_unpack.v in known_tuples:
+                if isinstance(to_unpack, values.CompositeValue) and to_unpack.identity in known_tuples:
                     indices = range(-1, -len(materialized_node.outputs) - 1, -1)
                     replacements[instruction] = tuple((-1, idx) for idx in indices)
 

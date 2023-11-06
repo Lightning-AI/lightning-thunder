@@ -22,18 +22,8 @@ from thunder.core.script.graph import (
     Value,
 )
 from thunder.core.script.instrumentation import record
-from thunder.core.script import parse
-from thunder.core.script.protograph import (
-    is_detail,
-    AbstractPhiValue,
-    AbstractValue,
-    CompositeValue,
-    ExternalRef,
-    IntermediateValue,
-    NonPyObject,
-    ProtoBlock,
-    ProtoGraph,
-)
+from thunder.core.script import parse, values
+from thunder.core.script.protograph import ProtoBlock, ProtoGraph
 from thunder.core.script.protograph_passes import _get_missing_transitive, apply_protograph_passes, check_idempotent
 from thunder.core.script.python_ir_data import get_instruction, SUPPORTS_PREPROCESSING
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
@@ -191,7 +181,7 @@ def _bind_to_graph(
             if protoblock is proto_graph.root:
                 value = get_initial_value(key, block=block)
                 if key.scope == parse.VariableScope.LOCAL and value.value is not NULL:
-                    assert isinstance(abstract_value, ExternalRef), abstract_value
+                    assert isinstance(abstract_value, values.ExternalRef), abstract_value
                     value = PhiValue([value], [None], block)
 
             elif key in protoblock.uses:
@@ -204,7 +194,7 @@ def _bind_to_graph(
 
     convert_cache = {}
 
-    def convert(value: AbstractValue, protoblock: ProtoBlock, block: Block) -> Value:
+    def convert(value: values.AbstractValue, protoblock: ProtoBlock, block: Block) -> Value:
         v = convert_cache.get((value, protoblock))
         if v is not None:
             if (
@@ -215,21 +205,21 @@ def _bind_to_graph(
                 raise AssertionError("ohoh, this should not happen")
             return v
 
-        def _convert(value: AbstractValue, protoblock: ProtoBlock) -> Value:
-            assert not is_detail(value), value
+        def _convert(value: values.AbstractValue, protoblock: ProtoBlock) -> Value:
+            assert not value.is_detail, value
             if (out := input_conversions.get((value, protoblock), missing := object())) is not missing:
                 return out
 
-            if isinstance(value, NonPyObject):
-                assert value.tag == NonPyObject.Tag.MISSING
+            if isinstance(value, values.NonPyObject):
+                assert value.tag == values.NonPyObject.Tag.MISSING
                 return Value(value=NULL)
 
-            elif isinstance(value, (IntermediateValue, CompositeValue, AbstractPhiValue)):
+            elif isinstance(value, (values.IntermediateValue, values.CompositeValue, values.AbstractPhiValue)):
                 # For now we discard any information and just treat them as opaque.
                 # TODO(robieta): refine
                 return Value(block=block)
 
-            elif isinstance(value, ExternalRef) and value.key.is_const:
+            elif isinstance(value, values.ExternalRef) and value.key.is_const:
                 return get_initial_value(value.key, block=block)
 
             raise ValueError(f"Cannot convert abstract value: {value}, {protoblock} {protoblock is proto_graph.root=}")
@@ -305,7 +295,7 @@ def _bind_to_graph(
         for parent in proto_graph.parents[protoblock]:
             parent_state = dict(parent.end_state)
             for key, sink in block_values.items():
-                source = convert(parent_state.get(key, NonPyObject(NonPyObject.Tag.MISSING)), parent, block=None)
+                source = convert(parent_state.get(key, values.NonPyObject(values.NonPyObject.Tag.MISSING)), parent, block=None)
                 if source.value is not NULL and source not in sink.values:
                     sink.add_missing_value(v=source, jump_source=blocks[parent].nodes[-1])
 
