@@ -5,6 +5,8 @@ import logging
 import threading
 import typing
 
+from thunder.core.utils import debug_asserts_enabled
+
 
 T = typing.TypeVar("T")
 _STORAGE = threading.local()
@@ -84,6 +86,9 @@ def intercept_errors():
 def verbose_error(f):
     @functools.wraps(f)
     def wrapped(*args, **kwargs):
+        if not debug_asserts_enabled():
+            return f(*args, **kwargs)
+
         try:
             return f(*args, **kwargs)
         except BaseException as e:
@@ -121,6 +126,9 @@ def record(delegate_to: typing.Optional[str] | typing.Callable = None):
 
         @functools.wraps(f)
         def wrapped(*args, **kwargs):
+            if not debug_asserts_enabled():
+                return f(*args, **kwargs)
+
             stack = get_stack()
             try:
                 stack.append((f, args, kwargs, delegate_to))
