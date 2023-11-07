@@ -309,7 +309,8 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
 
     assert len(n.outputs) == 1
     inp_map = {p: bound_args.arguments[p.name] for p in gr1.local_variables_at_start if p.name in bound_args.arguments}
-    bl.block_outputs.remove(n.outputs[0])  # TODO: what with inplace!!
+    if n.outputs[0] in bl.block_outputs:  # it may legitimately happen that we don't use the output
+        bl.block_outputs.remove(n.outputs[0])  # TODO: what with inplace!!
     bl.block_outputs.update(inp_map.values())  # Note: This includes default args
     replace_values(gr1, inp_map)
 
