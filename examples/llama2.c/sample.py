@@ -23,8 +23,8 @@ top_k = 300 # retain only the top_k most likely tokens, clamp others to have 0 p
 tokenizer = "" # override the tokenizer model path
 seed = 1337
 device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
-#dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
-dtype = "float32"
+# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
+# dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
 compile = True # Use lightning.compile to compile the model to be faster
 exec(open('configurator.py').read()) # overrides from command line or config file
 # -----------------------------------------------------------------------------
@@ -34,9 +34,9 @@ torch.cuda.manual_seed(seed)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
 device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
-ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-# https://github.com/Lightning-AI/lightning-thunder/issues/491
-ctx = nullcontext() if True else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
+# ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+ctx = nullcontext() # torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # init from a model saved in a specific directory
 checkpoint_dict = torch.load(checkpoint, map_location=device)
