@@ -116,9 +116,9 @@ __EFFECTS = dict[str, StackEffect | Callable[[int], StackEffect] | EllipsisType]
     SET_UPDATE=...,
     LIST_APPEND=...,
     LIST_EXTEND=...,
-    MAP_ADD=...,
     DICT_MERGE=...,
     DICT_UPDATE=...,
+    MAP_ADD=(Pop(3), Push(1)),  #                           A,B,C       -> A
     COPY_DICT_WITHOUT_KEYS=(Pop(2), Push(2)),  #            A,B         -> A,C  (I am unsure...)
     #
     # Unary operators                                       A           -> B

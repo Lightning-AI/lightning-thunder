@@ -40,9 +40,9 @@ ALIAS_OPCODES = FrozenDict[str, Callable[[int], _AliasMask]](
         SET_UPDATE=...,
         LIST_APPEND=...,
         LIST_EXTEND=...,
-        MAP_ADD=...,
         DICT_MERGE=...,
         DICT_UPDATE=...,
+        MAP_ADD=(-3),
         COPY_DICT_WITHOUT_KEYS=(-2, None),  #           A,B         -> A,C  (I am unsure...)
         #
         # Misc.
