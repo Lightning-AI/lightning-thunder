@@ -2216,6 +2216,8 @@ def selu(a: TensorProxy, inplace: bool = False) -> TensorLike:
 
 @torchsymbol(torch.outer)
 def outer(a, b):
+    utils.check_types([a, b], TensorProxy)
+
     utils.check(a.ndim == 1, lambda: f"Expected {a.ndim=} to be one")
     utils.check(b.ndim == 1, lambda: f"Expected {b.ndim=} to be one")
 

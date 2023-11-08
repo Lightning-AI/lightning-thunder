@@ -4353,9 +4353,9 @@ tensor_creation_ops.append(zeros_like_opinfo)
 opinfos.extend(tensor_creation_ops)
 
 #
-# Matmul OpInfos
+# Linear algebra OpInfos
 #
-matmul_ops = []
+linear_algebra_ops = []
 
 
 def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -4400,7 +4400,7 @@ matmul_opinfo = OpInfo(
         ),
     ),
 )
-matmul_ops.append(matmul_opinfo)
+linear_algebra_ops.append(matmul_opinfo)
 
 
 def linear_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -4448,9 +4448,29 @@ linear_opinfo = OpInfo(
         ),
     ),
 )
-matmul_ops.append(linear_opinfo)
+linear_algebra_ops.append(linear_opinfo)
 
-opinfos.extend(matmul_ops)
+
+def tensor_1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        (4, 3),
+        (5, 0),
+    )
+
+    for shape_a, shape_b in cases:
+        yield SampleInput(make(shape_a), make(shape_b))
+
+outer_opinfo = OpInfo(
+    ltorch.outer,
+    sample_input_generator=tensor_1d_sample_generator,
+    torch_reference=torch.outer
+)
+linear_algebra_ops.append(outer_opinfo)
+
+
+opinfos.extend(linear_algebra_ops)
 
 #
 # NN Ops
