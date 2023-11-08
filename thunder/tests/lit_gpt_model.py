@@ -1,7 +1,7 @@
 """Taken from https://github.com/Lightning-AI/lit-gpt/blob/main/lit_gpt/model.py"""
 import math
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, Literal, Type
+from typing import Any, Optional, Literal
 
 import torch
 import torch.nn as nn
@@ -29,11 +29,13 @@ class Config:
     rotary_percentage: float = 0.25
     parallel_residual: bool = True
     bias: bool = True
+    lm_head_bias: bool = False
     n_query_groups: Optional[int] = None
     shared_attention_norm: bool = False
     _norm_class: Literal["LayerNorm", "RMSNorm"] = "LayerNorm"
     norm_eps: float = 1e-5
     _mlp_class: Literal["GptNeoxMLP", "LLaMAMLP"] = "GptNeoxMLP"
+    gelu_approximate: str = "none"
     intermediate_size: Optional[int] = None
     rope_condense_ratio: int = 1
     rope_base: int = 10000
@@ -198,6 +200,21 @@ configs = [
     ),
     # real configs
     dict(
+        name="open_llama_3b",
+        block_size=2048,
+        vocab_size=32000,
+        padding_multiple=64,
+        n_layer=26,
+        n_embd=3200,
+        rotary_percentage=1.0,
+        parallel_residual=False,
+        bias=False,
+        _norm_class="RMSNorm",
+        norm_eps=1e-6,
+        _mlp_class="LLaMAMLP",
+        intermediate_size=8640,
+    ),
+    dict(
         org="openlm-research",
         name="open_llama_7b",
         block_size=2048,
@@ -236,7 +253,7 @@ class GPT(nn.Module):
         assert config.padded_vocab_size is not None
         self.config = config
 
-        self.lm_head = nn.Linear(config.n_embd, config.padded_vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.padded_vocab_size, bias=config.lm_head_bias)
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.padded_vocab_size, config.n_embd),
@@ -271,6 +288,10 @@ class GPT(nn.Module):
         # the mask and kv cache size will get updated on `set_kv_cache`. we cannot update it here because we don't know
         # if the kv cache is expected
 
+    def reset_parameters(self) -> None:
+        # Trigger resetting the rope-cache
+        self.max_seq_length = self.config.block_size
+
     def _init_weights(self, module: nn.Module) -> None:
         """Meant to be used with `gpt.apply(gpt._init_weights)`."""
         if isinstance(module, nn.Linear):
@@ -286,11 +307,12 @@ class GPT(nn.Module):
             raise ValueError(f"Cannot forward sequence of length {T}, max seq length is only {self.max_seq_length}.")
 
         if input_pos is not None:  # use the kv cache
-            cos = self.cos.index_select(0, input_pos)
-            sin = self.sin.index_select(0, input_pos)
+            # https://github.com/Lightning-AI/lightning-thunder/issues/1082
+            cos = torch.index_select(self.cos, 0, input_pos)
+            sin = torch.index_select(self.sin, 0, input_pos)
             if self.mask_cache is None:
                 raise TypeError("You need to call `gpt.set_kv_cache()`")
-            mask = self.mask_cache.index_select(2, input_pos)
+            mask = torch.index_select(self.mask_cache, 2, input_pos)
         else:
             cos = self.cos[:T]
             sin = self.sin[:T]
@@ -310,7 +332,6 @@ class GPT(nn.Module):
         return build_rope_cache(
             seq_len=self.max_seq_length,
             n_elem=self.config.rope_n_elem,
-            dtype=torch.get_default_dtype(),
             device=device,
             condense_ratio=self.config.rope_condense_ratio,
             base=self.config.rope_base,
@@ -337,7 +358,7 @@ class GPT(nn.Module):
             # passing `attn_mask` to SDPA downgrades it to use the inefficient implementation. since we only need the mask
             # for the kv-cache support (only during inference), we only create it in that situation
             # this will be resolved by https://github.com/pytorch/pytorch/issues/96099
-            ones = torch.ones((self.config.block_size, max_seq_length), device=device, dtype=torch.bool)
+            ones = torch.ones((max_seq_length, max_seq_length), device=device, dtype=torch.bool)
             self.mask_cache = torch.tril(ones).unsqueeze(0).unsqueeze(0)
 
     def clear_kv_cache(self) -> None:
@@ -368,15 +389,15 @@ class Block(nn.Module):
         h = self.attn(n_1, cos, sin, mask, input_pos)
         if self.config.parallel_residual:
             n_2 = n_1 if self.config.shared_attention_norm else self.norm_2(x)
-            x = x + h + self.mlp(n_2)
+            x = self.mlp(n_2) + h + x
         else:
             if self.config.shared_attention_norm:
                 raise NotImplementedError(
                     "No checkpoint amongst the ones we support uses this configuration"
                     " (non-parallel residual and shared attention norm)."
                 )
-            x = x + h
-            x = x + self.mlp(self.norm_2(x))
+            x = h + x
+            x = self.mlp(self.norm_2(x)) + x
         return x
 
 
@@ -414,9 +435,10 @@ class CausalSelfAttention(nn.Module):
         # split batched computation into three
         q, k, v = qkv.split((q_per_kv, 1, 1), dim=2)
 
-        # repeat k and v if necessary
-        if self.config.n_query_groups != 1:  # doing this would require a full kv cache with MQA (inefficient!)
-            # for MHA this is a no-op
+        # maybe repeat k and v if for the non multi-head attention cases
+        # training: flash attention requires it
+        # inference: multi-query would require a full kv cache so avoid it to limit its memory usage
+        if self.config.n_query_groups != self.config.n_head and (input_pos is None or self.config.n_query_groups != 1):
             k = k.expand(B, self.config.n_query_groups, q_per_kv, T, self.config.head_size)
             v = v.expand(B, self.config.n_query_groups, q_per_kv, T, self.config.head_size)
 
@@ -430,8 +452,9 @@ class CausalSelfAttention(nn.Module):
         k = torch.cat((k_roped, k[..., self.config.rope_n_elem :]), dim=-1)
 
         if input_pos is not None:
-            if not isinstance(self.kv_cache, KVCache):
-                raise TypeError("You need to call `gpt.set_kv_cache()`")
+            # FIXME: assertion triggers could not eliminate self
+            # if not isinstance(self.kv_cache, KVCache):
+            #    raise TypeError("You need to call `gpt.set_kv_cache()`")
             k, v = self.kv_cache(input_pos, k, v)
 
         y = self.scaled_dot_product_attention(q, k, v, mask)
@@ -443,7 +466,7 @@ class CausalSelfAttention(nn.Module):
 
     def scaled_dot_product_attention(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: Optional[torch.Tensor] = None
-    ):
+    ) -> torch.Tensor:
         scale = 1.0 / math.sqrt(self.config.head_size)
         y = torch.nn.functional.scaled_dot_product_attention(
             q, k, v, attn_mask=mask, dropout_p=0.0, scale=scale, is_causal=mask is None
@@ -480,9 +503,11 @@ class GptNeoxMLP(nn.Module):
         self.fc = nn.Linear(config.n_embd, config.intermediate_size, bias=config.bias)
         self.proj = nn.Linear(config.intermediate_size, config.n_embd, bias=config.bias)
 
+        self.config = config
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc(x)
-        x = torch.nn.functional.gelu(x)
+        x = torch.nn.functional.gelu(x, approximate=self.config.gelu_approximate)
         return self.proj(x)
 
 
@@ -501,12 +526,7 @@ class LLaMAMLP(nn.Module):
 
 
 def build_rope_cache(
-    seq_len: int,
-    n_elem: int,
-    dtype: torch.dtype,
-    device: Optional[torch.device] = None,
-    base: int = 10000,
-    condense_ratio: int = 1,
+    seq_len: int, n_elem: int, device: Optional[torch.device] = None, base: int = 10000, condense_ratio: int = 1
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Enhanced Transformer with Rotary Position Embedding.
 
@@ -515,7 +535,7 @@ def build_rope_cache(
     https://github.com/labmlai/annotated_deep_learning_paper_implementations/blob/master/license.
     """
     # $\Theta = {\theta_i = 10000^{\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$
-    theta = 1.0 / (base ** (torch.arange(0, n_elem, 2, device=device) / n_elem))
+    theta = 1.0 / (base ** (torch.arange(0, n_elem, 2, device=device).float() / n_elem))
 
     # Create position indexes `[0, 1, ..., seq_len - 1]`
     seq_idx = torch.arange(seq_len, device=device) / condense_ratio
@@ -523,12 +543,7 @@ def build_rope_cache(
     # Calculate the product of position index and $\theta_i$
     idx_theta = torch.outer(seq_idx, theta).repeat(1, 2)
 
-    cos, sin = torch.cos(idx_theta), torch.sin(idx_theta)
-
-    # this is to mimic the behaviour of complex32, else we will get different results
-    if dtype in (torch.float16, torch.bfloat16, torch.int8):
-        return cos.half(), sin.half()
-    return cos, sin
+    return torch.cos(idx_theta), torch.sin(idx_theta)
 
 
 def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -554,9 +569,17 @@ class KVCache(nn.Module):
 
     def forward(self, input_pos: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # move the buffer to the activation dtype for when AMP is used
-        self.k = self.k.to(k.dtype)
-        self.v = self.v.to(v.dtype)
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1144
+        self.k = torch.Tensor.to(self.k, k.dtype)
+        self.v = torch.Tensor.to(self.v, v.dtype)
         # update the cache
-        k = self.k.index_copy_(2, input_pos, k)
-        v = self.v.index_copy_(2, input_pos, v)
-        return k, v
+        if torch._dynamo.is_compiling():
+            # inductor doesn't support `index_add` with bfloat16
+            k = self.k.index_copy_(2, input_pos, k)
+            v = self.v.index_copy_(2, input_pos, v)
+            return k, v
+        # thunder doesn't support `index_copy`
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1145
+        self.k = torch.index_add(self.k, 2, input_pos, k)
+        self.v = torch.index_add(self.v, 2, input_pos, v)
+        return self.k, self.v
