@@ -4,8 +4,7 @@ import sys
 from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import List, Optional
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence, Iterable
 
 import pytest
 import torch
@@ -46,7 +45,31 @@ TRITON_AVAILABLE: bool = triton_utils.is_triton_version_at_least("2.1")
 
 NVFUSER_AVAILABLE = executors.nvfuser_available()
 
-IN_CI = os.getenv("CI", None) == "true"
+IN_CI: bool = os.getenv("CI", None) == "true"
+CUDA_AVAILABLE: bool = torch.cuda.is_available()
+env_var_FORCE_CPU_TEST_INSTANTIATION: str = os.getenv("FORCE_CPU_TEST_INSTANTIATION", None)
+FORCE_CPU_TEST_INSTANTIATION: bool = (
+    env_var_FORCE_CPU_TEST_INSTANTIATION == "true" or env_var_FORCE_CPU_TEST_INSTANTIATION == "1"
+)
+env_var_DISABLE_CUDA_TEST_INSTANTIATION: str = os.getenv("DISABLE_CUDA_TEST_INSTANTIATION", None)
+DISABLE_CUDA_TEST_INSTANTIATION: bool = (
+    env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
+)
+
+
+# Filters the CPU devicetype when in CI, CUDA is available, and the environment variable
+#   FORCE_CPU_TEST_INSTANTIATION isn't forcing CPU test instantiation
+def filter_ci_devicetypes(devicetypes: Iterable[devices.DeviceType]) -> tuple[devices.DeviceType]:
+    filtered: tuple[devices.DeviceType]
+    if IN_CI and CUDA_AVAILABLE and not FORCE_CPU_TEST_INSTANTIATION:
+        filtered = tuple(x for x in devicetypes if x is not devices.DeviceType.CPU)
+    else:
+        filtered = tuple(x for x in devicetypes)
+
+    if DISABLE_CUDA_TEST_INSTANTIATION:
+        filtered = tuple(x for x in devicetypes if x is not devices.DeviceType.CUDA)
+
+    return filtered
 
 
 # Asserts that a candidate is closer to a reference than a competitor
@@ -282,6 +305,8 @@ class ops:
         self.supported_devicetypes = (
             set(supported_devicetypes) if supported_devicetypes is not None else set(_all_devicetypes())
         )
+        self.supported_devicetypes = set(filter_ci_devicetypes(self.supported_devicetypes))
+
         self.supported_dtypes = (
             datatypes.resolve_dtypes(supported_dtypes) if supported_dtypes is not None else datatypes.all_dtypes
         )
@@ -352,6 +377,8 @@ class instantiate:
     ):
         self.executors = set(executors) if executors is not None else set(_all_test_executors())
         self.devicetypes = set(devicetypes) if devicetypes is not None else set(available_devicetypes())
+
+        self.devicetypes = set(filter_ci_devicetypes(self.devicetypes))
 
         if dtypes == NOTHING:
             self.dtypes = (None,)
