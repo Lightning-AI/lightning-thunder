@@ -4,7 +4,7 @@ from functools import partial
 import pytest
 import torch
 import thunder
-from thunder.core.transforms import grad, clear_grads, populate_grads, get_grad, put_grad, put_grads
+from thunder.core.transforms import grad, grad_v1, clear_grads, populate_grads, get_grad, put_grad, put_grads
 
 from thunder.benchmarks import (
     Benchmark,
@@ -206,6 +206,28 @@ def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
+def thunder_grad_transform_v1(b: Benchmark, compile_fn: Callable):
+    module: torch.nn.Module = b.fn()
+    cfn = compile_fn(module)
+    cfn_grad = grad_v1(cfn)
+
+    if isinstance(module, torch.nn.Sequential):
+
+        def wrapper(*args):
+            clear_grads(cfn)
+            grads = cfn_grad(args)
+            populate_grads(grads, cfn, args=args)
+
+        return wrapper
+
+    def wrapper(*args, **kwargs):
+        clear_grads(cfn)
+        grads = cfn_grad(*args, **kwargs)
+        populate_grads(grads, cfn, args=args, kwargs=kwargs)
+
+    return wrapper
+
+
 def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
@@ -235,6 +257,9 @@ thunder_fwd_bwd_nvfuser = partial(thunder_fwd_bwd, compile_fn=thunder_nvfuser_ex
 thunder_grad_transform_nvfuser = partial(thunder_grad_transform, compile_fn=thunder_nvfuser_executor)
 thunder_grad_transform_torch_compile = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
 thunder_grad_transform_torch = partial(thunder_grad_transform, compile_fn=thunder_torch_executor)
+thunder_grad_transform_v1_nvfuser = partial(thunder_grad_transform_v1, compile_fn=thunder_nvfuser_executor)
+thunder_grad_transform_v1_torch_compile = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
+thunder_grad_transform_v1_torch = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_executor)
 
 # NOTE apex may or may not be available
 thunder_grad_transform_apex: None | Callable = None
@@ -264,6 +289,8 @@ if thunder_cudnn_layer_norm_nvfuser_executor is not None:
 
 thunder_grad_sdpa_executor = partial(thunder_grad_transform, compile_fn=thunder_sdpa_executor)
 thunder_grad_sdpa_nvfuser_executor = partial(thunder_grad_transform, compile_fn=thunder_sdpa_nvfuser_executor)
+thunder_grad_v1_sdpa_executor = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_executor)
+thunder_grad_v1_sdpa_nvfuser_executor = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_nvfuser_executor)
 
 
 @pytest.mark.parametrize(
@@ -295,6 +322,8 @@ def test_gelu_fwd(benchmark, executor: Callable):
         torch_compile_torch_bwd,
         thunder_grad_transform_torch_compile,
         thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
         thunder_fwd_bwd_nvfuser,
     ),
     ids=(
@@ -302,6 +331,8 @@ def test_gelu_fwd(benchmark, executor: Callable):
         "torch.compile+torch-bwd",
         "thunder-grad+torch.compile",
         "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
         "thunder-fwd-bwd+nvfuser",
     ),
 )
@@ -353,6 +384,8 @@ def test_cross_entropy_fwd(benchmark, executor: None | Callable):
         torch_compile_torch_bwd,
         thunder_grad_transform_torch_compile,
         thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
         thunder_grad_transform_apex,
         thunder_grad_transform_apex_nvfuser,
         thunder_fwd_bwd_nvfuser,
@@ -362,6 +395,8 @@ def test_cross_entropy_fwd(benchmark, executor: None | Callable):
         "torch.compile+torch-bwd",
         "thunder-grad+torch.compile",
         "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
         "thunder-grad+apex",
         "thunder-grad+apex+nvfuser",
         "thunder-fwd-bwd+nvfuser",
@@ -460,6 +495,8 @@ def test_sdpa_fwd(benchmark, executor: None | Callable):
         torch_compile_torch_bwd,
         thunder_grad_transform_torch_compile,
         thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
         thunder_grad_sdpa_executor,
         thunder_grad_sdpa_nvfuser_executor,
         # thunder_fwd_bwd_nvfuser,
@@ -469,6 +506,8 @@ def test_sdpa_fwd(benchmark, executor: None | Callable):
         "torch.compile+torch-bwd",
         "thunder-grad+torch.compile",
         "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
         "thunder-grad+sdpa",
         "thunder-grad+sdpa+nvfuser",
         # "thunder-fwd-bwd+nvfuser"
@@ -515,6 +554,8 @@ def test_mlp_fwd(benchmark, executor: Callable):
         torch_compile_torch_bwd,
         thunder_grad_transform_torch_compile,
         thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
         thunder_fwd_bwd_nvfuser,
     ),
     ids=(
@@ -522,6 +563,8 @@ def test_mlp_fwd(benchmark, executor: Callable):
         "torch.compile+torch-bwd",
         "thunder-grad+torch.compile",
         "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
         "thunder-fwd-bwd+nvfuser",
     ),
 )
@@ -571,6 +614,8 @@ def test_csa_fwd(benchmark, executor: Callable):
         torch_compile_torch_bwd,
         thunder_grad_transform_torch_compile,
         thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
         thunder_fwd_bwd_nvfuser,
     ),
     ids=(
@@ -578,6 +623,8 @@ def test_csa_fwd(benchmark, executor: Callable):
         "torch.compile+torch-bwd",
         "thunder-grad+torch.compile",
         "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
         "thunder-fwd-bwd+nvfuser",
     ),
 )
@@ -627,6 +674,8 @@ def test_block_fwd(benchmark, executor: Callable):
         torch_compile_torch_bwd,
         thunder_grad_transform_torch_compile,
         thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
         thunder_fwd_bwd_nvfuser,
     ),
     ids=(
@@ -634,6 +683,8 @@ def test_block_fwd(benchmark, executor: Callable):
         "torch.compile+torch-bwd",
         "thunder-grad+torch.compile",
         "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
         "thunder-fwd-bwd+nvfuser",
     ),
 )
@@ -679,8 +730,20 @@ def test_gpt2_fwd(benchmark, executor: Callable):
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
 @pytest.mark.parametrize(
     "executor,",
-    (torch_eager_bwd, torch_compile_torch_bwd, thunder_grad_transform_nvfuser, thunder_fwd_bwd_nvfuser),
-    ids=("torch-eager", "torch.compile+torch-bwd", "thunder-grad+nvfuser", "thunder-fwd-bwd+nvfuser"),
+    (
+        torch_eager_bwd,
+        torch_compile_torch_bwd,
+        thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_nvfuser,
+        thunder_fwd_bwd_nvfuser,
+    ),
+    ids=(
+        "torch-eager",
+        "torch.compile+torch-bwd",
+        "thunder-grad+nvfuser",
+        "thunder-grad_v1+nvfuser",
+        "thunder-fwd-bwd+nvfuser",
+    ),
 )
 def test_gpt2_grad(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTBenchmark(
@@ -727,8 +790,20 @@ def test_gpt2xl_fwd(benchmark, executor: Callable):
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
 @pytest.mark.parametrize(
     "executor,",
-    (torch_eager_bwd, torch_compile_torch_bwd, thunder_grad_transform_nvfuser, thunder_fwd_bwd_nvfuser),
-    ids=("torch-eager", "torch.compile+torch-bwd", "thunder-grad+nvfuser", "thunder-fwd-bwd+nvfuser"),
+    (
+        torch_eager_bwd,
+        torch_compile_torch_bwd,
+        thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_nvfuser,
+        thunder_fwd_bwd_nvfuser,
+    ),
+    ids=(
+        "torch-eager",
+        "torch.compile+torch-bwd",
+        "thunder-grad+nvfuser",
+        "thunder-grad_v1+nvfuser",
+        "thunder-fwd-bwd+nvfuser",
+    ),
 )
 def test_gpt2xl_grad(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTBenchmark(

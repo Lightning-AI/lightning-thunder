@@ -1530,6 +1530,25 @@ def grad(
     return add_transform(cfn, _grad_transform)
 
 
+def grad_v1(
+    cfn,
+) -> Callable:
+    def grad(func):
+        def grad_func(*args, **kwargs):
+            _, grads = value_and_grad(func)(*args, **kwargs)
+            grads = [g for g in grads if g is not None]
+            return grads
+
+        return grad_func
+
+    def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+        gradtrc = construct_trace()(grad(trc.python_callable()), *trc.args, **trc.kwargs)
+        return gradtrc
+
+    cfn._using_grad_transform = True
+    return add_transform(cfn, _grad_transform)
+
+
 class Transforms(Enum):
     IdentityOp = auto()
     VmapOp = auto()
