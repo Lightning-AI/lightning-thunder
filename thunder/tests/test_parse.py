@@ -54,7 +54,7 @@ Block 1:  [] => []
 Block 2:  [] => []
   LOAD[x, 1: CONST]
   BINARY_ADD . . . . . .  (x, 1) -> v0
-  RETURN_VALUE . . . . .  (v0) ->             
+  RETURN_VALUE . . . . .  (v0) ->
 """
 )
 def simple_if_fn(x):

@@ -1151,10 +1151,8 @@ def test_populate_grads_nanogpt(executor, device, dtype):
         pytest.skip(
             "This test crashes its worked on Windows when run using pytest distributed (Windows fatal exception: access violation)"
         )
-    if IN_CI and torch.device(device).type == 'cpu':
-        pytest.skip(
-            "Skipping the CPU version of this test in CI because it's very slow"
-        )
+    if IN_CI and torch.device(device).type == "cpu":
+        pytest.skip("Skipping the CPU version of this test in CI because it's very slow")
 
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
 

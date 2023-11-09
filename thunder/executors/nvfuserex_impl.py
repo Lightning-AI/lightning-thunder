@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Callable, Set, Tuple, Type, Hashable
+from typing import Union, List, Any, Optional, Dict, Callable, Set, Tuple, Type
+from collections.abc import Hashable
 from collections.abc import Sequence
 import time
 from copy import copy

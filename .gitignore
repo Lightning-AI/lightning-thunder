@@ -138,3 +138,5 @@ scripts/build
 
 # Profiler traces
 benchmarks/traces
+
+.ruff_cache/

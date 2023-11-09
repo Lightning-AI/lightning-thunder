@@ -33,7 +33,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import inspect
 import math
 from dataclasses import dataclass
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
 import torch.nn as nn

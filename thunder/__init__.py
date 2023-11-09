@@ -1,5 +1,6 @@
 from functools import wraps, partial
-from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type, Sequence
+from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from collections.abc import Sequence
 import os
 
 from looseversion import LooseVersion

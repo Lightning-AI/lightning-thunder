@@ -1,6 +1,7 @@
 from itertools import chain
 import time
-from typing import Sequence, Any
+from typing import Any
+from collections.abc import Sequence
 
 import thunder.core.prims as prims
 from thunder.core.proxies import Proxy, variableify, Variable

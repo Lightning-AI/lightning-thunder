@@ -1,4 +1,5 @@
-from typing import List, Callable, Any, Dict, Tuple, Union, Type, Hashable
+from typing import List, Callable, Any, Dict, Tuple, Union, Type
+from collections.abc import Hashable
 from collections.abc import Sequence
 from numbers import Number
 import math

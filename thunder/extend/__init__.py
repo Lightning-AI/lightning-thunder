@@ -1,4 +1,5 @@
-from typing import Any, Callable, Hashable
+from typing import Any, Callable
+from collections.abc import Hashable
 from types import ModuleType
 
 from thunder.core.utils import check

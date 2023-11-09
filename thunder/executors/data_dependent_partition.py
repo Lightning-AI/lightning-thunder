@@ -22,8 +22,8 @@ class Node:
         self.stop = stop
         self.group_bsyms = group_bsyms
         self.group_indices = group_indices
-        self.parents: Set[Node] = set()
-        self.children: Set[Node] = set()
+        self.parents: set[Node] = set()
+        self.children: set[Node] = set()
 
     def __repr__(self) -> str:
         s = f"node ID {self.ID} : "
@@ -73,7 +73,7 @@ class Node:
 
 # assumes bound_symbol comes in as a DAG and in valid topo order
 class Graph:
-    def __init__(self, producers, consumers, bound_symbols: List[BoundSymbol]):
+    def __init__(self, producers, consumers, bound_symbols: list[BoundSymbol]):
         self.roots: list[Node] = []
         self.return_node: None | Node = None
         self.counter = 0
