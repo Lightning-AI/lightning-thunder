@@ -4118,6 +4118,10 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             cotangents = tree_unflatten(cotangents, output_spec)
         out = backward_pass(env, trace, cotangents)
         if torch_autograd:
+            gkwargs = out[-1] if isinstance(out[-1], dict) else {}
+            gargs = out[:-1] if isinstance(out[-1], dict) else out
+            gkwargs = {k: gkwargs.get(k, None) for k in trace.kwargs}
+            out = (*gargs, gkwargs)
             out = tree_flatten(out)[0]
         return out
 
