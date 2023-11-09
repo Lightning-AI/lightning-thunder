@@ -289,6 +289,7 @@ if thunder_cudnn_layer_norm_nvfuser_executor is not None:
 
 thunder_grad_sdpa_executor = partial(thunder_grad_transform, compile_fn=thunder_sdpa_executor)
 thunder_grad_sdpa_nvfuser_executor = partial(thunder_grad_transform, compile_fn=thunder_sdpa_nvfuser_executor)
+thunder_fwd_bwd_sdpa_nvfuser = partial(thunder_fwd_bwd, compile_fn=thunder_sdpa_nvfuser_executor)
 thunder_grad_v1_sdpa_executor = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_executor)
 thunder_grad_v1_sdpa_nvfuser_executor = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_nvfuser_executor)
 
@@ -499,7 +500,7 @@ def test_sdpa_fwd(benchmark, executor: None | Callable):
         thunder_grad_transform_v1_nvfuser,
         thunder_grad_sdpa_executor,
         thunder_grad_sdpa_nvfuser_executor,
-        # thunder_fwd_bwd_nvfuser,
+        thunder_fwd_bwd_sdpa_nvfuser,
     ),
     ids=(
         "torch-eager",
@@ -510,7 +511,7 @@ def test_sdpa_fwd(benchmark, executor: None | Callable):
         "thunder-grad_v1+nvfuser",
         "thunder-grad+sdpa",
         "thunder-grad+sdpa+nvfuser",
-        # "thunder-fwd-bwd+nvfuser"
+        "thunder-fwd-bwd+sdpa+nvfuser",
     ),
 )
 def test_sdpa_grad(benchmark, executor: Callable):

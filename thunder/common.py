@@ -24,7 +24,7 @@ from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, Te
 import thunder.core.prims as prims
 import thunder.distributed as dist
 import thunder.torch as ltorch
-from thunder.extend import Executor, get_default_executors, get_always_executors
+from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor
 import thunder.executors as executors
 from thunder.executors.torch_autograd import thunder_backward
 
@@ -676,6 +676,10 @@ def _create_callable(
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.time_ns()
 
+        for ex in cd.executors_list:
+            if isinstance(ex, OperatorExecutor):
+                ex.is_active = True
+
         # Determines whether to use autograd.Function or not
         # autograd.Function (which supports calling .backward() in PyTorch) is used when:
         #   1) The grad() transform is not applied
@@ -704,6 +708,9 @@ def _create_callable(
                 cs.last_executed = c
                 if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
                     cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs)
+                for ex in cd.executors_list:
+                    if isinstance(ex, OperatorExecutor):
+                        ex.is_active = False
                 cs.last_trace_host_stop = time.time_ns()
                 return result
 
@@ -741,6 +748,10 @@ def _create_callable(
         for transform in transforms:
             trc = transform(trc, executors_list=cd.executors_list)
             traces.append(trc)
+
+        for ex in cd.executors_list:
+            if isinstance(ex, OperatorExecutor):
+                ex.is_active = False
 
         #
         # Executes the trace, then updates the CompiledData and possibly

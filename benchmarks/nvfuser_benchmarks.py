@@ -199,10 +199,11 @@ class Benchmark:
             return executor, forward_fn
 
         assert base_executor == "thunder", f"Unknown executor base {base_executor}"
+        import thunder.executors.sdpaex
 
         # Constructs the executors list
         _executor_extension_map: dict[str, list] = {
-            "nvfuser": [thunder.nvfuser_executor],
+            "nvfuser": [thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex],
             "apex": ["apex_xentropy"],
             "cudnn": ["cudnn"],
             "triton": ["triton_crossentropy"],

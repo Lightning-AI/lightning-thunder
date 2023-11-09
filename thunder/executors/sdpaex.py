@@ -11,7 +11,13 @@ import thunder.core.devices as devices
 import thunder.torch as ltorch
 from thunder.torch import TensorLike
 
-from thunder.core.transforms import get_grad, put_grad, put_grads
+from thunder.core.transforms import (
+    get_grad,
+    put_grad,
+    put_grads,
+    register_augmented_forward_with_checker,
+    register_backward,
+)
 from thunder.extend import OperatorExecutor, register_executor
 
 sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
@@ -84,7 +90,6 @@ def _grad_forward_scaled_dot_product_efficient_attention_meta(
     attn_mask: None | TensorLike,
     dropout_p: float = 0.0,
     is_causal=False,
-    *,
     scale: None | float = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy, TensorProxy]:
     # Reference metadata:
@@ -145,6 +150,81 @@ sdpea_gradfwd = sdpa_ex.register_operator(
 )
 
 
+def scaled_dot_product_attention_aug_fw(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: TensorProxy | None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: float | None = None,
+):
+    out, logsumexp, philox_seed, philox_offset = sdpea_gradfwd(
+        query, key, value, attn_mask, dropout_p, is_causal, scale
+    )
+    return out, (query, key, value, attn_mask, out, logsumexp, philox_seed, philox_offset, dropout_p, is_causal, scale)
+
+
+def scaled_dot_product_efficient_attention_aug_fw_rule_check(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: None | TensorProxy,
+    dropout_p: float,
+    is_causal: bool,
+    *,
+    scale: None | float,
+) -> bool:
+    if sdpa_ex.is_active:
+        return _scaled_dot_product_attention_checker(query, key, value, attn_mask, dropout_p, is_causal, scale=scale)
+    return False
+
+
+register_augmented_forward_with_checker(
+    "torch.nn.functional.scaled_dot_product_attention",
+    scaled_dot_product_efficient_attention_aug_fw_rule_check,
+    scaled_dot_product_attention_aug_fw,
+)
+
+
+@register_backward("torch.nn.functional.scaled_dot_product_attention")
+def scaled_dot_product_attention_backward(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: TensorProxy | None,
+    out: TensorProxy,
+    logsumexp: TensorProxy,
+    philox_seed: TensorProxy,
+    philox_offset: TensorProxy,
+    dropout_p,
+    is_causal: bool,
+    scale: float | None,
+    grad_out: TensorProxy,
+):
+    (
+        grad_query,
+        grad_key,
+        grad_val,
+        grad_attn_mask,
+    ) = sdpea_bwd(
+        grad_out,
+        query,
+        key,
+        value,
+        attn_mask,
+        out,
+        logsumexp,
+        philox_seed,
+        philox_offset,
+        dropout_p,
+        is_causal,
+        scale,
+    )
+    return grad_query, grad_key, grad_val, grad_attn_mask
+
+
 def _grad_forward_scaled_dot_product_efficient_attention_checker(
     query: TensorLike,
     key: TensorLike,
@@ -152,7 +232,6 @@ def _grad_forward_scaled_dot_product_efficient_attention_checker(
     attn_mask: None | TensorLike = None,
     dropout_p: float = 0.0,
     is_causal: bool = False,
-    *,
     scale: None | float = None,
 ) -> bool:
     tensor_inputs = [query, key, value]
@@ -192,7 +271,6 @@ def _scaled_dot_product_efficient_attention_backward_meta(
     philox_offset: TensorLike,
     dropout_p: float,
     is_causal: bool = False,
-    *,
     scale: None | float = None,
 ) -> (TensorProxy, TensorProxy, TensorProxy, None | TensorProxy):
     _input_check_scaled_dot_product_efficient_attention(query, key, value, attn_mask)

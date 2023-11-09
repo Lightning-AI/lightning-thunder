@@ -473,8 +473,9 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
-    pytest.skip("This test needs to be updated to use the new sdpa executor")
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        from thunder.executors.sdpaex import sdpa_ex
+
         # query, key, value
         grad_inputs = list(sample.args[:3])
         if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
@@ -488,9 +489,12 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, actual_grad = executor.make_callable(vjp(filtered_op), disable_torch_autograd_support=True)(
-            filtered_args, (v,)
-        )
+        actual_out, actual_grad = thunder.compile(
+            vjp(filtered_op),
+            disable_torch_autograd_support=True,
+            disable_preprocessing=True,
+            executors_list=executor.executors_list() + [sdpa_ex],
+        )(filtered_args, (v,))
         comp(actual_out, expect_out)
 
         # compare gradients of query, key, value, and attn_mask
