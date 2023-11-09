@@ -67,8 +67,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        # self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
-        self.flash = False
+        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         # NOTE: The original Karpathy's script hides bias registration behind a flag
         # but we don't do that here. We always register bias, because of preprocessing bug:
         # https://github.com/Lightning-AI/lightning-thunder/issues/605
