@@ -18,6 +18,7 @@ import tempfile
 from lightning_utilities.core.imports import package_available
 
 import torch
+import torch.nn as nn
 from torch.testing import make_tensor
 import torch.multiprocessing as mp
 
@@ -26,6 +27,7 @@ import thunder.torch as ltorch
 from thunder.cudagraphs import CUDAGraphExecutor
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
+from thunder.core.transforms import grad, clear_grads, populate_grads
 import thunder.executors as executors
 from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_llama_model
 
@@ -237,25 +239,45 @@ class BenchmarkRunStatistics:
 
 # A timing helper
 def _benchmark(
-    benchmark: Benchmark, fn: Callable, wait_for_computation: Callable, repetitions: int
+    benchmark: Benchmark,
+    fn: Callable,
+    wait_for_computation: Callable,
+    repetitions: int,
+    *,
+    use_grad_transform: bool = False,
+    compile_backward: bool = False,
 ) -> list[BenchmarkRunStatistics]:
     stats = []
     for _ in range(repetitions):
+        # TODO - set grads to none
         args, kwargs = benchmark.make_batch()
         wait_for_computation()
         called_backward: bool = False
         start: int = time.time_ns()
         result = fn(*args, **kwargs)
+        if compile_backward:
+            # NOTE In this case backward has been compiled, so nothing more to be done
+            pass
+        elif use_grad_transform:
+            # This populates the grads on the module (even though they're cleared in a moment)
+            #   because calling backward() in PyTorch populates the grads, so for a far comparison
+            #   the benchmark needs to account for that happening
+            if isinstance(fn, torch.nn.Module):
+                populate_grads(result, fn)
+            else:
+                populate_grads(result, args=args, kwargs=kwargs)
+        else:
+            # Calls backward, if the output requires grad
+            grad_tensor = benchmark.postprocess_for_backward(result)
+            if grad_tensor is not None and isinstance(grad_tensor, torch.Tensor) and grad_tensor.requires_grad:
+                grad_tensor.backward(torch.ones_like(grad_tensor))
+                called_backward = True
 
-        # Calls backward, if the output requires grad
-        # TODO Consider zeroing the grad when generating a batch
-        grad_tensor = benchmark.postprocess_for_backward(result)
-        if grad_tensor is not None and isinstance(grad_tensor, torch.Tensor) and grad_tensor.requires_grad:
-            grad_tensor.backward(torch.randn_like(grad_tensor))
-            called_backward = True
         host_stop: int = time.time_ns()
         wait_for_computation()
         stop: int = time.time_ns()
+        if isinstance(fn, torch.nn.Module):
+            clear_grads(fn)
 
         cs = thunder.compile_stats(fn)
         stat = BenchmarkRunStatistics(
@@ -300,6 +322,7 @@ def _prettyprint_stats(
     callable_construction_time: int,
     warmup_stats: list[BenchmarkRunStatistics],
     benchmark_stats: list[BenchmarkRunStatistics],
+    extended_printout: bool = True,
 ) -> None:
     assert len(warmup_stats) > 0, "Expected at least one warmup run"
     assert len(benchmark_stats) > 0, "Expected at least one benchmark run"
@@ -356,6 +379,15 @@ def _prettyprint_stats(
     total_host_time_ns: int = median_benchmark_stat.host_stop_time - median_benchmark_stat.start_time
     total_host_time_us: str = ns_to_us(total_host_time_ns)
     host_time_percentage: str = f"{round(total_host_time_ns / median_benchmark_stat.total_time * 100)}%"
+
+    if not extended_printout:
+        short_printout = f"""\
+        {benchmark_name} benchmark results:
+            The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
+        """
+
+        print(short_printout)
+        return
 
     preamble = f"""\
     {benchmark_name} benchmark results:
@@ -427,7 +459,13 @@ def print_rank_0(message):
 # TODO Consider isolating each benchmark run in a subprocess to avoid cache reuse across benchmarks
 #   (which has been observed, to get around this just run one benchmark at a time)
 def _run_benchmark(
-    benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20
+    benchmark: Benchmark,
+    constructor: Callable,
+    *,
+    warmup_iters: int = 10,
+    benchmark_iters: int = 20,
+    use_grad_transform: bool = False,
+    compile_backward: bool = False,
 ) -> tuple[int, list, list]:
     # Determines the "wait for computation function," to be run after calls to make_batch() and the benchmark
     #   function to ensure that computation has finished
@@ -449,12 +487,39 @@ def _run_benchmark(
     benchmark_fn = benchmark.fn()
     wait_for_computation_fn()
     start_time: int = time.time_ns()
-    benchmark_callable = constructor(benchmark_fn)
+
+    assert not use_grad_transform or not compile_backward, "Can't set both use_grad_transform and compile_backward!"
+    if use_grad_transform:
+        from thunder.core.transforms import _grad_specifier_default
+
+        def grad_specifier(outs) -> None:
+            grad_tensor = benchmark.postprocess_for_backward(outs)
+            _grad_specifier_default(grad_tensor)
+
+        benchmark_callable = constructor(benchmark_fn)
+        benchmark_callable = grad(benchmark_callable, grad_specifier=grad_specifier)
+    elif compile_backward:
+
+        def _fn(*args, **kwargs):
+            result = benchmark_fn(*args, **kwargs)
+            grad_tensor = benchmark.postprocess_for_backward(result)
+            grad_tensor.backward(torch.ones_like(grad_tensor))
+
+        benchmark_callable = constructor(_fn)
+    else:
+        benchmark_callable = constructor(benchmark_fn)
+
     wait_for_computation_fn()
     stop_time: int = time.time_ns()
     callable_construction_time: int = stop_time - start_time
-
-    my_benchmark = partial(_benchmark, benchmark, benchmark_callable, wait_for_computation_fn)
+    my_benchmark = partial(
+        _benchmark,
+        benchmark,
+        benchmark_callable,
+        wait_for_computation_fn,
+        use_grad_transform=use_grad_transform,
+        compile_backward=compile_backward,
+    )
 
     # Performs warmup iters
     warmup_stats: list[BenchmarkRunStatistics] = my_benchmark(warmup_iters)
@@ -465,8 +530,17 @@ def _run_benchmark(
     return callable_construction_time, warmup_stats, benchmark_stats
 
 
+# TODO Support for grad transforming the benchmarks is currently a prototype
+#   Reconcile the grad transform and calling torch.autograd.grad so they can be directly compared
 def run_benchmark(
-    benchmark: Benchmark, constructor: Callable, *, warmup_iters: int = 10, benchmark_iters: int = 20
+    benchmark: Benchmark,
+    constructor: Callable,
+    *,
+    warmup_iters: int = 10,
+    benchmark_iters: int = 20,
+    use_grad_transform: bool = False,
+    extended_printout: bool = True,
+    compile_backward: bool = False,
 ) -> None:
     print(f"Running benchmark {benchmark.name}")
     _print_benchmark_arguments(benchmark)
@@ -476,7 +550,12 @@ def run_benchmark(
         raise RuntimeError("Found a benchmark with no specified devices")
 
     callable_construction_time, warmup_stats, benchmark_stats = _run_benchmark(
-        benchmark, constructor, warmup_iters=warmup_iters, benchmark_iters=benchmark_iters
+        benchmark,
+        constructor,
+        warmup_iters=warmup_iters,
+        benchmark_iters=benchmark_iters,
+        use_grad_transform=use_grad_transform,
+        compile_backward=compile_backward,
     )
 
     _prettyprint_stats(
@@ -484,6 +563,7 @@ def run_benchmark(
         callable_construction_time=callable_construction_time,
         warmup_stats=warmup_stats,
         benchmark_stats=benchmark_stats,
+        extended_printout=extended_printout,
     )
 
 
@@ -512,6 +592,7 @@ def run_multiprocess_benchmark(
     world_size: int = 2,
     warmup_iters: int = 10,
     benchmark_iters: int = 20,
+    extended_printout: bool = True,
 ):
     print(f"Running distributed benchmark {benchmark.name} with {world_size=}")
     _print_benchmark_arguments(benchmark)
@@ -576,6 +657,7 @@ def run_multiprocess_benchmark(
             callable_construction_time=avg_cct,
             warmup_stats=all_warmup_stats,
             benchmark_stats=all_benchmark_stats,
+            extended_printout=extended_printout,
         )
     finally:
         pool.shutdown()
@@ -586,9 +668,88 @@ def run_multiprocess_benchmark(
 #
 
 
-def default_torch_executor(fn: Callable) -> Callable:
+def torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return fn
+
+
+def torch_compile_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch._dynamo.reset()
+    return torch.compile(fn)
+
+
+def thunder_torch_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor])
+
+
+def thunder_nvfuser_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[thunder.nvfuser_executor])
+
+
+def thunder_torch_compile_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(
+        fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor], use_torch_compile=True
+    )
+
+
+from thunder.executors.apex_entropyex import apex_ex, apex_available
+
+thunder_apex_executor: None | Callable = None
+thunder_apex_nvfuser_executor: None | Callable = None
+if apex_available():
+
+    def thunder_apex_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[apex_ex])
+
+    def thunder_apex_nvfuser_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[apex_ex, thunder.nvfuser_executor])
+
+
+from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
+
+thunder_cudnn_executor: None | Callable = None
+thunder_cudnn_nvfuser_executor: None | Callable = None
+thunder_cudnn_layer_norm_executor: None | Callable = None
+thunder_cudnn_layer_norm_nvfuser_executor: None | Callable = None
+if cudnn_available():
+
+    def thunder_cudnn_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_ex])
+
+    def thunder_cudnn_nvfuser_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_ex, thunder.nvfuser_executor])
+
+    def thunder_cudnn_layer_norm_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_layernorm_ex])
+
+    def thunder_cudnn_layer_norm_nvfuser_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.compile(
+            fn, cache_mode="dynamic strides", executors_list=[cudnn_layernorm_ex, thunder.nvfuser_executor]
+        )
+
+
+from thunder.executors.sdpaex import sdpa_ex
+
+
+def thunder_sdpa_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex])
+
+
+def thunder_sdpa_nvfuser_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex, thunder.nvfuser_executor])
 
 
 def default_torch_ddp_executor(_) -> Callable:
@@ -597,12 +758,6 @@ def default_torch_ddp_executor(_) -> Callable:
         return torch.nn.parallel.DistributedDataParallel(fn)
 
     return func
-
-
-def default_torch_compile_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch._dynamo.reset()
-    return torch.compile(fn)
 
 
 def default_torch_compile_ddp_executor(_) -> Callable:
@@ -614,6 +769,13 @@ def default_torch_compile_ddp_executor(_) -> Callable:
     return func
 
 
+def default_thunder_torch_executor(fn: Callable) -> Callable:
+    from thunder.executors import TORCH
+
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[TORCH])
+
+
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(fn, cache_mode="always trace")
@@ -622,6 +784,10 @@ def default_thunder_always_trace_executor(fn: Callable) -> Callable:
 def default_thunder_dynamic_strides_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(fn, cache_mode="dynamic strides")
+
+
+def thunder_torchex_compile_dynamic_strides_executor(fn: Callable) -> Callable:
+    from thunder.executors import TORCH
 
 
 def default_thunder_ddp_dynamic_strides_executor(rank) -> Callable:
@@ -726,6 +892,30 @@ def _print_benchmark_arguments(bmark: Benchmark) -> None:
     print(f"{bmark.name} benchmark parameters:")
     for arg in bmark.args:
         print(f"\t{arg.name}={getattr(bmark, arg.name)}")
+
+
+class BwdModule(torch.nn.Module):
+    def __init__(self, postprocess_for_backward: Callable):
+        super().__init__()
+
+        self.postprocess_for_backward = postprocess_for_backward
+
+    def forward(self, *args, **kwargs):
+        bwd_tensor: torch.Tensor = self.postprocess_for_backward(*args, **kwargs)
+        return bwd_tensor
+
+
+# This class can be chained with another module, using sequential, to produce
+#   an output suitable for calling .backward() on, simplifying its integration into other benchmarks
+class SumModule(torch.nn.Module):
+    def __init__(self, postprocess_for_backward: Callable):
+        super().__init__()
+
+        self.postprocess_for_backward = postprocess_for_backward
+
+    def forward(self, *args, **kwargs):
+        bwd_tensor: torch.Tensor = self.postprocess_for_backward(*args, **kwargs)
+        return bwd_tensor.sum()
 
 
 class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
@@ -974,12 +1164,13 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     ) -> None:
         super().__init__()
 
-        gpt_config = _extract_nanogpt_config(config)
-        self.shape: Sequence[int] = batchdims + (gpt_config.seq_len, 4 * gpt_config.n_embd)
+        self.config = _extract_nanogpt_config(config)
+        self.batchdims = batchdims
+        self.shape: Sequence[int] = batchdims + (self.config.seq_len, 4 * self.config.n_embd)
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
-        self.requires_grad: bool = (requires_grad,)
+        self.requires_grad: bool = requires_grad
 
         self.devices: list[str] = [device]
 
@@ -988,7 +1179,7 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         def foo(a):
-            return torch.nn.functional.gelu(a, approximate="tanh")
+            return torch.nn.functional.gelu(a, approximate="tanh").sum()
 
         return foo
 
@@ -1013,11 +1204,15 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="dtype",
-            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the model. Default is thunder.float32.",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the model. Default is thunder.bfloat16.",
         ),
         BenchmarkArg(
             name="requires_grad",
             description="Whether the model parameters require grad. Default is True.",
+        ),
+        BenchmarkArg(
+            name="only_return_loss",
+            description="Whether the model only returns the loss or not. Default is False.",
         ),
     )
 
@@ -1042,8 +1237,9 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         batchdims: Sequence[int] = (16,),
         indices_dtype: dtypes.dtype = thunder.int64,
         device: str = "cuda",
-        dtype: dtypes.dtype = thunder.float32,
+        dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
+        only_return_loss: bool = False,
     ) -> None:
         super().__init__()
 
@@ -1053,6 +1249,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.device = device
         self.dtype = dtype
         self.requires_grad: bool = requires_grad
+        self.only_return_loss: bool = only_return_loss
 
         # Performs torch dtype conversions
         self.indices_tdtype: torch.dtype = ltorch.to_torch_dtype(self.indices_dtype)
@@ -1067,6 +1264,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
         x = make(shape)
         targets = make(shape)
+
         return (x, targets), {}
 
     def fn(self) -> Callable:
@@ -1075,7 +1273,25 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             .to(device=self.device, dtype=self.model_tdtype)
             .requires_grad_(self.requires_grad)
         )
-        return gpt
+
+        if not self.only_return_loss:
+            return gpt
+
+        # NOTE This module filters NanoGPT's (logits, loss) output to the tensor to call ".backward()" on
+        class FilterForBwd(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+
+            def forward(self, tup: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+                logits: torch.Tensor
+                loss: torch.Tensor
+                logits, loss = tup
+                return loss
+
+        ffb = FilterForBwd()
+        module: torch.nn.Module = torch.nn.Sequential(gpt, ffb)
+
+        return module
 
     def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> Optional[torch.Tensor]:
         if not self.requires_grad:
@@ -1161,12 +1377,14 @@ class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         targets_shape = self.batchdims + (self.config.seq_len,)
         targets = make(targets_shape, dtype=self.indices_tdtype, requires_grad=False)
 
-        return (logits, targets), {}
+        return (logits.view(-1, logits.size(-1)), targets.view(-1)), {}
 
     def fn(self) -> Callable:
         def foo(logits, targets):
             return torch.nn.functional.cross_entropy(
-                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+                logits,
+                targets,
+                ignore_index=-1,
             )
 
         return foo
@@ -1245,6 +1463,7 @@ class NanoGPTCSABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
+
         return gpt_csa
 
 
@@ -1321,6 +1540,7 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
+
         return gpt_block
 
 
@@ -1884,7 +2104,7 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="dtype",
-            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.float32.",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.bfloat16.",
         ),
         BenchmarkArg(
             name="requires_grad",
@@ -1913,7 +2133,7 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         sequences: int = 8,
         seq_length: int = 1024,
         device: str = "cuda",
-        dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.float32,
+        dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
         super().__init__()

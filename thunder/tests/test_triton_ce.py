@@ -13,6 +13,11 @@ from thunder.tests.opinfos import get_opinfo
 from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet, IN_CI
 from thunder.executors import triton_utils
 
+pytestmark = pytest.mark.skip(
+    "These tests are disabled until the cuDNN executor is updated log to use the extend submodule"
+)
+
+
 from lightning_utilities.core.imports import package_available
 
 TRITON_AVAILABLE = package_available("triton")

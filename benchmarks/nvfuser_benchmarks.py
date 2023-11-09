@@ -201,7 +201,7 @@ class Benchmark:
 
         # Constructs the executors list
         _executor_extension_map: dict[str, list] = {
-            "nvfuser": [thunder.executors.NVFUSER],
+            "nvfuser": [thunder.nvfuser_executor],
             "apex": ["apex_xentropy"],
             "cudnn": ["cudnn"],
             "triton": ["triton_crossentropy"],
@@ -214,7 +214,7 @@ class Benchmark:
         executors_list = []
         for ext in executor_extensions:
             executors_list.extend(_map_to_executor(ext))
-        executors_list.append(thunder.executors.TORCH)
+        executors_list.append(thunder.pytorch_executor)
 
         if not self.backward:
             tom = thunder.compile(

@@ -6,18 +6,29 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Callable, Dict, Union, Optional
+from typing import Any, Callable, Dict, Union, Optional, Hashable
 from collections.abc import Sequence
 import copy
 import inspect
 import time
+from collections import deque
+import os
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.core.baseutils import default_dataclass_params
+import thunder.core.devices as devices
 from thunder.core.devices import cpu, Device
 from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify, FutureTensorProxy
+from thunder.core.proxies import (
+    NumberProxy,
+    Proxy,
+    TensorProxy,
+    variableify,
+    unvariableify,
+    CollectionProxy,
+    FutureTensorProxy,
+)
+from thunder.core.baseutils import default_dataclass_params
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -44,8 +55,10 @@ from thunder.clang import (
     slice_in_dim,
     reciprocal,
     convolution,
+    clang_ctx,
 )
 from thunder.core.transform_common import dce
+import thunder.torch as ltorch
 
 import torch
 import numpy as np
@@ -75,6 +88,7 @@ class Node:
         self.bsym = bsym
         self.children: list[Node] = []
         self.parents: list[Node] = []
+        self.number: None | int = None
 
     # TODO Consider printing parents and children
     def __repr__(self) -> str:
@@ -92,10 +106,12 @@ class Node:
 # Converts a sequence of bound symbols to a directed acyclic graph
 # Returns a tuple of
 #   - a list of all Nodes corresponding to bound symbols without parents
-#   - an optional Node corresponding to the RETURN bound symbol, which must be unique or not in the list of bound symbols
+#   - a list of all Nodes of bound symbols without children
+# Note that nodes without parents or children may be in either list -- running a DCE pass
+#   before toposorting should remove all nodes without children EXCEPT FOR the return node
 def bsym_list_to_dag(
     bsyms: Sequence[BoundSymbolInterface], *, producers: None | ProxyDict = None, consumers: None | ProxyDict = None
-) -> tuple[list[Node], None | Node]:
+) -> tuple[list[Node], list[Node]]:
     roots: list[Node] = []
     leaves: list[Node] = []
     return_node: None | Node = None
@@ -119,10 +135,7 @@ def bsym_list_to_dag(
     # Adds edges between nodes
     for bsym, node in bsym_to_node_map.items():
         has_parents: bool = False
-        for inp in chain(bsym._flat_args, bsym._flat_kwargs):
-            if not isinstance(inp, Proxy):
-                continue
-
+        for inp in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
             producer = producers[inp]
             parent = bsym_to_node_map[producer]
 
@@ -142,13 +155,9 @@ def bsym_list_to_dag(
             roots.append(node)
 
         has_children: bool = False
-
-        vargs = tuple(variableify(x) for x in bsym._flat_args)
-        vkwargs = tuple(variableify(x) for x in bsym._flat_kwargs)
-        for out in bsym._flat_outs:
-            if not isinstance(out, Proxy):
-                continue
-
+        vargs = bsym.flat_variableified_proxy_args
+        vkwargs = bsym.flat_variableified_proxy_kwargs
+        for out in bsym.flat_proxy_outs:
             # Checks that the output is actually produced by this function, and not an input to it
             vout = variableify(out)
             if vout in vargs or vout in vkwargs:
@@ -314,6 +323,7 @@ class VISIT_TYPE(Enum):
     INSERT_AFTER = auto()
     INSERT_BEFORE = auto()
     REPLACE = auto()
+    NO_OP = auto()
 
 
 # Creates a new trace from "trace_from" by calling "visit" on its bound symbols ("bsyms").
@@ -354,7 +364,10 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
                 if visit_type is VISIT_TYPE.INSERT_AFTER:
                     trc.bound_symbols.append(bsym)
 
-                trc.bound_symbols.extend(scope)
+                if visit_type is not VISIT_TYPE.NO_OP:
+                    trc.bound_symbols.extend(scope)
+                else:
+                    trc.bound_symbols.append(bsym)
 
                 if visit_type is VISIT_TYPE.INSERT_BEFORE:
                     trc.bound_symbols.append(bsym)
@@ -362,14 +375,6 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
             finally:
                 # Restores the trc's scope
                 trc.scopes = old_scope
-
-        # Updates the trace's output
-        return_bsym: BoundSymbolInterface = trc.bound_symbols[-1]
-        check(
-            return_bsym.sym.id is prims.PrimIDs.RETURN,
-            lambda: f"Expected the last symbol of a inline visitor transformed trace to be RETURN, but it was {return_bsym.sym}",
-        )
-        trc.output = return_bsym.output
 
         if provenance is not None:
             trc.set_provenance(TraceProvenance(provenance))
@@ -397,8 +402,15 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
     cs = CompileStats()
     transforms = cfn._lc_transforms + [transform]
     potransforms = cfn._lc_post_optimization_transforms
+    using_grad_transform = cfn._using_grad_transform
 
-    ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
+    ncfn = _create_callable(
+        cd,
+        cs,
+        transforms=transforms,
+        post_optimization_transforms=potransforms,
+        _using_grad_transform=using_grad_transform,
+    )
     return ncfn
 
 
@@ -421,7 +433,7 @@ def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Calla
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
-def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
+def _noop_transform(trace: Trace, **kwargs) -> Trace:
     start_time_ns = time.time_ns()
     noop_trace = from_trace(trace)
 
@@ -439,7 +451,7 @@ def _noop_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
     elapsed_time_millis = elapsed_time_ns // 1000000
     noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-    return noop_trace, [noop_trace]
+    return noop_trace
 
 
 def noop(cfn: Callable) -> Callable:
@@ -447,7 +459,8 @@ def noop(cfn: Callable) -> Callable:
 
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
-def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
+#   This is an example of a post-optimization transform.
+def _comment_fusions_transform(trace: Trace, **kwargs) -> Trace:
     start_time_ns = time.time_ns()
     commented_trace = from_trace(trace)
 
@@ -469,7 +482,7 @@ def _comment_fusions_transform(trace: Trace) -> tuple[Trace, list[Trace]]:
 
     commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
 
-    return commented_trace, [commented_trace]
+    return commented_trace
 
 
 def comment_fusions(cfn: Callable) -> Callable:
@@ -477,41 +490,1042 @@ def comment_fusions(cfn: Callable) -> Callable:
 
 
 #
+# Helper functions for composable transforms
+#
+
+
+# Flattens a list of bound symbols, returning the flattened list
+def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
+    flattened: list[BoundSymbol] = []
+
+    def _flatten(bsym: BoundSymbol):
+        if should_flatten(bsym):
+            check(
+                len(bsym.subsymbols) > 0,
+                lambda: f"Trying to flatten {bsym} to create a grad formula, but it has no subsymbols",
+            )
+            for sbsym in bsym.subsymbols:
+                _flatten(sbsym)
+        else:
+            flattened.append(bsym)
+
+    for bsym in bsyms:
+        _flatten(bsym)
+
+    return flattened
+
+
+#
 # Phantom grad transform
 #
-# TODO WIP
+
+#
+# Functions related to functionalizing TOMs
+#
 
 
-# TODO Use the clang ctx -- define in clang/__init__.py?
-def mul_grad(a: Number | TensorProxy, b: Number | TensorProxy):
-    fwd = prims.mul(a, b)
+# TODO Test with buffers
+def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None, args=None, kwargs=None) -> None:
+    idx: int = 0
+    if tom is not None and tom._additional_param_values is not None:
+        for p in tom._additional_param_values:
+            if p.requires_grad:
+                # Supports grad accumulation (like when weight tying)
+                if p.grad is not None:
+                    p.grad += grads[idx]
+                else:
+                    p.grad = grads[idx]
+                idx += 1
 
-    g = prims.grad_for(fwd)
+    # Short-circuits if there are no args or kwargs
+    if args is None and kwargs is None:
+        return
 
-    a_grad = prims.mul(a, g)
-    b_grad = prims.mul(b, g)
+    flats, _ = tree_flatten((args, kwargs))
+    for f in flats:
+        if isinstance(f, torch.Tensor) and f.requires_grad:
+            f.grad = grads[idx]
+            idx += 1
 
-    prims.grads((a, b), (a_grad, b_grad))
+
+def extract_grads(module: torch.nn.Module) -> tuple[torch.Tensor, ...]:
+    grads = tuple(
+        f.grad
+        for f in chain(module.parameters(), module.buffers())
+        if isinstance(f, torch.Tensor) and f.requires_grad and f.grad is not None
+    )
+    return grads
+
+
+def clear_grads(module: torch.nn.Module) -> None:
+    if not isinstance(module, torch.nn.Module):
+        return
+
+    for p in module.parameters():
+        p.grad = None
+    for b in module.buffers():
+        b.grad = None
+
+
+from thunder.core.script.noinline import noinline
+from thunder.core.langctx import langctx
+
+
+def torchctx(fn):
+    _fn = langctx(ltorch)(fn)
+    return noinline(_fn)
+
+
+_grad_fn_map: dict[Any, Callable] = {}
+
+
+def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
+    id: Any = sym_or_id
+    if isinstance(sym_or_id, Symbol):
+        id = sym_or_id.id
+    _grad_fn_map[id] = gradfn
+
+
+# Grad functions for prims
+from thunder.core.prims import PrimIDs as pids, get_grad, put_grad
+
+
+# A generalization of prims.put_grad to pytrees
+# TODO Consider validating that the specs are the same
+# TODO Consider validating that that object requires grad (and filtering o.w.)
+def put_grads(a, g):
+    flats, _ = tree_flatten(a)
+    flatgrads, _ = tree_flatten(g)
+
+    for f, fg in zip(flats, flatgrads):
+        if isinstance(f, TensorProxy) and isinstance(fg, TensorProxy):
+            put_grad(f, fg)
+
+
+#
+# Unpacking operator grads
+#
+
+# NOTE prims.unpack_empty_dict creates no grad associations
+register_grad(pids.UNPACK_EMPTY_DICT, prims.unpack_empty_dict)
+
+# NOTE prims.unpack_key creates no grad associations
+register_grad(pids.UNPACK_KEY, prims.unpack_key)
+
+# NOTE prims.unpack_sequence creates no grad associations
+register_grad(pids.UNPACK_SEQUENCE, prims.unpack_sequence)
+
+
+#
+# Data movement and transformation operator grads
+#
+@torchctx
+def _convert_element_type_prim_grad(a: Number | TensorProxy, dtype: type | dtypes.dtype) -> Number | TensorProxy:
+    fwd = prims.convert_element_type(a, dtype)
+
+    g = get_grad(fwd)
+    g_converted = prims.convert_element_type(g, dtypes.to_dtype(a))
+    put_grad(a, g_converted)
 
     return fwd
 
 
-# The default grad extractor for the grad transform.
-#   Extractors return which output tensor or tensors from a function should be used
-#   to compute the grad.
-#   This default grad extractor ensures the function's output is a single tensor that requires grad,
-#   and it uses that to compute the grad.
-def _grad_extractor_default(x):
-    utils.check(
-        isinstance(x, TensorProxy) and x.requires_grad,
-        lambda: f"The default grad extractor expects a single tensor that requires grad as the function's output. Use a custom grad extractor for functions with other outputs.",
+register_grad(pids.CONVERT_ELEMENT_TYPE, _convert_element_type_prim_grad)
+
+#
+# Tensor creation operator grads
+#
+
+# NOTE prims.full creates no grad associations
+register_grad(pids.FULL, prims.full)
+
+# NOTE prims.iota creates no grad associations
+register_grad(pids.IOTA, prims.iota)
+
+# NOTE prims.uniform creates no grad associations
+register_grad(pids.UNIFORM, prims.uniform)
+
+#
+# Reshaping and permuting operator grads
+#
+
+
+@torchctx
+def _broadcast_in_dim_prim_grad(
+    a: TensorProxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]
+) -> TensorProxy:
+    fwd = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
+
+    g = get_grad(fwd)
+
+    unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
+    bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
+    reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
+
+    g = ltorch.sum(g, reduce_dims)
+
+    # NOTE This must be clang.unsqueeze because torch.unsqueeze, unlike clang.unsqueeze, only accepts an integer
+    #   (put another way, torch only allows one unsqueeze at a time)
+    g = clang.unsqueeze(g, unit_dims)
+
+    put_grad(a, g)
+
+    return fwd
+
+
+register_grad(pids.BROADCAST_IN_DIM, _broadcast_in_dim_prim_grad)
+
+
+def _reshape_prim_grad(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+    fwd = prims.reshape(a, shape)
+
+    g = get_grad(fwd)
+
+    a_grad = prims.reshape(g, a.shape)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.RESHAPE, _reshape_prim_grad)
+
+
+@torchctx
+def _slice_prim_grad(
+    a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: None | Sequence[int] = None
+) -> TensorProxy:
+    fwd = prims.slice_prim(a, start_indices, end_indices, strides)
+
+    g = get_grad(fwd)
+
+    padding = None
+    if strides is None or np.all(np.equal(strides, 1)):
+        padding = tuple(zip(start_indices, np.subtract(a.shape, end_indices), (0,) * len(start_indices)))
+    else:
+        real_limits = np.add(
+            start_indices,
+            np.where(np.equal(g.shape, 0), 0, np.add(1, np.multiply(np.subtract(g.shape, 1), strides))),
+        )
+        padding = tuple(zip(start_indices, np.subtract(a.shape, real_limits), np.subtract(strides, 1)))
+
+    # Converts NumPy numbers to Python ints
+    # TODO Should we support NumPy numbers better?
+    padding = tree_map(int, padding)
+    a_grad = prims.pad(g, const_as(0, g.dtype), padding)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.SLICE, _slice_prim_grad)
+
+
+@torchctx
+def _squeeze_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
+    fwd = prims.squeeze(a, dims)
+
+    g = get_grad(fwd)
+    # NOTE This calls clang.unsqueeze, and not torch.unsqueeze, because torch.unsqueeze only supports
+    #   unsqueezing a single dimension
+    a_grad = clang.unsqueeze(g, dims)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.SQUEEZE, _squeeze_prim_grad)
+
+
+@torchctx
+def _take_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.take(a, index, dim)
+
+    g = get_grad(fwd)
+
+    # TODO Switch to ltorch.index_add?
+    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # TODO Update to call ltorch.zeros
+    zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
+    a_grad = prims.index_add(zeros, index, g, dim)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TAKE, _take_prim_grad)
+
+
+@torchctx
+def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.take_along_axis(a, index, dim)
+
+    g = get_grad(fwd)
+    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # TODO Update to call ltorch.zeros
+    zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
+    a_grad = prims.scatter_add(zeros, index, g, dim)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TAKE_ALONG_AXIS, _take_along_axis_prim_grad)
+
+
+@torchctx
+def _transpose_prim_grad(a: TensorProxy, permutation: Sequence[int]) -> TensorProxy:
+    fwd = prims.transpose(a, permutation)
+
+    g = get_grad(fwd)
+    undo = _argsort(permutation)
+    a_grad = prims.transpose(g, undo)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TRANSPOSE, _transpose_prim_grad)
+
+#
+# Memory layout operator grads
+#
+
+
+@torchctx
+def _stride_order_prim_grad(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
+    fwd = prims.stride_order(a, order)
+
+    g = get_grad(fwd)
+    put_grad(a, g)
+
+    return fwd
+
+
+register_grad(pids.STRIDE_ORDER, _stride_order_prim_grad)
+
+
+#
+# Elementwise unary operator grads
+#
+@torchctx
+def _abs_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.abs(a)
+
+    g = get_grad(fwd)
+    put_grad(a, g * ltorch.sign(a))
+
+    return fwd
+
+
+register_grad(pids.ABS, _abs_prim_grad)
+
+
+@torchctx
+def _erf_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.erf(a)
+
+    g = get_grad(fwd)
+    a_grad = 2 / math.sqrt(math.pi) * ltorch.exp(-(a**2)) * g
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.ERF, _erf_prim_grad)
+
+
+@torchctx
+def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.exp(a)
+
+    g = get_grad(fwd)
+    a_grad = g * fwd
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.EXP, _exp_prim_grad)
+
+
+@torchctx
+def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.log(a)
+
+    g = get_grad(fwd)
+    a_grad = g / a
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.LOG, _log_prim_grad)
+
+
+@torchctx
+def _neg_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.neg(a)
+
+    g = get_grad(fwd)
+    put_grad(a, -g)
+
+    return fwd
+
+
+register_grad(pids.NEG, _neg_prim_grad)
+
+
+@torchctx
+def _rsqrt_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
+    fwd = prims.rsqrt(a)
+
+    g = get_grad(fwd)
+    # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x
+    # where rsqrt(x) and x are saved for the backwards pass.
+    # This derivation was selected because it avoids saving the input tensor.
+    a_grad = -0.5 * g * fwd**3.0
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.RSQRT, _rsqrt_prim_grad)
+
+
+@torchctx
+def _tanh_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
+    fwd = prims.tanh(a)
+
+    g = get_grad(fwd)
+    a_grad = g * (1 - fwd * fwd)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TANH, _tanh_prim_grad)
+
+#
+# Elementwise binary operator grads
+#
+
+
+@torchctx
+def _add_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
+    fwd = a + b
+
+    g = get_grad(fwd)
+    a_grad = g
+    b_grad = g
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(pids.ADD, _add_prim_grad)
+
+
+# NOTE The following grad definition relies on the fact that only inexact dtypes are differentiable,
+#   and torch's true division operator and the division primitive agree on those types
+@torchctx
+def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
+    fwd = a / b
+
+    g = get_grad(fwd)
+    a_grad = g / b
+    b_grad = -g * ((a / b) / b)
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(pids.DIV, _div_prim_grad)
+
+# Comparison operators -- these create no grad associations
+register_grad(pids.EQ, prims.eq)
+register_grad(pids.GE, prims.ge)
+register_grad(pids.LT, prims.lt)
+
+
+@torchctx
+def _mul_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
+    fwd = a * b
+
+    g = get_grad(fwd)
+    a_grad = b * g
+    b_grad = a * g
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(pids.MUL, _mul_prim_grad)
+
+
+@torchctx
+def _sub_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = a - b
+
+    g = get_grad(fwd)
+    a_grad = g
+    b_grad = -g
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(pids.SUB, _sub_prim_grad)
+
+
+#
+# Conditional operator grads
+#
+
+
+def _where_prim_grad(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> TensorProxy:
+    fwd = prims.where(pred, a, b)
+
+    g = get_grad(fwd)
+    a_grad = ltorch.where(pred, g, 0)
+    b_grad = ltorch.where(pred, 0, g)
+    put_grads((a, b), (a_grad, b_grad))
+
+    return fwd
+
+
+register_grad(pids.WHERE, _where_prim_grad)
+
+#
+# Reduction operator grads
+#
+
+
+# TODO Review tweaking grad_chooser_pullback interface
+def _amax_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
+    fwd = prims.amax(a, dims)
+
+    g = get_grad(fwd)
+    a_grad = grad_chooser_backward(fwd, a, a.shape, dims, g)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.AMAX, _amax_prim_grad)
+
+
+def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
+    fwd = prims.sum(a, dims)
+
+    g = get_grad(fwd)
+    a_grad = restore_reduced_dims(g, dims, a.shape)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.SUM, _sum_prim_grad)
+
+
+# TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
+#   by returning zeros_like(a) or similar.
+# TODO Fix grad when correction > n_elem_reduced.
+@torchctx
+def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+    v, m = prims.var_mean(a, dims, correction=correction)
+
+    gv = get_grad(v)
+    gm = get_grad(m)
+
+    n_elem_reduced = a.numel // m.numel if a.numel != 0 else 1
+
+    # Computes mean bwd
+    mean_scale = 1.0 / n_elem_reduced
+    mean_grad = mean_scale * restore_reduced_dims(gm, dims, a.shape)
+
+    # Computes var bwd
+    normalization_scalar = n_elem_reduced - correction
+    restored_gv = restore_reduced_dims(gv, dims, a.shape)
+    restored_mean = restore_reduced_dims(m, dims, a.shape)
+    var_grad = (2 * restored_gv * (a - restored_mean)) / normalization_scalar
+
+    put_grad(a, mean_grad + var_grad)
+
+    return v, m
+
+
+register_grad(pids.VAR_MEAN, _var_mean_prim_grad)
+
+
+#
+# Linear algebra operator grads
+#
+@torchctx
+def _linear_prim_grad(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> TensorProxy:
+    fwd = prims.linear(a, w, bias)
+
+    g = get_grad(fwd)
+
+    first_dim = -2
+    grad_a = ltorch.matmul(g.reshape(-1, g.shape[-1]), w).reshape(a.shape)
+
+    grad_w: TensorProxy
+    if a.ndim == 1:
+        grad_w = ltorch.matmul(g.unsqueeze(first_dim).mT, a.unsqueeze(first_dim))
+    else:
+        grad_w = ltorch.matmul(g.reshape(-1, g.shape[-1]).mT, a.reshape(-1, a.shape[-1]))
+
+    put_grads((a, w), (grad_a, grad_w))
+
+    if bias is not None:
+        if g.ndim > 1:
+            grad_bias = ltorch.sum(g, tuple(range(g.ndim - 1)))
+        else:
+            grad_bias = g
+        put_grad(bias, grad_bias)
+
+    return fwd
+
+
+register_grad(pids.LINEAR, _linear_prim_grad)
+
+
+# TODO Add explicit ltorch vs clang module to the tensor operations below
+# TODO could we get rid of the final squeezes in the b.ndim == 1 case and the a.ndim == 1 case?
+@torchctx
+def _matmul_prim_grad(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
+    fwd = prims.matmul(a, b)
+    g = get_grad(fwd)
+
+    last_dim = (-1,)
+    first_dim = (-2,)
+    if a.ndim == 1 and b.ndim == 1:
+        put_grads((a, b), (g * b, g * a))
+    elif b.ndim == 1:
+        ga = unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT
+        gb = a.mT @ unsqueeze(g, last_dim)
+        if g.ndim > 1:
+            gb = squeeze(gb, last_dim)
+            gb = ltorch.sum(gb, tuple(range(gb.ndim - 1)))
+        put_grads((a, b), (ga, gb.squeeze()))
+    elif a.ndim == 1:
+        ga = unsqueeze(g, first_dim) @ b.mT
+        if g.ndim > 1:
+            ga = ltorch.sum(ga, tuple(range(ga.ndim - 1)))
+        gb = unsqueeze(a, first_dim).mT @ unsqueeze(g, first_dim)
+        put_grads((a, b), (ga.squeeze(), gb))
+    else:
+        put_grads((a, b), (g @ b.mT, a.mT @ g))
+
+    return fwd
+
+
+register_grad(pids.MATMUL, _matmul_prim_grad)
+
+#
+# NN operator grads
+#
+
+
+@torchctx
+def _embedding_prim_grad(
+    a: TensorProxy, /, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
+) -> TensorProxy:
+    fwd = prims.embedding(
+        a,
+        weight,
+        padding_idx=padding_idx,
+        max_norm=max_norm,
+        norm_type=norm_type,
+        scale_grad_by_freq=scale_grad_by_freq,
+        sparse=sparse,
     )
-    return x
+
+    g = get_grad(fwd)
+    a_grad = prims.embedding_backward(g, a, weight.shape[0], padding_idx, scale_grad_by_freq, sparse)
+    put_grad(a, a_grad)
+
+    return fwd
 
 
-# TODO WIP
-def grad(cfn, grad_extractor: Callable = _grad_extractor_default):
-    return cfn
+register_grad(pids.EMBEDDING, _embedding_prim_grad)
+
+#
+# Phantom grad transform helpers
+#
+
+
+def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any]) -> None | Callable:
+    # Checks if the executor which has priority for this operation has a specific grad transform for it
+    for ex in executors_list:
+        if ex.can_execute_or_fuse(bsym):
+            ex_grad_transform: None | Callable = ex.get_grad_transform(bsym.sym)
+            if ex_grad_transform is not None:
+                return ex_grad_transform
+            break
+
+    # If the executor doesn't define its own grad transform, this just returns the default grad transform for the bsym
+    gradfn = _grad_fn_map.get(bsym.sym.id, None)
+    return gradfn
+
+
+# The default grad specifier for the grad transform
+#   For each tensor output "o" requiring grad, specifies a grad of ones_like(o)
+def _grad_specifier_default(pytree: Any) -> None:
+    flats, _ = tree_flatten(pytree)
+
+    for f in flats:
+        if isinstance(f, TensorProxy) and f.requires_grad:
+            # NOTE This uses clang.ones_like for now because ltorch.ones_like will extend the
+            #   lifetime of f, while clang.ones_like will extract the metadata of f at trace time
+            prims.put_grad(f, clang.full_like(f, 1.0))
+
+
+# TODO Test with buffers
+def _grad_out_specifier_default(pytree: Any) -> list[TensorProxy]:
+    flats, _ = tree_flatten(pytree)
+    grads = list([prims.get_grad(f) for f in flats if isinstance(f, TensorProxy) and f.requires_grad])
+    return grads
+
+
+# TODO Formally define the "gradient" of a tensor
+# TODO If none of the inputs to an operation require grad, then we could leave that operation alone
+#   This could actually improve performance if the operation performs extra computations in its grad transform
+#   A workaround for this would be for the operation itself to check if its input requires grad or not
+# Transforms a function to compute the "gradient" of its inputs requiring grad, possibly
+#   modified by the grad specifiers (see below).
+# The optional grad_specifier argument accepts the function's output, runs in a no-grad context,
+#   and can put grads (using prims.put_grad()) for tensors. By default, for every tensor output "o"
+#   that requires grad, a grad of ones_like(o) is put.
+# The optional grad_out_specifier accepts the function's input and can call prims.get_grad() to
+#   acquire and return gradients as desired. By default, the input is flattened
+#   (tree_flatten(args, kwargs)) and a flat list of grads for all tensors requiring grad
+#   and None for other inputs is returned.
+# The algorithm for modifying the program has the following steps:
+#   1) Flattens the original trace for the grad transform -- ensuing that all top-level symbols have
+#       a grad function.
+def grad(
+    cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
+) -> Callable:
+    # Creates a custom transform callable that binds the additional arguments to the grad transform
+    def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+        start_time_ns = time.time_ns()
+
+        # STEP ONE -- Flattens and dces
+
+        # Returns True if the bsym has no grad function, and so must be flattened for the grad transform
+        never_flatten: set[Hashable] = {prims.PrimIDs.RETURN, prims.PrimIDs.UNPACK_TRIVIAL}
+
+        def should_flatten_for_grad(bsym: BoundSymbol) -> bool:
+            if bsym.sym.id in never_flatten:
+                return False
+
+            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            return gradfn is None
+
+        gradtrc = from_trace(trc)
+        flattened_bsyms: list[BoundSymbol] = flatten_for_transform(should_flatten_for_grad, trc.bound_symbols)
+        gradtrc.bound_symbols = flattened_bsyms
+        gradtrc = dce(gradtrc)
+
+        # STEP TWO -- Replaces original calls with grad calls
+        nreturns: int = 0
+        swapmap: dict[Variable, Proxy] = {}
+
+        # Defines the visitor pattern for the first pass of the grad transform,
+        #   which swaps BoundSymbols with their grad functions
+        def _visit(bsym: BoundSymbol) -> VISIT_TYPE:
+            # Replaces the return statement with a statement returning the grads
+            # Validates there is only one return() call
+            if bsym.sym.id is prims.PrimIDs.RETURN:
+                nonlocal nreturns
+                check(nreturns == 0, lambda: f"Found multiple return statements while performing the grad transform")
+                nreturns += 1
+
+                new_return = bsym.from_bsym_swap_proxies(swapmap)
+
+                # Sets grads for output
+                # TODO This effectively runs in a no grad context -- should it run in a grad context,
+                #   or should there be the option to run it in a grad context?
+                grad_specifier(*new_return.args)
+
+                # Constructs return value
+                flat_grads = grad_out_specifier((trc.args, trc.kwargs))
+                prims.python_return(flat_grads)
+                return VISIT_TYPE.REPLACE
+
+            # TODO This special handling is no longer necessary
+            # UNPACK_TRIVIAL has to be handled specially because it introduces inputs
+            if bsym.sym.id is prims.PrimIDs.UNPACK_TRIVIAL:
+                return VISIT_TYPE.NO_OP
+
+            # NOTE In this branch the bsym is not RETURN or UNPACK_TRIVIAL
+            # Calls the gradfn for this symbol
+            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            check(
+                gradfn is not None,
+                lambda: f"Failed to find a gradfn for {bsym=} after flattening",
+                exception_type=AssertionError,
+            )
+
+            # Calls the new operation with the original's inputs
+            fwd = gradfn(*bsym.args, **bsym.kwargs)
+
+            # The new call produces new outputs, and they need to be swapped back to the original outputs
+            #   We can't edit the actual boundsymbol at this point, so we record the swap into a swapmap
+            flat_original_outs: list[Any] = bsym._flat_outs
+            flat_fwd: list[Any]
+            flat_fwd, _ = tree_flatten(fwd)
+
+            # Registers swaps
+            for o, f in zip(flat_original_outs, flat_fwd):
+                if isinstance(o, Proxy):
+                    vo = variableify(o)
+                    vf = variableify(f)
+                    if vo != vf:
+                        swapmap[vf] = o
+
+            return VISIT_TYPE.REPLACE
+
+        # NOTE After this call the gradtrc is invalid, because:
+        #   1) The non-executable put_grad operations are still in the trace, and multiple calls to put grad are not accumulated
+        #   2) The non-executable get_grad operations are still in the trace, and they may produce different proxies when
+        #       called on the same inputs
+        #   3) The operations are not in a valid order
+        # These issues are addressed in order by the following steps
+        gradtrc = visitor_transform(gradtrc, _visit)
+        gradtrc.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in gradtrc.bound_symbols]
+        gradtrc.scopes = [gradtrc.bound_symbols]
+
+        # STEP THREE -- Handles put_grad and get_grad operations and accumulates gradients
+
+        # Accumulates gradients, creating the primal -> accumulated grad mapping
+        # Sets the tracing context so accumulation operations are recorded into the trace
+        try:
+            tracectx_tok = set_tracectx(gradtrc)
+
+            # Maps primals to their gradients (which are returned from calling get_grad on the primal)
+            primals_to_ginput_map: dict[Variable, TensorProxy] = {}
+
+            # Handles put_grad operations
+            # NOTE This modifies a list that is being enumerated over, but it's OK because we're only
+            #   appending to the end of the list
+            bsym: BoundSymbol
+            for bsym in gradtrc.bound_symbols:
+                id: Hashable = bsym.sym.id
+                if id is pids.PUT_GRAD:
+                    primal: Number | TensorProxy
+                    grad: Number | TensorProxy
+                    primal, grad = bsym._flat_args
+
+                    # TODO Support autograd on numbers
+                    # Filters calls to put_grad that would put a grad on a non-tensor or a tensor that doesn't require grad
+                    if not isinstance(primal, TensorProxy) or not primal.requires_grad:
+                        continue
+
+                    # TODO Support complex autograd
+                    check(
+                        not dtypes.is_complex_dtype(dtypes.to_dtype(primal)),
+                        lambda: f"Complex grad is not supported yet",
+                    )
+
+                    vprimal: Variable = variableify(primal)
+                    accum: None | TensorProxy = primals_to_ginput_map.get(vprimal, None)
+
+                    if accum is None:
+                        primals_to_ginput_map[vprimal] = grad
+                    else:
+                        accum = accum + grad
+                        primals_to_ginput_map[vprimal] = accum
+
+            # Handles get_grad operations
+
+            # Resets the swapmap for grads
+            swapmap: dict[Variable, Proxy] = {}
+
+            for bsym in gradtrc.bound_symbols:
+                id: Hashable = bsym.sym.id
+                if id is pids.GET_GRAD:
+                    primal: Number | TensorProxy
+                    (primal,) = bsym._flat_args
+                    grad: Number | TensorProxy = bsym.output
+
+                    vprimal: Variable
+                    vgrad: Variable
+                    vprimal, vgrad = variableify(primal), variableify(grad)
+
+                    actual_grad: None | TensorProxy = primals_to_ginput_map.get(vprimal, None)
+
+                    # NOTE If actual_grad is None then there's a get_grad() request for a tensor which
+                    #   has no put_grad(), so we return zeros for the grad
+                    # TODO Revisit this -- can we remove these computations, or use a special ZeroTensor
+                    #   to simplify them?
+                    if actual_grad is None:
+                        actual_grad = ltorch.zeros_like(primal)
+                        primals_to_ginput_map[vprimal] = actual_grad
+
+                    # Updates the grad alias map
+                    vactual_grad: Variable = variableify(actual_grad)
+                    if vactual_grad != vgrad:
+                        swapmap[vgrad] = actual_grad
+
+        finally:
+            # Restores scope
+            reset_tracectx(tracectx_tok)
+
+        # Filters put_grad and get_grad operations and applies the swapmap
+        def _filter(bsym: BoundSymbol) -> bool:
+            id: Hashable = bsym.sym.id
+            return id in (pids.PUT_GRAD, pids.GET_GRAD)
+
+        gradtrc.bound_symbols = [
+            bsym.from_bsym_swap_proxies(swapmap) for bsym in gradtrc.bound_symbols if not _filter(bsym)
+        ]
+
+        # STEP FOUR --- Orders the operations
+        # TODO Consider alternative scheduling algorithms, maybe by using graph features
+        #   Some ideas are looking at memory-saving nodes, and nodes with a high in-degree or high out-degree
+
+        # Creates an initial valid ordering to DCE, so that additional ordering analysis doesn't need to consider all symbols
+        roots, leaves = bsym_list_to_dag(gradtrc.bound_symbols)
+        ordered_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
+        gradtrc.bound_symbols = ordered_bsyms
+        gradtrc = dce(gradtrc)
+
+        # Identifies the order of BoundSymbols using a "DFS and chain" algorithm
+        # TODO Elaborate on this algorithm and the implementation
+        roots, leaves = bsym_list_to_dag(gradtrc.bound_symbols)
+        check(
+            len(leaves) == 1,
+            lambda: f"Expected only one leaf node when sorting for grad, found there were {len(leaves)} leaves",
+        )
+        (leaf,) = leaves
+
+        # Computes the tensor memory used by the given pytree
+        def memory_used(pytree) -> int:
+            memory_use: int = 0
+
+            def count_memory_use(x):
+                nonlocal memory_use
+                if isinstance(x, TensorProxy):
+                    memory_use += x.dtype._bytes * x.numel
+
+            tree_map(count_memory_use, pytree)
+            return memory_use
+
+        # True when a node is a "link" -- a node with only one child and at most one parent
+        #   Conceptually the node is a "link" in a chain of nodes like A -> B -> C
+        def is_link(n: Node) -> bool:
+            _is_link = len(n.children) == 1 and len(n.parents) <= 1
+            return _is_link
+
+        counter: int = 0
+
+        def _chain(c: list[Node], end: Node) -> list[Node]:
+            nonlocal counter
+
+            # TODO Experiment with not always fusing this into the consumer -- there could be an
+            #   interesting mincut
+            # NOTE In this case the chain cannot be extended, and its origin is input to the function
+            #   so this just fuses it into the consumer
+            if len(end.parents) == 0:
+                for n in c:
+                    n.number = counter
+                    counter += 1
+                return []
+
+            # NOTE len(end.parents) == 1 on this path
+            (parent,) = end.parents
+
+            # Extends the chain if the parent is a link
+            if is_link(parent):
+                c.append(parent)
+                return _chain(c, parent)
+
+            # NOTE In this case the chain has a parent that is not a link
+            # Finds the mincut
+            mincut_idx: int = len(c)
+            min_memory_usage: int = memory_used(parent.bsym.output)
+
+            for idx, n in enumerate(c):
+                mem = memory_used(n.bsym.output)
+                if mem < min_memory_usage:
+                    mincut_idx = idx
+                    min_memory_usage = mem
+
+            for idx, n in enumerate(c):
+                if idx < mincut_idx:
+                    n.number = counter
+                    counter += 1
+
+            # Returns the producer-side chain cut if it exists
+            if mincut_idx < len(c):
+                return [c[mincut_idx]]
+            else:
+                assert mincut_idx == len(c)
+                return end.parents
+
+        def chain_out(n: Node, stack: list[Node]) -> None:
+            # Short-circuits if the original node n cannot be part of a chain
+            if not is_link(n):
+                stack.append(n)
+                return
+
+            # NOTE is_link(n) == True
+            post_chain: list[Node] = _chain([n], n)
+
+            for pc in post_chain:
+                stack.append(pc)
+
+        stack: list[Node] = [leaf]
+        while len(stack) > 0:
+            n: Node = stack.pop()
+
+            if n.number is not None:
+                continue
+
+            n.number = counter
+            counter += 1
+
+            for p in n.parents:
+                chain_out(p, stack)
+
+        def _selector(eligible_nodes: list[Node]) -> int:
+            min_idx: int = 0
+            min_number: int = eligible_nodes[0].number
+
+            # NOTE Although we've already processed the first element here, this still
+            #   enumerates the entire list c to align the enumeration idx properly
+            for idx, n in enumerate(eligible_nodes):
+                check(n.number is not None, lambda: f"Expected each node to be numbered, but {n} was not")
+
+                if n.number < min_number:
+                    min_idx = idx
+                    min_number = n.number
+
+            return min_idx
+
+        sorted_bsyms = toposort_bsym_dag(leaves, toposort_order=TOPOSORT_ORDER.BOTTOM_UP, selector=_selector)
+        gradtrc.bound_symbols = sorted_bsyms
+        gradtrc = dce(gradtrc)
+
+        # TODO Consider how to handle grad w.r.t. only some outputs -- should all grad
+        #   operations using the other output be removed? What kind of assumption does that
+        #   make about the grad structure? Probably some kind of independence assumption? Are
+        #   there practical examples where that's an issue?
+
+        end_time_ns = time.time_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
+        gradtrc.set_provenance(TraceProvenance(f"Grad (took {elapsed_time_millis} milliseconds)"))
+
+        return gradtrc
+
+    # NOTE This is a kludge to indicate that we shouldn't support PyTorch's autograd because
+    #   we're using our own autograd transform
+    cfn._using_grad_transform = True
+
+    return add_transform(cfn, _grad_transform)
 
 
 class Transforms(Enum):
@@ -1579,18 +2593,17 @@ def atan2_backward(x, y, g):
 
 
 @register_augmented_forward(prims.PrimIDs.SUM)
-def sum_aug_fwd(x, dims, output_dtype=None):
+def sum_aug_fwd(x, dims):
     """Augmented sum operation.
 
     Args:
         x (Variable): Tensor to be summed.
         dims (Tuple[int, ...]): Dimensions to be summed.
-        output_dtype (str, optional): Output data type. Defaults to None.
 
     Returns:
         VJPDual: Primal and residuals.
     """
-    primal = prims.sum(x, dims, output_dtype=output_dtype)
+    primal = prims.sum(x, dims)
     residuals = (
         x.shape,
         dims,
@@ -1619,7 +2632,9 @@ def var_backward(a, dim, correction, v, g):
     n_elem_reduced = a.numel // v.numel if a.numel != 0 else 1
     normalization_scalar = n_elem_reduced - correction
     g = restore_reduced_dims(g, dim, a.shape)
-    mean = prims.sum(a, dim, output_dtype=v.dtype) / n_elem_reduced
+    if a.dtype != v.dtype:
+        a = prims.convert_element_type(a, v.dtype)
+    mean = prims.sum(a, dim) / n_elem_reduced
     mean = restore_reduced_dims(mean, dim, a.shape)
     return (2 * g * (a - mean)) / normalization_scalar
 
@@ -1690,7 +2705,7 @@ def pad_backward(a, padding_config, g):
 
 
 @register_augmented_forward(prims.PrimIDs.PROD)
-def prod_aug_fwd(x, dims, *, output_dtype=None):
+def prod_aug_fwd(x, dims):
     """Augmented prod operation.
 
     Args:
@@ -1700,7 +2715,7 @@ def prod_aug_fwd(x, dims, *, output_dtype=None):
     Returns:
         VJPDual: Primal and residuals.
     """
-    primal = prims.prod(x, dims, output_dtype=output_dtype)
+    primal = prims.prod(x, dims)
 
     residuals = (
         primal,
@@ -1741,15 +2756,12 @@ register_backward(prims.PrimIDs.AMIN)(grad_chooser_backward)
 
 # TODO: exact same for amin, argmax, argmin
 @register_augmented_forward(prims.PrimIDs.AMAX)
-def amax_aug_fwd(x, dims, *, output_dtype=None):
+def amax_aug_fwd(x, dims):
     """Augmented amax operation.
 
     Args:
         x (Variable): Tensor to compute amax on.
         dims (Tuple[int, ...]): Dimensions to compute amax over.
-
-    Keyword Args:
-        output_dtype (str, optional): Output data type. Defaults to None.
 
     Returns:
         VJPDual: Primal and residuals.
@@ -1767,15 +2779,12 @@ def amax_aug_fwd(x, dims, *, output_dtype=None):
 
 
 @register_augmented_forward(prims.PrimIDs.AMIN)
-def amin_aug_fwd(x, dims, *, output_dtype=None):
+def amin_aug_fwd(x, dims):
     """Augmented amin operation.
 
     Args:
         x (Variable): Tensor to compute amin on.
         dims (Tuple[int, ...]): Dimensions to compute amin over.
-
-    Keyword Args:
-        output_dtype (str, optional): Output data type. Defaults to None.
 
     Returns:
         VJPDual: Primal and residuals.
@@ -2375,136 +3384,6 @@ def linear_backward(a, b, c, g):
     return ga, gb, gc
 
 
-def scaled_dot_product_attention(
-    query: Proxy,
-    key: Proxy,
-    value: Proxy,
-    attn_mask: Optional[Proxy],
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    scale: Optional[float] = None,
-) -> VJPDual:
-    from thunder.torch import grad_forward_scaled_dot_product_efficient_attention
-
-    (
-        primal,
-        logsumexp,
-        philox_seed,
-        philox_offset,
-    ) = grad_forward_scaled_dot_product_efficient_attention(
-        query,
-        key,
-        value,
-        attn_mask,
-        dropout_p,
-        is_causal,
-        scale=scale,
-    )
-    residuals = (
-        query,
-        key,
-        value,
-        attn_mask,
-        primal,
-        logsumexp,
-        philox_seed,
-        philox_offset,
-        dropout_p,
-        is_causal,
-        scale,
-    )
-    return VJPDual(primal, residuals)
-
-
-def scaled_dot_product_efficient_attention_rule_check(
-    query: Proxy,
-    key: Proxy,
-    value: Proxy,
-    attn_mask: None | Proxy,
-    dropout_p: float,
-    is_causal: bool,
-    scale: None | float,
-) -> bool:
-    # query (batch_size, num_heads, query_seq_len, E)
-    # key (batch_size, num_heads, key_seq_len, E)
-    # value (batch_size, num_heads, key_seq_len, Ev)
-    # attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
-
-    batch_size, num_heads, _, _ = query.shape
-
-    tensor_inputs = [query, key, value]
-    if attn_mask is not None:
-        tensor_inputs.append(attn_mask)
-
-    if any(map(lambda a: a.device is cpu, tensor_inputs)):
-        return False
-
-    # NOTE Expected query, key, value, and attn_mask tensor to have 4 dimensions
-    if any(map(lambda a: a.ndim != 4, tensor_inputs)):
-        return False
-
-    # NOTE FP64 is not supported by aten implementation
-    supported_dtypes = (dtypes.float32, dtypes.float16, dtypes.bfloat16)
-    if any(map(lambda a: a.dtype not in supported_dtypes, [query, key, value])):
-        return False
-
-    # NOTE aten::scaled_dot_product_efficient_attention does not support broadcastable batch size.
-    if any(map(lambda a: a.shape[0] != batch_size, tensor_inputs)):
-        return False
-
-    # NOTE Expected all inputs to have same number of attention heads.
-    if any(map(lambda a: a.shape[1] != num_heads, tensor_inputs)):
-        return False
-
-    return True
-
-
-register_augmented_forward_with_checker(
-    "torch.nn.functional.scaled_dot_product_attention",
-    scaled_dot_product_efficient_attention_rule_check,
-    scaled_dot_product_attention,
-)
-
-
-@register_backward("torch.nn.functional.scaled_dot_product_attention")
-def scaled_dot_product_attention_backward(
-    query: Proxy,
-    key: Proxy,
-    value: Proxy,
-    attn_mask: Optional[Proxy],
-    out: Proxy,
-    logsumexp: Proxy,
-    philox_seed: Proxy,
-    philox_offset: Proxy,
-    dropout_p,
-    is_causal: bool,
-    scale: Optional[float],
-    grad_out: Proxy,
-):
-    from thunder.torch import scaled_dot_product_efficient_attention_backward
-
-    (
-        grad_query,
-        grad_key,
-        grad_val,
-        grad_attn_mask,
-    ) = scaled_dot_product_efficient_attention_backward(
-        grad_out,
-        query,
-        key,
-        value,
-        attn_mask,
-        out,
-        logsumexp,
-        philox_seed,
-        philox_offset,
-        dropout_p,
-        is_causal,
-        scale=scale,
-    )
-    return grad_query, grad_key, grad_val, grad_attn_mask, *((None,) * 3)
-
-
 def iter_bound_symbols(bound_symbols):
     """Iterate over bound symbols, skipping symbols that are not supported by
     the transforms infrastructure.
@@ -2540,10 +3419,14 @@ def deconstruct_forward_env_for_backward(trace, env):
 
 def reconstruct_forward_env_for_backward(trace, saved_for_backward):
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    reconstructed_env = {
-        sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
-        for i, symbol in enumerate(bound_symbols)
-    }
+
+    reconstructed_env = {}
+
+    for idx, sym in enumerate(bound_symbols):
+        k = sequencify(sym.output)[0].name
+        v = VJPDual(None, saved_for_backward[idx])
+        reconstructed_env[k] = v
+
     return reconstructed_env
 
 
@@ -2562,7 +3445,7 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     # There may be a dead node like "_ = prims.convert_element_type(0, float)"
     # in the trace. We need to remove it before we can use the trace for
     # augmented_forward_pass.
-    trace = dce(trace)[0]
+    trace = dce(trace)
     result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
     saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
     # Static caching does not with with kwargs dicts, so we're converting them
@@ -2576,7 +3459,7 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     kwargs = {} if kwargs is None else kwargs
     trace = construct_trace()(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
-    trace = dce(trace)[0]
+    trace = dce(trace)
     # bound_symbols = iter_bound_symbols(trace.bound_symbols)
     # reconstructed_env = {
     #     sequencify(symbol.output)[0].name: VJPDual(None, saved_for_backward[i])
@@ -2868,6 +3751,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         if symbol.sym.id in transform_skip_list:
             continue
         symbol_output = sequencify(symbol.output)
+
         cotangents = tree_map(get_grad, symbol_output)
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
@@ -2990,9 +3874,12 @@ def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwarg
         )
         return result, backward_pass(env, trace, cotangents)
 
+
 # TODO: Can't use a Symbol here because mixed executor sybsymbols seem to be
 # unsupported. See https://github.com/Lightning-AI/lightning-thunder/issues/1308
-vjp_call = partial(vjp_call_metafunc, False) # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
+vjp_call = partial(
+    vjp_call_metafunc, False
+)  # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
 
 
 def vjp(func):
@@ -3073,7 +3960,6 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     forward_return_bsym = next(x for x in reversed(forward_trace.bound_symbols) if x.sym.id == prims.PrimIDs.RETURN)
     forward_return_bsym.args = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.output = forward_return_bsym.args
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:

@@ -6,7 +6,6 @@ from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map, method_lookup
-from thunder.executors.utils import nvfuser_available, is_cuda_available
 import torch
 from warnings import warn
 
@@ -155,9 +154,12 @@ def examine(fn: Callable, *args, **kwargs):
 
 
 def warn_fusions() -> bool:
-    if not is_cuda_available():
+    if not torch.cuda.is_available():
         warn("CUDA is not available, so no fusions will be created.")
         return True
+
+    from thunder.executors.nvfuserex import nvfuser_available
+
     if not nvfuser_available():
         warn("nvFuser is not available, so no fusions will be created.")
         return True

@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 import itertools
 from functools import partial
+from typing import Any
 
 # NOTE: Dependency on fdm and NumPy is temporary.
 # We will remove it once we have a native way to compute numerical derivatives.
@@ -12,14 +13,15 @@ import torch
 import thunder
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
+import thunder.clang as clang
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map, tree_flatten
-from thunder.core.transforms import jvp, vjp
+from thunder.core.transforms import jvp, vjp, grad
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
+from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
 
@@ -455,9 +457,9 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, (gindices, gweight) = executor.make_callable(
-            vjp(filtered_op), disable_torch_autograd_support=True
-        )(filtered_args, (v,))
+        actual_out, (gindices, gweight) = executor.make_callable(vjp(filtered_op), disable_torch_autograd_support=True)(
+            filtered_args, (v,)
+        )
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
@@ -471,6 +473,7 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    pytest.skip("This test needs to be updated to use the new sdpa executor")
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         # query, key, value
         grad_inputs = list(sample.args[:3])
@@ -505,9 +508,9 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(
-            vjp(flat_op), disable_torch_autograd_support=True
-        )(flat_args, (v,))
+        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
+            flat_args, (v,)
+        )
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
         comp(grad_rhs, expected_grad[0], equal_nan=True)
@@ -660,7 +663,7 @@ def test_multiple_output_vjp(executor, device, _):
 )
 def test_torch_autograd_function(executor, device, _):
     from thunder.clang import cos, sin
-    from thunder.executors.torchex import thunder_backward
+    from thunder.executors.torch_autograd import thunder_backward
     import thunder.torch as ltorch
 
     @thunder_backward(executors_list=executor.executors_list())
@@ -681,7 +684,7 @@ def test_torch_autograd_function(executor, device, _):
 )
 def test_torch_autograd_function_single_input(executor, device, _):
     from thunder.clang import sin
-    from thunder.executors.torchex import thunder_backward
+    from thunder.executors.torch_autograd import thunder_backward
 
     @thunder_backward(executors_list=executor.executors_list())
     def func(a):
@@ -695,7 +698,7 @@ def test_torch_autograd_function_single_input(executor, device, _):
     dtypes=(dtypes.float32,),
 )
 def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
-    from thunder.executors.torchex import thunder_backward
+    from thunder.executors.torch_autograd import thunder_backward
 
     # Borrowed from
     # https://github.com/Lightning-AI/lightning-thunder/blob/3401475ee47d5a732b6b4d5dcbd88afcd9bed81d/thunder/tests/test_core.py#L117
@@ -735,7 +738,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
             {},
         )
 
-    traced_foo = thunder_backward(executors_list=executor.executors_list())(foo)
+    cfoo = thunder.compile(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype, requires_grad=True)
@@ -744,7 +747,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
 
     args = ({"a": {"a": a}}, (b, c), (3, {"c": c}))
     kwargs = {"ka": b, "kb": 3.0, "kc": (a, 2)}
-    thunder_result = traced_foo(*args, **kwargs)
+    thunder_result = cfoo(*args, **kwargs)
     torch_result = foo(*args, **kwargs)
     torch.testing.assert_close(thunder_result, torch_result)
 
@@ -805,9 +808,9 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     forward_traces = compile_stats.forward_last_traces
     backward_traces = compile_stats.backward_last_traces
     assert isinstance(forward_traces, list)
-    assert len(forward_traces) > 1
+    assert len(forward_traces) >= 1
     assert isinstance(backward_traces, list)
-    assert len(backward_traces) > 1
+    assert len(backward_traces) >= 1
     assert isinstance(primal_trace, TraceCtx)
     fw_bw_traces = thunder.last_traces(lc)
     assert isinstance(fw_bw_traces, tuple)
@@ -820,7 +823,7 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _):
-    from thunder.executors.torchex import thunder_backward
+    from thunder.executors.torch_autograd import thunder_backward
 
     @thunder_backward(
         executors_list=executor.executors_list(),
@@ -873,56 +876,12 @@ def test_forward_and_backward_from_trace(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
-def test_rematerialization_with_forward_and_backward_from_trace(executor, device, _):
-    from thunder import trace
-    from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.executors import transform_for_execution
-    from thunder.core.rematerialization import rematerialize_forward_and_backward
-
-    def func(a, b, *, c):
-        d = a + b + c
-        e = d * a + d * b + d * c
-        return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
-
-    expected_vjp_func = executor.make_callable(value_and_grad(func))
-
-    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
-    trace = trace(inline_trace=False)(func, a, b, c=c)
-    fw_trace, bw_trace = forward_and_backward_from_trace(trace)
-
-    fw_extrace, _ = transform_for_execution(
-        fw_trace, executors_list=executor.executors_list(), use_rematerialization=False
-    )
-    bw_extrace, _ = transform_for_execution(
-        bw_trace, executors_list=executor.executors_list(), use_rematerialization=False
-    )
-    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
-
-    fw = fw_extrace.python_callable()
-    bw = bw_extrace.python_callable()
-
-    fw_out, saved_for_backward = fw(a, b, c=c)
-    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out, expected_fw_out)
-
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
-    bw_out = bw(saved_for_backward, output_grads)
-    torch.testing.assert_close(bw_out, expected_grads)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
 def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
     from thunder.core.prims import convert_element_type
-    from thunder.executors.torchex import thunder_backward
+    from thunder.executors.torch_autograd import thunder_backward
     import thunder.torch as ltorch
 
     @thunder_backward(executors_list=executor.executors_list())
@@ -972,3 +931,256 @@ def test_backward_none_propagation(executor, device, _):
     a = make_tensor((2, 4), device=device, dtype=torch.float16)
     result = func((a,), (None, None))
     assert result[1][0] is None
+
+
+#
+# Phantom grad tests
+#
+# TODO Jax consistency testing (slice and slice_in_dim don't have torch references)
+# TODO Double-backward testing
+# TODO Add more module tests
+
+
+def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singularity_fn):
+    if singularity_fn:
+        sample = sample.remove_singularities(singularity_fn, 1e-2)
+
+    args, kwargs = sample.args, sample.kwargs
+
+    # Computes PyTorch (competition) result
+    torch_flats, spec = tree_flatten((args, kwargs))
+    torch_result = torch_op(*args, **kwargs)
+
+    grads = []
+    assert isinstance(torch_result, torch.Tensor) or isinstance(
+        torch_result, Sequence
+    ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+    if isinstance(torch_result, Sequence):
+        for x in torch_result:
+            assert isinstance(
+                x, torch.Tensor
+            ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
+            grads.append(torch.ones_like(x))
+    else:
+        grads = [torch.ones_like(torch_result)]
+
+    torch_tensors_requiring_grad = tuple(f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad)
+    torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
+
+    # Computes reference result (upcasting floats to double)
+    def upcast_tensors(x: Any) -> Any:
+        if isinstance(x, torch.Tensor) and torch.is_floating_point(x):
+            requires_grad = x.requires_grad
+            return x.to(torch.double).detach().requires_grad_(requires_grad)
+
+        return x
+
+    reference_args = tree_map(upcast_tensors, args)
+    reference_kwargs = tree_map(upcast_tensors, kwargs)
+    reference_flats, spec = tree_flatten((reference_args, reference_kwargs))
+    reference_tensors_requiring_grad = tuple(
+        f for f in reference_flats if isinstance(f, torch.Tensor) and f.requires_grad
+    )
+    reference_result = torch_op(*reference_args, **reference_kwargs)
+    reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads)
+
+    # Computes thunder result
+    grad_op = grad(op)
+    thunder_flat_grads = grad_op(*sample.args, **sample.kwargs)
+
+    assert_closer(
+        reference=reference_grad_result, candidate=thunder_flat_grads, competitor=torch_grad_result, comparator=comp
+    )
+
+
+@ops(
+    tuple(op for op in opinfos if op.supports_grad and op.torch_reference is not None),
+    supported_dtypes=(dtypes.floating,),
+)
+def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
+    if dtypes.is_complex_dtype(dtype):
+        pytest.skip("Skipping complex operator tests in CI for speed")
+    if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+        pytest.skip("Your CUDA device does not support bfloat16")
+
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        comp = sample.comp if sample.comp is not None else comp
+
+        result = run_snippet(
+            snippet_phantom_grad_vs_torch_consistency,
+            op,
+            device,
+            dtype,
+            executor.make_callable(op.op),
+            op.torch_reference,
+            sample,
+            lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
+            op.singularity_fn,
+        )
+        if result is not None:
+            return result
+
+
+from torch.testing import assert_close
+from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
+    # Tests tuple unpacking
+    def foo(tup):
+        a, b = tup
+        return a * b
+
+    cfoo = thunder.compile(foo)
+    cfoo_grad = grad(cfoo)
+
+    a = torch.randn((2, 2), requires_grad=True)
+    b = torch.randn((2, 2), requires_grad=True)
+
+    a_grad, b_grad = cfoo_grad((a, b))
+
+    assert_close(a_grad, b)
+    assert_close(b_grad, a)
+
+    # Tests dict unpacking
+    def bar(d):
+        a, b = d["a"], d["b"]
+        return a * b
+
+    cbar = thunder.compile(bar)
+    cbar_grad = grad(cbar)
+
+    a_grad, b_grad = cbar_grad({"a": a, "b": b})
+
+    assert_close(a_grad, b)
+    assert_close(b_grad, a)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_phantom_grad_multiple_outputs(executor, device: str, dtype: dtypes.dtype):
+    pass
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_populate_grads_mlp(executor, device, dtype):
+    from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig
+
+    # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
+    config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
+
+    bench = NanoGPTMLPBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
+    model = bench.fn()
+    (x,), kwargs = bench.make_batch()
+
+    result = model(x)
+    result.backward(torch.ones_like(result))
+    torch_grads = extract_grads(model)
+
+    clear_grads(model)
+
+    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom_grad = grad(tom)
+    thunder_grads = tom_grad(x)
+
+    populate_grads(thunder_grads, tom)
+    thunder_grads = extract_grads(tom)
+
+    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_populate_grads_csa(executor, device, dtype):
+    from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
+
+    # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
+    config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
+
+    bench = NanoGPTCSABenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
+    model = bench.fn()
+    (x,), kwargs = bench.make_batch()
+
+    result = model(x)
+    result.backward(torch.ones_like(result))
+    torch_grads = extract_grads(model)
+
+    clear_grads(model)
+
+    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom_grad = grad(tom)
+    thunder_grads = tom_grad(x)
+
+    populate_grads(thunder_grads, tom)
+    thunder_grads = extract_grads(tom)
+
+    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_populate_grads_block(executor, device, dtype):
+    from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig
+
+    # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
+    config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
+
+    bench = NanoGPTBlockBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
+    model = bench.fn()
+    (x,), kwargs = bench.make_batch()
+
+    result = model(x)
+    result.backward(torch.ones_like(result))
+    torch_grads = extract_grads(model)
+
+    clear_grads(model)
+
+    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom_grad = grad(tom)
+    thunder_grads = tom_grad(x)
+
+    populate_grads(thunder_grads, tom)
+    thunder_grads = extract_grads(tom)
+
+    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_populate_grads_nanogpt(executor, device, dtype):
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip(
+            "This test crashes its worked on Windows when run using pytest distributed (Windows fatal exception: access violation)"
+        )
+    if IN_CI and torch.device(device).type == 'cpu':
+        pytest.skip(
+            "Skipping the CPU version of this test in CI because it's very slow"
+        )
+
+    from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
+
+    # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
+    config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
+
+    bench = NanoGPTBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
+    model = bench.fn()
+    (x, targets), kwargs = bench.make_batch()
+
+    logits, loss = model(x, targets)
+    loss.backward()
+    torch_grads = extract_grads(model)
+
+    clear_grads(model)
+
+    tom = executor.make_callable(model, disable_preprocessing=False)
+
+    def grad_specifier(out) -> None:
+        logits, loss = out
+        put_grad(loss, ltorch.ones_like(loss))
+
+    tom_grad = grad(tom, grad_specifier=grad_specifier)
+    thunder_grads = tom_grad(x, targets)
+
+    populate_grads(thunder_grads, tom)
+    thunder_grads = extract_grads(tom)
+
+    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)

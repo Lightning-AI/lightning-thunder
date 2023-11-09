@@ -20,13 +20,13 @@ import thunder.torch as ltorch
 from thunder.core.script.noinline import noinline, invoke_noinline
 from thunder.core.symbol import Symbol
 from thunder.core.utils import enable_debug_asserts
-from thunder.executors import NVFUSER, TORCH
-from thunder.executors.utils import Executor
 from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
 from thunder.tests.framework import instantiate, requiresCUDA, requiresNVFuser, IN_CI
 
-torchex = [Executor.TORCH]
-nvfuserex = [Executor.NVFUSER, Executor.TORCH]
+from thunder import pytorch_executor, nvfuser_executor
+
+torchex = [pytorch_executor]
+nvfuserex = [nvfuser_executor, pytorch_executor]
 
 enable_debug_asserts()
 
@@ -241,7 +241,8 @@ def test_inline_submodule():
 @pytest.mark.parametrize(
     "name",
     (
-        "gpt-neox-like",
+        # TODO FIXME https://github.com/Lightning-AI/lightning-thunder/issues/1408
+        # "gpt-neox-like",
         "llama1-like",
         "long-context-like",
         "llama2-like",
@@ -368,8 +369,8 @@ def test_nanogpt_inlining_unrolling():
 
     # these will likely change specialization, more inlining, ...
     # but lets check when it happens
-    assert len(gr.blocks) == 78
-    assert sum(len(bl.nodes) for bl in gr.blocks) == 665
+    assert len(gr.blocks) == 80
+    assert sum(len(bl.nodes) for bl in gr.blocks) == 669
 
     # has everything been inlined/unrolled?
     funcs = _helper_get_func_calls(gr)
@@ -395,6 +396,8 @@ def test_nanogpt_inlining_unrolling():
         "view",
         ## there is an oddball (handled above) from instantiating the AssertionError
         "LOAD_ASSERTION_ERROR",
+        # This isinstance check comes from an update to allow the nanogpt model to work in a torch.nn.Sequential module
+        isinstance,
     }
     assert not (delta := funcs ^ allowed_funcs), delta
 

@@ -33,6 +33,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import inspect
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 import torch
 import torch.nn as nn
@@ -66,7 +67,8 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        # self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        self.flash = False
         # NOTE: The original Karpathy's script hides bias registration behind a flag
         # but we don't do that here. We always register bias, because of preprocessing bug:
         # https://github.com/Lightning-AI/lightning-thunder/issues/605
@@ -207,6 +209,11 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
+        # NOTE This divergence from the original GPT supports using it in a torch.nn.Sequential, which
+        #   passes args as a tuple
+        if isinstance(idx, Sequence):
+            idx, targets = idx
+
         device = idx.device
         b, t = idx.size()
         assert (

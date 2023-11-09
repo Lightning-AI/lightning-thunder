@@ -6,6 +6,7 @@ import sys
 from contextvars import ContextVar
 from contextlib import contextmanager
 from itertools import chain
+from types import ModuleType
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
@@ -34,13 +35,13 @@ if TYPE_CHECKING:
 
 # NOTE Context variables for eager execution
 #   Expected to be set only once
-_eagetctx = ContextVar("eagerctx")
+_eagerctx = ContextVar("eagerctx")
 
 
 def set_eagerctx(ctx):
     """Sets the current eager execution context."""
 
-    return _eagetctx.set(ctx)
+    return _eagertctx.set(ctx)
 
 
 _bsym_header = ContextVar("bsym_header", default="")
@@ -107,8 +108,6 @@ def default_python_printer(
 # name is a string name for the operation
 # meta should use lightning.compile functions to evaluate the function;
 #   it will be called with lightning.compile proxies
-# python_impl defines the Python implementation of the operation, if
-#   available
 # id is an optional value to use when translating the function to executors
 # is_prim should be True if the Symbol represents a lightning.compile primitive
 # python_printer is a function that will produce valid Python for calling the
@@ -116,6 +115,8 @@ def default_python_printer(
 #   printer will be used for the Symbol. Symbols that control their own printing
 #   are typically unpacking datastructures, and producing particular, structured
 #   outputs.
+# python_impl defines the Python implementation of the operation, if
+#   available
 
 
 # TODO Improve annotations
@@ -123,22 +124,19 @@ def default_python_printer(
 class Symbol:
     name: str
     meta: Callable | None = None
-    python_impl: Callable | None = None
-    id: Any | None = None
+    id: None | Any = None
     is_prim: bool = False
     tags: None | list[Any] = None
     is_fusion: bool = False
     python_printer: Callable = default_python_printer
-    _module: Any | None = None
+    _module: None | type | ModuleType = None
     _hash: int | None = None
+    executor: None | Any = None
+    python_impl: None | Callable = None
+    call_ctx: None | dict[str, Callable] = None
 
     # An optional postprocessing function to modify the bound symbol resulting from bind()
     _bind_postprocess: None | Callable = None
-
-    # If True, then this function isn't actually executable
-    # NOTE This is useful when, for example, constructing implicit grad formulas
-    # TODO We could probably execute "phantom" symbols by executing their BoundSymbol's subsymbols
-    _phantom: bool = False
 
     @property
     def __name__(self):
@@ -164,7 +162,7 @@ class Symbol:
         return self.id == other.id
 
     @property
-    def module(self):
+    def module(self) -> None | ModuleType:
         # Identifies the module needed to call the function
         #   The module can be specified explicitly by setting the _module attribute,
         #   or it can be inferred by inspecting the module of the meta function,
@@ -179,10 +177,10 @@ class Symbol:
         #   an operation that is itself a partial or a wrapper they may expect to see that call
 
         module = self._module
+        if self.call_ctx is not None:
+            return None
         if module is not None:
             result = module
-        elif self._phantom:
-            return None
         elif self.meta is None:
             result = None
         else:
@@ -220,9 +218,15 @@ class Symbol:
         ba.apply_defaults()
         return ba.args, ba.kwargs
 
-    def bind(self, *args, output, subsymbols=(), _call_ctx=None, **kwargs) -> BoundSymbol:
+    # TODO Remove _call_ctx
+    def bind(self, *args, output, subsymbols=(), _call_ctx: None | dict = None, **kwargs) -> BoundSymbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
+
+        if self.call_ctx is not None:
+            baseutils.check(_call_ctx is None, lambda: f"Can't set {_call_ctx=} and {self.call_ctx=}")
+            _call_ctx = self.call_ctx
+
         b = BoundSymbol(
             self,
             args=args,
@@ -241,19 +245,25 @@ class Symbol:
         trace = get_tracectx()
 
         # NOTE This signals an eager invocation
-        if trace is None:
-            compile_eager, prims_eager = _eagetctx.get()
-            if self.is_prim:
-                peager = prims_eager.get_eager_implementation_for(self.id)
-                baseutils.check(
-                    peager is not None,
-                    lambda: f"Couldn't find an eager implementation for {self.name}",
-                    exception_type=NotImplementedError,
-                )
-                return peager(*args, **kwargs)
+        # TODO Consider restoring eager support
+        baseutils.check(
+            trace is not None,
+            lambda: f"Attempting to execute eagerly, which is not supported",
+            exception_type=NotImplementedError,
+        )
+        # if trace is None:
+        #     compile_eager, prims_eager = _eagerctx.get()
+        #     if self.is_prim:
+        #         peager = prims_eager.get_eager_implementation_for(self.id)
+        #         baseutils.check(
+        #             peager is not None,
+        #             lambda: f"Couldn't find an eager implementation for {self.name}",
+        #             exception_type=NotImplementedError,
+        #         )
+        #         return peager(*args, **kwargs)
 
-            ceager = compile_eager(self.meta)
-            return ceager(*args, **kwargs)
+        #     ceager = compile_eager(self.meta)
+        #     return ceager(*args, **kwargs)
 
         baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
         result: Any
@@ -311,11 +321,16 @@ class BoundSymbol(BoundSymbolInterface):
     # Header is a string that may be printed before the symbol
     header: str | list[str] = ""
 
-    _call_ctx: dict[str, Any] | None = None
+    _call_ctx: None | dict[str, Any] = None
 
     _import_ctx: dict = field(default_factory=dict)
     _object_ctx: dict = field(default_factory=dict)
-    _executor: Any | None = None
+    _executor: None | Any = None
+
+    # The line number of the bound symbol
+    # NOTE This is only intended for internal use, and should be set explicitly on all BoundSymbols
+    #   being analyzed before use, since it may have been set by previous passes, too
+    _line_no: None | int = None
 
     # TODO: Should we do input validation in post_init?
     # For example, making sure kwargs is empty dict instead on None.
@@ -359,12 +374,9 @@ class BoundSymbol(BoundSymbolInterface):
         return False
 
     # Produces a new BoundSymbol with the inputs swapped as described by swap_map,
-    #   which maps from variablified inputs to swap to the proxies to swap them with
-    # NOTE This does not modify the output. When calling this on operations that return one or
-    #   more of their inputs a DCE pass must have already marked those outputs as None
-    #   for this operation to be valid
+    #   which maps from variablified proxies to swap to the proxies to swap them with
     # TODO Consider adding a check that the swap is to another proxy with the same metadata
-    # TODO Consider adding a check that the output is not one of the swapped inputs
+    # TODO Consider preserving the BoundSymbol if does not use any of the proxies in the swapmap
     def from_bsym_swap_proxies(
         self,
         swap_map: dict[VariableInterface, Proxy],
@@ -397,12 +409,18 @@ class BoundSymbol(BoundSymbolInterface):
 
             swapped = []
             for fa in flats:
+                visited: set[VariableInterface] = set()
                 if isinstance(fa, Proxy):
-                    vfa = variableify(fa)
-                    to_swap = swap_map.get(vfa, None)
-                    if to_swap is not None:
-                        swapped.append(to_swap)
-                        continue
+                    ovfa = variableify(fa)
+                    vfa = ovfa
+                    while vfa in swap_map:
+                        baseutils.check(
+                            vfa not in visited, lambda: f"Detected a cycle while swapping; the cycle includes {visited}"
+                        )
+                        visited.add(vfa)
+
+                        fa = swap_map[vfa]
+                        vfa = variableify(fa)
 
                 swapped.append(fa)
 
@@ -413,42 +431,84 @@ class BoundSymbol(BoundSymbolInterface):
 
         new_output = swap(self.output) if not skip_output else self.output
 
-        nsubsymbols = []
-        for bsym in self.subsymbols:
-            if bsym.has_input(swap_map) and not skip_subsymbols:
-                nsubsymbols.append(bsym.from_bsym_swap_proxies(swap_map, skip_inputs, skip_output))
-            else:
-                nsubsymbols.append(bsym)
+        subsymbols: list[BoundSymbol]
+        if not skip_subsymbols:
+            subsymbols = []
+            for bsym in self.subsymbols:
+                subsymbols.append(bsym.from_bsym_swap_proxies(swap_map, skip_inputs, skip_output))
+        else:
+            subsymbols = self.subsymbols
 
-        return self.from_bsym(args=nargs, kwargs=nkwargs, output=new_output, subsymbols=nsubsymbols)
+        return self.from_bsym(args=nargs, kwargs=nkwargs, output=new_output, subsymbols=subsymbols)
 
     # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
     #   are immutable
 
     @functools.cached_property
+    def flat_args_and_spec(self):
+        return tree_flatten(self.args)
+
+    # TODO Rename to "flat_args"
+    @functools.cached_property
     def _flat_args(self):
-        return tree_flatten(self.args)[0]
+        flatargs, _ = self.flat_args_and_spec
+        return flatargs
 
-    @functools.cached_property
-    def _flat_kwargs(self):
-        return tree_flatten(self.kwargs)[0]
-
-    @functools.cached_property
-    def _flat_outs(self):
-        return tree_flatten(self.output)[0]
-
-    # NOTE These proxy variants are here because only operating on proxies is very common
     @functools.cached_property
     def flat_proxy_args(self) -> tuple[Proxy, ...]:
         return tuple(x for x in self._flat_args if isinstance(x, Proxy))
+
+    @functools.cached_property
+    def flat_variableified_proxy_args(self) -> tuple[Proxy, ...]:
+        return tuple(variableify(x) for x in self._flat_args if isinstance(x, Proxy))
+
+    # TODO The performance of these _var_* properties could be improved by reusing the tree spec
+    @functools.cached_property
+    def _var_args(self):
+        return tree_map(variableify, self.args)
+
+    @functools.cached_property
+    def flat_kwargs_and_spec(self):
+        return tree_flatten(self.kwargs)
+
+    # TODO Rename to "flat_kwargs"
+    @functools.cached_property
+    def _flat_kwargs(self):
+        flatkwargs, _ = self.flat_kwargs_and_spec
+        return flatkwargs
 
     @functools.cached_property
     def flat_proxy_kwargs(self) -> tuple[Proxy, ...]:
         return tuple(x for x in self._flat_kwargs if isinstance(x, Proxy))
 
     @functools.cached_property
+    def flat_variableified_proxy_kwargs(self) -> tuple[Proxy, ...]:
+        return tuple(variableify(x) for x in self._flat_kwargs if isinstance(x, Proxy))
+
+    @functools.cached_property
+    def _var_kwargs(self):
+        return tree_map(variableify, self.kwargs)
+
+    @functools.cached_property
+    def flat_outs_and_spec(self):
+        return tree_flatten(self.output)
+
+    @functools.cached_property
+    def _flat_outs(self):
+        flatouts, _ = self.flat_outs_and_spec
+        return flatouts
+
+    @functools.cached_property
     def flat_proxy_outs(self) -> tuple[Proxy, ...]:
         return tuple(x for x in self._flat_outs if isinstance(x, Proxy))
+
+    @functools.cached_property
+    def flat_variableified_proxy_outs(self) -> tuple[Proxy, ...]:
+        return tuple(variableify(x) for x in self._flat_outs if isinstance(x, Proxy))
+
+    @functools.cached_property
+    def _var_output(self):
+        return tree_map(variableify, self.output)
 
     @property
     def _out_printables(self):
@@ -468,25 +528,6 @@ class BoundSymbol(BoundSymbolInterface):
         trace = get_tracectx()
         return codeutils.to_printable(trace, self.kwargs, import_ctx=self._import_ctx, object_ctx=self._object_ctx)
 
-    # TODO self.args, self.kwargs, and self.output are flattened by
-    # _flat_args, etc, which is recomputed by the implementation of tree_map().
-    # This may be somewhat inefficient. We could cache the flattened sequence and the treespec.
-    # That way we wouldn't have to recompute them.
-    # Specifically, the implementation of tree_map() is:
-    # flat_args, spec = tree_flatten(pytree)
-    # return tree_unflatten([fn(i) for i in flat_args], spec)
-    @functools.cached_property
-    def _var_args(self):
-        return tree_map(variableify, self.args)
-
-    @functools.cached_property
-    def _var_output(self):
-        return tree_map(variableify, self.output)
-
-    @functools.cached_property
-    def _var_kwargs(self):
-        return tree_map(variableify, self.kwargs)
-
     # BoundSymbols are hashable and comparable by identity
     # This is necessary for using them as keys in a dict or set members
     # See dce in thunder/executors/passes.py for the usage.
@@ -503,7 +544,7 @@ class BoundSymbol(BoundSymbolInterface):
     def __hash__(self):
         return self._hash
 
-    # TODO: Deal with the contents of kwargs in __eq__ and __hash__.
+    # TODO Deal with the contents of kwargs in __eq__ and __hash__.
     def __eq__(self, other):
         if not isinstance(other, BoundSymbol):
             return False
@@ -521,19 +562,16 @@ class BoundSymbol(BoundSymbolInterface):
     def import_ctx(self):
         # NOTE This initializes the context
         self._out_printables, self._arg_printables, self._kwarg_printables
-
-        # BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
-        #   to not need any imports to run properly
         if self.sym is not None and self.sym.python_impl is not None:
+            # NOTE BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
+            #   to not need any imports to run properly
             import_ctx = {}
-        # NOTE If the call ctx was specified directly, then no import is needed to call the function
         elif self._call_ctx is not None:
-            import_ctx = {}
-        # NOTE If the symbol is a non-executable phantom, then no import is needed to call the function (because it cannot be called)
-        elif self.sym._phantom:
+            # NOTE If the call ctx was specified directly, then no import is needed to call the function
             import_ctx = {}
         else:
-            # BoundSymbols of Symbols without Python implementations are assumed to need
+            # BoundSymbols of Symbols without Python implementations (either because they
+            #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
             module_name = self.sym.module.__name__
             import_ctx = {module_name: self.sym.module}

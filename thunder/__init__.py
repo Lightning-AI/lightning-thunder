@@ -1,5 +1,5 @@
 from functools import wraps, partial
-from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type, Sequence
 import os
 
 from looseversion import LooseVersion
@@ -13,10 +13,15 @@ from thunder.core.trace import (
 
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
-import thunder.executors as executors
 import thunder.core.symbol as symbol
 import thunder.core.devices as devices
 from thunder.common import CACHE_MODES, CompileData, CompileStats, _create_callable, trace, preprocess
+import thunder.extend as extend
+from thunder.extend import Executor
+
+# The following executors are always available, and so are unconditionally imported
+from thunder.executors import pythonex, torchex, nvfuserex
+
 
 import thunder.torch as ltorch
 
@@ -51,6 +56,8 @@ __all__ = [
     "preprocess",
     # TODO Add device aliases
     # TODO Add executor aliases
+    "nvfuser_executor",
+    "pytorch_executor",
 ]
 
 
@@ -87,19 +94,23 @@ from thunder.clang import *
 # Promoted executor-related functions
 #
 
-list_executors = executors.list_executors
-list_default_executors = executors.list_default_executors
-set_default_executors = executors.set_default_executors
-add_operator_executor = executors.add_operator_executor
+# TODO Add more of these functions
+get_all_executors = extend.get_all_executors
+get_default_executors = extend.get_default_executors
+get_always_executors = extend.get_always_executors
+
+nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
+pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
 
 def compile(
     fn: Callable,
     *,
     langctx: Optional[Any] = None,
-    executors_list: Optional[list[executors.Executor]] = None,
+    executors_list: None | Sequence[Executor] = None,
     cache_mode: None | str | CACHE_MODES = None,
     use_cudagraphs: bool = False,
+    use_torch_compile: bool = False,
     disable_torch_autograd_support: bool = False,
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
@@ -111,6 +122,7 @@ def compile(
         executors_list=executors_list,
         cache_mode=cache_mode,
         use_cudagraphs=use_cudagraphs,
+        use_torch_compile=use_torch_compile,
         disable_torch_autograd_support=disable_torch_autograd_support,
         use_rematerialization=use_rematerialization,
         only_execute_prims=only_execute_prims,
@@ -153,12 +165,6 @@ def cache_misses(fn) -> int:
 
 def list_transforms(fn) -> list:
     return fn._lc_transforms
-
-
-# TODO There is probably a better way to do this
-symbol.set_eagerctx(
-    (partial(compile, executors_list=[executors.TORCH], only_execute_prims=True, disable_preprocessing=True), ltorch)
-)
 
 
 # TODO (mruberry) Update this

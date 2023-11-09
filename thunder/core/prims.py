@@ -48,10 +48,13 @@ class PrimIDs(Enum):
     DEL = auto()
     PRINT = auto()
     RETURN = auto()
+    # Prims related to transforms (like grad)
+    GET_GRAD = auto()
+    PUT_GRAD = auto()
     # Data movement and transformation prims
     CONVERT_ELEMENT_TYPE = auto()
     DEVICE_PUT = auto()
-    NUMPY_ARRAY_TO_TORCH_TENSOR = auto()
+    NUMPY_ARRAY_TO_TORCH_TENSOR = auto()  # Experimental
     # Tensor creation prims
     EXOGENOUS_LIKE = auto()
     FULL = auto()
@@ -62,15 +65,10 @@ class PrimIDs(Enum):
     BROADCAST_IN_DIM = auto()
     CAT = auto()
     FLIP = auto()
-    PAD = auto()
     RESHAPE = auto()
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
-    TAKE = auto()
-    INDEX_ADD = auto()
-    TAKE_ALONG_AXIS = auto()
-    SCATTER_ADD = auto()
     VIEW = auto()
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
@@ -145,13 +143,19 @@ class PrimIDs(Enum):
     SUM = auto()
     VAR = auto()
     VAR_MEAN = auto()
+    # Scatter and gather prims (Experimental!)
+    INDEX_ADD = auto()
+    SCATTER_ADD = auto()
+    TAKE = auto()
+    TAKE_ALONG_AXIS = auto()
     # Linear algebra prims (Mostly experimental)
-    LINEAR = auto()
     MATMUL = auto()
     # NN prims (Experimental!)
     CONVOLUTION = auto()
     EMBEDDING = auto()
     EMBEDDING_BACKWARD = auto()
+    LINEAR = auto()
+    PAD = auto()
 
 
 class OpTags(Enum):
@@ -178,18 +182,18 @@ def make_prim(
     *,
     meta,
     python_printer=default_python_printer,
-    python_impl=None,
+    python_impl: None | Callable = None,
     _bind_postprocess: None | Callable = None,
     tags: None | Sequence[OpTags] = None,
 ):
     sym = Symbol(
         name=name,
         meta=prim_ctx(meta),
-        python_impl=python_impl,
         id=id,
         is_prim=True,
         tags=tags,
         python_printer=python_printer,
+        python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
     )
     return sym
@@ -250,7 +254,7 @@ unpack_trivial = make_prim(
 
 
 # TODO Restore const criteria
-def unpack_sequence_meta(x: Union[Sequence, CollectionProxy], l: int) -> list:
+def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
     if isinstance(x, CollectionProxy):
         x = x.collection()
 
@@ -522,7 +526,7 @@ def del_printer(
 
 
 # NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _del_impl(x: Any) -> None:
+def _del_impl(x: Any, /) -> None:
     del x
 
 
@@ -571,6 +575,56 @@ python_return = make_prim(
 )
 
 #
+# Prims related to transforms (like grad)
+#
+
+
+# TODO Review number grad handling with dynamic constraints
+def _get_grad_meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
+    utils.check_type(a, (Number, TensorProxy))
+
+    if isinstance(a, TensorProxy):
+        return TensorProxy(like=a)
+
+    # NOTE a is a Number in this branch
+    return numberproxy(pytype(a), 0)
+
+
+get_grad = make_prim(
+    PrimIDs.GET_GRAD,
+    "get_grad",
+    meta=_get_grad_meta,
+)
+
+
+def _put_grad_meta(grad_for: Number | TensorProxy, grad: Number | TensorProxy) -> None:
+    utils.check_type(grad_for, (Number, TensorProxy))
+    utils.check_type(grad, (Number, TensorProxy))
+
+    # Attempts to put a grad for a number or tensor with an exact dtype are ignored
+    if dtypes.is_exact_dtype(dtypes.to_dtype(grad_for)):
+        return None
+
+    if isinstance(grad, TensorProxy):
+        utils.check_type(grad_for, TensorProxy)
+        utils.check_same_shape(grad_for, grad)
+        utils.check_same_device(grad_for, grad)
+        utils.check_same_dtype(grad_for, grad)
+    else:
+        # NOTE isinstance(grad, Number) == True in this branch
+        utils.check_type(grad_for, Number)
+        # TODO Add number grad support
+
+    return None
+
+
+put_grad = make_prim(
+    PrimIDs.PUT_GRAD,
+    "put_grad",
+    meta=_put_grad_meta,
+)
+
+#
 # Data movement and transformation prims
 #
 # TODO create an expected type helper for consistent error formatting
@@ -578,9 +632,7 @@ python_return = make_prim(
 
 
 # TODO Require the datatype of the conversion be constant
-def _convert_element_type_meta(
-    a: Union[TensorProxy, Number], dtype: Union[type, dtypes.dtype]
-) -> Union[TensorProxy, NumberProxy, Number]:
+def _convert_element_type_meta(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> Number | TensorProxy:
     utils.check_type(a, (Number, TensorProxy))
     utils.check_type(dtype, (type, dtypes.dtype))
 
@@ -605,7 +657,7 @@ convert_element_type = make_prim(
 )
 
 
-def _device_put_meta(a: TensorProxy, device: devices.Device) -> TensorProxy:
+def _device_put_meta(a: TensorProxy, /, device: devices.Device) -> TensorProxy:
     # NOTE The TensorProxy constructor will validate that a is a TensorProxy
     #   and device is a devices.Device
     return TensorProxy(like=a, device=device)
@@ -618,7 +670,7 @@ device_put = make_prim(
 )
 
 
-def _numpy_array_to_torch_tensor_meta(a: TensorProxy) -> TensorProxy:
+def _numpy_array_to_torch_tensor_meta(a: TensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a)
 
 
@@ -666,7 +718,7 @@ def _elementwise_unary_meta_factory(
     numbers_only: bool,
     number_type_map: Optional[dict[type, type]],
 ):
-    def meta(a: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+    def meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
         # Checks that inputs have an expected type
         utils.check_type(a, (TensorProxy, Number))
 
@@ -1069,9 +1121,10 @@ def _elementwise_binary_meta_factory(
     supported_input_dtypes,
 ):
     def meta(
-        a: Union[TensorProxy, Number],
-        b: Union[TensorProxy, Number],
-    ) -> Union[TensorProxy, Number]:
+        a: Number | TensorProxy,
+        b: Number | TensorProxy,
+        /,
+    ) -> Number | TensorProxy:
         # Checks that inputs have an expected type
         utils.check_type(a, (TensorProxy, Number))
         utils.check_type(b, (TensorProxy, Number))
@@ -1333,7 +1386,7 @@ zeta = _make_elementwise_binary_prim(
 
 
 # TODO Restore Number x Number x Number support
-def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> TensorProxy:
+def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy, /) -> TensorProxy:
     # Checks types
     # NOTE pred must be a bool tensor or bool (this is checked later)
     utils.check_type(pred, (TensorProxy, Number))
@@ -1426,7 +1479,7 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
-def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype):
+def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, Number)
 
@@ -1494,8 +1547,6 @@ uniform = make_prim(
 )
 
 
-# TODO(crcrpar): We might want to support `rng_seed` and `rng_offset` of `TensorProxy`
-# as the implementation for `torchex` does.
 def _uniform_philox_meta(
     shape: Sequence[int],
     minval: float,
@@ -1503,18 +1554,29 @@ def _uniform_philox_meta(
     *,
     device: devices.Device,
     dtype: dtypes.dtype,
-    rng_seed: int,
-    rng_offset: int,
+    seed: int | TensorProxy,
+    offset: int | TensorProxy,
 ) -> TensorProxy:
     # Checks inputs
     utils.check_type(minval, float)
     utils.check_type(maxval, float)
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
-    utils.check_type(rng_seed, int)
-    utils.check_type(rng_offset, int)
+    utils.check_type(seed, (int, TensorProxy))
+    utils.check_type(offset, (int, TensorProxy))
+    utils.check(
+        isinstance(seed, int) or seed.dtype is dtypes.int64,
+        lambda: f"Expected {seed=} to be an integer or an int64 tensor",
+    )
+    utils.check(
+        isinstance(offset, int) or seed.dtype is dtypes.int64,
+        lambda: f"Expected {offset=} to be an integer or an int64 tensor",
+    )
     utils.check(minval < maxval, lambda: f"`minval` must be less than `maxval` but {minval=}, {maxval=}")
     utils.check_valid_shape(shape)
+
+    utils.check_same_shape(shape, seed, offset)
+    utils.check_same_device(device, seed, offset)
 
     return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
@@ -1531,7 +1593,7 @@ uniform_philox = make_prim(
 
 
 # NOTE broadcast_dimensions is a sequence with length equal to a.shape (which is not necessarily equal to shape)
-def broadcast_in_dim_meta(a: TensorProxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> TensorProxy:
+def broadcast_in_dim_meta(a: TensorProxy, /, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(shape, Sequence)
     utils.check_type(broadcast_dimensions, Sequence)
@@ -1570,7 +1632,7 @@ broadcast_in_dim = make_prim(
 )
 
 
-def cat_meta(tensors: list[TensorProxy], dim: int):
+def cat_meta(tensors: list[TensorProxy], /, dim: int):
     utils.check(len(tensors) > 0, lambda: "Cat expects a non-empty list of tensors")
     utils.check_types(tensors, TensorProxy)
     utils.check_same_device(*tensors)
@@ -1614,7 +1676,7 @@ cat = make_prim(
 )
 
 
-def flip_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
+def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     # Check types
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
@@ -1631,7 +1693,7 @@ def flip_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
 flip = make_prim(PrimIDs.FLIP, "flip", meta=flip_meta)
 
 
-def pad_meta(a: TensorProxy, padding_value: Number, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:
+def pad_meta(a: TensorProxy, /, padding_value: Number, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:
     # Validates types
     utils.check_type(a, TensorProxy)
     utils.check_type(padding_value, Number)
@@ -1658,7 +1720,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: Sequence[int]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
@@ -1685,7 +1747,7 @@ reshape = make_prim(
 # TODO Update the prim to not accept optional strides
 # NOTE The stride parameter here refers to the stride of the slice, not the tensor's strides
 def slice_meta(
-    a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: Optional[Sequence[int]] = None
+    a: TensorProxy, /, start_indices: Sequence[int], end_indices: Sequence[int], strides: None | Sequence[int] = None
 ) -> TensorProxy:
     if strides is None:
         strides = [1] * a.ndim
@@ -1733,7 +1795,7 @@ def slice_meta(
 slice_prim = make_prim(PrimIDs.SLICE, "slice", meta=slice_meta, tags=(OpTags.SHAPE_OP,))
 
 
-def squeeze_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
+def squeeze_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     # Checks types
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
@@ -1762,7 +1824,7 @@ def squeeze_meta(a: TensorProxy, dims: Sequence[int]) -> TensorProxy:
 squeeze = make_prim(PrimIDs.SQUEEZE, "squeeze", meta=squeeze_meta, tags=(OpTags.SHAPE_OP,))
 
 
-def take_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+def take_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
     utils.check_type(dim, int)
@@ -1785,7 +1847,8 @@ def take_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
 take = make_prim(PrimIDs.TAKE, "take", meta=take_meta)
 
 
-def index_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+# TODO We should be consistent using 'index' or 'indices'
+def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
     utils.check_type(value, TensorProxy)
@@ -1814,7 +1877,7 @@ def index_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim: 
 index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
 
 
-def take_along_axis_meta(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
     utils.check_type(dim, int)
@@ -1836,7 +1899,7 @@ def take_along_axis_meta(a: TensorProxy, index: TensorProxy, dim: int) -> Tensor
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
 
 
-def scatter_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
     utils.check_type(value, TensorProxy)
@@ -1870,7 +1933,7 @@ def scatter_add_meta(a: TensorProxy, index: TensorProxy, value: TensorProxy, dim
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
 
 
-def transpose_meta(a: TensorProxy, permutation: Sequence[int]) -> TensorProxy:
+def transpose_meta(a: TensorProxy, /, permutation: Sequence[int]) -> TensorProxy:
     utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
     utils.check(
         a.ndim == len(permutation),
@@ -1895,7 +1958,7 @@ view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,
 #
 
 
-def stride_order_meta(a: TensorProxy, order: Sequence[int]) -> TensorProxy:
+def stride_order_meta(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_permutation(a.ndim, order)
@@ -1929,15 +1992,12 @@ def _compute_reduction_output_shape(shape: Sequence[int], dims: Sequence[int]) -
     return tuple(new_shape)
 
 
-def _reduction_meta(a: TensorProxy, dims: Sequence[int], *, output_dtype: Optional[dtypes.dtype] = None) -> TensorProxy:
+def _reduction_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     """Meta function for single output reduction operations."""
-    if output_dtype is None:
-        output_dtype = a.true_dtype
 
     # Validates types
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
-    utils.check_type(output_dtype, dtypes.dtype)
 
     utils.check(
         len(dims) > 0 or len(a.shape) == 0,
@@ -1946,7 +2006,7 @@ def _reduction_meta(a: TensorProxy, dims: Sequence[int], *, output_dtype: Option
 
     output_shape = _compute_reduction_output_shape(a.shape, dims)
 
-    return TensorProxy(like=a, shape=output_shape, dtype=output_dtype)
+    return TensorProxy(like=a, shape=output_shape)
 
 
 # TODO: review if reduction meta is OK for amax
@@ -1959,10 +2019,10 @@ prod = make_prim(PrimIDs.PROD, "prod", meta=_reduction_meta, tags=(OpTags.REDUCT
 sum = make_prim(PrimIDs.SUM, "sum", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
 
-# TODO Add comment for why var doesn't use _reduction_meta
+# NOTE var doesn't use _reduction_meta because it has the correction parameter
 # TODO Add output_dtype?
 # TODO Check that dims is a sequence of integers
-def _var_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+def _var_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
     # Checks input types
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
@@ -1974,17 +2034,23 @@ def _var_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> Ten
     else:
         output_dtype = a.true_dtype
 
-    return _reduction_meta(a, dims, output_dtype=output_dtype)
+    reduced: TensorProxy = _reduction_meta(a, dims)
+    return TensorProxy(like=reduced, dtype=output_dtype)
 
 
-def _var_mean_meta(a: TensorProxy, dims: Sequence[int], *, correction: Number) -> TensorProxy:
+def _var_mean_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
     output_dtype = None
     if utils.is_complex_dtype(a.dtype):
         output_dtype = utils.corresponding_real_dtype(a.true_dtype)
     else:
         output_dtype = a.true_dtype
-    var = _reduction_meta(a, dims, output_dtype=output_dtype)
-    mean = _reduction_meta(a, dims, output_dtype=a.true_dtype)
+
+    var_result: TensorProxy = _reduction_meta(a, dims)
+    mean_result: TensorProxy = _reduction_meta(a, dims)
+
+    var: TensorProxy = TensorProxy(like=var_result, dtype=output_dtype)
+    mean: TensorProxy = TensorProxy(like=mean_result, dtype=a.true_dtype)
+
     return (var, mean)
 
 
@@ -2061,7 +2127,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
 linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta)
 
 
-def matmul_meta(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     # Checks types
     utils.check(isinstance(a, TensorProxy), lambda: f"a={a} was not a TensorProxy")
     utils.check(isinstance(b, TensorProxy), lambda: f"b={b} was not a TensorProxy")
@@ -2127,6 +2193,7 @@ matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta)
 # TODO: model transpose and layout (channels last and alike)
 def convolution_meta(
     a: TensorProxy,
+    /,
     weight: TensorProxy,
     bias: Optional[TensorProxy],
     stride: Sequence[int],
@@ -2274,7 +2341,9 @@ convolution = make_prim(
 )
 
 
-def embedding_meta(a, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False):
+def embedding_meta(
+    a: TensorProxy, /, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
+) -> TensorProxy:
     # TODO: canonicalize and validating padding idx with weight.shape[0]
 
     if max_norm is not None:
@@ -2292,6 +2361,7 @@ def embedding_meta(a, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, s
 embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
 
 
+# TODO Update this so it's not a prim
 # TODO Add annotations
 # TODO Review requires_grad=False -- what about double backward?
 # TODO Once we have fusible index_put we can implement it using primitives

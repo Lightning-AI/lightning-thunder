@@ -85,8 +85,8 @@ def test_torch_mean(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_var_mean(executor, device, dtype):
-    def foo(a, dim=None, unbiased=None, keepdim=False, *, correction=None):
-        return ttorch.var_mean(a, dim, unbiased, keepdim=keepdim, correction=correction)
+    def foo(a, dim=None, keepdim=False, *, correction=1):
+        return ttorch.var_mean(a, dim, keepdim=keepdim, correction=correction)
 
     traced_foo = executor.make_callable(foo)
 

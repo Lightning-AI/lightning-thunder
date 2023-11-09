@@ -18,7 +18,7 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
     rng_offset = random.randint(0, 123902390) * (4 if executor == TorchExecutor else 1)
 
     def func(shape, dtype, device, rng_seed, rng_offset):
-        return ltorch.uniform_philox(shape, device=device, dtype=dtype, rng_seed=rng_seed, rng_offset=rng_offset)
+        return ltorch.uniform_philox(shape, device=device, dtype=dtype, seed=rng_seed, offset=rng_offset)
 
     cf = lc_compile(func, disable_preprocessing=True, executors_list=executor.executors_list())
 

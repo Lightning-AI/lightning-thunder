@@ -6,6 +6,7 @@ import string
 from numbers import Number
 import inspect
 import functools
+from types import ModuleType
 
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
@@ -45,7 +46,6 @@ class TraceCtx:
 
         self.args = None
         self.kwargs = None
-        self.output = None
 
         self.bound_symbols: list[BoundSymbolInterface] = []
         self.scopes = [self.bound_symbols]
@@ -176,8 +176,24 @@ class TraceCtx:
     # Methods related to adding inputs, outputs, bound symbols, and manipulating scopes
     #
 
-    def set_output(self, output: Any) -> None:
-        self.output = output
+    # NOTE This "unwraps" singleton outputs
+    # TODO Consider revisiting this behavior
+    @property
+    def output(self) -> Any:
+        from thunder.core.prims import PrimIDs
+
+        for bsym in self.bound_symbols:
+            if bsym.sym.id is PrimIDs.RETURN:
+                rval = bsym.args
+
+                if len(rval) == 1:
+                    return rval[0]
+
+                return rval
+
+        assert False, "Trace has no return, and so no output"
+
+    def mark_complete(self) -> None:
         self._complete = True
 
     def add_bound_symbol(self, bsym: BoundSymbolInterface) -> None:
@@ -308,15 +324,36 @@ class TraceCtx:
                 provenance_str = f"{str(self._provenance)}"
                 program.append(provenance_str)
 
-            # Prints imports, sorted by name
-            for name, module in sorted(import_ctx.items(), key=lambda x: x[1].__name__):
-                import_str = f"# import {module.__name__} as {name}"
-                program.append(import_str)
-
             # NOTE torch is explicitly imported because we always run in the no_grad() ctx (see below)
             # TODO Only do this if calling torch operators?
-            torch_import_str = "import torch"
-            program.append(torch_import_str)
+            import torch
+
+            import_ctx["torch"] = torch
+
+            # Prints imports, sorted by name
+
+            def keyfn(class_or_module: type | ModuleType) -> str:
+                if isinstance(class_or_module, ModuleType):
+                    return class_or_module.__name__
+                return class_or_module.__module__
+
+            name: str
+            class_or_module: type | ModuleType
+            for name, class_or_module in sorted(import_ctx.items(), key=lambda x: keyfn(x[1])):
+                import_str: str
+
+                # Handles class imports
+                if not isinstance(class_or_module, ModuleType):
+                    cls: type = class_or_module
+                    import_str = f"from {cls.__module__} import {cls.__name__}"
+                else:
+                    # class_or_module is a module
+                    module: ModuleType = class_or_module
+                    if module.__name__ == name:
+                        import_str = f"import {module.__name__}"
+                    else:
+                        import_str = f"import {module.__name__} as {name}"
+                program.append(import_str)
 
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
@@ -374,7 +411,6 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t = TraceCtx(trace.fn)
     t.args = trace.args
     t.kwargs = trace.kwargs
-    t.output = trace.output
 
     t.name_ctr = trace.name_ctr
     t.obj_name_ctr = trace.obj_name_ctr

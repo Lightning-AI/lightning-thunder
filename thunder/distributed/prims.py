@@ -15,8 +15,8 @@ class PrimIDs(Enum):
     ALL_GATHER = auto()
     ALL_REDUCE = auto()
     BROADCAST = auto()
-    SYNCHRONIZE = auto()
     REDUCE_SCATTER = auto()
+    SYNCHRONIZE = auto()
     WAIT = auto()
 
 
@@ -42,7 +42,7 @@ def check_if_distributed_available() -> None:
     )
 
 
-def all_gather_meta(a: TensorProxy, group: torch.distributed.ProcessGroup, do_async: Number) -> TensorProxy:
+def all_gather_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup, do_async: Number) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
@@ -64,7 +64,7 @@ def all_gather_meta(a: TensorProxy, group: torch.distributed.ProcessGroup, do_as
 # TODO Support additional reduction operations
 # TODO Consider our own distributed calls that don't just wrap PyTorch's
 def all_reduce_meta(
-    a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+    a: TensorProxy, /, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
 ) -> TensorProxy | FutureTensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
@@ -78,7 +78,9 @@ def all_reduce_meta(
     return TensorProxy(like=a)
 
 
-def broadcast_meta(a: TensorProxy, root: int, group: torch.distributed.ProcessGroup, do_async: Number) -> TensorProxy:
+def broadcast_meta(
+    a: TensorProxy, /, root: int, group: torch.distributed.ProcessGroup, do_async: Number
+) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(root, int)
@@ -92,7 +94,7 @@ def broadcast_meta(a: TensorProxy, root: int, group: torch.distributed.ProcessGr
 
 
 def reduce_scatter(
-    a: TensorProxy, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+    a: TensorProxy, /, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
@@ -114,14 +116,14 @@ def reduce_scatter(
 
 # NOTE This is a very particular implementation of wait that may need to be
 #   generalized in the future
-def wait_meta(a: FutureTensorProxy) -> TensorProxy:
+def wait_meta(a: FutureTensorProxy, /) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, FutureTensorProxy)
 
     return TensorProxy(like=a)
 
 
-def synchronize_meta(a: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
     return TensorProxy(like=a)

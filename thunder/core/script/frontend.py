@@ -295,7 +295,9 @@ def _bind_to_graph(
         for parent in proto_graph.parents[protoblock]:
             parent_state = dict(parent.end_state)
             for key, sink in block_values.items():
-                source = convert(parent_state.get(key, values.NonPyObject(values.NonPyObject.Tag.MISSING)), parent, block=None)
+                source = convert(
+                    parent_state.get(key, values.NonPyObject(values.NonPyObject.Tag.MISSING)), parent, block=None
+                )
                 if source.value is not NULL and source not in sink.values:
                     sink.add_missing_value(v=source, jump_source=blocks[parent].nodes[-1])
 

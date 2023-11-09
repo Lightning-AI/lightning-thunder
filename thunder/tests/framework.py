@@ -13,15 +13,23 @@ from torch.testing import assert_close
 from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as datatypes
 import thunder.core.devices as devices
 import thunder.executors as executors
+import thunder.extend as extend
 import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
 
 import thunder
+
+__all__ = [
+    "TestExecutor",
+    "nvFuserExecutor",
+    "TorchExecutor",
+]
 
 
 # A marker for actually wanting NOTHING instead of an unspecified value (marked with None)
@@ -40,6 +48,42 @@ NVFUSER_AVAILABLE = executors.nvfuser_available()
 IN_CI = os.getenv("CI", None) == "true"
 
 
+# Asserts that a candidate is closer to a reference than a competitor
+# This is useful when trying to compare low precision operators; the
+#   reference is typically the result in a higher precision datatype, like double,
+#   while the candidate and competitor are often in bfloat16 or float16
+def assert_closer(*, reference, candidate, competitor, comparator):
+    def _to_meta(x):
+        if isinstance(x, torch.Tensor):
+            return x.to(device="meta")
+
+        return x
+
+    # Validates metadata
+    reference_meta = tree_map(_to_meta, reference)
+    candidate_meta = tree_map(_to_meta, candidate)
+    competitor_meta = tree_map(_to_meta, competitor)
+
+    assert_close(reference_meta, candidate_meta, check_dtype=False)
+    assert_close(reference_meta, competitor_meta, check_dtype=False)
+    comparator(candidate_meta, competitor_meta)
+
+    reference_flats, _ = tree_flatten(reference)
+    candidate_flats, _ = tree_flatten(candidate)
+    competitor_flats, _ = tree_flatten(competitor)
+
+    for ref, cand, com in zip(reference_flats, candidate_flats, competitor_flats):
+        if isinstance(ref, torch.Tensor):
+            candidate_dist = torch.abs(ref - cand)
+            competitor_dist = torch.abs(ref - com)
+            minimum_dist = torch.minimum(candidate_dist, competitor_dist)
+
+            signed_minimum_dist = torch.where(candidate_dist < 0, -minimum_dist, minimum_dist)
+            target = ref + signed_minimum_dist
+
+            comparator(cand, target, check_dtype=False)
+
+
 # TODO: Add device type functionality to an object in this list
 def _all_devicetypes() -> Sequence[devices.DeviceType]:
     return devices.all_devicetypes
@@ -52,7 +96,7 @@ def available_devicetypes():
     return (devices.DeviceType.CPU,)
 
 
-class Executor:
+class TestExecutor:
     def supports_dtype(self, dtype: datatypes.dtype) -> bool:
         return dtype in datatypes.resolve_dtypes(self.supported_dtypes)
 
@@ -60,7 +104,7 @@ class Executor:
         return devicetype in self.supported_devicetypes
 
     # NOTE This method should be overridden by subclasses
-    def executors_list(self) -> list[executors.Executor]:
+    def executors_list(self) -> list[extend.Executor]:
         return []
 
     @singledispatchmethod
@@ -82,10 +126,8 @@ class Executor:
         # transform_for_execution doesn't work without a set trace
         # So we use detached_trace to get the tracectx and then use it
         with detached_trace():
-            executing_trace, history = executors.transform_for_execution(
-                trace, executors_list=self.executors_list(), **kwargs
-            )
-        return executing_trace.python_callable()
+            traces = thunder.common.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
+        return traces[-1].python_callable()
 
     # TODO Remove this
     def make_callable_with_info(self, fn, **kwargs):
@@ -96,8 +138,8 @@ class Executor:
 
 
 # TODO Convert to singletons or just add to executor logic
-class nvFuser(Executor):
-    name = "nvFuser"
+class nvFuserTestExecutor(TestExecutor):
+    name = "nvfuser"
     supported_devicetypes = (devices.DeviceType.CUDA,)
     supported_dtypes = (
         datatypes.floating,
@@ -108,35 +150,35 @@ class nvFuser(Executor):
         datatypes.complex128,
     )
 
-    def executors_list(self) -> list[Executor]:
-        return [executors.NVFUSER, executors.TORCH, executors.PYTHON]
+    def executors_list(self) -> list[extend.Executor]:
+        return [executors.get_nvfuser_executor()]
 
     def version(self):
-        return executors.nvfuser_version()
+        return executors.get_nvfuser_executor().version()
 
 
 # TODO Convert to singletons or just add to executor logic
-class TorchEx(Executor):
-    name = "TorchEx"
+class TorchTestExecutor(TestExecutor):
+    name = "torch"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
-    def executors_list(self) -> list[Executor]:
-        return [executors.TORCH, executors.PYTHON]
+    def executors_list(self) -> list[extend.Executor]:
+        return [executors.get_torch_executor()]
 
     def version(self):
         return torch.__version__
 
 
 # TODO Refactor these executors into the actual executor (sub)modules
-TorchExecutor = TorchEx()
-nvFuserExecutor = None
+TorchExecutor: TorchTestExecutor = TorchTestExecutor()
+nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:
-    nvFuserExecutor = nvFuser()
+    nvFuserExecutor = nvFuserTestExecutor()
 
 
-def _all_executors():
+def _all_test_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
     executors = [TorchExecutor]
 
@@ -156,7 +198,7 @@ def _instantiate_executor_test_template(
     template: Callable,
     scope,
     *,
-    executor: Executor,
+    executor: TestExecutor,
     device_or_devices: devices.Device | Sequence[devices.Device],
     dtype: datatypes.dtype,
     as_name: Optional[str] = None,
@@ -188,7 +230,7 @@ def _instantiate_executor_test_template(
 
 # TODO Support multiple devices
 def _instantiate_opinfo_test_template(
-    template: Callable, scope, *, opinfo, executor: Executor, device: devices.Device, dtype: datatypes.dtype
+    template: Callable, scope, *, opinfo, executor: TestExecutor, device: devices.Device, dtype: datatypes.dtype
 ) -> Callable:
     """Instantiates a test template for an operator."""
 
@@ -208,6 +250,7 @@ def _instantiate_opinfo_test_template(
         result = template(opinfo, device_str, dtype, executor, comp)
         return result
 
+    # Applies decorators
     for decorator in opinfo.test_decorators(template.__name__, executor, device, dtype):
         test = decorator(test)
 
@@ -230,10 +273,10 @@ class ops:
         self.opinfos = opinfos
 
         self.supported_executors = (
-            set(supported_executors) if supported_executors is not None else set(_all_executors())
+            set(supported_executors) if supported_executors is not None else set(_all_test_executors())
         )
         for ex in self.supported_executors:
-            assert isinstance(ex, Executor)
+            assert isinstance(ex, TestExecutor)
 
         self.supported_devicetypes = (
             set(supported_devicetypes) if supported_devicetypes is not None else set(_all_devicetypes())
@@ -306,7 +349,7 @@ class instantiate:
         scope=None,
         as_name: Optional[str] = None,
     ):
-        self.executors = set(executors) if executors is not None else set(_all_executors())
+        self.executors = set(executors) if executors is not None else set(_all_test_executors())
         self.devicetypes = set(devicetypes) if devicetypes is not None else set(available_devicetypes())
 
         if dtypes == NOTHING:

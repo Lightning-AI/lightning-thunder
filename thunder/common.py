@@ -4,14 +4,13 @@ from collections import deque
 import time
 from collections.abc import Hashable, Sequence
 from functools import wraps
+import os
 
 
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
-from thunder.executors import transform_for_execution
-from thunder.executors.torchex import thunder_backward
-from thunder.core.langctx import set_langctx, reset_langctx, get_langctx
+from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx, get_langctx
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
     TraceCtx,
@@ -19,11 +18,14 @@ from thunder.core.trace import (
     set_tracectx,
     reset_tracectx,
 )
+from thunder.core.transform_common import dce, cse
 from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy, DDPType, FutureTensorProxy
-from thunder.core.transform_common import dce
 import thunder.core.prims as prims
 import thunder.distributed as dist
 import thunder.torch as ltorch
+from thunder.extend import Executor, get_default_executors, get_always_executors
+import thunder.executors as executors
+from thunder.executors.torch_autograd import thunder_backward
 
 import torch as torch
 import numpy as np
@@ -119,6 +121,7 @@ def preprocess(fn, is_module):
         thunder_fn._additional_param_names = None
         thunder_fn._additional_param_values = None
         thunder_fn._additional_return_names = None
+
     return thunder_fn
 
 
@@ -131,11 +134,12 @@ class CompileData:
         *,
         fn: Callable,
         langctx: None | Any = None,
-        executors_list: None | list = None,
+        executors_list: None | tuple[Executor, ...] = None,
         cache_mode: None | str | CACHE_MODES = None,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
+        use_torch_compile: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
     ):
@@ -156,13 +160,26 @@ class CompileData:
         # Gathers additional metadata
         #
 
+        # Constructs executors list
+        # NOTE The executors list is fixed at compile time
+        if executors_list is None:
+            self.executors_list = tuple(get_default_executors() + get_always_executors())
+        else:
+            self.executors_list = tuple(executors_list) + tuple(get_always_executors())
+
+        # Validates executors list
+        for ex in self.executors_list:
+            assert isinstance(
+                ex, Executor
+            ), f"Expected all elements of the executors list to be executors, but found {ex}"
+
         self.fn = fn
         self.langctx = langctx
-        self.executors_list = executors_list
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
         self.use_cudagraphs = use_cudagraphs
+        self.use_torch_compile = use_torch_compile
         self.disable_torch_autograd_support = disable_torch_autograd_support
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
@@ -450,6 +467,12 @@ def trace(
             compile_data.langctx if compile_data is not None and compile_data.langctx is not None else get_langctx()
         )
 
+        # Checks for PyTorch settings that would invalidate the trace
+        if torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled():
+            raise NotImplementedError(
+                "torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled are True, but tracing would ignore these settings"
+            )
+
         try:
             langctx_tok = set_langctx(langctx_)
             current_trace = get_tracectx()
@@ -493,12 +516,12 @@ def trace(
 
                 prims.python_return(result)
 
-            trace.set_output(result)
+            trace.mark_complete()
 
             # TODO Stop calling this here and make it a separate trace in the sequence
             #   of traces
             if use_dce:
-                trace, _ = dce(trace)
+                trace = dce(trace)
 
         finally:
             # Resets contexts
@@ -510,6 +533,47 @@ def trace(
         return trace
 
     return _trace
+
+
+# TODO Remove executor-specific passes
+# TODO Constraint generation based off executor requirements
+# TODO Consider making this faster by reusing more data
+# TODO Create a general mechanism for running traces that produces reproducible provenance and the
+#   appropriate error checks
+def transform_for_execution(
+    trace: TraceCtx,
+    executors_list: Sequence[Executor],
+    *,
+    only_execute_prims=False,
+    use_rematerialization=True,
+    use_del_last_used=True,
+) -> list[TraceCtx]:
+    # TODO Should we add more torch checks here?
+    if torch.is_autocast_enabled():
+        raise RuntimeError(
+            "A callable optimized by thunder will not respect `torch.autocast`. "
+            "If your use case needs to use `torch.autocast`, file a feature request issue."
+        )
+
+    traces: list[TraceCtx] = []
+
+    # TODO If only_execute_prims, then flatten to prims here
+
+    # Runs passes that are generally useful
+    dce_trace = dce(trace)
+    traces.append(dce_trace)
+
+    # cse_trace = cse(dce_trace)
+    # traces.append(cse_trace)
+
+    extrace = executors.passes.transform_for_execution(dce_trace, executors_list)
+    traces.append(extrace)
+
+    if use_del_last_used:
+        lifetime_trace = executors.passes.del_last_used(extrace)
+        traces.append(lifetime_trace)
+
+    return traces
 
 
 # Executes the trace with the given args and kwargs and returns the result,
@@ -525,20 +589,25 @@ def _execute_trace(
 ) -> tuple[Any, Callable, list[TraceCtx]]:
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
-    extrace, extraces = transform_for_execution(
+
+    extraces = transform_for_execution(
         trc,
         executors_list=compile_data.executors_list,
         only_execute_prims=compile_data.only_execute_prims,
         use_rematerialization=compile_data.use_rematerialization,
     )
+    extrace = extraces[-1]
 
     # Applies post-optimization transforms
     for transform in post_optimization_transforms:
-        extrace, seq = transform(extrace)
-        extraces.extend(seq)
+        extrace = transform(extrace)
+        extraces.append(extrace)
 
     # Constructs the Python callable
     c = extrace.python_callable()
+
+    if compile_data.use_torch_compile:
+        c = torch.compile(c)
 
     if compile_data.use_cudagraphs:
         c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
@@ -567,6 +636,7 @@ def _create_callable(
     *,
     transforms: list[Callable] = [],
     post_optimization_transforms: list[Callable] = [],
+    _using_grad_transform: bool = False,
 ) -> Callable:
     @wraps(cd.processed_function)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
@@ -606,31 +676,35 @@ def _create_callable(
         cs.last_trace_cache_stop = time.time_ns()
 
         # Determines whether to use autograd.Function or not
-        flat_args, _ = tree_flatten((args, kwargs))
-        tensor_cls = (torch.Tensor, TensorProxy)
-        requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
-        if not cd.disable_torch_autograd_support and requires_grad:
-            compile_config = {
-                "langctx": cd.langctx,
-                "executors_list": cd.executors_list,
-                "only_execute_prims": cd.only_execute_prims,
-                "cache_mode": cd.cache_mode,
-                "use_rematerialization": cd.use_rematerialization,
-                "use_cudagraphs": cd.use_cudagraphs,
-            }
+        # autograd.Function (which supports calling .backward() in PyTorch) is used when:
+        #   1) The grad() transform is not applied
+        #   2) At least one input tensor (or tensor proxy) requires grad
+        if not _using_grad_transform:
+            flat_args, _ = tree_flatten((args, kwargs))
+            tensor_cls = (torch.Tensor, TensorProxy)
+            requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
+            if not cd.disable_torch_autograd_support and requires_grad:
+                compile_config = {
+                    "langctx": cd.langctx,
+                    "executors_list": cd.executors_list,
+                    "only_execute_prims": cd.only_execute_prims,
+                    "cache_mode": cd.cache_mode,
+                    "use_rematerialization": cd.use_rematerialization,
+                    "use_cudagraphs": cd.use_cudagraphs,
+                }
 
-            # thunder_backward may recursively call compile and wraps the result in a
-            # torch.autograd.Function to support embedding of Thunder-compiled
-            # functions in torch's Autograd
-            cs.last_trace_host_execution_start = time.time_ns()
-            c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(cd.processed_function)
-            result = c(*args, **kwargs)
-            cs.last_trace_host_execution_stop = time.time_ns()
-            cs.last_executed = c
-            if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-                cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs)
-            cs.last_trace_host_stop = time.time_ns()
-            return result
+                # thunder_backward may recursively call compile and wraps the result in a
+                # torch.autograd.Function to support embedding of Thunder-compiled
+                # functions in torch's Autograd
+                cs.last_trace_host_execution_start = time.time_ns()
+                c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(cd.processed_function)
+                result = c(*args, **kwargs)
+                cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_executed = c
+                if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
+                    cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs)
+                cs.last_trace_host_stop = time.time_ns()
+                return result
 
         # TODO Revisit compile() behavior when hit in a trace ctx
         #   This will inline the invocation of compile into the current
@@ -664,8 +738,8 @@ def _create_callable(
 
         # Applies transforms
         for transform in transforms:
-            trc, seq = transform(trc)
-            traces.extend(seq)
+            trc = transform(trc, executors_list=cd.executors_list)
+            traces.append(trc)
 
         #
         # Executes the trace, then updates the CompiledData and possibly
@@ -702,11 +776,12 @@ def _create_callable(
             cd.additional_return_names,
         )
 
-    # NOTE not is_module
+    # NOTE is_module is False
     _fn._pfn = cd.processed_function
     _fn._lc_cd = cd
     _fn._lc_cs = cs
     _fn._lc_transforms = transforms
     _fn._lc_post_optimization_transforms = post_optimization_transforms
+    _fn._using_grad_transform = _using_grad_transform
 
     return _fn

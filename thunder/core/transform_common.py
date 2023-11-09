@@ -1,8 +1,9 @@
 from itertools import chain
 import time
+from typing import Sequence, Any
 
 import thunder.core.prims as prims
-from thunder.core.proxies import Proxy, variableify
+from thunder.core.proxies import Proxy, variableify, Variable
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
@@ -12,29 +13,43 @@ from thunder.core.utils import ProxyDict, producers
 #
 # Common optimization and transform passes
 #
-# NOTE This avoids transforms depending on passes, since passes depend on transforms
+# NOTE This file avoids transforms depending on passes, since passes depend on transforms
 
 
-# NOTE Runs a Dead Code Elimination (DCE) pass
-#   Technically this could be a "transform", because it is semantic-preserving.
-# TODO We could look at reconciling the ideas of what a trace produces and the return prim
-# TODO This calls variableify(), but we could directly construct Variable objects instead
-def dce(trace: Trace) -> tuple[Trace, list[Trace]]:
+# Modifies an existing BoundSymbol, removing its "no-op" subsymbols (recursively) which perform no operations
+def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
+    nsbsyms: list[BoundSymbol] = []
+    sbsym: BoundSymbol
+    for sbsym in bsym.subsymbols:
+        if len(sbsym.subsymbols) == 0 and not sbsym.sym.is_prim:
+            continue
+
+        _remove_noop_subsymbols(sbsym)
+        nsbsyms.append(sbsym)
+
+    bsym.subsymbols = nsbsyms
+
+
+# TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
+#   improve performance
+# Runs a Dead Code Elimination (DCE) pass
+# NOTE Today we are only interested in computations that produce proxies, so this will eliminate operations
+#   that only produce non-proxy objects
+def dce(trace: Trace) -> Trace:
     start_time_ns = time.time_ns()
 
     producer_map: ProxyDict = producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
-    needed_proxies = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
+    # TODO Update this to use tags (like a HAS_SIDE_EFFECTS, or even DONT_DCE tag?)
     # NOTE These primitives are marked to not be collected because they dictate the function's output
-    #   (RETURN), have side effects (PRINT), or are comments (COMMENT, UNPACK_TRIVIAL)
+    #   (RETURN) or have side effects (PRINT)
     dont_collect = {
         prims.PrimIDs.RETURN,
-        prims.PrimIDs.COMMENT,
         prims.PrimIDs.PRINT,
-        prims.PrimIDs.UNPACK_TRIVIAL,
     }
 
     bsym: BoundSymbol
@@ -68,6 +83,14 @@ def dce(trace: Trace) -> tuple[Trace, list[Trace]]:
                 nbsym_output = tree_map(_helper, bsym.output)
                 nbsym = bsym.from_bsym(output=nbsym_output)
 
+            # Eliminates no-op subsymbols
+            # NOTE In general editing subsymbols doesn't do anything, but no-op subsymbols are a pain
+            #   for transforms to deal with. Transforms typically look for a "flattened" version of an
+            #   operator for which they can apply their rules, and no-op subsymbols have no
+            #   flattening, requiring each transform handle them explicitly or DCE them themselves
+            #   while flattening.
+            _remove_noop_subsymbols(nbsym)
+
             dced.append(nbsym)
             for x in chain(nbsym.flat_proxy_args, nbsym.flat_proxy_kwargs):
                 needed_proxies.add(variableify(x))
@@ -80,4 +103,164 @@ def dce(trace: Trace) -> tuple[Trace, list[Trace]]:
     elapsed_time_millis = elapsed_time_ns // 1000000
     dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
 
-    return dcetrace, [dcetrace]
+    return dcetrace
+
+
+#
+# Functions related to the Common Subexpression Elimination (CSE) pass
+#
+def replace_redundant_inputs(
+    redundant_map: dict[Variable, Proxy], bsyms: Sequence[BoundSymbol]
+) -> Sequence[BoundSymbol]:
+    new_bsyms = []
+    for bsym in bsyms:
+        # Checks if the bound symbol has redundant inputs (that need to be replaced)
+        has_redundant_inputs: bool = False
+        for x in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
+            if Variable(x) in redundant_map:
+                has_redundant_inputs = True
+                break
+
+        # Bound symbols without redundant inputs need no modification
+        if not has_redundant_inputs:
+            new_bsyms.append(bsym)
+            continue
+
+        # Bound symbols with redundant inputs have to remap those inputs, and the
+        #   inputs of their subsymbols, to the original computations
+        new_bsym = bsym.from_bsym_swap_proxies(
+            redundant_map,
+            skip_inputs=False,
+            skip_output=False,
+            skip_subsymbols=False,
+        )
+        new_bsyms.append(new_bsym)
+
+    return new_bsyms
+
+
+# TODO(crcrpar): Implement a mechanism to keep track of supported ops that cannot be CSE'd.
+# For example, `uniform`, `dropout`, and `scaled_dot_product_attention`.
+# See: https://github.com/Lightning-AI/lightning-thunder/issues/671
+NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
+    prims.PrimIDs.UNIFORM,
+    "torch.uniform",  # this doesn't exist as of the PR
+    "torch.uniform_like",  # this doesn't exist as of the PR
+    # thunder.core.prims doesn't support. See https://pytorch.org/docs/stable/generated/torch.rand.html.
+    # "torch.rand",
+    # "torch.rand_like",
+    "torch.nn.functional.dropout",
+    "torch.nn.functional.scaled_dot_product_attention",
+}
+
+
+# TODO Update the replacement of redundant proxies to use a visitor pattern
+#   when that architecture is added in the future
+def cse(trace: Trace) -> Trace:
+    """Remove bound symbols whose right hand side is common expression.
+
+    This does two things:
+        1. Removes bound symbols if their right hand side expression is already seen.
+        2. Replaces variables of arguments and keyword arguments of the bound symbols to use and
+           their subsymbols with the preceding ones using the map of a variable to another with
+           the same right hand side expression.
+
+    Say we have `foo` defined in the below code snippet.
+
+    .. code::
+
+        def foo(x, y):
+            a = x + y
+            b = y - x
+            c = x + y  # Expected to be removed in favor of `a`.
+            d = y - x  # Expected to be removed in favor of `b`.
+            z = a + b  # Expected to be intact.
+            w = c + d  # Expected to be converted to `w = a + b` and then removed in favor of `z`.
+            m = w + 1  # Expected to be updated to `m = z + 1`.
+            return z, w, m  # Expected to be (z, z, z + 1)
+
+        # CPU tensors
+        @torch.no_grad()
+        def thunder_140374621612752(x, y):
+          # x: "cpu f32[2, 2]" =  x  (trivial unpack)
+          # y: "cpu f32[2, 2]" =  y  (trivial unpack)
+          t0 = torch.add(x, y)  # t0: "cpu f32[2, 2]"
+          t1 = torch.sub(y, x)  # t1: "cpu f32[2, 2]"
+          del [y, x]
+          t4 = torch.add(t0, t1)  # t4: "cpu f32[2, 2]"
+          del [t0, t1]
+          t6 = torch.add(t4, 1)  # t6: "cpu f32[2, 2]"
+          return (t4, t4, t6)
+
+        # CUDA tensors & nvFuser
+        @torch.no_grad()
+        def thunder_140410131706304(x, y):
+          # x: "cuda:0 f32[2, 2]" =  x  (trivial unpack)
+          # y: "cuda:0 f32[2, 2]" =  y  (trivial unpack)
+          (t4, t6) = nvFusion0(x, y)
+            # t0 = prims.add(x, y)  # t0: "cuda:0 f32[2, 2]"
+            # t1 = prims.sub(y, x)  # t1: "cuda:0 f32[2, 2]"
+            # t4 = prims.add(t0, t1)  # t4: "cuda:0 f32[2, 2]"
+            # t6 = prims.add(t4, 1.0)  # t6: "cuda:0 f32[2, 2]"
+          del [x, y]
+          return (t4, t4, t6)
+
+    Args:
+        trace:
+
+    Returns:
+        :class:`TraceCtx` with common subexpression eliminated.
+    """
+    start_time_ns = time.time_ns()
+
+    cse_trace = from_trace(trace)
+
+    cse_trace_bound_symbols = []
+    rhs_to_bsym_map = {}
+    redundant_map = {}
+
+    # Identifies redundant operations and maps redundant proxies to originally
+    #   computed proxies
+    bsym: BoundSymbol
+    for bsym in trace.bound_symbols:
+        # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
+        # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
+        if bsym.sym.id in NON_FUNCTIONAL_OPS:
+            cse_trace_bound_symbols.append(bsym)
+            continue
+
+        # From the second bsym, we have opportunities to replace `bsym.args` and `bsym.kwargs`.
+        rhs = (
+            bsym.from_bsym_swap_proxies(
+                swap_map=redundant_map,
+                skip_inputs=False,
+                skip_output=True,
+                skip_subsymbols=True,
+            )
+        ).rhs()
+        if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
+            # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
+            for src, dst in zip(bsym._flat_outs, prior_bsym._flat_outs):
+                # Detects (and avoids) aliasing
+                vsrc, vdst = variableify(src), variableify(dst)
+                if vsrc == vdst:
+                    continue
+
+                redundant_map[vsrc] = dst
+        else:
+            rhs_to_bsym_map[rhs] = bsym
+            cse_trace_bound_symbols.append(bsym)
+
+    # Updates the bound symbols in the trace
+    # NOTE This uses the cse_trace_bound_symbols list, which has filtered
+    #   redundant symbols
+    new_bsyms = replace_redundant_inputs(redundant_map, cse_trace_bound_symbols)
+    cse_trace.bound_symbols = new_bsyms
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    cse_trace.set_provenance(
+        TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
+    )
+    return cse_trace

@@ -1,53 +1,40 @@
 from typing import Any
+from functools import partial
 
 import pytest
 import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder import dtypes
-from thunder.executors.apex_entropyex import deregister_apex_entropyex, register_apex_entropyex
-from thunder.tests.framework import instantiate, requiresCUDA, ops, run_snippet, IN_CI
-from thunder.tests.opinfos import OpInfo, get_opinfo
-import thunder.core.devices as devices
+from thunder.tests.framework import requiresCUDA, run_snippet, IN_CI, assert_closer
+from thunder.tests.opinfos import get_opinfo
+from thunder.core.transforms import grad
 
-from lightning_utilities.core.imports import package_available
-
-APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
-
-xentropy_cuda: None | Any = None
-if APEX_CROSS_ENTROPY_AVAILABLE:
-    import xentropy_cuda
+xentropy_cuda = pytest.importorskip("xentropy_cuda")
+from thunder.executors.apex_entropyex import apex_ex
 
 
-# NOTE This test modifies the global executor map, so it technically should not
-# be run in parallel with other tests
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
-def test_apex_cross_entropy(device, dtype):
-    if not APEX_CROSS_ENTROPY_AVAILABLE:
-        pytest.skip("Apex cross entropy is not available")
+def test_apex_cross_entropy(device: str, dtype: torch.dtype):
+    logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype))
+    labels = torch.randint(0, 50257, [2048], device=device)
 
-    try:
-        register_apex_entropyex()
-        logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype))
-        labels = torch.randint(0, 50257, [2048], device=device)
-        expected = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
+    def fn(logits, labels):
+        return torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
 
-        def test(logits, labels):
-            return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
+    cfn = thunder.compile(fn, executors_list=[apex_ex])
 
-        ctest = thunder.compile(test, executors_list=["apex_xentropy"])
-        actual = ctest(logits, labels)
-        torch.testing.assert_close(actual, expected)
-        last_trace = thunder.last_traces(ctest)[-1]
-        if xentropy_cuda is not None:
-            assert any(bsym.sym.name == "apex_cross_entropy" for bsym in last_trace.bound_symbols)
-        else:
-            assert all(bsym.sym.name != "apex_cross_entropy" for bsym in last_trace.bound_symbols)
-    finally:
-        deregister_apex_entropyex()
+    # Verifies the result is close to PyTorch
+    thunder_result = cfn(logits, labels)
+    torch_result = fn(logits, labels)
+
+    assert_close(thunder_result, torch_result)
+
+    # Verifies apex_cross_entropy was called
+    extrace = thunder.last_traces(cfn)[-1]
+    assert any(bsym.sym.name == "apex_cross_entropy" for bsym in extrace.bound_symbols)
 
 
 def snippet_torch_consistency(op, torch_op, sample):
@@ -61,95 +48,133 @@ def snippet_torch_consistency(op, torch_op, sample):
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32], ids=("float16", "float32"))
 @pytest.mark.parametrize("device,", ["cuda"])
-def test_apex_torch_consistency(device, dtype):
-    from thunder.executors.apex_entropyex import cross_entropy_checker
-
-    if not APEX_CROSS_ENTROPY_AVAILABLE:
-        pytest.skip("Apex cross entropy is not available")
+def test_apex_torch_consistency(device: str, dtype: torch.dtype):
+    from thunder.executors.apex_entropyex import _cross_entropy_checker
 
     op = get_opinfo("cross_entropy")
 
-    try:
-        register_apex_entropyex()
+    def fn(*args, **kwargs):
+        return torch.nn.functional.cross_entropy(*args, **kwargs)
 
-        def fn(*args, **kwargs):
-            return thunder.torch.cross_entropy(*args, **kwargs)
+    cfn = thunder.compile(fn, executors_list=[apex_ex])
+    at_least_one_supported_input = False
 
-        cfn = thunder.compile(fn, executors_list=["apex_xentropy"])
-        at_least_one_supported_input = False
+    # NOTE reference inputs take a long time to run in CI, so this uses sample inputs in CI
+    input_generator = op.reference_inputs if not IN_CI else op.sample_inputs
 
-        # NOTE reference inputs take a long time to run in CI, so this uses sample inputs in CI
-        input_generator = op.reference_inputs if not IN_CI else op.sample_inputs
+    for sample in input_generator(device, dtype, requires_grad=False):
+        if not _cross_entropy_checker(*sample.args, **sample.kwargs):
+            continue
 
-        for sample in input_generator(device, dtype, requires_grad=False):
-            if not cross_entropy_checker(*sample.args, **sample.kwargs):
-                continue
-            at_least_one_supported_input = True
-            result = run_snippet(
-                snippet_torch_consistency,
-                op,
-                device,
-                dtype,
-                cfn,
-                op.torch_reference,
-                sample,
-            )
-            if result is not None:
-                return result
-        if not at_least_one_supported_input:
-            raise ValueError("No supported inputs were generated by the OpInfo")
-    finally:
-        deregister_apex_entropyex()
+        at_least_one_supported_input = True
+        result = run_snippet(
+            snippet_torch_consistency,
+            op,
+            device,
+            dtype,
+            cfn,
+            op.torch_reference,
+            sample,
+        )
+
+        if result is not None:
+            return result
+
+    if not at_least_one_supported_input:
+        raise ValueError("No supported inputs were generated by the OpInfo")
 
 
-@pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32], ids=("float16", "bfloat16", "float32")
+)
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy_backward(device, dtype):
-    if not APEX_CROSS_ENTROPY_AVAILABLE:
-        pytest.skip("Apex cross entropy is not available")
+    logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True)
+    labels = torch.randint(0, 50257, [2048], device=device)
 
-    try:
-        from thunder.core.transforms import value_and_grad
-        from thunder.executors import TORCH
+    def foo(logits, labels):
+        ce = torch.nn.functional.cross_entropy(logits, labels, reduction="sum", ignore_index=-1)
+        return ce
 
-        register_apex_entropyex()
-        logits = torch.randn(
-            [2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True
-        )
-        labels = torch.randint(0, 50257, [2048], device=device)
+    cfoo = thunder.compile(foo, executors_list=[apex_ex])
+    cfoo_grad = grad(cfoo)
+    (thunder_grad,) = cfoo_grad(logits, labels)
 
-        # -1 is supported by apex cross entropy but 1 is not. The case of 1 is
-        # used to test that the conditional rules are working correctly and that
-        # the apex cross entropy is not used
-        ignore_indices = (-1, 1)
+    torch_result = foo(logits, labels)
+    torch_result.backward()
+    torch_grad = logits.grad
+    logits.grad = None
 
-        for ignore_index in ignore_indices:
+    # Computes the reference in double precision on the CPU
+    reference_logits = logits.cpu().double().detach().requires_grad_(True)
+    reference_labels = labels.cpu()
+    reference_result = foo(reference_logits, reference_labels)
+    reference_result.backward()
+    reference_grad = reference_logits.grad.cuda()
+    reference_logits.grad = None
 
-            @value_and_grad
-            def test(logits, labels):
-                return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
+    # (mruberry) In bf16 I see the following failure:
+    #   Mismatched elements: 13 / 102926336 (0.0%)
+    #   Greatest absolute difference: 4.741927263568393e-05 at index (1852, 25836) (up to 1e-05 allowed)
+    #   Greatest relative difference: 0.054034659671222666 at index (569, 3344) (up to 0.016 allowed)
+    comp = assert_close
+    if dtype in (torch.float16, torch.bfloat16):
+        comp = partial(assert_close, atol=1e-4, rtol=1e-2)
 
-            ctest = thunder.compile(
-                test,
-                executors_list=["apex_xentropy", TORCH],
-                disable_preprocessing=True,
-                disable_torch_autograd_support=True,
-            )
-            actual = ctest(logits, labels)
-            expected = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
-            expected_grad = torch.autograd.grad(expected, logits)[0]
-            torch.testing.assert_close(actual[0], expected)
-            torch.testing.assert_close(actual[1][0], expected_grad)
-            last_trace = thunder.last_traces(ctest)[-1]
-            is_any_fw = any(bsym.sym.name == "apex_cross_entropy_forward" for bsym in last_trace.bound_symbols)
-            is_any_bw = any(bsym.sym.name == "apex_cross_entropy_backward" for bsym in last_trace.bound_symbols)
+    assert_closer(reference=reference_grad, candidate=thunder_grad, competitor=torch_grad, comparator=comp)
 
-            if ignore_index == -1:
-                assert is_any_fw
-                assert is_any_bw
-            else:
-                assert not is_any_fw
-                assert not is_any_bw
-    finally:
-        deregister_apex_entropyex()
+    # Verifies that apex cross entropy was used to compute the grad
+    extrace = thunder.last_traces(cfoo_grad)[-1]
+    is_any_fw = any(bsym.sym.name == "apex_cross_entropy" for bsym in extrace.bound_symbols)
+    is_any_bw = any(bsym.sym.name == "apex_cross_entropy_backward" for bsym in extrace.bound_symbols)
+
+    assert is_any_fw and is_any_bw
+
+    # Tests with mean reduction
+    def bar(logits, labels):
+        ce = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
+        return ce
+
+    cbar = thunder.compile(bar, executors_list=[apex_ex])
+    cbar_grad = grad(cbar)
+    (thunder_grad,) = cbar_grad(logits, labels)
+
+    torch_result = bar(logits, labels)
+    torch_result.backward()
+    torch_grad = logits.grad
+    logits.grad = None
+
+    # Computes the reference in double precision on the CPU
+    reference_logits = logits.cpu().double().detach().requires_grad_(True)
+    reference_labels = labels.cpu()
+    reference_result = bar(reference_logits, reference_labels)
+    reference_result.backward()
+    reference_grad = reference_logits.grad.cuda()
+    reference_logits.grad = None
+
+    assert_closer(reference=reference_grad, candidate=thunder_grad, competitor=torch_grad, comparator=comp)
+
+    # Tests with none reduction
+    def caz(logits, labels):
+        ce = torch.nn.functional.cross_entropy(logits, labels, reduction="none", ignore_index=-1)
+        return ce.sum()
+
+    ccaz = thunder.compile(caz, executors_list=[apex_ex])
+    ccaz_grad = grad(ccaz)
+    (thunder_grad,) = ccaz_grad(logits, labels)
+
+    torch_result = caz(logits, labels)
+    torch_result.backward()
+    torch_grad = logits.grad
+    logits.grad = None
+
+    # Computes the reference in double precision on the CPU
+    reference_logits = logits.cpu().double().detach().requires_grad_(True)
+    reference_labels = labels.cpu()
+    reference_result = caz(reference_logits, reference_labels)
+    reference_result.backward()
+    reference_grad = reference_logits.grad.cuda()
+    reference_logits.grad = None
+
+    assert_closer(reference=reference_grad, candidate=thunder_grad, competitor=torch_grad, comparator=comp)

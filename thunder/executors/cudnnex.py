@@ -8,10 +8,16 @@ from lightning_utilities.core.imports import package_available
 CUDNN_AVAILABLE = package_available("cudnn")
 
 cudnn: None | Any = None
+cudnn_backend_version: None | Any = None
 if CUDNN_AVAILABLE:
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
+
+
+def cudnn_available() -> bool:
+    return CUDNN_AVAILABLE
+
 
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
@@ -22,6 +28,11 @@ from typing import Union, Dict
 
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import TensorProxy
+
+from thunder.extend import OperatorExecutor, register_executor
+
+cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
+register_executor(cudnn_ex)
 
 
 @dataclass(frozen=True)
@@ -201,25 +212,7 @@ def sdpa_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fal
     return True
 
 
-_op_to_cudnn = {
-    "torch.nn.functional.scaled_dot_product_attention": ("cudnn_sdpa", sdpa_checker, sdpa_impl),
-}
+import thunder.torch as ltorch
 
-
-def register_cudnnex(*, add_to_default_executors: bool = True) -> None:
-    assert CUDNN_AVAILABLE, f"Trying to register the cudnn executor, but the cudnn package is not available"
-
-    print(
-        "WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n"
-        "Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880"
-    )
-
-    from thunder.executors import add_operator_executor
-
-    add_operator_executor("cudnn", _op_to_cudnn, add_to_default_executors=add_to_default_executors)
-
-
-def deregister_cudnnex() -> None:
-    from thunder.executors import remove_operator_executor
-
-    remove_operator_executor("cudnn")
+sdpa = cudnn_ex.register_operator("cudnn_sdpa", like=ltorch.scaled_dot_product_attention, fn=sdpa_impl)
+cudnn_ex.register_implementation(ltorch.scaled_dot_product_attention, sdpa, checker=sdpa_checker)

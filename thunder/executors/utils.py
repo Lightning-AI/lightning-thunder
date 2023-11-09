@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from enum import Enum, auto
 from typing import List, Set, Dict, Callable, Optional
-from copy import copy
 from itertools import chain
 from collections.abc import Sequence
 
@@ -15,60 +14,8 @@ from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
 from thunder.core.prims import PrimIDs
-from thunder.executors import torchex as TorchEx
 
-# TODO Consider renaming this file to common.py?
-
-
-class Executor(Enum):
-    NVFUSER = auto()
-    TORCH = auto()
-    PYTHON = auto()
-
-
-# NOTE This is here because we can only import the nvFuser executor conditional on its being available
-def is_cuda_available() -> bool:
-    return torch.cuda.is_available()
-
-
-def nvfuser_version() -> LooseVersion | None:
-    # Short-circuits if CUDA isn't available
-    if not is_cuda_available():
-        return None
-
-    try:
-        import nvfuser
-
-        if hasattr(nvfuser, "version"):
-            return LooseVersion(nvfuser.version())
-
-        # NOTE: This import of nvFuser may or may not have version info
-        return LooseVersion("0.0.0")
-    except ImportError:
-        pass
-
-    try:
-        # NOTE This import of nvFuser is so old it didn't have version info
-        import torch._C._nvfuser as nvfuser
-
-        return LooseVersion("0.0.0")
-    except ImportError:
-        pass
-
-    # NOTE This occurs when both attempts at importing nvFuser failed
-    return None
-
-
-def required_nvfuser_version() -> LooseVersion:
-    return LooseVersion("0.0.1")
-
-
-# NOTE We require nvFuser version 0.0.1 or greater
-def nvfuser_available() -> bool:
-    v = nvfuser_version()
-    return v is not None and v >= required_nvfuser_version()
-
-
+# TODO Make these tags
 comment_symbols = {
     PrimIDs.COMMENT,
     PrimIDs.UNPACK_TRIVIAL,
@@ -79,12 +26,9 @@ comment_symbols = {
 # TODO Document this better
 # TODO Review non-proxy inputs as being consumed -- currently only proxies can be inputs and outputs of these regions
 class Region:
-    def __init__(self, trace: TraceCtx, producers, consumers, bound_symbols: list[BoundSymbol], executor, counter: int):
+    def __init__(self, producers, consumers, bound_symbols: list[BoundSymbol]):
         # Stores input data
-        self.trace = trace
         self.bound_symbols = bound_symbols
-        self.executor = executor
-        self.counter = counter
 
         # Identifies inputs and outputs
         # NOTE Inputs and outputs are "variableified" sets
@@ -132,7 +76,7 @@ class Region:
         self._shape_ops = {PrimIDs.SLICE, PrimIDs.TRANSPOSE, PrimIDs.RESHAPE}
 
     def __repr__(self) -> str:
-        s = f"[Region executor={self.executor}, bound symbols:"
+        s = f"[Region:"
 
         for bsym in self.bound_symbols:
             s += f"\n{str(bsym)}"
@@ -149,276 +93,72 @@ class Region:
         return True
 
 
-# A container for region nodes that supports multiple parentless
-#   "root" nodes from which a topological sort could start
-class Graph:
-    def __init__(self):
-        self.roots: list[Node] = []
+# # Group bookend meta operations into separate regions
+# # This function returns a List[Region] which changes the executor of meta regions to torchex
+# #
+# # NOTE this function assumes bound_symbols in region is toposorted
+# def group_bookend_meta_ops(region: Region, producers, consumers) -> list[Region]:
+#     # use TorchEx as meta_executor for meta regions
+#     meta_executor = TorchEx
 
-        self.producers: dict[Variable, Node] = {}
-        self.consumers: dict[Variable, list[Node]] = {}
+#     front_meta_cluster = list()
+#     middle_cluster = list()
+#     rear_meta_cluster = list()
+#     region_inputs = copy(region.inputs)
 
+#     # bsym can be moved to the front if all their inputs are direct region inputs
+#     def can_move_to_front(bsym: BoundSymbol) -> bool:
+#         # non proxy don't need to be checked here.
+#         for x in chain(bsym._flat_args, bsym._flat_kwargs):
+#             if not isinstance(x, Proxy):
+#                 continue
 
-# Represents a region and its parents (regions it consumes the output of) and
-#   children (regions that consume its output)
-#   Essentially creates a directional graph of regions showing their
-#   producer-consumer relationships.
-# TODO These classes could be refactored to be region-independent in their logic
-class Node:
-    def __init__(self, region):
-        self.region = region
-        self.parents: list[Node] = []
-        self.children: list[Node] = []
+#             if variableify(x) not in region_inputs:
+#                 return False
 
+#         return True
 
-# Constructs a graph of regions (regions and edges representing their
-#   producer-consumer relationships)
-# NOTE It is assumed that the list of regions is provided in a
-#   valid topological sort
-def graph_from_regions(regions: list[Region]) -> Graph:
-    # Constructs the graph, producers, and consumers map
-    # NOTE Graph construction is facilitated by creating a mapping from
-    #   proxies (wrapped as Variables) to the region (wrapped as Nodes)
-    #    producing them
-    producers: dict[Variable, Node] = {}
-    consumers: dict[Variable, list[Node]] = {}
-    g = Graph()
-    for region in regions:
-        node = Node(region)
+#     # when bsym has no consumer in current region, it can be safely moved to the rear
+#     def can_move_to_rear(bsym: BoundSymbol) -> bool:
+#         # check no existing bsym in region depends on current bsym
+#         for out in bsym._flat_outs:
+#             if not isinstance(out, Proxy):
+#                 continue
 
-        # Identifies this region's parents and establishes parent-child
-        #   relationships
-        # NOTE Doing this here relies on the assumption that the list of
-        #   regions provided is a valid topological sort of the graph
-        #   If this assumption can't be made then the identification
-        #   of parents would need to happen after this initial iteration
-        #   through the regions
-        for inp in region.inputs:
-            parent = producers[inp]
-            node.parents.append(parent)
-            parent.children.append(node)
+#             consumed_by = consumers.get(out, list())
+#             for consumer in consumed_by:
+#                 # TODO: switch query to set for faster query
+#                 if consumer in middle_cluster:
+#                     return False
+#         return True
 
-            # Updates consumers mapping
-            inp_consumers = consumers.get(inp, [])
-            inp_consumers.append(node)
-            consumers[inp] = inp_consumers
+#     # traversing all bound_symbols in topo order
+#     for bsym in region.bound_symbols:
+#         # we look at meta operations that can be moved to the front
+#         if bsym.sym.id in region._shape_ops and can_move_to_front(bsym):
+#             # when we remove a node, we add all the bsym's _flat_outs to region_inputs
+#             front_meta_cluster.append(bsym)
+#             for out in bsym._flat_outs:
+#                 if isinstance(out, Proxy):
+#                     region_inputs.add(variableify(out))
+#         else:
+#             # otherwise we just keep the bound_symbol in the middle_cluster
+#             middle_cluster.append(bsym)
 
-        # Adds nodes without parents as roots
-        # NOTE In practice today every region will have the initial
-        #   "unpacking" region as an ancestor, and there will only be
-        #   one root for each graph
-        if len(node.parents) == 0:
-            g.roots.append(node)
+#     # traversing all bound_symbols in reverse topo order
+#     for bsym in reversed(copy(middle_cluster)):
+#         if bsym.sym.id in region._shape_ops and can_move_to_rear(bsym):
+#             middle_cluster.remove(bsym)
+#             # NOTE that rear_meta_cluster is in reverse topo order
+#             rear_meta_cluster.append(bsym)
 
-        # Updates the producer mapping with this region's outputs
-        #   (which may be consumed by subsequence regions)
-        for output in region.outputs:
-            producers[output] = node
+#     ret = list()
+#     # check and construct each region
+#     if len(front_meta_cluster) > 0:
+#         ret.append(Region(producers, consumers, front_meta_cluster, meta_executor, -1))
+#     if len(middle_cluster) > 0:
+#         ret.append(Region(producers, consumers, middle_cluster, region.executor, -1))
+#     if len(rear_meta_cluster) > 0:
+#         ret.append(Region(producers, consumers, list(reversed(rear_meta_cluster)), meta_executor, -1))
 
-    g.producers = producers
-    g.consumers = consumers
-
-    return g
-
-
-# A very simple linked list node for use in linearizations
-class LLNode:
-    def __init__(self, node: Node, next: LLNode | None):
-        self.node = node
-        self._next = next
-
-
-# TODO Document this
-class Linearization:
-    def __init__(self, graph: Graph):
-        self.graph = graph
-        self.root_node: LLNode | None = None
-        self.cur_node: LLNode | None = None
-        self.tail_node: LLNode | None = None
-
-    def append(self, Node):
-        llnode = LLNode(Node, None)
-
-        if self.root_node is None:
-            self.root_node = llnode
-            self.tail_node = llnode
-        else:
-            self.tail_node._next = llnode
-            self.tail_node = llnode
-
-    # TODO Update this to use a proper iter pattern
-    def reset(self) -> None:
-        self.cur_node = self.root_node
-        return self.cur_node
-
-    def next(self) -> Node | None:
-        if self.cur_node is None:
-            return None
-
-        self.cur_node = self.cur_node._next
-        return self.cur_node
-
-    def peek(self) -> Node | None:
-        return self.cur_node._next
-
-    # Merges two regions
-    # NOTE This assumes that b is topologically weakly "after"
-    #   a (that is, a may be an ancestor of b, but
-    #   b may not be an ancestor of a)
-    # NOTE This mutates the graph and the regions, destroying
-    #   b
-    def merge(self, a: LLNode, b: LLNode):
-        utils.check(a._next is b, lambda: f"Can only merge nodes that are adjacent to each other in the linearization")
-        utils.check(
-            self.cur_node is a, lambda: f"Can only merge nodes when the current iteration is pointed to the first node"
-        )
-
-        # Updates the linked list
-        a._next = b._next
-
-        ar = a.node.region
-        br = b.node.region
-
-        utils.check(
-            ar.executor == br.executor,
-            lambda: f"Expected {ar.executor=} to be the same as {br.executor=} when merging regions",
-            exception_type=AssertionError,
-        )
-
-        ar.bound_symbols.extend(br.bound_symbols)
-
-        # Updates inputs
-        #   (b no longer needs inputs that are produced by a)
-        # NOTE This relies on the assumption that only a
-        #   may be an ancestor of b, and b may not
-        #   be an ancestor of a
-        for inp in br.inputs:
-            self.graph.consumers[inp].remove(b.node)
-            if inp not in ar.outputs:
-                ar.inputs.add(inp)
-                self.graph.consumers[inp].append(a.node)
-
-        # Updates outputs
-        #   (a no longer needs to output objects that were only
-        #   consumed by b)
-        for out in br.outputs:
-            self.graph.producers[out] = a.node
-
-        for out in ar.outputs:
-            consumers = self.graph.consumers[out]
-            if len(consumers) != 0:
-                br.outputs.add(out)
-
-        ar.outputs = br.outputs
-
-
-# Topologically sorts the given graph using Kahn's algorithm
-#   (see https://en.wikipedia.org/wiki/Topological_sorting)
-#   with the "selector" parameter determining how nodes are removed
-#   from the set of next candidates
-#   NOTE selector should have the signature (last_added: Optional[Node], nodes: list[Node]) -> Node,
-#       where it returns a Node from the list
-#   NOTE Kahn's algorithm simply does not specify how nodes are removed
-#       ("remove a node n from S"), so any selector will produce a valid
-#       topo sort, but the selector can be used to create a sort with
-#       a desired property.
-#   NOTE Other methods of choosing a topological sort could be considered.
-#       Greedily selecting which node should be next could lead to
-#       suboptimal optimizations, especially if there are cases where
-#       three nvFuser regions A B and C can be paired as
-#       AB or BC, and the A BC sorting would be preferred.
-#   NOTE This DESTROYS the given graph -- it could be changed
-#       to not to do so
-def toposort(graph: Graph, selector: Callable) -> Linearization:
-    candidates: list[Node] = graph.roots
-
-    l = Linearization(graph)
-
-    last_added: Node | None = None
-    while len(candidates) > 0:
-        n: Node = selector(last_added, candidates)
-
-        candidates.remove(n)
-
-        # Updates n's children
-        for child in n.children:
-            child.parents.remove(n)
-
-            if len(child.parents) == 0:
-                candidates.append(child)
-
-        l.append(n)
-        last_added = n
-
-    return l
-
-
-# Group bookend meta operations into separate regions
-# This function returns a List[Region] which changes the executor of meta regions to torchex
-#
-# NOTE this function assumes bound_symbols in region is toposorted
-def group_bookend_meta_ops(region: Region, producers, consumers) -> list[Region]:
-    # use TorchEx as meta_executor for meta regions
-    meta_executor = TorchEx
-
-    front_meta_cluster = list()
-    middle_cluster = list()
-    rear_meta_cluster = list()
-    region_inputs = copy(region.inputs)
-
-    # bsym can be moved to the front if all their inputs are direct region inputs
-    def can_move_to_front(bsym: BoundSymbol) -> bool:
-        # non proxy don't need to be checked here.
-        for x in chain(bsym._flat_args, bsym._flat_kwargs):
-            if not isinstance(x, Proxy):
-                continue
-
-            if variableify(x) not in region_inputs:
-                return False
-
-        return True
-
-    # when bsym has no consumer in current region, it can be safely moved to the rear
-    def can_move_to_rear(bsym: BoundSymbol) -> bool:
-        # check no existing bsym in region depends on current bsym
-        for out in bsym._flat_outs:
-            if not isinstance(out, Proxy):
-                continue
-
-            consumed_by = consumers.get(out, list())
-            for consumer in consumed_by:
-                # TODO: switch query to set for faster query
-                if consumer in middle_cluster:
-                    return False
-        return True
-
-    # traversing all bound_symbols in topo order
-    for bsym in region.bound_symbols:
-        # we look at meta operations that can be moved to the front
-        if bsym.sym.id in region._shape_ops and can_move_to_front(bsym):
-            # when we remove a node, we add all the bsym's _flat_outs to region_inputs
-            front_meta_cluster.append(bsym)
-            for out in bsym._flat_outs:
-                if isinstance(out, Proxy):
-                    region_inputs.add(variableify(out))
-        else:
-            # otherwise we just keep the bound_symbol in the middle_cluster
-            middle_cluster.append(bsym)
-
-    # traversing all bound_symbols in reverse topo order
-    for bsym in reversed(copy(middle_cluster)):
-        if bsym.sym.id in region._shape_ops and can_move_to_rear(bsym):
-            middle_cluster.remove(bsym)
-            # NOTE that rear_meta_cluster is in reverse topo order
-            rear_meta_cluster.append(bsym)
-
-    ret = list()
-    # check and construct each region
-    if len(front_meta_cluster) > 0:
-        ret.append(Region(region.trace, producers, consumers, front_meta_cluster, meta_executor, -1))
-    if len(middle_cluster) > 0:
-        ret.append(Region(region.trace, producers, consumers, middle_cluster, region.executor, -1))
-    if len(rear_meta_cluster) > 0:
-        ret.append(Region(region.trace, producers, consumers, list(reversed(rear_meta_cluster)), meta_executor, -1))
-
-    return ret
+#     return ret

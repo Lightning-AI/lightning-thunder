@@ -13,17 +13,137 @@ from thunder.core.utils import ProxyDict
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
-from thunder.executors.utils import Region, Node, graph_from_regions, toposort, Executor, group_bookend_meta_ops
 from thunder.core.proxies import Proxy, variableify, unvariableify, Variable
-from thunder.executors import torchex as TorchEx
 import thunder.core.transforms as transforms
+from thunder.core.transform_common import dce
+
+from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
 
 comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 
+# Transforms a trace by determining which execution transforms to call given the list of executors in priority order
+def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
+    swapmap: dict[Variable, Proxy] = {}
+
+    def update_swapmap_(original: BoundSymbol, new_output: Any) -> None:
+        flats, _ = tree_flatten(new_output)
+        flats = tuple(f for f in flats if isinstance(f, Proxy))
+
+        for o, no in zip(original.flat_proxy_outs, flats):
+            vo = variableify(o)
+            vno = variableify(no)
+            if vo == vno:
+                continue
+            swapmap[vno] = o
+
+    # TODO Consider using an enum for this function's return values
+    # Tries to find an executor for the BoundSymbol
+    #   If the BoundSymbol already has an executor then None is returned
+    #   If the executor has an execution transform, it's called and True is returned
+    #   If no executor can execute the BoundSymbol, False is returned
+    def visit_helper_(bsym: BoundSymbol) -> None | bool:
+        if bsym.sym.executor is not None or bsym.sym.python_impl is not None:
+            return None
+
+        ex: Executor
+        for ex in executors_list:
+            # TODO Consider allowing operator executors to claim portions of operations
+            if (isinstance(ex, OperatorExecutor) and ex.can_execute(bsym)) or (
+                isinstance(ex, FusionExecutor) and ex.can_fuse(bsym)
+            ):
+                execution_transform: None | Callable = ex.get_execution_transform(bsym.sym)
+                out: Any
+                if execution_transform is not None:
+                    out = execution_transform(*bsym.args, **bsym.kwargs)
+                elif isinstance(ex, OperatorExecutor):
+                    # NOTE execution_transform is None and the executor is an operator executor
+                    # Calls the operator executor's operation
+                    # TODO Instead of directly acquiring the symbol from the implmap, we probably
+                    #   want to hide this behind a function
+                    op = ex.implmap[bsym.sym.id].symbol
+                    out = op(*bsym.args, **bsym.kwargs)
+                elif isinstance(ex, FusionExecutor):
+                    # NOTE execution_transform is None and the executor is a fusion executor
+                    # Preserves the symbol as is (it will be handled in the fusion pass)
+                    # NOTE It'd be nice to just preserve the original BoundSymbol here, but it's not really
+                    #   clear how best to do that -- maybe we should support acquiring and editing the scope
+                    #   directly in the visitor transform (updating the signature of visit to be (bsym, scope))
+                    out = bsym.sym(*bsym.args, **bsym.kwargs)
+                else:
+                    raise AssertionError("Unknown executor")
+
+                update_swapmap_(bsym, out)
+                return True
+
+        return False
+
+    def visit_(bsym: BoundSymbol) -> transforms.VISIT_TYPE:
+        result: None | bool = visit_helper_(bsym)
+
+        if result is None:
+            return transforms.VISIT_TYPE.NO_OP
+
+        if result is True:
+            return transforms.VISIT_TYPE.REPLACE
+
+        # NOTE result is False (which means no executor was found for the symbol)
+        cutils.check(not bsym.sym.is_prim, lambda: f"Failed to find an executor for bound symbol {bsym=}")
+        for sbsym in bsym.subsymbols:
+            visit_(sbsym)
+
+        return transforms.VISIT_TYPE.REPLACE
+
+    extrace = transforms.visitor_transform(trace, visit_)
+
+    # Restores original variables
+    bound_symbols: list[BoundSymbol] = []
+    for bsym in extrace.bound_symbols:
+        nbsym: BoundSymbol = bsym.from_bsym_swap_proxies(swapmap)
+        bound_symbols.append(nbsym)
+
+    extrace.bound_symbols = bound_symbols
+    return extrace
+
+
+def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
+    start_time_ns = time.time_ns()
+
+    trace = dce(trace)
+
+    #
+    # Step 1 Performs execution transforms
+    #
+    extrace = _transform_for_operator_executor_execution(trace, executors_list)
+    extrace = dce(extrace)
+
+    #
+    # Step 2 Fusion executors can transform the trace
+    #
+    for ex in executors_list:
+        if isinstance(ex, FusionExecutor):
+            extrace = ex.fusion_pass(extrace)
+
+    #
+    # Step 3 "Always" executors are given the opportunity to execute unclaimed symbols
+    #
+    # NOTE "Always" executors cannot produce symbols that other executors are expected to execute
+    #   (The only exception is that they can produce symbols that the Python executor is expected to execute)
+    # NOTE This occurs if a fusion executor declines to execute a symbol after running its fusion pass
+    extrace = _transform_for_operator_executor_execution(extrace, get_always_executors())
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+
+    extrace.set_provenance(TraceProvenance(f"Transform for execution (took {elapsed_time_millis} milliseconds)"))
+    return extrace
+
+
 # TODO Review deleting non-proxies
-def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    """Mark last used intermediates to be deleted. This is necessary to avoid memory leaks.
+def del_last_used(trace: TraceCtx) -> TraceCtx:
+    """Mark last used intermediates to be deleted. This lets the Python garbage collector free
+        unused tensor memory.
 
     Args:
         trace: trace to be transformed
@@ -58,8 +178,14 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             handled[x] = None
             to_del.append(x)
 
-        if len(to_del) > 0:
-            del_sym = prims.python_del.bind(to_del, output=None)
+        # NOTE The check for return avoids putting dels after the return statement
+        if len(to_del) > 0 and bsym.sym.id is not prims.PrimIDs.RETURN:
+            # NOTE The following logic just helps the deletions print prettier
+            del_sym: BoundSymbol
+            if len(to_del) > 1:
+                del_sym = prims.python_del.bind(tuple(to_del), output=None)
+            else:
+                del_sym = prims.python_del.bind(*to_del, output=None)
             bsyms.appendleft(del_sym)
 
         bsyms.appendleft(bsym)
@@ -72,532 +198,4 @@ def del_last_used(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
     del_trace.set_provenance(TraceProvenance(f"Delete Last Used (took {elapsed_time_millis} milliseconds)"))
 
-    return del_trace, [del_trace]
-
-
-# TODO Improve executor annotation
-# TODO What if an operation is SOMETIMES fusible? This should originate
-#   constraints properly
-# TODO (mruberry) I think it would be helpful if the claim phase
-#   added comments describing the claimed regions, but these comments
-#   would need to be removed later because they're interesting
-#   while claiming but not so much later
-#   I think we should extend the idea of provenance so it can
-#   have a "friendly" print version of the trace vs. the actual
-#   output, so comments can appear temporarily and not actually be
-#   part of the input to subsequence traces
-#   Until this is done -- let's just model this as doing nothing, because
-#   it won't print any debugging information
-# TODO Consider more advanced claiming strategies, like claiming
-#   portions of operations
-# Identifies which executor will execute each operation
-#   Executors are queried in the order provided
-#   An error is thrown if none of the given executors can execute the operation
-# TODO Improve this to explain what couldn't be executed
-# TODO This could probably be done more efficiently
-def claim(trace: TraceCtx, executors_list: Sequence, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
-    def _set_executor(bsym: BoundSymbol, ex) -> None:
-        bsym._executor = ex
-
-        for sbsym in bsym.subsymbols:
-            _set_executor(sbsym, ex)
-
-    def _can_execute(executor, bsym: BoundSymbol) -> bool:
-        if executor.can_execute(bsym):
-            return True
-
-        if len(bsym.subsymbols) == 0:
-            return False
-
-        for sbsym in bsym.subsymbols:
-            can_executor_subsymbol = _can_execute(executor, sbsym)
-            if not can_executor_subsymbol:
-                return False
-
-        return True
-
-    # TODO Refactor this to be an nvFuser executor function
-    # NOTE Today this doesn't do anything special
-    def nvFuserClaim(executor):
-        for bsym in trace.bound_symbols:
-            if bsym._executor is None and _can_execute(executor, bsym):
-                _set_executor(bsym, executor)
-
-    # TODO Refactor this to be a call to each executor to claim
-    for executor in executors_list:
-        if executor.name() is Executor.NVFUSER:
-            nvFuserClaim(executor)
-        else:
-            for bsym in trace.bound_symbols:
-                if bsym._executor is None and _can_execute(executor, bsym):
-                    _set_executor(bsym, executor)
-
-    # Verifies all bound symbols are claimed
-    for bsym in trace.bound_symbols:
-        cutils.check(bsym._executor is not None, lambda: f"Could not find an executor for bound symbol {bsym}")
-
-    return trace, []
-
-
-def flatten(trace: TraceCtx, *, prims_only: bool = False) -> tuple[TraceCtx, list[TraceCtx]]:
-    start_time_ns = time.time_ns()
-
-    flattenedtrace = from_trace(trace)
-    flattened: list[BoundSymbol] = []
-
-    # TODO Maybe make this nonrecursive
-    def _flatten(bsym: BoundSymbol):
-        nonlocal flattened
-        ex = bsym._executor
-
-        if ex is not None and ex.is_supported(bsym, prims_only=prims_only):
-            # Propagates executor to subsymbols
-            flattened.append(bsym)
-        else:
-            cutils.check(
-                len(bsym.subsymbols) > 0,
-                lambda: f"Trying to flatten {bsym} for execution but it's not supported and has no subsymbols",
-                exception_type=AssertionError,
-            )
-            for ssym in bsym.subsymbols:
-                _flatten(ssym)
-
-    for bsym in trace.bound_symbols:
-        _flatten(bsym)
-
-    flattenedtrace.bound_symbols = flattened
-
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    flattenedtrace.set_provenance(TraceProvenance(f"Flatten (took {elapsed_time_millis} milliseconds)"))
-
-    return flattenedtrace, [flattenedtrace]
-
-
-#
-# Functions related to the Common Subexpression Elimination (CSE) pass
-#
-def replace_redundant_inputs(
-    redundant_map: dict[VariableInterface, Proxy], bsyms: Sequence[BoundSymbol]
-) -> Sequence[BoundSymbol]:
-    new_bsyms = []
-    for bsym in bsyms:
-        # Checks if the bound symbol has redundant inputs (that need to be replaced)
-        has_redundant_inputs: bool = False
-        for x in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
-            if Variable(x) in redundant_map:
-                has_redundant_inputs = True
-                break
-
-        # Bound symbols without redundant inputs need no modification
-        if not has_redundant_inputs:
-            new_bsyms.append(bsym)
-            continue
-
-        # Bound symbols with redundant inputs have to remap those inputs, and the
-        #   inputs of their subsymbols, to the original computations
-        new_bsym = bsym.from_bsym_swap_proxies(
-            redundant_map,
-            skip_inputs=False,
-            skip_output=False,
-            skip_subsymbols=False,
-        )
-        new_bsyms.append(new_bsym)
-
-    return new_bsyms
-
-
-# TODO(crcrpar): Implement a mechanism to keep track of supported ops that cannot be CSE'd.
-# For example, `uniform`, `dropout`, and `scaled_dot_product_attention`.
-# See: https://github.com/Lightning-AI/lightning-thunder/issues/671
-NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
-    prims.PrimIDs.UNIFORM,
-    "torch.uniform",  # this doesn't exist as of the PR
-    "torch.uniform_like",  # this doesn't exist as of the PR
-    # thunder.core.prims doesn't support. See https://pytorch.org/docs/stable/generated/torch.rand.html.
-    # "torch.rand",
-    # "torch.rand_like",
-    "torch.nn.functional.dropout",
-    "torch.nn.functional.scaled_dot_product_attention",
-}
-
-
-# TODO Update the replacement of redundant proxies to use a visitor pattern
-#   when that architecture is added in the future
-def cse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    """Remove bound symbols whose right hand side is common expression.
-
-    This does two things:
-        1. Removes bound symbols if their right hand side expression is already seen.
-        2. Replaces variables of arguments and keyword arguments of the bound symbols to use and
-           their subsymbols with the preceding ones using the map of a variable to another with
-           the same right hand side expression.
-
-    Say we have `foo` defined in the below code snippet.
-
-    .. code::
-
-        def foo(x, y):
-            a = x + y
-            b = y - x
-            c = x + y  # Expected to be removed in favor of `a`.
-            d = y - x  # Expected to be removed in favor of `b`.
-            z = a + b  # Expected to be intact.
-            w = c + d  # Expected to be converted to `w = a + b` and then removed in favor of `z`.
-            m = w + 1  # Expected to be updated to `m = z + 1`.
-            return z, w, m  # Expected to be (z, z, z + 1)
-
-        # CPU tensors
-        @torch.no_grad()
-        def thunder_140374621612752(x, y):
-          # x: "cpu f32[2, 2]" =  x  (trivial unpack)
-          # y: "cpu f32[2, 2]" =  y  (trivial unpack)
-          t0 = torch.add(x, y)  # t0: "cpu f32[2, 2]"
-          t1 = torch.sub(y, x)  # t1: "cpu f32[2, 2]"
-          del [y, x]
-          t4 = torch.add(t0, t1)  # t4: "cpu f32[2, 2]"
-          del [t0, t1]
-          t6 = torch.add(t4, 1)  # t6: "cpu f32[2, 2]"
-          return (t4, t4, t6)
-
-        # CUDA tensors & nvFuser
-        @torch.no_grad()
-        def thunder_140410131706304(x, y):
-          # x: "cuda:0 f32[2, 2]" =  x  (trivial unpack)
-          # y: "cuda:0 f32[2, 2]" =  y  (trivial unpack)
-          (t4, t6) = nvFusion0(x, y)
-            # t0 = prims.add(x, y)  # t0: "cuda:0 f32[2, 2]"
-            # t1 = prims.sub(y, x)  # t1: "cuda:0 f32[2, 2]"
-            # t4 = prims.add(t0, t1)  # t4: "cuda:0 f32[2, 2]"
-            # t6 = prims.add(t4, 1.0)  # t6: "cuda:0 f32[2, 2]"
-          del [x, y]
-          return (t4, t4, t6)
-
-    Args:
-        trace:
-
-    Returns:
-        :class:`TraceCtx` with common subexpression eliminated.
-    """
-    start_time_ns = time.time_ns()
-
-    cse_trace = from_trace(trace)
-
-    cse_trace_bound_symbols = []
-    rhs_to_bsym_map = {}
-    redundant_map = {}
-
-    # Identifies redundant operations and maps redundant proxies to originally
-    #   computed proxies
-    for bsym in trace.bound_symbols:
-        # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
-        # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
-        if bsym.sym.id in NON_FUNCTIONAL_OPS:
-            cse_trace_bound_symbols.append(bsym)
-            continue
-
-        # From the second bsym, we have opportunities to replace `bsym.args` and `bsym.kwargs`.
-        rhs = (
-            bsym.from_bsym_swap_proxies(
-                swap_map=redundant_map,
-                skip_inputs=False,
-                skip_output=True,
-                skip_subsymbols=True,
-            )
-        ).rhs()
-        if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
-            # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
-            for src, dst in zip(bsym._flat_outs, prior_bsym._flat_outs):
-                redundant_map[variableify(src)] = dst
-        else:
-            rhs_to_bsym_map[rhs] = bsym
-            cse_trace_bound_symbols.append(bsym)
-
-    # Updates the bound symbols in the trace
-    # NOTE This uses the cse_trace_bound_symbols list, which has filtered
-    #   redundant symbols
-    new_bsyms = replace_redundant_inputs(redundant_map, cse_trace_bound_symbols)
-    cse_trace.bound_symbols = new_bsyms
-
-    # Updates the trace's output
-    def map_redundant(x: Any) -> Any:
-        if isinstance(x, Proxy):
-            return redundant_map.get(Variable(x), x)
-        return x
-
-    new_trace_output = tree_map(map_redundant, trace.output)
-    cse_trace.output = new_trace_output
-
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    cse_trace.set_provenance(
-        TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
-    )
-    return cse_trace, [cse_trace]
-
-
-# Constructs execution regions that are as large as possible for each executor.
-#   Uses a greedy top-down toposort to associated nodes with common executors.
-def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    start_time_ns = time.time_ns()
-
-    fusedtrace = from_trace(trace)
-    fused_bsyms = []
-
-    producers = cutils.producers(trace)
-    consumers = cutils.consumers(trace)
-
-    batch = []
-    batch_ex = trace.bound_symbols[0]._executor if len(trace.bound_symbols) > 0 else None
-
-    regions = []
-
-    # Constructs regions of contiguous operations that all share
-    #   an executor
-    for bsym in trace.bound_symbols:
-        if batch_ex != bsym._executor:
-            # Constructs a region representing what to fuse (currently unused)
-            region = Region(trace, producers, consumers, batch, batch_ex, -1)
-            regions.append(region)
-
-            # Updates region collection metadata
-            batch = [bsym]
-            batch_ex = bsym._executor
-        else:
-            batch.append(bsym)
-
-    # Processes last batch
-    if len(batch) > 0:
-        region = Region(trace, producers, consumers, batch, batch_ex, -1)
-        regions.append(region)
-
-    g = graph_from_regions(regions)
-
-    # TODO Maybe implement a more advanced selection criteria?
-    def _selector(last_added: Optional[Node], nodes: list[Node]) -> Node:
-        if last_added is None or last_added.region.executor.name() != Executor.NVFUSER:
-            # NOTE In this case the last added is None or the executor
-            #   was not nvFuser
-            # Attempts to find a non-nvFuser region to go next
-            for node in nodes:
-                if node.region.executor.name() != Executor.NVFUSER:
-                    return node
-
-            # Defaults to returning the first eligible node
-            return nodes[0]
-
-        # NOTE In this case the last added region's executor is nvFuser
-        # Attempts to find another nvFuser region
-        for node in nodes:
-            if node.region.executor.name() == Executor.NVFUSER:
-                return node
-
-        # Defaults to returning the first eligible node
-        return nodes[0]
-
-    toposorted = toposort(g, _selector)
-
-    # Merges adjacent regions that share an executor
-    node = toposorted.reset()
-    while node is not None:
-        # Tries to merge one or more regions into the current node
-        while True:
-            peek = toposorted.peek()
-
-            if peek is None:
-                break
-
-            ar = node.node.region
-            br = peek.node.region
-
-            if ar.executor is br.executor:
-                toposorted.merge(node, peek)
-            else:
-                break
-
-        node = toposorted.next()
-
-    # Translates the (possibly) merged linearization to a trace
-    # Counts how many fusions (per executor) have been constructed
-    #   (Used to name fusions like nvFusion0, nvFusion1, ...)
-    executor_ctrs = {}
-    node = toposorted.reset()
-    while node is not None:
-        region = node.node.region
-        ex = region.executor
-
-        def _fuse_region_with_executor(executor, region_fuse):
-            if executor not in executor_ctrs:
-                executor_ctrs[executor] = 0
-            counter = executor_ctrs[executor]
-            executor_ctrs[executor] += 1
-
-            region_fuse.counter = counter
-            fused_bsyms.extend(executor.fuse(region_fuse))
-
-        # Regions that would go to nvFuser but are entirely composed of shape operations
-        #   are sent to the torch executor instead
-        # TODO Think about being more clever about when this occurs
-        #   Today fusion happens after flattening, but we should toposort and do this
-        #   analysis before flattening occurs
-        if ex.name() == Executor.NVFUSER:
-            if region.only_shape_operations():
-                _fuse_region_with_executor(TorchEx, region)
-            else:
-                list_region = group_bookend_meta_ops(region, producers, consumers)
-                for sub_region in list_region:
-                    _fuse_region_with_executor(sub_region.executor, sub_region)
-        else:
-            _fuse_region_with_executor(ex, region)
-
-        node = toposorted.next()
-
-    # Constructs the new trace
-    fusedtrace.bound_symbols = fused_bsyms
-
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
-
-    return fusedtrace, [fusedtrace]
-
-
-# Removes excessive float casts, like those that occur when autocasting
-# NOTE This passes actually changes a program's semantics, because it will take a sequence like
-#   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can
-#   changes the values (because most fp32 values are not representable in fp16)
-# NOTE This only handles conversions performed by CONVERT_ELEMENT_TYPE, and not conversions caused
-#   by other Symbols, like torch.to, which may be unflattened
-# TODO This could be extended to non-float conversions, like complex -> complex conversions
-def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    start_time_ns = time.time_ns()
-
-    rrctrace = from_trace(trace)
-
-    # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)
-    def is_eligible_cast(bsym: BoundSymbol) -> tuple[bool, Any, Any]:
-        # Ignores operations other than CONVERT_ELEMENT_TYPE
-        if bsym.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
-            return False, None, None
-
-        # Parses arguments
-        # TODO We should consider canonicalizing how BoundSymbols express their arguments
-        a: Any
-        dtyp: dtypes.dtype
-
-        if len(bsym.args) == 2:
-            a, dtyp = bsym.args
-        elif len(bsym.args) == 1:
-            cutils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
-            (a,) = bsym.args
-            dtyp = bsym.kwargs["dtype"]
-        else:
-            a = bsym.kwargs["a"]
-            dtyp = bsym.kwargs["dtype"]
-
-        if not isinstance(a, Proxy):
-            return False, None, None
-
-        is_float_to_float_conversion = dtypes.is_float_dtype(dtypes.to_dtype(a)) and dtypes.is_float_dtype(dtyp)
-
-        return is_float_to_float_conversion, a, dtyp
-
-    # Updates intermediate conversions, identifies no-ops, and updates no-op consumers
-    # NOTE These are separate maps. A no-op in this context is a cast from the
-    #   input's dtype to itself, like the following:
-    #
-    #   b = prims.convert_element_type(a, float32)  # a: f32
-    #
-    #   For these operations, everywhere b is consumed can be replaced with a.
-    #
-    #   When there is an intermediate conversion, however, we don't want to replace all uses
-    #   of its output with its input. For example, the dtype modified output could
-    #   actually be consumed by non-cast operations.
-
-    # TODO This is intentionally commented out. See TODO below on consumer analysis.
-    # consumers = cutils.consumers(trace)
-    replacement_map = {}
-    intermediate_map = {}
-    nbsyms = []
-    for bsym in trace.bound_symbols:
-        is_proxy_f2f_conversion, a, dtyp = is_eligible_cast(bsym)
-
-        # Replaces inputs due to no-op casts for all operations
-        if not is_proxy_f2f_conversion:
-            nbsym = bsym
-            if bsym.has_input(replacement_map):
-                nbsym = bsym.from_bsym_swap_proxies(replacement_map, skip_inputs=False, skip_output=True)
-            nbsyms.append(nbsym)
-            continue
-
-        # NOTE is_proxy_f2f_conversion is True
-        va = variableify(a)
-        vo = variableify(bsym.output)
-
-        # Identifies updated input
-        orig = intermediate_map.get(va, a)
-        orig_dtype = dtypes.to_dtype(orig)
-
-        # Elides no-ops, marking their outputs for replacement
-        if orig_dtype == dtyp:
-            replacement_map[vo] = orig
-            intermediate_map[vo] = orig
-            continue
-
-        # NOTE In this case there is a more original input
-
-        # Only marks this output for replacement with the more original input if it's
-        #   not consumed by a non-cast operation
-        has_non_cast_consumer = False
-        # TODO (mruberry) I'm not sure whether the following is worthwhile, although
-        #   I'm leaving it as a comment because we may want to revive it in the future.
-        #   Essentially, this would be a heuristic that says: "if x is being consumed,
-        #   don't bother finding the precursor of x to cast, just cast x itself."
-        #   That may improve data locality, but it could also lead to excessive
-        #   casts.
-        # for consumer in consumers.get(bsym.output, ()):
-        #     if consumer.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
-        #         has_non_cast_consumer = True
-        #         break
-
-        # When this operation has non-cast consumers, later conversion operations
-        #   might as well consume its output to try and improve data locality and
-        #   not have to preserve the original tensor for so long
-        if has_non_cast_consumer:
-            intermediate_map[vo] = bsym.output
-        else:
-            intermediate_map[vo] = orig
-
-        # Possibly creates a new BoundSymbol consuming the original instead of the current input
-        if orig is a:
-            nbsyms.append(bsym)
-        else:
-            # NOTE This is faster than using from_bsym_swap_proxies, and relies on us only working
-            #   with prims.convert_element_type
-            nbsym = bsym.from_bsym(args=(orig, dtyp), kwargs={})
-            nbsyms.append(nbsym)
-            cutils.check(
-                nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
-                exception_type=AssertionError,
-            )
-
-    rrctrace.bound_symbols = nbsyms
-
-    # Updates the trace's output
-    def map_redundant(x: Any) -> Any:
-        if isinstance(x, Proxy):
-            return replacement_map.get(Variable(x), x)
-        return x
-
-    new_trace_output = tree_map(map_redundant, trace.output)
-    rrctrace.output = new_trace_output
-
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
-    return rrctrace, [rrctrace]
+    return del_trace

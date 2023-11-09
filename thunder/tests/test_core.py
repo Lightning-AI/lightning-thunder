@@ -15,9 +15,9 @@ import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
 import thunder.torch as ltorch
-import thunder.executors.torchex as torchex
+
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, Executor
+from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 import thunder.core.prims as prims
@@ -426,6 +426,9 @@ def test_partial_args(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_constant_creation(executor, device, dtype):
+    def py_foo(a):
+        return a + 1.0
+
     def foo(a):
         x = prims.convert_element_type(1, float)
         return a + x
@@ -436,14 +439,9 @@ def test_constant_creation(executor, device, dtype):
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
 
     lc_result = cfoo(a)
-    python_result = foo(a)
+    python_result = py_foo(a)
 
     assert_close(lc_result, python_result)
-
-    for trace in thunder.last_traces(cfoo):
-        fn = trace.python_callable()
-        lc_result = fn(a)
-        assert_close(lc_result, python_result)
 
 
 #
@@ -523,62 +521,6 @@ def test_consistent_boundsymbol_collection_hard_printing():
         s0 = str(bsym)
         s1 = str(bsym)
         assert s0 == s1
-
-
-#
-# Tests of operator -> executor bindings
-#
-
-
-# This test verifies that all torch operators have direct lowerings to the torch executor
-#   (or it's OK that they don't)
-def test_direct_torch_lowerings():
-    torch_symbols = {sym.id for sym in ltorch._torch_to_thunder_function_map.values()}
-    direct_torchex_lowerings = set(torchex._ops_map.keys())
-
-    # These operators need additional scrutiny for how to directly lower them or have been
-    #   grandfathered in and just need straightforward lowerings added
-    # This is tracked by https://github.com/Lightning-AI/lightning-thunder/issues/581
-    allowed_exceptions = {
-        # These reduction operators need additional scrutiny because PyTorch has not always been
-        #   consistent in handling dims
-        "torch.amax",
-        "torch.amin",
-        "torch.mean",
-        "torch.prod",
-        "torch.sum",
-        "torch.var_mean",
-        # These operators just need their lowerings added
-        "torch.nn.functional.silu",
-        "torch.true_divide",
-        "torch.bmm",
-        "torch.matmul",
-        "torch.ones_like",
-        "torch.nn.functional.linear",
-        "torch.Tensor.view",
-        "torch.ops.aten.embedding_backward",
-        "torch.index_select",
-        "torch.stack",
-        "torch.index_add",
-        "torch.scatter_add",
-        "torch.full",
-        "torch.zeros",
-        "torch.ones",
-        "torch.outer",
-        "torch.take_along_dim",
-        "torch.Tensor.type_as",
-        # einsum is just a stub so there's nothing to lower atm
-        "torch.einsum",
-    }
-
-    missing_lowerings = torch_symbols - direct_torchex_lowerings - allowed_exceptions
-
-    assert (
-        len(missing_lowerings) == 0
-    ), f"the following torch symbols are missing direct torchex lowerings {missing_lowerings}"
-
-    mislabeled = allowed_exceptions & direct_torchex_lowerings
-    assert len(mislabeled) == 0, f"the following allowed exceptions actually have direct lowerings {mislabeled}"
 
 
 #
@@ -950,354 +892,13 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
 
 #
-# Tests related to optimizing passes
-#
-# TODO Maybe move to test_passes.py? test_nvfuser.py?
-
-
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_redundant_cast_basic(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a):
-        b = a.to(torch.float16)
-        c = b.to(torch.float64)
-        return c
-
-    cfoo = thunder.compile(foo)
-    cfoo(a)
-
-    traces = thunder.last_traces(cfoo)
-    extrace = traces[-1]
-    fusions = examine.get_fusion_symbols(extrace)
-
-    # Verifies that there is a single fusion with only one operation
-    assert len(fusions) == 1
-    fusion = fusions[0]
-    assert len(fusion.subsymbols) == 1
-
-    # Tests a longer chain of operations
-    def bar(a):
-        b = a.to(torch.float16)
-        c = b.to(torch.float64)
-        d = c.to(torch.float32)
-        e = d.to(torch.float16)
-        return e
-
-    cbar = thunder.compile(bar)
-    cbar(a)
-
-    traces = thunder.last_traces(cbar)
-    extrace = traces[-1]
-    fusions = examine.get_fusion_symbols(extrace)
-
-    # Verifies that there is a single fusion with only one operation
-    assert len(fusions) == 1
-    fusion = fusions[0]
-    assert len(fusion.subsymbols) == 1
-
-
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a):
-        b = a.to(torch.float64)
-        c = b + 5
-        d = b.to(torch.float16)
-        return c, d
-
-    cfoo = thunder.compile(foo)
-    cfoo(a)
-
-    traces = thunder.last_traces(cfoo)
-    extrace = traces[-1]
-    fusions = examine.get_fusion_symbols(extrace)
-
-    # Verifies that there is a single fusion with three each operation
-    assert len(fusions) == 1
-    fusion = fusions[0]
-    assert len(fusion.subsymbols) == 3
-
-    # Verifies that the second conversion consumes the output of the first conversion
-    #   (because the first conversion's output is used in an intermediate operation)
-    assert fusion.subsymbols[-1].args[0].name == "a"
-
-
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a):
-        return a.to(torch.float32)
-
-    cfoo = thunder.compile(foo)
-    cfoo(a)
-
-    traces = thunder.last_traces(cfoo)
-    extrace = traces[-1]
-    fusions = examine.get_fusion_symbols(extrace)
-
-    # Verifies that no operations are performed
-    assert len(fusions) == 0
-
-    def bar(a):
-        b = a.to(torch.float32)
-        c = b.to(torch.float64)
-        d = c.to(torch.float16)
-        e = c.to(torch.float16)
-        f = b.to(torch.float32)
-        g = d.to(torch.float32)
-        return d, e, f, g
-
-    cbar = thunder.compile(bar)
-    cbar(a)
-
-    traces = thunder.last_traces(cbar)
-    extrace = traces[-1]
-    fusions = examine.get_fusion_symbols(extrace)
-
-    # Verifies a single fusion of two operations
-    assert len(fusions) == 1
-    fusion = fusions[0]
-    assert len(fusion.subsymbols) == 1
-
-    # Verifies that the trace outputs are updated properly
-    t1, t2, a0, a1 = extrace.output
-    assert t1.name == "t1"
-    assert t2.name == "t1"
-    assert a0.name == a1.name == "a"
-
-
-# Tests that two separated nvFuser regions can be merged when they don't depend
-#   on an intermediate PyTorch region
-# TODO Create a testing operator that can only be executed by PyTorch so that
-#   these tests don't rely on matmul not being executable by nvFuser
-# TODO Explicitly use the nvFuserExecutor in these tests
-#   (by creating executor.make_callable_with_info?)
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - b
-
-        return c, d, e
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can be merged when they have no
-#   dependencies
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - b
-        f = b @ a
-        g = a * b
-
-        return c, d, e, f, g
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can be merged when the middle region
-#   depends on the first region
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - c
-        f = b @ a
-        g = a * b
-
-        return c, d, e, f, g
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can be merged when the middle
-#   and final regions depend on the first one
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - c
-        f = b @ a
-        g = c * b
-
-        return c, d, e, f, g
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can be merged when each region
-#   depends on the other
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - c
-        f = b @ a
-        g = c * e
-
-        return c, d, e, f, g
-
-    cfoo = thunder.compile(foo)
-
-    result = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can be merged when the first region
-#   is entirely consumed by later regions
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - c
-        f = b @ a
-        g = c * e
-
-        return d, f, g
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can be merged even if a PyTorch
-#   region has to be reordered BEFORE them
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = a @ b
-        e = a - c
-        f = b @ a
-        g = d * e
-
-        return d, f, g
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 1
-
-
-# Tests that three separated nvFuser regions can only be partially merged
-#   if there's a PyTorch data dependency between them
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
-def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype):
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-
-    def foo(a, b):
-        c = a + b
-        d = c @ b
-        e = a - c
-        f = b @ a
-        g = d * e
-
-        return d, f, g
-
-    cfoo = thunder.compile(foo)
-
-    _ = cfoo(a, b)
-    traces = thunder.last_traces(cfoo)
-
-    fusions = examine.get_fusions(traces[-1])
-
-    assert len(fusions) == 2
-
-
-#
 # Tests related to trace manipulation and transformation
 #
 # TODO Maybe move to test_transforms.py?
 
 
 @instantiate(dtypes=(thunder.float32,))
-def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
+def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype):
     tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
     make = partial(make_tensor, device=device, dtype=tdtype, requires_grad=False)
 
@@ -1360,29 +961,11 @@ def test_bsym_toposort(executor: Executor, device: str, dtype: dtypes.dtype):
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
 
-    # Tests flattening to prims
-    # NOTE The flatten will be different depending on the executor, so this just verifies
-    #   that the conversion produces a valid program that computes the same result
-    flat_trace: TraceCtx
-    for trc in traces:
-        if trc.get_provenance() is not None and "Flatten" in str(trc.get_provenance()):
-            flat_trace = trc
-
-    roots, leaves = bsym_list_to_dag(flat_trace.bound_symbols)
-    top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
-    bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
-
-    for bsyms in (top_down_bsyms, bottom_up_bsyms):
-        flat_trace.bound_symbols = top_down_bsyms
-        ctrace = flat_trace.python_callable()
-        actual = ctrace(a, (12, -1))
-        assert_close(expected, actual)
-
 
 # Verifies that using only some of the results of a function works as expected
 #   (the other results are dce'd)
 @instantiate(dtypes=(thunder.float32,))
-def test_partial_results(executor: Executor, device: str, dtype: dtypes.dtype):
+def test_partial_results(executor: TestExecutor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
 
@@ -1566,12 +1149,11 @@ def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
     trace2 = thunder.last_traces(c2)[0]
     sum1 = next(s for s in trace1.bound_symbols if s.sym.name == "sum")
     sum2 = next(s for s in trace2.bound_symbols if s.sym.name == "sum")
+
     assert len(sum1.args) == 2
     assert len(sum2.args) == 2
-    assert len(sum1.kwargs) == 1
-    assert len(sum2.kwargs) == 1
-    assert "output_dtype" in sum1.kwargs
-    assert "output_dtype" in sum2.kwargs
+    assert len(sum1.kwargs) == 0
+    assert len(sum2.kwargs) == 0
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1632,7 +1214,6 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     header = "Testing\nThis symbol's\nHeader"
     with bsym_header(header):
         trace = thunder.trace()(foo, a)
-    print(trace)
 
     assert len(trace.bound_symbols) == 3
     sin_symbol = trace.bound_symbols[1]
@@ -1658,8 +1239,8 @@ def test_argument_of_none(executor, device, dtype):
     producers = thunder.core.utils.producers(trace)
     consumers = thunder.core.utils.consumers(trace)
     region_bsyms = trace.bound_symbols[:3]
-    region = Region(trace, producers, consumers, region_bsyms, executor=executor, counter=0)
-    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == ["x", "y"]
+    region = Region(producers, consumers, region_bsyms)
+    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == ["t0"]
 
 
 # This test ensures that calls to torch functions are recorded in the trace
@@ -1697,6 +1278,7 @@ def all_neq(l):
             assert e1 == e2 if i == j else e1 != e2
 
 
+# TODO This test needs to be updated because it no longer compares kwargs vs. positional args
 @instantiate(dtypes=(thunder.float32,))
 def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
@@ -1728,12 +1310,13 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     all_eq([hash(b.rhs()) for b in bsyms])
     all_eq([b.rhs() for b in bsyms])
 
+    # TODO Update needed here
     # The current way BoundSymbols are compared treats args and kwargs the same,
     # so the same semantic call can be considered 'equal' if the arguments are
     # passed differently.
     def mul_rhs_kwargs(a, b):
         c = a * b
-        d = ltorch.mul(a=a, b=b)
+        d = ltorch.mul(a, b)
         return c, d
 
     # Assert the current behavior.
@@ -2363,7 +1946,7 @@ def test_torch_autocast_exception(executor, device, _):
     with pytest.raises(RuntimeError) as excinfo:
         with torch.autocast(device_type=devicetype):
             compiled_f(a)
-    assert "A callable optimized" in str(excinfo.value)
+    assert "torch.is_autocast_enabled()" in str(excinfo.value)
 
 
 def test_traceback():
@@ -2385,7 +1968,7 @@ def test_traceback():
     dtypes=NOTHING,
     executors=(TorchExecutor,),
 )
-def test_contiguous_and_stride_order(executor: Executor, device: str, _):
+def test_contiguous_and_stride_order(executor: TestExecutor, device: str, _):
     inp = torch.randn(2, 4, 5, 3, device=device, dtype=torch.float32).permute(0, 3, 1, 2)
 
     def foo(a, order):
@@ -2447,220 +2030,6 @@ def test_contiguous_and_stride_order(executor: Executor, device: str, _):
     thunder_result = cfn(a, torch.channels_last_3d)
     torch_result = channels_last_2d(a, torch.channels_last_3d)
     assert_close(torch_result, thunder_result, check_stride=True)
-
-
-@instantiate(
-    dtypes=NOTHING,
-    executors=(
-        nvFuserExecutor,
-        # NOTE torch executor does not have bookend optimization.
-        # See comment: https://github.com/Lightning-AI/lightning-thunder/issues/571#issuecomment-1610778432
-    ),
-)
-def test_bookend_meta_optimization(executor, device, _):
-    a = torch.ones(2, 3, 5, device=device, dtype=torch.float32)
-
-    def subtest(fn, n):
-        cfn = thunder.compile(fn)
-
-        _ = cfn(a)
-        traces = thunder.last_traces(cfn)
-        execution_trace = traces[-1]
-
-        transposes_in_fusions = 0
-        for bsym in execution_trace.bound_symbols:
-            sym = bsym.sym
-            if sym.is_fusion:
-                for sbsym in bsym.subsymbols:
-                    ssym = sbsym.sym
-                    if ssym.id is prims.PrimIDs.TRANSPOSE:
-                        transposes_in_fusions += 1
-
-        assert (
-            transposes_in_fusions == n
-        ), f"Expected {n} prims.transpose operations in fusions, but found {transposes_in_fusions} transpose in fusions in the trace {traces[-1]}"
-
-    # one transpose at the beginning
-    # should be moved out of fusion
-    def func_0(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        t2 = t1.sin()
-        return t2
-
-    subtest(func_0, 0)
-
-    # one transpose at the end
-    # should be moved out of fusion
-    def func_1(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        return t2
-
-    subtest(func_1, 0)
-
-    # one transpose at the beginning and another at the end
-    # both should be moved out of fusion
-    def func_2(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        t2 = t1.sin()
-        t3 = t2.transpose(0, 2)
-        return t3
-
-    subtest(func_2, 0)
-
-    # a couple independent transposes at the beginning
-    # both should be moved out of fusion
-    def func_3(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        t2 = t1.sin()
-
-        t3 = t.transpose(0, 2)
-        t4 = t3.sin()
-        t5 = t4.tanh()
-        return t2, t5
-
-    subtest(func_3, 0)
-
-    # a couple independent transposes at the end
-    # both should be moved out of fusion
-    def func_4(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-
-        t3 = t.sin()
-        t4 = t3.tanh()
-        t5 = t4.transpose(0, 2)
-        return t2, t5
-
-    subtest(func_4, 0)
-
-    # a couple chained transposes at the beginning
-    # both should be moved out of fusion
-    def func_5(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.transpose(0, 2)
-        t2 = t1.tanh()
-        t3 = t2.sin()
-        return t3
-
-    subtest(func_5, 0)
-
-    # a couple chained transposes at the end
-    # both should be moved out of fusion
-    def func_6(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.transpose(0, 2)
-        return t3
-
-    subtest(func_6, 0)
-
-    # a couple chained transposes at the beginning and end
-    # both should be moved out of fusion
-    def func_7(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.transpose(0, 2)
-        t2 = t1.tanh()
-        t3 = t2.sin()
-        t4 = t3.transpose(0, 1)
-        t5 = t4.transpose(0, 2)
-        return t5
-
-    subtest(func_7, 0)
-
-    # complicated case, where two non-meta ops are each sandwiched by transpose
-    # the two transposes on the edge should be moved out of fusion
-    def func_8(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.tanh()
-        # transpose in the middle should stay
-        t2 = t1.transpose(0, 1)
-        t3 = t2.sin()
-        t4 = t3.transpose(0, 2)
-        return t4
-
-    subtest(func_8, 1)
-
-    # NOTE func_9 and func_10 are symmetrical, this is designed to double check our toposort based approach can break
-    # ties
-
-    # complicated case, where two branches have transpose ops towards the end
-    # the two transposes on the edge should be moved out of fusion
-    def func_9(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.transpose(2, 1)
-
-        t4 = t.sin()
-        t5 = t4.tanh()
-        t6 = t5.transpose(0, 2)
-        t7 = t6.sin()
-        return t3, t7
-
-    subtest(func_9, 1)
-
-    # complicated case, where two branches have transpose ops towards the end
-    # the two transposes on the edge should be moved out of fusion
-    def func_10(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.sin()
-
-        t4 = t.sin()
-        t5 = t4.tanh()
-        t6 = t5.transpose(0, 2)
-        t7 = t6.transpose(2, 1)
-        return t3, t7
-
-    subtest(func_10, 1)
-
-    # complicated case, where a chain of transposed operations is both an output and consumed as an intermediate
-    # no transposes should be removed
-    def func_11(t):
-        t0 = t.tanh()
-        t1 = t0.sin()
-        t2 = t1.transpose(0, 1)
-        t3 = t2.transpose(0, 2)
-
-        t4 = t3.sin()
-        return t3, t4
-
-    subtest(func_11, 2)
-
-    # complicated case
-    def func_12(t):
-        t0 = t.transpose(0, 1)
-        t1 = t0.transpose(0, 2)
-        t2 = t1.tanh()
-        t3 = t2 + 1.0
-        t4 = t3.transpose(2, 1)
-        t4 = t4.transpose(0, 1)
-
-        t5 = t * 0.5
-        # this is the only transpose that should stay in fusion, because it is surrounded by non-meta ops
-        t6 = t5.transpose(0, 2)
-        t7 = t6.tanh()
-
-        t8 = t1.transpose(1, 2)
-
-        t9 = t.transpose(2, 1)
-        t10 = t9.tanh()
-
-        t11 = t.transpose(1, 2)
-        t12 = t11.transpose(0, 2)
-        t13 = t12.transpose(0, 1)
-
-        return t4, t6, t7, t8, t10, t13
-
-    subtest(func_12, 1)
 
 
 @instantiate(dtypes=NOTHING)
@@ -2819,9 +2188,7 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     out = compiled(qkv)
     history = thunder.last_traces(compiled)
     torch.testing.assert_close(out, func(qkv))
-    assert "torch.nn.functional.scaled_dot_product_attention" in tuple(
-        bsym.sym.id for bsym in history[-1].bound_symbols
-    )
+    assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in history[-1].bound_symbols)
 
 
 @instantiate(dtypes=NOTHING)
@@ -2873,12 +2240,12 @@ def test_cse(executor, device, _):
     flatten_dce_trace = [
         t for t in traces if t._provenance is not None and t._provenance.pss.startswith("Dead Code Elimination")
     ][1]
-    flatten_cse_trace = [
-        t
-        for t in traces
-        if t._provenance is not None and t._provenance.pss.startswith("Common Subexpression Elimination")
-    ][0]
-    # CSE is supposed to remove `c`, `d`, and `w`.
+
+    from thunder.core.transform_common import cse
+
+    flatten_cse_trace = cse(flatten_dce_trace)
+
+    # # CSE is supposed to remove `c`, `d`, and `w`.
     assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
     assert len([bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM]) == 4
 

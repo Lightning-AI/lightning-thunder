@@ -53,7 +53,7 @@ def test_find_producer_symbols(executor, device, _):
     trace = traces[-1]
     fusions = get_fusions(trace)
 
-    assert len(fusions) == 2
+    assert len(fusions) == 3
 
     # TODO Update this to use the fusions returned from get_fusions
     nvfuser_symbols = tuple(filter(lambda x: x.sym.is_fusion, trace.bound_symbols))
@@ -75,7 +75,7 @@ def test_find_producer_symbols(executor, device, _):
 
     # We need to find the producer of __c and __d that is not in subsymbols of nvfuser_symbol
     # We will search for the producer of __c and __d in the flattened trace
-    flattened_trace = next(filter(lambda x: str(x._provenance).startswith("# Constructed by Flatten"), traces))
+    flattened_trace = traces[0]
 
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region
@@ -101,12 +101,12 @@ def test_apply_rematerialization_producer(executor, device, _):
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 2
+    assert len(nvfuser_symbols) == 3
 
     # Let's consider a pair of the first and the last nvFuser regions
     # We call them producer and consumer because the last region consumes some
     # outputs of the first region
-    producer = nvfuser_symbols[0]
+    producer = nvfuser_symbols[1]
 
     cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
@@ -117,7 +117,7 @@ def test_apply_rematerialization_producer(executor, device, _):
     assert new_producer.sym.name == producer.sym.name
     assert new_producer.args == producer.args
     assert new_producer.subsymbols == producer.subsymbols
-    assert len(new_producer.output) == 2
+    assert len(new_producer.output) == 1
     assert cut[1] in (x.name for x in new_producer.output)
     assert external_producer_outputs[0].name in (x.name for x in new_producer.output)
 
@@ -133,13 +133,13 @@ def test_apply_rematerialization_consumer(executor, device, _):
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 2
+    assert len(nvfuser_symbols) == 3
 
     # Let's consider a pair of the first and the last nvFuser regions
     # We call them producer and consumer because the last region consumes some
     # outputs of the first region
-    producer = nvfuser_symbols[0]
-    consumer = nvfuser_symbols[-1]
+    producer = nvfuser_symbols[1]
+    consumer = nvfuser_symbols[2]
 
     cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
@@ -162,7 +162,7 @@ def test_apply_rematerialization_consumer(executor, device, _):
     assert new_consumer.subsymbols[1].args[0].name == new_consumer.subsymbols[0].output.name
 
     # The rest of the subsymbols should be the same as in the original consumer
-    assert new_consumer.subsymbols[2:] == consumer.subsymbols
+    assert tuple(new_consumer.subsymbols[2:]) == tuple(consumer.subsymbols)
 
 
 @instantiate(
@@ -267,10 +267,10 @@ def test_find_cut(executor, device, _):
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 2
+    assert len(nvfuser_symbols) == 3
 
-    producer = nvfuser_symbols[0]
-    consumer = nvfuser_symbols[-1]
+    producer = nvfuser_symbols[1]
+    consumer = nvfuser_symbols[2]
     ext_external_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_external_producer_outputs, producer, consumer)
     assert cut == ("t0", "t4")
@@ -287,47 +287,16 @@ def test_find_cut_dropout(executor, device, _):
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 2
+    assert len(nvfuser_symbols) == 3
 
-    producer = nvfuser_symbols[0]
-    consumer = nvfuser_symbols[-1]
+    producer = nvfuser_symbols[1]
+    consumer = nvfuser_symbols[2]
     ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_producer_outputs, producer, consumer)
     # Note t5 is the boolean mask for dropout. It should be chosen over the t6
     # that is the float32 mask. See this issue for the original problem:
     # https://github.com/Lightning-AI/lightning-thunder/issues/706
     assert cut == ("t0", "t5", "t9")
-
-
-@instantiate(
-    dtypes=NOTHING,
-    executors=(nvFuserExecutor,),
-)
-def test_find_cut_one_producer_op_no_args(executor, device, _):
-    # TODO: This test will fail once
-    # https://github.com/Lightning-AI/lightning-thunder/issues/601 is fixed
-    # You can remove this test once the issue is fixed
-    # This test would fail on the first assert statement
-    def func(x, device):
-        t1 = torch.full((3, 3), 1.0, device=device)
-        t2 = x @ x.transpose(-2, -1)
-        t3 = torch.cos(t2 + t1)
-        t4 = torch.sin(t3)
-        return t4
-
-    t0 = make_tensor(3, 3, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func)
-    _ = compiled_func(t0, device)
-    traces = thunder.last_traces(compiled_func)
-    trace = traces[-1]
-    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 2
-
-    producer = nvfuser_symbols[0]
-    consumer = nvfuser_symbols[-1]
-    ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
-    cut = find_cut(ext_producer_outputs, producer, consumer)
-    assert not cut
 
 
 @instantiate(

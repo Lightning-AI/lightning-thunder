@@ -12,7 +12,7 @@ from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
@@ -134,7 +134,7 @@ def higher_dtype(a, b):
     raise ValueError(f"Trying to determine the higher dtype of unknown inputs {a} and {b}!")
 
 
-def can_safe_cast_to(*, cast_to, cast_from) -> bool:
+def can_safe_cast_to(*, cast_to: type | dtypes.dtype, cast_from: type | dtypes.dtype) -> bool:
     return higher_dtype(cast_to, cast_from) == cast_to
 
 
@@ -513,7 +513,7 @@ def is_numbertensor(t):
 
 # TODO: maybe generalize to *args like check_same_dtype
 # TODO: change to check_same_shape or add check_same_shape variant and make check_same_dtype use the same pattern
-def same_shape(a, b):
+def same_shape(a: Sequence[int], b: Sequence[int], /) -> bool:
     return tuple(a) == tuple(b)
 
 
@@ -873,17 +873,6 @@ def dict_join(*args: list[dict[T, T1]]) -> dict[T, T1]:
 #
 
 
-def get_name(trace: TraceCtx, x: Any) -> str:
-    if isinstance(x, Proxy):
-        return x.name
-
-    to = trace.get_tracked_object(x)
-    if isinstance(to, TrackedObject):
-        return to.name
-
-    check(False, lambda: f"Could not find name for {x}")
-
-
 # A dictionary-like class with proxies as keys
 # NOTE Why ProxyDict?
 #   NumberProxies are hashed on their value, like Python numbers,
@@ -938,10 +927,13 @@ class ProxyDict:
         return str(self._dict)
 
 
+# NOTE That this pass does not assume that the bound symbols are in a reasonable order,
+#   but it does assume that each proxy is uniquely constructed once
 # Returns a proxy -> producer mapping
 def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDict:
     producers = ProxyDict()
 
+    # TODO Update this to use tags (tag NO_OUTPUT?)
     # Skips symbols that never produce anything
     skip = {
         prims.PrimIDs.COMMENT,
@@ -954,16 +946,20 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
         if bsym.sym.id in skip:
             continue
 
-        flat = bsym._flat_outs
-        for out in flat:
-            if not isinstance(out, Proxy):
+        for out in bsym.flat_proxy_outs:
+            vout = variableify(out)
+
+            # Checks if the proxy was also an input (in which case this is not its producers)
+            is_input: bool = False
+            for vin in chain(bsym.flat_variableified_proxy_args, bsym.flat_variableified_proxy_kwargs):
+                if vin == vout:
+                    is_input = True
+                    break
+
+            if is_input:
                 continue
 
-            # NOTE out may already be in producers because some operations return their input,
-            #   which might look like the same output is being produced multiple times
-            #   The first production is what we're interested in
-            if out not in producers:
-                producers[out] = bsym
+            producers[out] = bsym
 
     return producers
 
@@ -985,13 +981,10 @@ def consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
         if bsym.sym.id in skip:
             continue
 
-        flatargs = bsym._flat_args
-        flatkwargs = bsym._flat_kwargs
+        flatargs = bsym.flat_proxy_args
+        flatkwargs = bsym.flat_proxy_kwargs
 
         for x in chain(flatargs, flatkwargs):
-            if not isinstance(x, Proxy):
-                continue
-
             consumers.append(x, bsym)
 
     return consumers

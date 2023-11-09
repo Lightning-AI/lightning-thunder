@@ -55,27 +55,29 @@ def unvariableify(x: Any) -> Any:
 
 # TODO Document this class
 class Proxy(VariableInterface, ProxyInterface):
-    def __init__(self, name: str | None = None):
+    def __init__(self, name: str | None = None, *, prefix: None | str = None):
         trace = get_tracectx()
         if name is None:
-            prefix: str | None = None
-            if isinstance(self, FloatProxy):
-                prefix = "f"
-            elif isinstance(self, ComplexProxy):
-                prefix = "c"
-            elif isinstance(self, IntegerProxy):
-                if self.python_type is int:
-                    prefix = "i"
-                elif self.python_type is bool:
-                    prefix = "b"
-                else:
-                    baseutils.check(False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}")
-            elif isinstance(self, NumberProxy):
-                prefix = "n"
-            elif isinstance(self, TensorProxy):
-                prefix = "t"
-            elif isinstance(self, CollectionProxy):
-                prefix = "C"
+            if prefix is None:
+                if isinstance(self, FloatProxy):
+                    prefix = "f"
+                elif isinstance(self, ComplexProxy):
+                    prefix = "c"
+                elif isinstance(self, IntegerProxy):
+                    if self.python_type is int:
+                        prefix = "i"
+                    elif self.python_type is bool:
+                        prefix = "b"
+                    else:
+                        baseutils.check(
+                            False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}"
+                        )
+                elif isinstance(self, NumberProxy):
+                    prefix = "n"
+                elif isinstance(self, TensorProxy):
+                    prefix = "t"
+                elif isinstance(self, CollectionProxy):
+                    prefix = "C"
 
             name = trace.make_name(prefix=prefix)
         else:
@@ -661,9 +663,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
         requires_grad: bool | None = None,
+        prefix: None | str = None,
         ddp_type: DDPType | None = None,
     ):
-        super().__init__(name)
+        super().__init__(name, prefix=prefix)
 
         (
             self._shape,
@@ -749,7 +752,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     def __getitem__(self, key):
         ctx = get_langctx()
-        return ctx.get_item(self, key)
+        return ctx.getitem(self, key)
 
     #
     # Elementwise unary operators

@@ -8,10 +8,16 @@ from lightning_utilities.core.imports import package_available
 CUDNN_AVAILABLE = package_available("cudnn")
 
 cudnn: None | Any = None
+cudnn_backend_version: None | Any = None
 if CUDNN_AVAILABLE:
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
+
+
+def cudnn_available() -> bool:
+    return CUDNN_AVAILABLE
+
 
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
@@ -25,6 +31,11 @@ from thunder.core.proxies import TensorProxy
 
 from thunder.executors.cudnnex import CudnnTensorAttributes
 from thunder.executors.cudnnex import make_cacheable_cudnn_graph_inputs, torch_to_cudnn_dtype
+
+from thunder.extend import OperatorExecutor, register_executor
+
+cudnn_layernorm_ex: OperatorExecutor = OperatorExecutor("cudnn_layernorm", version=cudnn_backend_version)
+register_executor(cudnn_layernorm_ex)
 
 
 @make_cacheable_cudnn_graph_inputs
@@ -108,25 +119,7 @@ def layer_norm_checker(a, normalized_shape, weight=None, bias=None, eps=1e-5):
     return True
 
 
-_op_to_cudnn_layernom = {
-    "torch.layer_norm": ("cudnn_layer_norm", layer_norm_checker, layer_norm_impl),
-}
+import thunder.torch as ltorch
 
-
-def register_cudnn_layernormex(*, add_to_default_executors: bool = True) -> None:
-    assert CUDNN_AVAILABLE, f"Trying to register the cudnn executor, but the cudnn package is not available"
-
-    print(
-        "WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n"
-        "Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880"
-    )
-
-    from thunder.executors import add_operator_executor
-
-    add_operator_executor("cudnn_layernorm", _op_to_cudnn_layernom, add_to_default_executors=add_to_default_executors)
-
-
-def deregister_cudnn_layernormex() -> None:
-    from thunder.executors import remove_operator_executor
-
-    remove_operator_executor("cudnn_layernorm")
+layer_norm = cudnn_layernorm_ex.register_operator("cudnn_layernorm", like=ltorch.layer_norm, fn=layer_norm_impl)
+cudnn_layernorm_ex.register_implementation(ltorch.layer_norm, layer_norm, checker=layer_norm_checker)

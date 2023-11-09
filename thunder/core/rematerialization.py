@@ -10,7 +10,7 @@ from igraph import Graph
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
@@ -182,7 +182,7 @@ def find_filtered_producer_consumer_pairs(
     trace: TraceCtx,
     filter_func: Optional[Callable] = None,
     *,
-    proxy_to_consumers = None,
+    proxy_to_consumers=None,
 ) -> tuple[tuple[BoundSymbolInterface, BoundSymbolInterface], ...]:
     """Find producer-consumer pairs among the filtered symbols.
 
@@ -290,7 +290,7 @@ def find_cut(
 
     utils.check(
         len(required_consumer_vars) > 0,
-        "The consumer has no outputs. This is not supported by the cut finding algorithm.",
+        lambda: "The consumer has no outputs. This is not supported by the cut finding algorithm.",
     )
     for var_name in required_consumer_vars:
         add_edge(var_name + "_in", "sink", capacity=float("inf"))
@@ -378,7 +378,7 @@ def _update_nvfusion_call_ctx(trace: TraceCtx, bsym: BoundSymbolInterface) -> Bo
     Returns:
         The updated nvFusion BoundSymbol object.
     """
-    from thunder.executors.nvfuserex import fuse
+    from thunder import nvfuser_executor
 
     @dataclass
     class BoundSymbolRegion:
@@ -388,19 +388,20 @@ def _update_nvfusion_call_ctx(trace: TraceCtx, bsym: BoundSymbolInterface) -> Bo
         bound_symbols: tuple
         counter: int
 
+    counter = int(tuple(bsym._call_ctx.keys())[0].split("nvFusion")[-1])
+
     def nvfusion_bsym_to_region(trace: TraceCtx, bsym: BoundSymbolInterface):
-        counter = int(tuple(bsym._call_ctx.keys())[0].split("nvFusion")[-1])
         return BoundSymbolRegion(
             trace=trace,
-            inputs=bsym.args,
-            outputs=bsym.output,
+            inputs=tuple(map(variableify, bsym.args)),
+            outputs=tuple(map(variableify, bsym.output)),
             bound_symbols=bsym.subsymbols,
             counter=counter,
         )
 
     # fuse returns a new BoundSymbol object with correct updated call_ctx
     # information
-    return fuse(nvfusion_bsym_to_region(trace, bsym))[0]
+    return nvfuser_executor.fuse(nvfusion_bsym_to_region(trace, bsym), counter)
 
 
 def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:

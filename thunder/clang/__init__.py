@@ -207,7 +207,7 @@ def uniform(
     minval: Number = 0.0,
     maxval: Number = 1.0,
     *,
-    device: Union[str, devices.Device],
+    device: DeviceLike,
     dtype: dtypes.dtype,
 ) -> TensorProxy:
     device = devices.to_device(device)
@@ -237,10 +237,10 @@ def uniform_philox(
     minval: Number = 0.0,
     maxval: Number = 1.0,
     *,
-    device: Union[str, devices.Device],
+    device: DeviceLike,
     dtype: dtypes.dtype,
-    rng_seed: int,
-    rng_offset: int,
+    seed: int | TensorProxy,
+    offset: int | TensorProxy,
 ) -> TensorProxy:
     device = devices.to_device(device)
 
@@ -250,8 +250,8 @@ def uniform_philox(
         maxval,
         device=device,
         dtype=dtype,
-        rng_seed=rng_seed,
-        rng_offset=rng_offset,
+        seed=seed,
+        offset=offset,
     )
 
 
@@ -707,7 +707,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 #       * 0D or 1D TensorLike indices.
 #       * basic indexing + a single index which is a 1-length Sequence.
 @clang_ctx
-def get_item(a: TensorLike, /, key) -> TensorLike:
+def getitem(a: TensorLike, /, key) -> TensorLike:
     sig = _get_indexing_signature(key)
     utils.check(
         (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
@@ -912,26 +912,26 @@ def _maybe_expand_exclude_dim(a: TensorProxy, ref: TensorProxy, exclude_dim: int
 
 
 @clang_ctx
-def take(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
-    dim = utils.canonicalize_dim(a.ndim, dim)
-    return prims.take(a, indices, dim)
-
-
-@clang_ctx
 def index_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.index_add(a, indices, value, dim)
 
 
 @clang_ctx
-def take_along_axis(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
+def take(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.take(a, indices, dim)
+
+
+@clang_ctx
+def take_along_axis(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     indices = _maybe_expand_exclude_dim(indices, a, dim)
     return prims.take_along_axis(a, indices, dim)
 
 
 @clang_ctx
-def scatter_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.scatter_add(a, indices, value, dim)
 
@@ -941,7 +941,7 @@ def scatter_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: i
 # Based on https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.expand_dims.html
 # NOTE: the dimensions do not have to be specified in any order
 @clang_ctx
-def unsqueeze(a, dims: Union[Sequence, Number]):
+def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
     if isinstance(dims, Number):
         dims = (dims,)
 

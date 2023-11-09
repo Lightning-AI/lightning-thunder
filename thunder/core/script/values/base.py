@@ -107,7 +107,7 @@ class AbstractValue:
     @property
     def identity(self) -> AbstractValue:
         """Analogous to `id(obj)`. For composites there is a layer of state management above the value itself.
-        
+
         This is not suitable for equality checks (for example, mutation does not change
         an object's identity), but it is often the appropriate target for `isinstance` checks.
         """
