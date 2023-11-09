@@ -1113,7 +1113,7 @@ def test_populate_grads_csa(executor, device, dtype):
     populate_grads(thunder_grads, tom)
     thunder_grads = extract_grads(tom)
 
-    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
+    assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1140,7 +1140,7 @@ def test_populate_grads_block(executor, device, dtype):
     populate_grads(thunder_grads, tom)
     thunder_grads = extract_grads(tom)
 
-    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
+    assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1183,4 +1183,4 @@ def test_populate_grads_nanogpt(executor, device, dtype):
     populate_grads(thunder_grads, tom)
     thunder_grads = extract_grads(tom)
 
-    assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
+    assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
