@@ -3,7 +3,8 @@ from __future__ import annotations
 import dataclasses
 import itertools
 from types import CodeType
-from typing import cast, Callable, TypeVar
+from typing import cast, TypeVar
+from collections.abc import Callable
 from collections.abc import Iterable, Iterator
 
 from thunder.core.script import parse, values

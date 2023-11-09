@@ -2,7 +2,8 @@ from dataclasses import replace
 from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
-from typing import Union, Callable, Any, Tuple, Optional
+from typing import Union, Any, Tuple, Optional
+from collections.abc import Callable
 
 import torch
 
@@ -229,7 +230,7 @@ if torch.distributed.is_available():
 
     def insert_bsym_to_allreduce_grads(
         backward_trace: TraceCtx,
-        process_group: Optional[ProcessGroup],
+        process_group: ProcessGroup | None,
     ) -> TraceCtx:
         """Insert :class:`BoundSymbol`s of pre-averaging, async all_reduce, and wait.
 

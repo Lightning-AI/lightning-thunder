@@ -4,7 +4,8 @@ import dataclasses
 import functools
 import itertools
 from types import MappingProxyType
-from typing import Callable, Literal, TypeVar
+from typing import Literal, TypeVar
+from collections.abc import Callable
 from collections.abc import Iterator, Mapping
 
 from thunder.core.script import parse

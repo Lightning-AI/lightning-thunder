@@ -22,7 +22,7 @@ class Config:
     block_size: int = 4096
     vocab_size: int = 50254
     padding_multiple: int = 512
-    padded_vocab_size: Optional[int] = None
+    padded_vocab_size: int | None = None
     n_layer: int = 16
     n_head: int = 32
     n_embd: int = 4096
@@ -30,13 +30,13 @@ class Config:
     parallel_residual: bool = True
     bias: bool = True
     lm_head_bias: bool = False
-    n_query_groups: Optional[int] = None
+    n_query_groups: int | None = None
     shared_attention_norm: bool = False
     _norm_class: Literal["LayerNorm", "RMSNorm"] = "LayerNorm"
     norm_eps: float = 1e-5
     _mlp_class: Literal["GptNeoxMLP", "LLaMAMLP"] = "GptNeoxMLP"
     gelu_approximate: str = "none"
-    intermediate_size: Optional[int] = None
+    intermediate_size: int | None = None
     rope_condense_ratio: int = 1
     rope_base: int = 10000
 
@@ -262,7 +262,7 @@ class GPT(nn.Module):
             )
         )
         self.max_seq_length = self.config.block_size
-        self.mask_cache: Optional[torch.Tensor] = None
+        self.mask_cache: torch.Tensor | None = None
 
     @property
     def max_seq_length(self) -> int:
@@ -301,7 +301,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, input_pos: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, idx: torch.Tensor, input_pos: torch.Tensor | None = None) -> torch.Tensor:
         T = idx.size(1)
         if self.max_seq_length < T:
             raise ValueError(f"Cannot forward sequence of length {T}, max seq length is only {self.max_seq_length}.")
@@ -328,7 +328,7 @@ class GPT(nn.Module):
     def from_name(cls, name: str, **kwargs: Any) -> Self:
         return cls(Config.from_name(name, **kwargs))
 
-    def rope_cache(self, device: Optional[torch.device] = None) -> tuple[torch.Tensor, torch.Tensor]:
+    def rope_cache(self, device: torch.device | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         return build_rope_cache(
             seq_len=self.max_seq_length,
             n_elem=self.config.rope_n_elem,
@@ -340,9 +340,9 @@ class GPT(nn.Module):
     def set_kv_cache(
         self,
         batch_size: int,
-        rope_cache_length: Optional[int] = None,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        rope_cache_length: int | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
         if rope_cache_length is None:
             rope_cache_length = self.cos.size(-1)
@@ -382,8 +382,8 @@ class Block(nn.Module):
         x: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        input_pos: Optional[torch.Tensor] = None,
+        mask: torch.Tensor | None = None,
+        input_pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
         n_1 = self.norm_1(x)
         h = self.attn(n_1, cos, sin, mask, input_pos)
@@ -410,7 +410,7 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # disabled by default
-        self.kv_cache: Optional[KVCache] = None
+        self.kv_cache: KVCache | None = None
 
         self.config = config
 
@@ -419,8 +419,8 @@ class CausalSelfAttention(nn.Module):
         x: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-        input_pos: Optional[torch.Tensor] = None,
+        mask: torch.Tensor | None = None,
+        input_pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
         B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -465,7 +465,7 @@ class CausalSelfAttention(nn.Module):
         return self.proj(y)
 
     def scaled_dot_product_attention(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: Optional[torch.Tensor] = None
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         scale = 1.0 / math.sqrt(self.config.head_size)
         y = torch.nn.functional.scaled_dot_product_attention(
@@ -477,9 +477,9 @@ class CausalSelfAttention(nn.Module):
         self,
         batch_size: int,
         max_seq_length: int,
-        rope_cache_length: Optional[int] = None,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        rope_cache_length: int | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> "KVCache":
         heads = 1 if self.config.n_query_groups == 1 else self.config.n_head
         v_shape = (batch_size, heads, max_seq_length, self.config.head_size)
@@ -526,7 +526,7 @@ class LLaMAMLP(nn.Module):
 
 
 def build_rope_cache(
-    seq_len: int, n_elem: int, device: Optional[torch.device] = None, base: int = 10000, condense_ratio: int = 1
+    seq_len: int, n_elem: int, device: torch.device | None = None, base: int = 10000, condense_ratio: int = 1
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Enhanced Transformer with Rotary Position Embedding.
 
@@ -560,8 +560,8 @@ class KVCache(nn.Module):
         self,
         k_shape: tuple[int, int, int, int],
         v_shape: tuple[int, int, int, int],
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
         self.register_buffer("k", torch.zeros(k_shape, device=device, dtype=dtype), persistent=False)

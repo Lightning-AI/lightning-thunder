@@ -4,7 +4,8 @@ import dis
 import inspect
 import itertools
 import sys
-from typing import Callable, Optional, TypeVar
+from typing import Optional, TypeVar
+from collections.abc import Callable
 from collections.abc import Iterable
 
 import networkx as nx
@@ -68,8 +69,8 @@ def _prune_epilogues(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
 def _bind_to_graph(
     proto_graph: ProtoGraph,
     func: Callable,
-    method_self: Optional[object] = None,
-    mro_klass: Optional[type] = None,
+    method_self: object | None = None,
+    mro_klass: type | None = None,
 ) -> Graph:
     """Convert abstract value graph into a concrete Graph.
 
@@ -117,15 +118,15 @@ def _bind_to_graph(
         raise NotImplementedError(msg)
 
     co_name = func.__code__.co_name
-    self_key: Optional[parse.VariableKey] = None
-    self_value: Optional[Value] = None
+    self_key: parse.VariableKey | None = None
+    self_value: Value | None = None
     if method_self is not None:
         self_key = parse.VariableKey(arg_ordered_parameters[0], parse.VariableScope.LOCAL)
         self_value = Value(value=method_self, name=self_key.identifier, is_function_arg=True)
 
     get_initial_value_cache = {}
 
-    def get_initial_value(key: parse.VariableKey, block: Optional[Block] = None) -> Value:
+    def get_initial_value(key: parse.VariableKey, block: Block | None = None) -> Value:
         if key in get_initial_value_cache:
             v = get_initial_value_cache[key]
             assert not ((block is None or block != v.block) and not (v.is_global or v.is_const or v.is_function_arg))
@@ -354,8 +355,8 @@ def _bind_to_graph(
 
 def acquire_partial(
     pfunc: functools.partial,
-    module: Optional[object] = None,
-    mro_klass: Optional[type] = None,
+    module: object | None = None,
+    mro_klass: type | None = None,
 ) -> Graph:
     # This is complicated due to the semantics of calling Python functions.
     # The partial wrapper does the following:
@@ -564,8 +565,8 @@ def _construct_protograph(func):
 @record
 def acquire_method(
     method: Callable,
-    module: Optional[object] = None,
-    mro_klass: Optional[type] = None,
+    module: object | None = None,
+    mro_klass: type | None = None,
 ) -> Graph:
     assert SUPPORTS_PREPROCESSING, sys.version_info
     if isinstance(method, functools.partial):

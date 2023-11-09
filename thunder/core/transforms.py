@@ -6,7 +6,8 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Callable, Dict, Union, Optional
+from typing import Any, Dict, Union, Optional
+from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
 import copy
@@ -1671,7 +1672,7 @@ class BatchedValue:
     """
 
     value: Any
-    batch_dim: Union[int, NotMapped]
+    batch_dim: int | NotMapped
 
     def __iter__(self):
         yield self.value
@@ -2300,7 +2301,7 @@ class VJPDual:
         Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
     """
 
-    primal: Union[Proxy, Number]
+    primal: Proxy | Number
     residuals: tuple[Proxy, ...]
 
     def __iter__(self):
@@ -3264,7 +3265,7 @@ def nll_loss_backward(input, target, weight, reduction, ignore_index, total_weig
 
 
 @register_augmented_forward("torch.split")
-def split_aug_fwd(a: TensorProxy, split_size_or_sections: Union[int, Sequence[int]], dim: int = 0) -> VJPDual:
+def split_aug_fwd(a: TensorProxy, split_size_or_sections: int | Sequence[int], dim: int = 0) -> VJPDual:
     from thunder.torch import split
 
     primal = split(a, split_size_or_sections, dim)
@@ -3283,8 +3284,8 @@ def split_backward(dim, *grads):
 def embedding_aug_fwd(
     a: Proxy,
     weight: Proxy,
-    padding_idx: Optional[int],
-    max_norm: Optional[float],
+    padding_idx: int | None,
+    max_norm: float | None,
     norm_type: float,
     scale_grad_by_freq: bool,
     sparse: bool,
@@ -3314,7 +3315,7 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
 
 
 @register_augmented_forward("torch.softmax")
-def softmax_aug_fwd(a: Proxy, dim: int, dtype: Optional[dtypes.dtype] = None) -> VJPDual:
+def softmax_aug_fwd(a: Proxy, dim: int, dtype: dtypes.dtype | None = None) -> VJPDual:
     from thunder.torch import softmax
 
     primal = softmax(a, dim, dtype=dtype)
@@ -3362,7 +3363,7 @@ def matmul_backward(a, b, g):
 
 
 @register_augmented_forward(prims.PrimIDs.LINEAR)
-def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: Optional[TensorProxy]) -> VJPDual:
+def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: TensorProxy | None) -> VJPDual:
     primal = prims.linear(a, b, c)
     residuals = (a, b, c)
     return VJPDual(primal, residuals)
@@ -4215,7 +4216,7 @@ def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dty
     Returns:
         Callable: The callable implementing the autocast rule for the symbol.
     """
-    autocast_impl: Optional[Callable] = autocast_impls.get(bound_symbol.sym.id)
+    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.id)
     if autocast_impl is None and bound_symbol.subsymbols:
         return partial(decomposed_fn_autocast_rule, fn=bound_symbol.sym, dtype=dtype)
     return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)

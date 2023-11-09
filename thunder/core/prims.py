@@ -4,7 +4,8 @@ from functools import reduce
 import operator
 import builtins
 import math
-from typing import Union, Type, Any, List, Dict, Tuple, Optional, Callable
+from typing import Union, Type, Any, List, Dict, Tuple, Optional
+from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
 
@@ -204,18 +205,18 @@ def make_prim(
 #
 
 
-def _collectify(x: Any, *, name: Optional[str] = None) -> Any:
+def _collectify(x: Any, *, name: str | None = None) -> Any:
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
 
     return x
 
 
-def unpack_trivial_impl(x: Any, /, *, name: Optional[str] = None) -> Any:
+def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
     return x
 
 
-def unpack_trivial_meta(x: Any, /, *, name: Optional[str] = None) -> Any:
+def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
     return _collectify(x, name=name)
 
 
@@ -311,7 +312,7 @@ unpack_sequence = make_prim(
 )
 
 
-def unpack_key_meta(d: Union[dict, CollectionProxy], key: Hashable) -> Any:
+def unpack_key_meta(d: dict | CollectionProxy, key: Hashable) -> Any:
     if isinstance(d, CollectionProxy):
         d = d.collection()
     baseutils.check_type(d, dict)
@@ -355,7 +356,7 @@ unpack_key = make_prim(
 )
 
 
-def unpack_empty_dict_meta(d: Union[dict, CollectionProxy]) -> tuple:
+def unpack_empty_dict_meta(d: dict | CollectionProxy) -> tuple:
     baseutils.check_type(d, (dict, CollectionProxy))
     if isinstance(d, CollectionProxy):
         baseutils.check_type(d.collection(), dict)
@@ -384,7 +385,7 @@ def unpack_empty_dict_printer(
     return f"# {arg_str} (empty dict)"
 
 
-def unpack_empty_dict_impl(d: Union[dict, CollectionProxy]) -> tuple:
+def unpack_empty_dict_impl(d: dict | CollectionProxy) -> tuple:
     assert len(d) == 0
     return ()
 
@@ -398,7 +399,7 @@ unpack_empty_dict = make_prim(
 )
 
 
-def unpack_dict(d: Union[dict, CollectionProxy]) -> tuple[Any, ...]:
+def unpack_dict(d: dict | CollectionProxy) -> tuple[Any, ...]:
     l = []
 
     baseutils.check_type(d, (dict, CollectionProxy))
@@ -716,7 +717,7 @@ def _elementwise_unary_meta_factory(
     supported_input_dtypes,
     output_dtype_kind,
     numbers_only: bool,
-    number_type_map: Optional[dict[type, type]],
+    number_type_map: dict[type, type] | None,
 ):
     def meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
         # Checks that inputs have an expected type
@@ -783,12 +784,12 @@ def _elementwise_unary_meta_factory(
 def _make_elementwise_unary_prim(
     id: PrimIDs,
     name: str,
-    number_fn: Optional[Callable] = None,
+    number_fn: Callable | None = None,
     python_printer: Callable = default_python_printer,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
     output_dtype_kind: ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND = ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     numbers_only: bool = False,
-    number_type_map: Optional[dict[type, type]] = None,
+    number_type_map: dict[type, type] | None = None,
 ):
     return make_prim(
         id,
@@ -2195,7 +2196,7 @@ def convolution_meta(
     a: TensorProxy,
     /,
     weight: TensorProxy,
-    bias: Optional[TensorProxy],
+    bias: TensorProxy | None,
     stride: Sequence[int],
     padding: Sequence[int],
     dilation: Sequence[int],

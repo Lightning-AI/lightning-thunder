@@ -3,7 +3,8 @@ from __future__ import annotations
 import dataclasses
 import enum
 import textwrap
-from typing import overload, Any, Callable, Generic, NewType, TypeVar
+from typing import overload, Any, Generic, NewType, TypeVar
+from collections.abc import Callable
 from collections.abc import Mapping
 
 from typing_extensions import Self

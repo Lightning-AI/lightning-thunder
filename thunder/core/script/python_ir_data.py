@@ -1,7 +1,8 @@
 import functools
 import sys
 from types import CodeType
-from typing import Callable, Union
+from typing import Union
+from collections.abc import Callable
 from collections.abc import Iterable
 
 from thunder.core.script import parse
@@ -24,7 +25,7 @@ def debug_compare_functions_print(diffs: dict[str, tuple[list, list]]):
 
 
 def debug_compare_functions(
-    code1: Union[CodeType, Callable], code2: Union[CodeType, Callable], *, show=False
+    code1: CodeType | Callable, code2: CodeType | Callable, *, show=False
 ) -> dict[str, tuple[list, list]]:
     if not isinstance(code1, CodeType):
         code1 = code1.__code__

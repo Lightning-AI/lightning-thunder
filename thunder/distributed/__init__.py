@@ -23,9 +23,9 @@ def ddp(
     model: torch.nn.Module,
     rank: int,
     *,
-    world: Optional[Any] = None,
-    broadcast_from: Optional[int] = None,
-    process_group: Optional[tdist.ProcessGroup] = None,
+    world: Any | None = None,
+    broadcast_from: int | None = None,
+    process_group: tdist.ProcessGroup | None = None,
 ) -> torch.nn.Module:
     """Thunder's Distributed Data Parallel.
 

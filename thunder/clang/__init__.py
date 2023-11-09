@@ -97,7 +97,7 @@ def device_put(a, device):
 
 # TODO Add type annotations
 @clang_ctx
-def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dtype: Optional[dtypes.dtype] = None):
+def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dtype: dtypes.dtype | None = None):
     # Validates inputs
     # Checks that start, step, and stop are finite
     # TODO Semantically an infinite step seems fine?
@@ -156,7 +156,7 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
 def convolution(
     a: TensorLike,
     weight: TensorLike,
-    bias: Optional[TensorLike],
+    bias: TensorLike | None,
     stride: Sequence[int],
     padding: Sequence[int],
     dilation: Sequence[int],
@@ -184,8 +184,8 @@ def full_like(
     a: TensorLike | Number,
     fill_value: Number,
     *,
-    device: Optional[DeviceLike] = None,
-    dtype: Optional[dtypes.dtype] = None,
+    device: DeviceLike | None = None,
+    dtype: dtypes.dtype | None = None,
 ) -> TensorLike:
     if isinstance(a, Number):
         dtype = pytype(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
@@ -222,8 +222,8 @@ def uniform_like(
     minval: Number = 0.0,
     maxval: Number = 1.0,
     *,
-    device: Optional[Union[str, devices.Device]] = None,
-    dtype: Optional[dtypes.dtype] = None,
+    device: str | devices.Device | None = None,
+    dtype: dtypes.dtype | None = None,
 ):
     device = devices.to_device(device) if device is not None else a.device
     dtype = dtype if dtype is not None else a.true_dtype
@@ -1090,7 +1090,7 @@ def _elementwise_unary_wrapper(
 
 # TODO Return self for bool and uint datatypes?
 @clang_ctx
-def abs(a: Union[TensorProxy, Number]):
+def abs(a: TensorProxy | Number):
     # Short-circuits for unsigned types like bool and int8
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return a
@@ -1422,7 +1422,7 @@ def trunc(a: TensorLike | Number) -> TensorLike | Number:
 
 
 @clang_ctx
-def real(a: Union[TensorProxy, Number]):
+def real(a: TensorProxy | Number):
     # Short-circuits for non-complex types
     if not dtypes.is_complex_dtype(dtypes.to_dtype(a)):
         return a
@@ -1541,22 +1541,22 @@ def eq(a, b):
 
 # NOTE This is distinct from true_divide, which also wraps prims.div, because it doesn't promote
 #   integers to floating point values
-def _c_div(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+def _c_div(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
     return _elementwise_binary_wrapper(
         a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )
 
 
 def _floor_divide_integer(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, computation_dtype
-) -> Union[TensorProxy, Number]:
+    a: TensorProxy | Number, b: TensorProxy | Number, *, computation_dtype
+) -> TensorProxy | Number:
     # Converts truncation division to floor division
 
     offset = logical_and(signbit(a) != signbit(b), fmod(a, b) != 0)
     return _c_div(a, b) - offset
 
 
-def _floor_divide_float(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+def _floor_divide_float(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
     mod = fmod(a, b)
     div = (a - mod) / b
 
@@ -1582,7 +1582,7 @@ def _floor_divide_float(a: Union[TensorProxy, Number], b: Union[TensorProxy, Num
 
 # Dispatches floor division to integer or floating point specializations
 @clang_ctx
-def floor_divide(a: Union[TensorProxy, Number], b: Union[TensorProxy, Number]) -> Union[TensorProxy, Number]:
+def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
     computation_dtype, _ = utils.elementwise_type_promotion(
         a, b, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )

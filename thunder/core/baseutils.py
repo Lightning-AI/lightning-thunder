@@ -6,7 +6,8 @@ from __future__ import annotations
 import sys
 import collections.abc
 from numbers import Number
-from typing import Any, Callable, Type, Union, Optional, Tuple, List
+from typing import Any, Type, Union, Optional, Tuple, List
+from collections.abc import Callable
 from collections.abc import Sequence
 from types import MappingProxyType
 import re
@@ -21,10 +22,7 @@ import inspect
 # by default. However, we still want to support Python 3.9, so we need to
 # conditionally set the default dataclass parameters.
 # MappingProxyType is used to make the configuration immutable.
-if sys.version_info >= (3, 10):
-    default_dataclass_params = MappingProxyType({"frozen": True, "slots": True})
-else:
-    default_dataclass_params = MappingProxyType({"frozen": True})
+default_dataclass_params = MappingProxyType({"frozen": True, "slots": True})
 
 #
 # Functions and classes (and metaclasses) related to class management

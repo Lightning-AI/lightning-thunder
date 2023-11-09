@@ -24,7 +24,7 @@ repos:
     rev: v3.11.1
     hooks:
       - id: pyupgrade
-        args: [--py39-plus]
+        args: ["--py310-plus"]
         name: Upgrade code
         exclude: "examples"
 

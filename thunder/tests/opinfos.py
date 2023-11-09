@@ -5,7 +5,8 @@ from collections import namedtuple
 from collections.abc import Sequence
 from functools import partial, wraps
 from numbers import Number
-from typing import Union, Callable, Optional, Tuple, Any
+from typing import Union, Optional, Tuple, Any
+from collections.abc import Callable
 from collections.abc import Generator, Iterable
 
 import numpy as np
@@ -314,10 +315,10 @@ class OpInfo:
 
     def __init__(
         self,
-        op: Union[Symbol, Callable],
+        op: Symbol | Callable,
         *,
-        name: Optional[str] = None,
-        devicetypes: Optional[Sequence[devices.DeviceType]] = None,
+        name: str | None = None,
+        devicetypes: Sequence[devices.DeviceType] | None = None,
         dtypes=None,
         supports_grad: bool = False,
         sample_input_generator,
@@ -540,7 +541,7 @@ def _elementwise_unary_torch(op):
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
 @wraps(torch.abs)
-def _abs_torch(x: Union[torch.Tensor, Number]):
+def _abs_torch(x: torch.Tensor | Number):
     if isinstance(x, torch.Tensor):
         if datatypes.is_unsigned_dtype(ltorch.to_thunder_dtype(x.dtype)):
             return x

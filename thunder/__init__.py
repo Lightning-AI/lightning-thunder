@@ -1,5 +1,6 @@
 from functools import wraps, partial
-from typing import Dict, Set, Optional, Any, List, Callable, Tuple, Type
+from typing import Dict, Set, Optional, Any, List, Tuple, Type
+from collections.abc import Callable
 from collections.abc import Sequence
 import os
 
@@ -107,7 +108,7 @@ pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 def compile(
     fn: Callable,
     *,
-    langctx: Optional[Any] = None,
+    langctx: Any | None = None,
     executors_list: None | Sequence[Executor] = None,
     cache_mode: None | str | CACHE_MODES = None,
     use_cudagraphs: bool = False,
@@ -135,11 +136,11 @@ def compile(
     return _fn
 
 
-def compile_data(fn) -> Optional[CompileData]:
+def compile_data(fn) -> CompileData | None:
     return getattr(fn, "_lc_cd", None)
 
 
-def compile_stats(fn) -> Optional[CompileStats]:
+def compile_stats(fn) -> CompileStats | None:
     return getattr(fn, "_lc_cs", None)
 
 

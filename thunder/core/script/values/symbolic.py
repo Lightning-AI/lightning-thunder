@@ -4,7 +4,8 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import sys
-from typing import Any, Callable, NamedTuple, TypeAlias
+from typing import Any, NamedTuple, TypeAlias
+from collections.abc import Callable
 from collections.abc import Iterable, Iterator
 
 from typing_extensions import Self

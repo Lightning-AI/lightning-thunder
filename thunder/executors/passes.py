@@ -1,4 +1,5 @@
-from typing import Dict, Any, List, Callable, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional
+from collections.abc import Callable
 from collections.abc import Sequence
 from collections import deque
 from dataclasses import replace

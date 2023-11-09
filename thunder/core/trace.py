@@ -1,6 +1,7 @@
 from contextvars import ContextVar
 from contextlib import contextmanager
-from typing import Optional, Callable, Any, Tuple, Type, Dict, List, Union
+from typing import Optional, Any, Tuple, Type, Dict, List, Union
+from collections.abc import Callable
 from collections.abc import Sequence, Hashable
 import string
 from numbers import Number
@@ -56,7 +57,7 @@ class TraceCtx:
 
         self._object_ctx: dict[int, ContextObject] = {}
 
-        self._provenance: Optional[TraceProvenance] = None
+        self._provenance: TraceProvenance | None = None
 
         # Objects related to unpacking
         # NOTE While unpacking inputs we also sometimes want to convert those inputs
@@ -132,9 +133,7 @@ class TraceCtx:
         #     place += 1
         # return "".join(s)
 
-    def _make_name(
-        self, *, prefix: Optional[str] = None, is_object_name: bool = False, obj: Optional[Any] = None
-    ) -> str:
+    def _make_name(self, *, prefix: str | None = None, is_object_name: bool = False, obj: Any | None = None) -> str:
         name: str
         while True:
             if is_object_name:
@@ -162,7 +161,7 @@ class TraceCtx:
 
     # Constructs and records new name -- or, if name is not None --
     #   just records the given name
-    def make_name(self, name: Optional[str] = None, *, prefix: Optional[str] = None) -> str:
+    def make_name(self, name: str | None = None, *, prefix: str | None = None) -> str:
         if name is not None:
             self.names.add(name)
             return name
@@ -205,7 +204,7 @@ class TraceCtx:
     def pop_scope(self) -> list:
         return self.scopes.pop()
 
-    def peek_scope(self) -> Optional[list]:
+    def peek_scope(self) -> list | None:
         if len(self.scopes) == 0:
             return None
 
@@ -433,7 +432,7 @@ def set_tracectx(ctx):
     return _tracectx.set(ctx)
 
 
-def get_tracectx() -> Optional[TraceCtx]:
+def get_tracectx() -> TraceCtx | None:
     """Gets the current trace context, returning None if there is no current trace context."""
 
     try:
@@ -451,7 +450,7 @@ def reset_tracectx(token):
     _tracectx.reset(token)
 
 
-def maybe_start_trace(fn) -> tuple[bool, Optional[Any], TraceCtx]:
+def maybe_start_trace(fn) -> tuple[bool, Any | None, TraceCtx]:
     trace = get_tracectx()
     if trace is None:
         trace = TraceCtx(fn)

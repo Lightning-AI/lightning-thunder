@@ -116,7 +116,7 @@ def verbose_error(f):
     return wrapped
 
 
-def record(delegate_to: typing.Optional[str] | typing.Callable = None):
+def record(delegate_to: str | None | typing.Callable = None):
     # Hack to allow you to to decorate with `@record` instead of `@record()`.
     if callable(delegate_to):
         return record()(delegate_to)

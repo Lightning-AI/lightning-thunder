@@ -1,13 +1,11 @@
 import dis
 import opcode
 import sys
-from typing import Callable, NewType, TypeAlias, TypeVar
+from typing import NewType, TypeAlias, TypeVar
+from collections.abc import Callable
 from collections.abc import Iterable
 
-if sys.version_info >= (3, 10):
-    from types import EllipsisType
-else:
-    EllipsisType = type(...)
+from types import EllipsisType
 
 from thunder.core.utils import FrozenDict
 

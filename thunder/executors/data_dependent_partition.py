@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import List, Set, Callable
+from typing import List, Set
+from collections.abc import Callable
 from copy import copy
 from itertools import chain
 

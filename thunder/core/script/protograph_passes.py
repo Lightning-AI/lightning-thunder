@@ -2,7 +2,8 @@ import collections
 import dataclasses
 import functools
 import itertools
-from typing import Callable, Concatenate
+from typing import Concatenate
+from collections.abc import Callable
 from collections.abc import Iterable
 
 from typing_extensions import ParamSpec

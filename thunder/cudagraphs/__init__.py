@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
+from collections.abc import Callable
 from collections.abc import Sequence
 
 import torch
@@ -11,7 +12,7 @@ from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.utils import check, default_dataclass_params, flatten_func, safe_zip
 
 
-def static_input(x: Union[torch.Tensor, torch.nn.Parameter, Any]):
+def static_input(x: torch.Tensor | torch.nn.Parameter | Any):
     """Returns a static input of the same shape as x.
 
     This is useful for creating static inputs for a CUDA graph.
@@ -50,7 +51,7 @@ def to_args_descriptor(*args):
 @lru_cache
 def make_cuda_graph(
     flat_fn: Callable, args_descr: ArgsDescriptor, static_args_mask: tuple[bool, ...]
-) -> tuple[CUDAGraph, Sequence[Union[torch.Tensor, Any]], Sequence[Union[torch.Tensor, Any]]]:
+) -> tuple[CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
     """Creates a CUDA graph from a flattened function and its arguments.
 
     Args:
@@ -90,7 +91,7 @@ def make_cuda_graph(
 
 
 class CUDAGraphExecutor:
-    def __init__(self, fn: Callable, copy_outputs: bool = False, num_constant_args: Optional[int] = None):
+    def __init__(self, fn: Callable, copy_outputs: bool = False, num_constant_args: int | None = None):
         """Creates a CUDA graph executor.
 
         Args:

@@ -9,7 +9,8 @@ from itertools import chain
 from types import ModuleType
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
+from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
+from collections.abc import Callable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils

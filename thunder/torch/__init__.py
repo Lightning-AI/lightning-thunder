@@ -5,7 +5,8 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce
 from numbers import Number
-from typing import Any, Callable, Union, Optional, Tuple
+from typing import Any, Union, Optional, Tuple
+from collections.abc import Callable
 
 import thunder.clang as clang
 import thunder.core.devices as devices
@@ -190,7 +191,7 @@ class torchsymbol:
         self,
         *torchfns,
         is_method: bool = False,
-        id: Optional[str] = None,
+        id: str | None = None,
         is_prim: bool = False,
         tags: None | list[Any] = None,
     ):
@@ -252,7 +253,7 @@ class torchsymbol:
 
 
 def size(a):
-    def fn_(idx: Optional[int] = None):
+    def fn_(idx: int | None = None):
         if idx is None:
             return a.shape
         return a.shape[idx]
@@ -500,9 +501,7 @@ def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike
 
 
 @torchsymbol(torch.zeros_like)
-def zeros_like(
-    a: TensorLike, /, *, device: Optional[DeviceLike] = None, dtype: Optional[dtypeLike] = None
-) -> TensorLike:
+def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dtypeLike | None = None) -> TensorLike:
     return full_like(a, 0, device=device, dtype=dtype)
 
 
@@ -1432,7 +1431,7 @@ def _reduction_dtypes(
     return computation_dtype, result_dtype
 
 
-def _reduction_dims(shape, dims: Optional[Sequence]) -> tuple[int, ...]:
+def _reduction_dims(shape, dims: Sequence | None) -> tuple[int, ...]:
     if isinstance(dims, int):
         dims = (dims,)
     if dims is None or len(dims) == 0:
@@ -1872,7 +1871,7 @@ def _conv_helper(
     dim: int,
     a: TensorProxy,
     weight: TensorProxy,
-    bias: Optional[TensorProxy] = None,
+    bias: TensorProxy | None = None,
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
@@ -1956,7 +1955,7 @@ def conv1d(
     a: TensorProxy,
     /,
     weight: TensorProxy,
-    bias: Optional[TensorProxy] = None,
+    bias: TensorProxy | None = None,
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int = 1,
@@ -1970,7 +1969,7 @@ def conv2d(
     a: TensorProxy,
     /,
     weight: TensorProxy,
-    bias: Optional[TensorProxy] = None,
+    bias: TensorProxy | None = None,
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int = 1,
@@ -1984,7 +1983,7 @@ def conv3d(
     a: TensorProxy,
     /,
     weight: TensorProxy,
-    bias: Optional[TensorProxy] = None,
+    bias: TensorProxy | None = None,
     stride: int | Sequence[int] = 1,
     padding: int | Sequence[int] | str = 0,
     dilation: int = 1,
@@ -2713,7 +2712,7 @@ def nll_loss_backward(
 
 
 def _input_check_scaled_dot_product_efficient_attention(
-    query: TensorLike, key: TensorLike, value: TensorLike, attn_mask: Optional[TensorLike]
+    query: TensorLike, key: TensorLike, value: TensorLike, attn_mask: TensorLike | None
 ):
     # Restrict input tensors to 4 dimension
     utils.check(
@@ -2925,7 +2924,7 @@ if torch.distributed.is_available():
     # string name, PyTorch enum value, lightning.compile enum value
     _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),)
 
-    def to_thunder_distributed_reduce_op(op: Optional[DistributedReduceOpLike]):
+    def to_thunder_distributed_reduce_op(op: DistributedReduceOpLike | None):
         if isinstance(op, str):
             for s, top, pop in _reduceop_triples:
                 if op == s:
@@ -2961,7 +2960,7 @@ if torch.distributed.is_available():
     )
     def all_gather(
         a: TensorLike,
-        group: Optional[torch.distributed.ProcessGroup] = None,
+        group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
     ) -> TensorLike | FutureTensorLike:
         group = group if group is not None else torch.distributed.new_group()
@@ -2998,7 +2997,7 @@ if torch.distributed.is_available():
     def broadcast(
         a: TensorLike,
         src: int,
-        group: Optional[torch.distributed.ProcessGroup] = None,
+        group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
     ) -> TensorLike | FutureTensorLike:
         group = group if group is not None else torch.distributed.new_group()
@@ -3011,8 +3010,8 @@ if torch.distributed.is_available():
     )
     def reduce_scatter(
         a: TensorLike,
-        op: Optional[DistributedReduceOpLike] = None,
-        group: Optional[torch.distributed.ProcessGroup] = None,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
     ) -> TensorLike | FutureTensorLike:
         op = to_thunder_distributed_reduce_op(op)
@@ -3024,7 +3023,7 @@ else:
 
     def all_gather(
         a: TensorLike,
-        group: Optional[Any] = None,
+        group: Any | None = None,
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
@@ -3033,7 +3032,7 @@ else:
     def all_reduce(
         a: TensorLike,
         op: Any,
-        group: Optional[Any] = None,
+        group: Any | None = None,
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
@@ -3041,7 +3040,7 @@ else:
     def broadcast(
         a: TensorLike,
         src: int,
-        group: Optional[Any] = None,
+        group: Any | None = None,
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
@@ -3049,7 +3048,7 @@ else:
     def reduce_scatter(
         a: TensorLike,
         op: Any,
-        group: Optional[Any] = None,
+        group: Any | None = None,
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
@@ -3090,14 +3089,14 @@ class eager_for:
         return fn
 
 
-def get_eager_implementation_for(id: prims.PrimIDs) -> Optional[Callable]:
+def get_eager_implementation_for(id: prims.PrimIDs) -> Callable | None:
     return _primid_to_impl_map.get(id, None)
 
 
 @eager_for(pids.CONVERT_ELEMENT_TYPE)
 def _convert_element_type_eager(
-    a: Union[torch.Tensor, np.ndarray, Number], dtype: Union[dtypes.dtype, type]
-) -> Union[torch.Tensor, Number]:
+    a: torch.Tensor | np.ndarray | Number, dtype: dtypes.dtype | type
+) -> torch.Tensor | Number:
     utils.check_type(a, (torch.Tensor, np.ndarray, Number))
     utils.check_type(dtype, (dtypes.dtype, type))
 
@@ -3124,12 +3123,12 @@ def _reshape_eager(a: torch.Tensor, shape: Sequence[int]) -> torch.Tensor:
 
 
 def _elementwise_binary_eager(
-    a: Union[torch.Tensor, np.ndarray, Number],
-    b: Union[torch.Tensor, np.ndarray, Number],
+    a: torch.Tensor | np.ndarray | Number,
+    b: torch.Tensor | np.ndarray | Number,
     *,
     name: str,
-    number_fn: Optional[Callable] = None,
-    torch_fn: Optional[Callable] = None,
+    number_fn: Callable | None = None,
+    torch_fn: Callable | None = None,
 ):
     utils.check_type(name, str)
     utils.check_type(a, (torch.Tensor, np.ndarray, Number))

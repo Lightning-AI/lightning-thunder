@@ -124,7 +124,7 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
 
 
 def torch_to_cudnn_dtype(lc_dtype: dtypes.dtype):
-    _torch_to_cudnn_dtype_map: dict[Union[None, torch.dtype], cudnn.data_type] = {
+    _torch_to_cudnn_dtype_map: dict[None | torch.dtype, cudnn.data_type] = {
         torch.float16: cudnn.data_type.HALF,
         torch.bfloat16: cudnn.data_type.BFLOAT16,
         torch.float32: cudnn.data_type.FLOAT,

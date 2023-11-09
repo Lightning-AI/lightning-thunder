@@ -1,6 +1,7 @@
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
+from collections.abc import Callable
 from collections.abc import Sequence
 from enum import auto, Enum
 import time
@@ -1293,7 +1294,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
         return module
 
-    def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> Optional[torch.Tensor]:
+    def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor | None:
         if not self.requires_grad:
             return None
         logits, loss = output

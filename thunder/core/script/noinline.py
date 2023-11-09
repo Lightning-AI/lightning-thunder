@@ -1,5 +1,5 @@
 from contextvars import ContextVar
-from typing import Callable
+from collections.abc import Callable
 
 
 NOINLINE_METHODS: ContextVar[set[Callable]] = ContextVar("NOINLINE_METHODS", default=set())

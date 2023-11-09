@@ -1,4 +1,5 @@
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+from collections.abc import Callable
 from enum import Enum, auto
 from collections import deque
 import time
@@ -216,7 +217,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
 
     # Translates tensors, arrays, and dtypes to lightning.compile types
     # TODO Translate NumPy dtypes
-    def translate(x: Any, *, name: Optional[str] = None) -> Any:
+    def translate(x: Any, *, name: str | None = None) -> Any:
         # NOTE Unpacking proxies
         # When we encounter a proxy, we need to make sure that it's name is the
         # same as the name that the unpack is requesting. If it's not, we need to

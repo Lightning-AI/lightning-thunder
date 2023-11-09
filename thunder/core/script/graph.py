@@ -21,17 +21,17 @@ if TYPE_CHECKING:
 GraphObject = Union["Value", "Node", "Block"]
 
 
-def assert_value(v: Union[GraphObject, None]) -> "Value":
+def assert_value(v: GraphObject | None) -> "Value":
     assert isinstance(v, Value)
     return v
 
 
-def assert_node(n: Union[GraphObject, None]) -> "Node":
+def assert_node(n: GraphObject | None) -> "Node":
     assert isinstance(n, Node)
     return n
 
 
-def assert_block(bl: Union[GraphObject, None]) -> "Block":
+def assert_block(bl: GraphObject | None) -> "Block":
     assert isinstance(bl, Block)
     return bl
 
@@ -62,11 +62,11 @@ class SourceInformation:
     col_offset: int
     end_col_offset: int
     orig_file_name: str = ""
-    source: Optional[Any] = None
+    source: Any | None = None
 
 
 class MROAwareObjectRef:  # or as they call it super
-    def __init__(self, obj: Any, start_klass: Optional[type] = None):
+    def __init__(self, obj: Any, start_klass: type | None = None):
         self.obj = obj
         self.start_klass = start_klass
 
@@ -117,10 +117,10 @@ class Value(InstrumentingBase):
         *,
         node: Optional["Node"] = None,
         block: Optional["Block"] = None,
-        nr: Optional[int] = None,
-        typ: Optional[type] = None,
+        nr: int | None = None,
+        typ: type | None = None,
         value: Any = None,
-        name: Optional[str] = None,
+        name: str | None = None,
         parent: Optional["Value"] = None,
         is_global: bool = False,
         is_const: bool = False,
@@ -142,7 +142,7 @@ class Value(InstrumentingBase):
     def resolve(self) -> tuple["Value", ...]:
         return (self,)
 
-    def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "Value":
+    def clone(self, translation_dict: dict[GraphObject, GraphObject] | None = None) -> "Value":
         # clones a value, including (recursively) parent value
         # uses translation_dict to look up parent value
         # updates translation_dict
@@ -231,7 +231,7 @@ class PhiValue(Value):
 
         return tuple(i for i in seen if not isinstance(i, PhiValue))
 
-    def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "PhiValue":
+    def clone(self, translation_dict: dict[GraphObject, GraphObject] | None = None) -> "PhiValue":
         # due to loops in the Graph, this is complicated:
         # we do not translate values or jump_sources here, but do
         # translate blocks.
@@ -254,7 +254,7 @@ class PhiValue(Value):
         )
 
     def add_missing_value(
-        self, v: Value, idx: Optional[int] = None, jump_source: Optional["Node"] = None
+        self, v: Value, idx: int | None = None, jump_source: Optional["Node"] = None
     ) -> None:  # None: append
         if idx is None:
             assert v not in self.values
@@ -294,18 +294,18 @@ class Node(InstrumentingBase):
         self,
         *,
         i: ThunderInstruction,
-        inputs: Optional[list[Value]] = None,
-        outputs: Optional[list[Value]] = None,
-        source_infos: Optional[list[SourceInformation]] = None,
+        inputs: list[Value] | None = None,
+        outputs: list[Value] | None = None,
+        source_infos: list[SourceInformation] | None = None,
     ):
         self.i = i
         self.inputs: list[Value] = inputs if inputs is not None else []
         self.outputs: list[Value] = outputs if outputs is not None else []
         self.jump_targets: list[Block] = []
         self.source_infos: list[SourceInformation] = source_infos if source_infos is not None else []
-        self.block: Optional[Block] = None
+        self.block: Block | None = None
 
-    def clone(self, translation_dict: Optional[dict[GraphObject, GraphObject]] = None) -> "Node":
+    def clone(self, translation_dict: dict[GraphObject, GraphObject] | None = None) -> "Node":
         """.block of the clone will be None if block is not in translation dict."""
         if translation_dict is None:
             translation_dict = {}
@@ -326,7 +326,7 @@ class Node(InstrumentingBase):
         translation_dict[self] = n2
         return n2
 
-    def set_jump_target(self, jt: "Block", idx: Optional[int] = None) -> None:
+    def set_jump_target(self, jt: "Block", idx: int | None = None) -> None:
         # TODO: more validation?
         # is_jump = (self.i.opname not in unconditional_jump_names) or (idx == 1) or (idx is None and self.jump_targets)
         # assert is_jump
@@ -358,7 +358,7 @@ class Node(InstrumentingBase):
 # The jump targets are other blocks and are atributes of the jump instruction.
 class Block:
     def __init__(self):
-        self.jump_sources: list[Optional[Node]] = []
+        self.jump_sources: list[Node | None] = []
         self.nodes: list[Node] = []
         self.block_inputs: list[Value] = []
         self.block_outputs = OrderedSet([])
@@ -369,7 +369,7 @@ class Block:
     def __repr__(self) -> str:
         return f"{super().__repr__()[:-1]} {self}>"
 
-    def insert_node(self, n: Node, insert_after: Optional[Node] = None, insert_before: Optional[Node] = None) -> None:
+    def insert_node(self, n: Node, insert_after: Node | None = None, insert_before: Node | None = None) -> None:
         assert n.block is None
         assert (insert_after is None) != (insert_before is None), f"{insert_after=} {insert_before=}"
         to_find = insert_after or insert_before
@@ -391,7 +391,7 @@ class Block:
 # The first block (.blocks[0]) is the entry point. Other blocks are connected
 # through jump instructions.
 class Graph(InstrumentingBase):
-    def __init__(self, blocks: Optional[list[Block]] = None):
+    def __init__(self, blocks: list[Block] | None = None):
         self.blocks = [] if blocks is None else blocks[:]
 
     def __str__(self) -> str:
@@ -546,9 +546,7 @@ def insert_after(new_n: Node, n: Node) -> None:
     new_n.block = n.block
 
 
-def replace_values(
-    gr_or_bl: Union[Graph, Block], value_map: dict[Value, Value], follow_phi_values: bool = False
-) -> None:
+def replace_values(gr_or_bl: Graph | Block, value_map: dict[Value, Value], follow_phi_values: bool = False) -> None:
     ### Replacing a value:
     # - as inputs/outputs of nodes
     # - value.parent for other values
@@ -665,7 +663,7 @@ def make_dot(gr: Graph, format: str = "png", add_names: bool = False) -> "graphv
 
 
 def clone_blocks(
-    blocks_to_clone: list[Block], translation_dict: Optional[dict[GraphObject, GraphObject]] = None
+    blocks_to_clone: list[Block], translation_dict: dict[GraphObject, GraphObject] | None = None
 ) -> tuple[list[Block], dict[GraphObject, GraphObject]]:
     if translation_dict is None:
         translation_dict = {}
@@ -699,7 +697,7 @@ def _check_graph(gr: Graph) -> None:
     # some sanity checks for the values
     import collections
 
-    phi_value_refs: dict[PhiValue, list[Union[Value, tuple[Value, Optional[Node]]]]] = collections.defaultdict(list)
+    phi_value_refs: dict[PhiValue, list[Value | tuple[Value, Node | None]]] = collections.defaultdict(list)
     v: Value
     for bl in gr.blocks:
         known_values: set[Value] = set(bl.block_inputs)
@@ -753,7 +751,7 @@ def _check_graph(gr: Graph) -> None:
 
     assert not phi_value_refs, f"phi_values not found {phi_value_refs}"
 
-    jump_targets: dict[Optional[Node], set[Block]] = {}
+    jump_targets: dict[Node | None, set[Block]] = {}
     jump_targets[None] = {gr.blocks[0]}  # function entry point
 
     for bl in gr.blocks:

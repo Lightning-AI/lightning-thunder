@@ -163,7 +163,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         def foo(
             a,
             b,
-            op: Optional[torch.distributed.ReduceOp],
+            op: torch.distributed.ReduceOp | None,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
         ):
@@ -185,7 +185,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         def lc_foo(
             a,
             b,
-            op: Optional[torch.distributed.ReduceOp],
+            op: torch.distributed.ReduceOp | None,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
         ):
@@ -443,7 +443,7 @@ class PerProcessDataset(torch.utils.data.Dataset):
         num_samples: int,
         tensor_shape: Sequence[int],
         tensor_dtype: torch.dtype,
-        sample_seed: Optional[int] = None,
+        sample_seed: int | None = None,
     ):
         self._tensors = []
 
@@ -480,7 +480,7 @@ def create_per_process_dataloader(
     num_samples: int,
     tensor_shape: Sequence[int],
     tensor_dtype: torch.dtype,
-    sample_seed: Optional[int] = None,
+    sample_seed: int | None = None,
     *,
     devicetype: devices.DeviceType,
 ) -> tudata.DataLoader:

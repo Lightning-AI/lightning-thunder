@@ -4,7 +4,8 @@ import inspect
 import opcode
 import sys
 import types
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
+from collections.abc import Callable
 from collections.abc import Hashable
 from contextvars import ContextVar
 
@@ -153,7 +154,7 @@ def find_method_through_phi_parent(fn_value: Value) -> tuple[Value, list[str]]:
     return fn_value, list(attr_lookups)
 
 
-def find_and_evaluate_method_through_phi_parent(v: Value) -> Union[object, Callable]:
+def find_and_evaluate_method_through_phi_parent(v: Value) -> object | Callable:
     fn_parent_value, attr_lookups = find_method_through_phi_parent(v)
     if fn_parent_value.value is None:
         return None

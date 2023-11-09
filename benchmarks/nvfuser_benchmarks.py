@@ -9,7 +9,8 @@ import os
 import pathlib
 import textwrap
 import time
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
+from collections.abc import Callable
 import types
 
 # Note: This needs to run before `import torch`.

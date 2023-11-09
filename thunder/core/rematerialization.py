@@ -1,7 +1,8 @@
 from dataclasses import dataclass, replace
 from functools import partial
 from itertools import chain, product, takewhile
-from typing import Callable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
+from collections.abc import Callable
 from collections.abc import Sequence
 import time
 
@@ -98,7 +99,7 @@ def find_external_consumer_inputs(
 def apply_rematerialization_for_producer(
     external_producer_outputs,
     producer: BoundSymbolInterface,
-    cut: Sequence[Union[ProxyInterface, str]],
+    cut: Sequence[ProxyInterface | str],
 ) -> BoundSymbolInterface:
     """Update the producer node with the cut information.
 
@@ -128,7 +129,7 @@ def apply_rematerialization_for_producer(
 def apply_rematerialization_for_consumer(
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
-    cut: Sequence[Union[ProxyInterface, str]],
+    cut: Sequence[ProxyInterface | str],
 ) -> BoundSymbolInterface:
     """Update the consumer node with the cut information.
 
@@ -180,7 +181,7 @@ def apply_rematerialization_for_consumer(
 
 def find_filtered_producer_consumer_pairs(
     trace: TraceCtx,
-    filter_func: Optional[Callable] = None,
+    filter_func: Callable | None = None,
     *,
     proxy_to_consumers=None,
 ) -> tuple[tuple[BoundSymbolInterface, BoundSymbolInterface], ...]:
@@ -222,7 +223,7 @@ def find_cut(
     external_producer_outputs: Sequence[ProxyInterface],
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
-) -> Sequence[Union[ProxyInterface, str]]:
+) -> Sequence[ProxyInterface | str]:
     """Find the minimal cut between the producer and the consumer.
 
     Args:

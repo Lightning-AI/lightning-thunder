@@ -3,7 +3,8 @@ import os
 import sys
 from functools import wraps, singledispatchmethod, partial
 from itertools import product
-from typing import Callable, List, Optional
+from typing import List, Optional
+from collections.abc import Callable
 from collections.abc import Sequence
 
 import pytest
@@ -201,7 +202,7 @@ def _instantiate_executor_test_template(
     executor: TestExecutor,
     device_or_devices: devices.Device | Sequence[devices.Device],
     dtype: datatypes.dtype,
-    as_name: Optional[str] = None,
+    as_name: str | None = None,
 ) -> Callable:
     devicetype: devices.DeviceType
     device_str: str | list[str]
@@ -347,7 +348,7 @@ class instantiate:
         num_devices: int = 1,
         decorators: None | Sequence = None,
         scope=None,
-        as_name: Optional[str] = None,
+        as_name: str | None = None,
     ):
         self.executors = set(executors) if executors is not None else set(_all_test_executors())
         self.devicetypes = set(devicetypes) if devicetypes is not None else set(available_devicetypes())

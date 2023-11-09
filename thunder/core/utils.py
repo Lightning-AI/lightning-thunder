@@ -5,7 +5,8 @@ from functools import reduce, wraps
 import itertools
 from itertools import chain
 from numbers import Number
-from typing import overload, Callable, Generic, Optional, TypeVar, TYPE_CHECKING
+from typing import overload, Generic, Optional, TypeVar, TYPE_CHECKING
+from collections.abc import Callable
 from collections.abc import Iterable, Iterator, Sequence
 
 from typing_extensions import Self
@@ -643,7 +644,7 @@ def check_same_device(*args):
 # TODO Implement additional methods as needed
 class _OrderedSet(Generic[T, T1], Iterable[T]):
     # TODO: allow construction of an empty ordered set without requiring an empty sequence be specified
-    def __init__(self, args: Optional[Iterable[T | T1]] = None):
+    def __init__(self, args: Iterable[T | T1] | None = None):
         self.d = {self.canonicalize(k): None for k in args or ()}
 
     def canonicalize(self, v: T | T1) -> T:
@@ -834,8 +835,7 @@ def safe_zip(*args):
     Raises:
         ValueError: if the lengths of the arguments do not match
     """
-    if sys.version_info >= (3, 10):
-        return zip(*args, strict=True)
+    return zip(*args, strict=True)
     return _safe_zip_gen(*args)
 
 

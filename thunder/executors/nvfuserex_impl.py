@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Callable, Set, Tuple, Type
+from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
+from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
 import time
@@ -140,7 +141,7 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
     return devicetype_supported and dtype_supported and rank_supported
 
 
-def is_supported_tensor_or_number(a: Union[TensorProxy, Number]) -> bool:
+def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
     if isinstance(a, Number):
         return True
 
@@ -638,13 +639,13 @@ def register_supported(id: Hashable, translator: Callable, checker: Callable):
 #
 
 
-def _convert_element_type_check(a: Union[TensorProxy, Number], dtype: Union[type, dtypes.dtype]) -> bool:
+def _convert_element_type_check(a: TensorProxy | Number, dtype: type | dtypes.dtype) -> bool:
     return is_supported_tensor_or_number(a) and is_supported_dtype(dtype)
 
 
 # TODO Review conversion of numbers vs. tensors
 def convert_element_type(
-    a: Union[TensorProxy, Number], dtype: Union[type, dtypes.dtype], *, fd: FusionDefinition, lc_to_nv_map: dict
+    a: TensorProxy | Number, dtype: type | dtypes.dtype, *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvdtype = lcdtype_to_nvdtype(dtype)
@@ -962,7 +963,7 @@ register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
 
 # NOTE nvFuser's slice operation only supports all strides == 1
 def _slice_check(
-    a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: Optional[Sequence[int]] = None
+    a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: Sequence[int] | None = None
 ) -> bool:
     if nv_version < LooseVersion("0.0.6"):
         return False
@@ -984,7 +985,7 @@ def nv_slice(
     /,
     start_indices: Sequence[int],
     end_indices: Sequence[int],
-    strides: Optional[Sequence[int]] = None,
+    strides: Sequence[int] | None = None,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
@@ -1066,7 +1067,7 @@ def nv_abs(a: Number | TensorProxy, /, *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.ABS, nv_abs, _elementwise_unary_check)
 
 
-def acos(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def acos(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = lc_to_nv_map[a]
 
     return fd.ops.acos(nva)
@@ -1075,7 +1076,7 @@ def acos(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.ACOS, acos, _elementwise_unary_check)
 
 
-def acosh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def acosh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.acosh(nva)
@@ -1084,7 +1085,7 @@ def acosh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.ACOSH, acosh, _elementwise_unary_check)
 
 
-def asin(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def asin(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.asin(nva)
@@ -1093,7 +1094,7 @@ def asin(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.ASIN, asin, _elementwise_unary_check)
 
 
-def asinh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def asinh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.asinh(nva)
@@ -1102,7 +1103,7 @@ def asinh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.ASINH, asinh, _elementwise_unary_check)
 
 
-def atan(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def atan(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.atan(nva)
@@ -1111,7 +1112,7 @@ def atan(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.ATAN, atan, _elementwise_unary_check)
 
 
-def atanh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def atanh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.atanh(nva)
@@ -1120,7 +1121,7 @@ def atanh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.ATANH, atanh, _elementwise_unary_check)
 
 
-def bitwise_not(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def bitwise_not(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.bitwise_not(nva)
@@ -1129,7 +1130,7 @@ def bitwise_not(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv
 register_supported(PrimIDs.BITWISE_NOT, bitwise_not, _elementwise_unary_check)
 
 
-def ceil(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def ceil(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.ceil(nva)
@@ -1138,7 +1139,7 @@ def ceil(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.CEIL, ceil, _elementwise_unary_check)
 
 
-def cos(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def cos(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.cos(nva)
@@ -1147,7 +1148,7 @@ def cos(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.COS, cos, _elementwise_unary_check)
 
 
-def cosh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def cosh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.cosh(nva)
@@ -1156,7 +1157,7 @@ def cosh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.COSH, cosh, _elementwise_unary_check)
 
 
-def erf(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def erf(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.erf(nva)
@@ -1165,7 +1166,7 @@ def erf(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.ERF, erf, _elementwise_unary_check)
 
 
-def erfc(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def erfc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.erfc(nva)
@@ -1174,7 +1175,7 @@ def erfc(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.ERFC, erfc, _elementwise_unary_check)
 
 
-def erfcinv(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def erfcinv(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.erfcinv(nva)
@@ -1183,7 +1184,7 @@ def erfcinv(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map
 register_supported(PrimIDs.ERFCINV, erfcinv, _elementwise_unary_check)
 
 
-def erfinv(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def erfinv(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.erfinv(nva)
@@ -1192,7 +1193,7 @@ def erfinv(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map:
 register_supported(PrimIDs.ERFINV, erfinv, _elementwise_unary_check)
 
 
-def exp(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def exp(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.exp(nva)
@@ -1201,7 +1202,7 @@ def exp(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.EXP, exp, _elementwise_unary_check)
 
 
-def exp2(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def exp2(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.exp2(nva)
@@ -1210,7 +1211,7 @@ def exp2(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.EXP2, exp2, _elementwise_unary_check)
 
 
-def expm1(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def expm1(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.expm1(nva)
@@ -1219,7 +1220,7 @@ def expm1(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.EXPM1, expm1, _elementwise_unary_check)
 
 
-def floor(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def floor(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.floor(nva)
@@ -1228,7 +1229,7 @@ def floor(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.FLOOR, floor, _elementwise_unary_check)
 
 
-def isfinite(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def isfinite(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.isfinite(nva)
@@ -1237,7 +1238,7 @@ def isfinite(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_ma
 register_supported(PrimIDs.ISFINITE, isfinite, _elementwise_unary_check)
 
 
-def lgamma(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def lgamma(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.lgamma(nva)
@@ -1246,7 +1247,7 @@ def lgamma(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map:
 register_supported(PrimIDs.LGAMMA, lgamma, _elementwise_unary_check)
 
 
-def log(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def log(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.log(nva)
@@ -1255,7 +1256,7 @@ def log(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.LOG, log, _elementwise_unary_check)
 
 
-def log10(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def log10(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.log10(nva)
@@ -1264,7 +1265,7 @@ def log10(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.LOG10, log10, _elementwise_unary_check)
 
 
-def log1p(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def log1p(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.log1p(nva)
@@ -1273,7 +1274,7 @@ def log1p(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.LOG1P, log1p, _elementwise_unary_check)
 
 
-def log2(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def log2(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.log2(nva)
@@ -1289,7 +1290,7 @@ register_supported(PrimIDs.LOG2, log2, _elementwise_unary_check)
 # register_supported(PrimIDs.NDTRI, ndtri, _elementwise_unary_check)
 
 
-def neg(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def neg(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.neg(nva)
@@ -1298,7 +1299,7 @@ def neg(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.NEG, neg, _elementwise_unary_check)
 
 
-def real(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def real(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.real(nva)
@@ -1307,7 +1308,7 @@ def real(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.REAL, real, _elementwise_unary_check)
 
 
-def reciprocal(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def reciprocal(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.reciprocal(nva)
@@ -1317,7 +1318,7 @@ register_supported(PrimIDs.RECIPROCAL, reciprocal, _elementwise_unary_check)
 
 
 # NOTE nv_round to avoid a name conflict with the builtin round
-def nv_round(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def nv_round(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.round(nva)
@@ -1326,7 +1327,7 @@ def nv_round(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_ma
 register_supported(PrimIDs.ROUND, nv_round, _elementwise_unary_check)
 
 
-def rsqrt(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def rsqrt(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.rsqrt(nva)
@@ -1335,7 +1336,7 @@ def rsqrt(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: 
 register_supported(PrimIDs.RSQRT, rsqrt, _elementwise_unary_check)
 
 
-def sign(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def sign(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.sign(nva)
@@ -1344,7 +1345,7 @@ def sign(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.SIGN, sign, _elementwise_unary_check)
 
 
-def signbit(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def signbit(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.signbit(nva)
@@ -1353,7 +1354,7 @@ def signbit(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map
 register_supported(PrimIDs.SIGNBIT, signbit, _elementwise_unary_check)
 
 
-def sin(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def sin(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.sin(nva)
@@ -1362,7 +1363,7 @@ def sin(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.SIN, sin, _elementwise_unary_check)
 
 
-def sinh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def sinh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.sinh(nva)
@@ -1371,7 +1372,7 @@ def sinh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.SINH, sinh, _elementwise_unary_check)
 
 
-def sqrt(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def sqrt(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.sqrt(nva)
@@ -1380,7 +1381,7 @@ def sqrt(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.SQRT, sqrt, _elementwise_unary_check)
 
 
-def tan(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def tan(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.tan(nva)
@@ -1389,7 +1390,7 @@ def tan(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: di
 register_supported(PrimIDs.TAN, tan, _elementwise_unary_check)
 
 
-def tanh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def tanh(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.tanh(nva)
@@ -1398,7 +1399,7 @@ def tanh(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: d
 register_supported(PrimIDs.TANH, tanh, _elementwise_unary_check)
 
 
-def trunc(a: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def trunc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
     return fd.ops.trunc(nva)
@@ -1419,9 +1420,7 @@ def _elementwise_binary_check(a: Number | TensorProxy, b: Number | TensorProxy) 
 
 # TODO Generalize to use an elementwise binary helper or factory?
 # TODO Convert Python numbers to constants?
-def _add(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def _add(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1431,9 +1430,7 @@ def _add(
 register_supported(PrimIDs.ADD, _add, _elementwise_binary_check)
 
 
-def atan2(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def atan2(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1443,9 +1440,7 @@ def atan2(
 register_supported(PrimIDs.ATAN2, atan2, _elementwise_binary_check)
 
 
-def bitwise_and(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def bitwise_and(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1455,9 +1450,7 @@ def bitwise_and(
 register_supported(PrimIDs.BITWISE_AND, bitwise_and, _elementwise_binary_check)
 
 
-def bitwise_or(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def bitwise_or(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1467,9 +1460,7 @@ def bitwise_or(
 register_supported(PrimIDs.BITWISE_OR, bitwise_or, _elementwise_binary_check)
 
 
-def bitwise_xor(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def bitwise_xor(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1481,9 +1472,7 @@ register_supported(PrimIDs.BITWISE_XOR, bitwise_xor, _elementwise_binary_check)
 
 # TODO nvFuser's div operation is not equivalent to the div primitive
 #   (mruberry) I need to investigate if nvFuser exposes a truncation division operation
-def div(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def div(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1501,9 +1490,7 @@ def div(
 register_supported(PrimIDs.DIV, div, _elementwise_binary_check)
 
 
-def eq(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def eq(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1513,9 +1500,7 @@ def eq(
 register_supported(PrimIDs.EQ, eq, _elementwise_binary_check)
 
 
-def fmod(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def fmod(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1525,9 +1510,7 @@ def fmod(
 register_supported(PrimIDs.FMOD, fmod, _elementwise_binary_check)
 
 
-def ge(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def ge(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1537,9 +1520,7 @@ def ge(
 register_supported(PrimIDs.GE, ge, _elementwise_binary_check)
 
 
-def gt(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def gt(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1549,18 +1530,14 @@ def gt(
 register_supported(PrimIDs.GT, gt, _elementwise_binary_check)
 
 
-def le(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def le(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
     return fd.ops.le(nva, nvb)
 
 
-def lt(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def lt(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1570,9 +1547,7 @@ def lt(
 register_supported(PrimIDs.LT, lt, _elementwise_binary_check)
 
 
-def mul(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def mul(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1582,9 +1557,7 @@ def mul(
 register_supported(PrimIDs.MUL, mul, _elementwise_binary_check)
 
 
-def ne(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def ne(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1594,9 +1567,7 @@ def ne(
 register_supported(PrimIDs.NE, ne, _elementwise_binary_check)
 
 
-def nextafter(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def nextafter(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1606,9 +1577,7 @@ def nextafter(
 register_supported(PrimIDs.NEXTAFTER, nextafter, _elementwise_binary_check)
 
 
-def pow(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def pow(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1618,9 +1587,7 @@ def pow(
 register_supported(PrimIDs.POW, pow, _elementwise_binary_check)
 
 
-def remainder(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def remainder(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1630,9 +1597,7 @@ def remainder(
 register_supported(PrimIDs.REMAINDER, remainder, _elementwise_binary_check)
 
 
-def sub(
-    a: Union[TensorProxy, Number], b: Union[TensorProxy, Number], *, fd: FusionDefinition, lc_to_nv_map: dict
-) -> Any:
+def sub(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
@@ -1653,9 +1618,9 @@ def _where_check(pred, a, b) -> bool:
 
 
 def where(
-    pred: Union[TensorProxy, Number],
-    a: Union[TensorProxy, Number],
-    b: Union[TensorProxy, Number],
+    pred: TensorProxy | Number,
+    a: TensorProxy | Number,
+    b: TensorProxy | Number,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,

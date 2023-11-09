@@ -3,7 +3,8 @@ import dis
 import inspect
 import sys
 import types
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
+from typing import Any, Dict, List, Optional, Tuple, Union
+from collections.abc import Callable
 from collections.abc import Hashable
 
 from thunder.core.script.graph import (
@@ -27,7 +28,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
     consts: list[Any] = []
     names: list[str] = []
 
-    def get_value(v: Value, n: Node, inpidx: Optional[int] = None) -> None:
+    def get_value(v: Value, n: Node, inpidx: int | None = None) -> None:
         if n.i.opname == "CALL_METHOD" and inpidx == 1:
             return
         if isinstance(v.value, _Undefined):
@@ -123,7 +124,7 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
     local_vars: dict[Value, int] = {}
     lv_names: OrderedSet[str] = OrderedSet()
 
-    def get_or_add_lv(v: Value, name: Optional[str] = None) -> int:
+    def get_or_add_lv(v: Value, name: str | None = None) -> int:
         idx = local_vars.get(v)
         if idx is None:
             idx = len(local_vars)
@@ -152,10 +153,10 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
 
     nodes_to_skip = set()
 
-    def store_phi_values(o: Value, o_idx: int, last_n: Optional[Node], cur_n: Optional[Node]) -> Optional[Node]:
+    def store_phi_values(o: Value, o_idx: int, last_n: Node | None, cur_n: Node | None) -> Node | None:
         phi_values_in_processing = set()
 
-        def store_phi_values_inner(o: Value, o_idx: int, last_n: Optional[Node]) -> Optional[Node]:
+        def store_phi_values_inner(o: Value, o_idx: int, last_n: Node | None) -> Node | None:
             if o in phi_values_in_processing:
                 # avoid loops
                 return last_n

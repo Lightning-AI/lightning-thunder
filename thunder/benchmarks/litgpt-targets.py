@@ -1,5 +1,6 @@
 from functools import partial
-from typing import Callable, Optional
+from typing import Optional
+from collections.abc import Callable
 from collections.abc import Sequence
 
 import torch
@@ -101,7 +102,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         gpt = GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(self.requires_grad)
         return gpt
 
-    def postprocess_for_backward(self, output: torch.Tensor) -> Optional[torch.Tensor]:
+    def postprocess_for_backward(self, output: torch.Tensor) -> torch.Tensor | None:
         if not self.requires_grad:
             return
         logits = output

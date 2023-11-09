@@ -4,7 +4,8 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import Union, Callable, Any, Tuple, Optional
+from typing import Union, Any, Tuple, Optional
+from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
 from types import ModuleType

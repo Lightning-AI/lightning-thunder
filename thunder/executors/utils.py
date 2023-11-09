@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import List, Set, Dict, Callable, Optional
+from typing import List, Set, Dict, Optional
+from collections.abc import Callable
 from itertools import chain
 from collections.abc import Sequence
 
