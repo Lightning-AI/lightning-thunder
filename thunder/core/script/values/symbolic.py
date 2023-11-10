@@ -25,7 +25,7 @@ def rotate_N(oparg: int) -> tuple[int, ...]:
 
 
 _AliasMask = tuple[int | None, ...]
-ALIAS_OPCODES = FrozenDict[str, Callable[[int], _AliasMask]](
+ALIAS_OPCODES = FrozenDict[str, _AliasMask | Callable[[int], _AliasMask]](
     parse.fill_ellipses(
         #
         # Stack manipulation
@@ -43,7 +43,7 @@ ALIAS_OPCODES = FrozenDict[str, Callable[[int], _AliasMask]](
         LIST_EXTEND=...,
         DICT_MERGE=...,
         DICT_UPDATE=...,
-        MAP_ADD=(-3),
+        MAP_ADD=(-3,),
         COPY_DICT_WITHOUT_KEYS=(-2, None),  #           A,B         -> A,C  (I am unsure...)
         #
         # Misc.
