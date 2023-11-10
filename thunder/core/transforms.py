@@ -2416,9 +2416,7 @@ backward_impls = {
     prims.PrimIDs.ABS: lambda x, g: g * prims.sign(x),
     prims.PrimIDs.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
-    # Duplicates are not allowed in the backward_impls
-    # Therefore, we multiply the gradient by 1.0 to make it a different tensor
-    prims.PrimIDs.ADD: lambda g: (1.0 * g, 1.0 * g),
+    prims.PrimIDs.ADD: lambda g: (g, g),
     prims.PrimIDs.ASIN: lambda x, g: g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ASINH: lambda x, g: g * prims.rsqrt(1.0 + x * x),
     prims.PrimIDs.ATAN: lambda x, g: g / (1.0 + x * x),
@@ -2451,7 +2449,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.NEG: lambda g: -g,
-    prims.PrimIDs.FMOD: lambda x, y, g: (1.0 * g, -g * prims.trunc(x / y)),
+    prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
 }
 
 
