@@ -4211,24 +4211,13 @@ var_mean_opinfo = OpInfo(
     # Complex var is not supported yet
     dtypes=(datatypes.floating,),
     test_directives=(
-        # bfloat16 on CPU has accuracy things
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # PyTorch doesn't support float16 and bfloat16 on CUDA
+        # TODO FIXME nvFuser fails to compile var_mean for these tests
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/1438
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16, datatypes.bfloat16),
-            devicetypes=(devices.DeviceType.CUDA,),
-        ),
-        # TODO Restore this test -- what's going on here?
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_phantom_grad_vs_torch_consistency",
+            executors=("nvfuser",),
         ),
     ),
 )

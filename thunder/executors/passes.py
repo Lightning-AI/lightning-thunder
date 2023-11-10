@@ -10,7 +10,7 @@ import time
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as cutils
-from thunder.core.utils import ProxyDict
+from thunder.core.utils import ProxyDict, check
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
@@ -28,15 +28,20 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     swapmap: dict[Variable, Proxy] = {}
 
     def update_swapmap_(original: BoundSymbol, new_output: Any) -> None:
-        flats, _ = tree_flatten(new_output)
-        flats = tuple(f for f in flats if isinstance(f, Proxy))
+        new_flat_outs, _ = tree_flatten(new_output)
 
-        for o, no in zip(original.flat_proxy_outs, flats):
-            vo = variableify(o)
-            vno = variableify(no)
-            if vo == vno:
-                continue
-            swapmap[vno] = o
+        for o, no in zip(original._flat_outs, new_flat_outs):
+            if isinstance(o, Proxy):
+                check(
+                    isinstance(no, Proxy),
+                    lambda: f"Expected an execution transform to produce outputs with the same type, but found {type(o)} and {type(no)}",
+                )
+
+                vo = variableify(o)
+                vno = variableify(no)
+                if vo == vno:
+                    continue
+                swapmap[vno] = o
 
     # TODO Consider using an enum for this function's return values
     # Tries to find an executor for the BoundSymbol
