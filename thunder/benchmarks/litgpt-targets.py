@@ -9,8 +9,8 @@ import thunder
 import thunder.torch as ltorch
 from thunder.benchmarks import (
     run_benchmark,
-    default_torch_executor,
-    default_torch_compile_executor,
+    torch_executor,
+    torch_compile_executor,
     default_thunder_dynamic_strides_executor_no_grad,
     default_thunder_cudnn_executor,
     Benchmark,
@@ -118,10 +118,10 @@ if __name__ == "__main__":
         b = LitGPTBenchmark(config, dtype=torch.bfloat16, requires_grad=False)
 
         print(f"torch {name}")
-        run_benchmark(b, default_torch_executor)
+        run_benchmark(b, torch_executor)
 
         print(f"torch.compile {name}")
-        run_benchmark(b, default_torch_compile_executor)
+        run_benchmark(b, torch_compile_executor)
 
         print(f"thunder {name}")
         run_benchmark(b, default_thunder_dynamic_strides_executor_no_grad)
