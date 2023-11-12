@@ -665,6 +665,44 @@ def test_multiple_output_vjp(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_make_aug_forward_and_backward(executor, device, _):
+    from thunder.core.vjp_utils import make_aug_forward_and_backward
+    from thunder.core.prims import mul
+
+    def fun(a, b):
+        return mul(a, b)
+
+    @executor.make_callable
+    def expected_aug_fw(a, b):
+        return fun(a, b), (a, b)
+
+    @executor.make_callable
+    def fun_bw(a, b, g):
+        return {"a": g * b, "b": g * a}
+
+    x = torch.tensor(2.0, device=device)
+    y = torch.tensor(3.0, device=device)
+    v = torch.tensor(1.5, device=device)
+
+    trace = thunder.trace()(fun, x, y)
+    mul_bsym = trace.bound_symbols[2]
+    assert mul_bsym.sym.name == "mul"
+
+    aug_fw, bw = make_aug_forward_and_backward(mul_bsym)
+    aug_fw = executor.make_callable(aug_fw)
+    actual_aug_fw, actual_saved = aug_fw(x, y)
+    expected_aug_fw, expected_saved = expected_aug_fw(x, y)
+    torch.testing.assert_close(actual_aug_fw, expected_aug_fw)
+
+    bw = executor.make_callable(bw)
+    actual_bw = bw(*actual_saved, v)
+    expected_bw = fun_bw(*expected_saved, v)
+    torch.testing.assert_close(actual_bw, expected_bw)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_torch_autograd_function(executor, device, _):
     from thunder.clang import cos, sin
     from thunder.executors.torch_autograd import thunder_backward
