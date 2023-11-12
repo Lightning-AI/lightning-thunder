@@ -39,10 +39,9 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
         model = torch.compile(model, fullgraph=True, mode="reduce-overhead", dynamic=dynamic)
     elif compile == "thunder":
         import thunder
-        from thunder.executors.utils import Executor
 
-        executors = [Executor.TORCH]
-        executors = [Executor.NVFUSER] + executors
+        executors = [thunder.pytorch_executor]
+        executors = [thunder.nvfuser_executor] + executors
         model = thunder.compile(model, use_cudagraphs=False, executors_list=executors)
         model.max_seq_length = og_model.max_seq_length
     elif compile != "eager":

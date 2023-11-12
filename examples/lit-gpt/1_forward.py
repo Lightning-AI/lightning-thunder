@@ -30,10 +30,9 @@ def main(name: str = "open_llama_7b", num_samples: int = 10, compile: str = "eag
         model = torch.compile(model, fullgraph=True)  # , mode="reduce-overhead")
     elif compile == "thunder":
         import thunder
-        from thunder.executors.utils import Executor
 
-        executors = [Executor.TORCH]
-        executors = [Executor.NVFUSER] + executors
+        executors = [thunder.pytorch_executor]
+        executors = [thunder.nvfuser_executor] + executors
         model = thunder.compile(
             model, disable_torch_autograd_support=True, use_cudagraphs=False, executors_list=executors
         )

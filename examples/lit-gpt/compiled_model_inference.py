@@ -100,10 +100,9 @@ def main(
         model = torch.compile(model, fullgraph=True, mode="reduce-overhead")
     elif compile == "thunder":
         import thunder
-        from thunder.executors.utils import Executor
 
-        executors = [Executor.TORCH]
-        executors = [Executor.NVFUSER] + executors
+        executors = [thunder.pytorch_executor]
+        executors = [thunder.nvfuser_executor] + executors
         model = thunder.compile(
             og_model, disable_torch_autograd_support=True, use_cudagraphs=True, executors_list=executors
         )
