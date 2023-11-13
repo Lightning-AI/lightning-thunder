@@ -25,7 +25,7 @@ from thunder.core.script.graph import (
 from thunder.core.script.instrumentation import record
 from thunder.core.script import parse, values
 from thunder.core.script.protograph import ProtoBlock, ProtoGraph
-from thunder.core.script.protograph_passes import _get_missing_transitive, apply_protograph_passes, check_idempotent
+from thunder.core.script.protograph_passes import apply_protograph_passes, check_idempotent
 from thunder.core.script.python_ir_data import get_instruction, SUPPORTS_PREPROCESSING
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
@@ -170,7 +170,7 @@ def _bind_to_graph(
     del func
     # End live inspection region.
     # =========================================================================
-    assert not (missing_transitive := _get_missing_transitive(proto_graph)), missing_transitive
+    assert proto_graph is proto_graph.link()
     proto_graph, _ = _prune_epilogues(proto_graph)
     blocks = {protoblock: Block() for protoblock in proto_graph}
     blocks[proto_graph.root].jump_sources.append(None)
@@ -178,7 +178,8 @@ def _bind_to_graph(
     # Block inputs require special handling since we may need to create `PhiValue`s.
     input_conversions = {}
     for protoblock, block in blocks.items():
-        for key, abstract_value in protoblock.begin_state:
+        for key, abstract_value in protoblock.flow.begin_state:
+            abstract_value = abstract_value.identity
             if protoblock is proto_graph.root:
                 value = get_initial_value(key, block=block)
                 if key.scope == parse.VariableScope.LOCAL and value.value is not NULL:
@@ -196,6 +197,7 @@ def _bind_to_graph(
     convert_cache = {}
 
     def convert(value: values.AbstractValue, protoblock: ProtoBlock, block: Block) -> Value:
+        value = value.identity
         v = convert_cache.get((value, protoblock))
         if v is not None:
             if (
@@ -213,7 +215,7 @@ def _bind_to_graph(
 
             if isinstance(value, values.NonPyObject):
                 assert value.tag == values.NonPyObject.Tag.MISSING
-                return Value(value=NULL)
+                return Value(value=NULL, block=block)
 
             elif isinstance(value, (values.IntermediateValue, values.CompositeValue, values.AbstractPhiValue)):
                 # For now we discard any information and just treat them as opaque.
@@ -230,7 +232,7 @@ def _bind_to_graph(
         return v
 
     def make_nodes(protoblock: ProtoBlock, block: Block) -> Iterable[Node]:
-        for instruction, node_flow in protoblock.node_flow:
+        for instruction, node_flow in protoblock.flow.materialized.items():
             node = Node(
                 i=instruction,
                 inputs=[convert(v, protoblock, block) for v in node_flow.inputs],
@@ -288,23 +290,25 @@ def _bind_to_graph(
     for protoblock, block in blocks.items():
         block_values = {
             k: v
-            for k, abstract_v in protoblock.begin_state
+            for k, abstract_v in protoblock.flow.begin_state
             if isinstance(v := convert(abstract_v, protoblock, block), PhiValue)
         }
 
         block.block_inputs = list(OrderedSet(block_values.values()))
         for parent in proto_graph.parents[protoblock]:
-            parent_state = dict(parent.end_state)
+            parent_state = dict(parent.flow.end_state)
             for key, sink in block_values.items():
                 source = convert(
-                    parent_state.get(key, values.NonPyObject(values.NonPyObject.Tag.MISSING)), parent, block=None
+                    parent_state.get(key, values.NonPyObject(values.NonPyObject.Tag.MISSING)),
+                    parent,
+                    block=blocks[parent],
                 )
                 if source.value is not NULL and source not in sink.values:
                     sink.add_missing_value(v=source, jump_source=blocks[parent].nodes[-1])
 
     # Third pass: specify block outputs once we know which Values are passed to another Block.
     for protoblock, block in blocks.items():
-        outputs = (convert(abstract_value, protoblock, block) for k, abstract_value in protoblock.end_state)
+        outputs = (convert(abstract_value, protoblock, block) for k, abstract_value in protoblock.flow.end_state)
         block.block_outputs.update(v for v in outputs if v.phi_values)
 
     param_keys = tuple(parse.VariableKey(p, parse.VariableScope.LOCAL) for p in arg_ordered_parameters)

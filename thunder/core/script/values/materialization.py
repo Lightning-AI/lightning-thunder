@@ -5,8 +5,7 @@ import functools
 import itertools
 from types import MappingProxyType
 from typing import Literal, TypeVar
-from collections.abc import Callable
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator
 
 from thunder.core.script import parse
 from thunder.core.script.values import base, composite, symbolic
@@ -166,4 +165,6 @@ class IntraBlockFlow:
         begin = ConcreteState({k: base.substitute_value(v, replace_map_view) for k, v in self._begin.items()})
 
         # TODO(robieta): Check if a value is only present in `materialized` and error.
-        return dataclasses.replace(self, _symbolic=new_symbolic, _begin=begin)
+        if self._symbolic != new_symbolic or self._begin != begin:
+            return dataclasses.replace(self, _symbolic=new_symbolic, _begin=begin)
+        return None

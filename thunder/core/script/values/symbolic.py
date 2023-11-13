@@ -98,7 +98,7 @@ class ConstRef(NamedTuple):
     identifier: Any
 
 
-@dataclasses.dataclass(frozen=True, eq=False)
+@dataclasses.dataclass(frozen=True, eq=True)
 class Symbolic:
     """Represents abstract flow immediately after functionalization."""
 
