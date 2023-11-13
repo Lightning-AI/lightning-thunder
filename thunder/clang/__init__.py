@@ -1644,6 +1644,16 @@ def lt(a, b):
 
 
 @clang_ctx
+def maximum(a, b):
+    return _elementwise_binary_wrapper(a, b, prim=prims.maximum)
+
+
+@clang_ctx
+def minimum(a, b):
+    return _elementwise_binary_wrapper(a, b, prim=prims.minimum)
+
+
+@clang_ctx
 def mul(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.mul)
 

@@ -1204,6 +1204,16 @@ def lt(a, b, /):
     return clang.lt(a, b)
 
 
+@torchsymbol(torch.maximum, is_method=True)
+def maximum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    return clang.maximum(a, b)
+
+
+@torchsymbol(torch.minimum, is_method=True)
+def minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    return clang.minimum(a, b)
+
+
 # NOTE This is just an alias for proxies to find operation defined for the modulus
 #   operator
 # TODO Review this alias

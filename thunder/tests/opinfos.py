@@ -1972,6 +1972,20 @@ lt_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(lt_opinfo)
 
+maximum_opinfo = OpInfo(
+    clang.maximum,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    torch_reference=torch.maximum,
+)
+elementwise_binary_ops.append(maximum_opinfo)
+
+minimum_opinfo = OpInfo(
+    clang.minimum,
+    sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
+    torch_reference=torch.minimum,
+)
+elementwise_binary_ops.append(minimum_opinfo)
+
 mul_opinfo = OpInfo(
     clang.mul,
     supports_grad=True,
