@@ -249,3 +249,16 @@ def exotic_jumps(x, y, f):
 
 def test_exotic_jumps():
     thunder.compile(exotic_jumps)
+
+
+__OPAQUE_CONDITION = True
+__OPAQUE_ELSE = None
+
+
+def global_unused():
+    for _ in [None]:
+        x = int.bit_count if __OPAQUE_CONDITION else __OPAQUE_ELSE
+
+
+def test_global_unused():
+    tom = thunder.compile(global_unused)

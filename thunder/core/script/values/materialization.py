@@ -142,7 +142,8 @@ class IntraBlockFlow:
 
     @property
     def uses(self) -> OrderedSet[parse.VariableKey]:
-        return OrderedSet(itertools.chain(*(s.uses for _, s in self.symbolic)))
+        assignment = (v for k, v in self._end.items() if isinstance(v, parse.VariableKey) and not v.is_const and k != v)
+        return OrderedSet(itertools.chain(*(s.uses for _, s in self.symbolic), assignment))
 
     _Computed = tuple[
         FrozenDict[parse.ThunderInstruction, Materialized],
