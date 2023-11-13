@@ -287,7 +287,7 @@ def test_litgpt_variants(name, device):
     for param1, param2 in zip(reference.parameters(), tom.parameters()):
         assert param1 is not param2
         assert param1.grad is not None
-        torch.testing.assert_close(param1.grad, param2.grad, rtol=1e24, atol=1e-2)
+        torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
 @skipif_not_python_3_10
