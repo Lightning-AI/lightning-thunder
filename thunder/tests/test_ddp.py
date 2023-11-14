@@ -153,6 +153,40 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         ):
             thunder.compile(DDP(model, device_ids=[self.rank]))
 
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_sort_waits(self, executor):
+        from thunder.distributed.utils import sort_waits
+
+        _executor = executors_map[executor]
+
+        def func(
+            a,
+            b,
+            process_group: torch.distributed.ProcessGroup,
+        ):
+            d = ltorch.all_reduce(a, group=process_group, async_op=True).wait()
+            c = a + b
+            e = c @ b + a
+            return e, d
+
+        cfunc = thunder.compile(func, executors_list=_executor.executors_list(), disable_preprocessing=True)
+        device = f"cuda:{self.rank}"
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        process_group = c10d.new_group()
+        _ = cfunc(a, b, process_group)
+        execution_trace = thunder.last_traces(cfunc)[-2]
+        sorted_execution_trace = sort_waits(execution_trace)
+        # assert that there is at least one node between the all_reduce and wait
+        all_reduce_idx = sorted_execution_trace.bound_symbols.index(
+            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", execution_trace.bound_symbols))
+        )
+        wait_idx = sorted_execution_trace.bound_symbols.index(
+            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", execution_trace.bound_symbols))
+        )
+        self.assertGreater(wait_idx - all_reduce_idx, 1)
+        self.assertEqual(wait_idx, len(sorted_execution_trace.bound_symbols) - 2)
+
     # TODO(crcrpar): Mandate multiple GPUs so that the timing of collectives matters especially for
     # nvfuser executor.
     @common_utils.parametrize("executor", tuple(executors_map.keys()))

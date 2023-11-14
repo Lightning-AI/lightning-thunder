@@ -46,7 +46,7 @@ def sort_data_parallel_syncs(primal_trace):
 
 def sort_waits(execution_trace):
     """
-    Sorts the wait_helper nodes in the execution trace to be as far from the
+    Sorts the wait_prim_impl nodes in the execution trace to be as far from the
     communication ops as possible. This is done to overlap communication with
     computation as much as possible.
 
@@ -56,17 +56,23 @@ def sort_waits(execution_trace):
     Returns:
         TraceCtx: The sorted execution trace.
     """
+    from thunder.executors.torchex import (
+        wait_prim_impl,
+        reduce_scatter_prim_impl,
+        all_reduce_prim_impl,
+        all_gather_prim_impl,
+    )
 
     order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
 
     def prefer_comm_over_other_over_wait(eligible_nodes: list[Node]) -> int:
         # Prefer communication ops over other nodes and prefer other
-        # nodes over "wait_helper"
+        # nodes over "wait_prim_impl"
         def key(node: Node) -> int:
-            match node.bsym.sym.name:
-                case ("wait_helper"):
+            match node.bsym.sym.id:
+                case (wait_prim_impl.id):
                     return len(order_in_trace)
-                case ("reduce_scatter_prim_helper" | "all_reduce_prim_helper" | "all_gather_prim_helper"):
+                case (reduce_scatter_prim_impl.id | all_reduce_prim_impl.id | all_gather_prim_impl.id):
                     # Prefer larger communication ops over smaller ones
                     return -node.bsym.args[0].numel
                 case _:
@@ -83,7 +89,7 @@ def sort_waits(execution_trace):
         lambda: "Cannot sort execution trace with del nodes",
     )
 
-    if any(bsym.sym.name == "wait_helper" for bsym in execution_trace.bound_symbols):
+    if any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
         new_execution_trace.bound_symbols = toposort_bsym_dag(
             bsym_list_to_dag(execution_trace.bound_symbols)[0],
             TOPOSORT_ORDER.TOP_DOWN,
