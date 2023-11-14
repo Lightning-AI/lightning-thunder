@@ -12,9 +12,10 @@ from thunder.tests.lit_gpt_model import GPT
 
 
 def multinomial_num_samples_1(probs: torch.Tensor) -> torch.Tensor:
-    """Faster version of ``torch.multinomial(probs, num_samples=1)``."""
-    distribution = torch.empty_like(probs).exponential_(1)
-    return torch.argmax(probs / distribution, dim=-1, keepdim=True)
+    if torch._dynamo.is_compiling():
+        distribution = torch.empty_like(probs).exponential_(1)
+        return torch.argmax(probs / distribution, dim=-1, keepdim=True)
+    return torch.multinomial(probs, num_samples=1)
 
 
 def sample(logits: torch.Tensor, temperature: float = 1.0, top_k: Optional[int] = None):
@@ -103,9 +104,23 @@ def main(
         global generate_one_token
         generate_one_token = torch.compile(generate_one_token, mode="reduce-overhead")
     elif compile == "thunder":
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1082
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1379
-        raise NotImplementedError
+        import thunder
+
+        executors = [thunder.pytorch_executor]
+        executors = [thunder.nvfuser_executor] + executors
+        # cannot compile `generate_one_token` as with torch.compile because of
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1082#issuecomment-1797026065
+        # so instead i'm compiling its individual components
+        model = thunder.compile(og_model, disable_torch_autograd_support=True, use_cudagraphs=True, executors_list=executors)
+        model.max_seq_length = og_model.max_seq_length
+        global sample
+        sample = thunder.compile(
+            sample,
+            disable_torch_autograd_support=True,
+            # https://github.com/Lightning-AI/lightning-thunder/issues/1453
+            use_cudagraphs=False,
+            executors_list=executors,
+        )
     elif compile != "eager":
         raise ValueError(compile)
 
@@ -124,8 +139,7 @@ def main(
         fabric.print(f"Time for inference {i + 1}: {t:.02f} sec total, {tok_per_sec:.02f} tokens/sec")
         # reset the kv cache
         for block in og_model.transformer.h:
-            block.attn.kv_cache.k.zero_()
-            block.attn.kv_cache.v.zero_()
+            block.attn.kv_cache.reset_parameters()
     print(f"Best: {max(values):05f}")
     fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB")
 

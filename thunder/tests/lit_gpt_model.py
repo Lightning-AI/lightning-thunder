@@ -583,3 +583,7 @@ class KVCache(nn.Module):
         self.k = torch.index_add(self.k, 2, input_pos, k)
         self.v = torch.index_add(self.v, 2, input_pos, v)
         return self.k, self.v
+
+    def reset_parameters(self) -> None:
+        torch.nn.init.zeros_(self.k)
+        torch.nn.init.zeros_(self.v)

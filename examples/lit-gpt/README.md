@@ -8,7 +8,7 @@ Runs a single forward call with a (B=10 x T=2048) tensor:
 |-----------|--------|---------|
 | Inductor  | 1.19 s | 17.3 GB |
 | TinyLlama | 1.25 s | 18.8 GB |
-| Thunder   | 1.29 s | 16.4 GB |
+| Thunder   | 1.27 s | 16.3 GB |
 | Eager     | 1.48 s | 17.4 GB |
 
 ## [Compiled model inference](compiled_model_inference.py)
@@ -18,7 +18,7 @@ Runs the existing generation logic with the model `forward` compiled:
 | Method   | Speed        | Memory  |
 |----------|--------------|---------|
 | Inductor | 89.9 tok/sec | 13.8 GB |
-| Thunder  | 74.2 tok/sec | 13.8 GB |
+| Thunder  | 74.5 tok/sec | 13.8 GB |
 | Eager    | 47.3 tok/sec | 13.6 GB |
 
 FIXME: thunder generation is not correct
@@ -30,11 +30,11 @@ You will need to download the tokenizer data for the checkpoint. You can use htt
 Runs a customized generation logic that is compiled and a customized multinomial implementation.
 This is advantageous because `torch.multinomial(probs, num_samples=1)` is very slow. The model is also compiled:
 
-| Method    | Speed        | Memory      |
-|-----------|--------------|-------------|
-| Inductor  | 93.8 tok/sec | 13.8 GB     |
-| Thunder   | Unsupported  | Unsupported |
-| Eager     | 46.7 tok/sec | 13.6 GB     |
+| Method    | Speed        | Memory  |
+|-----------|--------------|---------|
+| Inductor  | 93.8 tok/sec | 13.8 GB |
+| Thunder   | 74.9 tok/sec | 13.8 GB |
+| Eager     | 46.7 tok/sec | 13.6 GB |
 
 ## [Training](train.py)
 
@@ -70,7 +70,7 @@ Inductor and Thunder
 ```text
 pytorch-triton==2.1.0+6e4932cda8
 torch==2.2.0.dev20231102+cu121
-thunder==d56afda7c9ad18477991487e2fbd5398942525d8
+thunder==cb80d58c2a3f26b865f364b00bdd5bde3dc84209
 nvfuser-cu121==0.1.1.dev20231030
 ```
 

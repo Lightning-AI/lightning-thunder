@@ -127,8 +127,7 @@ def main(
         fabric.print(f"Time for inference {i + 1}: {t:.02f} sec total, {tok_per_sec:.02f} tokens/sec")
         # reset the kv cache
         for block in og_model.transformer.h:
-            block.attn.kv_cache.k.zero_()
-            block.attn.kv_cache.v.zero_()
+            block.attn.kv_cache.reset_parameters()
     print(f"Best: {max(values):05f}")
     fabric.print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB")
 
