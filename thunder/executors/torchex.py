@@ -1359,6 +1359,39 @@ _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
 _register_implementation(ltorch.softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
 
+
+# Probability Distribution ops
+def _multinomial_transform(
+    input: TensorLike,
+    num_samples: int,
+    replacement: bool,
+    seed: int | None = None,
+):
+    if seed is not None:
+        input_torch_device = ltorch.to_torch_device(input.device)
+        generator = torch.Generator(input_torch_device).manual_seed(seed)
+    else:
+        generator = None
+    return multinomial_helper(input, num_samples, replacement, generator=generator)
+
+
+def _multinomial_helper_impl(
+    a: torch.Tensor,
+    num_samples: int,
+    replacement: bool = False,
+    seed: int | None = None,
+):
+    if seed is None:
+        generator = None
+    else:
+        generator = torch.Generator(a.device).manual_seed(seed)
+    return torch.multinomial(a, num_samples, replacement, generator=generator)
+
+
+multinomial_helper = ex.register_operator("multinomial_helper", like=prims.multinomial, fn=_multinomial_helper_impl)
+_register_implementation(prims.multinomial, checker=_always_executable, execution_transform=multinomial_helper)
+
+
 #
 # Distributed operations
 #

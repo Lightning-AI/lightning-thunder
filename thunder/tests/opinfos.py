@@ -5950,3 +5950,64 @@ nn_ops.append(interpolate_opinfo)
 
 
 opinfos.extend(nn_ops)
+
+
+# Ops related to Probability Distributions.
+prob_distr_ops = []
+
+
+def multinomial_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = [
+        (10),
+        (10, 10),
+    ]
+    num_samples = (1, 3, 5)
+    replacement = (True, False)
+    seed = 13
+
+    for shape, ns, r in itertools.product(shapes, num_samples, replacement):
+        weights = make(shape).abs()
+        gen = torch.Generator(device).manual_seed(seed)
+        yield SampleInput(weights, ns, r, generator=gen)
+
+
+def torch_multinomial_like(
+    a: torch.Tensor,
+    num_samples: int,
+    replacement: bool,
+    *,
+    generator: torch.Generator,
+):
+    return prims.multinomial(a, num_samples, replacement, generator.initial_seed())
+
+
+multinomial_prim_opinfo = OpInfo(
+    torch_multinomial_like,
+    name="multinomial_prim",
+    supports_grad=False,
+    sample_input_generator=multinomial_sample_generator,
+    torch_reference=torch.multinomial,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support CUDA BFloat16 multinomial
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # PyTorch does not support CPU Half multinomial
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+prob_distr_ops.append(multinomial_prim_opinfo)
+
+
+opinfos.extend(prob_distr_ops)

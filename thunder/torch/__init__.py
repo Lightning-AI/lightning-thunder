@@ -474,6 +474,39 @@ def uniform_like(
     return clang.uniform_like(a, minval, maxval, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.multinomial, is_method=True, id="torch.multinomial")
+def multinomial(
+    a: TensorLike,
+    num_samples: int,
+    replacement: bool = False,
+    *,
+    generator: torch.Generator | None = None,
+    out: TensorLike | None = None,
+) -> TensorLike:
+    utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
+
+    utils.check(
+        generator is None,
+        lambda: "Non-None generator is not supported",
+        NotImplementedError,
+    )
+
+    if generator is None:
+        seed = None
+    else:
+        # NOTE: this is not optimal in a way that our op is not
+        # equivalent to PyTorch. Generator might have been used
+        # before and the only way to re-create it is by using it's
+        # internal state. We do not model randomness just yet.
+        # NOTE: this code path is currently blocked.
+        # One needs to remove the generator check to enable it,
+        # or replace with something that better models randomness.
+        # We do not model randomness at the moment.
+        seed = generator.initial_seed()
+    samples = prims.multinomial(a, num_samples, replacement, seed)
+    return samples
+
+
 # TODO Maybe update this to return an offset of how far to advance the seed to acquire new values
 #   See https://github.com/Lightning-AI/lightning-thunder/issues/1360
 @torchsymbol(is_method=False, id="torch.uniform_philox")

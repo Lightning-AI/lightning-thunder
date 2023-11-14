@@ -62,6 +62,8 @@ class PrimIDs(Enum):
     IOTA = auto()
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
+    # Probability distribution-related ops
+    MULTINOMIAL = auto()
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
@@ -1593,6 +1595,60 @@ uniform_philox = make_prim(
     "uniform_philox",
     meta=_uniform_philox_meta,
 )
+
+
+def _multinomial_meta(
+    input: TensorProxy,
+    num_samples: int,
+    replacement: bool,
+    seed: int | None = None,
+) -> TensorProxy:
+    utils.check_type(input, TensorProxy)
+    utils.check_type(num_samples, int)
+    utils.check(pytype(replacement) is bool, f"Expected boolean {replacement=}")
+    utils.check_type(seed, (int, type(None)))
+
+    utils.check(
+        input.numel != 0,
+        lambda: f"Expected probability weights to be non-empty",
+    )
+    utils.check(
+        0 < input.ndim <= 2,
+        lambda: f"Expected {input.ndim=} to be 1 or 2",
+    )
+    utils.check(
+        isinstance(input.dtype, dtypes.floating),
+        lambda: f"Expected {input.dtype=} to be of a floating type",
+    )
+    n_categories = input.shape[-1]
+
+    utils.check(num_samples > 0, lambda: f"Expected {num_samples=} to be greater than 0")
+    utils.check(
+        bool(replacement) or (num_samples <= n_categories),
+        lambda: f"Cannot sample {num_samples} > {input.shape[-1]=} without replacement",
+    )
+
+    # TODO: PyTorch restriction. Could be removed once different ref is used.
+    max_n_categories = 2**24
+    utils.check(n_categories <= max_n_categories, lambda: f"Expected {n_categories=} to not exceed {max_n_categories}")
+
+    if seed is not None:
+        seed_lo = -0x8000_0000_0000_0000
+        seed_hi = 0xFFFF_FFFF_FFFF_FFFF
+        utils.check(seed_lo <= seed <= seed_hi, lambda: f"Expected {seed_lo} <= {seed=} <= {seed_hi}")
+
+    shape = (*input.shape[:-1], num_samples)
+
+    return TensorProxy(shape=shape, device=input.device, dtype=dtypes.int64, requires_grad=False)
+
+
+multinomial = make_prim(
+    PrimIDs.MULTINOMIAL,
+    "multinomial",
+    meta=_multinomial_meta,
+    tags=(OpTags.RANDOM_OP,),
+)
+
 
 #
 # Shape prims
