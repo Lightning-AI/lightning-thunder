@@ -5496,43 +5496,63 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     # * attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
 
     # NOTE: aten::scaled_dot_product_efficient_attention does not support broadcastable batch sizes.
-    n_head = 3
-    N = 2
+    n_head = 2
+    N = 8
+    alignment_factor = 8
 
-    # NOTE: Last dimension of inputs is divisible by alignment factor.
-    dtype_to_alignment_map = {
-        torch.float64: 8,
-        torch.float32: 4,
-        torch.bfloat16: 2,
-        torch.float16: 2,
-    }
-    L, S, E, Ev = (random.randint(1, 4) * dtype_to_alignment_map[dtype] for _ in range(4))
+    # NOTE If (6 * flash_threads) > L where flash_threads = N * n_head, then the cutlass memory efficient sdpa
+    # is prioritized over flash attention sdpa. Reference: See "priority_order" function in
+    # aten/src/ATen/native/transformers/cuda/sdp_utils.cpp
+    flash_attn_threshold = 6 * N * n_head
+    query_seq_length = (flash_attn_threshold - 32, flash_attn_threshold + 32)
 
-    # 4-dim (multiheaded) causal cases
-    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := True)
+    for L in query_seq_length:
+        is_flash_attention = L <= flash_attn_threshold
+        S = random.randint(1, 10) * alignment_factor
 
-    # test the scale factor which was added in torch 2.1
-    if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
+        # NOTE Flash attention requires the head dim be divisible by 8.
+        # If input tensors requires_grad=True and gpu is sm86 or sm89, then head dim must be less than 64.
+        if is_flash_attention:
+            E = random.randint(1, 8) * alignment_factor
+        else:
+            E = random.randint(8, 20) * alignment_factor
+
+        # NOTE Flash attention requires Ev == E.
+        if is_flash_attention:
+            Ev = E
+        else:
+            Ev = random.randint(1, 10) * alignment_factor
+
+        # 4-dim (multiheaded) causal cases
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := True, scale=0.123)
+        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
 
-    # mask cases
-    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    bool_attn_mask = make((N, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+        # Non-contiguous input tensor case
+        nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
+        nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
+        nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
+        yield SampleInput(nq, nk, nv, attn_mask := None, dropout_p := 0.0, is_causal := False)
 
-    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
-    yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+        # Test the scale factor which was added in torch 2.1
+        if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
+            q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+            yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.123)
+
+        # NOTE Flash attention sdpa does not support attn_mask argument; These cases always use memory efficient sdpa.
+        q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+        bool_attn_mask = make((N, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+        yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+
+        q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+        additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
+        yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
 
 
-# NOTE When calculating the gradient in the backwards pass, the torch executor calls
-# 'aten::_scaled_dot_product_efficient_attention' and 'aten::_scaled_dot_product_efficient_attention_backward'.
+# NOTE When calculating the gradient in the backwards pass, the torch executor calls fused sdpa functions.
 # This opinfo test creates inputs that are valid for those functions.
 grad_sdpa_opinfo = OpInfo(
     ltorch.scaled_dot_product_attention,
-    name="grad_forward_scaled_dot_product_efficient_attention",
+    name="grad_forward_scaled_dot_product_attention",
     sample_input_generator=grad_scaled_dot_product_attention_sample_generator,
     torch_reference=torch.nn.functional.scaled_dot_product_attention,
     # RuntimeError: Only fp32, half & bf16 supported at the moment

@@ -468,21 +468,24 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
 # RuntimeError: Only fp32, half & bf16 supported at the moment
 @ops(
-    (get_opinfo("grad_forward_scaled_dot_product_efficient_attention"),),
-    supported_dtypes=(dtypes.float32,),
+    (get_opinfo("grad_forward_scaled_dot_product_attention"),),
+    supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 
+        # Enforce tensor arguments are contiguous for torch reference
+        contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
+
         # query, key, value
-        grad_inputs = list(sample.args[:3])
+        grad_inputs = list(contiguous_args[:3])
         if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
             grad_inputs.append(attn_mask)
 
         # Compute vjp result using PyTorch
-        expect_out = op.torch_reference(*sample.args, **sample.kwargs)
+        expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
         v = make_tensor_like(expect_out)
         expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
 

@@ -63,6 +63,7 @@ from thunder.core.transform_common import dce
 import thunder.torch as ltorch
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 import numpy as np
 
 
