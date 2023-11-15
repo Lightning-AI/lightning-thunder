@@ -281,7 +281,12 @@ class PhiValue(Value):
         assert v_new not in self.values
         idx = self.values.index(v_old)
         self.values[idx] = v_new
-        self.jump_sources[idx] = None
+        assert (v_new.is_function_arg or v_new.is_const) or v_new.block.graph is self.block.graph  # v_old.block.graph
+        if v_new.is_function_arg or v_new.is_const:
+            # TV-TODO: this is actually dubious for constants and we should avoid it
+            self.jump_sources[idx] = None
+        else:
+            self.jump_sources[idx] = v_new.block.nodes[-1]
 
         v_old.phi_values.remove(self)
         v_new.phi_values.append(self)
@@ -414,6 +419,9 @@ class Graph(InstrumentingBase):
                     if o not in inps:  # not for inplace
                         o.block = bl
                         o.node = n
+            for o in bl.block_outputs:
+                if not (o.is_const or o.is_function_arg):
+                    o.block = bl
             for i in bl.block_inputs:
                 i.block = bl
 
@@ -482,9 +490,14 @@ class Graph(InstrumentingBase):
         graph_lines = []
         legend_lines = []
 
+        block_indices = {bl: i for i, bl in enumerate(self.blocks)}
+        block_jump_indices = {bl.nodes[-1]: i for i, bl in enumerate(self.blocks)}
+        block_jump_indices[None] = None
+
         for block in self.blocks:
             graph_lines.extend(
                 (
+                    f"Block {block_indices[block]} reached from blocks {[block_jump_indices.get(js, 'unknown') for js in block.jump_sources]}",
                     f"Block inputs: {[get_name(i) for i in block.block_inputs]}",
                     f"Block outputs: {[get_name(i) for i in block.block_outputs]}",
                 )
@@ -699,12 +712,14 @@ def _check_graph(gr: Graph) -> None:
 
     phi_value_refs: dict[PhiValue, list[Value | tuple[Value, Node | None]]] = collections.defaultdict(list)
     v: Value
+    known_nodes: set[Node] = set()
     for bl in gr.blocks:
         known_values: set[Value] = set(bl.block_inputs)
         for i in bl.block_inputs:
             for v in i.phi_values:
                 phi_value_refs[v].append(i)
         for n in bl.nodes:
+            known_nodes.add(n)
             assert n.source_infos, f"{n}({n.inputs}) does not have source infos"
             n.block = bl
             for i in n.inputs:
@@ -748,6 +763,8 @@ def _check_graph(gr: Graph) -> None:
                 del phi_value_refs[i]
             for v in i.values:
                 assert i in v.phi_values, f"phi value {repr(i)} not in phi_values of {repr(v)}"
+            for js in i.jump_sources:
+                assert js is None or js in known_nodes, f"phi value {repr(i)} jump source not found in graph {repr(js)}"
 
     assert not phi_value_refs, f"phi_values not found {phi_value_refs}"
 

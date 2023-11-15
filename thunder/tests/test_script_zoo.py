@@ -99,6 +99,7 @@ def call_to_flatten(x):
 
 @skipif_not_python_3_10
 @pytest.mark.xfail(reason="TODO(robieta, t-vi): Handle recursion during inlining.")
+@pytest.mark.skip  # seems to take > 22GB of memory on my machine...
 def test_tree_flatten():
     thunder.compile(call_to_flatten)
 

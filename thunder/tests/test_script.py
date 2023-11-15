@@ -46,6 +46,13 @@ def skipif_not_python_3_10(f):
     )(f)
 
 
+def skipif_windows(f):
+    return pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=f"has trouble on windows (e.g. memory)",
+    )(f)
+
+
 def skipif_not_CI(f):
     return pytest.mark.skipif(not IN_CI, reason=f"Not in CI.")(f)
 
@@ -133,17 +140,19 @@ def test_sequential():
 
 @skipif_not_python_3_10
 def test_thunder_compile():
-    model = torch.nn.Sequential(
+    model0 = torch.nn.Sequential(
         torch.nn.Linear(3, 5),
         torch.nn.Tanh(),
         torch.nn.Linear(5, 3),
     )
-    tom = thunder.compile(model)
+    models = [model0, torch.nn.Sequential(model0)]
+    for model in models:
+        tom = thunder.compile(model)
 
-    # several times for caching
-    a = torch.randn(2, 3)
-    for _ in range(3):
-        assert_close(model(a), tom(a))
+        # several times for caching
+        a = torch.randn(2, 3)
+        for _ in range(3):
+            assert_close(model(a), tom(a))
 
     tfn = thunder.compile(new_gelu)
     for _ in range(3):
@@ -434,6 +443,7 @@ def test_exception_source_line():
 
 
 @skipif_not_python_3_10
+@skipif_windows
 def test_nanogpt_functionalization():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig)
 
@@ -485,6 +495,7 @@ def test_functionalization_conditional():
 
 
 @skipif_not_python_3_10
+@skipif_windows
 def test_nanogpt_tom():
     m = nanogpt_model.GPT(nanogpt_model.GPTConfig(dropout=0.0))
     tom = thunder.compile(m, executors_list=torchex, disable_torch_autograd_support=True)

@@ -36,7 +36,7 @@ from thunder.core.script.parse import ThunderInstruction, JUMP_ABSOLUTE
 from thunder.core.script.python_ir_data import get_instruction, X_THUNDER_STORE_ATTR
 from thunder.torch import _torch_to_thunder_complete_map
 from thunder.core.script.noinline import NOINLINE_METHODS
-from thunder.core.utils import debug_asserts_enabled, OrderedSet
+from thunder.core.utils import debug_asserts_enabled, debug_asserts_level, OrderedSet
 
 MAX_INLINE_ITERS = 50
 
@@ -54,6 +54,8 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     #   uses in the bottom block
     # - add unconditional jump from top to bottom part
 
+    if debug_asserts_level() > 1:
+        thunder.core.script.graph.check_graph(gr)
     i = 0
     while i < len(gr.blocks) and gr.blocks[i] is not bl:
         i += 1
@@ -65,7 +67,8 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
     nbl = Block()
     nbl.nodes = bl.nodes[j:]
     del bl.nodes[j:]
-    nbl.block_outputs = bl.block_outputs
+    old_block_outputs = bl.block_outputs
+    nbl.block_outputs = OrderedSet()
     bl.block_outputs = OrderedSet()
     nbl.block_inputs = []
 
@@ -77,6 +80,7 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
         bl_jump_node.source_infos = copy.deepcopy(nbl.nodes[0].source_infos)
     bl.nodes.append(bl_jump_node)
     nbl.jump_sources.append(bl_jump_node)
+    nbl.graph = gr
     gr.blocks.insert(i + 1, nbl)
 
     potential_bl_outputs = {i for i in bl.block_inputs}
@@ -102,23 +106,32 @@ def split_block(gr: "Graph", bl: "Block", n: "Node") -> Block:
             # this adds v.parent to the value_map, so that is used
             # for the clone's parent
             get_or_create_phi(v.parent)
-            return v.clone(translation_dict=value_map)
+            v_new = v.clone(translation_dict=value_map)
+            v_new.block = nbl
+            return v_new
         raise ValueError(f"unknwn value {v}")
 
     for n in nbl.nodes:
         n.inputs = [get_or_create_phi(i) for i in n.inputs]
         for o in n.outputs:
+            o.block = nbl
             value_map[o] = o
-        # for inplace ops, we also check the outputs (e.g. FOR_ITER)
-        for idx_o, o in enumerate(n.outputs):
-            if o in potential_bl_outputs:
-                n.outputs[idx_o] = get_or_create_phi(o)
-                bl.block_outputs.add(o)
 
-    bl.block_outputs.update(nbl.block_outputs & potential_bl_outputs)
-    nbl.block_outputs = OrderedSet(
-        (get_or_create_phi(o) if o in potential_bl_outputs else o) for o in nbl.block_outputs
-    )
+    for o in old_block_outputs:
+        if o not in value_map:
+            bl.block_outputs.add(o)
+        else:
+            assert value_map[o].block is nbl or (
+                value_map[o].is_function_arg or value_map[o].is_global
+            ), f"value {repr(o)} mapped to {repr(value_map[o])} has block {gr.blocks.index(value_map[o].block)} instead of {gr.blocks.index(nbl)}"
+            nbl.block_outputs.add(value_map[o])
+            if o is not value_map[o]:
+                for pv in o.phi_values[:]:
+                    if pv.block is not nbl:
+                        pv.replace_value(o, value_map[o])
+
+    if debug_asserts_level() > 1:
+        thunder.core.script.graph.check_graph(gr)
 
     return nbl
 
@@ -173,6 +186,9 @@ class SkipInlineError(NotImplementedError):
 
 @record(delegate_to="n")
 def inline_method_call(gr: "Graph", n: "Node") -> None:
+    gr.ensure_links()
+    if debug_asserts_level() > 1:
+        thunder.core.script.graph.check_graph(gr)
     found_block = False
     for i_bl, bl in enumerate(gr.blocks):
         for i_n, n1 in enumerate(bl.nodes):
@@ -302,10 +318,18 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
         line_no=ret_node.i.line_no,
     )
     bl.nodes[-1].jump_targets = [gr1.blocks[0]]
+    assert len(gr1.blocks[0].jump_sources) == 1
     gr1.blocks[0].jump_sources = [bl.nodes[-1]]
+    for pv in gr1.blocks[0].block_inputs:
+        assert pv.jump_sources == [None]
+        pv.jump_sources = [bl.nodes[-1]]
     ret_node.jump_targets = [nbl]
     nbl.jump_sources = [ret_node if js == bl.nodes[-1] else js for js in nbl.jump_sources]
+    for pv in nbl.block_inputs:
+        pv.jump_sources = [ret_node if js == bl.nodes[-1] else js for js in pv.jump_sources]
 
+    for bl1 in gr1.blocks:
+        bl1.graph = gr
     gr.blocks[i_bl + 1 : i_bl + 1] = gr1.blocks
 
     assert len(n.outputs) == 1
@@ -313,6 +337,7 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     if n.outputs[0] in bl.block_outputs:  # it may legitimately happen that we don't use the output
         bl.block_outputs.remove(n.outputs[0])  # TODO: what with inplace!!
     bl.block_outputs.update(inp_map.values())  # Note: This includes default args
+    gr.ensure_links()
     replace_values(gr1, inp_map)
 
     # output value
@@ -321,6 +346,8 @@ def inline_method_call(gr: "Graph", n: "Node") -> None:
     (orv,) = n.outputs
     replace_values(gr, {orv: rv})
     ret_bl.block_outputs.add(rv)
+    if debug_asserts_level() > 1:
+        thunder.core.script.graph.check_graph(gr)
 
 
 def inline_submodule_calls(gr: "Graph") -> bool:
@@ -461,6 +488,8 @@ def torch_to_thunder(gr: "Graph", fallback: bool = False) -> None:
 
 
 def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
+    if debug_asserts_level() > 1:
+        thunder.core.script.graph.check_graph(gr)
     jt = bl1.nodes[-1].jump_targets
     if len(jt) != 1:
         raise RuntimeError("can only fuse blocks with deterministic connection")
@@ -475,6 +504,8 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
         if iv in bl1.block_outputs:
             replacements[i] = iv
         else:
+            if i.jump_sources == [bl1.nodes[-1]]:
+                i.jump_sources = [iv.block.nodes[-1]]
             bl1.block_inputs.append(i)
             i.block = bl1
 
@@ -485,11 +516,27 @@ def merge_two_blocks(gr: "Graph", bl1: "Block") -> None:
         for pv in o.phi_values[:]:
             if pv in replacements:
                 pv.remove_value(o)
+            else:
+                pv.jump_sources = [js if js != bl1.nodes[-1] else bl2.nodes[-1] for js in pv.jump_sources]
+
+    bl1_jump = bl1.nodes[-1]
+    bl2_jump = bl2.nodes[-1]
+
     bl1.block_outputs = OrderedSet(o for o in bl1.block_outputs if o.phi_values)
     bl1.block_outputs.update(bl2.block_outputs)
 
     bl1.nodes[-1:] = bl2.nodes
     gr.blocks.remove(bl2)
+
+    gr.ensure_links()
+
+    # fix jump sources in other blocks
+    for bl in gr.blocks:
+        for i in bl.block_inputs:
+            i.jump_sources = [(bl2_jump if js is bl1_jump else js) for js in i.jump_sources]
+
+    if debug_asserts_level() > 1:
+        thunder.core.script.graph.check_graph(gr)
 
 
 def merge_blocks_where_possible(gr: "Graph") -> None:
@@ -533,7 +580,7 @@ def find_blocks_of_for(gr: "Graph", for_block: "Block") -> list[Block]:
 
 def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
     gr.ensure_links()
-    if debug_asserts_enabled():
+    if debug_asserts_level() > 1:
         thunder.core.script.graph.check_graph(gr)
     get_iter_node = for_iter_node.inputs[0].values[0].node
     assert get_iter_node.i.opname == "GET_ITER"
@@ -663,15 +710,14 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
                 ##  - instead of looping back, point the update to the phi value of the next block (or the exit block)
                 ##  - if idx > 0: remove external (before the loop) value
                 for v, js in zip(i.values[:], i.jump_sources[:]):
-                    assert js is not None and js.block is not None
-                    if js.block not in nbls and idx_it > 0:
+                    if js is not None and js.block not in nbls and idx_it > 0:
                         i.remove_value(v)
 
     for idx_it, (fib_i, jump_sources_to_fix, fib_next, nbls) in enumerate(fixup_data):
         for idx_i, i in enumerate(fib_i.block_inputs):
-            if any((js.block in nbls) for js in i.jump_sources):
+            if any((js is not None and js.block in nbls) for js in i.jump_sources):
                 for v, js in zip(i.values[:], i.jump_sources[:]):
-                    if assert_block(assert_node(js).block) in nbls:
+                    if js is not None and assert_block(assert_node(js).block) in nbls:
                         i.remove_value(v)
                         assert_block(fib_next).block_inputs[idx_i].add_missing_value(v, jump_source=js)
                 if idx_it == 0:
@@ -693,7 +739,7 @@ def unroll_for_over_modules(gr: "Graph", for_iter_node: "Node") -> None:
 
 
 def find_and_unroll_for_loop(gr: "Graph") -> bool:
-    if debug_asserts_enabled():
+    if debug_asserts_level() > 1:
         thunder.core.script.graph.check_graph(gr)
     gr.ensure_links()
 
@@ -715,12 +761,11 @@ def find_and_unroll_for_loop(gr: "Graph") -> bool:
                     # what about more complex things? in particular enumerate, but zip, ...
                     if isinstance(iterated_module_list, (torch.nn.Sequential, torch.nn.ModuleList)):
                         thunder.core.script.passes.unroll_for_over_modules(gr, for_iter_node)
-                        if debug_asserts_enabled():
+                        if debug_asserts_level() > 1:
                             thunder.core.script.graph.check_graph(gr)
                         thunder.core.script.passes.merge_blocks_where_possible(gr)
-                        if debug_asserts_enabled():
+                        if debug_asserts_level() > 1:
                             thunder.core.script.graph.check_graph(gr)
-                        thunder.core.script.graph.check_graph(gr)
                         return True
     if debug_asserts_enabled():
         thunder.core.script.graph.check_graph(gr)
@@ -728,7 +773,7 @@ def find_and_unroll_for_loop(gr: "Graph") -> bool:
 
 
 def unroll_for_loops_and_inline_modules(gr: "Graph") -> None:
-    if debug_asserts_enabled():
+    if debug_asserts_level() > 1:
         thunder.core.script.graph.check_graph(gr)
     iterate = True
     while iterate:

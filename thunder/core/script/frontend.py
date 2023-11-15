@@ -380,6 +380,7 @@ def acquire_partial(
     #   or kwargs parameters of the function.
 
     gr = acquire_method(pfunc.func, module, mro_klass)
+    gr.ensure_links()
 
     # first we shuffle positional args to kw only if they are in the kwargs of the partial
     pos_param_names = [v.name for v in gr.local_variables_at_start[: gr.co_argcount]]
@@ -455,6 +456,7 @@ def acquire_partial(
 
     if args_for_varargs or kwargs:
         prelude = Block()
+        prelude.graph = gr
         jump_node = Node(i=parse.ThunderInstruction.make_jump_absolute(None), inputs=[], outputs=[])
         jump_node.source_infos = [
             SourceInformation(

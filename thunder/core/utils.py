@@ -27,6 +27,7 @@ __all__ = [
     # Error checking helpers
     "enable_debug_asserts",
     "debug_asserts_enabled",
+    "debug_asserts_level",
     # dtype and Python type-related functions
     "to_dtype",
     "is_boolean_dtype",
@@ -79,15 +80,29 @@ T1 = TypeVar("T1")
 #
 # Error checking helpers
 #
-_DEBUG_ASSERTS = os.environ.get("THUNDER_DEBUG_ASSERTS", "") in {"Y", "1", "y"}
+# We support multiple levels with the idea that
+#   0 is off
+#   1 enables checks for CI
+#   2 enables debugging checks that are too slow for the CI
+
+_THUNDER_DEBUG_ASSERTS = os.environ.get("THUNDER_DEBUG_ASSERTS", "")
+_DEBUG_ASSERTS = (
+    int(_THUNDER_DEBUG_ASSERTS)
+    if _THUNDER_DEBUG_ASSERTS.isnumeric()
+    else int(_THUNDER_DEBUG_ASSERTS in {"Y", "1", "y"})
+)
 
 
 def enable_debug_asserts() -> None:
     global _DEBUG_ASSERTS
-    _DEBUG_ASSERTS = True
+    _DEBUG_ASSERTS = max(_DEBUG_ASSERTS, 1)
 
 
 def debug_asserts_enabled() -> bool:
+    return _DEBUG_ASSERTS > 0
+
+
+def debug_asserts_level() -> int:
     return _DEBUG_ASSERTS
 
 
