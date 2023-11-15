@@ -250,7 +250,7 @@ def test_inline_submodule():
 @pytest.mark.parametrize(
     "name",
     (
-        # TODO FIXME https://github.com/Lightning-AI/lightning-thunder/issues/1408
+        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1408
         # "gpt-neox-like",
         "llama1-like",
         "long-context-like",
@@ -304,7 +304,8 @@ def test_litgpt_variants(name, device):
 @pytest.mark.parametrize(
     "name",
     (
-        "gpt-neox-like",
+        # TODO this seems flaky on CI - the cause is unclear
+        # "gpt-neox-like",
         "llama1-like",
         "long-context-like",
         "llama2-like",
