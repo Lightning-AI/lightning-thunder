@@ -370,7 +370,7 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> list[Region]
     # bsym can be moved to the front if all their inputs are direct region inputs
     def can_move_to_front(bsym: BoundSymbol) -> bool:
         # non proxy don't need to be checked here.
-        for x in chain(bsym._flat_args, bsym._flat_kwargs):
+        for x in bsym.flat_args:
             if not isinstance(x, Proxy):
                 continue
 
@@ -382,7 +382,7 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> list[Region]
     # when bsym has no consumer in current region, it can be safely moved to the rear
     def can_move_to_rear(bsym: BoundSymbol) -> bool:
         # check no existing bsym in region depends on current bsym
-        for out in bsym._flat_outs:
+        for out in bsym.flat_outs:
             if not isinstance(out, Proxy):
                 continue
 
@@ -407,9 +407,9 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> list[Region]
     for bsym in region.bound_symbols:
         # we look at meta operations that can be moved to the front
         if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_front(bsym):
-            # when we remove a node, we add all the bsym's _flat_outs to region_inputs
+            # when we remove a node, we add all the bsym's flat_outs to region_inputs
             front_meta_cluster.append(bsym)
-            for out in bsym._flat_outs:
+            for out in bsym.flat_outs:
                 if isinstance(out, Proxy):
                     region_inputs.add(variableify(out))
         else:
@@ -487,7 +487,7 @@ class nvFuserExecutor(FusionExecutor):
         return flattened
 
     def has_cuda_input_or_output(self, bsym: BoundSymbol) -> bool:
-        for p in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs, bsym.flat_proxy_outs):
+        for p in chain(bsym.flat_proxy_args, bsym.flat_proxy_outs):
             if isinstance(p, TensorProxy) and p.device.devicetype is DeviceType.CUDA:
                 return True
 

@@ -364,7 +364,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     # NOTE coll must be a Container of "variableified" proxies
     def has_input(self, coll) -> bool:
-        for x in chain(self._flat_args, self._flat_kwargs):
+        for x in self.flat_args:
             if not isinstance(x, Proxy):
                 continue
 
@@ -447,44 +447,26 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten(self.args)
+        return tree_flatten((self.args, self.kwargs))
 
     # TODO Rename to "flat_args"
     @functools.cached_property
-    def _flat_args(self):
+    def flat_args(self):
         flatargs, _ = self.flat_args_and_spec
         return flatargs
 
     @functools.cached_property
     def flat_proxy_args(self) -> tuple[Proxy, ...]:
-        return tuple(x for x in self._flat_args if isinstance(x, Proxy))
+        return tuple(x for x in self.flat_args if isinstance(x, Proxy))
 
     @functools.cached_property
     def flat_variableified_proxy_args(self) -> tuple[Proxy, ...]:
-        return tuple(variableify(x) for x in self._flat_args if isinstance(x, Proxy))
+        return tuple(variableify(x) for x in self.flat_args if isinstance(x, Proxy))
 
     # TODO The performance of these _var_* properties could be improved by reusing the tree spec
     @functools.cached_property
     def _var_args(self):
         return tree_map(variableify, self.args)
-
-    @functools.cached_property
-    def flat_kwargs_and_spec(self):
-        return tree_flatten(self.kwargs)
-
-    # TODO Rename to "flat_kwargs"
-    @functools.cached_property
-    def _flat_kwargs(self):
-        flatkwargs, _ = self.flat_kwargs_and_spec
-        return flatkwargs
-
-    @functools.cached_property
-    def flat_proxy_kwargs(self) -> tuple[Proxy, ...]:
-        return tuple(x for x in self._flat_kwargs if isinstance(x, Proxy))
-
-    @functools.cached_property
-    def flat_variableified_proxy_kwargs(self) -> tuple[Proxy, ...]:
-        return tuple(variableify(x) for x in self._flat_kwargs if isinstance(x, Proxy))
 
     @functools.cached_property
     def _var_kwargs(self):
@@ -495,17 +477,17 @@ class BoundSymbol(BoundSymbolInterface):
         return tree_flatten(self.output)
 
     @functools.cached_property
-    def _flat_outs(self):
+    def flat_outs(self):
         flatouts, _ = self.flat_outs_and_spec
         return flatouts
 
     @functools.cached_property
     def flat_proxy_outs(self) -> tuple[Proxy, ...]:
-        return tuple(x for x in self._flat_outs if isinstance(x, Proxy))
+        return tuple(x for x in self.flat_outs if isinstance(x, Proxy))
 
     @functools.cached_property
     def flat_variableified_proxy_outs(self) -> tuple[Proxy, ...]:
-        return tuple(variableify(x) for x in self._flat_outs if isinstance(x, Proxy))
+        return tuple(variableify(x) for x in self.flat_outs if isinstance(x, Proxy))
 
     @functools.cached_property
     def _var_output(self):
@@ -640,7 +622,7 @@ class BoundSymbol(BoundSymbolInterface):
     @functools.cached_property
     def are_all_args_constant(self):
         """Returns True if all arguments are constant (i.e. not Variables)."""
-        return not any(isinstance(arg, VariableInterface) for arg in self._flat_args)
+        return not any(isinstance(arg, VariableInterface) for arg in self.flat_args)
 
     def __repr__(self) -> str:
         return "\n".join(self.python(indent=0, print_depth=-1))

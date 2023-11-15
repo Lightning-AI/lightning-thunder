@@ -951,7 +951,7 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
 
             # Checks if the proxy was also an input (in which case this is not its producers)
             is_input: bool = False
-            for vin in chain(bsym.flat_variableified_proxy_args, bsym.flat_variableified_proxy_kwargs):
+            for vin in bsym.flat_variableified_proxy_args:
                 if vin == vout:
                     is_input = True
                     break
@@ -982,9 +982,8 @@ def consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
             continue
 
         flatargs = bsym.flat_proxy_args
-        flatkwargs = bsym.flat_proxy_kwargs
 
-        for x in chain(flatargs, flatkwargs):
+        for x in flatargs:
             consumers.append(x, bsym)
 
     return consumers
@@ -1040,7 +1039,7 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         p = trace_producers.get(proxy, None)
         if p is not None:
             result.add(p)
-            for arg in p._flat_args:
+            for arg in p.flat_args:
                 arg_name = arg.name if isinstance(arg, Proxy) else None
                 if arg_name not in map(lambda x: x.name, stop_proxies) and arg_name not in seen:
                     queue.append(arg)

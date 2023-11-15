@@ -30,7 +30,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     def update_swapmap_(original: BoundSymbol, new_output: Any) -> None:
         new_flat_outs, _ = tree_flatten(new_output)
 
-        for o, no in zip(original._flat_outs, new_flat_outs):
+        for o, no in zip(original.flat_outs, new_flat_outs):
             if isinstance(o, Proxy):
                 check(
                     isinstance(no, Proxy),
@@ -177,7 +177,7 @@ def del_last_used(trace: TraceCtx) -> TraceCtx:
             continue
 
         to_del = []
-        for x in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
+        for x in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args):
             if x in handled:
                 continue
 

@@ -2252,6 +2252,17 @@ def test_cse(executor, device, _):
     assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t7", "t8", "t9", "t10"]
 
 
+def test_symbol_flat_args():
+    from thunder.core.symbol import Symbol, BoundSymbol
+
+    def func(x, y, *, z):
+        return x * y + z
+
+    sym = Symbol(meta=func, name="func", id=0)
+    bsym = BoundSymbol(sym, args=(1, 2), kwargs={"z": 3}, output=None)
+    assert bsym.flat_args == [1, 2, 3]
+
+
 # @instantiate(
 #     dtypes=NOTHING,
 # )

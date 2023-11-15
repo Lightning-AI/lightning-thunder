@@ -138,7 +138,7 @@ def bsym_list_to_dag(
     # Adds edges between nodes
     for bsym, node in bsym_to_node_map.items():
         has_parents: bool = False
-        for inp in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
+        for inp in bsym.flat_proxy_args:
             producer = producers[inp]
             parent = bsym_to_node_map[producer]
 
@@ -159,11 +159,10 @@ def bsym_list_to_dag(
 
         has_children: bool = False
         vargs = bsym.flat_variableified_proxy_args
-        vkwargs = bsym.flat_variableified_proxy_kwargs
         for out in bsym.flat_proxy_outs:
             # Checks that the output is actually produced by this function, and not an input to it
             vout = variableify(out)
-            if vout in vargs or vout in vkwargs:
+            if vout in vargs:
                 continue
 
             children = consumers.get(out, [])
@@ -1276,7 +1275,7 @@ def grad(
 
             # The new call produces new outputs, and they need to be swapped back to the original outputs
             #   We can't edit the actual boundsymbol at this point, so we record the swap into a swapmap
-            flat_original_outs: list[Any] = bsym._flat_outs
+            flat_original_outs: list[Any] = bsym.flat_outs
             flat_fwd: list[Any]
             flat_fwd, _ = tree_flatten(fwd)
 
@@ -1319,7 +1318,7 @@ def grad(
                 if id is pids.PUT_GRAD:
                     primal: Number | TensorProxy
                     grad: Number | TensorProxy
-                    primal, grad = bsym._flat_args
+                    primal, grad = bsym.flat_args
 
                     # TODO Support autograd on numbers
                     # Filters calls to put_grad that would put a grad on a non-tensor or a tensor that doesn't require grad
@@ -1350,7 +1349,7 @@ def grad(
                 id: Hashable = bsym.sym.id
                 if id is pids.GET_GRAD:
                     primal: Number | TensorProxy
-                    (primal,) = bsym._flat_args
+                    (primal,) = bsym.flat_args
                     grad: Number | TensorProxy = bsym.output
 
                     vprimal: Variable

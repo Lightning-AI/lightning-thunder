@@ -93,7 +93,7 @@ def dce(trace: Trace) -> Trace:
             _remove_noop_subsymbols(nbsym)
 
             dced.append(nbsym)
-            for x in chain(nbsym.flat_proxy_args, nbsym.flat_proxy_kwargs):
+            for x in nbsym.flat_proxy_args:
                 needed_proxies.add(variableify(x))
 
     dcetrace = from_trace(trace)
@@ -117,7 +117,7 @@ def replace_redundant_inputs(
     for bsym in bsyms:
         # Checks if the bound symbol has redundant inputs (that need to be replaced)
         has_redundant_inputs: bool = False
-        for x in chain(bsym.flat_proxy_args, bsym.flat_proxy_kwargs):
+        for x in bsym.flat_proxy_args:
             if Variable(x) in redundant_map:
                 has_redundant_inputs = True
                 break
@@ -241,7 +241,7 @@ def cse(trace: Trace) -> Trace:
         ).rhs()
         if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
             # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
-            for src, dst in zip(bsym._flat_outs, prior_bsym._flat_outs):
+            for src, dst in zip(bsym.flat_outs, prior_bsym.flat_outs):
                 # Detects (and avoids) aliasing
                 vsrc, vdst = variableify(src), variableify(dst)
                 if vsrc == vdst:

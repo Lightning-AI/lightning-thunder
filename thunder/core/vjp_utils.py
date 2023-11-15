@@ -85,7 +85,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     backward_producers = utils.producers(backward_bsyms)
     saved_for_backward = []
     for backward_bsym in backward_bsyms:
-        for arg in chain(backward_bsym._flat_args, backward_bsym._flat_kwargs):
+        for arg in backward_bsym.flat_args:
             if not isinstance(arg, Proxy):
                 continue
             if arg not in backward_producers and variableify(arg) not in map(variableify, tree_flatten(bw_inputs)[0]):

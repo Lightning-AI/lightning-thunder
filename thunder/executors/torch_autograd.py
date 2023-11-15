@@ -267,7 +267,7 @@ if torch.distributed.is_available():
                         ]
                     )
                     return VISIT_TYPE.REPLACE
-                grads_of_bsym = tuple(t for t in bsym._flat_outs if isinstance(t, TensorProxy) and t in grad_to_future)
+                grads_of_bsym = tuple(t for t in bsym.flat_outs if isinstance(t, TensorProxy) and t in grad_to_future)
                 if len(grads_of_bsym) == 0:
                     # NOTE(crcrpar): Wouldn't `VISIT_TYPE.NOOP` be more lucid?
                     return VISIT_TYPE.INSERT_AFTER

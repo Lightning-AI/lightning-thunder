@@ -95,7 +95,7 @@ class Graph:
 
         for bsym, node in bsym_to_node_map.items():
             has_parents: bool = False
-            for inp in chain(bsym._flat_args, bsym._flat_kwargs):
+            for inp in bsym.flat_args:
                 if not isinstance(inp, Proxy):
                     continue
 
@@ -107,14 +107,12 @@ class Graph:
             if not has_parents:
                 self.roots.append(node)
 
-            for out in bsym._flat_outs:
+            for out in bsym.flat_outs:
                 if not isinstance(out, Proxy):
                     continue
 
                 # Checks that the output is actually produced by this function, and not an input to it
-                if variableify(out) in chain(
-                    (variableify(x) for x in bsym._flat_args), (variableify(x) for x in bsym._flat_kwargs)
-                ):
+                if variableify(out) in (variableify(x) for x in bsym.flat_args):
                     continue
 
                 children = consumers.get(out, [])

@@ -84,7 +84,7 @@ def find_external_consumer_inputs(
         Tuple[ProxyInterface, ...]: Consumer's inputs that must be included in
         the input of the consumer.
     """
-    all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
+    all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols))
     external_consumer_inputs_names = tuple(
         sorted(
             {x.name for x in consumer.args}
@@ -116,9 +116,9 @@ def apply_rematerialization_for_producer(
     new_producer_output_names = tuple(x.name for x in external_producer_outputs) + cut_names
     # Remove the producer's inputs from the new producer's output.
     new_producer_output_names = tuple(
-        x for x in new_producer_output_names if x not in (y.name for y in producer._flat_args)
+        x for x in new_producer_output_names if x not in (y.name for y in producer.flat_args)
     )
-    all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
+    all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols))
     # Choose the new producer's output from all the produced variables.
     new_producer_output = tuple(x for x in all_produced_vars if x.name in new_producer_output_names)
     new_producer_output = tuple(sorted(new_producer_output, key=lambda x: x.name))
@@ -146,7 +146,7 @@ def apply_rematerialization_for_consumer(
     # We need to keep consumer's inputs that are not in the cut and are not
     # produced by the producer. We call these inputs "external inputs".
     external_inputs = find_external_consumer_inputs(producer, consumer)
-    all_produced_vars = tuple(chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols))
+    all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols))
     cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
     cut_inputs = tuple(filter(lambda x: x.name in cut_names, (*all_produced_vars, *producer.args)))
     new_consumer_args = cut_inputs + external_inputs
@@ -168,7 +168,7 @@ def apply_rematerialization_for_consumer(
     # Probably find_min_cut should have returned this information.
     all_args = tuple(
         chain.from_iterable(
-            (x.name for x in bsym._flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
+            (x.name for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
         )
     )
     new_consumer_args += tuple(
@@ -201,7 +201,7 @@ def find_filtered_producer_consumer_pairs(
 
     # We are looking for special producer-consumer pairs among the filtered symbols
     for producer in filter(filter_func, trace.bound_symbols):
-        for out in producer._flat_outs:
+        for out in producer.flat_outs:
             consumers = proxy_to_consumers.get(out, tuple())
             consumers = filter(filter_func, consumers)
             for consumer in consumers:
@@ -256,7 +256,7 @@ def find_cut(
     # This is needed to avoid rematerializing random or reduction primitives.
     tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP}
     required_producer_vars += tuple(
-        chain.from_iterable((y for y in x._flat_outs) for x in producer.subsymbols if has_tags(x, tags))
+        chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
 
     # Required consumer variables. These are the variables that are required to
@@ -274,7 +274,7 @@ def find_cut(
         utils.find_producer_symbols(consumer_trace, consumer.output, external_consumer_inputs)
     )
     required_consumer_vars += tuple(
-        chain.from_iterable((y.name for y in x._flat_outs) for x in required_consumer_symbols)
+        chain.from_iterable((y.name for y in x.flat_outs) for x in required_consumer_symbols)
     )
 
     # TODO: Use TensorProxy properties to compute the weights
@@ -320,7 +320,7 @@ def find_cut(
         for user in combined_consumers._dict.get(var_name, tuple()):
             if user.sym.id in sym_skip_list:
                 continue
-            for out in user._flat_outs:
+            for out in user.flat_outs:
                 user_name = out.name
                 add_edge(var_name + "_out", user_name + "_in", capacity=float("inf"))
 
@@ -334,7 +334,7 @@ def find_cut(
         add_edges(var)
 
     for symbol in chain(producer.subsymbols, consumer.subsymbols):
-        for var in symbol._flat_outs:
+        for var in symbol.flat_outs:
             add_edges(var)
 
     g = Graph(
@@ -518,7 +518,7 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         )
     )
     all_args = tuple(
-        chain.from_iterable((x for x in bsym._flat_args if isinstance(x, ProxyInterface)) for bsym in new_bw_bsyms)
+        chain.from_iterable((x for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_bw_bsyms)
     )
     producers = utils.producers(new_bw_bsyms)
     new_required_for_backward = tuple(
