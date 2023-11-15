@@ -29,7 +29,7 @@ class ImplInfo:
         self,
         *,
         symbol: None | Symbol = None,
-        checker: Callable,
+        checker: None | Callable = None,
         execution_transform: None | Callable = None,
         grad_transform: None | Callable = None,
     ):
@@ -76,6 +76,9 @@ class Executor:
 
         if impl is None:
             return False
+
+        if impl.checker is None:
+            return True
 
         return impl.checker(*bsym.args, **bsym.kwargs)
 
@@ -124,7 +127,7 @@ class FusionExecutor(Executor):
     def register_supported(
         self,
         sym_or_id: Symbol | Hashable,
-        checker=Callable,
+        checker: None | Callable = None,
         *,
         execution_transform: None | Callable = None,
         grad_transform: None | Callable = None,
@@ -195,7 +198,7 @@ class OperatorExecutor(Executor):
         sym_or_id: Symbol | Hashable,
         op: None | Symbol = None,
         *,
-        checker=Callable,
+        checker: None | Callable = None,
         execution_transform: None | Callable = None,
         grad_transform: None | Callable = None,
     ):
