@@ -299,6 +299,60 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
+@skipif_not_pytorch_2_1
+@skipif_not_python_3_10
+@pytest.mark.parametrize(
+    "name",
+    (
+        "gpt-neox-like",
+        "llama1-like",
+        "long-context-like",
+        "llama2-like",
+        "falcon-7b-like",
+        "falcon-40b-like",
+        "codellama2-like",
+    ),
+)
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_litgpt_variants_kvcache(name, device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    device = torch.device(device)
+    x = torch.randint(0, 200, (1, 2), device=device)
+    config = lit_gpt_model.Config.from_name(name)
+
+    with device:
+        model = lit_gpt_model.GPT(config)
+        model.max_seq_length = 3
+
+    def sample(logits):
+        return torch.argmax(logits[:, -1], dim=-1, keepdim=True)
+
+    # the reference is 2 regular forward without the kv cache
+    logits_1 = model(x)
+    token_1 = sample(logits_1)
+    logits_2 = model(torch.cat((x, token_1), dim=-1))
+
+    with device:
+        model.set_kv_cache(batch_size=1)
+    tom = thunder.compile(
+        model, executors_list=nvfuserex if device.type == "cuda" else torchex, disable_torch_autograd_support=True
+    )
+
+    # kv cache prefill
+    thunder_logits_1 = tom(x, torch.tensor([0, 1], device=device))
+    thunder_token_1 = sample(thunder_logits_1)
+    # 1 token generation
+    thunder_logits_2 = tom(thunder_token_1, torch.tensor([2], device=device))
+
+    assert_close(logits_1, thunder_logits_1)
+    assert_close(logits_2[:, -1:], thunder_logits_2)
+
+
 @skipif_not_python_3_10
 def test_llama_block_compile():
     m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))

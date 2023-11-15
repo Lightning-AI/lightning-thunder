@@ -580,9 +580,10 @@ class KVCache(nn.Module):
             return k, v
         # thunder doesn't support `index_copy`
         # https://github.com/Lightning-AI/lightning-thunder/issues/1145
-        self.k = torch.index_add(self.k, 2, input_pos, k)
-        self.v = torch.index_add(self.v, 2, input_pos, v)
-        return self.k, self.v
+        k = self.k = torch.index_add(self.k, 2, input_pos, k)
+        v = self.v = torch.index_add(self.v, 2, input_pos, v)
+        # cannot return self.k, self.v here (???)
+        return k, v
 
     def reset_parameters(self) -> None:
         torch.nn.init.zeros_(self.k)
