@@ -791,17 +791,21 @@ def thunder_torchex_compile_dynamic_strides_executor(fn: Callable) -> Callable:
     from thunder.executors import TORCH
 
 
-def default_thunder_ddp_dynamic_strides_executor(rank) -> Callable:
-    from thunder.distributed import ddp
+@dataclass(frozen=True)
+class get_default_thunder_ddp_dynamic_strides_executor:
+    bucket_size_in_mb: float = 25
 
-    def func(fn: Callable) -> Callable:
-        torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(
-            ddp(fn, rank, broadcast_from=0),
-            cache_mode="dynamic strides",
-        )
+    def __call__(self, rank) -> Callable:
+        from thunder.distributed import ddp
 
-    return func
+        def func(fn: Callable) -> Callable:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            return thunder.compile(
+                ddp(fn, rank, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
+                cache_mode="dynamic strides",
+            )
+
+        return func
 
 
 def default_thunder_dynamic_strides_executor_no_grad(fn: Callable) -> Callable:

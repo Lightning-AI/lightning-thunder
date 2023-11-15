@@ -1,18 +1,16 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import wraps, partial
 from inspect import signature
-from itertools import groupby
-from typing import Union, Any, Tuple, Optional
-from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
 
 import torch
 
 from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
 from thunder.core.prims import PrimIDs
 import thunder.core.utils as utils
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.pytree import tree_flatten
 from thunder.core.transform_common import replace_redundant_inputs
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
+from thunder.core.trace import TraceCtx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.distributed.prims as dist_prims
 import thunder.torch as ltorch
@@ -100,6 +98,13 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
+            _apply_batch_allreduce_of_grads = (
+                compile_data is not None
+                and getattr(compile_data.fn, "use_ddp", False)
+                and getattr(compile_data.fn, "bucket_size_in_mb", 25) <= 0
+            )
+            if _apply_batch_allreduce_of_grads:
+                bw_trace = batch_allreduce_of_grads(bw_trace, compile_data)
 
             # Now we can run the optimization passes on the backward trace
             # TODO Restore request for no rematerialization
@@ -110,9 +115,10 @@ class ThunderFunction(torch.autograd.Function):
 
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
 
-            # We need to sort the waits in the backward trace to overlap
-            # computation with communication
-            bw_extrace = sort_waits(bw_extrace)
+            if not _apply_batch_allreduce_of_grads:
+                # We need to sort the waits in the backward trace to overlap
+                # computation with communication
+                bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace = del_last_used(fw_extrace)
 
@@ -284,3 +290,108 @@ if torch.distributed.is_available():
             provenance="All-reduce gradients tranform",
         )
         return backward_trace_with_grads_allreduced
+
+    if TYPE_CHECKING:
+        from thunder import CompileData
+
+    def batch_allreduce_of_grads(
+        backward_trace: TraceCtx,
+        compile_data: "CompileData",
+    ) -> TraceCtx:
+        from collections import defaultdict
+        from torch.distributed.distributed_c10d import _get_default_group
+        from thunder.core import dtypes
+        from thunder.core import devices
+        from thunder.core import prims
+        from thunder.core.transforms import visitor_transform
+        from thunder.core.transforms import VISIT_TYPE
+        from thunder.distributed.bucketing import GradBuckets
+
+        if (bucket_size_in_mb := getattr(compile_data.fn, "bucket_size_in_mb", 25)) <= 0:
+            return backward_trace
+
+        @dataclass
+        class BatchAllReduceVisitor:
+            process_group: torch.distributed.ProcessGroup
+            original_backward_trace_outputs: list[Any]
+            gradient_buckets: GradBuckets
+            prims_to_filter: set[prims.PrimIDs, dist_prims.PrimIDs]
+
+            def __call__(self, bsym: BoundSymbol) -> None:
+                sym: Symbol = bsym.sym
+
+                if sym.id in self.prims_to_filter:
+                    return VISIT_TYPE.REPLACE
+
+                if sym.id == prims.PrimIDs.RETURN:
+                    allreduced_grads = self.gradient_buckets.retrieve_allreduced_grads(self.process_group)
+                    prims.python_return(
+                        *[allreduced_grads.get(i, t) for i, t in enumerate(self.original_backward_trace_outputs)]
+                    )
+                    return VISIT_TYPE.REPLACE
+
+                # `grads` here are pre-averaged gradients. Thus we might want to make sure sym.id is prims.PrimIDs.DIV
+                grads_of_bsym = tuple(filter(lambda p: p in self.gradient_buckets.grad_to_bucket, bsym.flat_proxy_outs))
+
+                if not grads_of_bsym:
+                    return VISIT_TYPE.INSERT_AFTER
+
+                for grad in grads_of_bsym:
+                    self.gradient_buckets.tell(grad, self.process_group)
+                return VISIT_TYPE.INSERT_AFTER
+
+        preaveraged_gradient_tensor_proxies = tree_flatten(
+            tuple(
+                bsym._flat_args[0]
+                for bsym in backward_trace.bound_symbols
+                if len(bsym._flat_outs) == 1 and isinstance(bsym._flat_outs[0], FutureTensorProxy)
+            )
+        )[0]
+
+        backward_trace_outputs, _ = tree_flatten(backward_trace.output)
+        tensor_proxy_indices_of_trace_output = tuple(
+            i for i, t in enumerate(backward_trace_outputs) if isinstance(t, TensorProxy)
+        )
+        utils.check(
+            all(isinstance(t, TensorProxy) for t in preaveraged_gradient_tensor_proxies),
+            lambda: f"All elements need to be TensorProxy but {[type(a) for a in preaveraged_gradient_tensor_proxies]}",
+        )
+        utils.check(
+            len(preaveraged_gradient_tensor_proxies) == len(tensor_proxy_indices_of_trace_output),
+            lambda: (
+                f"return statement has {len(tensor_proxy_indices_of_trace_output)} `TensorProxy`s while "
+                f"{len(preaveraged_gradient_tensor_proxies)} all_reduce calls found"
+            ),
+        )
+
+        # Map from grad to index in trace.output
+        gradient_to_index = utils.ProxyDict()
+        for i, t in enumerate(backward_trace_outputs):
+            if isinstance(t, TensorProxy):
+                producer_symbols = utils.find_producer_symbols(backward_trace, [t], preaveraged_gradient_tensor_proxies)
+                gradient_to_index[producer_symbols[0]._flat_args[0]] = i
+
+        gradients_of_same_dtype_and_device: dict[tuple[dtypes.dtype, devices.Device], list[TensorProxy]] = defaultdict(
+            list
+        )
+        for grad in preaveraged_gradient_tensor_proxies:
+            key = (grad.dtype, grad.device)
+            gradients_of_same_dtype_and_device[key].append(grad)
+        gradient_to_index = utils.ProxyDict()
+        gradient_buckets = GradBuckets.build(
+            gradients_of_same_dtype_and_device=gradients_of_same_dtype_and_device,
+            gradient_to_index=gradient_to_index,
+            bucket_cap_in_mb=bucket_size_in_mb,
+            delay_allreduce=getattr(compile_data.fn, "delay_allreduce", False),
+        )
+
+        return visitor_transform(
+            backward_trace,
+            BatchAllReduceVisitor(
+                process_group=getattr(compile_data.fn, "process_group_for_ddp", _get_default_group()),
+                original_backward_trace_outputs=backward_trace_outputs,
+                gradient_buckets=gradient_buckets,
+                prims_to_filter={dist_prims.PrimIDs.ALL_REDUCE, dist_prims.PrimIDs.WAIT},
+            ),
+            provenance="Batching all_reduce calls",
+        )

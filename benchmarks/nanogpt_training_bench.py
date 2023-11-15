@@ -48,12 +48,18 @@ parser.add_argument("--compile-mode", default="thunder", choices=("thunder", "to
 parser.add_argument("--dtype", default="float32", choices=("float32", "float16", "bfloat16"))
 parser.add_argument("--print-loss", action="store_true", help="Set this `True` to print loss every step")
 parser.add_argument("--profile", action="store_true")
+parser.add_argument("--nsys-profile", action="store_true")
 parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.keys()))
+parser.add_argument("--bucket-size-in-mb", type=float, default=25.0)
+parser.add_argument("--seq-len", type=int, default=128)
+parser.add_argument("--dump-extrace", action="store_true")
+parser.add_argument("--skip-torch-compile", action="store_true")
+parser.add_argument("--delay-allreduce", action="store_true")
 args = parser.parse_args()
 # -----------------------------------------------------------------------------
 config = args.model
 batch_size = 16
-seq_len = 128
+seq_len = args.seq_len
 bias = False
 seed = 1337
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
@@ -62,6 +68,9 @@ dtype = args.dtype  # 'float32' or 'bfloat16' or 'float16'
 compile_mode = args.compile_mode
 print_loss = args.print_loss
 use_ddp = False
+bucket_size_in_mb: float = args.bucket_size_in_mb
+if args.dump_extrace:
+    assert compile_mode == "thunder"
 # -----------------------------------------------------------------------------
 
 world_size, local_rank, pg = None, None, None
@@ -74,6 +83,9 @@ if "WORLD_SIZE" in os.environ and "LOCAL_RANK" in os.environ:
     use_ddp = True
     if local_rank == 0:
         print("Distributed NanoGPT bench")
+
+if args.skip_torch_compile:
+    assert use_ddp
 
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
@@ -98,52 +110,104 @@ if use_ddp:
     if compile_mode == "thunder":
         from thunder.distributed import ddp
 
-        model = ddp(model, rank=local_rank, broadcast_from=0, process_group=pg)
+        model = ddp(
+            model,
+            rank=local_rank,
+            broadcast_from=0,
+            process_group=pg,
+            bucket_size_in_mb=bucket_size_in_mb,
+        )
     else:
-        model = torch.nn.parallel.distributed.DistributedDataParallel(model, device_ids=[local_rank])
+        model = torch.nn.parallel.distributed.DistributedDataParallel(
+            model,
+            device_ids=[local_rank],
+            bucket_cap_mb=bucket_size_in_mb,
+        )
 
 optimizer = optimizer_ctor(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95), device_type="cuda")
 
 if compile_mode == "torch":
-    print("Compiling model using torch.compile...")
-    model = torch.compile(model)  # pytorch 2.0
+    if not (args.skip_torch_compile or bucket_size_in_mb <= 0):
+        print("Compiling model using torch.compile...")
+        model = torch.compile(model)  # pytorch 2.0
 elif compile_mode == "thunder":
     print("Compiling model using thunder.compile...")
     model = thunder.compile(model)
 else:
     raise ValueError(f"Unknown compile_mode: {compile_mode}")
 
+save_files = not (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0)
+dir_for_outputs = (
+    (
+        f"./thunder_traces/{config}_{args.dtype}_seq-{args.seq_len}"
+        f"{'_ddp_bucket_size-' + str(bucket_size_in_mb) if use_ddp else ''}"
+        f"{'_delayed_allreduce' if use_ddp and args.delay_allreduce else ''}"
+    )
+    if save_files
+    else None
+)
+if save_files and not os.path.exists(dir_for_outputs):
+    os.makedirs(dir_for_outputs)
+
 # simple benchmarking
 context = nullcontext()
 losses: list[torch.Tensor] = []
-torch.cuda.synchronize()
+put_nvtx_markers: bool = False
 for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
-    if args.profile and stage == 1:
-        context = torch.profiler.profile(
-            record_shapes=True,
-            profile_memory=True,
-            with_modules=True,
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    f"/tensor_board_logs/{compile_mode}{'_ddp' if use_ddp else ''}",
+    if stage == 1:
+        if args.profile:
+            context = torch.profiler.profile(
+                record_shapes=True,
+                profile_memory=True,
+                with_modules=True,
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(
+                    os.path.join(dir_for_outputs, f"rank_{torch.distributed.get_rank()}"),
                 ),
-            ),
-        )
+            )
+        if args.nsys_profile:
+            put_nvtx_markers = True
+            torch.cuda.profiler.start()
+    torch.cuda.synchronize()
     t0 = time.time()
-    X, Y = get_batch("train")
     with context:
         for k in range(num_steps):
-            logits, loss = model(X, Y)
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_push(f"iter_{k}")
+
             X, Y = get_batch("train")
-            optimizer.zero_grad(set_to_none=True)
+
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_push("forward")
+            logits, loss = model(X, Y)
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_pop()
+
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_push("backward")
             loss.backward()
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_pop()
+
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_push("optimizer.step")
             optimizer.step()
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_pop()
+
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_push("optimizer.zero_grad")
+            optimizer.zero_grad(set_to_none=True)
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_pop()
+
             if print_loss:
                 lossf = loss.item()
                 print(f"{k}/{num_steps} loss: {lossf:.4f}")
             elif stage == 1:
                 losses.append(loss.detach())
+
+            if put_nvtx_markers:
+                torch.cuda.nvtx.range_pop()  # iter
     torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
@@ -152,6 +216,8 @@ for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
             print(f"time per iteration: {dt/num_steps*1000:.4f}ms")
         else:
             print(f"time per iteration at rank{local_rank}: {dt/num_steps*1000:.4f}ms")
+if args.nsys_profile:
+    torch.cuda.profiler.stop()
 if losses:
     for i, loss in enumerate(losses):
         if use_ddp:
@@ -166,3 +232,11 @@ if args.profile:
         for e in allreduce_elements:
             print(f"# No. of occurrences {e.count} {e}")
         print(context.key_averages().table(sort_by="cuda_time_total"))
+if args.dump_extrace and save_files:
+    preamble = f"### {config=}, {dtype=}, {seq_len=}, {use_ddp=}, {bucket_size_in_mb=}, {args.delay_allreduce=}\n"
+    fwd_traces, bwd_traces = thunder.last_traces(model)
+
+    with open(os.path.join(dir_for_outputs, "fwd_trace.py"), "w") as f:
+        f.write(preamble + str(fwd_traces[-1]))
+    with open(os.path.join(dir_for_outputs, "bwd_trace.py"), "w") as f:
+        f.write(preamble + str(bwd_traces[-1]))

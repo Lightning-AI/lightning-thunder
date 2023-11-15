@@ -18,6 +18,9 @@ class PrimIDs(Enum):
     REDUCE_SCATTER = auto()
     SYNCHRONIZE = auto()
     WAIT = auto()
+    PACK = auto()
+    UNPACK = auto()
+    UPDATE_BUCKET_VIEW = auto()
 
 
 # This enum describes what all_reduce (below) will actually do
@@ -129,12 +132,46 @@ def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -
     return TensorProxy(like=a)
 
 
+def pack_meta(tensors: list[TensorProxy], bucket_key: str) -> TensorProxy:
+    utils.check(len(tensors) > 0, lambda: "Empty list is not expected")
+    utils.check(
+        all(isinstance(t, TensorProxy) for t in tensors),
+        lambda: f"Every element of `tensors` must be TensorProxy but {[type(a) for a in tensors]}",
+    )
+    utils.check_same_dtype(*tensors)
+    utils.check_same_device(*tensors)
+    return TensorProxy(
+        shape=(sum(t.numel for t in tensors),),
+        device=tensors[0].device,
+        dtype=tensors[0].dtype,
+        requires_grad=False,
+    )
+
+
+def unpack_meta(buffer: TensorProxy, tensors: list[TensorProxy], bucket_key: str) -> list[TensorProxy]:
+    utils.check(len(tensors) > 0, lambda: "Empty list is not expected")
+    utils.check(
+        all(isinstance(t, TensorProxy) for t in tensors),
+        lambda: f"Every element of `tensors` must be TensorProxy but {[type(a) for a in tensors]}",
+    )
+    utils.check_same_dtype(buffer, *tensors)
+    utils.check_same_device(buffer, *tensors)
+    return [TensorProxy(like=t) for t in tensors]
+
+
+def update_bucket_view_meta(tensor: TensorProxy, index_of_dst_view: int, bucket_key: str) -> TensorProxy:
+    return TensorProxy(like=tensor)
+
+
 all_gather = make_prim(PrimIDs.ALL_GATHER, "all_gather", meta=all_gather_meta)
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
 broadcast = make_prim(PrimIDs.BROADCAST, "broadcast", meta=broadcast_meta)
 reduce_scatter = make_prim(PrimIDs.REDUCE_SCATTER, "reduce_scatter", meta=reduce_scatter)
 synchronize = make_prim(PrimIDs.SYNCHRONIZE, "synchronize", meta=synchronize_meta)
 wait = make_prim(PrimIDs.WAIT, "wait", meta=wait_meta)
+pack = make_prim(PrimIDs.PACK, "pack", meta=pack_meta)
+unpack = make_prim(PrimIDs.UNPACK, "unpack", meta=unpack_meta)
+update_bucket_view = make_prim(PrimIDs.UPDATE_BUCKET_VIEW, "update_bucket_view", meta=update_bucket_view_meta)
 
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE)

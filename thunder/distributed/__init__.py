@@ -26,6 +26,7 @@ def ddp(
     world: Any | None = None,
     broadcast_from: int | None = None,
     process_group: tdist.ProcessGroup | None = None,
+    bucket_size_in_mb: float = 25.0,
 ) -> torch.nn.Module:
     """Thunder's Distributed Data Parallel.
 
@@ -43,10 +44,10 @@ def ddp(
         broadcast_from: The rank of the device hosting the parameters to broadcast. The lowest rank
             will be used if none specified.
         process_group: PyTorch's process group. Use the default process group if none specified.
+        bucket_size_in_mb: Size of a gradient bucket.
 
     Return:
         :class:`torch.nn.Module` with the parameters synchronized among all the ranks involved.
-
 
 
     .. note::
@@ -142,6 +143,7 @@ def ddp(
     utils.check(pg is not None, lambda: "Both process group and default process group are None")
     model.use_ddp = True
     model.process_group_for_ddp = pg
+    model.bucket_size_in_mb = bucket_size_in_mb
 
     # Infers device information from model
     # TODO Verify parameters are not partially initialized

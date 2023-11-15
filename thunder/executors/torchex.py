@@ -1476,6 +1476,51 @@ if torch.distributed.is_available():
         handle.wait()
         return t
 
+    _key_to_bucket_and_views: dict[str, tuple[torch.Tensor, list[torch.Tensor]]] = {}
+
+    def _pack_prim_impl(tensors: list[torch.Tensor], bucket_key: str) -> torch.Tensor:
+        if bucket_key not in _key_to_bucket_and_views:
+            buffer = torch.empty(
+                size=(sum(t.numel() for t in tensors),),
+                device=tensors[0].device,
+                dtype=tensors[0].dtype,
+            )
+            offset = 0
+            views = []
+            for t in tensors:
+                n = t.numel()
+                v = buffer[offset : offset + n].view_as(t)
+                v.copy_(t)
+                views.append(v)
+                offset += n
+            _key_to_bucket_and_views[bucket_key] = (buffer, views)
+        buffer = _key_to_bucket_and_views[bucket_key][0]
+        return buffer
+
+    def _unpack_prim_impl(
+        buffer: torch.Tensor,
+        tensors: list[torch.Tensor],
+        bucket_key: str,
+    ) -> list[torch.Tensor]:
+        offset = 0
+        results = []
+        for t in tensors:
+            n = t.numel()
+            results.append(buffer[offset : offset + n].view_as(t))
+            offset += n
+        return results
+
+    def _update_bucket_view_prim_impl(
+        tensor: torch.Tensor,
+        index_of_dst_view: int,
+        bucket_key: str,
+    ) -> torch.Tensor:
+        if bucket_key not in _key_to_bucket_and_views:
+            return tensor
+        views = _key_to_bucket_and_views[bucket_key][-1]
+        views[index_of_dst_view].copy_(tensor)
+        return tensor
+
     all_gather_prim_impl = ex.register_operator(
         "torch_all_gather_prim_impl", meta=dist_prims.all_gather.meta, fn=_all_gather_prim_impl
     )
@@ -1494,3 +1539,13 @@ if torch.distributed.is_available():
     _register_implementation(dist_prims.reduce_scatter, reduce_scatter_prim_impl, checker=_always_executable)
     wait_prim_impl = ex.register_operator("torch_wait_prim_impl", meta=dist_prims.wait.meta, fn=_wait_prim_impl)
     _register_implementation(dist_prims.wait, wait_prim_impl, checker=_always_executable)
+    pack_prim_impl = ex.register_operator("torch_pack_prim_impl", meta=dist_prims.pack.meta, fn=_pack_prim_impl)
+    _register_implementation(dist_prims.pack, pack_prim_impl, checker=_always_executable)
+    unpack_prim_impl = ex.register_operator("torch_unpack_prim_impl", meta=dist_prims.unpack.meta, fn=_unpack_prim_impl)
+    _register_implementation(dist_prims.unpack, unpack_prim_impl, checker=_always_executable)
+    update_bucket_view_prim_impl = ex.register_operator(
+        "torch_update_bucket_view_prim_impl",
+        meta=dist_prims.update_bucket_view.meta,
+        fn=_update_bucket_view_prim_impl,
+    )
+    _register_implementation(dist_prims.update_bucket_view, update_bucket_view_prim_impl, checker=_always_executable)
