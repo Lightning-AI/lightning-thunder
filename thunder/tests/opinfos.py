@@ -1552,6 +1552,11 @@ relu_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
     ),
 )
 elementwise_unary_ops.append(relu_opinfo)
@@ -1567,6 +1572,11 @@ relu6_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
+        ),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -1598,6 +1608,11 @@ selu_opinfo = OpInfo(
                 datatypes.float16,
                 datatypes.bfloat16,
             ),
+        ),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -4950,6 +4965,11 @@ conv1d_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
         ),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1443
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_vjp_correctness",
+        ),
     ),
 )
 nn_ops.append(conv1d_opinfo)
@@ -4977,6 +4997,11 @@ conv2d_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
         ),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1443
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_vjp_correctness",
+        ),
     ),
 )
 nn_ops.append(conv2d_opinfo)
@@ -5003,6 +5028,11 @@ conv3d_opinfo = OpInfo(
             # because there is no access to real/imag yet.
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
+        ),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1443
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -5963,6 +5993,11 @@ interpolate_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1032
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
         ),
     ),
 )

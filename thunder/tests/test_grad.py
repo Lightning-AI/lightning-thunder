@@ -18,7 +18,7 @@ import thunder.clang as clang
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype
 from thunder.core.pytree import tree_map, tree_flatten
-from thunder.core.transforms import jvp, vjp, grad
+from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
 from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI
@@ -98,15 +98,6 @@ def _generate_supported_op_list(checker):
                     yield opinfo.name
 
 
-def _vjp_symbol_checker(symbol):
-    from thunder.core.transforms import augmented_forward_impls, backward_impls
-    from thunder.core.transforms import transform_skip_list
-
-    return (symbol.sym.id in augmented_forward_impls and symbol.sym.id in backward_impls) or (
-        symbol.sym.id in transform_skip_list
-    )
-
-
 def _jvp_symbol_checker(symbol):
     from thunder.core.transforms import jvp_impls
     from thunder.core.transforms import transform_skip_list
@@ -114,7 +105,7 @@ def _jvp_symbol_checker(symbol):
     return symbol.sym.id in jvp_impls or symbol.sym.id in transform_skip_list
 
 
-supported_vjp_ops = set(_generate_supported_op_list(_vjp_symbol_checker)).union(vjp_op_force)
+supported_vjp_ops = set(_generate_supported_op_list(check_bsym_for_vjp)).union(vjp_op_force)
 supported_jvp_ops = set(_generate_supported_op_list(_jvp_symbol_checker))
 
 

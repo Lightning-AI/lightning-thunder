@@ -3688,6 +3688,34 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     return _vjp_impl
 
 
+def check_bsym_for_vjp(bsym):
+    """
+    Check if a bound symbol is supported by vjp.
+
+    Args:
+        bsym (BoundSymbol): The bound symbol to check.
+
+    Returns:
+        bool: True if the bound symbol is supported by vjp, False otherwise.
+    """
+
+    if bsym.sym.id in transform_skip_list:
+        return True
+
+    if bsym.sym.id in backward_impls and bsym.sym.id in augmented_forward_impls:
+        return True
+
+    # We could not find a VJP for this symbol, so we try to decompose it
+    # into sub-symbols and check if they are supported
+    if len(bsym.subsymbols) > 0 and not bsym.sym.is_prim:
+        subtrace = construct_trace()(bsym.sym, *bsym.args, **bsym.kwargs)
+        subtrace = unwrap_one_level_of_subsymbols(subtrace)
+        all_supported = all(check_bsym_for_vjp(subbsym) for subbsym in subtrace.bound_symbols)
+        return all_supported
+
+    return False
+
+
 def augmented_forward_pass(*args, trace: Trace, **kwargs):
     """Augmented forward pass for the VJP transform.
 
