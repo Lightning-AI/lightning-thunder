@@ -17,6 +17,10 @@ assert (
     TRITON_AVAILABLE
 ), f"Trying to import a Triton executor, but it requires Triton version {min_triton_version} or greater, and the current Triton version is {triton_version}"
 
+from thunder.extend import OperatorExecutor, register_executor
+
+triton_ex: OperatorExecutor = OperatorExecutor("triton", version=triton_version)
+register_executor(triton_ex)
 
 import triton  # noqa: E402
 import triton.language as tl  # noqa: E402
@@ -625,20 +629,7 @@ def cross_entropy_checker(
     return True
 
 
-_op_to_xentropy = {
-    "torch.nn.functional.cross_entropy": ("triton_cross_entropy", cross_entropy_checker, cross_entropy_impl),
-}
+import thunder.torch as ltorch
 
-
-def register_triton_entropyex(*, add_to_default_executors: bool = True) -> None:
-    from thunder.executors import add_operator_executor
-
-    return add_operator_executor(
-        "triton_crossentropy", _op_to_xentropy, add_to_default_executors=add_to_default_executors
-    )
-
-
-def deregister_triton_entropyex() -> None:
-    from thunder.executors import remove_operator_executor
-
-    return remove_operator_executor("triton_crossentropy")
+ce = triton_ex.register_operator("triton_crossentropy", like=ltorch.cross_entropy, fn=cross_entropy_impl)
+triton_ex.register_implementation(ltorch.cross_entropy, ce, checker=cross_entropy_checker)
