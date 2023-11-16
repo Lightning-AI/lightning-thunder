@@ -8,6 +8,7 @@ from collections.abc import Callable
 from collections.abc import Hashable
 
 from thunder.core.script.graph import (
+    assert_block,
     _generate_raises,
     Graph,
     GraphSummaryCallback,
@@ -30,7 +31,16 @@ def undo_ssa(gr: "Graph") -> tuple[list[Value], list[str], list[str], list[Any]]
 
     def get_value(v: Value, n: Node, inpidx: int | None = None) -> None:
         if n.i.opname == "CALL_METHOD" and inpidx == 1:
-            return
+            bl = assert_block(n.block)
+            idx = bl.nodes.index(n)
+            if idx > 0 and bl.nodes[idx - 1].i.opname == "LOAD_METHOD":
+                # if we just a LOAD_METHOD, that did put input 0 and 1 on the stack
+                return
+            else:
+                # else the loading has been separated from the call, so we
+                # switch to call LOAD_ATTR/CALL_FUNCTION instead
+                n.i = n.i.modify_copy(opname="CALL_FUNCTION", opcode=None)
+                return
         if isinstance(v.value, _Undefined):
             idx = len(consts)
             consts.append(
