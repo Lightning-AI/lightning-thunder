@@ -5,28 +5,9 @@ on: [push]
 jobs:
 
   precommit-run:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout 🛎️
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.PAT_GHOST }}
-
-    - name: Set up Python 🐍
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
-
-    - name: Run pre-commit 🤖
-      id: precommit
-      run: |
-        pip install -q pre-commit
-        pre-commit run --all-files
-
-    - name: Fixing Pull Request ↩️
-      if: always() && github.ref != 'refs/heads/main' && steps.precommit.outcome == 'failure'
-      uses: actions-js/push@v1.4
-      with:
-        github_token: ${{ secrets.PAT_GHOST }}
-        message: "pre-commit: running and fixing..."
-        branch: ${{ github.ref_name }}
+    uses: Lightning-AI/utilities/.github/workflows/check-precommit.yml@main
+    with:
+      python-version: "3.10"
+      push-fixes: true
+    secrets:
+      github-token: ${{ secrets.PAT_GHOST }}

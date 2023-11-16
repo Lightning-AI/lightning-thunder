@@ -58,10 +58,10 @@ repos:
           - mdformat_frontmatter
         exclude: "examples"
 
-#  - repo: https://github.com/asottile/yesqa
-#    rev: v1.4.0
-#    hooks:
-#      - id: yesqa
+  - repo: https://github.com/asottile/yesqa
+    rev: v1.4.0
+    hooks:
+      - id: yesqa
 
 #  - repo: https://github.com/charliermarsh/ruff-pre-commit
 #    rev: v0.0.270
