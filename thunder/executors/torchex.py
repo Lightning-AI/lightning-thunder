@@ -964,6 +964,7 @@ mean = _register_torch_operation("mean")
 # NOTE prod is from torch._refs because torch.prod has bugs parsing its input properly
 prod = _register_torch_operation("prod", module=torch._refs)
 sum = _register_torch_operation("sum")
+cumsum = _register_torch_operation("cumsum")
 var = _register_torch_operation("var")
 var_mean = _register_torch_operation("var_mean")
 
@@ -994,6 +995,14 @@ def _var_mean_prim_transform(a: TensorProxy, /, dims: Sequence[int], *, correcti
     return var_mean(a, dims, correction=correction)
 
 
+def _cumsum_transform(a: TensorProxy, dim: int, *, dtype: None | dtypeLike = None) -> TensorProxy:
+    if dtype is None:
+        return cumsum(a, dim)
+
+    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    return cumsum(a, dim, dtype=torch_dtype)
+
+
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
 _register_implementation(prims.amin, checker=_always_executable, execution_transform=_amin_prim_transform)
 _register_implementation(prims.prod, checker=_always_executable, execution_transform=_prod_prim_transform)
@@ -1006,6 +1015,7 @@ _register_implementation(ltorch.amin, amin, checker=_always_executable)
 _register_implementation(ltorch.mean, mean, checker=_always_executable)
 _register_implementation(ltorch.prod, prod, checker=_always_executable)
 _register_implementation(ltorch.sum, sum, checker=_always_executable)
+_register_implementation(ltorch.cumsum, checker=_always_executable, execution_transform=_cumsum_transform)
 _register_implementation(ltorch.var, var, checker=_always_executable)
 _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 

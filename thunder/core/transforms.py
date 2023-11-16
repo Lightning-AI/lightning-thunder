@@ -3331,6 +3331,26 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     return gweight
 
 
+@register_augmented_forward("torch.cumsum")
+def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> VJPDual:
+    from thunder.torch import cumsum
+
+    primal = cumsum(a, dim, dtype=dtype)
+    residuals = (
+        a.dtype,
+        dim,
+    )
+    return VJPDual(primal, residuals)
+
+
+@register_backward("torch.cumsum")
+def cumsum_backward(a_dtype, dim, g):
+    g = g.to(a_dtype)
+    if g.numel <= 1 or g.shape[dim] == 1:
+        return g
+    return g.flip(dim).cumsum(dim).flip(dim)
+
+
 @register_augmented_forward("torch.softmax")
 def softmax_aug_fwd(a: Proxy, dim: int, dtype: dtypes.dtype | None = None) -> VJPDual:
     from thunder.torch import softmax

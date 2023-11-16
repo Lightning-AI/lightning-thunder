@@ -4252,6 +4252,46 @@ var_mean_opinfo = OpInfo(
 )
 reduction_ops.append(var_mean_opinfo)
 
+
+def cumsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim
+    cases = (
+        ((), 0),
+        ((4), -1),
+        ((4, 4), 1),
+        ((8, 1, 6), -2),
+        ((8, 7, 5, 1), -3),
+    )
+
+    for shape, dim in cases:
+        # torch.cumsum not implemented for dtype='Bool'
+        output_dtype = torch.float if dtype is torch.bool else dtype
+        yield (SampleInput(make(shape), dim, dtype=output_dtype))
+
+
+cumsum_opinfo = OpInfo(
+    ltorch.cumsum,
+    sample_input_generator=cumsum_sample_generator,
+    torch_reference=torch.cumsum,
+    test_directives=(
+        # Torch doesn't support cpu/cuda complex half cumsum
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+        # "cumsum_out_cpu" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+reduction_ops.append(cumsum_opinfo)
 opinfos.extend(reduction_ops)
 
 #

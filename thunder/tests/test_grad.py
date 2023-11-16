@@ -56,6 +56,7 @@ vjp_op_force = {
     "repeat",
     "split",
     "stack",
+    "cumsum",
 }
 
 

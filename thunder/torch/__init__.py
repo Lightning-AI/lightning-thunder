@@ -1661,6 +1661,17 @@ def _sum_grad(
 register_grad(sum, _sum_grad)
 
 
+# NOTE This decomposition can not be efficiently fused, so make it primitive
+@torchsymbol(torch.cumsum, is_method=True, is_prim=True)
+def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    # check the input dimension
+    utils.canonicalize_dim(a.ndim, dim)
+    if dtype is None:
+        return TensorProxy(like=a)
+    else:
+        return TensorProxy(like=a, dtype=to_thunder_dtype(dtype))
+
+
 @torchsymbol(torch.var, is_method=True)
 def var(
     a: TensorProxy,
