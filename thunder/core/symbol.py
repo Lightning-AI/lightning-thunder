@@ -449,7 +449,6 @@ class BoundSymbol(BoundSymbolInterface):
     def flat_args_and_spec(self):
         return tree_flatten((self.args, self.kwargs))
 
-    # TODO Rename to "flat_args"
     @functools.cached_property
     def flat_args(self):
         flatargs, _ = self.flat_args_and_spec
