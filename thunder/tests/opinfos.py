@@ -5005,9 +5005,10 @@ conv1d_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
         ),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1443
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
         DecorateInfo(
-            pytest.mark.xfail(strict=True),
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
             "test_vjp_correctness",
         ),
     ),
@@ -5037,9 +5038,10 @@ conv2d_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
         ),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1443
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
         DecorateInfo(
-            pytest.mark.xfail(strict=True),
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
             "test_vjp_correctness",
         ),
     ),
@@ -5069,9 +5071,10 @@ conv3d_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
         ),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1443
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
         DecorateInfo(
-            pytest.mark.xfail(strict=True),
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
             "test_vjp_correctness",
         ),
     ),

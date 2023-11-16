@@ -1935,9 +1935,12 @@ def _conv_helper(
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
     utils.check(weight.ndim == dim + 2, lambda: f"{weight.ndim=} should be equal to {dim + 2}")
 
-    # insert batch dim into a if not present
+    # insert batch dim into a if not present.
+    # This is required for prims.convolution.
+    batch_dim_inserted: bool = False
     if a.ndim == dim + 1:
         a = unsqueeze(a, 0)
+        batch_dim_inserted = True
 
     # Handle stride, padding, dilation {
     def int_to_seq(param):
@@ -1999,9 +2002,15 @@ def _conv_helper(
     padding, a = process_padding_str(int_to_seq(padding), stride, dilation, a)
     # }
 
-    return clang.convolution(
+    res = clang.convolution(
         a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
     )
+
+    # Undo batch dim insertion if needed.
+    if batch_dim_inserted:
+        res = res.squeeze(0)
+
+    return res
 
 
 @torchsymbol(torch.conv1d, torch.nn.functional.conv1d, id="torch.nn.functional.conv1d", is_method=False)
