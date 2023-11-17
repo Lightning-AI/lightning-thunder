@@ -43,8 +43,8 @@ class TraceProvenance:
 #   ... but maybe we still need the naming context?
 # TODO Allow the function signature to be modified by transforms
 class TraceCtx:
-    def __init__(self, fn):
-        self.fn = fn
+    def __init__(self, fn: None | Callable = None):
+        self.fn: None | Callable = fn
 
         self.args = None
         self.kwargs = None
@@ -89,6 +89,7 @@ class TraceCtx:
     # Methods related to the trace's signature
     #
     def siginfo(self) -> codeutils.SigInfo:
+        assert self.fn is not None, "Can't provide siginfo for a trace without a function signature"
         if self._siginfo is None:
             self._siginfo = codeutils.get_siginfo(self.fn, self.args, self.kwargs)
 
@@ -313,8 +314,11 @@ class TraceCtx:
             import_ctx, call_ctx, object_ctx = self._gather_ctxs()
 
             # ... and from the signature
-            si = self.siginfo()
-            signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
+            if self.fn is None:
+                signature_str = f"# No signature available"
+            else:
+                si = self.siginfo()
+                signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
 
             # Constructs program strings
             program = []
@@ -451,7 +455,7 @@ def set_tracectx(ctx):
     return _tracectx.set(ctx)
 
 
-def get_tracectx() -> TraceCtx | None:
+def get_tracectx() -> None | TraceCtx:
     """Gets the current trace context, returning None if there is no current trace context."""
 
     try:
@@ -487,7 +491,7 @@ def maybe_reset_trace(started: bool, tok: Any) -> None:
 
 
 @contextmanager
-def tracectx(trace: TraceCtx):
+def tracectx(trace: None | TraceCtx):
     tok = set_tracectx(trace)
     try:
         yield

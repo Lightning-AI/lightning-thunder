@@ -84,6 +84,7 @@ class Proxy(VariableInterface, ProxyInterface):
             trace.add_name(name)
 
         self._name = name
+        self._has_weak_name: bool = name is None
 
     @property
     def name(self) -> str:
