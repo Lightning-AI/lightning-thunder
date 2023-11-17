@@ -436,7 +436,7 @@ class BoundSymbol(BoundSymbolInterface):
         if not skip_subsymbols:
             subsymbols = []
             for bsym in self.subsymbols:
-                subsymbols.append(bsym.from_bsym_swap_proxies(swap_map, skip_inputs, skip_output))
+                subsymbols.append(bsym.from_bsym_swap_proxies(swap_map, skip_inputs, skip_output, skip_subsymbols))
         else:
             subsymbols = self.subsymbols
 
