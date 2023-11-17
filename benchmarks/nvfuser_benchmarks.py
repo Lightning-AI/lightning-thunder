@@ -31,22 +31,19 @@ from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
 from lightning_utilities.core.imports import package_available
 
 TRITON_AVAILABLE = package_available("triton")
+triton_ex = None
 if TRITON_AVAILABLE:
-    from thunder.executors.triton_crossentropy import register_triton_entropyex
-
-from lightning_utilities.core.imports import package_available
-
-TRITON_AVAILABLE = package_available("triton")
-if TRITON_AVAILABLE:
-    from thunder.executors.triton_crossentropy import register_triton_entropyex
+    from thunder.executors.triton_crossentropy import triton_ex
 
 APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
+apex_ex = None
 if APEX_CROSS_ENTROPY_AVAILABLE:
-    from thunder.executors.apex_entropyex import register_apex_entropyex
+    from thunder.executors.apex_entropyex import apex_ex
 
 CUDNN_AVAILABLE = package_available("cudnn")
+cudnn_ex = None
 if CUDNN_AVAILABLE:
-    from thunder.executors.cudnnex import register_cudnnex
+    from thunder.executors.cudnnex import cudnn_ex
 
 # This file contains custom nvFuser-related benchmarks.
 
@@ -159,19 +156,16 @@ class Benchmark:
                 assert (
                     TRITON_AVAILABLE
                 ), "Trying to run a benchmark with a Triton executor extension, but Triton is not available"
-                register_triton_entropyex(add_to_default_executors=False)
 
             if extension == "apex":
                 assert (
                     APEX_CROSS_ENTROPY_AVAILABLE
                 ), "Trying to run a benchmark with the Apex executor extension, but the xentropy_cuda package is not available"
-                register_apex_entropyex()
 
             if extension == "cudnn":
                 assert (
                     CUDNN_AVAILABLE
                 ), "Trying to run a benchmark with the cudnn extension, but the cudnn package is not available"
-                register_cudnnex()
 
             if extension == "cudagraphs":
                 use_cudagraphs = True
@@ -204,9 +198,9 @@ class Benchmark:
         # Constructs the executors list
         _executor_extension_map: dict[str, list] = {
             "nvfuser": [thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex],
-            "apex": ["apex_xentropy"],
-            "cudnn": ["cudnn"],
-            "triton": ["triton_crossentropy"],
+            "apex": [apex_ex],
+            "cudnn": [cudnn_ex],
+            "triton": [triton_ex],
             "cudagraphs": [],
         }
 
