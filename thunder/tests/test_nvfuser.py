@@ -158,6 +158,48 @@ def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.d
     assert fusion.subsymbols[-1].args[0].name == "a"
 
 
+# NOTE the test relies on matmul not being executable by nvFuser
+# Test that rrc pass can handle subsymbols in nvFusion, and the inputs of successors are handled properly
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    x = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    def foo(a, x):
+        b = a + 5
+        c = b.to(torch.float16)
+        d = c.to(torch.float32)
+        e = d @ x
+        f = d + 3
+        g = e + x
+        g1 = g.to(torch.float64)
+        g2 = g1 + d
+        g3 = g1.to(torch.half)
+        h = f.to(torch.float16)
+        i = h.to(torch.float32)
+        y = i.to(torch.float64)
+        return d, g, y, i, g2, g3
+
+    cfoo = thunder.compile(foo)
+    cfoo(a, x)
+    traces = thunder.last_traces(cfoo)
+
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+    assert len(fusions) == 2
+
+    # Verifies that the nvFusion inputs and outputs are updated properly
+    t0 = fusions[0].output
+    assert fusions[1].args[0].name == "t0"
+    assert t0[0].name == "t0"
+    assert extrace.output[0].name == "t0"
+    assert len(fusions[0].subsymbols) == 3
+
+    # Verifies the intermediate consumer
+    assert fusions[1].subsymbols[-1].args[0].name == "t5"
+
+
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)

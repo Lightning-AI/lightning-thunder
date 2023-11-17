@@ -615,6 +615,7 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace.bound_symbols = fused_bsyms
 
         fusedtrace = dce(fusedtrace)
+        fusedtrace = remove_redundant_casts(fusedtrace)
 
         end_time_ns: int = time.time_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
@@ -1778,6 +1779,7 @@ def var_mean(
 
 register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 
+
 # Removes excessive float casts, like those that occur when autocasting
 # NOTE This passes actually changes a program's semantics, because it will take a sequence like
 #   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can
@@ -1785,259 +1787,164 @@ register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 # NOTE This only handles conversions performed by CONVERT_ELEMENT_TYPE, and not conversions caused
 #   by other Symbols, like torch.to, which may be unflattened
 # TODO This could be extended to non-float conversions, like complex -> complex conversions
-# def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-#     start_time_ns = time.time_ns()
+def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+    start_time_ns = time.time_ns()
 
-#     rrctrace = from_trace(trace)
+    rrctrace = from_trace(trace)
 
-#     # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)
-#     def is_eligible_cast(bsym: BoundSymbol) -> tuple[bool, Any, Any]:
-#         # Ignores operations other than CONVERT_ELEMENT_TYPE
-#         if bsym.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
-#             return False, None, None
+    # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)
+    def is_eligible_cast(bsym: BoundSymbol) -> tuple[bool, Any, Any]:
+        # Ignores operations other than CONVERT_ELEMENT_TYPE
+        if bsym.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
+            return False, None, None
 
-#         # Parses arguments
-#         # TODO We should consider canonicalizing how BoundSymbols express their arguments
-#         a: Any
-#         dtyp: dtypes.dtype
+        # Parses arguments
+        # TODO We should consider canonicalizing how BoundSymbols express their arguments
+        a: Any
+        dtyp: dtypes.dtype
 
-#         if len(bsym.args) == 2:
-#             a, dtyp = bsym.args
-#         elif len(bsym.args) == 1:
-#             cutils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
-#             (a,) = bsym.args
-#             dtyp = bsym.kwargs["dtype"]
-#         else:
-#             a = bsym.kwargs["a"]
-#             dtyp = bsym.kwargs["dtype"]
+        if len(bsym.args) == 2:
+            a, dtyp = bsym.args
+        elif len(bsym.args) == 1:
+            utils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            (a,) = bsym.args
+            dtyp = bsym.kwargs["dtype"]
+        else:
+            a = bsym.kwargs["a"]
+            dtyp = bsym.kwargs["dtype"]
 
-#         if not isinstance(a, Proxy):
-#             return False, None, None
+        if not isinstance(a, Proxy):
+            return False, None, None
 
-#         is_float_to_float_conversion = dtypes.is_float_dtype(dtypes.to_dtype(a)) and dtypes.is_float_dtype(dtyp)
+        is_float_to_float_conversion = dtypes.is_float_dtype(dtypes.to_dtype(a)) and dtypes.is_float_dtype(dtyp)
 
-#         return is_float_to_float_conversion, a, dtyp
+        return is_float_to_float_conversion, a, dtyp
 
-#     # Updates intermediate conversions, identifies no-ops, and updates no-op consumers
-#     # NOTE These are separate maps. A no-op in this context is a cast from the
-#     #   input's dtype to itself, like the following:
-#     #
-#     #   b = prims.convert_element_type(a, float32)  # a: f32
-#     #
-#     #   For these operations, everywhere b is consumed can be replaced with a.
-#     #
-#     #   When there is an intermediate conversion, however, we don't want to replace all uses
-#     #   of its output with its input. For example, the dtype modified output could
-#     #   actually be consumed by non-cast operations.
+    # Updates intermediate conversions, identifies no-ops, and updates no-op consumers
+    # NOTE These are separate maps. A no-op in this context is a cast from the
+    #   input's dtype to itself, like the following:
+    #
+    #   b = prims.convert_element_type(a, float32)  # a: f32
+    #
+    #   For these operations, everywhere b is consumed can be replaced with a.
+    #
+    #   When there is an intermediate conversion, however, we don't want to replace all uses
+    #   of its output with its input. For example, the dtype modified output could
+    #   actually be consumed by non-cast operations.
 
-#     # TODO This is intentionally commented out. See TODO below on consumer analysis.
-#     # consumers = cutils.consumers(trace)
-#     replacement_map = {}
-#     intermediate_map = {}
-#     nbsyms = []
-#     for bsym in trace.bound_symbols:
-#         is_proxy_f2f_conversion, a, dtyp = is_eligible_cast(bsym)
+    # TODO This is intentionally commented out. See TODO below on consumer analysis.
+    # consumers = cutils.consumers(trace)
+    def _remove_redundant_casts(
+        bsym: BoundSymbol,
+        nbsyms: Sequence[BoundSymbol],
+        replacement_map: dict[Variable, Proxy],
+        intermediate_map: dict[Variable, Proxy],
+    ) -> None:
+        is_proxy_f2f_conversion, a, dtyp = is_eligible_cast(bsym)
 
-#         # Replaces inputs due to no-op casts for all operations
-#         if not is_proxy_f2f_conversion:
-#             nbsym = bsym
-#             if bsym.has_input(replacement_map):
-#                 nbsym = bsym.from_bsym_swap_proxies(replacement_map, skip_inputs=False, skip_output=True)
-#             nbsyms.append(nbsym)
-#             continue
+        # Replaces inputs due to no-op casts for all operations
+        if not is_proxy_f2f_conversion:
+            nbsym = bsym
+            if bsym.has_input(replacement_map):
+                nbsym = bsym.from_bsym_swap_proxies(replacement_map, skip_inputs=False, skip_output=True)
+            nbsyms.append(nbsym)
+            return
 
-#         # NOTE is_proxy_f2f_conversion is True
-#         va = variableify(a)
-#         vo = variableify(bsym.output)
+        # NOTE is_proxy_f2f_conversion is True
+        va = variableify(a)
+        vo = variableify(bsym.output)
 
-#         # Identifies updated input
-#         orig = intermediate_map.get(va, a)
-#         orig_dtype = dtypes.to_dtype(orig)
+        # Identifies updated input
+        orig = intermediate_map.get(va, a)
+        orig_dtype = dtypes.to_dtype(orig)
 
-#         # Elides no-ops, marking their outputs for replacement
-#         if orig_dtype == dtyp:
-#             replacement_map[vo] = orig
-#             intermediate_map[vo] = orig
-#             continue
+        # Elides no-ops, marking their outputs for replacement
+        if orig_dtype == dtyp:
+            replacement_map[vo] = orig
+            intermediate_map[vo] = orig
+            return
 
-#         # NOTE In this case there is a more original input
+        # NOTE In this case there is a more original input
 
-#         # Only marks this output for replacement with the more original input if it's
-#         #   not consumed by a non-cast operation
-#         has_non_cast_consumer = False
-#         # TODO (mruberry) I'm not sure whether the following is worthwhile, although
-#         #   I'm leaving it as a comment because we may want to revive it in the future.
-#         #   Essentially, this would be a heuristic that says: "if x is being consumed,
-#         #   don't bother finding the precursor of x to cast, just cast x itself."
-#         #   That may improve data locality, but it could also lead to excessive
-#         #   casts.
-#         # for consumer in consumers.get(bsym.output, ()):
-#         #     if consumer.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
-#         #         has_non_cast_consumer = True
-#         #         break
+        # Only marks this output for replacement with the more original input if it's
+        #   not consumed by a non-cast operation
+        has_non_cast_consumer = False
+        # TODO (mruberry) I'm not sure whether the following is worthwhile, although
+        #   I'm leaving it as a comment because we may want to revive it in the future.
+        #   Essentially, this would be a heuristic that says: "if x is being consumed,
+        #   don't bother finding the precursor of x to cast, just cast x itself."
+        #   That may improve data locality, but it could also lead to excessive
+        #   casts.
+        # for consumer in consumers.get(bsym.output, ()):
+        #     if consumer.sym.id is not prims.PrimIDs.CONVERT_ELEMENT_TYPE:
+        #         has_non_cast_consumer = True
+        #         break
 
-#         # When this operation has non-cast consumers, later conversion operations
-#         #   might as well consume its output to try and improve data locality and
-#         #   not have to preserve the original tensor for so long
-#         if has_non_cast_consumer:
-#             intermediate_map[vo] = bsym.output
-#         else:
-#             intermediate_map[vo] = orig
+        # When this operation has non-cast consumers, later conversion operations
+        #   might as well consume its output to try and improve data locality and
+        #   not have to preserve the original tensor for so long
+        if has_non_cast_consumer:
+            intermediate_map[vo] = bsym.output
+        else:
+            intermediate_map[vo] = orig
 
-#         # Possibly creates a new BoundSymbol consuming the original instead of the current input
-#         if orig is a:
-#             nbsyms.append(bsym)
-#         else:
-#             # NOTE This is faster than using from_bsym_swap_proxies, and relies on us only working
-#             #   with prims.convert_element_type
-#             nbsym = bsym.from_bsym(args=(orig, dtyp), kwargs={})
-#             nbsyms.append(nbsym)
-#             cutils.check(
-#                 nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-#                 lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
-#                 exception_type=AssertionError,
-#             )
+        # Possibly creates a new BoundSymbol consuming the original instead of the current input
+        if orig is a:
+            nbsyms.append(bsym)
+        else:
+            # NOTE This is faster than using from_bsym_swap_proxies, and relies on us only working
+            #   with prims.convert_element_type
+            nbsym = bsym.from_bsym(args=(orig, dtyp), kwargs={})
+            nbsyms.append(nbsym)
+            utils.check(
+                nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
+                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                exception_type=AssertionError,
+            )
 
-#     rrctrace.bound_symbols = nbsyms
+    replacement_map = {}
+    intermediate_map = {}
+    nbsyms = []
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion:
+            nbsym = bsym
+            if bsym.has_input(replacement_map):
+                nbsym = bsym.from_bsym_swap_proxies(
+                    replacement_map, skip_inputs=False, skip_output=True, skip_subsymbols=False
+                )
+            nvfuser_replacement_map = {}
+            nvfuser_intermediate_map = {}
+            nvfuser_subbsyms = []
+            for subbsym in nbsym.subsymbols:
+                _remove_redundant_casts(subbsym, nvfuser_subbsyms, nvfuser_replacement_map, nvfuser_intermediate_map)
+            nbsym = nbsym.from_bsym(subsymbols=nvfuser_subbsyms)
 
-#     # Updates the trace's output
-#     def map_redundant(x: Any) -> Any:
-#         if isinstance(x, Proxy):
-#             return replacement_map.get(Variable(x), x)
-#         return x
+            def map_inside_replacement(x: Any) -> None:
+                vx = variableify(x)
+                if vx in nvfuser_replacement_map:
+                    replacement_map[vx] = nvfuser_replacement_map[vx]
 
-#     new_trace_output = tree_map(map_redundant, trace.output)
-#     rrctrace.output = new_trace_output
+            tree_map(map_inside_replacement, nbsym.output)
+            nbsym = nbsym.from_bsym_swap_proxies(
+                nvfuser_replacement_map, skip_inputs=True, skip_output=False, skip_subsymbols=True
+            )
+            dedup_output = list({variableify(x): x for x in nbsym.output}.values())
+            nbsym = nbsym.from_bsym(output=dedup_output)
+            nbsyms.append(nbsym)
+        else:
+            _remove_redundant_casts(bsym, nbsyms, replacement_map, intermediate_map)
 
-#     end_time_ns = time.time_ns()
-#     elapsed_time_ns = end_time_ns - start_time_ns
-#     elapsed_time_millis = elapsed_time_ns // 1000000
-#     rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
-#     return rrctrace, [rrctrace]
+    rrctrace.bound_symbols = nbsyms
 
+    # update call_ctx information in nvFusion
+    from thunder.core.rematerialization import _update_nvfusion_call_ctx
 
-# Constructs execution regions that are as large as possible for each executor.
-#   Uses a greedy top-down toposort to associated nodes with common executors.
-# def fuse(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-#     start_time_ns = time.time_ns()
+    for idx, bsym in enumerate(rrctrace.bound_symbols):
+        if bsym.sym.is_fusion:
+            rrctrace.bound_symbols[idx] = _update_nvfusion_call_ctx(rrctrace, bsym)
 
-#     fusedtrace = from_trace(trace)
-#     fused_bsyms = []
-
-#     producers = cutils.producers(trace)
-#     consumers = cutils.consumers(trace)
-
-#     batch = []
-#     batch_ex = trace.bound_symbols[0]._executor if len(trace.bound_symbols) > 0 else None
-
-#     regions = []
-
-#     # Constructs regions of contiguous operations that all share
-#     #   an executor
-#     for bsym in trace.bound_symbols:
-#         if batch_ex != bsym._executor:
-#             # Constructs a region representing what to fuse (currently unused)
-#             region = Region(trace, producers, consumers, batch, batch_ex, -1)
-#             regions.append(region)
-
-#             # Updates region collection metadata
-#             batch = [bsym]
-#             batch_ex = bsym._executor
-#         else:
-#             batch.append(bsym)
-
-#     # Processes last batch
-#     if len(batch) > 0:
-#         region = Region(trace, producers, consumers, batch, batch_ex, -1)
-#         regions.append(region)
-
-#     g = graph_from_regions(regions)
-
-#     # TODO Maybe implement a more advanced selection criteria?
-#     def _selector(last_added: Optional[Node], nodes: list[Node]) -> Node:
-#         if last_added is None or last_added.region.executor.name() != Executor.NVFUSER:
-#             # NOTE In this case the last added is None or the executor
-#             #   was not nvFuser
-#             # Attempts to find a non-nvFuser region to go next
-#             for node in nodes:
-#                 if node.region.executor.name() != Executor.NVFUSER:
-#                     return node
-
-#             # Defaults to returning the first eligible node
-#             return nodes[0]
-
-#         # NOTE In this case the last added region's executor is nvFuser
-#         # Attempts to find another nvFuser region
-#         for node in nodes:
-#             if node.region.executor.name() == Executor.NVFUSER:
-#                 return node
-
-#         # Defaults to returning the first eligible node
-#         return nodes[0]
-
-#     toposorted = toposort(g, _selector)
-
-#     # Merges adjacent regions that share an executor
-#     node = toposorted.reset()
-#     while node is not None:
-#         # Tries to merge one or more regions into the current node
-#         while True:
-#             peek = toposorted.peek()
-
-#             if peek is None:
-#                 break
-
-#             ar = node.node.region
-#             br = peek.node.region
-
-#             if ar.executor is br.executor:
-#                 toposorted.merge(node, peek)
-#             else:
-#                 break
-
-#         node = toposorted.next()
-
-#     # Translates the (possibly) merged linearization to a trace
-#     # Counts how many fusions (per executor) have been constructed
-#     #   (Used to name fusions like nvFusion0, nvFusion1, ...)
-#     executor_ctrs = {}
-#     node = toposorted.reset()
-#     while node is not None:
-#         region = node.node.region
-#         ex = region.executor
-
-#         def _fuse_region_with_executor(executor, region_fuse):
-#             if executor not in executor_ctrs:
-#                 executor_ctrs[executor] = 0
-#             counter = executor_ctrs[executor]
-#             executor_ctrs[executor] += 1
-
-#             region_fuse.counter = counter
-#             fused_bsyms.extend(executor.fuse(region_fuse))
-
-#         # Regions that would go to nvFuser but are entirely composed of shape operations
-#         #   are sent to the torch executor instead
-#         # TODO Think about being more clever about when this occurs
-#         #   Today fusion happens after flattening, but we should toposort and do this
-#         #   analysis before flattening occurs
-#         if ex.name() == Executor.NVFUSER:
-#             if region.only_shape_operations():
-#                 _fuse_region_with_executor(TorchEx, region)
-#             else:
-#                 list_region = group_bookend_meta_ops(region, producers, consumers)
-#                 for sub_region in list_region:
-#                     _fuse_region_with_executor(sub_region.executor, sub_region)
-#         else:
-#             _fuse_region_with_executor(ex, region)
-
-#         node = toposorted.next()
-
-#     # Constructs the new trace
-#     fusedtrace.bound_symbols = fused_bsyms
-
-#     end_time_ns = time.time_ns()
-#     elapsed_time_ns = end_time_ns - start_time_ns
-#     elapsed_time_millis = elapsed_time_ns // 1000000
-#     fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
-
-#     return fusedtrace, [fusedtrace]
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
+    return rrctrace
