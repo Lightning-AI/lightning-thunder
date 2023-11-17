@@ -1006,7 +1006,10 @@ def _squeeze_check(a: TensorProxy, /, dims: Sequence[int]) -> bool:
 def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
-    return fd.ops.squeeze(nva, a.shape, dims)
+    if nv_version >= LooseVersion("0.1.3"):
+        return fd.ops.squeeze(nva, dims)
+    else:
+        return fd.ops.squeeze(nva, a.shape, dims)
 
 
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
