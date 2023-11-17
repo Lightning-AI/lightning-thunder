@@ -568,6 +568,7 @@ def transform_for_execution(
     # traces.append(cse_trace)
 
     extrace = executors.passes.transform_for_execution(dce_trace, executors_list)
+
     traces.append(extrace)
 
     if use_del_last_used:

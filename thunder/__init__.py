@@ -60,6 +60,8 @@ __all__ = [
     # TODO Add executor aliases
     "nvfuser_executor",
     "pytorch_executor",
+    # debugging functions
+    "set_execution_callback_file",
 ]
 
 
@@ -93,7 +95,7 @@ complex128 = dtypes.complex128
 from thunder.clang import *
 
 #
-# Promoted executor-related functions
+# Promoted executor-related functions and objects
 #
 
 # TODO Add more of these functions
@@ -103,6 +105,16 @@ get_always_executors = extend.get_always_executors
 
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
+
+#
+# Promoted debugging functions
+#
+
+# If set, Python programs will be written to this file before being executed, and if the
+#   the file is modified then the modified version of the program will be compiled and executed, instead.
+from thunder.core.trace import _set_execution_file
+
+set_execution_callback_file = _set_execution_file
 
 
 def compile(

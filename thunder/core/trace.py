@@ -1,3 +1,4 @@
+import os
 from contextvars import ContextVar
 from contextlib import contextmanager
 from typing import Optional, Any, Tuple, Type, Dict, List, Union
@@ -394,7 +395,22 @@ class TraceCtx:
     # TODO https://github.com/Lightning-AI/lightning-thunder/issues/323
     #   Create a mechanism for freezing traces and cache the compilation
     def python_callable(self) -> Callable:
-        python_str = self.python()
+        python_str: str
+
+        # Writes the program to allow it to be edited before execution
+        path: None | str = _get_execution_file()
+        if path is not None:
+            f = open(path, "w")
+            f.write(self.python())
+            f.close()
+
+            input(f"Trace written to {os.path.realpath(path)}  Press Any key to execute it")
+
+            with open(path) as file:
+                python_str = file.read()
+        else:
+            python_str = self.python()
+
         ctx = self.python_ctx()
 
         callable = baseutils.compile_and_exec(
@@ -500,6 +516,11 @@ def detached_trace():
     reset_tracectx(trace_token)
 
 
+#
+# Variable helpers
+#
+
+
 class VariableInterface:
     @property
     def name(self):
@@ -516,3 +537,20 @@ def wrap_in_trace_variable(obj):
     if isinstance(obj, VariableInterface):
         return TraceVariable(obj)
     return obj
+
+
+#
+# Functions related to the execution file callback
+#
+# When set, this will write traces to a file, then load the source of that file, before executing them
+
+_execution_file = ContextVar("_execution_file", default=None)
+
+
+# TODO Consider generalizing these to take a file object, too
+def _set_execution_file(path: str) -> None:
+    _execution_file.set(path)
+
+
+def _get_execution_file() -> None | str:
+    return _execution_file.get()
