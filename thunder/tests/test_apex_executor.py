@@ -90,6 +90,51 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_apex_cross_entropy_backward(device, dtype):
+    from thunder.core.transforms import value_and_grad
+
+    logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True)
+    labels = torch.randint(0, 50257, [2048], device=device)
+
+    # -1 is supported by apex cross entropy but 1 is not. The case of 1 is
+    # used to test that the conditional rules are working correctly and that
+    # the apex cross entropy is not used
+    ignore_indices = (-1, 1)
+
+    for ignore_index in ignore_indices:
+
+        @value_and_grad
+        def test(logits, labels):
+            return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
+
+        ctest = thunder.compile(
+            test,
+            executors_list=[apex_ex],
+            disable_preprocessing=True,
+            disable_torch_autograd_support=True,
+        )
+        actual = ctest(logits, labels)
+        expected = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
+        expected_grad = torch.autograd.grad(expected, logits)[0]
+        torch.testing.assert_close(actual[0], expected)
+        torch.testing.assert_close(actual[1][0], expected_grad)
+        last_trace = thunder.last_traces(ctest)[-1]
+        is_any_fw = any(bsym.sym.name == "apex_cross_entropy" for bsym in last_trace.bound_symbols)
+        is_any_bw = any(bsym.sym.name == "apex_cross_entropy_backward" for bsym in last_trace.bound_symbols)
+
+        if ignore_index == -1:
+            assert is_any_fw
+            assert is_any_bw
+        else:
+            assert not is_any_fw
+            assert not is_any_bw
+
+
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32], ids=("float16", "bfloat16", "float32")
+)
+@pytest.mark.parametrize("device,", ["cuda"])
+@requiresCUDA
+def test_apex_cross_entropy_phantom_grad(device, dtype):
     logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True)
     labels = torch.randint(0, 50257, [2048], device=device)
 
