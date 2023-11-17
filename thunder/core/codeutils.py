@@ -75,6 +75,8 @@ def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
         return True, ("torch", torch)
     if isinstance(x, slice):
         return True, None
+    if x is Ellipsis:
+        return True, None
 
     return False, None
 
@@ -253,6 +255,8 @@ def prettyprint(
         return m(_torch_dtype_to_str_map[x])
     if isinstance(x, slice):
         return m(str(x))
+    if x is Ellipsis:
+        return m("...")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")
