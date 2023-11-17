@@ -37,6 +37,32 @@ def _sdpa_enforce_input_tensor_contiguity(a: torch.Tensor) -> torch.Tensor:
         return a.contiguous()
 
 
+# Configure attention mask argument for memory efficient sdpa kernel
+def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, query: torch.Tensor) -> None | torch.Tensor:
+    if attn_mask is None:
+        return None
+
+    # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
+    # with a very negative value that should become ~0 after softmax
+    if attn_mask.dtype == torch.bool:
+        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
+
+    # Expand the number of heads in attention mask to match query, key, and value tensors.
+    num_heads = query.shape[1]
+    head_dim = query.shape[-1]
+
+    batch_size, _, query_seq_len, key_seq_len = attn_mask.shape
+    expanded_attn_mask = attn_mask.expand(batch_size, num_heads, query_seq_len, key_seq_len)
+
+    if head_dim > key_seq_len:
+        # Pad and slice attention mask to ensure correct alignment.
+        padded_size = head_dim - key_seq_len
+        padded_attn_mask = torch.nn.functional.pad(expanded_attn_mask, [0, padded_size], value=0.0)
+        return padded_attn_mask[:, :, :, 0:key_seq_len]
+    else:
+        return expanded_attn_mask.contiguous()
+
+
 # TODO These checks should be converted to compile-time checks using a checker function
 # This helper function checks that the shape of input tensors are supported by fused sdpa implementation.
 def _input_shape_check_fused_scaled_dot_product_attention(
@@ -76,8 +102,8 @@ def _input_shape_check_fused_scaled_dot_product_attention(
 
     # Check for the same number of heads
     utils.check(
-        all(a.shape[1] == inputs[0].shape[1] for a in inputs),
-        lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads.",
+        all(a.shape[1] == 1 or a.shape[1] == inputs[0].shape[1] for a in inputs),
+        lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads or a broadcastable dimension.",
     )
 
 
@@ -151,17 +177,12 @@ def _grad_forward_scaled_dot_product_efficient_attention_impl(
     is_causal: bool = False,
     scale: None | float = None,
 ) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
-    # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
-    # with a very negative value that should become ~0 after softmax
-    if attn_mask is not None and attn_mask.dtype == torch.bool:
-        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
-
     # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
     return torch.ops.aten._scaled_dot_product_efficient_attention(
         _sdpa_enforce_input_tensor_contiguity(query),
         _sdpa_enforce_input_tensor_contiguity(key),
         _sdpa_enforce_input_tensor_contiguity(value),
-        attn_mask,
+        _attention_mask_memory_efficient_helper(attn_mask, query),
         compute_logsumexp := True,
         dropout_p,
         is_causal,
@@ -368,8 +389,25 @@ def _scaled_dot_product_efficient_attention_backward_impl(
         grad_input_mask.append(attn_mask.requires_grad)
         # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
         # with a very negative value that should become ~0 after softmax
-        if attn_mask.dtype == torch.bool:
-            attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                attn_mask = torch.masked_fill(
+                    torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf
+                )
+
+            # Expand the number of heads in attention mask to match query, key, and value tensors.
+            num_heads = query.shape[1]
+            head_dim = query.shape[-1]
+            batch_size, _, query_seq_len, key_seq_len = attn_mask.shape
+            attn_mask = attn_mask.expand(batch_size, num_heads, query_seq_len, key_seq_len)
+
+            if head_dim > key_seq_len:
+                # Pad and slice attention mask to ensure correct alignment.
+                padded_size = head_dim - key_seq_len
+                padded_attn_mask = torch.nn.functional.pad(attn_mask, [0, padded_size], value=0.0)
+                attn_mask = padded_attn_mask[:, :, :, 0:key_seq_len]
+            else:
+                attn_mask = attn_mask.contiguous()
 
     # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
     return torch.ops.aten._scaled_dot_product_efficient_attention_backward(
@@ -377,7 +415,7 @@ def _scaled_dot_product_efficient_attention_backward_impl(
         _sdpa_enforce_input_tensor_contiguity(query),
         _sdpa_enforce_input_tensor_contiguity(key),
         _sdpa_enforce_input_tensor_contiguity(value),
-        _sdpa_enforce_input_tensor_contiguity(attn_mask),
+        _attention_mask_memory_efficient_helper(attn_mask, query),
         out,
         logsumexp,
         philox_seed,

@@ -20,6 +20,7 @@ import thunder.torch as ltorch
 from thunder.core.script.noinline import noinline, invoke_noinline
 from thunder.core.symbol import Symbol
 from thunder.core.utils import enable_debug_asserts
+from thunder.executors.sdpaex import sdpa_ex
 from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
 from thunder.tests.framework import instantiate, requiresCUDA, requiresNVFuser, IN_CI
 
@@ -330,6 +331,9 @@ def test_litgpt_variants_kvcache(name, device):
         model = lit_gpt_model.GPT(config)
         model.max_seq_length = 3
 
+    executors = nvfuserex if device.type == "cuda" else torchex
+    executors = [sdpa_ex] + executors
+
     def sample(logits):
         return torch.argmax(logits[:, -1], dim=-1, keepdim=True)
 
@@ -340,9 +344,7 @@ def test_litgpt_variants_kvcache(name, device):
 
     with device:
         model.set_kv_cache(batch_size=1)
-    tom = thunder.compile(
-        model, executors_list=nvfuserex if device.type == "cuda" else torchex, disable_torch_autograd_support=True
-    )
+    tom = thunder.compile(model, executors_list=executors, disable_torch_autograd_support=True)
 
     # kv cache prefill
     thunder_logits_1 = tom(x, torch.tensor([0, 1], device=device))
