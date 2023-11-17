@@ -354,12 +354,15 @@ class TraceCtx:
                         import_str = f"import {module.__name__} as {name}"
                 program.append(import_str)
 
+            program.append("from thunder.executors.torchex import no_autocast")
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
                 program.append("")
 
             # Prints the signature and the no_grad context (for when calling torch operations)
             program.append("@torch.no_grad()")
+            # Prints the signature and the no_autocast context
+            program.append("@no_autocast()")
             program.append(signature_str)
 
             # TODO Print objects from context
