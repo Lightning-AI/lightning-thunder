@@ -615,7 +615,11 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace.bound_symbols = fused_bsyms
 
         fusedtrace = dce(fusedtrace)
-        fusedtrace = remove_redundant_casts(fusedtrace)
+        # TODO: Restore this when CSE pass can remove ops inside fusion
+        # See https://github.com/Lightning-AI/lightning-thunder/pull/1338
+        # OR nvFuser itself can handle fusions with certain common subexpressions
+        # See https://github.com/NVIDIA/Fuser/issues/1301
+        # fusedtrace = remove_redundant_casts(fusedtrace)
 
         end_time_ns: int = time.time_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
