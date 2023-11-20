@@ -7,7 +7,7 @@ import torch
 import torch._dynamo.config
 import torch._inductor.config
 
-from boring_bits import Tokenizer
+from lit_gpt import Tokenizer
 from thunder.tests.lit_gpt_model import GPT
 
 
@@ -105,13 +105,20 @@ def main(
         generate_one_token = torch.compile(generate_one_token, mode="reduce-overhead")
     elif compile == "thunder":
         import thunder
+        from thunder.executors.sdpaex import sdpa_ex
 
-        executors = [thunder.pytorch_executor]
-        executors = [thunder.nvfuser_executor] + executors
         # cannot compile `generate_one_token` as with torch.compile because of
         # https://github.com/Lightning-AI/lightning-thunder/issues/1082#issuecomment-1797026065
         # so instead i'm compiling its individual components
-        model = thunder.compile(og_model, disable_torch_autograd_support=True, use_cudagraphs=True, executors_list=executors)
+        model = thunder.compile(
+            og_model,
+            disable_torch_autograd_support=True,
+            # DISABLED: sdpa_ex: RuntimeError: attn_bias is not correctly aligned (strideH)
+            executors_list=[thunder.nvfuser_executor, thunder.pytorch_executor],
+            # DISABLED: kv cache issue
+            # https://github.com/Lightning-AI/lightning-thunder/issues/1501
+            use_cudagraphs=False,
+        )
         model.max_seq_length = og_model.max_seq_length
         global sample
         sample = thunder.compile(
@@ -119,7 +126,6 @@ def main(
             disable_torch_autograd_support=True,
             # https://github.com/Lightning-AI/lightning-thunder/issues/1453
             use_cudagraphs=False,
-            executors_list=executors,
         )
     elif compile != "eager":
         raise ValueError(compile)

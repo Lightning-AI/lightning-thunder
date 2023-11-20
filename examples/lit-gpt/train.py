@@ -39,10 +39,14 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
         model = torch.compile(model, fullgraph=True, mode="reduce-overhead", dynamic=dynamic)
     elif compile == "thunder":
         import thunder
+        from thunder.executors.sdpaex import sdpa_ex
 
-        executors = [thunder.pytorch_executor]
-        executors = [thunder.nvfuser_executor] + executors
-        model = thunder.compile(model, use_cudagraphs=False, executors_list=executors)
+        model = thunder.compile(
+            model,
+            # DISABLED: goes OOM
+            use_cudagraphs=False,
+            executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+        )
         model.max_seq_length = og_model.max_seq_length
     elif compile != "eager":
         raise ValueError(compile)

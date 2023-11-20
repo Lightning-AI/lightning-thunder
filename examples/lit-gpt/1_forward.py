@@ -30,11 +30,13 @@ def main(name: str = "open_llama_7b", num_samples: int = 10, compile: str = "eag
         model = torch.compile(model, fullgraph=True)  # , mode="reduce-overhead")
     elif compile == "thunder":
         import thunder
+        from thunder.executors.sdpaex import sdpa_ex
 
-        executors = [thunder.pytorch_executor]
-        executors = [thunder.nvfuser_executor] + executors
         model = thunder.compile(
-            model, disable_torch_autograd_support=True, use_cudagraphs=False, executors_list=executors
+            model,
+            disable_torch_autograd_support=True,
+            use_cudagraphs=False,
+            executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
         )
     elif compile != "eager":
         raise ValueError(compile)

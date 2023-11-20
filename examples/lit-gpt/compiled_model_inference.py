@@ -7,7 +7,7 @@ import torch
 import torch._dynamo.config
 import torch._inductor.config
 
-from boring_bits import Tokenizer
+from lit_gpt import Tokenizer
 from thunder.tests.lit_gpt_model import GPT
 
 
@@ -100,11 +100,16 @@ def main(
         model = torch.compile(model, fullgraph=True, mode="reduce-overhead")
     elif compile == "thunder":
         import thunder
+        from thunder.executors.sdpaex import sdpa_ex
 
-        executors = [thunder.pytorch_executor]
-        executors = [thunder.nvfuser_executor] + executors
         model = thunder.compile(
-            og_model, disable_torch_autograd_support=True, use_cudagraphs=True, executors_list=executors
+            og_model,
+            disable_torch_autograd_support=True,
+            # DISABLED: sdpa_ex: RuntimeError: attn_bias is not correctly aligned (strideH)
+            executors_list=[thunder.nvfuser_executor, thunder.pytorch_executor],
+            # DISABLED: kv cache issue
+            # https://github.com/Lightning-AI/lightning-thunder/issues/1501
+            use_cudagraphs=False,
         )
         model.max_seq_length = og_model.max_seq_length
     elif compile != "eager":
