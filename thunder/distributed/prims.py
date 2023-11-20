@@ -129,7 +129,17 @@ def wait_meta(a: FutureTensorProxy, /) -> TensorProxy:
 def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
-    return TensorProxy(like=a)
+
+    match a.ddp_type:
+        case DDPType.REPLICATED:
+            return TensorProxy(like=a)
+        case DDPType.FULLY_SHARDED:
+            # Assuming that the sharding is done on the first dimension
+            # See [FSDP Sharding] in distributed/__init__.py
+            unsharded_shape = a.shape[0] * group.size(), *a.shape[1:]
+            return TensorProxy(shape=unsharded_shape, like=a, ddp_type=DDPType.REPLICATED)
+        case _:
+            utils.check(False, lambda: f"Unexpected {a.ddp_type=}")
 
 
 def pack_meta(tensors: list[TensorProxy], bucket_key: str) -> TensorProxy:
@@ -175,27 +185,41 @@ update_bucket_view = make_prim(PrimIDs.UPDATE_BUCKET_VIEW, "update_bucket_view",
 
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE)
-def synchronize_augmented_forward_rule(a: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
-    utils.check(
-        a.ddp_type == DDPType.REPLICATED,
-        lambda: f"Expected {a.ddp_type=} to be {DDPType.REPLICATED=}",
-    )
-    # Assuming that the input is a replicated tensor, so no need to do anything
-    # in the forward pass
-    return a, (
-        a.ddp_type,
-        group,
-    )
+def synchronize_augmented_forward_rule(
+    a: TensorProxy, group: torch.distributed.ProcessGroup
+) -> tuple[TensorProxy, tuple]:
+    match a.ddp_type:
+        case DDPType.REPLICATED:
+            # Assuming that the input is a replicated tensor, so no need to do anything
+            # in the forward pass
+            return a, (
+                a.ddp_type,
+                group,
+            )
+        case DDPType.FULLY_SHARDED:
+            # Assuming that the sharding is done on the first dimension.
+            # We do the communication on the side CUDA stream and wait is
+            # immediately called on the result with the hope that the execution
+            # passes would reorder the wait operation to be closer to the actual
+            # usage of the tensor.
+            return all_gather(a, group, do_async=True).wait(), (
+                a.ddp_type,
+                group,
+            )
+        case _:
+            utils.check(False, lambda: f"Unexpected {a.ddp_type=}")
 
 
 @register_backward(PrimIDs.SYNCHRONIZE)
 def synchronize_backward_rule(
     ddp_type: DDPType, group: torch.distributed.ProcessGroup, grad: TensorProxy
 ) -> tuple[TensorProxy, None]:
-    utils.check(
-        ddp_type == DDPType.REPLICATED,
-        lambda: f"Expected {ddp_type=} to be {DDPType.REPLICATED=}",
-    )
     preaverage_grad = grad / group.size()
-    all_reduced = all_reduce(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True)
-    return all_reduced, None
+    match ddp_type:
+        case DDPType.REPLICATED:
+            synced_grad = all_reduce(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
+        case DDPType.FULLY_SHARDED:
+            synced_grad = reduce_scatter(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
+        case _:
+            utils.check(False, lambda: f"Unexpected {ddp_type=}")
+    return synced_grad, None

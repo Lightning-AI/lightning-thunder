@@ -63,6 +63,9 @@ def sort_waits(execution_trace):
         all_gather_prim_impl,
     )
 
+    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+        return execution_trace
+
     order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
 
     def prefer_comm_over_other_over_wait(eligible_nodes: list[Node]) -> int:
@@ -89,12 +92,9 @@ def sort_waits(execution_trace):
         lambda: "Cannot sort execution trace with del nodes",
     )
 
-    if any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
-        new_execution_trace.bound_symbols = toposort_bsym_dag(
-            bsym_list_to_dag(execution_trace.bound_symbols)[0],
-            TOPOSORT_ORDER.TOP_DOWN,
-            selector=prefer_comm_over_other_over_wait,
-        )
-        return new_execution_trace
-    else:
-        return execution_trace
+    new_execution_trace.bound_symbols = toposort_bsym_dag(
+        bsym_list_to_dag(execution_trace.bound_symbols)[0],
+        TOPOSORT_ORDER.TOP_DOWN,
+        selector=prefer_comm_over_other_over_wait,
+    )
+    return new_execution_trace

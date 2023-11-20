@@ -516,7 +516,7 @@ class FloatProxy(NumberProxy, float):
 class DDPType(Enum):
     NONE = auto()
     REPLICATED = auto()
-    # FULLY_SHARDED = auto()
+    FULLY_SHARDED = auto()
 
 
 def _infer_tensor_properties(

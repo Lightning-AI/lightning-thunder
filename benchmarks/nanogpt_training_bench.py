@@ -23,15 +23,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import argparse
-from contextlib import nullcontext
+import functools
 import os
 import time
+from contextlib import nullcontext
+
+import thunder
 
 import torch
 import torch.distributed as torch_dist
-
-import thunder
-from thunder.tests.nanogpt_model import GPT, GPTConfig
+from thunder.tests.nanogpt_model import Block, GPT, GPTConfig
 
 _configs = {
     "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
@@ -50,6 +51,7 @@ parser.add_argument("--print-loss", action="store_true", help="Set this `True` t
 parser.add_argument("--profile", action="store_true")
 parser.add_argument("--nsys-profile", action="store_true")
 parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.keys()))
+parser.add_argument("--ddp-mode", default="ddp", choices=("ddp", "fsdp"))
 parser.add_argument("--bucket-size-in-mb", type=float, default=25.0)
 parser.add_argument("--seq-len", type=int, default=128)
 parser.add_argument("--dump-extrace", action="store_true")
@@ -68,6 +70,7 @@ dtype = args.dtype  # 'float32' or 'bfloat16' or 'float16'
 compile_mode = args.compile_mode
 print_loss = args.print_loss
 use_ddp = False
+ddp_mode = args.ddp_mode
 bucket_size_in_mb: float = args.bucket_size_in_mb
 if args.dump_extrace:
     assert compile_mode == "thunder"
@@ -108,21 +111,49 @@ model.to(device=device).to(dtype=ptdtype)
 optimizer_ctor = model.configure_optimizers
 if use_ddp:
     if compile_mode == "thunder":
-        from thunder.distributed import ddp
+        match ddp_mode:
+            case "ddp":
+                from thunder.distributed import ddp
 
-        model = ddp(
-            model,
-            rank=local_rank,
-            broadcast_from=0,
-            process_group=pg,
-            bucket_size_in_mb=bucket_size_in_mb,
-        )
+                model = ddp(
+                    model,
+                    rank=local_rank,
+                    broadcast_from=0,
+                    process_group=pg,
+                    bucket_size_in_mb=bucket_size_in_mb,
+                )
+            case "fsdp":
+                from thunder.distributed import fsdp
+
+                model = fsdp(model, rank=local_rank, broadcast_from=0, process_group=pg)
+            case _:
+                raise ValueError(f"Unknown ddp_mode: {ddp_mode}")
     else:
-        model = torch.nn.parallel.distributed.DistributedDataParallel(
-            model,
-            device_ids=[local_rank],
-            bucket_cap_mb=bucket_size_in_mb,
-        )
+        match ddp_mode:
+            case "ddp":
+                model = torch.nn.parallel.DistributedDataParallel(
+                    model,
+                    device_ids=[local_rank],
+                    bucket_cap_mb=bucket_size_in_mb,
+                )
+            case "fsdp":
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+                from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+                nanogpt_auto_wrap_policy = functools.partial(
+                    transformer_auto_wrap_policy, transformer_layer_cls={Block}
+                )
+                zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
+                sharding_strategy: ShardingStrategy = ShardingStrategy.SHARD_GRAD_OP  # ZeRO-2
+                # AssertionError: Dynamo only supports FSDP with use_orig_params=True
+                torch.cuda.set_device(local_rank)
+                model = FSDP(
+                    model,
+                    sharding_strategy=sharding_strategy,
+                    auto_wrap_policy=zero_bucket_wrap_policy,
+                    device_id=local_rank,
+                    use_orig_params=not args.skip_torch_compile,
+                )
 
 optimizer = optimizer_ctor(weight_decay=1e-2, learning_rate=1e-4, betas=(0.9, 0.95), device_type="cuda")
 
@@ -132,7 +163,9 @@ if compile_mode == "torch":
         model = torch.compile(model)  # pytorch 2.0
 elif compile_mode == "thunder":
     print("Compiling model using thunder.compile...")
-    model = thunder.compile(model)
+    import thunder.executors.sdpaex
+
+    model = thunder.compile(model, executors_list=[thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex])
 else:
     raise ValueError(f"Unknown compile_mode: {compile_mode}")
 

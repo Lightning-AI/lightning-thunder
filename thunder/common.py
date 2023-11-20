@@ -318,6 +318,15 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
             for v in additional_param_values:
                 v.ddp_type = DDPType.REPLICATED
 
+        # If model was wrapped with thunder.distributed.fsdp it would have a
+        # .use_fsdp attribute set to True and all parameters would be already
+        # sharded across all other processes. So that our tracing is aware of
+        # this we need to mark the ddp_type of model's parameters as
+        # thunder.proxies.DDPType.FULLY_SHARDED
+        if getattr(model, "use_fsdp", False):
+            for v in additional_param_values:
+                v.ddp_type = DDPType.FULLY_SHARDED
+
         self._additional_param_values = additional_param_values
         self._additional_param_names = additional_param_names
         self._additional_return_names = additional_return_names
@@ -493,7 +502,8 @@ def trace(
 
                 def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
                     if isinstance(arg, TensorProxy) and arg.ddp_type in (
-                        DDPType.REPLICATED,  # or DDPType.FULLY_SHARDED
+                        DDPType.REPLICATED,
+                        DDPType.FULLY_SHARDED,
                     ):
                         return dist.prims.synchronize(arg, compile_data.process_group_for_ddp)
                     else:

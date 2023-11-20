@@ -115,9 +115,10 @@ class ThunderFunction(torch.autograd.Function):
 
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
 
-            if not _apply_batch_allreduce_of_grads:
-                # We need to sort the waits in the backward trace to overlap
-                # computation with communication
+            # We need to sort the waits in forward and backward trace to overlap
+            # computation with communication
+            if compile_data is not None and getattr(compile_data.fn, "use_fsdp", False):
+                fw_extrace = sort_waits(fw_extrace)
                 bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace = del_last_used(fw_extrace)

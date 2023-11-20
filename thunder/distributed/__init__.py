@@ -204,3 +204,45 @@ def ddp(
         tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
 
     return model
+
+
+def fsdp(
+    model: torch.nn.Module,
+    rank: int,
+    *,
+    world: Any | None = None,
+    broadcast_from: int | None = None,
+    process_group: tdist.ProcessGroup | None = None,
+) -> torch.nn.Module:
+    # We are going to use DDP to broadcast the parameters
+    distributed_params_module = ddp(
+        model, rank, world=world, broadcast_from=broadcast_from, process_group=process_group
+    )
+    distributed_params_module.use_ddp = False
+    distributed_params_module.use_fsdp = True
+    process_group = distributed_params_module.process_group_for_ddp
+
+    current_rank = tdist.get_rank(group=process_group)
+    world_size = tdist.get_world_size(group=process_group)
+
+    # Now we need to shard the parameters
+    # We will definitely change the sharding logic in the future
+    for name, param in distributed_params_module.named_parameters():
+        # Note [FSDP Sharding]
+        # Here we shard the parameters on the first
+        # dimension and all internal code will assume that the parameters are
+        # sharded on the first dimension
+
+        # narrow the param to the current rank on the first dimension
+        utils.check(
+            param.shape[0] % world_size == 0,
+            lambda: (
+                f"Current sharding requires the first dimension of the parameter to be divisible by the world size, "
+                f"but got {param.shape[0]} and {world_size}"
+            ),
+        )
+        chunk_size = param.shape[0] // world_size
+        # NOTE This could be a ShardTensor to indicate other parts of the code
+        # that it's sharded and should be treated differently
+        param.data = param.data.narrow(0, chunk_size * current_rank, chunk_size).clone()
+    return distributed_params_module

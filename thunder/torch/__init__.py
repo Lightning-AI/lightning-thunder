@@ -1875,6 +1875,15 @@ def layer_norm(
     bias: None | TensorLike = None,
     eps: Number = 1e-5,
 ) -> TensorLike:
+    # Note [LayerNorm with parameter sharding]
+    # Sharding messes up the normalized_shape argument, so we need to get the
+    # unsharded normalized shape from the weight
+    if weight is not None:
+        normalized_ndim = len(weight.shape)
+        normalized_shape = a.shape[-normalized_ndim:]
+    if bias is not None:
+        normalized_ndim = len(bias.shape)
+        normalized_shape = a.shape[-normalized_ndim:]
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
 
 

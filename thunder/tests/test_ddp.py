@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import unittest
+import weakref
 from typing import Optional
 from itertools import product
 
@@ -424,7 +425,7 @@ common_utils.instantiate_parametrized_tests(CompileDDPTest)
 from thunder.tests.framework import instantiate
 from thunder.core import dtypes
 from thunder.core import devices
-from thunder.distributed import ddp
+from thunder.distributed import ddp, fsdp
 
 import torch.distributed as tdist
 import torch.utils.data as tudata
@@ -707,10 +708,107 @@ def _test_native_ddp_helper(input_data):
     return None
 
 
+def _test_native_fsdp_helper(input_data):
+    init_method, world_size, rank, executor, device, dtype = input_data
+
+    num_samples = 2
+    tensor_shape = (2, 2)
+    sample_seed = 3456
+    num_epochs = 1
+    devicetype = devices.device_from_string(device).devicetype
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+
+    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+    tdist.barrier(pg)
+
+    def finalize_pg(pg):
+        # NOTE This function is undocumented; its definition is here:
+        # https://github.com/pytorch/pytorch/blob/416bf4e/torch/distributed/distributed_c10d.py#L1359
+        tdist.barrier(pg)
+        tdist.destroy_process_group(pg)
+
+    weakref.finalize(pg, finalize_pg, pg)
+
+    dataloader = create_per_process_dataloader(
+        rank,
+        num_samples=num_samples,
+        tensor_shape=tensor_shape,
+        tensor_dtype=torch_dtype,
+        sample_seed=sample_seed,
+        devicetype=devicetype,
+    )
+
+    # Creates, compiles, and FSDPs the model
+    model = SmallModel(device, torch_dtype)
+
+    original_weight_net1_shape = model.net1.weight.shape
+
+    fsdp_model = fsdp(
+        model,
+        rank=rank,
+        broadcast_from=0,
+        process_group=pg,
+    )
+
+    # Check that the model is sharded
+    sharded_weight_net1 = fsdp_model.net1.weight
+    assert sharded_weight_net1.shape != original_weight_net1_shape
+    assert sharded_weight_net1.shape == (1, 2)
+
+    cmodel = thunder.compile(
+        fsdp_model,
+        executors_list=executor.executors_list(),
+    )
+
+    comparison_exceptions = []
+    for epoch in range(num_epochs):
+        for step, data in enumerate(dataloader):
+            (inp,) = data
+            pred = cmodel(inp)
+
+            # Validates that each process got the same result by gathering all the tensors
+            #   on rank 0 and comparing them
+            # NOTE Exceptions thrown during the comparison process are recorded and returned
+            #   to the spawning process for analysis
+            gather_list = None
+            if rank == 0:
+                gather_list = []
+                for _ in range(world_size):
+                    gather_list.append(torch.empty_like(pred))
+
+            tdist.gather(pred, gather_list, dst=0, group=pg, async_op=False)
+
+            if rank == 0:
+                for other in gather_list:
+                    try:
+                        assert_close(pred, other)
+                    except Exception as e:
+                        comparison_exceptions.append(e)
+
+            pred.mean().backward()
+
+            for param_with_grad in filter(lambda p: p.grad is not None, cmodel.parameters()):
+                sharded_grad = param_with_grad.grad
+                assert sharded_grad.shape == param_with_grad.shape
+
+    if rank == 0:
+        return comparison_exceptions
+
+    return None
+
+
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
 @instantiate(dtypes=(thunder.float32,), num_devices=2)
 @ddp_wrapper("test_native_ddp", _test_native_ddp_helper)
 def test_native_ddp(executor, devices, dtype):
+    pass
+
+
+# NOTE CPU is skipped because of
+# RuntimeError: no support for _allgather_base in Gloo process group
+@instantiate(dtypes=(thunder.float32,), num_devices=2, devicetypes=(devices.DeviceType.CUDA,))
+@ddp_wrapper("test_native_fsdp", _test_native_fsdp_helper)
+def test_native_fsdp(executor, devices, dtype):
     pass
 
 
