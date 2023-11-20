@@ -30,7 +30,7 @@ import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
 from thunder.core.transforms import grad, clear_grads, populate_grads
 import thunder.executors as executors
-from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_llama_model
+from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_llama_model, lit_gpt_model
 
 # List of all benchmarks
 benchmarks: list = []
@@ -1716,6 +1716,79 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             nanogpt_model.MLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return gpt_mlp
+
+
+class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="The device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.bfloat16.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-llamamlp"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str = "Llama-2-7b-hf",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.bfloat16,
+        requires_grad: bool = True,
+    ) -> None:
+        from thunder.tests.lit_gpt_model import Config
+
+        super().__init__()
+
+        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = self.batchdims + (self.config.block_size, self.config.n_embd)
+
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        module = (
+            lit_gpt_model.LLaMAMLP(self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+        return module
 
 
 class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):

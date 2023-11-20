@@ -3579,6 +3579,15 @@ def reciprocal_backward(primal, g):
     return -g * primal * primal
 
 
+@partial(register_grad, prims.PrimIDs.RECIPROCAL)
+def reciprocal_joint_forward_backward_rule(a: TensorProxy) -> TensorProxy:
+    result, saved = reciprocal_aug_fwd(a)
+    g = get_grad(result)
+    ga = reciprocal_backward(*saved, g)
+    put_grad(a, ga)
+    return result
+
+
 @register_augmented_forward(prims.PrimIDs.SQUEEZE)
 def squeeze_aug_fwd(a: TensorProxy, dims: Sequence[int]) -> VJPDual:
     primal = squeeze(a, dims)

@@ -581,6 +581,44 @@ def test_mlp_grad(benchmark, executor: Callable):
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=0)
 
 
+@pytest.mark.parametrize(
+    "executor,",
+    (
+        torch_eager_bwd,
+        torch_compile_torch_bwd,
+        thunder_fwd_bwd_nvfuser,
+        thunder_grad_transform_torch_compile,
+        thunder_grad_transform_nvfuser,
+        thunder_grad_transform_v1_torch_compile,
+        thunder_grad_transform_v1_nvfuser,
+    ),
+    ids=(
+        # "torch-bwd" here means that PyTorch's .backward() is used
+        "torch-eager+torch-bwd",
+        "torch.compile+torch-bwd",
+        "thunder+nvfuser+torch-bwd",
+        # The following "executors" return only the gradient wrt the input so
+        # they might remove dead code paths from the joint fwd+bwd call
+        "thunder-grad+torch.compile",
+        "thunder-grad+nvfuser",
+        "thunder-grad_v1+torch.compile",
+        "thunder-grad_v1+nvfuser",
+    ),
+)
+def test_llama2_mlp_7b_requires_grad(benchmark, executor: Callable):
+    from thunder.benchmarks import LlamaMLPBenchmark
+
+    bench: Benchmark = LlamaMLPBenchmark(
+        config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
 # NOTE The CSA module is linear -> sdpa -> dropout
 @pytest.mark.parametrize(
     "executor,",
