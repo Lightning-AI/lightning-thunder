@@ -4,7 +4,6 @@ from looseversion import LooseVersion
 import torch
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
-
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import Proxy, TensorProxy
 import thunder.core.utils as utils
@@ -35,6 +34,30 @@ def _sdpa_enforce_input_tensor_contiguity(a: torch.Tensor) -> torch.Tensor:
         return a
     else:
         return a.contiguous()
+
+
+def ceil_div(a: int, b: int) -> int:
+    return (a + b - 1) // b
+
+
+def _sdpa_pad_head_dimension(a: torch.Tensor) -> torch.Tensor:
+    head_size = a.shape[-1]
+    padding_size = ceil_div(head_size, 8) * 8 - head_size
+    return torch.nn.functional.pad(a, [0, padding_size], value=0.0)
+
+
+def _sdpa_slice_head_dimension(a: torch.Tensor, head_size: int) -> torch.Tensor:
+    return a[:, :, :, 0:head_size]
+
+
+def _sdpa_pad_scale(a: None | float, head_size: int) -> float:
+    if a is not None:
+        return a
+
+    if head_size % 8 == 0:
+        return None
+
+    return 1.0 / math.sqrt(head_size)
 
 
 # Configure attention mask argument for memory efficient sdpa kernel
@@ -282,15 +305,16 @@ def _grad_forward_scaled_dot_product_flash_attention_impl(
     is_causal: bool = False,
     scale: None | float = None,
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, torch.Tensor, torch.Tensor, torch.Tensor):
-    return torch.ops.aten._scaled_dot_product_flash_attention(
-        _sdpa_enforce_input_tensor_contiguity(query),
-        _sdpa_enforce_input_tensor_contiguity(key),
-        _sdpa_enforce_input_tensor_contiguity(value),
+    primal, *remaining_args = torch.ops.aten._scaled_dot_product_flash_attention(
+        _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(query)),
+        _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(key)),
+        _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(value)),
         dropout_p,
         is_causal,
         return_debug_mask=False,
-        scale=scale,
+        scale=_sdpa_pad_scale(scale, value.shape[-1]),
     )
+    return _sdpa_slice_head_dimension(primal, value.shape[-1]), *remaining_args
 
 
 sdpfa_gradfwd = sdpa_ex.register_operator(
@@ -387,27 +411,6 @@ def _scaled_dot_product_efficient_attention_backward_impl(
         grad_input_mask.append(False)
     else:
         grad_input_mask.append(attn_mask.requires_grad)
-        # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
-        # with a very negative value that should become ~0 after softmax
-        if attn_mask is not None:
-            if attn_mask.dtype == torch.bool:
-                attn_mask = torch.masked_fill(
-                    torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf
-                )
-
-            # Expand the number of heads in attention mask to match query, key, and value tensors.
-            num_heads = query.shape[1]
-            head_dim = query.shape[-1]
-            batch_size, _, query_seq_len, key_seq_len = attn_mask.shape
-            attn_mask = attn_mask.expand(batch_size, num_heads, query_seq_len, key_seq_len)
-
-            if head_dim > key_seq_len:
-                # Pad and slice attention mask to ensure correct alignment.
-                padded_size = head_dim - key_seq_len
-                padded_attn_mask = torch.nn.functional.pad(attn_mask, [0, padded_size], value=0.0)
-                attn_mask = padded_attn_mask[:, :, :, 0:key_seq_len]
-            else:
-                attn_mask = attn_mask.contiguous()
 
     # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
     return torch.ops.aten._scaled_dot_product_efficient_attention_backward(
@@ -524,12 +527,12 @@ def _scaled_dot_product_flash_attention_backward_impl(
     philox_offset: torch.Tensor,
     scale: None | float,
 ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
-    return torch.ops.aten._scaled_dot_product_flash_attention_backward(
-        grad_out,
-        _sdpa_enforce_input_tensor_contiguity(query),
-        _sdpa_enforce_input_tensor_contiguity(key),
-        _sdpa_enforce_input_tensor_contiguity(value),
-        out,
+    grads = torch.ops.aten._scaled_dot_product_flash_attention_backward(
+        _sdpa_pad_head_dimension(grad_out),
+        _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(query)),
+        _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(key)),
+        _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(value)),
+        _sdpa_pad_head_dimension(out),
         logsumexp,
         cum_seq_q,
         cum_seq_k,
@@ -539,8 +542,9 @@ def _scaled_dot_product_flash_attention_backward_impl(
         is_causal,
         philox_seed,
         philox_offset,
-        scale=scale,
+        scale=_sdpa_pad_scale(scale, value.shape[-1]),
     )
+    return (_sdpa_slice_head_dimension(g, value.shape[-1]) for g in grads)
 
 
 sdpfa_bwd = sdpa_ex.register_operator(

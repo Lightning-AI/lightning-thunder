@@ -5560,6 +5560,8 @@ nn_ops.append(sdpa_opinfo)
 
 def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
+    from thunder.executors.sdpaex import SpdaBackend
+
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     # Reference metadata:
     # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4863-L4899
@@ -5599,6 +5601,22 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
         # 4-dim (multiheaded) causal cases
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+
+        # Test padding case when head size is not a multiple of 8
+        if is_flash_attention:
+            offset = random.randint(1, 7)
+            q, k, v = make(N, n_head, L, E + offset), make(N, n_head, S, E + offset), make(N, n_head, S, Ev + offset)
+
+            # Skip these test cases if the flash attention kernel is not selected.
+            # If the flash attention kernel is unavailable, _fused_sdp_choice uses the math reference.
+            # When the dtype is not fp64, there is inconsistent results with torch autograd.
+            backend = torch._fused_sdp_choice(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
+            if SpdaBackend(backend) == SpdaBackend.FLASH_ATTENTION:
+                # fixed scale
+                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.5)
+
+                # default scale
+                yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False)
 
         # Non-contiguous input tensor case
         nq = make(N, n_head, L, E).permute(0, 1, 3, 2)

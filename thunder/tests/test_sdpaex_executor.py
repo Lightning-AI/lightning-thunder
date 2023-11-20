@@ -45,12 +45,14 @@ def snippet_torch_consistency(op, torch_op, sample):
     torch_result = torch_op(*sample.args, **sample.kwargs)
     torch.testing.assert_close(thunder_result, torch_result, equal_nan=True, atol=1e-3, rtol=1e-4)
 
-    last_trace = thunder.last_traces(op)[-1]
-    fused_sdpa_kernels = [
-        "sdpaex_grad_forward_scaled_dot_product_efficient_attention",
-        "sdpafx_grad_forward_scaled_dot_product_efficient_attention",
-    ]
-    assert any(bsym.sym.name in fused_sdpa_kernels for bsym in last_trace.bound_symbols)
+    head_size = sample.args[0].shape[-1]
+    if head_size % 8 == 0:
+        last_trace = thunder.last_traces(op)[-1]
+        fused_sdpa_kernels = [
+            "sdpaex_grad_forward_scaled_dot_product_efficient_attention",
+            "sdpafx_grad_forward_scaled_dot_product_efficient_attention",
+        ]
+        assert any(bsym.sym.name in fused_sdpa_kernels for bsym in last_trace.bound_symbols)
 
 
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
