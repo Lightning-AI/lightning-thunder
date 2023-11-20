@@ -1,6 +1,4 @@
 checkpoints
-data
 
 download.py
-prepare_openwebtext.py
 convert_hf_checkpoint.py

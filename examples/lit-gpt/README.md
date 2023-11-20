@@ -5,8 +5,7 @@
 ```bash
 wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/main/scripts/download.py
 wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/main/scripts/convert_hf_checkpoint.py
-wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/main/scripts/prepare_openwebtext.py
-pip install jsonargparse huggingface_hub sentencepiece tokenizers datasets
+pip install jsonargparse huggingface_hub sentencepiece tokenizers
 pip install git+https://github.com/Lightning-AI/lit-gpt
 ```
 
@@ -67,7 +66,6 @@ This is advantageous because `torch.multinomial(probs, num_samples=1)` is very s
 ```shell
 # setup
 python download.py --repo_id openlm-research/open_llama_3b --tokenizer_only true
-python prepare_openwebtext.py --checkpoint_dir checkpoints/openlm-research/open_llama_3b --destination_path data/openwebtext-llama
 # run
 python train.py --compile thunder --dynamic false
 ```

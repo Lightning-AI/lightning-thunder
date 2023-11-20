@@ -9,9 +9,6 @@ from torch.utils.data import DataLoader, IterableDataset
 from thunder.tests.lit_gpt_model import GPT, Config
 
 model_name = "open_llama_3b"
-name = "openwebtext-llama"
-out_dir = Path("out") / name
-data_dir = Path("data") / name
 learning_rate = 6e-4
 micro_batch_size = 2
 max_iters = 50
@@ -19,9 +16,6 @@ max_iters = 50
 
 def main(compile: str = "eager", dynamic: bool = False) -> None:
     fabric = L.Fabric(devices=1, precision="bf16-true")
-
-    if fabric.global_rank == 0:
-        out_dir.mkdir(parents=True, exist_ok=True)
 
     fabric.seed_everything(1337, workers=True)  # same seed for every process to init model (FSDP)
 
@@ -55,7 +49,7 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=1e-1, foreach=False)
     optimizer = fabric.setup_optimizers(optimizer)
 
-    train_data = Dataset(data_dir / "train.bin", model.max_seq_length, dynamic)
+    train_data = DummyDataset(model.max_seq_length, dynamic)
     train_dataloader = DataLoader(train_data, batch_size=micro_batch_size, num_workers=2, collate_fn=pad_collate)
     train_dataloader = fabric.setup_dataloaders(train_dataloader)
 
@@ -89,23 +83,21 @@ def train(
     print(f"Total time: {(t1 - t0):.2f}s")
 
 
-class Dataset(IterableDataset):
-    def __init__(self, data_file: Path, max_seq_length: int, dynamic: bool):
+class DummyDataset(IterableDataset):
+    def __init__(self, max_seq_length: int, dynamic: bool):
         super().__init__()
-        self.data_file = data_file
         self.max_seq_length = max_seq_length
         self.dynamic = dynamic
 
     def __iter__(self):
-        data = np.memmap(self.data_file, dtype=np.uint16, mode="r")
         while True:
             if self.dynamic:
                 t = torch.randint(10, self.max_seq_length + 1, (1,))
             else:
                 t = self.max_seq_length
-            i = torch.randint(len(data) - t, (1,)).item()
-            x = torch.from_numpy((data[i : i + t]).astype(np.int64))
-            y = torch.from_numpy((data[i + 1 : i + 1 + t]).astype(np.int64))
+            data = torch.randint(0, 100, (t + 1,), dtype=torch.int64)
+            x = data[:t]
+            y = data[1 : t + 1]
             yield x, y
 
 
