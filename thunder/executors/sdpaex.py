@@ -42,11 +42,19 @@ def ceil_div(a: int, b: int) -> int:
 
 def _sdpa_pad_head_dimension(a: torch.Tensor) -> torch.Tensor:
     head_size = a.shape[-1]
+    # NOTE short-circuit path when we already have compatible head_size
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1505
+    if head_size % 8 == 0:
+        return a
     padding_size = ceil_div(head_size, 8) * 8 - head_size
     return torch.nn.functional.pad(a, [0, padding_size], value=0.0)
 
 
 def _sdpa_slice_head_dimension(a: torch.Tensor, head_size: int) -> torch.Tensor:
+    # NOTE short-circuit path when we already have compatible head_size
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1505
+    if head_size % 8 == 0:
+        return a
     return a[:, :, :, 0:head_size]
 
 
