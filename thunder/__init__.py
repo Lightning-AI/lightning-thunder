@@ -19,11 +19,10 @@ import thunder.core.symbol as symbol
 import thunder.core.devices as devices
 from thunder.common import CACHE_MODES, CompileData, CompileStats, _create_callable, trace, preprocess
 import thunder.extend as extend
-from thunder.extend import Executor
+from thunder.extend import Executor, add_default_executor
 
 # The following executors are always available, and so are unconditionally imported
-from thunder.executors import pythonex, torchex, nvfuserex
-
+from thunder.executors import pythonex, torchex, nvfuserex, sdpaex
 
 import thunder.torch as ltorch
 
@@ -58,6 +57,7 @@ __all__ = [
     "preprocess",
     # TODO Add device aliases
     # TODO Add executor aliases
+    "sdpa_executor",
     "nvfuser_executor",
     "pytorch_executor",
     # debugging functions
@@ -103,8 +103,16 @@ get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
 
+sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
+
+# Default executor list is [sdpa -> nvfuser -> torch -> python]
+if nvfuser_executor:
+    add_default_executor(nvfuser_executor)
+
+if sdpa_executor:
+    add_default_executor(sdpa_executor)
 
 #
 # Promoted debugging functions

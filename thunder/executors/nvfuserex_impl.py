@@ -631,7 +631,6 @@ class nvFuserExecutor(FusionExecutor):
 
 ex = nvFuserExecutor()
 register_executor(ex)
-add_default_executor(ex)
 
 
 def register_supported(id: Hashable, translator: Callable, checker: Callable):
