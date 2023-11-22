@@ -85,9 +85,20 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
     batch_size, _, query_seq_len, key_seq_len = attn_mask.shape
     expanded_attn_mask = attn_mask.expand(batch_size, num_heads, query_seq_len, key_seq_len)
 
-    if head_dim > key_seq_len:
-        # Pad and slice attention mask to ensure correct alignment.
-        padded_size = head_dim - key_seq_len
+    utils.check(
+        head_dim > 0,
+        lambda: f"Expected head dimension to be greater than 0.",
+    )
+
+    utils.check(
+        key_seq_len > 0,
+        lambda: f"Expected key-value sequence length to be greater than 0.",
+    )
+
+    # Pad and slice attention mask to ensure correct alignment.
+    if head_dim != key_seq_len:
+        ceil_power_of_eight = ceil_div(key_seq_len, 8) * 8
+        padded_size = ceil_power_of_eight - key_seq_len
         padded_attn_mask = torch.nn.functional.pad(expanded_attn_mask, [0, padded_size], value=0.0)
         return padded_attn_mask[:, :, :, 0:key_seq_len]
     else:

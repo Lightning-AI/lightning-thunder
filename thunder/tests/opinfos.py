@@ -5581,6 +5581,17 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
     flash_attn_threshold = 6 * N * n_head
     query_seq_length = (flash_attn_threshold - 32, flash_attn_threshold + 32)
 
+    # We pad and slice the attention bias to ensure contiguity for the memory efficient sdpa.
+    # Test Case: kv_seq_len > head_dim
+    q, k, v = make(1, n_head, 12, 8), make(1, n_head, 14, 8), make(1, n_head, 14, 8)
+    bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+
+    # Test Case: kv_seq_len < head_dim
+    q, k, v = make(1, n_head, 12, 16), make(1, n_head, 14, 16), make(1, n_head, 14, 16)
+    bool_attn_mask = make((1, n_head, 12, 14), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+    yield SampleInput(q, k, v, bool_attn_mask, dropout_p := 0.0, is_causal := False, scale=0.5)
+
     for L in query_seq_length:
         is_flash_attention = L <= flash_attn_threshold
         S = random.randint(1, 10) * alignment_factor

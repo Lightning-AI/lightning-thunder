@@ -113,8 +113,7 @@ def main(
         model = thunder.compile(
             og_model,
             disable_torch_autograd_support=True,
-            # DISABLED: sdpa_ex: RuntimeError: attn_bias is not correctly aligned (strideH)
-            executors_list=[thunder.nvfuser_executor, thunder.pytorch_executor],
+            executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
             # DISABLED: kv cache issue
             # https://github.com/Lightning-AI/lightning-thunder/issues/1501
             use_cudagraphs=False,
