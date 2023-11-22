@@ -1,14 +1,16 @@
-from itertools import chain
 import time
-from typing import Any
+from typing import Any, Dict
 from collections.abc import Sequence
+from itertools import filterfalse
+from functools import partial
 
 import thunder.core.prims as prims
+from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.proxies import Proxy, variableify, Variable
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.core.symbol import BoundSymbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
-from thunder.core.utils import ProxyDict, producers
+from thunder.core.utils import ProxyDict, producers, check
 
 
 #
@@ -155,6 +157,46 @@ NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
 }
 
 
+# This helper function applies cse transformation to bound symbol that is not a fusion.
+def cse_single_bsym(
+    redundant_map: dict[Variable, Proxy],
+    rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbolInterface],
+    bsym: BoundSymbolInterface,
+) -> BoundSymbolInterface:
+    check(
+        bsym.sym.is_fusion != True,
+        lambda: f"Expected bound symbol not to be a fusion in _cse_single_bsym",
+        exception_type=AssertionError,
+    )
+
+    # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
+    # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
+    if bsym.sym.id in NON_FUNCTIONAL_OPS:
+        return bsym
+
+    # We can replace any redundant `bsym.args` and `bsym.kwargs` if it is available in the current context.
+    new_bsym = bsym.from_bsym_swap_proxies(
+        swap_map=redundant_map,
+        skip_inputs=False,
+        skip_output=True,
+        skip_subsymbols=True,
+    )
+
+    # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
+    rhs = new_bsym.rhs()
+    if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
+        for src, dst in zip(bsym.flat_outs, prior_bsym.flat_outs):
+            # Detects (and avoids) aliasing
+            vsrc, vdst = variableify(src), variableify(dst)
+            if vsrc == vdst:
+                continue
+            redundant_map[vsrc] = dst
+        return None
+    else:
+        rhs_to_bsym_map[rhs] = bsym
+        return new_bsym
+
+
 # TODO Update the replacement of redundant proxies to use a visitor pattern
 #   when that architecture is added in the future
 def cse(trace: Trace) -> Trace:
@@ -222,35 +264,8 @@ def cse(trace: Trace) -> Trace:
 
     # Identifies redundant operations and maps redundant proxies to originally
     #   computed proxies
-    bsym: BoundSymbol
-    for bsym in trace.bound_symbols:
-        # `NON_FUNCTIONAL_OPS` are a op that's not deterministic, for example, `torch.nn.functiona.dropout`
-        # and `torch.nn.functional.scaled_dot_product_attention` depending on PRNG.
-        if bsym.sym.id in NON_FUNCTIONAL_OPS:
-            cse_trace_bound_symbols.append(bsym)
-            continue
-
-        # From the second bsym, we have opportunities to replace `bsym.args` and `bsym.kwargs`.
-        rhs = (
-            bsym.from_bsym_swap_proxies(
-                swap_map=redundant_map,
-                skip_inputs=False,
-                skip_output=True,
-                skip_subsymbols=True,
-            )
-        ).rhs()
-        if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
-            # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
-            for src, dst in zip(bsym.flat_outs, prior_bsym.flat_outs):
-                # Detects (and avoids) aliasing
-                vsrc, vdst = variableify(src), variableify(dst)
-                if vsrc == vdst:
-                    continue
-
-                redundant_map[vsrc] = dst
-        else:
-            rhs_to_bsym_map[rhs] = bsym
-            cse_trace_bound_symbols.append(bsym)
+    cse_bound_symbols = map(partial(cse_single_bsym, redundant_map, rhs_to_bsym_map), trace.bound_symbols)
+    cse_trace_bound_symbols = tuple(filterfalse(lambda a: a is None, cse_bound_symbols))
 
     # Updates the bound symbols in the trace
     # NOTE This uses the cse_trace_bound_symbols list, which has filtered

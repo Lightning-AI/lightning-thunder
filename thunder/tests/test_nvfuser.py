@@ -8,6 +8,9 @@ import thunder.examine as examine
 from thunder.examine import get_fusions
 import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
+import thunder.core.devices as devices
+import thunder.core.prims as prims
+from thunder.core.pytree import tree_map
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
@@ -31,9 +34,6 @@ from thunder.tests.framework import (
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
-
-
-pytestmark = pytest.mark.skip("These tests are disabled pending nvFuser logic updates")
 
 
 @instantiate(
@@ -244,6 +244,70 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     assert t1.name == "t1"
     assert t2.name == "t1"
     assert a0.name == a1.name == "a"
+
+
+@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
+def test_cse_subsymbol_removal(executor, device, _):
+    from thunder.core.pytree import tree_flatten
+
+    def func(x):
+        t0 = x.relu()
+        t1 = t0 + 5
+        t2 = t0 + 5
+        t3 = t0 @ t0
+        t4 = torch.where(t3 > t1, t1, t2)
+        return t4
+
+    x = make_tensor(5, 5, dtype=torch.float16, device=device)
+    compiled_func = thunder.compile(func, executors_list=executor.executors_list())
+    compiled_func(x)
+
+    fw_trace = thunder.last_traces(compiled_func)[-1]
+    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+
+    # There are two nvfuser fusion groups separated by the matmul operation.
+    assert len(fusion_bsyms) == 2
+    nvf_0, nvf_1 = fusion_bsyms
+
+    # CSE removes the redundant (t0 + 5) operation
+    assert len(nvf_0.subsymbols) == 5
+    # Return t0 and t1 from the first fusion
+    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t1", "t4"]
+
+    # CSE does not change the second fusion
+    assert len(nvf_1.subsymbols) == 2
+    assert [t.name for t in tree_flatten(nvf_1.output)[0]] == ["t10"]
+
+
+@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
+def test_cse_subsymbol_redundant_args(executor, device, _):
+    from thunder.core.pytree import tree_flatten
+
+    def func(w, x, y, z):
+        t0 = x @ y
+        t1 = t0 + z
+        t2 = x @ y
+        t3 = t2 + w
+        t4 = t1 + t3
+        return t4
+
+    w = make_tensor(5, 5, dtype=torch.float16, device=device)
+    x = make_tensor(5, 5, dtype=torch.float16, device=device)
+    y = make_tensor(5, 5, dtype=torch.float16, device=device)
+    z = make_tensor(5, 5, dtype=torch.float16, device=device)
+    compiled_func = thunder.compile(func, executors_list=executor.executors_list())
+    compiled_func(w, x, y, z)
+
+    fw_trace = thunder.last_traces(compiled_func)[-1]
+    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+
+    # There is a single nvfuser fusion group.
+    assert len(fusion_bsyms) == 1
+    nvf_0 = fusion_bsyms[0]
+
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "w", "z"]
+    assert len(nvf_0.subsymbols) == 7
+    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend

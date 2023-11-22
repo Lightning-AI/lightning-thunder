@@ -19,7 +19,6 @@ import thunder.torch as ltorch
 import thunder.core.codeutils as codeutils
 from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
 import thunder.core.dtypes as dtypes
-import thunder.core.devices as devices
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
 from thunder.core.symbol import BoundSymbol

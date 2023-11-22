@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
 from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
@@ -7,7 +7,8 @@ from collections.abc import Hashable
 from collections.abc import Sequence
 import time
 from copy import copy
-from itertools import chain
+from itertools import chain, filterfalse
+from functools import partial
 
 from looseversion import LooseVersion
 import torch
@@ -15,16 +16,17 @@ import torch
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
 from thunder.core import prims, utils
+from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify, unvariableify, Variable, pyval
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.utils import OrderedSet, check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.symbol import BoundSymbol, Symbol, has_tags
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
-from thunder.core.transform_common import dce
+from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
 
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, add_default_executor
@@ -525,6 +527,94 @@ class nvFuserExecutor(FusionExecutor):
 
         return fusion_bsym
 
+    # TODO Update the replacement of redundant proxies to use a visitor pattern
+    #   when that architecture is added in the future
+    def cse(self, trace: TraceCtx) -> TraceCtx:
+        """Remove bound symbols whose right hand side is common expression.
+        Nvfuser specific CSE pass.
+
+        Args:
+            trace:
+
+        Returns:
+            :class:`TraceCtx` with common subexpression eliminated.
+        """
+        from thunder.core.rematerialization import _update_nvfusion_call_ctx
+
+        start_time_ns = time.time_ns()
+
+        cse_trace = from_trace(trace)
+
+        def replace_bsym_and_update_call_ctx(bsym, new_bsyms):
+            new_bsym = new_bsyms.get(bsym, None)
+            if new_bsym is not None and new_bsym.sym.is_fusion:
+                return _update_nvfusion_call_ctx(cse_trace, new_bsym)
+            return new_bsym
+
+        # The trace_rhs_to_bsym_map is used for CSE on trace outside of nvFusion region.
+        # TODO: CSE on overall trace should NOT be inside fusion pass for nvfuser executor.
+        trace_rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbolInterface] = {}
+
+        # For bound symbols with redundant rhs expressions, map the output proxies to the output proxies of the common bound symbol.
+        redundant_map: dict[Variable, Proxy] = {}
+        new_bsyms = {bsym: bsym for bsym in trace.bound_symbols}
+
+        # Updates the trace's proxy
+        def map_redundant(x: Any) -> Any:
+            if isinstance(x, Proxy):
+                return redundant_map.get(Variable(x), x)
+            return x
+
+        for bsym in trace.bound_symbols:
+            if bsym.sym.is_fusion != True:
+                new_bsyms[bsym] = cse_single_bsym(redundant_map, trace_rhs_to_bsym_map, bsym)
+                continue
+
+            # The fusion_rhs_to_bsym_map is used only for CSE inside a nvFusion region.
+            fusion_rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbolInterface] = {}
+
+            # Apply cse transformation to subsymbols.
+            cse_subsymbols = map(partial(cse_single_bsym, redundant_map, fusion_rhs_to_bsym_map), bsym.subsymbols)
+            remove_none_subsymbols = tuple(filterfalse(lambda a: a is None, cse_subsymbols))
+            new_subsymbols = replace_redundant_inputs(redundant_map, remove_none_subsymbols)
+
+            # Map redundant args and outputs that have a common subexpression to the same value.
+            # Remove identical values from the bsym's arguments and outputs.
+            #  * First, variableify the proxies so they are hashable.
+            #  * Then, create a dictionary where the keys are variables and the values are their original proxies.
+            #  * Lastly, create a new tuple given the dictionary values.
+            new_args = tree_map(map_redundant, bsym.args)
+            if isinstance(new_args, Sequence):
+                new_args = tuple({variableify(x): x for x in new_args}.values())
+
+            new_output = tree_map(map_redundant, bsym.output)
+            if isinstance(new_output, Sequence):
+                new_output = tuple({variableify(x): x for x in new_output}.values())
+
+            # Create new bsym with updated args, subsymbols and outputs.
+            new_bsyms[bsym] = replace(bsym, args=new_args, subsymbols=new_subsymbols, output=new_output)
+
+            # TODO Add (rhs, bsym) key, value pairs for nvfusion outputs to trace_rhs_to_bsym_map
+
+        # New bound symbols are still incorrect. Its _ctx_call dict points to the
+        # old nvFuser fusion. We need to update it to use the new definition.
+        new_symbols = [replace_bsym_and_update_call_ctx(bsym, new_bsyms) for bsym in trace.bound_symbols]
+        cse_trace.bound_symbols = list(filterfalse(lambda a: a is None, new_symbols))
+
+        return_bsym = cse_trace.bound_symbols[-1]
+        assert return_bsym.sym.id == prims.PrimIDs.RETURN
+        trace_output = tree_map(map_redundant, return_bsym.args)
+        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=())
+
+        end_time_ns = time.time_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
+
+        cse_trace.set_provenance(
+            TraceProvenance(f"Nvfuser Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
+        )
+        return cse_trace
+
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.time_ns()
@@ -614,12 +704,9 @@ class nvFuserExecutor(FusionExecutor):
 
         fusedtrace.bound_symbols = fused_bsyms
 
+        fusedtrace = remove_redundant_casts(fusedtrace)
+        fusedtrace = self.cse(fusedtrace)
         fusedtrace = dce(fusedtrace)
-        # TODO: Restore this when CSE pass can remove ops inside fusion
-        # See https://github.com/Lightning-AI/lightning-thunder/pull/1338
-        # OR nvFuser itself can handle fusions with certain common subexpressions
-        # See https://github.com/NVIDIA/Fuser/issues/1301
-        # fusedtrace = remove_redundant_casts(fusedtrace)
 
         end_time_ns: int = time.time_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
