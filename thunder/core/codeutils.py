@@ -335,7 +335,7 @@ class SigInfo:
 
 
 # TODO Review errors and improve message quality (ex. too many arguments error)
-def get_siginfo(fn: Callable, args, kwargs) -> SigInfo:
+def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False) -> SigInfo | Any:
     # Unwraps partials and records their arguments
     partials = []
     partial_kwargs = {}
@@ -384,7 +384,20 @@ def get_siginfo(fn: Callable, args, kwargs) -> SigInfo:
     # Augments the parameters with positional information
     params_with_indices = {k: (v, idx) for idx, (k, v) in enumerate(sig.parameters.items())}
 
+    # Constructs an object with properties named after the names in the function's signature,
+    #   that return their corresponding arguments when accessed
+    if _make_named_inputs:
+
+        class NamedBindings:
+            pass
+
+        for name, x in args_dict.items():
+            setattr(NamedBindings, name, property(lambda self, x=x: x))
+
+        return NamedBindings()
+
     # Constructs signature information
+    # NOTE On this path _make_named_inputs == False, so a SigInfo is created
 
     # Acquires the name of the function
     # NOTE Not all callables define __name__, including objects that define __call__ and

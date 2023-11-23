@@ -945,7 +945,8 @@ class ProxyDict:
 # NOTE That this pass does not assume that the bound symbols are in a reasonable order,
 #   but it does assume that each proxy is uniquely constructed once
 # Returns a proxy -> producer mapping
-def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDict:
+#   If _map_to_numbers is True then producers are represented by their position in the trace (their "line number")
+def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_numbers: bool = False) -> ProxyDict:
     producers = ProxyDict()
 
     # TODO Update this to use tags (tag NO_OUTPUT?)
@@ -957,7 +958,7 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
     }
 
     bsyms = trace_or_bsyms if isinstance(trace_or_bsyms, list) else trace_or_bsyms.bound_symbols
-    for bsym in bsyms:
+    for idx, bsym in enumerate(bsyms):
         if bsym.sym.id in skip:
             continue
 
@@ -974,7 +975,10 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
             if is_input:
                 continue
 
-            producers[out] = bsym
+            if _map_to_numbers:
+                producers[out] = idx
+            else:
+                producers[out] = bsym
 
     return producers
 
