@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import dis
+import sys
+import collections
 from collections.abc import Iterator, Sequence, Callable
 from dataclasses import dataclass
 import inspect
+import linecache
 from typing import Any
 from types import CellType, CodeType, FunctionType, MethodType
 import functools
@@ -115,6 +120,11 @@ class JitProxyMap:
         return p
 
 
+# Our own exception class for reporting compilation problems
+class JITError(RuntimeError):
+    pass
+
+
 from typing import Literal
 
 
@@ -141,6 +151,74 @@ class JitMode(Enum):
     THUNDER = auto()
 
 
+# Use dis.Positions in 3.11+ and make it up in <3.11
+if sys.version_info < (3, 11):
+    Positions = collections.namedtuple(
+        "Positions",
+        [
+            "lineno",
+            "end_lineno",
+            "col_offset",
+            "end_col_offset",
+        ],
+        defaults=[None] * 4,
+    )
+else:
+    Positions = dis.Positions
+
+
+# This is an interpreter frame, similar to Python's for use fo the JIT
+# currently, we mainly use this to provide exception tracebacks,
+# so in contrast to Python we don't (yet) store globals / locals etc. here.
+@dataclass
+class JITFrame:
+    code: CodeType
+    positions: Positions | None = None
+    inst: dis.Instruction | None = None
+
+    def nexti(self, inst: dis.Instruction):
+        self.inst = inst
+        if (3, 9) <= sys.version_info < (3, 11):
+            if inst.starts_line is not None:
+                self.positions = Positions(inst.starts_line, inst.starts_line, 0, 999)
+        elif (3, 11) <= sys.version_info < (3, 12):
+            self.positions = inst.positions
+        else:
+            raise NotImplementedError(f"Python {sys.version_info} not supported")
+
+    def format_with_source(self):
+        # todo: multiple lines in positions, underline, indent
+        l = []
+        l.append(f"  in {self.code.co_name} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        if self.code.co_filename:
+            ls = linecache.getlines(self.code.co_filename)
+            l.append("  " + ls[max(self.positions.lineno - 1, 0)].rstrip())
+        return "\n".join(l)
+
+
+# A context keeping track of where we are in the interpreted program.
+# This should really be per JIT invocation and passed around, but for now
+# we have a global below
+class JITCtx:
+    def __init__(self):
+        self.frame_stack = []
+
+    # advance to the given instruction
+    def frame_stack_change_top(self, inst: dis.Instruction):
+        assert self.frame_stack
+        self.frame_stack[-1].nexti(inst)
+
+    # for method calls. There is a bit of a trick because the filename is
+    # part of the code object, but not the instruction's position information.
+    def push_frame_stack(self, code: CodeType):
+        self.frame_stack.append(JITFrame(code=code))
+
+    # for returning from method calls
+    def pop_frame_stack(self):
+        assert self.frame_stack
+        del self.frame_stack[-1]
+
+
 #
 # Per-Jit globals
 #
@@ -150,6 +228,7 @@ prologue_trace: TraceCtx
 computation_trace: TraceCtx
 jpm: JitProxyMap
 jit_mode: JitMode
+jit_ctx: JitCtx | None = None
 
 #
 # Handler registration
@@ -268,10 +347,6 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
 
     # Call PyErr_SetObject() to update the thread's state
     pass
-
-
-def do_call(fn: Callable, *args, **kwargs):
-    return fn(*args, **kwargs)
 
 
 # TODO Handle UndefVariableError
@@ -487,6 +562,24 @@ def _rot_two_handler(stack: list, **kwargs) -> None:
     stack.append(b)
 
 
+# This performs any operation needed for the execution of CALL_... opcodes in Python
+# before handing to _jit
+# TODO: We might revisit folding this into _jit
+def do_call(fn, *args, **kwargs) -> tuple[bool, Any]:
+    # TODO Restore lookaside depending on the mode
+    # We should move this inside a common do_call() function.
+    # lookaside: bool
+    # result: Any
+    lookaside, result = _fn_lookaside(fn, *args)
+
+    if lookaside:
+        stack.append(result)
+        return
+
+    # default: recurse in to jit
+    return _jit(fn, *args, **kwargs)
+
+
 # TODO Test how this handles functions, callable classes, and lambdas
 #   Functions
 #   Callable classes
@@ -497,7 +590,7 @@ def _call_function_handler(stack: list, inst: dis.Instruction, **kwargs) -> None
     assert inst.arg is not None
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(inst.arg))))
     func: Callable = stack.pop()
-    _, retval = _jit(func, *args)
+    _, retval = do_call(func, *args)
     stack.append(retval)
 
 
@@ -513,7 +606,7 @@ def _call_function_kw_handler(stack: list, inst: dis.Instruction, **kwargs) -> N
     args = tuple(reversed(tuple(stack.pop() for _ in range(arg_length))))
     func: Callable = stack.pop()
 
-    _, retval = _jit(func, *args, **fn_kwargs)
+    _, retval = do_call(func, *args, **fn_kwargs)
     stack.append(retval)
 
 
@@ -548,18 +641,8 @@ def _call_method_handler(stack: list, inst: dis.Instruction, **kwargs) -> None:
     else:
         meth = second_lm
 
-    # TODO Restore lookaside depending on the mode
-    # We should move this inside a common do_call() function.
-    # lookaside: bool
-    # result: Any
-    # lookaside, result = _fn_lookaside(meth, *args)
-
-    # if lookaside:
-    #     stack.append(result)
-    #     return
-
     # NOTE In this branch there was no function lookaside, so this traces into the function
-    _, retval = _jit(meth, args)
+    _, retval = do_call(meth, args)
     stack.append(retval)
 
 
@@ -567,7 +650,11 @@ def _call_method_handler(stack: list, inst: dis.Instruction, **kwargs) -> None:
 def _jit(fn, *args, **kwargs) -> tuple[bool, Any]:
     # TODO FIXME This won't acquire the code object for all callables
     #   What about partial objects, callable classes, callable modules, functools.wraps and @contextmanager...
+    if not hasattr(fn, "__code__"):
+        # TODO: The message could be made nicer.
+        raise ValueError(f"Cannot JIT object {repr(fn)} of type {type(fn)}")
     code: CodeType = fn.__code__
+
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
     locals_dict: dict[str, Any] = dict(inspect.signature(fn).bind(*args, **kwargs).arguments)
     globals_dict: dict[str, Any] = globals()
@@ -576,28 +663,19 @@ def _jit(fn, *args, **kwargs) -> tuple[bool, Any]:
     try_stack: list[TryBlock] = []
     stack: list[Any] = []
 
+    # we push a stack frame for the current function
+    jit_ctx.push_frame_stack(code)
+
     inst_ptr: int = 0
     while True:
         inst: dis.Instruction = insts[inst_ptr]
+        # update the stack frame to the current position (TODO: maybe also have inst_ptr?)
+        jit_ctx.frame_stack_change_top(inst)
+
         handler: None | Callable = _get_handler(inst.opname)
 
-        # TODO Highlight the portion of the line that originated the opcode on Python versions that include
-        #   the line offset information in the instruction
         if handler is None:
-            line_no: int | None = None
-            for i in reversed(insts[: insts.index(inst) + 1]):
-                if i.starts_line is not None:
-                    line_no = i.starts_line
-                    break
-            with open(code.co_filename) as f:
-                lines = f.readlines()
-            line_msg = f":{line_no}" if line_no else ""
-            line_contents = lines[line_no - 1] if line_no else ""
-            raise NotImplementedError(
-                f"Encountered unimplemented opcode {inst.opname} while tracing.\n"
-                f"Encountered in {fn.__name__}() at {code.co_filename if code.co_filename else 'Unknown'}{line_msg}\n"
-                f"{line_contents}"
-            )
+            raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.\n")
 
         # NOTE On this path handler is not None
 
@@ -656,6 +734,11 @@ def jit(fn: Callable, *, executors_list: None | Sequence[Executor] = None, mode:
         prologue_trace.args = args
         prologue_trace.kwargs = kwargs
 
+        # Jit state, this is global for now, but should really be passed around
+        # it contains the frame stack.
+        global jit_ctx
+        jit_ctx = JITCtx()
+
         # NOTE The computation_trace doesn't have a signature yet, its signature is determined
         #   by the computation "leaves" it uses
         global computation_trace
@@ -670,7 +753,16 @@ def jit(fn: Callable, *, executors_list: None | Sequence[Executor] = None, mode:
         global jit_mode
         jit_mode = mode if mode is not None else JitMode.THUNDER
 
-        should_return, result = _jit(fn, *args, **kwargs)
+        try:
+            should_return, result = _jit(fn, *args, **kwargs)
+        except Exception as e:
+            # TODO Highlight the portion of the line that originated the opcode on Python versions that include
+            #   the line offset information in the instruction
+            traceback_str = "\n".join(f.format_with_source() for f in jit_ctx.frame_stack)
+            msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn.__name__}:\n" f"{traceback_str}"
+            raise JITError(msg) from e
+        finally:
+            jit_ctx = None
 
         # Python mode computes the actual result here
         if mode is JitMode.PYTHON:

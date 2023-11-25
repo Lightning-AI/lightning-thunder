@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch.testing import assert_close
 
-from thunder.core.jit import jit, pjit
+from thunder.core.jit import jit, pjit, JITError
 
 
 def test_no_return():
@@ -137,6 +137,24 @@ def test_unpack_sequence():
     python_result = foo(args)
 
     assert_close(thunder_result, python_result)
+
+
+def test_exception_traceback():
+    def bar(a):
+        raise ValueError(f"I don't like {a}")
+
+    def foo(b):
+        return bar(b + 1)
+
+    jfoo = pjit(foo)
+
+    args = (4,)
+
+    # TODO: change to ValueError once that is supported!
+    with pytest.raises(JITError) as excinfo:
+        thunder_result = jfoo(*args)
+    assert "in foo in file" in str(excinfo.value)
+    assert "in bar in file" in str(excinfo.value)
 
 
 # test kwargs
