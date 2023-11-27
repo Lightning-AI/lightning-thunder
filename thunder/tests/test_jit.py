@@ -238,6 +238,17 @@ def test_partials():
     assert jppfoo(-3) == ppfoo(-3)
 
 
+def test_using_imported_modules():
+    import operator
+
+    def foo(a, b):
+        return operator.add(a, b)
+
+    jfoo = jit(foo)
+
+    assert jfoo(3, 5) == foo(3, 5)
+
+
 @pytest.mark.xfail
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark

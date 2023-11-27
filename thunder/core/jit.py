@@ -125,6 +125,10 @@ class JitRuntimeCtx:
         self.frame_stack = []
         self._interpreter_stacks = [[]]
 
+    @property
+    def globals_dict(self) -> dict[str, Any]:
+        return self._globals_dict
+
     def push_interpreter_stack(self) -> list:
         interpreter_stack: list = []
         self._interpreter_stacks.append(interpreter_stack)
@@ -814,7 +818,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     # (4) Jits into the function
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
     locals_dict: dict[str, Any] = dict(inspect.signature(fn).bind(*args, **kwargs).arguments)
-    globals_dict: dict[str, Any] = globals()
+    globals_dict: dict[str, Any] = fn.__globals__
     closures = fn.__closure__
     try_stack: list[TryBlock] = []
     stack: list = runtimectx.push_interpreter_stack()
