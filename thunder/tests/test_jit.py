@@ -4,14 +4,14 @@ import pytest
 import torch
 from torch.testing import assert_close
 
-from thunder.core.jit import jit, pjit, JITError
+from thunder.core.jit import jit, JITError
 
 
 def test_no_return():
     def foo():
         pass
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
     assert jfoo() == foo()
 
 
@@ -19,7 +19,7 @@ def test_constant_return():
     def foo():
         return 5
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
     assert jfoo() == foo()
 
 
@@ -27,7 +27,7 @@ def test_constant_addition():
     def foo():
         return 3 + 5
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
     assert jfoo() == foo()
 
 
@@ -35,7 +35,7 @@ def test_input_number_addition():
     def foo(a, b):
         return a + 2 + b
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (5, 2)
 
@@ -46,7 +46,7 @@ def test_input_tensor_addition():
     def foo(a, b):
         return a + 2 + b
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4, 3)
 
@@ -63,7 +63,7 @@ def test_constant_if():
         else:
             assert False
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4, 3)
 
@@ -80,7 +80,7 @@ def test_function_call():
     def foo(a, b):
         return bar(a + 1, b)
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4, 3)
 
@@ -97,7 +97,7 @@ def test_inner_function_definition():
 
         return bar(a + 1, b)
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4, 3)
 
@@ -114,7 +114,7 @@ def test_inner_closure():
 
         return bar(a + 1)
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4, 3)
 
@@ -129,7 +129,7 @@ def test_unpack_sequence():
         a, b = tup
         return a + b
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4, 3)
 
@@ -146,7 +146,7 @@ def test_exception_traceback():
     def foo(b):
         return bar(b + 1)
 
-    jfoo = pjit(foo)
+    jfoo = jit(foo)
 
     args = (4,)
 
@@ -155,6 +155,16 @@ def test_exception_traceback():
         thunder_result = jfoo(*args)
     assert "in foo in file" in str(excinfo.value)
     assert "in bar in file" in str(excinfo.value)
+
+
+def test_walrus_operator():
+    def foo(a, b):
+        c = (a := b)
+        return c
+
+    jfoo = jit(foo)
+
+    assert jfoo(3, 8) == foo(3, 8)
 
 
 # test kwargs
