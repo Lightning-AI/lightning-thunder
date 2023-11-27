@@ -167,6 +167,41 @@ def test_walrus_operator():
     assert jfoo(3, 8) == foo(3, 8)
 
 
+def test_build_map():
+    def foo(a, b):
+        return {0: a, 1: b, 2: 3, "a": 4, a: 5}
+
+    jfoo = jit(foo)
+
+    # a, b
+    cases = (
+        (-3, 9),
+        (1, 1),
+        (0, 1),
+        (2, 5),
+    )
+
+    for a, b in cases:
+        print(f"{jfoo(a, b)=}")
+        print(f"{foo(a, b)=}")
+        assert jfoo(a, b) == foo(a, b)
+
+
+@pytest.mark.xfail
+def test_nanogpt_mlp():
+    from thunder.benchmarks import NanoGPTMLPBenchmark
+
+    bench = NanoGPTMLPBenchmark(config="gpt2", device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = jit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
 # test kwargs
 # test compile + exec
 # test random.randint

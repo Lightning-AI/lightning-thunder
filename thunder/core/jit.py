@@ -208,12 +208,19 @@ MethodWrapperType: type = type(_a.__add__)
 
 
 def is_opaque(fn: Callable) -> bool:
-    return isinstance(fn, (BuiltinFunctionType, MethodWrapperType)) or fn.__name__ in builtins_dict
+    if isinstance(fn, (BuiltinFunctionType, MethodWrapperType)):
+        return True
+
+    # NOTE builtins.type has type type, but type() is an opaque function
+    if isinstance(fn, type):
+        return True
+
+    return False
 
 
 # Acquires the code object from a function or method (converting methods to functions)
 # TODO FIXME This won't acquire the code object for all callables...
-#   ... what about partial objects, callable classes, callable modules, functools.wraps, @contextmanager, etc.
+#   ... what about partial objects, callable classes, functools.wraps, @contextmanager, etc.
 # TODO Print a nicer error message
 def extract_code(fn: Callable) -> CodeType:
     if isinstance(fn, MethodType):
@@ -349,6 +356,16 @@ def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     _jit(impl)
 
 
+@register_opcode_handler("BUILD_MAP")
+def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert inst.arg is not None
+    count: int = inst.arg
+
+    # NOTE The reversed() call below is necessary to handle key collisions properly
+    d: dict = {k: v for v, k in reversed(tuple((stack.pop(), stack.pop()) for _ in range(count)))}
+    stack.append(d)
+
+
 @register_opcode_handler("BUILD_TUPLE")
 def _build_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
@@ -384,6 +401,12 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     _jit(func, *args, **fn_kwargs)
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
+# @register_opcode_handler("CALL_FUNCTION_EX")
+# def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+#     pass
+
+
 @register_opcode_handler("CALL_METHOD")
 def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
@@ -416,6 +439,12 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     assert inst.arg < len(dis.cmp_op), f"{inst}, {dis.cmp_op}"
     result: Any = cmp_impls[dis.cmp_op[inst.arg]](a, b)
     stack.append(result)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-DICT_MERGE
+# @register_opcode_handler("DICT_MERGE")
+# def _dict_merge_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+#     pass
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DUP_TOP
@@ -860,17 +889,17 @@ def jit(
     def fn_(*args, **kwargs) -> Any:
         runtimectx: JitRuntimeCtx = JitRuntimeCtx()
 
-        result: Any
         with jitctx(compilectx, runtimectx):
             try:
                 return _jit(fn, *args, **kwargs)
+
+                # TODO Enable this version when CALL_FUNCTION_EX is implemented
+                # return _jit(lambda: fn(*args, **kwargs))
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #   the line offset information in the instruction
                 traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
                 msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn.__name__}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
-
-        return result
 
     return fn_
