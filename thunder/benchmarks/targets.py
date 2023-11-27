@@ -619,6 +619,34 @@ def test_llama2_mlp_7b_requires_grad(benchmark, executor: Callable):
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
+@pytest.mark.parametrize(
+    "executor,",
+    (
+        torch_eager_bwd,
+        torch_compile_torch_bwd,
+        thunder_fwd_bwd_sdpa_nvfuser,
+    ),
+    ids=(
+        # "torch-bwd" here means that PyTorch's .backward() is used
+        "torch-eager+torch-bwd",
+        "torch.compile+torch-bwd",
+        "thunder+nvfuser+sdpa+torch-bwd",
+    ),
+)
+def test_llama2_causal_self_attention_7b_train(benchmark, executor: Callable):
+    from thunder.benchmarks import LlamaCausalSelfAttentionBenchmark
+
+    bench: Benchmark = LlamaCausalSelfAttentionBenchmark(
+        config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
 # NOTE The CSA module is linear -> sdpa -> dropout
 @pytest.mark.parametrize(
     "executor,",

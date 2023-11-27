@@ -1791,6 +1791,78 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return module
 
 
+class LlamaCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="The device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.bfloat16.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-csa"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config="Llama-2-7b-hf",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.bfloat16,
+        requires_grad: bool = True,
+    ) -> None:
+        from thunder.tests.lit_gpt_model import Config
+
+        super().__init__()
+
+        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        x = make(self.batchdims + (self.config.block_size, self.config.n_embd))
+        cos = make((self.config.block_size, self.config.rope_n_elem), requires_grad=False)
+        sin = make((self.config.block_size, self.config.rope_n_elem), requires_grad=False)
+        mask = None
+        input_pos = None
+        return (x, cos, sin, mask, input_pos), {}
+
+    def fn(self) -> Callable:
+        module = (
+            lit_gpt_model.CausalSelfAttention(self.config)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+        return module
+
+
 class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
