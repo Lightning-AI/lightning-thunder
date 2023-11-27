@@ -784,14 +784,16 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
 
 
 # Interprets the callable with the given args and kwargs
-# NOTE There are four cases for interpretation:
+# NOTE There are (currently) 6 cases for interpretation:
 #
-#   (1) The function has a lookaside, in which case it executes the operation or signals the operation
+#   (1) The callable has a lookaside, in which case it executes the operation or signals the operation
 #           is unsafe
-#   (2) The function is opaque, in which case it's executed by the CPython interpreter and its
+#   (2) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (3) The function is a partial object, in which case it's recursively unwrapped
-#   (4) The function has code, in which case it's recursively interpretered by the jit
+#   (3) The callable is a partial object, in which case it's recursively unwrapped
+#   (4) The callable is a callable class, in which case its __call__ attribute is called recursively
+#   (5) The callable is a method, in which calls its __func__ attribute is called recursively
+#   (6) The callable is a FunctionType, in which case it's recursively interpretered by the jit
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
@@ -831,7 +833,21 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
         )
 
-    # (4) Jits into the function
+    # (4) Handles callable classes
+    if not isinstance(fn, (FunctionType, MethodType)):
+        if not hasattr(fn, "__call__"):
+            raise NotImplementedError(
+                f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
+            )
+        return _jit(fn.__call__, *((fn.__call__.__self__,) + args), **kwargs)
+
+    # (5) Handles methods
+    if isinstance(fn, MethodType):
+        return _jit(fn.__func__, *args, **kwargs)
+
+    assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
+
+    # (6) Jits into the function
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
     locals_dict: dict[str, Any] = dict(inspect.signature(fn).bind(*args, **kwargs).arguments)
     globals_dict: dict[str, Any] = fn.__globals__

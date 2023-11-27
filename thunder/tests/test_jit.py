@@ -262,6 +262,42 @@ def test_reduce():
     assert jfoo(-2, 0) == foo(-2, 0)
 
 
+def test_calling_methods():
+    class mycls:
+        def __init__(self, v: int):
+            self.v = v
+
+        def my_add(self, b):
+            return self.v + b
+
+    x = mycls(5)
+
+    def foo(x, a):
+        return x.my_add(a)
+
+    jfoo = jit(foo)
+
+    assert jfoo(x, 7) == foo(x, 7)
+
+
+def test_callable_classes():
+    class mycls:
+        def __init__(self, v: int):
+            self.v = v
+
+        def __call__(self, b):
+            return self.v + b
+
+    x = mycls(5)
+
+    def foo(x, a):
+        return x(a)
+
+    jfoo = jit(foo)
+
+    assert jfoo(x, 7) == foo(x, 7)
+
+
 @pytest.mark.xfail
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark
