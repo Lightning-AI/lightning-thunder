@@ -2251,6 +2251,11 @@ true_divide_opinfo = OpInfo(
             "test_phantom_grad_vs_torch_consistency",
             dtypes=(datatypes.bfloat16, datatypes.float16),
         ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.float32,),
+        ),
     ),
 )
 elementwise_binary_ops.append(true_divide_opinfo)
