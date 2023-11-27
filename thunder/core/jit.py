@@ -369,8 +369,8 @@ def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
         if (not hasattr(a, "__mul__")) or ((result := a.__mul__(b)) is NotImplemented):
             if (not hasattr(b, "__rmul__")) or ((result := b.__rmul__(a)) is NotImplemented):
                 # TODO Restore formatting once FORMAT_VALUE is implemented
-                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
-                err: TypeError = TypeError("Unsupported operand types for binary add")
+                # raise TypeError(f"Unsupported operand type(s) for *: '{type(a)}' and '{type(b)}'")
+                err: TypeError = TypeError("Unsupported operand types for binary multiply")
                 raise err
 
         return result
@@ -387,13 +387,32 @@ def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
         if (not hasattr(a, "__sub__")) or ((result := a.__sub__(b)) is NotImplemented):
             if (not hasattr(b, "__rsub__")) or ((result := b.__rsub__(a)) is NotImplemented):
                 # TODO Restore formatting once FORMAT_VALUE is implemented
-                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
-                err: TypeError = TypeError("Unsupported operand types for binary add")
+                # raise TypeError(f"Unsupported operand type(s) for -: '{type(a)}' and '{type(b)}'")
+                err: TypeError = TypeError("Unsupported operand types for binary subtract")
                 raise err
 
         return result
 
     _jit(impl)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
+# TODO Review if there's a better way to perform the subscription
+@register_opcode_handler("BINARY_SUBSCR")
+def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    tos1 = stack.pop()
+
+    # NOTE This cannot be implemented by jitting tos1[tos], since that would call this handler again
+    stack.append(tos1[tos])
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_LIST
+@register_opcode_handler("BUILD_LIST")
+def _build_list_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert inst.arg is not None
+    result: list[Any] = list(reversed([stack.pop() for _ in range(inst.arg)]))
+    stack.append(result)
 
 
 @register_opcode_handler("BUILD_MAP")
@@ -404,6 +423,21 @@ def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     # NOTE The reversed() call below is necessary to handle key collisions properly
     d: dict = {k: v for v, k in reversed(tuple((stack.pop(), stack.pop()) for _ in range(count)))}
     stack.append(d)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_SLICE
+@register_opcode_handler("BUILD_SLICE")
+def _build_slice_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert inst.arg is not None
+
+    tos = stack.pop()
+    tos1 = stack.pop()
+    if inst.arg == 2:
+        stack.append(slice(tos1, tos))
+    else:
+        assert inst.arg == 3, f"Unexpected argument value for build tuple handler {inst.arg=}"
+        tos2 = stack.pop()
+        stack.append(slice(tos2, tos1, tos))
 
 
 @register_opcode_handler("BUILD_TUPLE")
@@ -504,6 +538,21 @@ def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
     a = stack.pop()
     stack.append(a is not b if inst.arg == 1 else a is b)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
+# TODO What does the arg actually do?
+@register_opcode_handler("LIST_EXTEND")
+def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert inst.arg is not None
+
+    # NOTE Doesn't pop tos1
+    tos = stack.pop()
+    tos1 = stack[-1]
+
+    # NOTE tos does not have to be a list
+    assert isinstance(tos1, list)
+    tos1.extend(tos)
 
 
 # https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_ATTR

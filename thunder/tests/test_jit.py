@@ -298,6 +298,17 @@ def test_callable_classes():
     assert jfoo(x, 7) == foo(x, 7)
 
 
+def test_build_slice():
+    def foo(a, b):
+        l = [0, 1, 2, 3, 4, 5, 6]
+        return l[a:b], l[a:], l[:b], l[1:2:2], l[0:a:b]
+
+    jfoo = jit(foo)
+
+    assert jfoo(1, 4) == foo(1, 4)
+    assert jfoo(0, -1) == foo(0, -1)
+
+
 @pytest.mark.xfail
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark
