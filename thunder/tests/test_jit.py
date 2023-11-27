@@ -249,6 +249,19 @@ def test_using_imported_modules():
     assert jfoo(3, 5) == foo(3, 5)
 
 
+def test_reduce():
+    import functools
+    import operator
+
+    def foo(a, b):
+        return functools.reduce(operator.add, (a, b))
+
+    jfoo = jit(foo)
+
+    assert jfoo(3, 5) == foo(3, 5)
+    assert jfoo(-2, 0) == foo(-2, 0)
+
+
 @pytest.mark.xfail
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark

@@ -506,6 +506,22 @@ def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(a is not b if inst.arg == 1 else a is b)
 
 
+# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_ATTR
+@register_opcode_handler("LOAD_ATTR")
+def _load_attr_handler(
+    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
+) -> None:
+    assert inst.arg is not None
+
+    a = stack.pop()
+    name: str = co.co_names[inst.arg]
+
+    def impl():
+        return getattr(a, name)
+
+    _jit(impl)
+
+
 @register_opcode_handler("LOAD_CLOSURE")
 def _load_closure_handler(
     inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
