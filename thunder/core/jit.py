@@ -212,7 +212,7 @@ def is_opaque(fn: Callable) -> bool:
         return True
 
     # NOTE builtins.type has type type, but type() is an opaque function
-    if isinstance(fn, type):
+    if fn is type:
         return True
 
     return False
@@ -346,6 +346,42 @@ def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     def impl():
         if (not hasattr(a, "__add__")) or ((result := a.__add__(b)) is NotImplemented):
             if (not hasattr(b, "__radd__")) or ((result := b.__radd__(a)) is NotImplemented):
+                # TODO Restore formatting once FORMAT_VALUE is implemented
+                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
+                err: TypeError = TypeError("Unsupported operand types for binary add")
+                raise err
+
+        return result
+
+    _jit(impl)
+
+
+@register_opcode_handler("BINARY_MULTIPLY")
+def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    b = stack.pop()
+    a = stack.pop()
+
+    def impl():
+        if (not hasattr(a, "__mul__")) or ((result := a.__mul__(b)) is NotImplemented):
+            if (not hasattr(b, "__rmul__")) or ((result := b.__rmul__(a)) is NotImplemented):
+                # TODO Restore formatting once FORMAT_VALUE is implemented
+                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
+                err: TypeError = TypeError("Unsupported operand types for binary add")
+                raise err
+
+        return result
+
+    _jit(impl)
+
+
+@register_opcode_handler("BINARY_SUBTRACT")
+def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    b = stack.pop()
+    a = stack.pop()
+
+    def impl():
+        if (not hasattr(a, "__sub__")) or ((result := a.__sub__(b)) is NotImplemented):
+            if (not hasattr(b, "__rsub__")) or ((result := b.__rsub__(a)) is NotImplemented):
                 # TODO Restore formatting once FORMAT_VALUE is implemented
                 # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
                 err: TypeError = TypeError("Unsupported operand types for binary add")
@@ -728,13 +764,14 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
 
 
 # Interprets the callable with the given args and kwargs
-# NOTE There are three cases for interpretation:
+# NOTE There are four cases for interpretation:
 #
 #   (1) The function has a lookaside, in which case it executes the operation or signals the operation
 #           is unsafe
 #   (2) The function is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (3) The function has code, in which case it's recursively interpretered by the jit
+#   (3) The function is a partial object, in which case it's recursively unwrapped
+#   (4) The function has code, in which case it's recursively interpretered by the jit
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
@@ -764,7 +801,17 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         runtimectx.peek_interpreter_stack().append(opaque_result)
         return opaque_result
 
-    # (3) Jits into the function
+    # (3) Handles partial objects
+    if isinstance(fn, functools.partial):
+        p: functools.partial = fn
+        return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
+
+    if isinstance(fn, functools.partialmethod):
+        raise NotImplementedError(
+            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
+        )
+
+    # (4) Jits into the function
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
     locals_dict: dict[str, Any] = dict(inspect.signature(fn).bind(*args, **kwargs).arguments)
     globals_dict: dict[str, Any] = globals()
@@ -850,7 +897,7 @@ class JIT_SIGNALS(Enum):
 #       - globals_dict, the globals dictionary
 #       - builtins_dict, the builtins dictionary
 #       - closures, the closures object
-#       - try_stack, a stack to facilittae handling exceptions
+#       - try_stack, a stack to facilitate handling exceptions
 #
 #   The handler can then return None, -1 to indicate a return statement, or a weakly positive integer
 #   to indicate that the interpreter should jump absolute to that instruction.
@@ -899,7 +946,7 @@ def jit(
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #   the line offset information in the instruction
                 traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
-                msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn.__name__}:\n" f"{traceback_str}"
+                msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
 
     return fn_

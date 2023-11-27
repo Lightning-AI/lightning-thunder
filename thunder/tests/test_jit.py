@@ -182,9 +182,60 @@ def test_build_map():
     )
 
     for a, b in cases:
-        print(f"{jfoo(a, b)=}")
-        print(f"{foo(a, b)=}")
         assert jfoo(a, b) == foo(a, b)
+
+
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1543
+@pytest.mark.xfail
+def test_kwargs():
+    def foo(a, b, *, c=2):
+        return a + b + c
+
+    jfoo = jit(foo)
+
+    assert jfoo(2, 3) == foo(2, 3)
+    assert jfoo(a=2, b=7, c=3) == foo(a=2, b=7, c=3)
+
+    # Same case as above except c can be specified positionally
+    def foo(a, b, c=2):
+        return a + b + c
+
+    jfoo = jit(foo)
+
+    assert jfoo(2, 3) == foo(2, 3)
+    assert jfoo(a=2, b=7, c=3) == foo(a=2, b=7, c=3)
+
+
+def test_partials():
+    def foo(a, b, c):
+        return a - b * c
+
+    pfoo = partial(foo, 2, c=3)
+    jpfoo = jit(pfoo)
+
+    assert jpfoo(4) == pfoo(4)
+    assert jpfoo(-9) == pfoo(-9)
+
+    ppfoo = partial(pfoo, -5)
+    jppfoo = jit(ppfoo)
+
+    assert jppfoo() == ppfoo()
+
+    # Tests that keywords "stack" as expected (later partials take precedence)
+    pfoo = partial(foo, c=2)
+    ppfoo = partial(pfoo, c=-2)
+    jppfoo = jit(ppfoo)
+
+    assert jppfoo(7, 9) == ppfoo(7, 9)
+    assert jppfoo(7, 9, c=4) == ppfoo(7, 9, c=4)
+
+    # Tests that args "stack" as expected
+    pfoo = partial(foo, 7)
+    ppfoo = partial(pfoo, 9)
+    jppfoo = jit(ppfoo)
+
+    assert jppfoo(5) == ppfoo(5)
+    assert jppfoo(-3) == ppfoo(-3)
 
 
 @pytest.mark.xfail
@@ -200,10 +251,3 @@ def test_nanogpt_mlp():
     result = jfn(*args, **kwargs)
 
     assert_close(result, fn(*args, **kwargs))
-
-
-# test kwargs
-# test compile + exec
-# test random.randint
-# test random.seed, random.getstate, random.setstate
-# test isinstance
