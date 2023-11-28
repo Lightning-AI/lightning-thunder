@@ -721,9 +721,10 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     except AttributeError as e:
         raise e
 
-    if isinstance(meth, MethodType):
-        stack.append(meth)
-        stack.append(obj)
+    if inspect.ismethod(meth):
+        stack.append(meth.__func__)
+        # meth.__self__ ihis is obj for regular methods but cls for class methods
+        stack.append(meth.__self__)
     else:
         stack.append(Py_NULL())
         stack.append(meth)
@@ -994,12 +995,11 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             )
         return _jit(fn.__call__, *args, **kwargs)
 
-    # (5) Handles methods
-    if isinstance(fn, MethodType):
-        # TODO There has to be a better way of understand whether to include __self__ in args or not
-        if hasattr(fn, "__self__") and (not len(args) > 0 or fn.__self__ is not args[0]):
-            args = (fn.__self__,) + args
-        return _jit(fn.__func__, *args, **kwargs)
+    # (5) Handles (bound) methods
+    #     while we unwrap methods to __func__ when processing LOAD_METHOD (so those will not run into this)
+    #     methods may also originate from LOAD_ATTR e.g. assign to variable and calling that
+    if inspect.ismethod(fn):
+        return _jit(fn.__func__, fn.__self__, *args, **kwargs)
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 

@@ -285,14 +285,53 @@ def test_calling_methods():
         def my_add(self, b):
             return self.v + b
 
+        @classmethod
+        def my_add_class(cls, b):
+            o = cls(2)
+            return o.v + b
+
+        @staticmethod
+        def my_add_static(b):
+            return 3 + b
+
     x = mycls(5)
 
+    # these use LOAD_METHOD / CALL_METHOD
     def foo(x, a):
         return x.my_add(a)
 
+    def foo_class(x, a):
+        return x.my_add_class(a)
+
+    def foo_static(x, a):
+        return x.my_add_static(a)
+
+    # these use LOAD_ATTR / CALL_FUNCTION
+    def bar(x, a):
+        meth = x.my_add(a)
+        return meth
+
+    def bar_class(x, a):
+        meth = x.my_add_class(a)
+        return meth
+
+    def bar_static(x, a):
+        meth = x.my_add_static(a)
+        return meth
+
     jfoo = jit(foo)
+    jfoo_class = jit(foo_class)
+    jfoo_static = jit(foo_static)
+    jbar = jit(bar)
+    jbar_class = jit(bar_class)
+    jbar_static = jit(bar_static)
 
     assert jfoo(x, 7) == foo(x, 7)
+    assert jfoo_class(x, 7) == foo_class(x, 7)
+    assert jfoo_static(x, 7) == foo_static(x, 7)
+    assert jbar(x, 7) == bar(x, 7)
+    assert jbar_class(x, 7) == bar_class(x, 7)
+    assert jbar_static(x, 7) == bar_static(x, 7)
 
 
 def test_callable_classes():
