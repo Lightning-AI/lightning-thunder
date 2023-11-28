@@ -108,9 +108,13 @@ def test_inner_function_definition():
 
 
 def test_inner_closure():
+    # NOTE The addition of closing over value also tests
+    #   the STORE_DEREF opcode
     def foo(a, b):
+        value = 5
+
         def bar(a):
-            return a + b
+            return a + b + value
 
         return bar(a + 1)
 
@@ -318,6 +322,56 @@ def test_build_slice():
 
     assert jfoo(1, 4) == foo(1, 4)
     assert jfoo(0, -1) == foo(0, -1)
+
+
+def test_format_value():
+    # Tests FVS_HAVE_SPEC and FVC_NONE
+    def foo(a, b):
+        return f"{a:3.2f}, {b:2.1f}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(2.34, 123234.79289) == foo(2.34, 123234.79289)
+
+    class mycls:
+        def __repr__(self):
+            return "repr"
+
+        def __str__(self):
+            return "str"
+
+    # Tests FVC_NONE
+    def foo(a, b):
+        return f"{a}, {b}"
+
+    jfoo = jit(foo)
+
+    x = mycls()
+    assert jfoo(x, "goodbye") == foo(x, "goodbye")
+
+    # Tests FVC_STR
+    def foo(a):
+        return f"{a!s}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(x) == foo(x)
+
+    # Tests FVC_REPR
+    def foo(a):
+        return f"{a!r}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(x) == foo(x)
+
+    # Tests FVC_ASCII
+    def foo(a):
+        return f"{a!a}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(x) == foo(x)
 
 
 @pytest.mark.xfail

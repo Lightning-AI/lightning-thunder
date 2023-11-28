@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import inspect
 import linecache
 from typing import Any
-from types import CellType, CodeType, FunctionType, MethodType, BuiltinFunctionType
+from types import CellType, CodeType, FunctionType, MethodType, BuiltinFunctionType, BuiltinMethodType
 import functools
 from functools import partial
 from enum import Enum, auto
@@ -210,9 +210,12 @@ def jitctx(_jitcompilectx: JitCompileCtx, _jitruntimectx: JitRuntimeCtx):
 _a: int = 2
 MethodWrapperType: type = type(_a.__add__)
 
+# NOTE wrapper-descriptor is a CPython implementation detail
+WrapperDescriptorType: type = type(builtins.type.__call__)
+
 
 def is_opaque(fn: Callable) -> bool:
-    if isinstance(fn, (BuiltinFunctionType, MethodWrapperType)):
+    if isinstance(fn, (BuiltinFunctionType, BuiltinMethodType, MethodWrapperType, WrapperDescriptorType)):
         return True
 
     # NOTE builtins.type has type type, but type() is an opaque function
@@ -223,8 +226,6 @@ def is_opaque(fn: Callable) -> bool:
 
 
 # Acquires the code object from a function or method (converting methods to functions)
-# TODO FIXME This won't acquire the code object for all callables...
-#   ... what about partial objects, callable classes, functools.wraps, @contextmanager, etc.
 # TODO Print a nicer error message
 def extract_code(fn: Callable) -> CodeType:
     if isinstance(fn, MethodType):
@@ -234,6 +235,7 @@ def extract_code(fn: Callable) -> CodeType:
         raise ValueError(f"Cannot JIT object {repr(fn)} of type {type(fn)}")
 
     code: CodeType = fn.__code__
+
     return code
 
 
@@ -440,6 +442,17 @@ def _build_slice_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
         stack.append(slice(tos2, tos1, tos))
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_STRING
+@register_opcode_handler("BUILD_STRING")
+def _build_string_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert inst.arg is not None
+
+    count: int = inst.arg
+
+    strings: tuple[str, ...] = reversed(tuple(stack.pop() for _ in range(count)))
+    stack.append("".join(strings))
+
+
 @register_opcode_handler("BUILD_TUPLE")
 def _build_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
@@ -447,15 +460,13 @@ def _build_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     stack.append(result)
 
 
-# TODO Test how this handles functions, callable classes, and lambdas
-#   Functions
-#   Callable classes
-#   Lambdas
 # NOTE This only accepts positional args
+# https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION
 @register_opcode_handler("CALL_FUNCTION")
 def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
-    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(inst.arg))))
+    assert isinstance(inst.arg, int)
+    argc: int = inst.arg
+    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
     func: Callable = stack.pop()
     _jit(func, *args)
 
@@ -535,6 +546,48 @@ def _dup_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-1])
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
+# TODO Extend the jitted implementation to
+@register_opcode_handler("FORMAT_VALUE")
+def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    FVC_MASK: int = 0x3
+    FVC_NONE: int = 0x0
+    FVC_STR: int = 0x1
+    FVC_REPR: int = 0x2
+    FVC_ASCII: int = 0x3
+    FVS_MASK: int = 0x4
+    FVS_HAVE_SPEC: int = 0x4
+
+    flags: int = inst.arg
+    assert isinstance(flags, int)
+
+    value = stack.pop()
+    fmt_spec = None
+    if (flags & FVS_MASK) == FVS_HAVE_SPEC:
+        fmt_spec = value
+        value = stack.pop()
+
+    case: int = flags & FVC_MASK
+
+    def impl():
+        nonlocal value
+        # NOTE `match` was only introduced in Python 3.10, but we support Python 3.9
+        if case == FVC_NONE:
+            pass
+        elif case == FVC_STR:
+            value = str(value)
+        elif case == FVC_REPR:
+            value = repr(value)
+        else:
+            assert case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
+            value = ascii(value)
+
+        formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
+        return formatted
+
+    _jit(impl)
+
+
 @register_opcode_handler("GET_LEN")
 def _get_len_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     a = stack.pop()
@@ -548,19 +601,27 @@ def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(a is not b if inst.arg == 1 else a is b)
 
 
+# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-JUMP_FORWARD
+@register_opcode_handler("JUMP_FORWARD")
+def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    delta: int = inst.arg
+    assert isinstance(delta, int)
+    return inst_ptr + delta + 1
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
-# TODO What does the arg actually do?
 @register_opcode_handler("LIST_EXTEND")
 def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
 
-    # NOTE Doesn't pop tos1
+    # NOTE Doesn't pop the list that's extended
     tos = stack.pop()
-    tos1 = stack[-1]
+    l: list = stack[-i]
 
     # NOTE tos does not have to be a list
-    assert isinstance(tos1, list)
-    tos1.extend(tos)
+    assert isinstance(l, list)
+    l.extend(tos)
 
 
 # https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_ATTR
@@ -579,12 +640,14 @@ def _load_attr_handler(
     _jit(impl)
 
 
+# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_FAST
 @register_opcode_handler("LOAD_CLOSURE")
 def _load_closure_handler(
     inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
 ) -> None:
-    assert inst.arg is not None
-    var_name: str = co.co_cellvars[inst.arg]
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    var_name: str = co.co_cellvars[i]
     actual: Any = locals_dict[var_name]
     stack.append(actual)
 
@@ -595,19 +658,29 @@ def _load_const_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
     stack.append(co.co_consts[inst.arg])
 
 
+# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_DEREF
 @register_opcode_handler("LOAD_DEREF")
-def _load_deref_handler(inst: dis.Instruction, /, stack: list, closures: tuple[CellType, ...], **kwargs) -> None:
-    assert inst.arg is not None
-    stack.append(closures[inst.arg].cell_contents)
+def _load_deref_handler(
+    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], closures: tuple[CellType, ...], **kwargs
+) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    assert i >= 0 and i < len(closures)
+
+    stack.append(closures[i].cell_contents)
 
 
+# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_FAST
 @register_opcode_handler("LOAD_FAST")
 def _load_fast_handler(
-    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
+    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, closures, **kwargs
 ) -> None:
-    assert inst.arg is not None
-    name: str = co.co_varnames[inst.arg]
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    name: str = co.co_varnames[i]
+    assert isinstance(name, str)
     actual: Any = locals_dict[name]
+
     stack.append(actual)
 
 
@@ -820,6 +893,29 @@ def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **k
     try_stack.append(TryBlock())
 
 
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
+# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-STORE_DEREF
+@register_opcode_handler("STORE_DEREF")
+def _store_deref_handler(
+    inst: dis.Instruction,
+    /,
+    stack: list,
+    co: CodeType,
+    locals_dict: dict[str, Any],
+    closures: tuple[CellType, ...],
+    **kwargs,
+) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+
+    tos = stack.pop()
+    if i < len(closures):
+        closures[i].cell_contents = tos
+    else:
+        name: str = co.co_cellvars[i - len(closures)]
+        locals_dict[name] = tos
+
+
 # https://docs.python.org/3/library/dis.html#opcode-STORE_FAST
 @register_opcode_handler("STORE_FAST")
 def _store_fast_handler(
@@ -857,6 +953,8 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
 def _jit(fn: Callable, *args, **kwargs) -> Any:
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+    # print(f"{fn=}, {args=}")
 
     # (1) Handles lookasides
     lookaside_result: tuple[bool, None | Any] | JIT_SIGNALS = compilectx.lookaside(fn, *args, **kwargs)
@@ -896,7 +994,12 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             raise NotImplementedError(
                 f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
             )
-        return _jit(fn.__call__, *((fn.__call__.__self__,) + args), **kwargs)
+        fn = fn.__call__
+        # NOTE (mruberry) This seems very odd -- but apparently opaque __call__s really don't
+        #   want __self__ preprended to the arguments
+        if not is_opaque(fn):
+            args = (fn.__self__,) + args
+        return _jit(fn, *args, **kwargs)
 
     # (5) Handles methods
     if isinstance(fn, MethodType):
@@ -910,7 +1013,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
     globals_dict: dict[str, Any] = fn.__globals__
-    closures = fn.__closure__
+    closures: tuple[CellType, ...] = fn.__closure__ if fn.__closure__ is not None else ()
     try_stack: list[TryBlock] = []
     stack: list = runtimectx.push_interpreter_stack()
 
@@ -1034,9 +1137,6 @@ def jit(
         with jitctx(compilectx, runtimectx):
             try:
                 return _jit(fn, *args, **kwargs)
-
-                # TODO Enable this version when CALL_FUNCTION_EX is implemented
-                # return _jit(lambda: fn(*args, **kwargs))
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #   the line offset information in the instruction
