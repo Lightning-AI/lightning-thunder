@@ -54,6 +54,8 @@ class ThunderFunction(torch.autograd.Function):
             # not any other container type. So we need to flatten the outputs of
             # the forward trace and inputs of the backward trace.
             fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
+            fw_traces = [fw_trace]
+            bw_traces = [bw_trace]
 
             # Update the backward trace to only compute gradients for the
             # inputs that require gradients
@@ -72,6 +74,7 @@ class ThunderFunction(torch.autograd.Function):
                 fw_trace,
                 executors_list=compile_config.get("executors_list", None),
             )
+            fw_traces.append(fw_extrace)
 
             # Some of the optimization passes change proxies in the trace and
             # any change in the forward trace must be reflected in the backward
@@ -112,8 +115,11 @@ class ThunderFunction(torch.autograd.Function):
                 bw_trace,
                 executors_list=compile_config.get("executors_list", None),
             )
+            bw_traces.append(bw_extrace)
 
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+            fw_traces.append(fw_extrace)
+            bw_traces.append(bw_extrace)
 
             # We need to sort the waits in forward and backward trace to overlap
             # computation with communication
@@ -122,13 +128,15 @@ class ThunderFunction(torch.autograd.Function):
                 bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace = del_last_used(fw_extrace)
+            fw_traces.append(fw_extrace)
 
             bw_extrace = del_last_used(bw_extrace)
+            bw_traces.append(bw_extrace)
 
             if compile_stats is not None:
                 compile_stats.primal_trace = primal_trace
-                compile_stats.forward_last_traces = [fw_extrace]
-                compile_stats.backward_last_traces = [bw_extrace]
+                compile_stats.forward_last_traces = fw_traces
+                compile_stats.backward_last_traces = bw_traces
 
                 if compile_data.use_cudagraphs or compile_config.get("use_cudagraphs", False):
                     fw = CUDAGraphExecutor(
