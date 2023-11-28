@@ -954,8 +954,6 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
-    # print(f"{fn=}, {args=}")
-
     # (1) Handles lookasides
     lookaside_result: tuple[bool, None | Any] | JIT_SIGNALS = compilectx.lookaside(fn, *args, **kwargs)
 
@@ -994,15 +992,13 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             raise NotImplementedError(
                 f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
             )
-        fn = fn.__call__
-        # NOTE (mruberry) This seems very odd -- but apparently opaque __call__s really don't
-        #   want __self__ preprended to the arguments
-        if not is_opaque(fn):
-            args = (fn.__self__,) + args
-        return _jit(fn, *args, **kwargs)
+        return _jit(fn.__call__, *args, **kwargs)
 
     # (5) Handles methods
     if isinstance(fn, MethodType):
+        # TODO There has to be a better way of understand whether to include __self__ in args or not
+        if hasattr(fn, "__self__") and (not len(args) > 0 or fn.__self__ is not args[0]):
+            args = (fn.__self__,) + args
         return _jit(fn.__func__, *args, **kwargs)
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"

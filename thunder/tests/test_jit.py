@@ -374,11 +374,12 @@ def test_format_value():
     assert jfoo(x) == foo(x)
 
 
-@pytest.mark.xfail
 def test_nanogpt_mlp():
-    from thunder.benchmarks import NanoGPTMLPBenchmark
+    from thunder.benchmarks import NanoGPTBenchmark, NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
-    bench = NanoGPTMLPBenchmark(config="gpt2", device="cpu")
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTMLPBenchmark(config=config, device="cpu")
     fn = bench.fn()
 
     args, kwargs = bench.make_batch()
