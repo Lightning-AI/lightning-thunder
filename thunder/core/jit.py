@@ -344,6 +344,7 @@ def default_fn_lookaside(fn, *args, **kwargs) -> tuple[bool, None | Any] | JIT_S
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1529
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1530
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
 @register_opcode_handler("BINARY_ADD")
 def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
@@ -361,7 +362,7 @@ def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
 
     _jit(impl)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
 @register_opcode_handler("BINARY_MULTIPLY")
 def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
@@ -379,7 +380,7 @@ def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
 
     _jit(impl)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
 @register_opcode_handler("BINARY_SUBTRACT")
 def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
@@ -398,8 +399,8 @@ def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
     _jit(impl)
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
 # TODO Review if there's a better way to perform the subscription
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
 @register_opcode_handler("BINARY_SUBSCR")
 def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack.pop()
@@ -416,7 +417,7 @@ def _build_list_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     result: list[Any] = list(reversed([stack.pop() for _ in range(inst.arg)]))
     stack.append(result)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_MAP
 @register_opcode_handler("BUILD_MAP")
 def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
@@ -452,7 +453,7 @@ def _build_string_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
     strings: tuple[str, ...] = reversed(tuple(stack.pop() for _ in range(count)))
     stack.append("".join(strings))
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_TUPLE
 @register_opcode_handler("BUILD_TUPLE")
 def _build_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
@@ -471,7 +472,7 @@ def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     _jit(func, *args)
 
 
-# https://docs.python.org/id/3.5/library/dis.html#opcode-CALL_FUNCTION_KW
+# https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
 @register_opcode_handler("CALL_FUNCTION_KW")
 def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     kw_names: tuple[str, ...] = stack.pop()
@@ -495,7 +496,7 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
 
     _jit(func, *args, **fn_kwargs)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
 @register_opcode_handler("CALL_METHOD")
 def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
@@ -512,6 +513,7 @@ def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1523
+# https://docs.python.org/3.10/library/dis.html#opcode-COMPARE_OP
 @register_opcode_handler("COMPARE_OP")
 def _compare_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     cmp_impls = {
@@ -587,13 +589,13 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
     _jit(impl)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
 @register_opcode_handler("GET_LEN")
 def _get_len_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     a = stack.pop()
     stack.append(len(a))
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-IS_OP
 @register_opcode_handler("IS_OP")
 def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
@@ -651,7 +653,7 @@ def _load_closure_handler(
     actual: Any = locals_dict[var_name]
     stack.append(actual)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CONST
 @register_opcode_handler("LOAD_CONST")
 def _load_const_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
     assert inst.arg is not None
@@ -685,8 +687,7 @@ def _load_fast_handler(
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1524
-# https://docs.python.org/3.13/library/dis.html#opcode-LOAD_GLOBAL
-# NOTE This version is the 3.10 handler
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_GLOBAL
 @register_opcode_handler("LOAD_GLOBAL")
 def _load_global_handler(
     inst: dis.Instruction,
@@ -731,7 +732,7 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1526
-# https://docs.python.org/id/3.5/library/dis.html#opcode-MAKE_FUNCTION
+# https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
 @register_opcode_handler("MAKE_FUNCTION")
 def _make_function_handler(inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], **kwargs) -> None:
     name: str = stack.pop()
@@ -748,17 +749,17 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, locals_dict: d
     fn = FunctionType(fn_co, locals_dict, name, closure=closure)
     stack.append(fn)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-NOP
 @register_opcode_handler("NOP")
 def _nop_handler(inst: dis.Instruction, /, **kwargs) -> None:
     pass
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-POP_BLOCK
 @register_opcode_handler("POP_BLOCK")
 def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
     try_stack.pop()
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-POP_EXCEPT
 @register_opcode_handler("POP_EXCEPT")
 def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
     try_stack.pop()
@@ -787,7 +788,7 @@ def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
         return inst.arg
     return None
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-POP_TOP
 @register_opcode_handler("POP_TOP")
 def _pop_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.pop()
@@ -846,7 +847,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
     # Call PyErr_SetObject() to update the thread's state
     pass
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-RAISE_VARARGS
 @register_opcode_handler("RAISE_VARARGS")
 def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
     cause: Any = Py_NULL()
@@ -860,24 +861,24 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
         assert inst.arg == 0
     do_raise(exc, cause)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE")
 def _reraise_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
     pass
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
 @register_opcode_handler("RETURN_VALUE")
 def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None:
     return -1
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-ROT_N
 @register_opcode_handler("ROT_N")
 def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
     assert len(stack) >= inst.arg
     stack[-inst.arg :] = (stack[-1], *stack[-inst.arg : -1])
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-ROT_TWO
 @register_opcode_handler("ROT_TWO")
 def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     a = stack.pop()
@@ -887,7 +888,7 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(c)
     stack.append(b)
 
-
+# https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
 @register_opcode_handler("SETUP_WITH")
 def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
     assert inst.arg is not None
@@ -895,7 +896,7 @@ def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **k
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
-# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-STORE_DEREF
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_DEREF
 @register_opcode_handler("STORE_DEREF")
 def _store_deref_handler(
     inst: dis.Instruction,
@@ -917,7 +918,7 @@ def _store_deref_handler(
         locals_dict[name] = tos
 
 
-# https://docs.python.org/3/library/dis.html#opcode-STORE_FAST
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_FAST
 @register_opcode_handler("STORE_FAST")
 def _store_fast_handler(
     inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
@@ -928,7 +929,7 @@ def _store_fast_handler(
     locals_dict[var_name] = a
 
 
-# https://docs.python.org/id/3.5/library/dis.html#opcode-UNPACK_SEQUENCE
+# https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_SEQUENCE
 @register_opcode_handler("UNPACK_SEQUENCE")
 def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     seq: Sequence = stack.pop()
