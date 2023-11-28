@@ -476,9 +476,13 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
-# @register_opcode_handler("CALL_FUNCTION_EX")
-# def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-#     pass
+@register_opcode_handler("CALL_FUNCTION_EX")
+def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    fn_kwargs = stack.pop()
+    args = stack.pop()
+    func = stack.pop()
+
+    _jit(func, *args, **fn_kwargs)
 
 
 @register_opcode_handler("CALL_METHOD")
@@ -516,9 +520,13 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DICT_MERGE
-# @register_opcode_handler("DICT_MERGE")
-# def _dict_merge_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-#     pass
+@register_opcode_handler("DICT_MERGE")
+def _dict_merge_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    a = stack.pop()
+    b = stack[-1]
+    assert type(b) is dict, b
+    assert not (overlap := b.keys() & a), overlap
+    b.update(a)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DUP_TOP

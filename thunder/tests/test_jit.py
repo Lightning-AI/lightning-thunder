@@ -205,6 +205,18 @@ def test_kwargs():
     assert jfoo(a=2, b=7, c=3) == foo(a=2, b=7, c=3)
 
 
+def test_args_kwargs():
+    def bar(a, b):
+        return a + b
+
+    def foo(a, **kwargs):
+        return bar(a, **kwargs)
+
+    jfoo = jit(foo)
+    assert jfoo(2, b=3) == foo(2, b=3)
+    assert jfoo(a=2, b=3) == foo(a=2, b=3)
+
+
 def test_partials():
     def foo(a, b, c):
         return a - b * c
