@@ -898,7 +898,9 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
 
     # (6) Jits into the function
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
-    locals_dict: dict[str, Any] = dict(inspect.signature(fn).bind(*args, **kwargs).arguments)
+    bound = inspect.signature(fn).bind(*args, **kwargs)
+    bound.apply_defaults()
+    locals_dict: dict[str, Any] = dict(bound.arguments)
     globals_dict: dict[str, Any] = fn.__globals__
     closures = fn.__closure__
     try_stack: list[TryBlock] = []

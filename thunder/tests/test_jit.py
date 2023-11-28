@@ -186,7 +186,6 @@ def test_build_map():
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1543
-@pytest.mark.xfail
 def test_kwargs():
     def foo(a, b, *, c=2):
         return a + b + c
