@@ -598,6 +598,44 @@ def _get_len_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(len(a))
 
 
+# NOTE (mruberry) The actual implementation of IMPORT_FROM is quite complicated, and there doesn't appear
+#   to be a Python exposure for the operation (unlike __import__ for IMPORT_NAME)
+#   There may be a better way to model this, including by just calling "from module import name"
+#   directly -- are we really worried that programs will put tensor operations in import hooks?
+# https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_FROM
+@register_opcode_handler("IMPORT_FROM")
+def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    namei: int = inst.arg
+
+    # NOTE The stack is peeked, not popped
+    module = stack[-1]
+    name: str = co.co_names[namei]
+
+    def impl():
+        return getattr(module, name)
+
+    _jit(impl)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
+@register_opcode_handler("IMPORT_NAME")
+def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    namei: int = inst.arg
+
+    module_name: str = co.co_names[namei]
+
+    fromlist = stack.pop()
+    level = stack.pop()
+
+    def impl():
+        module = __import__(module_name, fromlist=fromlist, level=level)
+        return module
+
+    _jit(impl)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-IS_OP
 @register_opcode_handler("IS_OP")
 def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:

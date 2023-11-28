@@ -459,6 +459,38 @@ def test_format_value():
     assert jfoo(x) == foo(x)
 
 
+def test_import():
+    def foo(a, b):
+        import operator
+
+        return operator.add(a, b)
+
+    jfoo = jit(foo)
+
+    assert jfoo(-1, 3) == foo(-1, 3)
+
+    def foo(a, b):
+        from operator import add
+
+        return add(a, b)
+
+    jfoo = jit(foo)
+
+    assert jfoo(2, 7) == foo(2, 7)
+
+    def foo(a):
+        import torch.nn as nn
+        from torch.nn.functional import relu
+
+        return relu(a)
+
+    jfoo = jit(foo)
+
+    a = torch.randn((2, 2))
+
+    assert_close(jfoo(a), foo(a))
+
+
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
