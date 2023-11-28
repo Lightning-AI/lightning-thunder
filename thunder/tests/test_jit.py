@@ -73,6 +73,52 @@ def test_constant_if():
     assert_close(thunder_result, python_result)
 
 
+def test_if():
+    def foo(a, b):
+        if a < b:
+            return a
+        elif b > a:
+            return b
+        else:
+            return 0
+
+    jfoo = jit(foo)
+
+    cases = (
+        (5, 3),
+        (9, 12),
+        (2, 2),
+    )
+
+    for case in cases:
+        assert jfoo(*case) == foo(*case)
+
+
+def test_dunder_bool():
+    class mycls:
+        def __init__(self, value):
+            self.value = value
+
+        # True if self.value is even
+        def __bool__(self):
+            return (self.value % 2) == 0
+
+    def foo(a):
+        if a:
+            return 1
+        return -1
+
+    jfoo = jit(foo)
+
+    cases = (
+        (mycls(4),),
+        (mycls(5),),
+    )
+
+    for case in cases:
+        assert jfoo(*case) == foo(*case)
+
+
 def test_function_call():
     def bar(a, b):
         return a + b

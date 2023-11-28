@@ -8,7 +8,16 @@ from dataclasses import dataclass
 import inspect
 import linecache
 from typing import Any
-from types import CellType, CodeType, FunctionType, MethodType, BuiltinFunctionType, BuiltinMethodType
+from types import (
+    CellType,
+    CodeType,
+    FunctionType,
+    MethodType,
+    BuiltinFunctionType,
+    BuiltinMethodType,
+    MethodWrapperType,
+    WrapperDescriptorType,
+)
 import functools
 from functools import partial
 from enum import Enum, auto
@@ -200,19 +209,6 @@ def jitctx(_jitcompilectx: JitCompileCtx, _jitruntimectx: JitRuntimeCtx):
 # Helpers
 #
 
-# Acquires the method-wrapper type indirectly by getting the type of a known
-#   method-wrapper
-# TODO Extend to "slot wrapper"?
-# TODO What is the best way to test for method-wrapper?
-# NOTE method-wrapper is a CPython implementation detail. It represents
-#   an opaque method, and it has a __self__ attribute populated with
-#   its first argument
-_a: int = 2
-MethodWrapperType: type = type(_a.__add__)
-
-# NOTE wrapper-descriptor is a CPython implementation detail
-WrapperDescriptorType: type = type(builtins.type.__call__)
-
 
 def is_opaque(fn: Callable) -> bool:
     if isinstance(fn, (BuiltinFunctionType, BuiltinMethodType, MethodWrapperType, WrapperDescriptorType)):
@@ -362,6 +358,7 @@ def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
 
     _jit(impl)
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
 @register_opcode_handler("BINARY_MULTIPLY")
 def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -379,6 +376,7 @@ def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
         return result
 
     _jit(impl)
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
 @register_opcode_handler("BINARY_SUBTRACT")
@@ -417,6 +415,7 @@ def _build_list_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     result: list[Any] = list(reversed([stack.pop() for _ in range(inst.arg)]))
     stack.append(result)
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_MAP
 @register_opcode_handler("BUILD_MAP")
 def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -452,6 +451,7 @@ def _build_string_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
     strings: tuple[str, ...] = reversed(tuple(stack.pop() for _ in range(count)))
     stack.append("".join(strings))
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_TUPLE
 @register_opcode_handler("BUILD_TUPLE")
@@ -495,6 +495,7 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     func = stack.pop()
 
     _jit(func, *args, **fn_kwargs)
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
 @register_opcode_handler("CALL_METHOD")
@@ -589,11 +590,13 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
     _jit(impl)
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
 @register_opcode_handler("GET_LEN")
 def _get_len_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     a = stack.pop()
     stack.append(len(a))
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IS_OP
 @register_opcode_handler("IS_OP")
@@ -652,6 +655,7 @@ def _load_closure_handler(
     var_name: str = co.co_cellvars[i]
     actual: Any = locals_dict[var_name]
     stack.append(actual)
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CONST
 @register_opcode_handler("LOAD_CONST")
@@ -749,15 +753,18 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, locals_dict: d
     fn = FunctionType(fn_co, locals_dict, name, closure=closure)
     stack.append(fn)
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-NOP
 @register_opcode_handler("NOP")
 def _nop_handler(inst: dis.Instruction, /, **kwargs) -> None:
     pass
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_BLOCK
 @register_opcode_handler("POP_BLOCK")
 def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
     try_stack.pop()
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_EXCEPT
 @register_opcode_handler("POP_EXCEPT")
@@ -768,11 +775,17 @@ def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **k
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1527
 @register_opcode_handler("POP_JUMP_IF_FALSE")
 def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
-    a = stack.pop()
-    cnd = bool(a)
-    assert inst.arg is not None
+    assert isinstance(inst.arg, int)
 
-    if cnd is False:
+    tos = stack.pop()
+
+    def impl():
+        return bool(tos)
+
+    _jit(impl)
+
+    cnd: bool = stack.pop()
+    if not cnd:
         return inst.arg
     return None
 
@@ -780,13 +793,20 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1527
 @register_opcode_handler("POP_JUMP_IF_TRUE")
 def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
-    a = stack.pop()
-    cnd = bool(a)
-    assert inst.arg is not None
+    assert isinstance(inst.arg, int)
 
-    if cnd is True:
+    tos = stack.pop()
+
+    def impl():
+        return bool(tos)
+
+    _jit(impl)
+
+    cnd: bool = stack.pop()
+    if cnd:
         return inst.arg
     return None
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_TOP
 @register_opcode_handler("POP_TOP")
@@ -847,6 +867,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
     # Call PyErr_SetObject() to update the thread's state
     pass
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-RAISE_VARARGS
 @register_opcode_handler("RAISE_VARARGS")
 def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
@@ -861,15 +882,18 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
         assert inst.arg == 0
     do_raise(exc, cause)
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE")
 def _reraise_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
     pass
 
+
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
 @register_opcode_handler("RETURN_VALUE")
 def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None:
     return -1
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_N
 @register_opcode_handler("ROT_N")
@@ -877,6 +901,7 @@ def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert inst.arg is not None
     assert len(stack) >= inst.arg
     stack[-inst.arg :] = (stack[-1], *stack[-inst.arg : -1])
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_TWO
 @register_opcode_handler("ROT_TWO")
@@ -887,6 +912,7 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(a)
     stack.append(c)
     stack.append(b)
+
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
 @register_opcode_handler("SETUP_WITH")
