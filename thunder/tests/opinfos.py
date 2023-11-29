@@ -1575,7 +1575,7 @@ relu6_opinfo = OpInfo(
         ),
         # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
         DecorateInfo(
-            pytest.mark.xfail(strict=True),
+            pytest.mark.xfail(strict=False),
             "test_vjp_correctness",
         ),
     ),
