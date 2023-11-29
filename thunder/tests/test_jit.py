@@ -1,4 +1,5 @@
 from functools import partial
+from itertools import product
 
 import dis
 import pytest
@@ -580,6 +581,53 @@ def test_import():
     assert_close(jfoo(a), foo(a))
 
 
+def test_binary_operations():
+    def foo(op, a, b):
+        return op(a, b)
+
+    jfoo = jit(foo)
+
+    import operator
+
+    number_ops = (
+        operator.add,
+        operator.floordiv,
+        operator.lshift,
+        operator.mul,
+        operator.mod,
+        operator.pow,
+        operator.rshift,
+        operator.sub,
+        operator.truediv,
+    )
+
+    bool_ops = (operator.and_, operator.or_, operator.xor)
+
+    # NOTE Not all of the number ops support floats (for example lshift)
+    number_inps = (
+        (5, 9),
+        (2, 8),
+        (8, 2),
+    )
+
+    bools_inps = (
+        (True, True),
+        (False, True),
+    )
+
+    for op, (a, b) in product(number_ops, number_inps):
+        assert jfoo(op, a, b) == foo(op, a, b)
+
+    for op, (a, b) in product(number_ops, bools_inps):
+        assert jfoo(op, a, b) == foo(op, a, b)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    # Tests matmul on actual torch tensors
+    assert_close(jfoo(operator.matmul, a, b), foo(operator.matmul, a, b))
+
+
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -596,7 +644,6 @@ def test_nanogpt_mlp():
     assert_close(result, fn(*args, **kwargs))
 
 
-@pytest.mark.xfail
 def test_nanogpt_csa():
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -613,7 +660,6 @@ def test_nanogpt_csa():
     assert_close(result, fn(*args, **kwargs))
 
 
-@pytest.mark.xfail
 def test_nanogpt_block():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 

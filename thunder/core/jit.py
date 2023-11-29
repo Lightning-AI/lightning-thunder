@@ -369,71 +369,36 @@ def default_fn_lookaside(fn, *args, **kwargs) -> tuple[bool, None | Any] | JIT_S
 #
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1529
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1530
-# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
-@register_opcode_handler("BINARY_ADD", max_ver=(3, 10))
-def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    b = stack.pop()
-    a = stack.pop()
-
-    def impl():
-        if (not hasattr(a, "__add__")) or ((result := a.__add__(b)) is NotImplemented):
-            if (not hasattr(b, "__radd__")) or ((result := b.__radd__(a)) is NotImplemented):
-                # TODO Restore formatting once FORMAT_VALUE is implemented
-                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
-                err: TypeError = TypeError("Unsupported operand types for binary add")
-                raise err
-
-        return result
-
-    _jit(impl)
-
-
-# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
-@register_opcode_handler("BINARY_MULTIPLY", max_ver=(3, 10))
-def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    b = stack.pop()
-    a = stack.pop()
-
-    def impl():
-        if (not hasattr(a, "__mul__")) or ((result := a.__mul__(b)) is NotImplemented):
-            if (not hasattr(b, "__rmul__")) or ((result := b.__rmul__(a)) is NotImplemented):
-                # TODO Restore formatting once FORMAT_VALUE is implemented
-                # raise TypeError(f"Unsupported operand type(s) for *: '{type(a)}' and '{type(b)}'")
-                err: TypeError = TypeError("Unsupported operand types for binary multiply")
-                raise err
-
-        return result
-
-    _jit(impl)
+class BINARY_OP(Enum):
+    ADD = 0
+    AND = 1
+    FLOORDIV = 2
+    LSHIFT = 3
+    MATMUL = 4
+    MUL = 5
+    MOD = 6
+    OR = 7
+    POW = 8
+    RSHIFT = 9
+    SUB = 10
+    TRUEDIV = 11
+    XOR = 12
+    IADD = 13
+    IAND = 14
+    IFLOORDIV = 15
+    ILSHIFT = 16
+    IMATMUL = 17
+    IMUL = 18
+    IMOD = 19
+    IOR = 20
+    IPOW = 21
+    IRSHIFT = 22
+    ISUB = 23
+    ITRUEDIV = 24
+    IXOR = 25
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
-@register_opcode_handler("BINARY_SUBTRACT", max_ver=(3, 10))
-def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    b = stack.pop()
-    a = stack.pop()
-
-    def impl():
-        if (not hasattr(a, "__sub__")) or ((result := a.__sub__(b)) is NotImplemented):
-            if (not hasattr(b, "__rsub__")) or ((result := b.__rsub__(a)) is NotImplemented):
-                # TODO Restore formatting once FORMAT_VALUE is implemented
-                # raise TypeError(f"Unsupported operand type(s) for -: '{type(a)}' and '{type(b)}'")
-                err: TypeError = TypeError("Unsupported operand types for binary subtract")
-                raise err
-
-        return result
-
-    _jit(impl)
-
-
-# https://docs.python.org/3.11/library/dis.html#opcode-BINARY_OP
-@register_opcode_handler("BINARY_OP", min_ver=(3, 11))
-def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    b = stack.pop()
-    a = stack.pop()
-
+def _binary_op(op: BINARY_OP, a, b):
     ops = [
         ("+", "__add__", "__radd__"),
         ("&", "__and__", "__rand__"),
@@ -463,16 +428,19 @@ def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
         ("^=", "__ixor__"),
     ]
 
-    binop_name, *method_names = ops[inst.arg]
+    assert type(op) is BINARY_OP
+    idx: int = op.value
+
+    binop_name, *method_names = ops[idx]
     if len(method_names) == 2:
         left_method, right_method = method_names
 
         def impl():
             if (not hasattr(a, left_method)) or ((result := getattr(a, left_method)(b)) is NotImplemented):
                 if (not hasattr(b, right_method)) or ((result := getattr(b, right_method)(a)) is NotImplemented):
-                    # TODO Restore formatting once FORMAT_VALUE is implemented
-                    # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
-                    err: TypeError = TypeError("Unsupported operand types for " + binop_name)
+                    err: TypeError = TypeError(
+                        f"Unsupported operand type(s) for {binop_name}: '{type(a)}' and '{type(b)}'"
+                    )
                     raise err
 
             return result
@@ -482,14 +450,104 @@ def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
         def impl():
             if (not hasattr(a, method)) or ((result := getattr(a, method)(b)) is NotImplemented):
-                # TODO Restore formatting once FORMAT_VALUE is implemented
-                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
-                err: TypeError = TypeError("Unsupported operand types for " + binop_name)
+                err: TypeError = TypeError(f"Unsupported operand type(s) for {binop_name}: '{type(a)}' and '{type(b)}'")
                 raise err
 
             return result
 
     _jit(impl)
+
+
+def _binary_op_helper(stack: list, op: BINARY_OP):
+    b = stack.pop()
+    a = stack.pop()
+
+    return _binary_op(op, a, b)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
+@register_opcode_handler("BINARY_ADD", max_ver=(3, 10))
+def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.ADD)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_AND
+@register_opcode_handler("BINARY_AND", max_ver=(3, 10))
+def _binary_and_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.AND)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_FLOOR_DIVIDE
+@register_opcode_handler("BINARY_FLOOR_DIVIDE", max_ver=(3, 10))
+def _binary_floor_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.FLOORDIV)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_LSHIFT
+@register_opcode_handler("BINARY_LSHIFT", max_ver=(3, 10))
+def _binary_lshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.LSHIFT)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MATRIX_MULTIPLY
+@register_opcode_handler("BINARY_MATRIX_MULTIPLY", max_ver=(3, 10))
+def _binary_matrix_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.MATMUL)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
+@register_opcode_handler("BINARY_MULTIPLY", max_ver=(3, 10))
+def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.MUL)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MODULO
+@register_opcode_handler("BINARY_MODULO", max_ver=(3, 10))
+def _binary_modulo_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.MOD)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_OR
+@register_opcode_handler("BINARY_OR", max_ver=(3, 10))
+def _binary_or_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.OR)
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-BINARY_OP
+@register_opcode_handler("BINARY_OP", min_ver=(3, 11))
+def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
+    return _binary_op_helper(stack, BINARY_OP(inst.arg))
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_POWER
+@register_opcode_handler("BINARY_POWER", max_ver=(3, 10))
+def _binary_power_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.POW)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_RSHIFT
+@register_opcode_handler("BINARY_RSHIFT", max_ver=(3, 10))
+def _binary_rshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.RSHIFT)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
+@register_opcode_handler("BINARY_SUBTRACT", max_ver=(3, 10))
+def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.SUB)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_TRUE_DIVIDE
+@register_opcode_handler("BINARY_TRUE_DIVIDE", max_ver=(3, 10))
+def _binary_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.TRUEDIV)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
+@register_opcode_handler("BINARY_XOR", max_ver=(3, 10))
+def _binary_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.XOR)
 
 
 # TODO Review if there's a better way to perform the subscription
