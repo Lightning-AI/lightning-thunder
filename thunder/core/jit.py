@@ -160,8 +160,8 @@ class JitRuntimeCtx:
 
     # for method calls. There is a bit of a trick because the filename is
     # part of the code object, but not the instruction's position information.
-    def push_frame_stack(self, code: CodeType, localsplus: list[Any]):
-        self.frame_stack.append(JITFrame(code=code, localsplus=localsplus))
+    def push_frame_stack(self, code: CodeType, localsplus: list[Any], qualname: str):
+        self.frame_stack.append(JITFrame(code=code, localsplus=localsplus, qualname=qualname))
 
     # for returning from method calls
     def pop_frame_stack(self):
@@ -284,8 +284,11 @@ else:
 @dataclass
 class JITFrame:
     code: CodeType
+    qualname: str
     positions: Positions | None = None
     inst: dis.Instruction | None = None
+    call_shape_kwnames: tuple[str] | None = None  # for KW_NAMES opcode in 3.11+
+
     # in Python 3.11+ the slots are not split by local/cell/free any more
     localsplus: list[Any] = field(default_factory=list)
 
@@ -302,10 +305,13 @@ class JITFrame:
     def format_with_source(self):
         # todo: multiple lines in positions, underline, indent
         l = []
-        l.append(f"  in {self.code.co_name} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
             ls = linecache.getlines(self.code.co_filename)
-            l.append("  " + ls[max(self.positions.lineno - 1, 0)].rstrip())
+            lineno = self.positions.lineno
+            if lineno is None:
+                lineno = self.code.co_firstlineno
+            l.append("  " + ls[max(lineno - 1, 0)].rstrip())
         return "\n".join(l)
 
     def get_localsplus_name(self, idx: int) -> str:
@@ -338,12 +344,19 @@ def default_opcode_interpreter(inst: dis.Instruction, /, **interpreter_state) ->
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1528
 class register_opcode_handler:
-    def __init__(self, name: str):
+    def __init__(self, name: str, *, min_ver: tuple[int, int] | None = None, max_ver: tuple[int, int] | None = None):
         self.name: str = name
+        self.min_ver = min_ver
+        self.max_ver = max_ver
 
     def __call__(self, fn: Callable) -> Callable:
-        _default_opcode_handler_map[self.name] = fn
-        return fn
+        if (self.min_ver is None or self.min_ver <= sys.version_info) and (
+            self.max_ver is None or sys.version_info < (*self.max_ver[:-1], self.max_ver[-1] + 1)
+        ):
+            assert self.name not in _default_opcode_handler_map
+            _default_opcode_handler_map[self.name] = fn
+            return fn
+        return _default_opcode_handler_map.get(self.name)
 
 
 # The default function lookaside -- currently it doesn't intercept anything
@@ -359,7 +372,7 @@ def default_fn_lookaside(fn, *args, **kwargs) -> tuple[bool, None | Any] | JIT_S
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1529
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1530
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
-@register_opcode_handler("BINARY_ADD")
+@register_opcode_handler("BINARY_ADD", max_ver=(3, 10))
 def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
     a = stack.pop()
@@ -378,7 +391,7 @@ def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
-@register_opcode_handler("BINARY_MULTIPLY")
+@register_opcode_handler("BINARY_MULTIPLY", max_ver=(3, 10))
 def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
     a = stack.pop()
@@ -397,7 +410,7 @@ def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
-@register_opcode_handler("BINARY_SUBTRACT")
+@register_opcode_handler("BINARY_SUBTRACT", max_ver=(3, 10))
 def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
     a = stack.pop()
@@ -411,6 +424,70 @@ def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
                 raise err
 
         return result
+
+    _jit(impl)
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-BINARY_OP
+@register_opcode_handler("BINARY_OP", min_ver=(3, 11))
+def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    b = stack.pop()
+    a = stack.pop()
+
+    ops = [
+        ("+", "__add__", "__radd__"),
+        ("&", "__and__", "__rand__"),
+        ("//", "__floordiv__", "__rfloordiv__"),
+        ("<<", "__lshift__", "__rlshift__"),
+        ("@", "__matmul__", "__rmatmul__"),
+        ("*", "__mul__", "__rmul__"),
+        ("%", "__mod__", "__rmod__"),
+        ("|", "__or__", "__ror__"),
+        ("**", "__pow__", "__rpow__"),
+        (">>", "__rshift__", "__rrshift__"),
+        ("-", "__sub__", "__rsub__"),
+        ("/", "__truediv__", "__rtruediv__"),
+        ("^", "__xor__", "__rxor__"),
+        ("+=", "__iadd__"),
+        ("&=", "__iand__"),
+        ("//=", "__ifloordiv__"),
+        ("<<=", "__ilshift__"),
+        ("@=", "__imatmul__"),
+        ("*=", "__imul__"),
+        ("%=", "__imod__"),
+        ("|=", "__ior__"),
+        ("**=", "__ipow__"),
+        (">>=", "__irshift__"),
+        ("-=", "__isub__"),
+        ("/=", "__itruediv__"),
+        ("^=", "__ixor__"),
+    ]
+
+    binop_name, *method_names = ops[inst.arg]
+    if len(method_names) == 2:
+        left_method, right_method = method_names
+
+        def impl():
+            if (not hasattr(a, left_method)) or ((result := getattr(a, left_method)(b)) is NotImplemented):
+                if (not hasattr(b, right_method)) or ((result := getattr(b, right_method)(a)) is NotImplemented):
+                    # TODO Restore formatting once FORMAT_VALUE is implemented
+                    # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
+                    err: TypeError = TypeError("Unsupported operand types for " + binop_name)
+                    raise err
+
+            return result
+
+    else:
+        (method,) = method_names
+
+        def impl():
+            if (not hasattr(a, method)) or ((result := getattr(a, method)(b)) is NotImplemented):
+                # TODO Restore formatting once FORMAT_VALUE is implemented
+                # raise TypeError(f"Unsupported operand type(s) for +: '{type(a)}' and '{type(b)}'")
+                err: TypeError = TypeError("Unsupported operand types for " + binop_name)
+                raise err
+
+            return result
 
     _jit(impl)
 
@@ -479,6 +556,38 @@ def _build_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     stack.append(result)
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-KW_NAMES
+@register_opcode_handler("KW_NAMES", min_ver=(3, 11))
+def _kw_names_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert inst.arg is not None
+    frame.call_shape_kwnames = co.co_consts[inst.arg]
+
+
+# NOTE This only accepts positional args
+# https://docs.python.org/3.11/library/dis.html#opcode-CALL
+@register_opcode_handler("CALL", min_ver=(3, 11))
+def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    argc: int = inst.arg
+    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
+    func_or_self = stack.pop()
+    func_or_null = stack.pop()
+    if frame.call_shape_kwnames is not None:
+        kwnames = frame.call_shape_kwnames
+        assert len(args) >= len(kwnames)
+        kwargs = dict(zip(kwnames, args[-len(kwnames) :]))
+        args = args[: -len(kwnames)]
+        frame.call_shape_kwnames = None
+    else:
+        kwargs = {}
+    if func_or_null is not Py_NULL():
+        func = func_or_null
+        args = (func_or_self, *args)
+    else:
+        func = func_or_self
+    _jit(func, *args, **kwargs)
+
+
 # NOTE This only accepts positional args
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION
 @register_opcode_handler("CALL_FUNCTION")
@@ -501,6 +610,10 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     assert isinstance(kwargs, Mapping)
     assert isinstance(args, Iterable)
     assert isinstance(func, Callable)
+
+    if (3, 11) <= sys.version_info:
+        null = stack.pop()
+        assert isinstance(null, Py_NULL)
 
     _jit(func, *args, **kwargs)
 
@@ -584,6 +697,36 @@ def _dict_update_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 @register_opcode_handler("DUP_TOP")
 def _dup_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-1])
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
+@register_opcode_handler("MAKE_CELL", min_ver=(3, 11))
+def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    assert i >= 0 and i < len(frame.localsplus)
+    val = frame.localsplus[i]
+
+    if isinstance(val, Py_NULL):
+        # empty local variable slots (Py_NULL()) produce an empty cell
+        frame.localsplus[i] = CellType()
+    else:
+        # wrap the current val into a cell
+        frame.localsplus[i] = CellType(val)
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-COPY
+@register_opcode_handler("COPY", min_ver=(3, 11))
+def _copy_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    assert inst.arg >= 1
+    stack.append(stack[-inst.arg])
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-PUSH_NULL
+@register_opcode_handler("PUSH_NULL", min_ver=(3, 11))
+def _push_null_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    stack.append(Py_NULL())
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
@@ -791,7 +934,11 @@ def _load_global_handler(
     **kwargs,
 ) -> None:
     assert type(inst.arg) is int
-    co_name: str = co.co_names[inst.arg]
+    idx = inst.arg
+    if (3, 11) <= sys.version_info:
+        idx = idx // 2
+    co_name: str = co.co_names[idx]
+
     try:
         obj = globals_dict[co_name]
     except KeyError:
@@ -800,6 +947,10 @@ def _load_global_handler(
         except KeyError as e:
             # TODO: UndefVariableError
             raise e
+    if (3, 11) <= sys.version_info:
+        # for 3.11+, the lowest bit indicates whether a NULL should be pushed
+        if inst.arg & 1:
+            stack.append(Py_NULL())
     stack.append(obj)
 
 
@@ -827,8 +978,13 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
 # https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
 @register_opcode_handler("MAKE_FUNCTION")
 def _make_function_handler(inst: dis.Instruction, /, stack: list, globals_dict: dict[str, Any], **kwargs) -> None:
-    name: str = stack.pop()
+    if sys.version_info < (3, 11):
+        name = stack.pop()
+    else:
+        name = ""
+
     fn_co: CodeType = stack.pop()
+    name = fn_co.co_name
 
     if inst.arg != 0 and inst.arg != 0x08:
         raise NotImplementedError("Annotations on functions compiled inline are not yet supported")
@@ -851,6 +1007,25 @@ def _nop_handler(inst: dis.Instruction, /, **kwargs) -> None:
     pass
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-RESUME
+@register_opcode_handler("RESUME", min_ver=(3, 11))
+def _resume_handler(inst: dis.Instruction, /, **kwargs) -> None:
+    pass
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-COPY_FREE_VARS
+@register_opcode_handler("COPY_FREE_VARS", min_ver=(3, 11))
+def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
+    # we already do this when setting up the function call in _jit
+    pass
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-PRECALL
+@register_opcode_handler("PRECALL", min_ver=(3, 11), max_ver=(3, 11))
+def _precall_handler(inst: dis.Instruction, /, co: CodeType, **kwargs) -> None:
+    pass
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_BLOCK
 @register_opcode_handler("POP_BLOCK")
 def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
@@ -863,7 +1038,53 @@ def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **k
     try_stack.pop()
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1527
+@register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11))
+def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+
+    def impl():
+        return bool(tos)
+
+    _jit(impl)
+
+    cnd: bool = stack.pop()
+    if not cnd:
+        return inst_ptr + inst.arg + 1
+
+    return None
+
+
+@register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11))
+def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+
+    def impl():
+        return bool(tos)
+
+    _jit(impl)
+
+    cnd: bool = stack.pop()
+    if cnd:
+        return inst_ptr + inst.arg + 1
+
+    return None
+
+
+@register_opcode_handler("POP_JUMP_FORWARD_IF_NONE", min_ver=(3, 11))
+def _pop_jump_forward_if_none_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+    if tos is None:
+        return inst_ptr + inst.arg + 1
+
+    return None
+
+
 @register_opcode_handler("POP_JUMP_IF_FALSE")
 def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
     assert type(inst.arg) is int
@@ -881,7 +1102,6 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
     return None
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1527
 @register_opcode_handler("POP_JUMP_IF_TRUE")
 def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
     assert type(inst.arg) is int
@@ -1034,28 +1254,6 @@ def _store_deref_handler(
     frame.localsplus[i].cell_contents = tos
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
-# https://docs.python.org/3.10/library/dis.html#opcode-STORE_DEREF
-@register_opcode_handler("STORE_DEREF")
-def _store_deref_handler(
-    inst: dis.Instruction,
-    /,
-    stack: list,
-    co: CodeType,
-    frame: JITFrame,
-    **kwargs,
-) -> None:
-    assert isinstance(inst.arg, int)
-    i: int = inst.arg
-    if sys.version_info < (3, 11):
-        i += co.co_nlocals
-
-    assert i >= 0 and i < len(frame.localsplus)
-
-    tos = stack.pop()
-    frame.localsplus[i].cell_contents = tos
-
-
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_DEREF
 @register_opcode_handler("DELETE_DEREF")
 def _delete_deref_handler(
@@ -1162,6 +1360,8 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
 
     # (6) Jits into the function
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
+    # adjustments for "hidden" instructiions (EXTENDED_ARGS, CACHE, ...)
+    inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
     bound = inspect.signature(fn).bind(*args, **kwargs)
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
@@ -1208,11 +1408,17 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         )
 
     # Pushes a stack frame for the current function
-    runtimectx.push_frame_stack(code, localsplus)
+    runtimectx.push_frame_stack(code, localsplus, fn.__qualname__)
 
     inst_ptr: int = 0
+    max_inst_ptr = max(inst_ptr_to_idx.keys())
     while True:
-        inst: dis.Instruction = insts[inst_ptr]
+        # we might have jumped or advanced to a "hidden" instruction such as cache,
+        # so move forward until we have something to look at.
+        while inst_ptr not in inst_ptr_to_idx:
+            assert inst_ptr <= max_inst_ptr
+            inst_ptr += 1
+        inst: dis.Instruction = insts[inst_ptr_to_idx[inst_ptr]]
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
         runtimectx.frame_stack_change_top(inst)
@@ -1249,9 +1455,18 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         actual_stack_effect: int = len(stack) - stack_size_before_handler
         jumped: bool = isinstance(interpretation_result, int) and interpretation_result != -1
         expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
+
+        if (3, 11) <= sys.version_info < (3, 12):
+            # PRECALL stack effect (3.11) has a -2 stck effect in the function that we only see during CALL
+            if inst.opname == "PRECALL":
+                assert expected_stack_effect == -inst.arg, f"precall with stack effect {expected_stack_effect}, {inst}"
+                expected_stack_effect = 0
+            elif inst.opname == "CALL":
+                assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
+                expected_stack_effect = -inst.arg - 1
         assert (
             actual_stack_effect == expected_stack_effect
-        ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect}"
+        ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
 
 
 # Special signals for the interpreter

@@ -291,8 +291,9 @@ def test_exception_traceback():
     # TODO: change to ValueError once that is supported!
     with pytest.raises(JITError) as excinfo:
         thunder_result = jfoo(*args)
-    assert "in foo in file" in str(excinfo.value)
-    assert "in bar in file" in str(excinfo.value)
+    print(str(excinfo.value))
+    assert "foo in file" in str(excinfo.value)
+    assert "bar in file" in str(excinfo.value)
 
 
 def test_walrus_operator():
