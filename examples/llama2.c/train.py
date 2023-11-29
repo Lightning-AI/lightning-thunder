@@ -72,7 +72,7 @@ warmup_iters = 1000  # how many steps to warm up for
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
 # thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
 # dtype = "bfloat16"  # float32|bfloat16|float16
-compile = True  # use lightning.compile to compile the model to be faster
+compile = "thunder"  # eager|torch|thunder
 # -----------------------------------------------------------------------------
 config_keys = [
     k
@@ -184,7 +184,7 @@ elif init_from == "resume":
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
+scaler = torch.cuda.amp.GradScaler(enabled=(False))  # dtype == "float16"))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -194,12 +194,17 @@ checkpoint = None  # free up memory
 
 raw_model = eval_model = train_model = model
 # compile the model
-if compile:
+if compile == "thunder":
     print("compiling the model... (takes a ~minute)")
-    import thunder
 
-    eval_model = thunder.compile(model.eval(), disable_torch_autograd_support=True)
-    train_model = thunder.compile(model.train())
+    import thunder
+    from thunder.executors.sdpaex import sdpa_ex
+    executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
+
+    eval_model = thunder.compile(model.eval(), disable_torch_autograd_support=True, executors_list=executors)
+    train_model = thunder.compile(model.train(), executors_list=executors)
+elif compile == "torch":
+    eval_model = train_model = torch.compile(model)
 
 # wrap model into DDP container
 if ddp:
@@ -213,6 +218,8 @@ if ddp:
 @torch.no_grad()
 def estimate_loss():
     out = {}
+    if compile != "thunder":
+        eval_model.eval()
     for split in ["train", "val"]:
         batch_iter = iter_batches(split=split)
         losses = torch.zeros(eval_iters)  # keep on CPU
@@ -223,6 +230,8 @@ def estimate_loss():
                 loss = F.cross_entropy(logits.view(-1, logits.size(-1)), Y.view(-1), ignore_index=-1)
             losses[k] = loss.item()
         out[split] = losses.mean()
+    if compile != "thunder":
+        train_model.train()
     return out
 
 # learning rate decay scheduler (cosine with warmup)

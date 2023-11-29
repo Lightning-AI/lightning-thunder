@@ -14,8 +14,7 @@ from tinystories import get_tokenizer_model_path
 
 # -----------------------------------------------------------------------------
 checkpoint = 'out/ckpt.pt'
-# cannot be empty: https://github.com/Lightning-AI/lightning-thunder/issues/1111
-start = "A thunder" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
+start = "" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 1 # number of samples to draw
 max_new_tokens = 100 # number of tokens generated in each sample
 temperature = 1.0 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
@@ -53,9 +52,12 @@ model.eval()
 model.to(device)
 if compile:
     print("Compiling the model...")
-    import thunder
 
-    cmodel = thunder.compile(model, disable_torch_autograd_support=True)
+    import thunder
+    from thunder.executors.sdpaex import sdpa_ex
+
+    executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
+    cmodel = thunder.compile(model, disable_torch_autograd_support=True, executors_list=executors)
     # the generate implementation is not compile friendly, so bind the compiled model to the generate implementation
     generate = partial(Transformer.generate, cmodel)
     # workaround for https://github.com/Lightning-AI/lightning-thunder/issues/954

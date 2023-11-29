@@ -9,7 +9,7 @@ The scripts are configured to run with Thunder by default. You can `diff` them a
 ## Setup
 
 ```shell
-wget https://github.com/karpathy/llama2.c/raw/master/tokenizer.model
+wget -nc https://github.com/karpathy/llama2.c/raw/master/tokenizer.model
 pip install -r requirements.txt
 ```
 
@@ -18,23 +18,16 @@ pip install -r requirements.txt
 ```shell
 python tinystories.py download
 python tinystories.py pretokenize
+git revert 4639efc03a0c7137a744abc8fe8b9bf9971a0e1d # 1293
 # 1 device
 python train.py
-# 2 devices (DDP)
-torchrun --standalone --nproc_per_node=2 train.py
 ```
 
 The code is configured to run with Thunder by default.
 
-1 device:
-* 319 ms/iter (thunder nvfuser)
-* 343 ms/iter (inductor)
-* 431 ms/iter (eager)
-
-2 devices:
-* 161 ms/iter (thunder nvfuser)
-* 173 ms/iter (inductor)
-* 217 ms/iter (eager)
+* ~342 ms/iter (inductor)
+* ~350 ms/iter (thunder nvfuser)
+* ~430 ms/iter (eager)
 
 CUDAGraphs are not used as the results were worse with them.
 
@@ -42,19 +35,22 @@ CUDAGraphs are not used as the results were worse with them.
 
 ```shell
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.pt -P out15M
+git revert 4639efc03a0c7137a744abc8fe8b9bf9971a0e1d # 1293
 python sample.py --checkpoint=out15M/stories15M.pt
 ```
 
+nanoGPT doesn't implement KV caching so this is expectedly slow. Please checkout the [Lit-GPT example](../lit-gpt/README.md) for faster text generation.
+
 ## Setup
 
-```shell
-Thunder commit: 4aaa95858601ecac6faed74441d790158fbdeca4
+```text
+Thunder commit: 9761546938de49290c7d1472421fef844a89dfce
 Is debug build: False
 CUDA used to build PyTorch: 12.1
 CUDA runtime version: 12.1.105
 GPU 0: NVIDIA A100-SXM4-40GB
 Nvidia driver version: 525.105.17
 pytorch-triton           2.1.0+6e4932cda8
-torch                    2.1.0+cu121
-nvfuser-cu121            0.0.19.dev20230925
+torch                    2.2.0.dev20231108+cu121
+nvfuser-cu121            0.1.2
 ```

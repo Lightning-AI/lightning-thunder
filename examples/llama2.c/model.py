@@ -252,8 +252,7 @@ class Transformer(nn.Module):
             #self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the output on the very last position
-            # https://github.com/Lightning-AI/lightning-thunder/issues/1110
-            logits = self.output(h[:, -1:, :])
+            logits = self.output(h[:, [-1], :])
             #self.last_loss = None
 
         return logits
