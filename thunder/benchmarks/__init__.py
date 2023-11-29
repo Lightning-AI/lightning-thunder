@@ -1863,6 +1863,154 @@ class LlamaCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmark
         return module
 
 
+# This block of code is after the "attn" projection in the forward
+# method of the CausalSelfAttention class and before the
+# "scaled_dot_product_attention" call.
+class QKVSplitRope(nn.Module):
+    def __init__(self, config, use_apex) -> None:
+        from thunder.tests.lit_gpt_model import apply_rope
+
+        self.fused_apply_rotary_pos_emb_cached = None
+        if use_apex:
+            try:
+                from apex.transformer.functional import fused_apply_rotary_pos_emb_cached
+
+                self.fused_apply_rotary_pos_emb_cached = fused_apply_rotary_pos_emb_cached
+            except ImportError:
+                pass
+
+        super().__init__()
+        self.config = config
+        self.apply_rope = apply_rope
+        self.use_apex = use_apex
+
+    def forward(
+        self,
+        qkv: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+    ) -> torch.Tensor:
+        B, T, _ = qkv.shape  # batch size, sequence length
+
+        # assemble into a number of query groups to support MHA, MQA and GQA together (see `config.n_query_groups`)
+        q_per_kv = self.config.n_head // self.config.n_query_groups
+        total_qkv = q_per_kv + 2  # each group has 1+ queries, 1 key, and 1 value
+        qkv = qkv.view(B, T, self.config.n_query_groups, total_qkv, self.config.head_size)
+        qkv = qkv.permute(0, 2, 3, 1, 4)  # (B, n_query_groups, total_qkv, T, hs)
+
+        # split batched computation into three
+        q, k, v = qkv.split((q_per_kv, 1, 1), dim=2)
+
+        # maybe repeat k and v if for the non multi-head attention cases
+        # training: flash attention requires it
+        # inference: multi-query would require a full kv cache so avoid it to limit its memory usage
+        if self.config.n_query_groups != self.config.n_head and self.config.n_query_groups != 1:
+            k = k.expand(B, self.config.n_query_groups, q_per_kv, T, self.config.head_size)
+            v = v.expand(B, self.config.n_query_groups, q_per_kv, T, self.config.head_size)
+
+        q = q.reshape(B, -1, T, self.config.head_size)  # (B, nh_q, T, hs)
+        k = k.reshape(B, -1, T, self.config.head_size)  # (B, nh_k, T, hs)
+        v = v.reshape(B, -1, T, self.config.head_size)  # (B, nh_v, T, hs)
+
+        if self.use_apex:
+            # Apex kernel expect q, k to be (T, B, nh, hs)
+            # And cos and sin to be (T, 1, 1, rope_n_elem)
+            cos = cos.unsqueeze(-2).unsqueeze(-2)
+            sin = sin.unsqueeze(-2).unsqueeze(-2)
+            q = q.permute(2, 0, 1, 3)
+            k = k.permute(2, 0, 1, 3)
+            q = self.fused_apply_rotary_pos_emb_cached(q, cos, sin)
+            k = self.fused_apply_rotary_pos_emb_cached(k, cos, sin)
+            q = q.permute(1, 2, 0, 3)
+            k = k.permute(1, 2, 0, 3)
+            return q, k, v
+
+        q_roped = self.apply_rope(q[..., : self.config.rope_n_elem], cos, sin)
+        k_roped = self.apply_rope(k[..., : self.config.rope_n_elem], cos, sin)
+        q = torch.cat((q_roped, q[..., self.config.rope_n_elem :]), dim=-1)
+        k = torch.cat((k_roped, k[..., self.config.rope_n_elem :]), dim=-1)
+        return q, k, v
+
+
+class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="The device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.bfloat16.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+        BenchmarkArg(
+            name="use_apex",
+            description="Whether to use apex's fused_apply_rotary_pos_emb_cached function. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-csa-qkv-split-rope"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config="Llama-2-7b-hf",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.bfloat16,
+        requires_grad: bool = True,
+        use_apex: bool = False,
+    ) -> None:
+        from thunder.tests.lit_gpt_model import Config
+
+        super().__init__()
+
+        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+        self.devices: list[str] = [device]
+        self.use_apex = use_apex
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        qkv = make(
+            self.batchdims
+            + (self.config.block_size, (self.config.n_head + 2 * self.config.n_query_groups) * self.config.head_size)
+        )
+        cos = make((self.config.block_size, self.config.rope_n_elem), requires_grad=False)
+        sin = make((self.config.block_size, self.config.rope_n_elem), requires_grad=False)
+        return (qkv, cos, sin), {}
+
+    def fn(self) -> Callable:
+        module = (
+            QKVSplitRope(self.config, self.use_apex)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+        return module
+
+
 class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(

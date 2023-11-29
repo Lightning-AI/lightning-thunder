@@ -1,5 +1,8 @@
 from collections.abc import Callable
 from functools import partial
+from collections.abc import Sequence
+
+from lightning_utilities.core.imports import package_available
 
 import pytest
 import torch
@@ -30,6 +33,9 @@ from thunder.benchmarks import (
     thunder_sdpa_executor,
     thunder_sdpa_nvfuser_executor,
 )
+
+
+APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
 
 
 def make_setup(b: Benchmark):
@@ -69,29 +75,6 @@ def torch_eager_fwd(b: Benchmark):
     return wrapper
 
 
-def torch_eager_bwd(b: Benchmark):
-    module = b.fn()
-    fn_ = torch_executor(module)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        def wrapper(*args):
-            clear_grads(module)
-            result = fn_(args)
-            result.backward(result)
-            return result
-
-        return wrapper
-
-    def wrapper(*args, **kwargs):
-        clear_grads(module)
-        result = fn_(*args, **kwargs)
-        result.backward(result)
-        return result
-
-    return wrapper
-
-
 def torch_compile_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_compile_executor(module)
@@ -106,29 +89,6 @@ def torch_compile_fwd(b: Benchmark):
 
     def wrapper(*args, **kwargs):
         result = fn_(*args, **kwargs)
-        return result
-
-    return wrapper
-
-
-def torch_compile_torch_bwd(b: Benchmark):
-    module = b.fn()
-    fn_ = torch_compile_executor(module)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        def wrapper(*args):
-            clear_grads(module)
-            result = fn_(args)
-            result.backward(result)
-            return result
-
-        return wrapper
-
-    def wrapper(*args, **kwargs):
-        clear_grads(module)
-        result = fn_(*args, **kwargs)
-        result.backward(result)
         return result
 
     return wrapper
@@ -245,11 +205,17 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     def wrapper(*args, **kwargs):
         clear_grads(module)
         result = cfn(*args, **kwargs)
-        result.backward(result)
+        if isinstance(result, Sequence):
+            torch.autograd.backward(result, [torch.randn_like(x) for x in result])
+        else:
+            result.backward(torch.randn_like(result))
         return result
 
     return wrapper
 
+
+torch_eager_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
+torch_compile_torch_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
 
 thunder_fwd_nvfuser = partial(thunder_fwd, compile_fn=thunder_nvfuser_executor)
 thunder_fwd_torch_compile = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
@@ -638,6 +604,45 @@ def test_llama2_causal_self_attention_7b_train(benchmark, executor: Callable):
 
     bench: Benchmark = LlamaCausalSelfAttentionBenchmark(
         config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "executor,use_apex,",
+    (
+        (torch_eager_bwd, False),
+        (torch_compile_torch_bwd, False),
+        (thunder_fwd_bwd_nvfuser, False),
+        (torch_eager_bwd, True),
+        (torch_compile_torch_bwd, True),
+    ),
+    ids=(
+        "torch-eager+torch-bwd",
+        "torch.compile+torch-bwd",
+        "thunder+nvfuser+torch-bwd",
+        "torch-eager+torch-bwd+apex",
+        "torch.compile+torch-bwd+apex",
+    ),
+)
+def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex: bool):
+    from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
+
+    if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
+        pytest.skip("Apex fused rotary positional embedding is unavailable")
+
+    bench: Benchmark = LlamaQKVSplitRopeBenchmark(
+        config="Llama-2-7b-hf",
+        batchdims=(32,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+        use_apex=use_apex,
     )
 
     setup = make_setup(bench)
