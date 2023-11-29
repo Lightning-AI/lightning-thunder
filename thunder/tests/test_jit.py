@@ -1,5 +1,6 @@
 from functools import partial
 
+import dis
 import pytest
 import torch
 from torch.testing import assert_close
@@ -132,6 +133,69 @@ def test_function_call():
 
     thunder_result = jfoo(*args)
     python_result = foo(*args)
+
+    assert_close(thunder_result, python_result)
+
+
+def test_call_function_ex():
+    def foo(a, b):
+        return a + b
+
+    def argsplat(*args):
+        return foo(*args)
+
+    def kwargsplat(**kwargs):
+        return foo(**kwargs)
+
+    assert any(i.opname == "CALL_FUNCTION_EX" and not i.arg & 1 for i in dis.get_instructions(argsplat))
+    assert any(i.opname == "CALL_FUNCTION_EX" and i.arg & 1 for i in dis.get_instructions(kwargsplat))
+
+    kwargs = {"a": 1, "b": 2}
+
+    res1 = argsplat(*kwargs.values())
+    res2 = kwargsplat(**kwargs)
+    jres1 = jit(argsplat)(*kwargs.values())
+    jres2 = jit(kwargsplat)(**kwargs)
+
+    assert_close(res1, jres1)
+    assert_close(res2, jres2)
+
+
+def test_build_map_dict_merge():
+    addall = lambda *args, **kwargs: sum(args) + sum(kwargs.values())
+    foo = lambda *args, **kwargs: addall(*args, **kwargs)
+
+    assert any(i.opname == "BUILD_MAP" for i in dis.get_instructions(foo))
+    assert any(i.opname == "DICT_MERGE" for i in dis.get_instructions(foo))
+
+    jfoo = jit(foo)
+
+    args = (4, 3)
+    kwargs = {"a": 1, "b": 2}
+
+    thunder_result = jfoo(*args, **kwargs)
+    python_result = foo(*args, **kwargs)
+
+    with pytest.raises(JITError, match="got multiple values for keyword argument") as excinfo:
+        d = {"a": 3, "b": 4}
+        mergefail = lambda **kwargs: addall(**kwargs, **d)
+        jfail = jit(mergefail)
+        jfail(**kwargs)
+
+    assert_close(thunder_result, python_result)
+
+
+def test_dict_update():
+    addall = lambda *args, **kwargs: sum(args) + sum(kwargs.values())
+    foo = lambda *args, **kwargs: addall(*args, **{**kwargs, "x": 1})
+
+    assert any(i.opname == "DICT_UPDATE" for i in dis.get_instructions(foo))
+
+    args = (4, 3)
+    kwargs = {"a": 1, "b": 2}
+
+    thunder_result = jit(foo)(*args, **kwargs)
+    python_result = foo(*args, **kwargs)
 
     assert_close(thunder_result, python_result)
 

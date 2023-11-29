@@ -3,7 +3,7 @@ from __future__ import annotations
 import dis
 import sys
 import collections
-from collections.abc import Iterator, Sequence, Callable
+from collections.abc import Iterator, Sequence, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 import inspect
 import linecache
@@ -429,7 +429,7 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_LIST
 @register_opcode_handler("BUILD_LIST")
 def _build_list_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     result: list[Any] = list(reversed([stack.pop() for _ in range(inst.arg)]))
     stack.append(result)
 
@@ -437,7 +437,7 @@ def _build_list_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_MAP
 @register_opcode_handler("BUILD_MAP")
 def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     count: int = inst.arg
 
     # NOTE The reversed() call below is necessary to handle key collisions properly
@@ -448,7 +448,7 @@ def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_SLICE
 @register_opcode_handler("BUILD_SLICE")
 def _build_slice_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
 
     tos = stack.pop()
     tos1 = stack.pop()
@@ -463,7 +463,7 @@ def _build_slice_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_STRING
 @register_opcode_handler("BUILD_STRING")
 def _build_string_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
 
     count: int = inst.arg
 
@@ -474,7 +474,7 @@ def _build_string_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_TUPLE
 @register_opcode_handler("BUILD_TUPLE")
 def _build_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     result: tuple[Any, ...] = tuple(reversed([stack.pop() for _ in range(inst.arg)]))
     stack.append(result)
 
@@ -487,7 +487,22 @@ def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
     func: Callable = stack.pop()
+
     _jit(func, *args)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
+@register_opcode_handler("CALL_FUNCTION_EX")
+def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
+    kwargs = stack.pop() if inst.arg & 0x01 else {}
+    args = stack.pop()
+    func = stack.pop()
+    assert isinstance(kwargs, Mapping)
+    assert isinstance(args, Iterable)
+    assert isinstance(func, Callable)
+
+    _jit(func, *args, **kwargs)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
@@ -497,7 +512,7 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     kwarg_length: int = len(kw_names)
     kwargs_flat: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(kwarg_length))))
     fn_kwargs: dict[str, Any] = {k: v for k, v in zip(kw_names, kwargs_flat)}
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     arg_length: int = inst.arg - kwarg_length
     args = tuple(reversed(tuple(stack.pop() for _ in range(arg_length))))
     func: Callable = stack.pop()
@@ -505,20 +520,10 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     _jit(func, *args, **fn_kwargs)
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
-@register_opcode_handler("CALL_FUNCTION_EX")
-def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    fn_kwargs = stack.pop()
-    args = stack.pop()
-    func = stack.pop()
-
-    _jit(func, *args, **fn_kwargs)
-
-
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
 @register_opcode_handler("CALL_METHOD")
 def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(inst.arg))))
     second_lm = stack.pop()
     first_lm = stack.pop()
@@ -545,7 +550,7 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     }
     b = stack.pop()
     a = stack.pop()
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     assert inst.arg < len(dis.cmp_op), f"{inst}, {dis.cmp_op}"
     result: Any = cmp_impls[dis.cmp_op[inst.arg]](a, b)
     stack.append(result)
@@ -553,11 +558,25 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DICT_MERGE
 @register_opcode_handler("DICT_MERGE")
-def _dict_merge_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
     a = stack.pop()
     b = stack[-1]
-    assert type(b) is dict, b
-    assert not (overlap := b.keys() & a), overlap
+    # TODO: Raise inside interpreter
+    assert isinstance(b, Mapping), b
+    assert isinstance(a, Mapping), a
+    if overlap := b.keys() & a:
+        # TODO: Raise inside interpreter
+        raise KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}")
+    b.update(a)
+
+
+@register_opcode_handler("DICT_UPDATE")
+def _dict_update_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
+    a = stack.pop()
+    b = stack[-inst.arg]
+    assert isinstance(b, Mapping), b
+    assert isinstance(a, Mapping), a
     b.update(a)
 
 
@@ -688,7 +707,7 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR")
 def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
 
     a = stack.pop()
     name: str = co.co_names[inst.arg]
@@ -716,7 +735,7 @@ def _load_closure_handler(inst: dis.Instruction, /, stack: list, co: CodeType, f
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CONST
 @register_opcode_handler("LOAD_CONST")
 def _load_const_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     stack.append(co.co_consts[inst.arg])
 
 
@@ -771,7 +790,7 @@ def _load_global_handler(
     builtins_dict: dict[str, Any],
     **kwargs,
 ) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     co_name: str = co.co_names[inst.arg]
     try:
         obj = globals_dict[co_name]
@@ -787,7 +806,7 @@ def _load_global_handler(
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1525
 @register_opcode_handler("LOAD_METHOD")
 def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     name = co.co_names[inst.arg]
     obj = stack.pop()
     try:
@@ -847,7 +866,7 @@ def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **k
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1527
 @register_opcode_handler("POP_JUMP_IF_FALSE")
 def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
-    assert isinstance(inst.arg, int)
+    assert type(inst.arg) is int
 
     tos = stack.pop()
 
@@ -865,7 +884,7 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1527
 @register_opcode_handler("POP_JUMP_IF_TRUE")
 def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
-    assert isinstance(inst.arg, int)
+    assert type(inst.arg) is int
 
     tos = stack.pop()
 
@@ -945,7 +964,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
 def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
     cause: Any = Py_NULL()
     exc: Any = Py_NULL()
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     if inst.arg == 2:
         cause = stack.pop()
     elif inst.arg == 1:
@@ -970,7 +989,7 @@ def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None:
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_N
 @register_opcode_handler("ROT_N")
 def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     assert len(stack) >= inst.arg
     stack[-inst.arg :] = (stack[-1], *stack[-inst.arg : -1])
 
@@ -989,7 +1008,7 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
 @register_opcode_handler("SETUP_WITH")
 def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
-    assert inst.arg is not None
+    assert type(inst.arg) is int
     try_stack.append(TryBlock())
 
 
@@ -1061,7 +1080,7 @@ def _delete_deref_handler(
 @register_opcode_handler("STORE_FAST")
 def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     a = stack.pop()
-    assert isinstance(inst.arg, int)
+    assert type(inst.arg) is int
     i: int = inst.arg
     frame.localsplus[i] = a
 
