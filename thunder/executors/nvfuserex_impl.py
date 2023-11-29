@@ -34,7 +34,7 @@ from thunder.extend import FusionExecutor, register_executor, add_default_execut
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
 import nvfuser
-from nvfuser import DataType, FusionDefinition, compute_contiguity as nv_compute_contiguity
+from nvfuser import DataType, FusionDefinition
 
 nvTensor = nvfuser._C.Tensor
 nvNumber = nvfuser._C.Scalar
@@ -184,7 +184,7 @@ def get_translator(bsym: BoundSymbol) -> Callable:
 
 def create_fd(
     bsyms: list[BoundSymbol],
-    input_descriptors: Sequence[type | tuple[tuple[int, ...], tuple[bool, ...]]],
+    input_descriptors: Sequence[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]],
     sorted_unique_inputs: list[Proxy],
     sorted_unique_outputs: list[Proxy],
 ) -> FusionDefinition:
@@ -215,9 +215,13 @@ def create_fd(
                 nv = fd.define_scalar(nvdtype)
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
-                symbolic_shape, contiguity, dtype = y
+                symbolic_shape, contiguity, stride_order, dtype = y
                 nvdtype = lcdtype_to_nvdtype(ltorch.to_thunder_dtype(dtype))
-                if nv_version >= LooseVersion("0.0.17"):
+                if nv_version >= LooseVersion("0.1.3"):
+                    nv = fd.define_tensor(
+                        shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
+                    )
+                elif nv_version >= LooseVersion("0.0.17"):
                     nv = fd.define_tensor(shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
                 elif nv_version >= LooseVersion("0.0.9"):
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
@@ -276,59 +280,75 @@ def compute_symbolic_shape(shape: torch.Size | Sequence[int]) -> tuple[int, ...]
     return tuple(1 if l == 1 else -1 for l in shape)
 
 
-def compute_contiguity(shape: torch.Size | Sequence[int], stride: Sequence[int]) -> tuple[bool, ...]:
+def compute_contiguity(
+    shape: torch.Size | Sequence[int], stride: Sequence[int]
+) -> tuple([tuple[bool, ...], tuple[int, ...]]):
     """
-    Computes the contiguity of a tensor using nvFuser's notion of contiguity, it's
-    represented by True, False and None. True represents dimensions that are contiguous,
-    and False represents dimensions that are not contiguous, and None represents
-    stride-0 or size-1 dimensions.
+    Computes the contiguity and stride_order of a tensor using nvFuser's notion.
 
-    For example, the contiguity of a tensor with shape (1, 2, 3) and stride (6, 3, 1)
-    is (None, True, True).
+    The contiguity is represented by True, False and None. True represents
+    dimensions that are contiguous, and False represents dimensions that are not
+    contiguous, and None represents stride-0 or size-1 dimensions.
+
+    The stride_order represents the order of each dimension from innermost to
+    outermost.
+
+    For example, a tensor with shape (1, 2, 3) and stride (6, 3, 1):
+        contiguity is (None, True, True);
+        stride_order is (2, 1, 0);
+    For example, a tensor with shape (2, 3, 4) and stride (12, 1, 3):
+        contiguity is (True, True, True);
+        stride_order is (2, 0, 1);
 
     Args:
         shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
         stride (Sequence[int]): The stride of the tensor.
 
     Returns:
-        Tuple[bool, ...]: The contiguity of the tensor.
+        Tuple[Tuple[bool, ...], Tuple[int, ...]]: The contiguity and stride_order
     """
-    return tuple(nv_compute_contiguity(shape, stride))
+    if nv_version >= LooseVersion("0.1.1"):
+        from nvfuser import compute_tensor_descriptor as nv_compute_td
+
+        return tuple(tuple(x) for x in nv_compute_td(shape, stride))
+    else:
+        from nvfuser import compute_contiguity as nv_compute_contiguity
+
+        return tuple(nv_compute_contiguity(shape, stride)), tuple(range(len(shape) - 1, -1, -1))
 
 
 @lru_cache(maxsize=2048)
-def compute_symbolic_shape_and_contiguity(
+def compute_tensor_descriptor(
     shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple[tuple[int, ...], tuple[bool, ...]]:
+) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
     """
-    Computes the symbolic shape and contiguity of a tensor using nvFuser's notion of
-    symbolic shape and contiguity. See compute_symbolic_shape and compute_contiguity
-    for more details.
+    Computes the symbolic shape, contiguity and stride_order of a tensor using
+    nvFuser's notion. See compute_symbolic_shape and compute_contiguity for
+    more details.
 
-    This function is caching the results of compute_symbolic_shape and compute_contiguity
-    to speed up the computation.
+    This function is caching the results of compute_symbolic_shape and
+    compute_contiguity to speed up the computation.
 
     Args:
         shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
         stride (Sequence[int]): The stride of the tensor.
 
     Returns:
-        Tuple[Tuple[int, ...], Tuple[bool, ...]]: The symbolic shape and contiguity of the tensor.
+        Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[int, ...]]: The symbolic
+        shape, contiguity and stride_order of the tensor.
     """
-    return compute_symbolic_shape(shape), compute_contiguity(shape, stride)
+    return compute_symbolic_shape(shape), *compute_contiguity(shape, stride)
 
 
-def get_symbolic_shape_and_contiguity(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...]]:
-    return compute_symbolic_shape_and_contiguity(t.shape, t.stride())
+def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
+    return compute_tensor_descriptor(t.shape, t.stride())
 
 
 # NOTE Currently assumes that only numbers and tensors are passed in
 # TODO Add check that only numbers and tensors are passed in
-# TODO Inline the get_symbolic_shape_and_contiguity call
+# TODO Inline the get_tensor_descriptor call
 def to_descriptors(args):
-    return tuple(
-        type(arg) if isinstance(arg, Number) else (*get_symbolic_shape_and_contiguity(arg), arg.dtype) for arg in args
-    )
+    return tuple(type(arg) if isinstance(arg, Number) else (*get_tensor_descriptor(arg), arg.dtype) for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -338,7 +358,7 @@ class FusionDefinitionWrapper:
     A callable object wrapping a nvFuser fusion definition.
     """
 
-    get_fd: Callable[[tuple[type | tuple[tuple[int, ...], tuple[bool, ...]], ...]], FusionDefinition]
+    get_fd: Callable[[tuple[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]], ...]], FusionDefinition]
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
