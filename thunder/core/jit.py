@@ -4,7 +4,7 @@ import dis
 import sys
 import collections
 from collections.abc import Iterator, Sequence, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import inspect
 import linecache
 from typing import Any
@@ -154,10 +154,14 @@ class JitRuntimeCtx:
         assert self.frame_stack
         self.frame_stack[-1].nexti(inst)
 
+    # get current top of stack
+    def peek_frame_stack(self) -> list:
+        return self.frame_stack[-1]
+
     # for method calls. There is a bit of a trick because the filename is
     # part of the code object, but not the instruction's position information.
-    def push_frame_stack(self, code: CodeType):
-        self.frame_stack.append(JITFrame(code=code))
+    def push_frame_stack(self, code: CodeType, localsplus: list[Any]):
+        self.frame_stack.append(JITFrame(code=code, localsplus=localsplus))
 
     # for returning from method calls
     def pop_frame_stack(self):
@@ -282,6 +286,8 @@ class JITFrame:
     code: CodeType
     positions: Positions | None = None
     inst: dis.Instruction | None = None
+    # in Python 3.11+ the slots are not split by local/cell/free any more
+    localsplus: list[Any] = field(default_factory=list)
 
     def nexti(self, inst: dis.Instruction):
         self.inst = inst
@@ -301,6 +307,18 @@ class JITFrame:
             ls = linecache.getlines(self.code.co_filename)
             l.append("  " + ls[max(self.positions.lineno - 1, 0)].rstrip())
         return "\n".join(l)
+
+    def get_localsplus_name(self, idx: int) -> str:
+        if sys.version_info < (3, 11):
+            if idx < self.code.co_nlocals:
+                return self.code.co_varnames[idx]
+            idx -= self.code.co_nlocals
+            if idx < len(self.code.co_cellvars):
+                return self.code.co_cellvars[idx]
+            idx -= len(self.code.co_cellvars)
+            return self.code.co_freevars[idx]
+        else:
+            return self.code._varname_from_oparg(idx)
 
 
 #
@@ -644,7 +662,7 @@ def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(a is not b if inst.arg == 1 else a is b)
 
 
-# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-JUMP_FORWARD
+# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_FORWARD
 @register_opcode_handler("JUMP_FORWARD")
 def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     delta: int = inst.arg
@@ -667,11 +685,9 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     l.extend(tos)
 
 
-# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_ATTR
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR")
-def _load_attr_handler(
-    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
-) -> None:
+def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
     assert inst.arg is not None
 
     a = stack.pop()
@@ -683,16 +699,18 @@ def _load_attr_handler(
     _jit(impl)
 
 
-# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_FAST
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
 @register_opcode_handler("LOAD_CLOSURE")
-def _load_closure_handler(
-    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
-) -> None:
+def _load_closure_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
-    var_name: str = co.co_cellvars[i]
-    actual: Any = locals_dict[var_name]
-    stack.append(actual)
+
+    if sys.version_info < (3, 11):
+        i += co.co_nlocals
+
+    assert i >= 0 and i < len(frame.localsplus)
+    val = frame.localsplus[i]
+    stack.append(val)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CONST
@@ -702,30 +720,43 @@ def _load_const_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
     stack.append(co.co_consts[inst.arg])
 
 
-# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_DEREF
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_DEREF
 @register_opcode_handler("LOAD_DEREF")
-def _load_deref_handler(
-    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], closures: tuple[CellType, ...], **kwargs
-) -> None:
+def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
-    assert i >= 0 and i < len(closures)
 
-    stack.append(closures[i].cell_contents)
+    if sys.version_info < (3, 11):
+        i += co.co_nlocals
+
+    assert i >= 0 and i < len(frame.localsplus)
+    cell = frame.localsplus[i]
+
+    # it seems that the only way to check for an empty cell (short of
+    # try... except) is comparison to another empty cell
+    if cell == CellType():
+        do_raise(
+            NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
+        )
+        return -1
+    val = cell.cell_contents
+    stack.append(val)
 
 
-# https://docs.python.org/3.10/library/dis.html?highlight=dis#opcode-LOAD_FAST
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_FAST
 @register_opcode_handler("LOAD_FAST")
-def _load_fast_handler(
-    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, closures, **kwargs
-) -> None:
+def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
-    name: str = co.co_varnames[i]
-    assert isinstance(name, str)
-    actual: Any = locals_dict[name]
+    assert i >= 0 and i < len(frame.localsplus)
+    val = frame.localsplus[i]
 
-    stack.append(actual)
+    # empty local variable slots are initialized to Py_NULL()
+    if isinstance(val, Py_NULL):
+        do_raise(UnboundLocalError(f"local variable '{frame.get_localsplus_name(i)}' referenced before assignment"))
+        return -1
+
+    stack.append(val)
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1524
@@ -776,7 +807,7 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1526
 # https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
 @register_opcode_handler("MAKE_FUNCTION")
-def _make_function_handler(inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], **kwargs) -> None:
+def _make_function_handler(inst: dis.Instruction, /, stack: list, globals_dict: dict[str, Any], **kwargs) -> None:
     name: str = stack.pop()
     fn_co: CodeType = stack.pop()
 
@@ -784,11 +815,14 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, locals_dict: d
         raise NotImplementedError("Annotations on functions compiled inline are not yet supported")
 
     if inst.arg & 0x08:
-        closure = tuple(CellType(v) for v in stack.pop())
+        # Python will have built at tuple of cell vars
+        # (via STORE_DEREF, LOAD_CLOSURE)
+        closure = tuple(stack.pop())
+        assert all(isinstance(v, CellType) for v in closure)
     else:
         closure = None
 
-    fn = FunctionType(fn_co, locals_dict, name, closure=closure)
+    fn = FunctionType(fn_co, globals_dict, name, closure=closure)
     stack.append(fn)
 
 
@@ -967,30 +1001,69 @@ def _store_deref_handler(
     /,
     stack: list,
     co: CodeType,
-    locals_dict: dict[str, Any],
-    closures: tuple[CellType, ...],
+    frame: JITFrame,
     **kwargs,
 ) -> None:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
+    if sys.version_info < (3, 11):
+        i += co.co_nlocals
+
+    assert i >= 0 and i < len(frame.localsplus)
 
     tos = stack.pop()
-    if i < len(closures):
-        closures[i].cell_contents = tos
-    else:
-        name: str = co.co_cellvars[i - len(closures)]
-        locals_dict[name] = tos
+    frame.localsplus[i].cell_contents = tos
+
+
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_DEREF
+@register_opcode_handler("STORE_DEREF")
+def _store_deref_handler(
+    inst: dis.Instruction,
+    /,
+    stack: list,
+    co: CodeType,
+    frame: JITFrame,
+    **kwargs,
+) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    if sys.version_info < (3, 11):
+        i += co.co_nlocals
+
+    assert i >= 0 and i < len(frame.localsplus)
+
+    tos = stack.pop()
+    frame.localsplus[i].cell_contents = tos
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_DEREF
+@register_opcode_handler("DELETE_DEREF")
+def _delete_deref_handler(
+    inst: dis.Instruction,
+    /,
+    stack: list,
+    co: CodeType,
+    frame: JITFrame,
+    **kwargs,
+) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    if sys.version_info < (3, 11):
+        i += co.co_nlocals
+
+    assert i >= 0 and i < len(frame.localsplus)
+
+    del frame.localsplus[i].cell_contents
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_FAST
 @register_opcode_handler("STORE_FAST")
-def _store_fast_handler(
-    inst: dis.Instruction, /, stack: list, locals_dict: dict[str, Any], co: CodeType, **kwargs
-) -> None:
+def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     a = stack.pop()
-    assert inst.arg is not None
-    var_name: str = co.co_varnames[inst.arg]
-    locals_dict[var_name] = a
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    frame.localsplus[i] = a
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_SEQUENCE
@@ -1074,34 +1147,66 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
     globals_dict: dict[str, Any] = fn.__globals__
-    closures: tuple[CellType, ...] = fn.__closure__ if fn.__closure__ is not None else ()
     try_stack: list[TryBlock] = []
     stack: list = runtimectx.push_interpreter_stack()
 
     code: CodeType = extract_code(fn)
 
+    # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars)
+    # in Python 3.11+, these are not separated, in Python 3.10 we need to create cell vars here and add them to closures in Python 3.11 they will be dealt with though MAKE_CELL...
+    localsplus: list[Any] = []
+
+    if (3, 10) <= sys.version_info < (3, 11):
+        assert len(code.co_varnames) == code.co_nlocals
+        for n in code.co_varnames:
+            localsplus.append(locals_dict.get(n, Py_NULL()))
+        for n in code.co_cellvars:
+            if n in locals_dict:
+                localsplus.append(CellType(locals_dict[n]))
+                localsplus[code.co_varnames.index(n)] = Py_NULL()
+            else:
+                localsplus.append(CellType())
+        if code.co_freevars:
+            assert len(code.co_freevars) == len(fn.__closure__)
+            localsplus.extend(fn.__closure__)
+        else:
+            assert not fn.__closure__
+    elif (3, 11) <= sys.version_info < (3, 12):
+        assert len(code.co_varnames) == code.co_nlocals
+        for n in code.co_varnames:
+            localsplus.append(locals_dict.get(n, Py_NULL()))
+        for n in code.co_cellvars:
+            # those in locals_dict will use that index but will
+            # see MAKE_CELL called for them for the conversion
+            if n not in locals_dict:
+                localsplus.append(CellType())
+        if code.co_freevars:
+            assert len(code.co_freevars) == len(fn.__closure__)
+            localsplus.extend(fn.__closure__)
+    else:
+        raise NotImplementedError(
+            f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."
+        )
+
     # Pushes a stack frame for the current function
-    runtimectx.push_frame_stack(code)
+    runtimectx.push_frame_stack(code, localsplus)
 
     inst_ptr: int = 0
     while True:
         inst: dis.Instruction = insts[inst_ptr]
-
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
         runtimectx.frame_stack_change_top(inst)
         stack_size_before_handler: int = len(stack)
-
         interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
             inst,
             inst_ptr=inst_ptr,
             stack=stack,
-            locals_dict=locals_dict,
             globals_dict=globals_dict,
             builtins_dict=builtins_dict,
             try_stack=try_stack,
-            closures=closures,
             co=code,
+            frame=runtimectx.peek_frame_stack(),
         )
 
         # TODO Improve this error message
@@ -1113,6 +1218,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             result: Any = stack.pop()
             runtimectx.pop_interpreter_stack()
             runtimectx.peek_interpreter_stack().append(result)
+            runtimectx.pop_frame_stack()
             return result
         elif interpretation_result is None:
             inst_ptr += 1
@@ -1152,10 +1258,9 @@ class JIT_SIGNALS(Enum):
 #       - stack, the interpreter stack
 #       - inst_ptr, the current instruction pointer
 #       - co, the code object
-#       - locals_dict, the locals dictionary
 #       - globals_dict, the globals dictionary
 #       - builtins_dict, the builtins dictionary
-#       - closures, the closures object
+#       - frame: JIT frame containing local variables, source loc etc.
 #       - try_stack, a stack to facilitate handling exceptions
 #
 #   The handler can then return None, -1 to indicate a return statement, or a weakly positive integer

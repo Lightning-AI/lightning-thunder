@@ -174,6 +174,30 @@ def test_inner_closure():
     assert_close(thunder_result, python_result)
 
 
+@pytest.mark.xfail(reason="Waits for do_raise to work")
+def test_delete_deref():
+    def foo(a, b):
+        value = 5
+
+        def bar(a):
+            nonlocal value
+            del value
+            return a + b + value
+
+        return bar(a + 1)
+
+    jfoo = jit(foo)
+
+    args = (4, 3)
+
+    with pytest.raises(NameError, match="'value'"):
+        python_result = foo(*args)
+    with pytest.raises(NameError, match="'value'"):
+        thunder_result = jfoo(*args)
+
+    assert_close(thunder_result, python_result)
+
+
 def test_unpack_sequence():
     def foo(tup):
         a, b = tup
