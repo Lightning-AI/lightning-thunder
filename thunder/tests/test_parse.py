@@ -504,7 +504,8 @@ def try_except_finally(f, log):
     ],
 )
 def test_parse(fn, spec: str | None):
-    _, _, summary = parse.functionalize_blocks(fn.__code__)
+    parsed = parse.ParsedFunctional.make(fn.__code__)
+    summary = parsed.summary
     if spec is None:
         print(f"\n\n{summary}")
         pytest.skip("No parse spec provided.")

@@ -1,38 +1,12 @@
-import collections
 import dataclasses
-import functools
-import itertools
-from typing import Concatenate
-from collections.abc import Callable
 from collections.abc import Iterable
-
-from typing_extensions import ParamSpec
 
 from thunder.core.script import parse, values
 from thunder.core.script.protograph import ProtoGraph, ProtoGraphTransform, AddTransitive, ReplaceSymbolic
 from thunder.core.utils import debug_asserts_enabled
 
 ValueEdges = Iterable[tuple[values.AbstractValue, values.AbstractValue]]
-P = ParamSpec("P")
-IDEMPOTENT_REPEATS = 10  # Check for nondeterministic behavior.
 KNOWN_TUPLE = values.TraitName("__known_tuple")
-
-
-# TODO(robieta): remove once `_prune_epilogues` is removed.
-def check_idempotent(
-    f: Callable[Concatenate[ProtoGraph, P], tuple[ProtoGraph, bool]]
-) -> Callable[Concatenate[ProtoGraph, P], tuple[ProtoGraph, bool]]:
-    @functools.wraps(f)
-    def wrapped(protograph: ProtoGraph, /, *args: P.args, **kwargs: P.kwargs) -> tuple[ProtoGraph, bool]:
-        protograph, had_effect = f(protograph, *args, **kwargs)
-        if debug_asserts_enabled():
-            for _ in range(IDEMPOTENT_REPEATS):
-                _, had_effect_on_rerun = f(protograph, *args, **kwargs)
-                assert not had_effect_on_rerun
-
-        return protograph, had_effect
-
-    return wrapped
 
 
 def _connect_protograph(proto_graph: "ProtoGraph") -> "ProtoGraph":

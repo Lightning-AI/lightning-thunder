@@ -5,8 +5,7 @@ import dataclasses
 import itertools
 import sys
 from typing import Any, NamedTuple, TypeAlias
-from collections.abc import Callable
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable
 
 from typing_extensions import Self
 
@@ -14,7 +13,7 @@ from thunder.core.script import parse
 from thunder.core.script.values import base
 from thunder.core.utils import FrozenDict, safe_zip
 
-__all__ = ("OutputRef", "make_symbolic", "Symbolic", "NestedReference", "ConstRef")
+__all__ = ("OutputRef", "ParsedSymbolic", "Symbolic", "NestedReference", "ConstRef")
 
 
 # =============================================================================
@@ -139,29 +138,38 @@ class Symbolic:
 
 
 # =============================================================================
-# == Conversion from parsed representation ====================================
+# == Conversion from functional representation ================================
 # =============================================================================
-def make_symbolic(blocks: tuple[parse.FunctionalizedBlock, ...]) -> Iterator[Symbolic.Block]:
-    for block, begin_state, end_state in blocks:
-        # `functionalize_blocks` produces unique values, so provenance is unambiguous.
-        producers: dict[parse.PlaceholderValue | None, Symbolic.Input] = {v: k for k, v in begin_state.items()}
-        producers[None] = base.NonPyObject.Tag.DELETED
-        assert len(producers) == len(begin_state) + 1, (producers, end_state)
+@dataclasses.dataclass(frozen=True)
+class ParsedSymbolic:
+    blocks: tuple[Symbolic.Block, ...]
+    provenance: parse.ParsedFunctional
 
-        symbolic_blocks: dict[parse.ThunderInstruction, Symbolic] = {}
-        for instruction, raw_inputs, raw_outputs in block:
-            for idx, o in enumerate(raw_outputs):
-                assert o not in producers
-                producers[o] = OutputRef(instruction, base.Reference(idx))
+    @classmethod
+    def make(cls, parsed: parse.ParsedFunctional) -> ParsedSymbolic:
+        blocks: list[Symbolic.Block] = []
+        for block, begin_state, end_state in parsed.blocks:
+            # `functionalize_blocks` produces unique values, so provenance is unambiguous.
+            producers: dict[parse.PlaceholderValue | None, Symbolic.Input] = {v: k for k, v in begin_state.items()}
+            producers[None] = base.NonPyObject.Tag.DELETED
+            assert len(producers) == len(begin_state) + 1, (producers, end_state)
 
-            outputs: tuple[Symbolic.Output, ...] = tuple(base.IntermediateValue() for _ in raw_outputs)
-            if alias := ALIAS_OPCODES.get(instruction.opname):
-                mask = alias(len(outputs)) if callable(alias) else alias
-                mask = (base.Reference(i) if i is not None else i for i in mask)
-                outputs = tuple(o if o_mask is None else o_mask for o, o_mask in safe_zip(outputs, mask))
-            inputs = base.HybridMap(ordered=tuple(producers[i] for i in raw_inputs))
-            symbolic_blocks[instruction] = Symbolic(inputs, outputs)
+            symbolic_blocks: dict[parse.ThunderInstruction, Symbolic] = {}
+            for instruction, raw_inputs, raw_outputs in block:
+                for idx, o in enumerate(raw_outputs):
+                    assert o not in producers
+                    producers[o] = OutputRef(instruction, base.Reference(idx))
 
-        begin = {k: base.AbstractRef(v) for k, v in begin_state.items() if not k.is_const}
-        end = {k: producers[v] for k, v in end_state.items() if not k.is_const}
-        yield (FrozenDict(symbolic_blocks), FrozenDict(begin), FrozenDict(end))
+                outputs: tuple[Symbolic.Output, ...] = tuple(base.IntermediateValue() for _ in raw_outputs)
+                if alias := ALIAS_OPCODES.get(instruction.opname):
+                    mask = alias(len(outputs)) if callable(alias) else alias
+                    mask = (base.Reference(i) if i is not None else i for i in mask)
+                    outputs = tuple(o if o_mask is None else o_mask for o, o_mask in safe_zip(outputs, mask))
+                inputs = base.HybridMap(ordered=tuple(producers[i] for i in raw_inputs))
+                symbolic_blocks[instruction] = Symbolic(inputs, outputs)
+
+            begin = {k: base.AbstractRef(v) for k, v in begin_state.items() if not k.is_const}
+            end = {k: producers[v] for k, v in end_state.items() if not k.is_const}
+            blocks.append((FrozenDict(symbolic_blocks), FrozenDict(begin), FrozenDict(end)))
+
+        return cls(tuple(blocks), parsed)

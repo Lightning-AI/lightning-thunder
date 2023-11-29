@@ -1,6 +1,7 @@
 """Convert a `CodeType` object into a series of simple blocks."""
 from __future__ import annotations
 
+import dataclasses
 import dis
 import itertools
 from types import CodeType
@@ -11,12 +12,33 @@ from thunder.core.script.parse import stack_effect
 from thunder.core.script.parse.instructions import *  # There are a lot of constants, and it defines `__all__`
 
 
-__all__ = ("parse_bytecode", "ParseDetailInstruction", "EpilogueFixup", "Jump", "Edges")
+__all__ = ("Disassembled", "ParseDetailInstruction", "EpilogueFixup", "Jump")
 
-OrderedBlocks = tuple[tuple["ThunderInstruction", ...], ...]
 BlockIdx = NewType("BlockIdx", int)
 Jump = NewType("Jump", bool)
-Edges = tuple[tuple[BlockIdx, BlockIdx, Jump], ...]
+
+
+@dataclasses.dataclass
+class Disassembled:
+    code: CodeType
+
+    _StartIndex = NewType("_StartIndex", int)
+    _RawBlocks = dict[_StartIndex, tuple[ThunderInstruction, ...]]
+    raw: RawBlocks
+
+    _Blocks = tuple[tuple["ThunderInstruction", ...], ...]
+    blocks: _Blocks
+
+    _Edges = tuple[tuple[BlockIdx, BlockIdx, Jump], ...]
+    edges: _Edges
+
+    @classmethod
+    def make(cls, co: CodeType) -> Disassembled:
+        raw_blocks, last_line_no = partition(co)
+        blocks, edges = connect_blocks(consolidate_returns(raw_blocks))
+        for instruction in itertools.chain(*blocks):
+            instruction.line_no = getattr(instruction, "line_no", last_line_no)
+        return cls(code=co, raw=raw_blocks, blocks=blocks, edges=edges)
 
 
 class ParseDetailInstruction(ThunderInstruction):
@@ -114,7 +136,7 @@ def consolidate_returns(blocks: RawBlocks) -> RawBlocks:
     return blocks
 
 
-def connect_blocks(blocks: RawBlocks) -> tuple[OrderedBlocks, Edges]:
+def connect_blocks(blocks: RawBlocks) -> tuple[Disassembled._Blocks, Disassembled._Edges]:
     def iter_raw_edges(blocks: RawBlocks) -> Iterable[tuple[StartIndex, StartIndex, Jump, int, int]]:
         for start, block in tuple(blocks.items()):
             raw_block_len = sum(not isinstance(i, ParseDetailInstruction) for i in block)
@@ -142,12 +164,3 @@ def connect_blocks(blocks: RawBlocks) -> tuple[OrderedBlocks, Edges]:
 
     to_idx = {k: BlockIdx(idx) for idx, k in enumerate(blocks.keys())}
     return tuple(blocks.values()), tuple((to_idx[source], to_idx[sink], jump) for source, sink, jump in edges)
-
-
-def parse_bytecode(co: CodeType) -> tuple[OrderedBlocks, Edges]:
-    raw_blocks, last_line_no = partition(co)
-    raw_blocks = consolidate_returns(raw_blocks)
-    blocks, edges = connect_blocks(raw_blocks)
-    for instruction in itertools.chain(*blocks):
-        instruction.line_no = getattr(instruction, "line_no", last_line_no)
-    return blocks, edges

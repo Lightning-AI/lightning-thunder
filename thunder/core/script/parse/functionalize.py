@@ -1,4 +1,7 @@
 """Replay the CPython stack machine to determine data flow within a simple block."""
+from __future__ import annotations
+
+import dataclasses
 import enum
 import inspect
 import itertools
@@ -13,7 +16,7 @@ from thunder.core.script import algorithms
 from thunder.core.script.parse import disassemble, instructions, stack_effect
 from thunder.core.utils import safe_zip, FrozenDict, InferringDict
 
-__all__ = ("VariableScope", "VariableKey", "functionalize_blocks", "FunctionalizedBlock", "PlaceholderValue")
+__all__ = ("VariableScope", "VariableKey", "ParsedFunctional", "FunctionalizedBlock", "PlaceholderValue")
 
 
 class VariableScope(enum.Enum):
@@ -66,17 +69,17 @@ class VariableKey(NamedTuple):
         return self.scope == VariableScope.CONST
 
 
-def _compute_stack_offsets(blocks: disassemble.OrderedBlocks, edges: disassemble.Edges) -> tuple[int, ...]:
+def _compute_stack_offsets(disassembled: disassemble.Disassembled) -> tuple[int, ...]:
     # If we convert the stack indices to a common basis then we can ignore stack effect and
     # treat VariableScope.STACK variables just like any other local.
-    G = algorithms.TypedDiGraph[disassemble.BlockIdx]((i, j) for i, j, _ in edges)
-    G.add_nodes_from(range(len(blocks)))
+    G = algorithms.TypedDiGraph[disassemble.BlockIdx]((i, j) for i, j, _ in disassembled.edges)
+    G.add_nodes_from(range(len(disassembled.blocks)))
     offsets: dict[disassemble.BlockIdx, int] = {i: 0 for i in G.nodes if not G.in_degree(i)}  # type: ignore[misc]
     assert len(offsets) == 1, G
 
     for source, sink in nx.edge_dfs(G):
         net_stack_effect = 0
-        for instruction in blocks[source]:
+        for instruction in disassembled.blocks[source]:
             pop, push_by_branch = stack_effect.stack_effect_detail(instruction)
             net_stack_effect += max(push_by_branch) - pop
         expected = offsets[source] + net_stack_effect
@@ -84,7 +87,7 @@ def _compute_stack_offsets(blocks: disassemble.OrderedBlocks, edges: disassemble
         assert actual == expected, (actual, expected)
 
     assert all(v >= 0 for v in offsets.values()), offsets
-    return tuple(offsets[disassemble.BlockIdx(i)] for i in range(len(blocks)))
+    return tuple(offsets[disassemble.BlockIdx(i)] for i in range(len(disassembled.blocks)))
 
 
 LOAD_OPNAMES = FrozenDict[str, VariableScope](
@@ -116,31 +119,45 @@ FunctionalNode = tuple[instructions.ThunderInstruction, Inputs, Outputs]
 FunctionalizedBlock = NewType("FunctionalizedBlock", tuple[tuple[FunctionalNode, ...], BeginState, EndState])
 
 
-def functionalize_blocks(co: CodeType) -> tuple[tuple[FunctionalizedBlock, ...], disassemble.Edges, str]:
+@dataclasses.dataclass(frozen=True)
+class ParsedFunctional:
+    blocks: tuple[FunctionalizedBlock, ...]
+    provenance: disassemble.Disassembled
+
+    @staticmethod
+    def make(co: CodeType) -> ParsedFunctional:
+        disassembled = disassemble.Disassembled.make(co)
+        return ParsedFunctional(_functionalize_blocks(disassembled), disassembled)
+
+    @property
+    def summary(self) -> str:
+        return _summarize(self)
+
+
+def _functionalize_blocks(disassembled: disassemble.Disassembled) -> tuple[FunctionalizedBlock, ...]:
+    code = disassembled.code
     errors: list[str] = []
-    if co.co_cellvars:
+    if code.co_cellvars:
         errors.append(
             "Nonlocal variables are not supported but\n"
-            f"  {co.co_name}() defined in {co.co_filename}:{co.co_firstlineno}\n"
-            f"  defines nonlocal variable{'s' if len(co.co_cellvars) > 1 else ''}: {', '.join(co.co_cellvars)}"
+            f"  {code.co_name}() defined in {code.co_filename}:{code.co_firstlineno}\n"
+            f"  defines nonlocal variable{'s' if len(code.co_cellvars) > 1 else ''}: {', '.join(code.co_cellvars)}"
         )
 
     def report_unsupported(msg: str, instruction: instructions.ThunderInstruction) -> None:
-        source_lines, _ = inspect.getsourcelines(co)
+        source_lines, _ = inspect.getsourcelines(code)
         errors.append(
             f"{msg}{instruction} found\n"
-            f"  {co.co_name}() defined in {co.co_filename}:{co.co_firstlineno}\n"
-            f"  line {instruction.line_no + co.co_firstlineno}: {source_lines[instruction.line_no].rstrip()}"
+            f"  {code.co_name}() defined in {code.co_filename}:{code.co_firstlineno}\n"
+            f"  line {instruction.line_no + code.co_firstlineno}: {source_lines[instruction.line_no].rstrip()}"
         )
 
-    blocks, edges = disassemble.parse_bytecode(co)
-    stack_offsets = _compute_stack_offsets(blocks, edges)
     name_arrays = FrozenDict[VariableScope, tuple[str, ...]](
         {
-            VariableScope.CONST: co.co_consts,
-            VariableScope.LOCAL: co.co_varnames,
-            VariableScope.NONLOCAL: (*co.co_cellvars, *co.co_freevars),
-            VariableScope.GLOBAL: co.co_names,
+            VariableScope.CONST: code.co_consts,
+            VariableScope.LOCAL: code.co_varnames,
+            VariableScope.NONLOCAL: (*code.co_cellvars, *code.co_freevars),
+            VariableScope.GLOBAL: code.co_names,
         }
     )
 
@@ -201,34 +218,31 @@ def functionalize_blocks(co: CodeType) -> tuple[tuple[FunctionalizedBlock, ...],
         end_state: EndState = FrozenDict({**end_variables, **end_stack})
         return FunctionalizedBlock((tuple(functionalized), FrozenDict(begin_variables), end_state))
 
-    functionalized = tuple(convert(block, offset) for block, offset in safe_zip(blocks, stack_offsets))
+    stack_offsets = _compute_stack_offsets(disassembled)
+    functionalized = tuple(convert(block, offset) for block, offset in safe_zip(disassembled.blocks, stack_offsets))
     if errors:
         raise RuntimeError("Preprocessing issues detected:\n" + textwrap.indent("\n\n".join(errors), " " * 4))
 
-    return functionalized, edges, _summarize(blocks, functionalized, edges)
+    return functionalized
 
 
 # =============================================================================
 # == Summary for debugging and testing ========================================
 # =============================================================================
-def _summarize(
-    blocks: disassemble.OrderedBlocks,
-    functionalized: tuple[FunctionalizedBlock, ...],
-    edges: disassemble.Edges,
-) -> str:
+def _summarize(parsed: ParsedFunctional) -> str:
     # Clear identifiers for input stack values.
     to_symbol = FrozenDict[int, str](enumerate("⓵ ⓶ ⓷ ⓸ ⓹ ⓺ ⓻ ⓼ ⓽ ⓾ Ⓐ Ⓑ Ⓒ Ⓓ Ⓔ Ⓕ".split()))
 
     # Group output edges.
     grouped_edges: dict[int, str] = {
         source: ", ".join(f"{sink}{'(Jump)' if jump else ''}" for _, sink, jump in sinks)
-        for source, sinks in itertools.groupby(edges, lambda e: e[0])
+        for source, sinks in itertools.groupby(parsed.provenance.edges, lambda e: e[0])
     }
 
     # Best effort to apply descriptive names.
     inputs_outputs = {}
     block_headers: list[str] = []
-    for idx, (functionalized_block, begin, end) in enumerate(functionalized):
+    for idx, (functionalized_block, begin, end) in enumerate(parsed.blocks):
         begin_stack = tuple(v for k, v in begin.items() if k.scope == VariableScope.STACK)
         stack_names: dict[str, str] = {v: to_symbol.get(idx, f"S{idx}") + "\u2009" for idx, v in enumerate(begin_stack)}
         names: dict[str, str] = {**{v: f"{k.identifier}" for k, v in begin.items()}, **stack_names}
@@ -244,9 +258,9 @@ def _summarize(
     # Group loads and stores.
     prefix = {opname: opname.split("_")[0] for opname in itertools.chain(STORE_OPNAMES, LOAD_OPNAMES, DEL_OPNAMES)}
     condensed: list[list[tuple[str, instructions.ThunderInstruction | None]]] = []
-    for block in blocks:
+    for raw_block in parsed.provenance.blocks:
         condensed.append([])
-        for prefix_or_i, group in itertools.groupby(block, lambda i: prefix.get(i.opname, i)):
+        for prefix_or_i, group in itertools.groupby(raw_block, lambda i: prefix.get(i.opname, i)):
             if isinstance(prefix_or_i, str):
                 name = ", ".join(f"{i.argval}: {i.opname[len(prefix_or_i) + 1:]}" for i in group)
                 condensed[-1].append((f"{prefix_or_i}[{name.replace(': FAST', '')}]", None))
@@ -258,7 +272,7 @@ def _summarize(
     lines: list[str] = []
     width = max(len(name) for name, _ in itertools.chain(*condensed))
     width = max(width, max(len(i) for i in block_headers)) + 5
-    for idx, (condensed_block, (_, _, end)) in enumerate(safe_zip(condensed, functionalized)):
+    for idx, (condensed_block, (_, _, end)) in enumerate(safe_zip(condensed, parsed.blocks)):
         lines.append(block_headers[idx])
         for name, maybe_i in condensed_block:
             inputs, outputs = inputs_outputs.get(maybe_i, ((), ()))  # type: ignore[assignment, arg-type]

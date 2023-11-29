@@ -69,7 +69,10 @@ class ProtoGraph:
     root: ProtoBlock
     parents: Mapping[ProtoBlock, tuple[ProtoBlock, ...]]
 
-    def __init__(self, protoblocks: Iterable[ProtoBlock]) -> None:
+    Provenance = values.ParsedSymbolic | tuple[type["ProtoGraphTransform"], "ProtoGraph"]
+    provenance: Provenance
+
+    def __init__(self, protoblocks: Iterable[ProtoBlock], provenance: Provenance) -> None:
         G = algorithms.TypedDiGraph[ProtoBlock]()
         for protoblock in (protoblocks := tuple(protoblocks)):
             is_return = tuple(protoblock.flow.symbolic)[-1][0].opname == parse.RETURN_VALUE
@@ -90,19 +93,19 @@ class ProtoGraph:
         nodes = cast(Iterable[ProtoBlock], G.nodes)  # For some reason mypy needs this.
         parents = {protoblock: tuple(G.predecessors(protoblock)) for protoblock in nodes}
         object.__setattr__(self, "parents", FrozenDict(parents))
+        object.__setattr__(self, "provenance", provenance)
 
     @classmethod
     def from_code(cls, co: CodeType) -> ProtoGraph:
         """Given a method, disassemble it to a sequence of simple blocks."""
-        raw_blocks, edges, _ = parse.functionalize_blocks(co)
+        parsed = values.ParsedSymbolic.make(parse.ParsedFunctional.make(co))
         protoblocks = tuple(
-            ProtoBlock(values.IntraBlockFlow(symbolic, begin, end))
-            for symbolic, begin, end in values.make_symbolic(raw_blocks)
+            ProtoBlock(values.IntraBlockFlow(symbolic, begin, end)) for symbolic, begin, end in parsed.blocks
         )
-        for source, sink, jump in edges:
+        for source, sink, jump in parsed.provenance.provenance.edges:
             protoblocks[source].add_jump_target(protoblocks[sink], jump)
 
-        return cls(protoblocks)
+        return cls(protoblocks, parsed)
 
     def __iter__(self) -> Iterator[ProtoBlock]:
         yield from self.protoblocks
@@ -236,6 +239,7 @@ class ProtoGraphTransform(abc.ABC):
 
     def __init__(self, proto_graph: ProtoGraph) -> None:
         assert not (self._forbid_linked and len(proto_graph) > 1 and proto_graph.is_linked), self
+        assert isinstance(proto_graph, ProtoGraph)
         self._protograph = proto_graph
 
     @property
@@ -286,7 +290,7 @@ class ReplaceProtoBlocks(ProtoGraphTransform):
                 self.post_apply(old_protoblock, new_protoblock)
                 for old_target, is_jump in old_protoblock.jump_targets:
                     new_protoblock.add_jump_target(replacements[old_target], is_jump)
-            return ProtoGraph(replacements.values())
+            return ProtoGraph(replacements.values(), provenance=(self.__class__, self.protograph))
         return None
 
 

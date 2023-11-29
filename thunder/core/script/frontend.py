@@ -24,8 +24,8 @@ from thunder.core.script.graph import (
 )
 from thunder.core.script.instrumentation import record
 from thunder.core.script import parse, values
-from thunder.core.script.protograph import ProtoBlock, ProtoGraph
-from thunder.core.script.protograph_passes import apply_protograph_passes, check_idempotent
+from thunder.core.script.protograph import ProtoBlock, ProtoGraph, ProtoGraphTransform
+from thunder.core.script.protograph_passes import apply_protograph_passes
 from thunder.core.script.python_ir_data import get_instruction, SUPPORTS_PREPROCESSING
 from thunder.core.utils import debug_asserts_enabled, OrderedSet
 
@@ -36,8 +36,7 @@ class Super:
     pass
 
 
-@check_idempotent
-def _prune_epilogues(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
+class PruneEpilogues(ProtoGraphTransform):
     """Remove the `POP_TOP, ..., JUMP_ABSOLUTE` blocks introduced during parsing.
 
     NOTE: This is only for `_bind_to_graph`. The reason is that it produces a
@@ -45,25 +44,31 @@ def _prune_epilogues(proto_graph: ProtoGraph) -> tuple[ProtoGraph, bool]:
           This isn't a problem since `_bind_to_graph` is value based, however
           it does make `_inter_block_edges` unsafe.
     """
-    retain: dict[ProtoBlock, ProtoBlock] = {}
-    for protoblock in proto_graph:
-        instructions = tuple(i for i, _ in protoblock.flow.symbolic)
-        if all(isinstance(i, parse.EpilogueFixup) for i in instructions):
-            assert all(i.opname == parse.POP_TOP for i in instructions[:-1])
-            assert instructions[-1].opname == parse.JUMP_ABSOLUTE, instructions[-1]
-            continue
 
-        retain[protoblock] = new_protoblock = ProtoBlock(protoblock.flow)
-        new_protoblock.uses.update(protoblock.uses)
+    def _apply(self) -> ProtoGraph | None:
+        retain: dict[ProtoBlock, ProtoBlock] = {}
+        for protoblock in self.protograph:
+            if isinstance(protoblock, ProtoGraph):
+                breakpoint()
+            instructions = tuple(i for i, _ in protoblock.flow.symbolic)
+            if all(isinstance(i, parse.EpilogueFixup) for i in instructions):
+                assert all(i.opname == parse.POP_TOP for i in instructions[:-1])
+                assert instructions[-1].opname == parse.JUMP_ABSOLUTE, instructions[-1]
+                continue
 
-    for old, new in retain.items():
-        for target, jump in old.jump_targets:
-            if target not in retain:
-                ((target, _),) = target.jump_targets
-                assert target in retain
-            new.add_jump_target(retain[target], jump)
+            retain[protoblock] = new_protoblock = ProtoBlock(protoblock.flow)
+            new_protoblock.uses.update(protoblock.uses)
 
-    return ProtoGraph(retain.values()), len(retain) != len(tuple(proto_graph))
+        for old, new in retain.items():
+            for target, jump in old.jump_targets:
+                if target not in retain:
+                    ((target, _),) = target.jump_targets
+                    assert target in retain
+                new.add_jump_target(retain[target], jump)
+
+        if len(retain) != len(tuple(self.protograph)):
+            return ProtoGraph(retain.values(), provenance=(self.__class__, self.protograph))
+        return None
 
 
 def _bind_to_graph(
@@ -171,7 +176,7 @@ def _bind_to_graph(
     # End live inspection region.
     # =========================================================================
     assert proto_graph is proto_graph.link()
-    proto_graph, _ = _prune_epilogues(proto_graph)
+    proto_graph = PruneEpilogues(proto_graph).apply(or_default=True)
     blocks = {protoblock: Block() for protoblock in proto_graph}
     blocks[proto_graph.root].jump_sources.append(None)
 
