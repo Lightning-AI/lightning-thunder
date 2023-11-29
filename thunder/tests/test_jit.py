@@ -628,6 +628,28 @@ def test_binary_operations():
     assert_close(jfoo(operator.matmul, a, b), foo(operator.matmul, a, b))
 
 
+def test_get_and_for_iter():
+    def foo(a):
+        for x in (1, 2, 3):
+            a = a + x
+        return a
+
+    jfoo = jit(foo)
+
+    assert jfoo(5) == foo(5)
+
+    def foo(d):
+        for k, v in d.items():
+            if k == "stop":
+                return v
+
+    jfoo = jit(foo)
+
+    d = {"start": 5, "stop": 9}
+
+    assert jfoo(d) == foo(d)
+
+
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -676,12 +698,11 @@ def test_nanogpt_block():
     assert_close(result, fn(*args, **kwargs))
 
 
-@pytest.mark.xfail
 def test_nanogpt():
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
-    config.update(**_nanogpt_configs["gpt2"])
+    config.update(**_nanogpt_configs["test"])
     bench = NanoGPTBenchmark(config=config, device="cpu")
     fn = bench.fn()
 

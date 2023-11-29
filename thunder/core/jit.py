@@ -829,6 +829,36 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
     _jit(impl)
 
 
+# TODO
+# https://docs.python.org/3.10/library/dis.html#opcode-FOR_ITER
+@register_opcode_handler("FOR_ITER")
+def _for_iter_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> None:
+    assert type(inst.arg) is int
+    delta: int = inst.arg
+
+    tos: Iterator = stack[-1]
+    assert isinstance(tos, Iterator)
+
+    v: Any
+    try:
+        v = next(tos)
+        stack.append(v)
+    except StopIteration:
+        stack.pop()
+        return inst_ptr + delta + 1
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-GET_ITER
+@register_opcode_handler("GET_ITER")
+def _get_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+
+    def impl():
+        return iter(tos)
+
+    _jit(impl)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
 @register_opcode_handler("GET_LEN")
 def _get_len_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -880,6 +910,14 @@ def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     b = stack.pop()
     a = stack.pop()
     stack.append(a is not b if inst.arg == 1 else a is b)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_ABSOLUTE
+@register_opcode_handler("JUMP_ABSOLUTE")
+def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    assert type(inst.arg) is int
+    target: int = inst.arg
+    return target
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_FORWARD
@@ -1275,12 +1313,11 @@ def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_TWO
 @register_opcode_handler("ROT_TWO")
 def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    a = stack.pop()
-    b = stack.pop()
-    c = stack.pop()
-    stack.append(a)
-    stack.append(c)
-    stack.append(b)
+    top = stack[-1]
+    second = stack[-2]
+
+    stack[-1] = second
+    stack[-2] = top
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH

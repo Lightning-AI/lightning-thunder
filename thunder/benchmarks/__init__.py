@@ -1094,6 +1094,9 @@ class NanoGPTConfig:
 
 
 _nanogpt_configs = {
+    "test": dict(
+        n_layers=1, n_head=1, n_embd=64, seq_len=2, dropout=0, block_size=6, vocab_size=1024
+    ),  # for test purposes
     "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
     "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
     "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
