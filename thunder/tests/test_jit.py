@@ -516,11 +516,62 @@ def test_import():
 
 
 def test_nanogpt_mlp():
-    from thunder.benchmarks import NanoGPTBenchmark, NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
+    from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
     config.update(**_nanogpt_configs["gpt2"])
     bench = NanoGPTMLPBenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = jit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
+@pytest.mark.xfail
+def test_nanogpt_csa():
+    from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTCSABenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = jit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
+@pytest.mark.xfail
+def test_nanogpt_block():
+    from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTBlockBenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = jit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
+@pytest.mark.xfail
+def test_nanogpt():
+    from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTBenchmark(config=config, device="cpu")
     fn = bench.fn()
 
     args, kwargs = bench.make_batch()
