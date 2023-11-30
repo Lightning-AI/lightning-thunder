@@ -27,9 +27,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, macOS-11, windows-2022]
+        os: ["ubuntu-22.04", "macOS-12", "windows-2022"]
         python-version: ['3.10']
         requires: ['latest', 'oldest']
+        include:
+          - { os: "ubuntu-22.04", python-version: '3.11', requires: 'latest' }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -76,13 +78,22 @@ jobs:
         pip list
       shell: bash
 
-    - name: Tests
+    - name: Testing All
+      if: matrix.python-version == '3.10'
       run: |
         coverage run --source thunder -m \
           pytest thunder/tests/ \
-            -v  --datefmt="%Y%m%d-%H:%M:%S.%f" \
-             --random-order-seed=$GITHUB_RUN_ID \
+            -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+            --random-order-seed=$GITHUB_RUN_ID \
             -n 2 --durations=250
+
+    - name: Testing just a few
+      if: matrix.python-version == '3.11'
+      #continue-on-error: true
+      run: |
+        python -m pytest \
+          thunder/tests/test_jit.py \
+          -v --durations=50 --cov=thunder
 
     - name: Statistics
       run: |
