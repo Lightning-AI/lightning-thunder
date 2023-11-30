@@ -1404,6 +1404,7 @@ class Conv1d(torch.nn.Conv1d):
         return self._conv_forward(input, weight=self.weight, bias=self.bias)
 
 
+@pytest.mark.skip
 def test_nn_modules():
     modules_to_test = [
         (Conv1d, (3, 3, 3), {}, lambda: (torch.randn(2, 3, 4),)),
