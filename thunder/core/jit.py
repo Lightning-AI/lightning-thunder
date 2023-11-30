@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import inspect
 import linecache
 from typing import Any
+from collections.abc import MutableMapping
 from types import (
     CellType,
     CodeType,
@@ -131,11 +132,13 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
 # TODO Merge interpreter stack into frame stack?
 class JitRuntimeCtx:
     def __init__(self):
-        self.frame_stack = []
+        self.frame_stack: list[JITFrame] = []
         self._interpreter_stacks = [[]]
+        self._globals_dict: dict[str, Any] | None = None
 
     @property
     def globals_dict(self) -> dict[str, Any]:
+        assert self._globals_dict is not None
         return self._globals_dict
 
     def push_interpreter_stack(self) -> list:
@@ -155,8 +158,8 @@ class JitRuntimeCtx:
         self.frame_stack[-1].nexti(inst)
 
     # get current top of stack
-    def peek_frame_stack(self) -> list:
-        return self.frame_stack[-1]
+    def peek_frame_stack(self) -> JITFrame | None:
+        return self.frame_stack[-1] if len(self.frame_stack) != 0 else None
 
     # for method calls. There is a bit of a trick because the filename is
     # part of the code object, but not the instruction's position information.
@@ -248,18 +251,22 @@ class Py_NULL(metaclass=Singleton):
     pass
 
 
-@dataclass
-class TryBlock:
-    def __init__(self):
-        pass
+SETUP_FINALLY_TYPE = dis.opmap["SETUP_FINALLY"]
 
 
-@dataclass
+class PyTryBlock:
+    def __init__(self, typ: int, handler: int, level: int):
+        self.typ = typ
+        self.handler = handler
+        self.level = level
+
+
 class PyErr_StackItem:
-    def __init__(self, exc_type, exc_value, exc_traceback):
+    def __init__(self, exc_type: Any, exc_value: Any, exc_traceback: Any, previous: None | PyErr_StackItem = None):
         self.exc_type = exc_type
         self.exc_value = exc_value
         self.exc_traceback = exc_traceback
+        self.previous = previous
 
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
@@ -304,6 +311,7 @@ class JITFrame:
 
     def format_with_source(self):
         # todo: multiple lines in positions, underline, indent
+        assert self.positions is not None
         l = []
         l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
@@ -324,7 +332,8 @@ class JITFrame:
             idx -= len(self.code.co_cellvars)
             return self.code.co_freevars[idx]
         else:
-            return self.code._varname_from_oparg(idx)
+            # _varname_from_oparg is not documented
+            return self.code._varname_from_oparg(idx)  # type: ignore
 
 
 #
@@ -350,13 +359,14 @@ class register_opcode_handler:
         self.max_ver = max_ver
 
     def __call__(self, fn: Callable) -> Callable:
+        # TODO: Create a list of opcodes per version, and assert that they're all registered.
         if (self.min_ver is None or self.min_ver <= sys.version_info) and (
             self.max_ver is None or sys.version_info < (*self.max_ver[:-1], self.max_ver[-1] + 1)
         ):
             assert self.name not in _default_opcode_handler_map
             _default_opcode_handler_map[self.name] = fn
             return fn
-        return _default_opcode_handler_map.get(self.name)
+        return _default_opcode_handler_map.get(self.name, fn)
 
 
 # The default function lookaside -- currently it doesn't intercept anything
@@ -602,7 +612,7 @@ def _build_string_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
     count: int = inst.arg
 
-    strings: tuple[str, ...] = reversed(tuple(stack.pop() for _ in range(count)))
+    strings: tuple[str, ...] = tuple(reversed(tuple(stack.pop() for _ in range(count))))
     stack.append("".join(strings))
 
 
@@ -733,7 +743,7 @@ def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
     a = stack.pop()
     b = stack[-1]
     # TODO: Raise inside interpreter
-    assert isinstance(b, Mapping), b
+    assert isinstance(b, MutableMapping), b
     assert isinstance(a, Mapping), a
     if overlap := b.keys() & a:
         # TODO: Raise inside interpreter
@@ -746,7 +756,7 @@ def _dict_update_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     assert type(inst.arg) is int
     a = stack.pop()
     b = stack[-inst.arg]
-    assert isinstance(b, Mapping), b
+    assert isinstance(b, MutableMapping), b
     assert isinstance(a, Mapping), a
     b.update(a)
 
@@ -807,6 +817,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
     FVS_MASK: int = 0x4
     FVS_HAVE_SPEC: int = 0x4
 
+    assert type(inst.arg) is int
     flags: int = inst.arg
     assert isinstance(flags, int)
 
@@ -840,7 +851,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 # TODO
 # https://docs.python.org/3.10/library/dis.html#opcode-FOR_ITER
 @register_opcode_handler("FOR_ITER")
-def _for_iter_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> None:
+def _for_iter_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
     assert type(inst.arg) is int
     delta: int = inst.arg
 
@@ -931,6 +942,7 @@ def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_FORWARD
 @register_opcode_handler("JUMP_FORWARD")
 def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    assert type(inst.arg) is int
     delta: int = inst.arg
     assert isinstance(delta, int)
     return inst_ptr + delta + 1
@@ -1004,7 +1016,7 @@ def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
         do_raise(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
-        return -1
+        return
     val = cell.cell_contents
     stack.append(val)
 
@@ -1020,7 +1032,7 @@ def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
     # empty local variable slots are initialized to Py_NULL()
     if isinstance(val, Py_NULL):
         do_raise(UnboundLocalError(f"local variable '{frame.get_localsplus_name(i)}' referenced before assignment"))
-        return -1
+        return
 
     stack.append(val)
 
@@ -1132,13 +1144,13 @@ def _precall_handler(inst: dis.Instruction, /, co: CodeType, **kwargs) -> None:
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_BLOCK
 @register_opcode_handler("POP_BLOCK")
-def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
+def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     try_stack.pop()
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_EXCEPT
 @register_opcode_handler("POP_EXCEPT")
-def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
+def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     try_stack.pop()
 
 
@@ -1291,7 +1303,7 @@ def _push_null_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RAISE_VARARGS
 @register_opcode_handler("RAISE_VARARGS")
-def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
+def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], **kwargs) -> None:
     cause: Any = Py_NULL()
     exc: Any = Py_NULL()
     assert type(inst.arg) is int
@@ -1306,7 +1318,7 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE")
-def _reraise_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
+def _reraise_handler(inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], **kwargs) -> None:
     pass
 
 
@@ -1334,11 +1346,19 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack[-2] = top
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-SETUP_FINALLY
+@register_opcode_handler("SETUP_FINALLY")
+def _setup_finally_handler(inst: dis.Instruction, stack: list, try_stack: list[PyTryBlock], **kwargs) -> None:
+    assert inst.arg is not None
+    instr_offset = stack.index(inst) + inst.arg
+    try_stack.append(PyTryBlock(SETUP_FINALLY_TYPE, instr_offset, 0))
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
 @register_opcode_handler("SETUP_WITH")
-def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[TryBlock], **kwargs) -> None:
+def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     assert type(inst.arg) is int
-    try_stack.append(TryBlock())
+    try_stack.append(PyTryBlock())
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
@@ -1519,7 +1539,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
     globals_dict: dict[str, Any] = fn.__globals__
-    try_stack: list[TryBlock] = []
+    try_stack: list[PyTryBlock] = []
     stack: list = runtimectx.push_interpreter_stack()
 
     code: CodeType = extract_code(fn)
@@ -1612,9 +1632,11 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         if (3, 11) <= sys.version_info < (3, 12):
             # PRECALL stack effect (3.11) has a -2 stck effect in the function that we only see during CALL
             if inst.opname == "PRECALL":
+                assert type(inst.arg) is int
                 assert expected_stack_effect == -inst.arg, f"precall with stack effect {expected_stack_effect}, {inst}"
                 expected_stack_effect = 0
             elif inst.opname == "CALL":
+                assert type(inst.arg) is int
                 assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
                 expected_stack_effect = -inst.arg - 1
         assert (
