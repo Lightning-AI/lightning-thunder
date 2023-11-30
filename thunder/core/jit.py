@@ -963,6 +963,14 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     l.extend(tos)
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-LIST_TO_TUPLE
+@register_opcode_handler("LIST_TO_TUPLE")
+def _list_to_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    assert isinstance(tos, list)
+    stack.append(tuple(tos))
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR")
 def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:

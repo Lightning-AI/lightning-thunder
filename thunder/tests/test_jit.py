@@ -854,6 +854,14 @@ def test_unpack_ex():
     assert jfoo(alphabet) == foo(alphabet)
 
 
+def test_list_to_tuple():
+    def ltt():
+        return (*[1, 2, 3],)
+
+    assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
+    assert jit(ltt)() == ltt()
+
+
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
