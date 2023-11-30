@@ -818,6 +818,42 @@ def test_get_and_for_iter():
     assert jfoo(d) == foo(d)
 
 
+def test_unpack_ex():
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+
+    def foo(a):
+        a, b, *l = a
+        return a, b, l
+
+    jfoo = jit(foo)
+
+    assert jfoo(alphabet) == foo(alphabet)
+
+    def foo(a):
+        *l, x, y, z = a
+        return l, x, y, z
+
+    jfoo = jit(foo)
+
+    assert jfoo(alphabet) == foo(alphabet)
+
+    def foo(a):
+        a, b, c, d, *l, z = a
+        return a, b, c, d, l, z
+
+    jfoo = jit(foo)
+
+    assert jfoo(alphabet) == foo(alphabet)
+
+    def foo(a):
+        (*l,) = a
+        return l
+
+    jfoo = jit(foo)
+
+    assert jfoo(alphabet) == foo(alphabet)
+
+
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 

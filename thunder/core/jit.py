@@ -757,6 +757,12 @@ def _dup_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-1])
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
+@register_opcode_handler("EXTENDED_ARG")
+def _extended_arg_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    pass
+
+
 # https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
 @register_opcode_handler("MAKE_CELL", min_ver=(3, 11))
 def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> None:
@@ -781,10 +787,12 @@ def _copy_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-inst.arg])
 
 
-# https://docs.python.org/3.11/library/dis.html#opcode-PUSH_NULL
-@register_opcode_handler("PUSH_NULL", min_ver=(3, 11))
-def _push_null_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    stack.append(Py_NULL())
+# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
+@register_opcode_handler("DELETE_SUBSCR")
+def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    tos1 = stack.pop()
+    del tos1[tos]
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
@@ -1275,6 +1283,12 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
     pass
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-PUSH_NULL
+@register_opcode_handler("PUSH_NULL", min_ver=(3, 11))
+def _push_null_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    stack.append(Py_NULL())
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-RAISE_VARARGS
 @register_opcode_handler("RAISE_VARARGS")
 def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[TryBlock], **kwargs) -> None:
@@ -1376,6 +1390,50 @@ def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
     assert type(inst.arg) is int
     i: int = inst.arg
     frame.localsplus[i] = a
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NEGATIVE
+@register_opcode_handler("UNARY_NEGATIVE")
+def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack[-1]
+    stack[-1] = -tos
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_EX
+@register_opcode_handler("UNPACK_EX")
+def _unpack_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
+    counts: int = inst.arg
+    before_list: int = counts & 0xFF
+    after_list: int = counts >> 8
+
+    seq: Iterable = stack.pop()
+    assert isinstance(seq, Iterable)
+
+    def impl():
+        results: list = []
+        it: Iterator = iter(seq)
+
+        for _ in range(before_list):
+            results.append(next(it))
+
+        list_result: list = list(it)
+        results.append(list_result)
+
+        if after_list > 0:
+            for x in list_result[-after_list:]:
+                results.append(x)
+
+            del list_result[-after_list:]
+
+        return results
+
+    _jit(impl)
+
+    results = stack.pop()
+
+    for x in reversed(results):
+        stack.append(x)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_SEQUENCE
