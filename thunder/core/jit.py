@@ -251,7 +251,8 @@ class Py_NULL(metaclass=Singleton):
     pass
 
 
-SETUP_FINALLY_TYPE = dis.opmap["SETUP_FINALLY"]
+# SETUP_FINALLY is Python <= 3.10
+SETUP_FINALLY_TYPE = dis.opmap.get("SETUP_FINALLY")
 
 
 class PyTryBlock:
@@ -948,6 +949,14 @@ def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> 
     return inst_ptr + delta + 1
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD
+@register_opcode_handler("JUMP_BACKWARD", min_ver=(3, 11))
+def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    delta: int = inst.arg
+    assert isinstance(delta, int)
+    return inst_ptr - delta + 1
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
 @register_opcode_handler("LIST_EXTEND")
 def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1162,6 +1171,7 @@ def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], *
     try_stack.pop()
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_FALSE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11))
 def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
     assert isinstance(inst.arg, int)
@@ -1180,6 +1190,7 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
     return None
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_TRUE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11))
 def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
     assert isinstance(inst.arg, int)
@@ -1198,12 +1209,25 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
     return None
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_NONE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_NONE", min_ver=(3, 11))
 def _pop_jump_forward_if_none_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
     if tos is None:
+        return inst_ptr + inst.arg + 1
+
+    return None
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_NOT_NONE
+@register_opcode_handler("POP_JUMP_FORWARD_IF_NOT_NONE", min_ver=(3, 11))
+def _pop_jump_forward_if_none_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+    if tos is not None:
         return inst_ptr + inst.arg + 1
 
     return None
@@ -1367,6 +1391,20 @@ def _setup_finally_handler(inst: dis.Instruction, stack: list, try_stack: list[P
 def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     assert type(inst.arg) is int
     try_stack.append(PyTryBlock())
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-SWAP
+@register_opcode_handler("SWAP", min_ver=(3, 11))
+def _swap_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    i = inst.arg
+    assert isinstance(i, int)
+    assert 0 < i <= len(stack)
+
+    top = stack[-1]
+    other = stack[-i]
+
+    stack[-1] = other
+    stack[-i] = top
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
