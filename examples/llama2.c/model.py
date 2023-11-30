@@ -34,11 +34,7 @@ class RMSNorm(torch.nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def forward(self, x):
-        # https://github.com/Lightning-AI/lightning-thunder/pull/1069
-        if self.training:
-            output = self._norm(x)
-        else:
-            output = self._norm(x.float()).type_as(x)
+        output = self._norm(x.float()).type_as(x)
         return output * self.weight
 
 
