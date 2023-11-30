@@ -297,6 +297,174 @@ def test_exception_traceback():
     assert "bar in file" in str(excinfo.value)
 
 
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_raise():
+    msg = "lorem ipsum"
+
+    def foo():
+        raise ValueError(msg)
+
+    jfoo = jit(foo)
+
+    with pytest.raises(JITError) as excinfo:
+        jfoo()
+
+    assert type(excinfo.value.__cause__) == ValueError
+    assert msg in str(excinfo.value.__cause__)
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_bare_except():
+    msg = "lorem ipsum"
+
+    def bare_except():
+        try:
+            raise ValueError(msg)
+        except:
+            return True
+
+    assert jit(bare_except)() == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_trivial_try_finally():
+    def trivial_try_finally():
+        try:
+            pass
+        finally:
+            return True
+
+    assert jit(trivial_try_finally)() == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_try_finally():
+    def try_finally():
+        try:
+            var = False
+            raise ValueError
+        except ValueError:
+            var = True
+        finally:
+            return var
+
+    assert jit(try_finally)() == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_match_exception():
+    def match_exception():
+        error_set = (ValueError, IndexError)
+        try:
+            raise ValueError
+        except error_set:
+            return True
+
+    assert jit(match_exception)() == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_match_as():
+    msg = "lorem ipsum"
+
+    def match_as():
+        try:
+            raise ValueError(msg)
+        except ValueError as e:
+            return msg in str(e)
+
+    assert jit(match_as) == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_raise_external():
+    msg = "lorem ipsum"
+
+    def raise_external():
+        raise ValueError(msg)
+
+    with pytest.raises(JITError) as excinfo:
+        jit(raise_external)()
+
+    assert msg in str(excinfo.value.__cause__)
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_raise_from():
+    msg = "lorem ipsum"
+
+    def raise_from():
+        try:
+            raise ValueError(msg) from IndexError(msg)
+        except ValueError as e:
+            return msg in str(e) and msg in str(e.__cause__)
+
+    assert jit(raise_from) == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_raise_from_external():
+    msg = "lorem ipsum"
+
+    def raise_from_external():
+        raise ValueError(msg) from IndexError(msg)
+
+    with pytest.raises(JITError) as excinfo:
+        jit(raise_from_external)()
+
+    e = excinfo.value
+    assert type(e) == JITError
+    assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
+    assert type(e.__cause__.__cause__) == IndexError and msg in str(e.__cause__.__cause__), excinfo.value
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_nested_try_except():
+    def nested_try_except():
+        try:
+            raise ValueError
+        except ValueError as e1:
+            try:
+                raise IndexError from e1
+            except IndexError:
+                pass
+            return True
+
+    assert jit(nested_try_except)() == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_inner_nested_try_except():
+    def inner_nested_try_except():
+        try:
+            try:
+                raise ValueError
+            except ValueError:
+                pass
+        except Exception:
+            return False
+        return True
+
+    assert jit(inner_nested_try_except)() == True
+
+
+@pytest.mark.xfail(reason="Not implemented yet.")
+def test_cross_function_exceptions():
+    def foo():
+        def bar():
+            raise ValueError
+
+        bar()
+
+    def cross_function_exceptions():
+        try:
+            foo()
+        except ValueError:
+            return True
+
+    assert jit(cross_function_exceptions)() == True
+
+
 def test_walrus_operator():
     def foo(a, b):
         c = (a := b)
