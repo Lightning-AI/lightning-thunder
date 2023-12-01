@@ -129,11 +129,9 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
 
 
 # The Jit's runtime context, which tracks stack changes in Python mode
-# TODO Merge interpreter stack into frame stack?
 class JitRuntimeCtx:
     def __init__(self):
         self.frame_stack: list[JITFrame] = []
-        self._interpreter_stacks = [[]]
         self._globals_dict: dict[str, Any] | None = None
 
     @property
@@ -141,16 +139,8 @@ class JitRuntimeCtx:
         assert self._globals_dict is not None
         return self._globals_dict
 
-    def push_interpreter_stack(self) -> list:
-        interpreter_stack: list = []
-        self._interpreter_stacks.append(interpreter_stack)
-        return interpreter_stack
-
     def peek_interpreter_stack(self) -> list:
-        return self._interpreter_stacks[-1]
-
-    def pop_interpreter_stack(self) -> list:
-        return self._interpreter_stacks.pop()
+        return self.frame_stack[-1].interpreter_stack
 
     # advance to the given instruction
     def frame_stack_change_top(self, inst: dis.Instruction):
@@ -161,10 +151,8 @@ class JitRuntimeCtx:
     def peek_frame_stack(self) -> JITFrame | None:
         return self.frame_stack[-1] if len(self.frame_stack) != 0 else None
 
-    # for method calls. There is a bit of a trick because the filename is
-    # part of the code object, but not the instruction's position information.
-    def push_frame_stack(self, code: CodeType, localsplus: list[Any], qualname: str):
-        self.frame_stack.append(JITFrame(code=code, localsplus=localsplus, qualname=qualname))
+    def push_frame_stack(self, frame: JITFrame):
+        self.frame_stack.append(frame)
 
     # for returning from method calls
     def pop_frame_stack(self):
@@ -287,15 +275,21 @@ else:
 
 
 # This is an interpreter frame, similar to Python's for use fo the JIT
-# currently, we mainly use this to provide exception tracebacks,
-# so in contrast to Python we don't (yet) store globals / locals etc. here.
+# It contains all information needed to execute the current code
+# so for generators (which need to suspend and resume) one only needs to
+# have the JITFrame around to continue execution.
 @dataclass
 class JITFrame:
     code: CodeType
     qualname: str
+    globals: dict[str, Any]
+    builtins: dict[str, Any]
     positions: Positions | None = None
     inst: dis.Instruction | None = None
     call_shape_kwnames: tuple[str] | None = None  # for KW_NAMES opcode in 3.11+
+    interpreter_stack: list[Any] = field(default_factory=list)
+    try_stack: list[PyTryBlock] = field(default_factory=list)
+    inst_ptr: int = 0
 
     # in Python 3.11+ the slots are not split by local/cell/free any more
     localsplus: list[Any] = field(default_factory=list)
@@ -1584,9 +1578,6 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     bound = inspect.signature(fn).bind(*args, **kwargs)
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
-    globals_dict: dict[str, Any] = fn.__globals__
-    try_stack: list[PyTryBlock] = []
-    stack: list = runtimectx.push_interpreter_stack()
 
     code: CodeType = extract_code(fn)
 
@@ -1626,31 +1617,38 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."
         )
 
-    # Pushes a stack frame for the current function
-    runtimectx.push_frame_stack(code, localsplus, fn.__qualname__)
+    # Creates and pushes a stack frame for the current function
+    frame = JITFrame(
+        code=code, localsplus=localsplus, globals=fn.__globals__, builtins=builtins_dict, qualname=fn.__qualname__
+    )
+    runtimectx.push_frame_stack(frame)
+    stack: list = frame.interpreter_stack
 
-    inst_ptr: int = 0
     max_inst_ptr = max(inst_ptr_to_idx.keys())
     while True:
         # we might have jumped or advanced to a "hidden" instruction such as cache,
         # so move forward until we have something to look at.
-        while inst_ptr not in inst_ptr_to_idx:
-            assert inst_ptr <= max_inst_ptr
-            inst_ptr += 1
-        inst: dis.Instruction = insts[inst_ptr_to_idx[inst_ptr]]
+        # N.B.: For Python 3.12 there is a change coming up that changes how to
+        #       consider CACHE items in computing relative jumps.
+        #       This is discussed at the top of
+        #       https://docs.python.org/3.12/library/dis.html
+        while frame.inst_ptr not in inst_ptr_to_idx:
+            assert frame.inst_ptr <= max_inst_ptr
+            frame.inst_ptr += 1
+        inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
         runtimectx.frame_stack_change_top(inst)
         stack_size_before_handler: int = len(stack)
         interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
             inst,
-            inst_ptr=inst_ptr,
-            stack=stack,
-            globals_dict=globals_dict,
-            builtins_dict=builtins_dict,
-            try_stack=try_stack,
-            co=code,
-            frame=runtimectx.peek_frame_stack(),
+            inst_ptr=frame.inst_ptr,
+            stack=frame.interpreter_stack,
+            globals_dict=frame.globals,
+            builtins_dict=frame.builtins,
+            try_stack=frame.try_stack,
+            co=frame.code,
+            frame=frame,
         )
 
         # TODO Improve this error message
@@ -1660,15 +1658,15 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         if interpretation_result == -1:
             # Restores the previous stack and puts the returned value onto it
             result: Any = stack.pop()
-            runtimectx.pop_interpreter_stack()
-            runtimectx.peek_interpreter_stack().append(result)
             runtimectx.pop_frame_stack()
+            if runtimectx.frame_stack:  # only if there is a stack above?
+                runtimectx.peek_interpreter_stack().append(result)
             return result
         elif interpretation_result is None:
-            inst_ptr += 1
+            frame.inst_ptr += 1
         else:
             assert isinstance(interpretation_result, int)
-            inst_ptr = interpretation_result
+            frame.inst_ptr = interpretation_result
 
         # Verifies the handler had the expected stack effect (delta on stack size)
         actual_stack_effect: int = len(stack) - stack_size_before_handler
@@ -1676,7 +1674,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
 
         if (3, 11) <= sys.version_info < (3, 12):
-            # PRECALL stack effect (3.11) has a -2 stck effect in the function that we only see during CALL
+            # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
             if inst.opname == "PRECALL":
                 assert type(inst.arg) is int
                 assert expected_stack_effect == -inst.arg, f"precall with stack effect {expected_stack_effect}, {inst}"
