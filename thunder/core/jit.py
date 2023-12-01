@@ -867,15 +867,18 @@ def _for_iter_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kw
         return inst_ptr + delta + 1
 
 
+def _iter_impl(obj):
+    def impl():
+        return obj.__iter__()
+
+    return impl
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_ITER
 @register_opcode_handler("GET_ITER")
 def _get_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack.pop()
-
-    def impl():
-        return iter(tos)
-
-    stack.append(_jit(impl))
+    stack.append(_jit(_iter_impl(tos)))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
@@ -951,6 +954,16 @@ def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> 
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD
 @register_opcode_handler("JUMP_BACKWARD", min_ver=(3, 11))
 def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    delta: int = inst.arg
+    assert isinstance(delta, int)
+    return inst_ptr - delta + 1
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD
+# TODO: we currently ignore the NO_INTERRUPT part,
+#       https://github.com/Lightning-AI/lightning-thunder/issues/1631
+@register_opcode_handler("JUMP_BACKWARD_NO_INTERRUPT", min_ver=(3, 11))
+def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     delta: int = inst.arg
     assert isinstance(delta, int)
     return inst_ptr - delta + 1
@@ -1500,6 +1513,114 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
         stack.append(x)
 
 
+# Generator handling
+# https://docs.python.org/3.10/library/dis.html#opcode-GEN_START
+@register_opcode_handler("GEN_START", max_ver=(3, 10))
+def _gen_start_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert 0 <= inst.arg < 3  # yeah, we are not doing anything with it
+    stack.pop()  # this should be None (sent to the generator), but Python does not check
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-GET_YIELD_FROM_ITER
+@register_opcode_handler("GET_YIELD_FROM_ITER")
+def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack[-1]
+    if not (inspect.isgenerator(tos) or inspect.iscoroutine(tos)):
+        stack.append(_jit(_iter_impl(stack.pop())))
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-RETURN_GENERATOR
+@register_opcode_handler("RETURN_GENERATOR", min_ver=(3, 11))
+def _return_generator_handler(inst: dis.Instruction, /, **kwargs) -> None:
+    return JIT_SIGNALS.RETURN_GENERATOR
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-SEND
+@register_opcode_handler("SEND", min_ver=(3, 11))
+def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> None:
+    # SEND(delta)
+    # Equivalent to STACK[-1] = STACK[-2].send(STACK[-1]). Used in yield from and await statements.
+    # If the call raises StopIteration, pop the top value from the stack, push the exception’s value attribute, and increment the bytecode counter by delta.
+    assert isinstance(inst.arg, int)
+    send_value = stack.pop()
+    generator = stack[-1]
+
+    if send_value is None:
+        # iterators don't have a .send method
+        def impl():
+            return generator.__next__()
+
+    else:
+
+        def impl():
+            return generator.send(send_value)
+
+    try:
+        res = _jit(impl)
+    except StopIteration as si:
+        stack.pop()  # remove generator
+        stack.append(si.value)
+        return inst_ptr + inst.arg + 1
+
+    stack.append(res)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-YIELD_FROM
+@register_opcode_handler("YIELD_FROM", max_ver=(3, 10))
+def _yield_from_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, inst_ptr: int, **kwargs) -> None:
+    send_value = stack.pop()
+    generator = stack[-1]
+
+    if send_value is None:
+        # iterators don't have a .send method
+        def impl():
+            return generator.__next__()
+
+    else:
+
+        def impl():
+            return generator.send(send_value)
+
+    try:
+        res = _jit(impl)
+    except StopIteration as si:
+        stack.pop()  # remove generator
+        stack.append(si.value)
+        return
+
+    # this is a gross hack, this will be incremented so the inst_ptr is at this YIELD_FROM again
+    # cleaner would be to introduce another JIT_SIGNALS
+    frame.inst_ptr -= 1
+    # this will be yielded
+    stack.append(res)
+    return JIT_SIGNALS.YIELD_VALUE
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-YIELD_VALUE
+@register_opcode_handler("YIELD_VALUE")
+def _yield_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    # note that the popping from the stack is done in the _jit_run loop
+    return JIT_SIGNALS.YIELD_VALUE
+
+
+def make_generator(
+    frame: JITFrame,
+    compilectx: JitCompileCtx,
+    runtimectx: JitRuntimeCtx,
+):
+    def thunder_jit_generator():
+        send_value: Any = None  # the value gotten from from <generator>.send
+        while True:  # or maybe have return?
+            with jitctx(compilectx, runtimectx):
+                res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+            if status == JIT_SIGNALS.RETURN_VALUE:
+                return
+            assert status == JIT_SIGNALS.YIELD_VALUE
+            sent_value = yield res
+
+    return thunder_jit_generator()
+
+
 # Interprets the callable with the given args and kwargs
 # NOTE There are (currently) 6 cases for interpretation:
 #
@@ -1613,6 +1734,12 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         code=code, localsplus=localsplus, globals=fn.__globals__, builtins=builtins_dict, qualname=fn.__qualname__
     )
 
+    # Python 3.10 deals with creating the generator on call,
+    # 3.11+ use the RETURN_GENERATOR opcode
+    if sys.version_info < (3, 11):
+        if code.co_flags & inspect.CO_GENERATOR:
+            return make_generator(frame, compilectx, runtimectx)
+
     res, status = _jit_run(frame, compilectx, runtimectx)
     return res
 
@@ -1621,10 +1748,14 @@ def _jit_run(
     frame: JITFrame,
     compilectx: JitCompileCtx,
     runtimectx: JitRuntimeCtx,
+    *,
+    send_value: Any = Py_NULL(),
 ):
     # Pushes the current stack frame for the current function
     runtimectx.push_frame_stack(frame)
     stack: list = frame.interpreter_stack
+    if send_value != Py_NULL():
+        stack.append(send_value)
 
     insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
     inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
@@ -1660,7 +1791,7 @@ def _jit_run(
         if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
             raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.\n")
 
-        elif interpretation_result == JIT_SIGNALS.RETURN_VALUE:
+        elif interpretation_result in (JIT_SIGNALS.RETURN_VALUE, JIT_SIGNALS.YIELD_VALUE):
             # advance the inst_ptr, needed in particular for YIELD
             frame.inst_ptr += 1
             # get rhe result from the current stack
@@ -1668,6 +1799,11 @@ def _jit_run(
             # Restores the previous stack, the caller needs to put the value on it
             runtimectx.pop_frame_stack()
             return result, interpretation_result
+        elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
+            frame.inst_ptr += 1
+            assert frame.code.co_flags & inspect.CO_GENERATOR
+            runtimectx.pop_frame_stack()
+            return make_generator(frame, compilectx, runtimectx), interpretation_result
         elif interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
             raise Unimplemented("exception handling")
         elif interpretation_result is None:
@@ -1676,7 +1812,7 @@ def _jit_run(
             assert isinstance(interpretation_result, int)
             frame.inst_ptr = interpretation_result
 
-        # Verifies the handler had the expected stack effect (delta on stack size)
+        # Verifies the handler had the expected stack effect (delta on stack sie)
         actual_stack_effect: int = len(stack) - stack_size_before_handler
         jumped: bool = isinstance(interpretation_result, int) and interpretation_result != -1
         expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
@@ -1702,6 +1838,8 @@ class JIT_SIGNALS(Enum):
     UNHANDLED_OPCODE = auto()
     UNSAFE_FUNCTION = auto()
     RETURN_VALUE = auto()
+    RETURN_GENERATOR = auto()
+    YIELD_VALUE = auto()
     EXCEPTION_RAISED = auto()
 
 

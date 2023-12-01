@@ -749,6 +749,22 @@ def test_import():
     assert_close(jfoo(a), foo(a))
 
 
+def test_generator():
+    def my_generator_1():
+        yield from range(5)
+
+    def my_generator_2():
+        val = yield 1
+        while True:
+            val = yield 2 * val
+
+    jgen_1 = jit(my_generator_1)
+
+    actual = list(jgen_1())
+    expected = list(my_generator_1())
+    assert actual == expected
+
+
 def test_binary_operations():
     def foo(op, a, b):
         return op(a, b)
