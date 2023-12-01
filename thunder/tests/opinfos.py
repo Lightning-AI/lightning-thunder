@@ -2751,6 +2751,7 @@ def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
 
 cat_opinfo = OpInfo(
     ltorch.cat,
+    supports_grad=True,
     sample_input_generator=cat_sample_generator,
     error_input_generator=cat_error_generator,
     torch_reference=torch.cat,

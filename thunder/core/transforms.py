@@ -678,6 +678,27 @@ def _broadcast_in_dim_prim_grad(
 register_grad(pids.BROADCAST_IN_DIM, _broadcast_in_dim_prim_grad)
 
 
+@torchctx
+def _cat_prim_grad(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
+    fwd = prims.cat(tensors, dim)
+
+    g = get_grad(fwd)
+
+    slice_start: int = 0
+    t: TensorProxy
+    for t in tensors:
+        dim_len: int = t.shape[dim]
+        slice_end: int = slice_start + dim_len
+        g_slice: TensorProxy = clang.slice_in_dim(g, slice_start, slice_end, dim=dim)
+        slice_start = slice_end
+        put_grad(t, g_slice)
+
+    return fwd
+
+
+register_grad(pids.CAT, _cat_prim_grad)
+
+
 def _reshape_prim_grad(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
     fwd = prims.reshape(a, shape)
 
