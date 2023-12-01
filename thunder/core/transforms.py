@@ -3779,9 +3779,11 @@ def backward_pass(forward_env, trace, init_cotangents):
         elif isinstance(v, Sequence) and all(isinstance(x, int) for x in v):
             # TODO: remove when we move dims to kwargs
             pass
+        elif isinstance(v, str):
+            env[v] = val
         elif isinstance(v, Sequence) and val is None:
             # broadcast None to the right shape
-            safe_map(put_grad, v, [0] * len(v))
+            safe_map(put_grad, v, [None] * len(v))
         else:
             # Skip writing to constants
             pass
