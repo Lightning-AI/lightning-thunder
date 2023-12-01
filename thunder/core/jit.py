@@ -142,11 +142,6 @@ class JitRuntimeCtx:
     def peek_interpreter_stack(self) -> list:
         return self.frame_stack[-1].interpreter_stack
 
-    # advance to the given instruction
-    def frame_stack_change_top(self, inst: dis.Instruction):
-        assert self.frame_stack
-        self.frame_stack[-1].nexti(inst)
-
     # get current top of stack
     def peek_frame_stack(self) -> JITFrame | None:
         return self.frame_stack[-1] if len(self.frame_stack) != 0 else None
@@ -294,6 +289,7 @@ class JITFrame:
     # in Python 3.11+ the slots are not split by local/cell/free any more
     localsplus: list[Any] = field(default_factory=list)
 
+    # advance to the given instruction
     def nexti(self, inst: dis.Instruction):
         self.inst = inst
         if (3, 9) <= sys.version_info < (3, 11):
@@ -403,7 +399,7 @@ class BINARY_OP(Enum):
     IXOR = 25
 
 
-def _binary_op(op: BINARY_OP, a, b):
+def _binary_op(stack: list, op: BINARY_OP, a, b):
     ops = [
         ("+", "__add__", "__radd__"),
         ("&", "__and__", "__rand__"),
@@ -460,14 +456,13 @@ def _binary_op(op: BINARY_OP, a, b):
 
             return result
 
-    _jit(impl)
+    stack.append(_jit(impl))
 
 
 def _binary_op_helper(stack: list, op: BINARY_OP):
     b = stack.pop()
     a = stack.pop()
-
-    return _binary_op(op, a, b)
+    return _binary_op(stack, op, a, b)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
@@ -648,7 +643,7 @@ def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwar
         args = (func_or_self, *args)
     else:
         func = func_or_self
-    _jit(func, *args, **kwargs)
+    stack.append(_jit(func, *args, **kwargs))
 
 
 # NOTE This only accepts positional args
@@ -659,8 +654,7 @@ def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
     func: Callable = stack.pop()
-
-    _jit(func, *args)
+    stack.append(_jit(func, *args))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
@@ -678,7 +672,7 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
         null = stack.pop()
         assert isinstance(null, Py_NULL)
 
-    _jit(func, *args, **kwargs)
+    stack.append(_jit(func, *args, **kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
@@ -693,7 +687,7 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     args = tuple(reversed(tuple(stack.pop() for _ in range(arg_length))))
     func: Callable = stack.pop()
 
-    _jit(func, *args, **fn_kwargs)
+    stack.append(_jit(func, *args, **fn_kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
@@ -709,7 +703,7 @@ def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     else:
         meth = second_lm
 
-    _jit(meth, *args)
+    stack.append(_jit(meth, *args))
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1523
@@ -840,7 +834,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
         return formatted
 
-    _jit(impl)
+    stack.append(_jit(impl))
 
 
 # TODO
@@ -870,7 +864,7 @@ def _get_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     def impl():
         return iter(tos)
 
-    _jit(impl)
+    stack.append(_jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
@@ -897,7 +891,7 @@ def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     def impl():
         return getattr(module, name)
 
-    _jit(impl)
+    stack.append(_jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
@@ -915,7 +909,7 @@ def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
         module = __import__(module_name, fromlist=fromlist, level=level)
         return module
 
-    _jit(impl)
+    stack.append(_jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IS_OP
@@ -985,7 +979,7 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kw
     def impl():
         return getattr(a, name)
 
-    _jit(impl)
+    stack.append(_jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
@@ -1175,9 +1169,7 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
     def impl():
         return bool(tos)
 
-    _jit(impl)
-
-    cnd: bool = stack.pop()
+    cnd: bool = _jit(impl)
     if not cnd:
         return inst_ptr + inst.arg + 1
 
@@ -1194,9 +1186,7 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
     def impl():
         return bool(tos)
 
-    _jit(impl)
-
-    cnd: bool = stack.pop()
+    cnd: bool = _jit(impl)
     if cnd:
         return inst_ptr + inst.arg + 1
 
@@ -1236,9 +1226,7 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
     def impl():
         return bool(tos)
 
-    _jit(impl)
-
-    cnd: bool = stack.pop()
+    cnd: bool = _jit(impl)
     if not cnd:
         return inst.arg
     return None
@@ -1253,9 +1241,7 @@ def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     def impl():
         return bool(tos)
 
-    _jit(impl)
-
-    cnd: bool = stack.pop()
+    cnd: bool = _jit(impl)
     if cnd:
         return inst.arg
     return None
@@ -1351,7 +1337,7 @@ def _reraise_handler(inst: dis.Instruction, /, stack: list, try_stack: list[PyTr
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
 @register_opcode_handler("RETURN_VALUE")
 def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None:
-    return -1
+    return JIT_SIGNALS.RETURN_VALUE
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_N
@@ -1488,9 +1474,7 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
         return results
 
-    _jit(impl)
-
-    results = stack.pop()
+    results = _jit(impl)
 
     for x in reversed(results):
         stack.append(x)
@@ -1534,15 +1518,13 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     lookaside_retval: Any
     did_lookaside, lookaside_retval = lookaside_result
 
-    # Adds the returned value to the current stack
+    # Returns value from lookaside
     if did_lookaside:
-        runtimectx.peek_interpreter_stack().append(lookaside_retval)
         return lookaside_retval
 
-    # (2) Handles opaque functions, adding the returned value to the current stack
+    # (2) Handles opaque functions
     if is_opaque(fn):
         opaque_result: Any = fn(*args, **kwargs)
-        runtimectx.peek_interpreter_stack().append(opaque_result)
         return opaque_result
 
     # (3) Handles partial objects
@@ -1572,9 +1554,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
     # (6) Jits into the function
-    insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(fn))
     # adjustments for "hidden" instructiions (EXTENDED_ARGS, CACHE, ...)
-    inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
     bound = inspect.signature(fn).bind(*args, **kwargs)
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
@@ -1617,13 +1597,26 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."
         )
 
-    # Creates and pushes a stack frame for the current function
+    # Creates the current ready to run stack frame for the current function
     frame = JITFrame(
         code=code, localsplus=localsplus, globals=fn.__globals__, builtins=builtins_dict, qualname=fn.__qualname__
     )
+
+    res, status = _jit_run(frame, compilectx, runtimectx)
+    return res
+
+
+def _jit_run(
+    frame: JITFrame,
+    compilectx: JitCompileCtx,
+    runtimectx: JitRuntimeCtx,
+):
+    # Pushes the current stack frame for the current function
     runtimectx.push_frame_stack(frame)
     stack: list = frame.interpreter_stack
 
+    insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
+    inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
     max_inst_ptr = max(inst_ptr_to_idx.keys())
     while True:
         # we might have jumped or advanced to a "hidden" instruction such as cache,
@@ -1638,7 +1631,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
-        runtimectx.frame_stack_change_top(inst)
+        frame.nexti(inst)
         stack_size_before_handler: int = len(stack)
         interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
             inst,
@@ -1655,13 +1648,16 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
             raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.\n")
 
-        if interpretation_result == -1:
-            # Restores the previous stack and puts the returned value onto it
-            result: Any = stack.pop()
+        elif interpretation_result == JIT_SIGNALS.RETURN_VALUE:
+            # advance the inst_ptr, needed in particular for YIELD
+            frame.inst_ptr += 1
+            # get rhe result from the current stack
+            result = frame.interpreter_stack.pop()
+            # Restores the previous stack, the caller needs to put the value on it
             runtimectx.pop_frame_stack()
-            if runtimectx.frame_stack:  # only if there is a stack above?
-                runtimectx.peek_interpreter_stack().append(result)
-            return result
+            return result, interpretation_result
+        elif interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
+            raise Unimplemented("exception handling")
         elif interpretation_result is None:
             frame.inst_ptr += 1
         else:
@@ -1693,6 +1689,8 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
 class JIT_SIGNALS(Enum):
     UNHANDLED_OPCODE = auto()
     UNSAFE_FUNCTION = auto()
+    RETURN_VALUE = auto()
+    EXCEPTION_RAISED = auto()
 
 
 # Interprets the Python program
