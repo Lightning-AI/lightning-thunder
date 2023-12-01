@@ -1231,73 +1231,40 @@ def grad(
         gradtrc = dce(gradtrc)
 
         # STEP TWO -- Replaces original calls with grad calls
-        nreturns: int = 0
-        swapmap: dict[Variable, Proxy] = {}
 
         # Defines the visitor pattern for the first pass of the grad transform,
         #   which swaps BoundSymbols with their grad functions
-        def _visit(bsym: BoundSymbol) -> VISIT_TYPE:
-            # Replaces the return statement with a statement returning the grads
-            # Validates there is only one return() call
-            if bsym.sym.id is prims.PrimIDs.RETURN:
-                nonlocal nreturns
-                check(nreturns == 0, lambda: f"Found multiple return statements while performing the grad transform")
-                nreturns += 1
-
-                new_return = bsym.from_bsym_swap_proxies(swapmap)
-
-                # Sets grads for output
-                # TODO This effectively runs in a no grad context -- should it run in a grad context,
-                #   or should there be the option to run it in a grad context?
-                grad_specifier(*new_return.args)
-
-                # Constructs return value
-                flat_grads = grad_out_specifier((trc.args, trc.kwargs))
-                prims.python_return(flat_grads)
-                return VISIT_TYPE.REPLACE
-
-            # TODO This special handling is no longer necessary
-            # UNPACK_TRIVIAL has to be handled specially because it introduces inputs
-            if bsym.sym.id is prims.PrimIDs.UNPACK_TRIVIAL:
-                return VISIT_TYPE.NO_OP
-
-            # NOTE In this branch the bsym is not RETURN or UNPACK_TRIVIAL
-            # Calls the gradfn for this symbol
+        def visit_(bsym: BoundSymbol) -> Callable:
             gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
             check(
                 gradfn is not None,
                 lambda: f"Failed to find a gradfn for {bsym=} after flattening",
                 exception_type=AssertionError,
             )
+            return gradfn
 
-            # Calls the new operation with the original's inputs
-            fwd = gradfn(*bsym.args, **bsym.kwargs)
-
-            # The new call produces new outputs, and they need to be swapped back to the original outputs
-            #   We can't edit the actual boundsymbol at this point, so we record the swap into a swapmap
-            flat_original_outs: list[Any] = bsym.flat_outs
-            flat_fwd: list[Any]
-            flat_fwd, _ = tree_flatten(fwd)
-
-            # Registers swaps
-            for o, f in zip(flat_original_outs, flat_fwd):
-                if isinstance(o, Proxy):
-                    vo = variableify(o)
-                    vf = variableify(f)
-                    if vo != vf:
-                        swapmap[vf] = o
-
-            return VISIT_TYPE.REPLACE
+        @wraps(trc.fn.meta if isinstance(trc.fn, Symbol) else trc.fn)
+        def interpreting_fn(*args, **kwargs):
+            result = eval_trace(gradtrc, *args, symbol_mapper=visit_, **kwargs)
+            # Sets grads for output
+            # TODO This effectively runs in a no grad context -- should it run in a grad context,
+            #   or should there be the option to run it in a grad context?
+            grad_specifier(result)
+            # Constructs return value
+            flat_grads = grad_out_specifier((args, kwargs))
+            return flat_grads
 
         # NOTE After this call the gradtrc is invalid, because:
         #   1) The non-executable put_grad operations are still in the trace, and multiple calls to put grad are not accumulated
         #   2) The non-executable get_grad operations are still in the trace, and they may produce different proxies when
         #       called on the same inputs
         #   3) The operations are not in a valid order
-        # These issues are addressed in order by the following steps
-        gradtrc = visitor_transform(gradtrc, _visit)
-        gradtrc.bound_symbols = [bsym.from_bsym_swap_proxies(swapmap) for bsym in gradtrc.bound_symbols]
+        gradtrc = construct_trace(
+            rename_proxies=False,
+            use_dce=False,
+        )(interpreting_fn, *gradtrc.args, **gradtrc.kwargs)
         gradtrc.scopes = [gradtrc.bound_symbols]
+        gradtrc._complete = False
 
         # STEP THREE -- Handles put_grad and get_grad operations and accumulates gradients
 
