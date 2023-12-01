@@ -1475,3 +1475,33 @@ def test_raises_exception_opcode():
     cfoo = thunder.compile(foo)
     with pytest.raises(AttributeError, match="no attribute.*this_does_not_exist"):
         cfoo(1, 1)
+
+
+class BranchedLogits(torch.nn.Module):
+    """Simplified version of llama2.c's Transformer.forward."""
+
+    def forward(self, x: torch.Tensor, targets: torch.Tensor | None = None) -> torch.Tensor:
+        for layer in self.layers:
+            x = layer(x)
+
+        x = self.norm(x)
+        if targets is not None:
+            logits = self.output(x)
+        else:
+            logits = self.output(x[:, [-1], :])
+
+        return logits
+
+    @property
+    def layers(self):
+        yield from ()
+
+    def norm(self, x):
+        return x
+
+    def output(self, x):
+        return x
+
+
+def test_transitive_end():
+    thunder.compile(BranchedLogits())

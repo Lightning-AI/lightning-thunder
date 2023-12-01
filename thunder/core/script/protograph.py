@@ -415,10 +415,10 @@ class AddTransitive(ReplaceProtoBlocks):
     """
 
     def apply_to_protoblock(self, protoblock: ProtoBlock) -> values.IntraBlockFlow | None:
-        if missing := self.expanded_uses[protoblock].difference(protoblock.uses):
-            flow = protoblock.flow
+        flow = protoblock.flow
+        end = FrozenDict({**{use: use for use in self.target_uses(protoblock, self.expanded_uses)}, **flow._end})
+        if (missing := self.expanded_uses[protoblock].difference(protoblock.uses)) or (end != flow._end):
             begin = {**{k: values.AbstractRef("Transitive") for k in missing}, **flow._begin}
-            end = {**{use: use for use in self.target_uses(protoblock, self.expanded_uses)}, **flow._end}
             return dataclasses.replace(flow, _begin=FrozenDict(begin), _end=FrozenDict(end))
         return None
 
