@@ -878,6 +878,11 @@ def test_list_to_tuple():
     assert jit(ltt)() == ltt()
 
 
+#
+# Network tests
+#
+
+
 def test_nanogpt_mlp():
     from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -932,6 +937,22 @@ def test_nanogpt():
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
     config.update(**_nanogpt_configs["test"])
     bench = NanoGPTBenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = jit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
+def test_litgpt():
+    from thunder.benchmarks import LitGPTBenchmark
+    from thunder.tests.lit_gpt_model import Config
+
+    cfg: Config = Config.from_name("gpt-neox-like")
+    bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
     fn = bench.fn()
 
     args, kwargs = bench.make_batch()
