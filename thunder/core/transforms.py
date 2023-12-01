@@ -1,6 +1,6 @@
 from collections import namedtuple
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import auto, Enum
 from itertools import chain, compress
 from functools import lru_cache, partial, wraps
@@ -4034,8 +4034,9 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     """
     saved_for_backward = tree_map(lambda x: x.value if isinstance(x, NumberProxy) else x, saved_for_backward)
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
-    forward_return_bsym = next(x for x in reversed(forward_trace.bound_symbols) if x.sym.id == prims.PrimIDs.RETURN)
-    forward_return_bsym.args = (forward_trace.output[0], (saved_tensors, saved_other))
+    assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
+    new_return = (forward_trace.output[0], (saved_tensors, saved_other))
+    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:

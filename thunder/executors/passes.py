@@ -10,13 +10,14 @@ import time
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as cutils
-from thunder.core.utils import ProxyDict, check
+from thunder.core.utils import ProxyDict, check, safe_map_flat
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
 from thunder.core.proxies import Proxy, variableify, unvariableify, Variable
 import thunder.core.transforms as transforms
 from thunder.core.transform_common import dce
+from thunder.core.trace import get_tracectx
 
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
 
@@ -25,23 +26,29 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
+    start_time_ns = time.time_ns()
+
     swapmap: dict[Variable, Proxy] = {}
 
-    def update_swapmap_(original: BoundSymbol, new_output: Any) -> None:
-        new_flat_outs, _ = tree_flatten(new_output)
+    def update_swapmap(o: Any, no: Any) -> None:
+        if isinstance(o, Proxy):
+            check(
+                isinstance(no, Proxy),
+                lambda: f"Expected an execution transform to produce outputs with the same type, but found {type(o)} and {type(no)}",
+            )
 
-        for o, no in zip(original.flat_outs, new_flat_outs):
-            if isinstance(o, Proxy):
-                check(
-                    isinstance(no, Proxy),
-                    lambda: f"Expected an execution transform to produce outputs with the same type, but found {type(o)} and {type(no)}",
-                )
+            vo = variableify(o)
+            vno = variableify(no)
+            if vo == vno:
+                return
+            swapmap[vno] = o
 
-                vo = variableify(o)
-                vno = variableify(no)
-                if vo == vno:
-                    continue
-                swapmap[vno] = o
+    def preserve_bsym(bsym: BoundSymbol) -> Any:
+        trace = get_tracectx()
+        trace.bound_symbols.append(bsym)
+        for p in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args):
+            trace.names.add(p.name)
+        return bsym.output
 
     # TODO Consider using an enum for this function's return values
     # Tries to find an executor for the BoundSymbol
@@ -72,14 +79,11 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                 elif isinstance(ex, FusionExecutor):
                     # NOTE execution_transform is None and the executor is a fusion executor
                     # Preserves the symbol as is (it will be handled in the fusion pass)
-                    # NOTE It'd be nice to just preserve the original BoundSymbol here, but it's not really
-                    #   clear how best to do that -- maybe we should support acquiring and editing the scope
-                    #   directly in the visitor transform (updating the signature of visit to be (bsym, scope))
-                    out = bsym.sym(*bsym.args, **bsym.kwargs)
+                    out = preserve_bsym(bsym)
                 else:
                     raise AssertionError("Unknown executor")
 
-                update_swapmap_(bsym, out)
+                safe_map_flat(update_swapmap, bsym.output, out)
                 return True
 
         return False
@@ -109,6 +113,13 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
         bound_symbols.append(nbsym)
 
     extrace.bound_symbols = bound_symbols
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    extrace.set_provenance(
+        TraceProvenance(f"Transform for operator executor execution (took {elapsed_time_millis} milliseconds)")
+    )
     return extrace
 
 
