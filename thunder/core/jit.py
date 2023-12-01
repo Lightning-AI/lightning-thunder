@@ -133,11 +133,17 @@ class JitRuntimeCtx:
     def __init__(self):
         self.frame_stack: list[JITFrame] = []
         self._globals_dict: dict[str, Any] | None = None
+        self._interpreted_instructions: list[dis.Instruction] = []
 
     @property
     def globals_dict(self) -> dict[str, Any]:
         assert self._globals_dict is not None
         return self._globals_dict
+
+    # The operations encountered while interpreting
+    @property
+    def interpreted_instructions(self) -> list[dis.Instruction]:
+        return self._interpreted_instructions
 
     def peek_interpreter_stack(self) -> list:
         return self.frame_stack[-1].interpreter_stack
@@ -153,6 +159,10 @@ class JitRuntimeCtx:
     def pop_frame_stack(self):
         assert self.frame_stack
         del self.frame_stack[-1]
+
+    def add_interpreted_instruction(self, inst: dis.Instruction) -> JitRuntimeCtx:
+        self._interpreted_instructions.append(inst)
+        return self
 
 
 _jitruntimectx = ContextVar("jitruntimectx")
@@ -550,15 +560,16 @@ def _binary_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     return _binary_op_helper(stack, BINARY_OP.XOR)
 
 
-# TODO Review if there's a better way to perform the subscription
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
 @register_opcode_handler("BINARY_SUBSCR")
 def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack.pop()
     tos1 = stack.pop()
 
-    # NOTE This cannot be implemented by jitting tos1[tos], since that would call this handler again
-    stack.append(tos1[tos])
+    def impl():
+        return tos1.__getitem__(tos)
+
+    stack.append(_jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_LIST
@@ -1629,6 +1640,7 @@ def _jit_run(
             assert frame.inst_ptr <= max_inst_ptr
             frame.inst_ptr += 1
         inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
+        runtimectx.add_interpreted_instruction(inst)
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
         frame.nexti(inst)
@@ -1753,7 +1765,9 @@ def jit(
 
         with jitctx(compilectx, runtimectx):
             try:
-                return _jit(fn, *args, **kwargs)
+                jit_result: Any = _jit(fn, *args, **kwargs)
+                fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
+                return jit_result
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #   the line offset information in the instruction
@@ -1762,3 +1776,7 @@ def jit(
                 raise JITError(msg) from e
 
     return fn_
+
+
+def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
+    return getattr(fn, "_last_interpreted_instructions", None)
