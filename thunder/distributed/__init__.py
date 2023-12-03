@@ -200,8 +200,9 @@ def ddp(
     # TODO Perform up to two broadcasts at a time
     # https://github.com/Lightning-AI/lightning-thunder/issues/727
     # TODO "Bucket" small tensors together before broadcasting
-    for name, param in model.named_parameters():
-        tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
 
     return model
 
