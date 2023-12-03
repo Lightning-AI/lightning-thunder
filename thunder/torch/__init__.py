@@ -2331,6 +2331,31 @@ def cross_entropy(
             return out
 
 
+# TODO The function cross_entropy_backward shouldn't be registered as a primitive operation (above), but as
+#   a composite operation
+def _cross_entropy_grad(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+) -> TensorLike:
+    fwd: TensorLike = cross_entropy(a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing)
+
+    g: TensorLike = get_grad(fwd)
+    a_grad: TensorLike = cross_entropy_backward(g, a, target, weight, reduction, ignore_index, label_smoothing)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(cross_entropy, _cross_entropy_grad)
+
+
 # TODO Is this a method?
 # TODO Move this to nn.functional
 # NOTE The id must be explicitly specified so as not to resolve to torch.dropout

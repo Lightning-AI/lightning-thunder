@@ -27,7 +27,13 @@ APEX_CROSS_ENTROPY_AVAILABLE: bool = package_available("xentropy_cuda")
 
 xentropy_cuda: None | Any = None
 if APEX_CROSS_ENTROPY_AVAILABLE:
-    import xentropy_cuda
+    # NOTE Even if the Apex package is available it can still fail to import properly
+    try:
+        import xentropy_cuda
+    except Exception as ex:
+        print(f"xentropy_cuda failed to import with exception {ex}")
+        APEX_CROSS_ENTROPY_AVAILABLE = False
+
 
 # TODO Does apex have a version this should use?
 apex_ex = OperatorExecutor("apex", version="0.1")

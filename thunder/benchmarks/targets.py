@@ -19,9 +19,10 @@ from thunder.benchmarks import (
     NanoGPTCSABenchmark,
     NanoGPTBlockBenchmark,
     NanoGPTBenchmark,
+    LitGPTBenchmark,
     torch_executor,
     torch_compile_executor,
-    thunder_nvfuser_executor,
+    thunder_executor,
     thunder_torch_executor,
     thunder_torch_compile_executor,
     thunder_apex_executor,
@@ -31,8 +32,9 @@ from thunder.benchmarks import (
     thunder_cudnn_layer_norm_executor,
     thunder_cudnn_layer_norm_nvfuser_executor,
     thunder_sdpa_executor,
-    thunder_sdpa_nvfuser_executor,
 )
+
+from thunder.tests.lit_gpt_model import Config as LitGPTConfig
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
@@ -56,7 +58,7 @@ def wrap_for_benchmark(fn):
     return fn_
 
 
-def torch_eager_fwd(b: Benchmark):
+def torch_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_executor(module)
 
@@ -214,63 +216,111 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
-torch_eager_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
-torch_compile_torch_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
+# To compare with PyTorch and torchcompile
+torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
+torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
 
-thunder_fwd_nvfuser = partial(thunder_fwd, compile_fn=thunder_nvfuser_executor)
-thunder_fwd_torch_compile = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
-thunder_fwd_bwd_nvfuser = partial(thunder_fwd_bwd, compile_fn=thunder_nvfuser_executor)
-thunder_grad_transform_nvfuser = partial(thunder_grad_transform, compile_fn=thunder_nvfuser_executor)
-thunder_grad_transform_torch_compile = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
-thunder_grad_transform_torch = partial(thunder_grad_transform, compile_fn=thunder_torch_executor)
-thunder_grad_transform_v1_nvfuser = partial(thunder_grad_transform_v1, compile_fn=thunder_nvfuser_executor)
-thunder_grad_transform_v1_torch_compile = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
-thunder_grad_transform_v1_torch = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_executor)
+# Executing with just PyTorch
+thunder_torch_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_executor)
+thunder_torch_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_executor)
 
+# Default thunder configs
+thunder_fwd = partial(thunder_fwd, compile_fn=thunder_executor)
+thunder_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=thunder_executor)
+thunder_grad = partial(thunder_grad_transform, compile_fn=thunder_executor)
+thunder_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_executor)
+
+# Executing with torchcompile
+thunder_torchcompile_fwd = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
+thunder_torchcompile_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
+thunder_torchcompile_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
+
+# Executing with just the sdpa executor
+thunder_sdpa_grad = partial(thunder_grad_transform, compile_fn=thunder_sdpa_executor)
+thunder_sdpa_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_executor)
+
+# Executing with just the apex executor
 # NOTE apex may or may not be available
-thunder_grad_transform_apex: None | Callable = None
+thunder_apex_grad: None | Callable = None
 if thunder_apex_executor is not None:
-    thunder_grad_transform_apex = partial(thunder_grad_transform, compile_fn=thunder_apex_executor)
+    thunder_apex_grad = partial(thunder_grad_transform, compile_fn=thunder_apex_executor)
 
-thunder_grad_transform_apex_nvfuser: None | Callable = None
+# Executing with the apex and nvfuser executors
+thunder_apex_nvfuser_grad: None | Callable = None
 if thunder_apex_nvfuser_executor is not None:
-    thunder_grad_transform_apex_nvfuser = partial(thunder_grad_transform, compile_fn=thunder_apex_nvfuser_executor)
+    thunder_apex_nvfuser_grad = partial(thunder_grad_transform, compile_fn=thunder_apex_nvfuser_executor)
 
+# Executing with just the cuDNN executor
 # NOTE cudnn may or may not be available
-thunder_fwd_cudnn: None | Callable = None
+thunder_cudnn_fwd: None | Callable = None
 if thunder_cudnn_executor is not None:
-    thunder_fwd_cudnn = partial(thunder_fwd, compile_fn=thunder_cudnn_executor)
+    thunder_cudnn_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_executor)
 
-thunder_fwd_cudnn_nvfuser: None | Callable = None
+# Executing with cuDNN + nvFuser
+thunder_cudnn_nvfuser_fwd: None | Callable = None
 if thunder_cudnn_nvfuser_executor is not None:
-    thunder_fwd_cudnn_nvfuser = partial(thunder_fwd, compile_fn=thunder_cudnn_nvfuser_executor)
+    thunder_cudnn_nvfuser_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_nvfuser_executor)
 
-thunder_fwd_cudnn_layer_norm: None | Callable = None
+# Executing with just the cuDNN layer norm executor
+thunder_cudnn_layer_norm_fwd: None | Callable = None
 if thunder_cudnn_layer_norm_executor is not None:
-    thunder_fwd_cudnn_layer_norm = partial(thunder_fwd, compile_fn=thunder_cudnn_layer_norm_executor)
+    thunder_cudnn_layer_norm_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_layer_norm_executor)
 
-thunder_fwd_cudnn_layer_norm_nvfuser: None | Callable = None
+# Executing with the cuDNN layer norm executor and nvFuser
+thunder_cudnn_layer_norm_nvfuser_fwd: None | Callable = None
 if thunder_cudnn_layer_norm_nvfuser_executor is not None:
-    thunder_fwd_cudnn_layer_norm_nvfuser = partial(thunder_fwd, compile_fn=thunder_cudnn_layer_norm_nvfuser_executor)
+    thunder_cudnn_layer_norm_nvfuser_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_layer_norm_nvfuser_executor)
 
-thunder_grad_sdpa_executor = partial(thunder_grad_transform, compile_fn=thunder_sdpa_executor)
-thunder_grad_sdpa_nvfuser_executor = partial(thunder_grad_transform, compile_fn=thunder_sdpa_nvfuser_executor)
-thunder_fwd_bwd_sdpa_nvfuser = partial(thunder_fwd_bwd, compile_fn=thunder_sdpa_nvfuser_executor)
-thunder_grad_v1_sdpa_executor = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_executor)
-thunder_grad_v1_sdpa_nvfuser_executor = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_nvfuser_executor)
+
+fwd_executors = (torch_fwd, torch_compile_fwd, thunder_fwd)
+fwd_executor_ids = (
+    "torch",
+    "torch.compile",
+    "thunder",
+)
+
+grad_executors = (
+    torch_fwd_bwd,
+    torchcompile_fwd_bwd,
+    thunder_grad,
+    thunder_gradv1,
+    thunder_fwd_bwd,
+    thunder_torchcompile_grad,
+    thunder_torchcompile_gradv1,
+)
+grad_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunder-grad",
+    "thunder-gradv1",
+    "thunder-fwd-bwd",
+    "thunder+torchcompile-grad",
+    "thunder+torchcompile-gradv1",
+)
+
+apex_grad_executors = (thunder_apex_grad, thunder_apex_nvfuser_grad)
+apex_grad_executors_ids = ("thunder+apex-grad", "thunder+apex+nvfuser-grad")
+
+cudnn_fwd_executors = (thunder_cudnn_fwd, thunder_cudnn_nvfuser_fwd)
+cudnn_fwd_executors_ids = ("thunder+cudnn", "thunder+cudnn+nvfuser")
+
+cudnn_layernorm_fwd_executors = (thunder_cudnn_fwd, thunder_cudnn_nvfuser_fwd)
+cudnn_layernorm_fwd_executors_ids = (
+    "thunder+cudnn_layernorm",
+    "thunder+cudnn_layernorm+nvfuser",
+)
+
+#
+# nanogpt benchmarks
+#
 
 
 @pytest.mark.parametrize(
     "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
+    fwd_executors,
+    ids=fwd_executor_ids,
 )
-def test_gelu_fwd(benchmark, executor: Callable):
+def test_nanogpt_gelu_fwd(benchmark, executor: Callable):
     gelu_bench: Benchmark = NanoGPTGeLUBenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
     )
@@ -284,26 +334,10 @@ def test_gelu_fwd(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
+    grad_executors,
+    ids=grad_executors_ids,
 )
-def test_gelu_grad(benchmark, executor: Callable):
+def test_nanogpt_gelu_grad(benchmark, executor: Callable):
     gelu_bench: Benchmark = NanoGPTGeLUBenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
     )
@@ -319,15 +353,10 @@ def test_gelu_grad(benchmark, executor: Callable):
 #   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
 @pytest.mark.parametrize(
     "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
+    fwd_executors,
+    ids=fwd_executor_ids,
 )
-def test_cross_entropy_fwd(benchmark, executor: None | Callable):
+def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
     if executor is None:
         pytest.skip("Executor is unavailable")
 
@@ -346,30 +375,10 @@ def test_cross_entropy_fwd(benchmark, executor: None | Callable):
 #   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_grad_transform_apex,
-        thunder_grad_transform_apex_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-        "thunder-grad+apex",
-        "thunder-grad+apex+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
+    (grad_executors + apex_grad_executors),
+    ids=(grad_executors_ids + apex_grad_executors_ids),
 )
-def test_cross_entropy_grad(benchmark, executor: None | Callable):
+def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
     if executor is None:
         pytest.skip("Executor is unavailable")
 
@@ -388,24 +397,10 @@ def test_cross_entropy_grad(benchmark, executor: None | Callable):
 #   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_fwd,
-        torch_compile_fwd,
-        thunder_fwd_torch_compile,
-        thunder_fwd_nvfuser,
-        thunder_fwd_cudnn_layer_norm,
-        thunder_fwd_cudnn_layer_norm_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-        "thunder+cudnn_layernorm",
-        "thunder+cudnn_layernorm+nvfuser",
-    ),
+    (fwd_executors + cudnn_layernorm_fwd_executors),
+    ids=(fwd_executor_ids + cudnn_layernorm_fwd_executors_ids),
 )
-def test_layer_norm_fwd(benchmark, executor: None | Callable):
+def test_nanogpt_layer_norm_fwd(benchmark, executor: None | Callable):
     if executor is None:
         pytest.skip("Executor is unavailable")
 
@@ -421,25 +416,9 @@ def test_layer_norm_fwd(benchmark, executor: None | Callable):
 
 
 @pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_eager_fwd,
-        torch_compile_fwd,
-        thunder_fwd_torch_compile,
-        thunder_fwd_nvfuser,
-        thunder_fwd_cudnn,
-        thunder_fwd_cudnn_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-        "thunder+cudnn",
-        "thunder+cudnn+nvfuser",
-    ),
+    "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
 )
-def test_sdpa_fwd(benchmark, executor: None | Callable):
+def test_nanogpt_sdpa_fwd(benchmark, executor: None | Callable):
     if executor is None:
         pytest.skip("Executor is unavailable")
 
@@ -457,30 +436,10 @@ def test_sdpa_fwd(benchmark, executor: None | Callable):
 # TODO Fix thunder-fwd-bwd+nvfuser
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_grad_sdpa_executor,
-        thunder_grad_sdpa_nvfuser_executor,
-        thunder_fwd_bwd_sdpa_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-        "thunder-grad+sdpa",
-        "thunder-grad+sdpa+nvfuser",
-        "thunder-fwd-bwd+sdpa+nvfuser",
-    ),
+    grad_executors,
+    ids=grad_executors_ids,
 )
-def test_sdpa_grad(benchmark, executor: Callable):
+def test_nanogpt_sdpa_grad(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTSDPABenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
     )
@@ -494,15 +453,10 @@ def test_sdpa_grad(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
+    fwd_executors,
+    ids=fwd_executor_ids,
 )
-def test_mlp_fwd(benchmark, executor: Callable):
+def test_nanogpt_mlp_fwd(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTMLPBenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
     )
@@ -516,26 +470,10 @@ def test_mlp_fwd(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
+    grad_executors,
+    ids=grad_executors_ids,
 )
-def test_mlp_grad(benchmark, executor: Callable):
+def test_nanogpt_mlp_grad(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTMLPBenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
     )
@@ -547,31 +485,210 @@ def test_mlp_grad(benchmark, executor: Callable):
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=0)
 
 
+# NOTE The CSA module is linear -> sdpa -> dropout
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_fwd_bwd_nvfuser,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-    ),
-    ids=(
-        # "torch-bwd" here means that PyTorch's .backward() is used
-        "torch-eager+torch-bwd",
-        "torch.compile+torch-bwd",
-        "thunder+nvfuser+torch-bwd",
-        # The following "executors" return only the gradient wrt the input so
-        # they might remove dead code paths from the joint fwd+bwd call
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-    ),
+    fwd_executors,
+    ids=fwd_executor_ids,
 )
-def test_llama2_mlp_7b_requires_grad(benchmark, executor: Callable):
+def test_nanogpt_csa_fwd(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTCSABenchmark(
+        config="gpt2-xl",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=False,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+
+
+# NOTE The CSA module is linear -> sdpa -> dropout
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_nanogpt_csa_grad(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTCSABenchmark(
+        config="gpt2-xl",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+
+
+# NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
+@pytest.mark.parametrize(
+    "executor,",
+    fwd_executors,
+    ids=fwd_executor_ids,
+)
+def test_nanogpt_block_fwd(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBlockBenchmark(
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+
+
+# NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_nanogpt_block_grad(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBlockBenchmark(
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+
+
+# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark -- why does thunder trigger it but regular torch.compile does not
+@pytest.mark.parametrize(
+    "executor,",
+    fwd_executors,
+    ids=fwd_executor_ids,
+)
+def test_nanogpt_gpt2_fwd(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBenchmark(
+        config="gpt2",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=False,
+        only_return_loss=False,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+
+
+# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_nanogpt_gpt2_grad(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBenchmark(
+        config="gpt2",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+        only_return_loss=True,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    fwd_executors,
+    ids=fwd_executor_ids,
+)
+def test_nanogpt_gpt2xl_fwd(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBenchmark(
+        config="gpt2-xl",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=False,
+        only_return_loss=False,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+
+
+# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_nanogpt_gpt2xl_grad(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBenchmark(
+        config="gpt2-xl",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+        only_return_loss=True,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+
+
+#
+# llama benchmarks
+#
+
+
+@pytest.mark.parametrize(
+    "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
+)
+def test_open_llama_7b_fwd(benchmark, executor: Callable):
+    cfg: LitGPTConfig = LitGPTConfig.from_name("open_llama_7b")
+    b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
+
+    setup = make_setup(b)
+    fn = executor(b)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+
+
+@pytest.mark.parametrize(
+    "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
+)
+def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
+    cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
+    b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
+
+    setup = make_setup(b)
+    fn = executor(b)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_llama2_mlp_7b_grad(benchmark, executor: Callable):
     from thunder.benchmarks import LlamaMLPBenchmark
 
     bench: Benchmark = LlamaMLPBenchmark(
@@ -587,19 +704,10 @@ def test_llama2_mlp_7b_requires_grad(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_fwd_bwd_sdpa_nvfuser,
-    ),
-    ids=(
-        # "torch-bwd" here means that PyTorch's .backward() is used
-        "torch-eager+torch-bwd",
-        "torch.compile+torch-bwd",
-        "thunder+nvfuser+sdpa+torch-bwd",
-    ),
+    grad_executors,
+    ids=grad_executors_ids,
 )
-def test_llama2_causal_self_attention_7b_train(benchmark, executor: Callable):
+def test_llama2_causal_self_attention_7b_grad(benchmark, executor: Callable):
     from thunder.benchmarks import LlamaCausalSelfAttentionBenchmark
 
     bench: Benchmark = LlamaCausalSelfAttentionBenchmark(
@@ -616,18 +724,18 @@ def test_llama2_causal_self_attention_7b_train(benchmark, executor: Callable):
 @pytest.mark.parametrize(
     "executor,use_apex,",
     (
-        (torch_eager_bwd, False),
-        (torch_compile_torch_bwd, False),
-        (thunder_fwd_bwd_nvfuser, False),
-        (torch_eager_bwd, True),
-        (torch_compile_torch_bwd, True),
+        (torch_fwd_bwd, False),
+        (torchcompile_fwd_bwd, False),
+        (thunder_fwd_bwd, False),
+        (torch_fwd_bwd, True),
+        (torchcompile_fwd_bwd, True),
     ),
     ids=(
-        "torch-eager+torch-bwd",
-        "torch.compile+torch-bwd",
-        "thunder+nvfuser+torch-bwd",
-        "torch-eager+torch-bwd+apex",
-        "torch.compile+torch-bwd+apex",
+        "torch",
+        "torch.compile",
+        "thunder-fwd-bwd",
+        "torch+apex",
+        "torch.compile+apex",
     ),
 )
 def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex: bool):
@@ -650,244 +758,3 @@ def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex:
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
-
-
-# NOTE The CSA module is linear -> sdpa -> dropout
-@pytest.mark.parametrize(
-    "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
-)
-def test_csa_fwd(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTCSABenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=False,
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
-
-
-# NOTE The CSA module is linear -> sdpa -> dropout
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
-)
-def test_csa_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTCSABenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=True,
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
-
-
-# NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
-@pytest.mark.parametrize(
-    "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
-)
-def test_block_fwd(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBlockBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
-
-
-# NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_torch_compile,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_torch_compile,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+torch.compile",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+torch.compile",
-        "thunder-grad_v1+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
-)
-def test_block_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBlockBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
-
-
-# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark -- why does thunder trigger it but regular torch.compile does not
-@pytest.mark.parametrize(
-    "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
-)
-def test_gpt2_fwd(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBenchmark(
-        config="gpt2",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=False,
-        only_return_loss=False,
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
-
-
-# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
-)
-def test_gpt2_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBenchmark(
-        config="gpt2",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=True,
-        only_return_loss=True,
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    (torch_eager_fwd, torch_compile_fwd, thunder_fwd_torch_compile, thunder_fwd_nvfuser),
-    ids=(
-        "torch-eager",
-        "torch.compile",
-        "thunder+torch.compile",
-        "thunder+nvfuser",
-    ),
-)
-def test_gpt2xl_fwd(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=False,
-        only_return_loss=False,
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
-
-
-# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_eager_bwd,
-        torch_compile_torch_bwd,
-        thunder_grad_transform_nvfuser,
-        thunder_grad_transform_v1_nvfuser,
-        thunder_fwd_bwd_nvfuser,
-    ),
-    ids=(
-        "torch-eager",
-        "torch.compile+torch-bwd",
-        "thunder-grad+nvfuser",
-        "thunder-grad_v1+nvfuser",
-        "thunder-fwd-bwd+nvfuser",
-    ),
-)
-def test_gpt2xl_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=True,
-        only_return_loss=True,
-    )
-
-    setup = make_setup(bench)
-    fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)

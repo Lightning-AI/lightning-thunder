@@ -688,11 +688,6 @@ def thunder_torch_executor(fn: Callable) -> Callable:
     return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor])
 
 
-def thunder_nvfuser_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[thunder.nvfuser_executor])
-
-
 def thunder_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(
@@ -751,11 +746,6 @@ def thunder_sdpa_executor(fn: Callable) -> Callable:
     return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex])
 
 
-def thunder_sdpa_nvfuser_executor(fn: Callable) -> Callable:
-    torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex, thunder.nvfuser_executor])
-
-
 def default_torch_ddp_executor(_) -> Callable:
     def func(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -790,8 +780,7 @@ def default_thunder_dynamic_strides_executor(fn: Callable) -> Callable:
     return thunder.compile(fn, cache_mode="dynamic strides")
 
 
-def thunder_torchex_compile_dynamic_strides_executor(fn: Callable) -> Callable:
-    from thunder.executors import TORCH
+thunder_executor = default_thunder_dynamic_strides_executor
 
 
 @dataclass(frozen=True)
