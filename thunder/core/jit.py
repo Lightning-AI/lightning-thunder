@@ -785,6 +785,55 @@ def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
     pass
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_DEREF
+@register_opcode_handler("DELETE_DEREF")
+def _delete_deref_handler(
+    inst: dis.Instruction,
+    /,
+    stack: list,
+    co: CodeType,
+    frame: JITFrame,
+    **kwargs,
+) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    if sys.version_info < (3, 11):
+        i += co.co_nlocals
+
+    assert i >= 0 and i < len(frame.localsplus)
+
+    del frame.localsplus[i].cell_contents
+
+
+# https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
+@register_opcode_handler("DELETE_FAST")
+def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+    var_num: int = inst.arg
+    assert var_num >= 0 and var_num < co.co_nlocals
+
+    # NOTE The deletion just sets the reference in localsplus to an instance of Py_NULL
+    frame.localsplus[var_num] = Py_NULL()
+
+
+# https://docs.python.org/3/library/dis.html#opcode-DELETE_GLOBAL
+@register_opcode_handler("DELETE_GLOBAL")
+def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+    namei: int = inst.arg
+
+    name: str = co.co_names[namei]
+    del frame.globals[name]
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
+@register_opcode_handler("DELETE_SUBSCR")
+def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    tos1 = stack.pop()
+    del tos1[tos]
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-DICT_MERGE
 @register_opcode_handler("DICT_MERGE")
 def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
@@ -813,25 +862,6 @@ def _dict_update_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 @register_opcode_handler("DUP_TOP")
 def _dup_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-1])
-
-
-# https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
-@register_opcode_handler("DELETE_FAST")
-def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
-    assert type(inst.arg) is int
-    var_num: int = inst.arg
-    assert var_num >= 0 and var_num < co.co_nlocals
-
-    # NOTE The deletion just sets the reference in localsplus to an instance of Py_NULL
-    frame.localsplus[var_num] = Py_NULL()
-
-
-# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
-@register_opcode_handler("DELETE_SUBSCR")
-def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    tos = stack.pop()
-    tos1 = stack.pop()
-    del tos1[tos]
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
@@ -1537,24 +1567,15 @@ def _store_deref_handler(
     frame.localsplus[i].cell_contents = tos
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_DEREF
-@register_opcode_handler("DELETE_DEREF")
-def _delete_deref_handler(
-    inst: dis.Instruction,
-    /,
-    stack: list,
-    co: CodeType,
-    frame: JITFrame,
-    **kwargs,
-) -> None:
-    assert isinstance(inst.arg, int)
-    i: int = inst.arg
-    if sys.version_info < (3, 11):
-        i += co.co_nlocals
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_GLOBAL
+@register_opcode_handler("STORE_GLOBAL")
+def _store_global_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+    namei: int = inst.arg
 
-    assert i >= 0 and i < len(frame.localsplus)
-
-    del frame.localsplus[i].cell_contents
+    name: str = co.co_names[namei]
+    tos = stack.pop()
+    frame.globals[name] = tos
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_FAST

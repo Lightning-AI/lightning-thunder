@@ -909,7 +909,7 @@ def test_list_to_tuple():
 
 
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1640")
-def test_use_of_deleted_raises():
+def test_use_of_deleted_raises_correctly():
     def foo(a):
         b = a
         del b
@@ -920,6 +920,46 @@ def test_use_of_deleted_raises():
 
     with pytest.raises(UnboundLocalError, match=r".*local variable 'b' referenced before assignment.*"):
         jfoo(5)
+
+
+def test_delete_fast():
+    def foo(a):
+        b = a
+        del b
+        c = b + a
+        return a
+
+    jfoo = jit(foo)
+    with pytest.raises(Exception):
+        jfoo(5)
+
+
+def test_delete_global():
+    x = 5
+
+    def foo(a):
+        global x
+        del x
+        return a + x
+
+    jfoo = jit(foo)
+
+    with pytest.raises(Exception):
+        jfoo(5)
+
+
+x = 7
+
+
+def test_store_global():
+    def foo(a):
+        global x
+        x = a
+
+    jfoo = jit(foo)
+
+    jfoo(6)
+    assert x == 6
 
 
 def test_bool_conversion():
