@@ -834,6 +834,36 @@ def test_get_and_for_iter():
     assert jfoo(d) == foo(d)
 
 
+def test_unary_not():
+    def foo(a):
+        return not a
+
+    jfoo = jit(foo)
+
+    assert jfoo(False) == foo(False)
+    assert jfoo(0) == foo(0)
+    assert jfoo(3.14) == foo(3.14)
+    assert jfoo(1j) == foo(1j)
+
+    class mycls(int):
+        def __init__(self, v):
+            self.v = v
+
+        def __bool__(self) -> bool:
+            return self.v % 2 == 0
+
+    cases = (
+        (mycls(1), 1),
+        (mycls(2), 2),
+    )
+
+    for o, case in cases:
+        assert jfoo(o) == foo(case % 2 == 0)
+
+    assert jfoo([]) == foo([])
+    assert jfoo([1, 2]) == foo([2, 3])
+
+
 def test_unpack_ex():
     alphabet = "abcdefghijklmnopqrstuvwxyz"
 

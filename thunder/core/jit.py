@@ -1474,6 +1474,20 @@ def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
     frame.localsplus[i] = a
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NOT
+@register_opcode_handler("UNARY_NOT")
+def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+
+    def impl():
+        if bool(tos):
+            return False
+        return True
+
+    stack.append(_jit(impl))
+
+
+# https://docs.python.org/id/3.5/library/dis.html#opcode-UNPACK_SEQUENCE
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NEGATIVE
 @register_opcode_handler("UNARY_NEGATIVE")
 def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
