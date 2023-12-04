@@ -997,6 +997,53 @@ def test_store_attr():
     assert x.bar == 5
 
 
+def test_comprehension():
+    def foo():
+        return tuple([i for i in range(10)])
+
+    jfoo = jit(foo)
+    assert foo() == jfoo()
+
+
+def test_nested_comprehension():
+    def foo():
+        return tuple([[j for j in enumerate(range(i))] for i in range(10)])
+
+    jfoo = jit(foo)
+    assert foo() == jfoo()
+
+
+def test_comprehension_nonlocal():
+    def foo():
+        counter = 0
+
+        def increment():
+            nonlocal counter
+            counter = counter + 1
+            return counter
+
+        return tuple([i + increment() for i in range(10)])
+
+    jfoo = jit(foo)
+    assert foo() == jfoo()
+
+
+@pytest.mark.xfail(reason="INPLACE_ADD is not implemented")
+def test_comprehension_nonlocal_inplace():
+    def foo():
+        counter = 0
+
+        def increment():
+            nonlocal counter
+            counter += 1
+            return counter
+
+        return tuple([i + increment() for i in range(10)])
+
+    jfoo = jit(foo)
+    assert foo() == jfoo()
+
+
 #
 # Network tests
 #

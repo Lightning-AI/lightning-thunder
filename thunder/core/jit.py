@@ -1004,6 +1004,20 @@ def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int,
     return inst_ptr - delta + 1
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-LIST_APPEND
+@register_opcode_handler("LIST_APPEND")
+def _list_append_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+
+    # NOTE Doesn't pop the list that's extended
+    tos = stack.pop()
+    l: list = stack[-i]
+
+    assert isinstance(l, list)
+    l.append(tos)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
 @register_opcode_handler("LIST_EXTEND")
 def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1787,6 +1801,15 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     locals_dict: dict[str, Any] = dict(bound.arguments)
 
     code: CodeType = extract_code(fn)
+
+    # Comprehensions:
+    #   CPython prefixes protected variables with a period. (Since it's not
+    #   legal syntax, so they cannot collide with user variable names.) However,
+    #   `inspect` helpfully renames them. We need to undo this to properly reflect
+    #   what is in the actual bytecode.
+    for name in code.co_varnames:
+        if name.startswith("."):
+            locals_dict[name] = locals_dict.pop(f"implicit{name[1:]}")
 
     # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars)
     # in Python 3.11+, these are not separated, in Python 3.10 we need to create cell vars here and add them to closures in Python 3.11 they will be dealt with though MAKE_CELL...
