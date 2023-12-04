@@ -797,6 +797,17 @@ def _copy_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-inst.arg])
 
 
+# https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
+@register_opcode_handler("DELETE_FAST")
+def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+    var_num: int = inst.arg
+    assert var_num >= 0 and var_num < co.co_nlocals
+
+    # NOTE The deletion just sets the reference in localsplus to an instance of Py_NULL
+    frame.localsplus[var_num] = Py_NULL()
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
 @register_opcode_handler("DELETE_SUBSCR")
 def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1056,7 +1067,8 @@ def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
     assert isinstance(inst.arg, int)
     i: int = inst.arg
     assert i >= 0 and i < len(frame.localsplus)
-    val = frame.localsplus[i]
+
+    val: Any = frame.localsplus[i]
 
     # empty local variable slots are initialized to Py_NULL()
     if isinstance(val, Py_NULL):

@@ -878,6 +878,20 @@ def test_list_to_tuple():
     assert jit(ltt)() == ltt()
 
 
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1640")
+def test_use_of_deleted_raises():
+    def foo(a):
+        b = a
+        del b
+        c = b + a
+        return a
+
+    jfoo = jit(foo)
+
+    with pytest.raises(UnboundLocalError, match=r".*local variable 'b' referenced before assignment.*"):
+        jfoo(5)
+
+
 #
 # Network tests
 #
