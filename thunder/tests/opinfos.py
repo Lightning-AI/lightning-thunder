@@ -4298,7 +4298,10 @@ cumsum_opinfo = OpInfo(
     ),
 )
 reduction_ops.append(cumsum_opinfo)
+
+
 opinfos.extend(reduction_ops)
+
 
 #
 # Tensor Creation OpInfos
@@ -4533,6 +4536,179 @@ matmul_opinfo = OpInfo(
     ),
 )
 linear_algebra_ops.append(matmul_opinfo)
+
+
+def einsum_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shapes, equation
+    cases = (
+        # Basic views/diagonal-like results
+        ([(3,)], "i"),
+        ([(3, 3)], "ij"),
+        ([(3, 3)], "ji"),
+        ([(3, 3)], "ii->i"),
+        ([(3, 3, 3)], "iji->j"),
+        ([(2, 2, 3, 3)], "iijj->ij"),
+        ([(2, 2, 3, 3)], "iijj->ji"),
+        ([(3, 3, 3, 3)], "iiij->ij"),
+        ([(3, 3, 3, 3)], "iiii->i"),
+        # Basic GEMM/TDOT pairs
+        ([(1, 3, 4), (4, 3)], "bij,jk"),
+        ([(1, 3, 4), (4, 3)], "bij,jk->bik"),
+        ([(1, 3, 4), (4, 3)], "bij,jk->bki"),
+        ([(2, 3, 3), (1, 3, 3)], "bij,bjk"),
+        ([(2, 3, 3), (1, 3, 3)], "bij,bkj"),
+        ([(2, 3, 3), (1, 3, 3)], "bij,bjk->bik"),
+        ([(2, 3, 3), (2, 3, 3)], "bij,bkj->bik"),
+        # Tensor-like products, aka 'OUTER'
+        ([(3,), (4,)], "i,j->ij"),
+        ([(3,), (2, 2)], "i,jk->jik"),
+        ([(3,), (4,), (5,)], "i,j,k->ijk"),
+        ([(3,), (4,), (5,), (2,)], "i,j,k,l->lkji"),
+        # Multiple reductions
+        ([(1, 2, 3, 4), (4, 3, 2)], "ijkl,lkj->i"),
+        ([(2, 2, 2), (2, 2, 2)], "ijk,ijk->i"),
+        ([(2, 2, 2), (2, 2, 2)], "ijk,kji->i"),
+        ([(2, 2, 2, 2), (2, 2, 2, 2)], "aijk,ijkb->ba"),
+        ([(2, 2, 2, 2), (2, 2, 2, 2)], "aijk,jikb->ba"),
+        ([(2, 2, 2, 2), (2, 2, 2, 2)], "aijk,kjib->ba"),
+        # From a Transformer model (T5 uses it?).
+        ([(1, 3, 4, 5), (2, 3, 2, 5)], "bnqd,bnkd->bnqk"),
+        # Cases from BERT.
+        ([(1, 3, 4, 5), (1, 4, 5)], "bhld,lrd->bhlr"),
+        ([(1, 3, 4, 5), (4, 6, 5)], "bhld,lrd->bhlr"),
+        # Basic ellipsis
+        ([(3, 3)], "i...->..."),
+        ([(1, 2, 3), (3,)], "...ik, ...j->ij"),
+        ([(4,), (4, 4, 4)], "...a, ...a->..."),
+        ([(3, 3, 2, 2)], "...ii->...i"),
+        ([(2, 3, 3, 2)], "i...i->...i"),
+        ([(1, 2, 3, 4)], "...ijk->...kji"),
+        ([(2, 3, 2, 2), (3, 2, 2, 2)], "ij...,jk...->ik..."),
+        ([(3, 2), (4, 3)], "k...,jk"),
+        # Let's go with >=3 operands!
+        ([(2, 2, 2), (2, 2, 2), (2, 2, 2)], "ijk,kji,jki->ij"),
+        ([(1, 2, 3, 4), (1, 1, 5), (2, 1, 2)], "i...j,...k,l...m->ijklm"),
+        ([(2, 2, 2), (2, 2, 2), (2, 2, 2)], "...i,...j,...kl->ijk"),
+        ([(2, 2, 2), (2, 2, 2), (2, 2, 2), (2, 2, 2)], "...i,...j,...kl,mn...->ijkm"),
+    )
+
+    for shapes, eq in cases:
+        operands = [make(shape) for shape in shapes]
+        yield SampleInput(eq, *operands)
+
+
+def einsum_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    cases = (
+        ([(3,)], "i->->j", "multiple arrows"),
+        ([(3,), (3,)], "i->i", r"Found 1 operand\(s\) in the equation, but 2 tensor\(s\) were provided"),
+        ([(3,)], "....i->i", "two or more ellipses"),
+        ([(3,)], "...i...->i", "two or more ellipses"),
+        ([(3, 3)], "i->i", "the number of subscripted dims 1 has to match the operand's dimensionality 2"),
+        ([()], "i->i", r"subscripts more dimenions \(1\) then there are in the operand \(0\)"),
+        ([(3, 3)], "ijk->i", r"subscripts more dimenions \(3\) then there are in the operand \(2\)"),
+        ([(3,)], "i->j", "includes a 'j' label which does not apper in neither of the operand's subsripts"),
+        ([(3,)], "i->ii", "Output subscript string 'ii' includes multiple 'i' labels"),
+        ([(3, 1)], "ii->i", "label 'i' requires dimensions 1 and 0 to have the same lenght, but got 1 != 3"),
+        ([(1, 3)], "ii->i", "label 'i' requires dimensions 1 and 0 to have the same lenght, but got 3 != 1"),
+        (
+            [(1, 2, 3), (2, 3, 1)],
+            "i...j,k...l->ijkl",
+            "Implied by ellipsis operands' dimensions do not jointy broadcast",
+        ),
+        (
+            [(2, 2, 2), (3, 3, 3), (4, 4, 4)],
+            "i...,...j,k...->ijk",
+            "Implied by ellipsis operands' dimensions do not jointy broadcast",
+        ),
+        # opt_einsum throws.
+        (
+            [(1, 2, 3), (2, 3, 1)],
+            "ijk,ljm->im",
+            r"Size of label 'j' for operand 1 \(2\) does not match previous terms \(3\)",
+        ),
+    )
+
+    for op_shapes, einsum_eq, err_msg in cases:
+        yield (
+            SampleInput(
+                einsum_eq,
+                *tuple(make(s) for s in op_shapes),
+            ),
+            ValueError,
+            err_msg,
+        )
+
+
+einsum_opinfo = OpInfo(
+    ltorch.einsum,
+    sample_input_generator=einsum_sample_generator,
+    error_input_generator=einsum_error_generator,
+    torch_reference=torch.einsum,
+    # TODO: test all integer types and figure out their dtype.
+    dtypes=(datatypes.float32, datatypes.float64),
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1643.
+    # Testing only float32, float64 now.
+    #  types=(datatypes.int64, datatypes.floating),
+    #  domain=(-1, +1),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="vjp is tested with manual tests"),
+            "test_vjp_correctness",
+        ),
+        # NOTE: for nvfuser bugs see
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1542.
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvfuser",),
+            active_if=nvfuser_version >= LooseVersion("0.0.30"),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-4)),
+            dtypes=(datatypes.float32,),
+        ),
+    ),
+    #      DecorateInfo(
+    #          pytest.mark.skip(reason="vjp is tested with manual tests"),
+    #          "test_vjp_correctness",
+    #      ),
+    #      # RuntimeError: "addmm_impl_cpu" is not implemented for 'Half'
+    #      DecorateInfo(
+    #          pytest.mark.xfail,
+    #          dtypes=(datatypes.float16,),
+    #          devicetypes=(devices.DeviceType.CPU,),
+    #      ),
+    #      # PyTorch bug: tries to dispatch to bmm
+    #      # which is not implemented for int64.
+    #      DecorateInfo(
+    #          pytest.mark.xfail,
+    #          "test_core_vs_torch_consistency",
+    #          dtypes=(datatypes.int64,),
+    #          devicetypes=(devices.DeviceType.CUDA,),
+    #      ),
+    #      # Precision is very low on the CPU.
+    #      # TODO: investigate.
+    #      DecorateInfo(
+    #          pytest.mark.xfail,
+    #          "test_core_vs_torch_consistency",
+    #          dtypes=(datatypes.bfloat16,),
+    #          devicetypes=(devices.DeviceType.CPU,),
+    #      ),
+    #      DecorateInfo(
+    #          custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+    #          dtypes=(datatypes.float16,),
+    #      ),
+    #      # Spurious single values.
+    #      # TODO: investigate.
+    #      DecorateInfo(
+    #          custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+    #          dtypes=(datatypes.bfloat16,),
+    #      ),
+)
+linear_algebra_ops.append(einsum_opinfo)
 
 
 def linear_sample_generator(op, device, dtype, requires_grad, **kwargs):

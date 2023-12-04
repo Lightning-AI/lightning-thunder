@@ -537,6 +537,26 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
         comp(grad_out[0], expected_grad[0])
 
 
+@ops((get_opinfo("einsum"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grads = torch.autograd.grad(out, sample.args[1:], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        actual_out, grads_out = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
+            flat_args, (v,)
+        )
+
+        comp(actual_out, out)
+        assert len(expected_grads) == len(grads_out) - 1
+        for torch_grad, thunder_grad in zip(expected_grads, grads_out[1:]):
+            comp(torch_grad, thunder_grad)
+
+
 # TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly

@@ -4,3 +4,4 @@ lightning-utilities >=0.7.0
 numpy >=1.23.0
 igraph >=0.10.4
 optree >=0.9.2
+opt_einsum >= 3.3.0

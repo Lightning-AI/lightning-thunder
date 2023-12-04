@@ -156,6 +156,7 @@ ones_like = _register_torch_operation("ones_like")
 tensor = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
+einsum = _register_torch_operation("einsum")
 
 
 def _uniform_philox_like(

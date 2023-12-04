@@ -1,12 +1,16 @@
 import itertools
 import math
 import operator
+import collections
+import re
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce
 from numbers import Number
 from typing import Any, Union, Optional, Tuple
 from collections.abc import Callable
+
+import opt_einsum
 
 import thunder.clang as clang
 import thunder.core.devices as devices
@@ -1746,11 +1750,442 @@ def take_along_dim(a: TensorLike, /, indices: TensorLike, dim: int) -> TensorLik
 #
 
 
-# TODO Add string equation support
-# TODO Add sublist support (probably by translating the sublist into a string equation)
 @torchsymbol(torch.einsum, is_method=False)
-def einsum(equation: str | TensorLike, *operands: TensorLike | Sequence[int]) -> TensorLike | Number:
-    raise NotImplementedError("Einsum is not yet implemented")
+def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> TensorLike:
+    utils.check(
+        isinstance(equation, str),
+        lambda: f"Sublist inputs are not currently supported. "
+        "Rewrite the sublist input to use a string equation, "
+        "and/or file an issue requesting sublist einsum support here: "
+        "https://github.com/Lightning-AI/lightning-thunder/issues/new/choose",
+        exception_type=NotImplementedError,
+    )
+
+    operands = list(utils.sequencify(operands))
+    utils.check_types(operands, TensorProxy)
+
+    orig_eq = equation
+    # Removes spaces and replaces ... with . to faciliate parsing later
+    equation = re.sub(r"\s", "", equation)
+    equation = re.sub(r"\.\.\.", ".", equation)
+
+    # Splits the equation into input/output subscripts
+    input_output_subscripts = equation.split("->")
+    input_subscript: str
+    output_subscript: None | str = None
+    if len(input_output_subscripts) == 1:
+        (input_subscript,) = input_output_subscripts
+    else:
+        utils.check(
+            len(input_output_subscripts) == 2, lambda: f"Found multiple arrows (->) in einsum equation", ValueError
+        )
+        input_subscript, output_subscript = input_output_subscripts
+
+    subscripts = input_subscript.split(",")
+    utils.check(
+        len(subscripts) == len(operands),
+        lambda: f"Found {len(subscripts)} operand(s) in the equation, but {len(operands)} tensor(s) were provided",
+        ValueError,
+    )
+
+    # Iterator class that maps each subscript label to a corresponding dimension.
+    # These dimensions are iterated left-to-right with positive indices before
+    # hitting the ellipis signaling symbol ('.'), and from right-to-left with
+    # negative indices afterwards.
+    class LabelDimIter:
+        def __init__(self, pos, eq):
+            self.pos = pos
+            self.eq = eq
+
+        def __iter__(self):
+            self.eq_iter = zip(self.eq, range(len(self.eq)))
+            self.seen_ellipsis = False
+            return self
+
+        def __next__(self):
+            l, d = next(self.eq_iter)
+            if l == ".":
+                utils.check(
+                    not self.seen_ellipsis,
+                    lambda: f"Incorrect subscript for operand #{self.pos}: " "it contains two or more ellipses",
+                    ValueError,
+                )
+                self.seen_ellipsis = True
+                self.ellipsis_start = d
+                self.ellipsis_end = -1
+
+                rest_eq = self.eq[d + 1 :]
+                self.eq_iter = zip(reversed(rest_eq), range(-1, -len(rest_eq) - 1, -1))
+            # This variable has meaning only if ellipsis is present.
+            self.ellipsis_end = d - 1
+
+            return l, d
+
+    # Returns a label -> list of dims positions map.
+    # If Ellipsis is in the map,
+    # __getitem__(Ellipsis) will be a 2-list [ellipsis_start_dim, ellipsis_end_dim]
+    # (spanning subdims includes ellipsis_start_dim and ellipsis_end_dim)
+    # with ellipsis_start_dim >= 0 and ellipsis_end_dim < 0,
+    def get_subscript_spec(pos, subscript, operand=None):
+        n_subscripted_dims = 0
+        label_dims_map = {}
+        label_dim_iter = LabelDimIter(pos, subscript)
+        for l, d in label_dim_iter:
+            # Skip ellipsis
+            if l == ".":
+                continue
+
+            n_subscripted_dims = n_subscripted_dims + 1
+            dims = label_dims_map.setdefault(l, [])
+            if dims:
+                utils.check(
+                    operand is None or operand.shape[d] == operand.shape[dims[-1]],
+                    lambda: f"Incorrect subscript for operand #{pos}: "
+                    f"repeated label '{l}' requires dimensions "
+                    f"{d} and {dims[-1]} to have the same lenght, "
+                    f"but got {operand.shape[d]} != {operand.shape[dims[-1]]}",
+                    ValueError,
+                )
+            dims.append(d)
+
+        # Cannot subscript more dims than there are in the operand.
+        utils.check(
+            operand is None or n_subscripted_dims <= operand.ndim,
+            lambda: f"Incorrect subscript for operand #{pos}: "
+            f"it subscripts more dimenions ({n_subscripted_dims}) "
+            f"then there are in the operand ({operand.ndim})",
+            ValueError,
+        )
+
+        # Check no present ellipsis implies all dims are subscripted.
+        utils.check(
+            operand is None or label_dim_iter.seen_ellipsis or n_subscripted_dims == operand.ndim,
+            lambda: f"Incorrect subscript for operand #{pos}: "
+            "in the absence of ellipsis the number of subscripted dims "
+            f"{n_subscripted_dims} has to match the operand's dimensionality "
+            f"{operand.ndim}",
+            ValueError,
+        )
+
+        if label_dim_iter.seen_ellipsis:
+            label_dims_map.setdefault(Ellipsis, []).extend((label_dim_iter.ellipsis_start, label_dim_iter.ellipsis_end))
+        return label_dims_map
+
+    # Do some basic subscript checking.
+    # TODO: consolidate Numpy/PyTorch ways of handling ellipses.
+    # opt_einsum does it the Numpy way.
+    # This is fine for PyTorch as long as opt_einsum is in the path,
+    # and as long as it's computation path is not it's default.
+    operand_subscript_specs = [
+        get_subscript_spec(pos, op_spec, op) for pos, (op_spec, op) in enumerate(zip(subscripts, operands))
+    ]
+    out_spec = get_subscript_spec(len(operands), "" if output_subscript is None else output_subscript)
+
+    # NOTE: the checks below are must since opt_einsum is not doing them. {
+    operand_union_subscript_spec = collections.ChainMap(*operand_subscript_specs)
+    for l, dims in out_spec.items():
+        # Skip ellipsis.
+        if l is Ellipsis:
+            continue
+
+        # check uniqueness.
+        utils.check(
+            len(dims) == 1,
+            lambda: f"Output subscript string '{output_subscript}' includes multiple '{l}' labels",
+            ValueError,
+        )
+
+        # check output labels are coming from operand's subscripts.
+        utils.check(
+            l in operand_union_subscript_spec,
+            lambda: f"Output subscript string '{output_subscript}' includes a '{l}' label "
+            "which does not apper in neither of the operand's subsripts",
+            ValueError,
+        )
+    # }
+
+    # Check Ellipsis consistency - ellipsis-covered subshapes need to broadcast. {
+    op_ellipsis_shapes = []
+    for op_spec, op, s in zip(operand_subscript_specs, operands, subscripts):
+        ellipsis_start, ellipsis_end = op_spec.get(Ellipsis, (0, -op.ndim - 1))
+        op_ellipsis_shapes.append(op.shape[ellipsis_start : ellipsis_end + op.ndim + 1])
+
+    try:
+        clang.compute_broadcast_shape(*op_ellipsis_shapes)
+    except Exception as e:
+        raise ValueError("Implied by ellipsis operands' dimensions do not jointy broadcast") from e
+    # }
+
+    # Constructs a generalized diagonal tensor of the given rank
+    # of shape (dim_len,) * rank and boolean dtype.
+    def generalized_diagonal_tensor(dim_len, rank, device):
+        assert rank >= 2
+
+        def construct_eye(dim_len):
+            iota = arange(dim_len, device=device)
+            eye = unsqueeze(iota, -1) == unsqueeze(iota, 0)
+            return eye
+
+        eye = construct_eye(dim_len)
+        diag = eye
+        for _ in range(2, rank):
+            diag = unsqueeze(diag, -1) * eye
+        return diag
+
+    # Constructs a generalized diagonal mask that broadcasts
+    # over t, with diagonals across dimensions from the
+    # diagonal_dims argument.
+    # The result of this function is used for masking diagonals
+    # when contracting over repeated labels in subscripts.
+    def construct_broadcastable_diagonal(t, diagonal_dims):
+        # TODO: revisit and use index_put instead.
+        dim_len = t.shape[diagonal_dims[0]]
+        gen_diagonal = generalized_diagonal_tensor(dim_len, len(diagonal_dims), t.device)
+        return prims.broadcast_in_dim(gen_diagonal, t.shape, diagonal_dims)
+
+    # Labels unique to each operand are trivially contractable with sum.
+    def sum_unique_labels(operand, labels, unique_labels):
+        def removechars(s, chars):
+            return s.translate(str.maketrans(dict.fromkeys(chars)))
+
+        if unique_labels:
+            dims = [labels.index(name) for name in unique_labels]
+            operand = sum(operand, dims)
+            labels = removechars(labels, unique_labels)
+
+        return operand, labels
+
+    # Repeated labels imply contractions over masked diagonals.
+    def sum_repeated_labels(operand, labels, counts, keep_labels):
+        orig_labels = labels
+        # Dims to contract over, these correspond to repeated labels.
+        dims = []
+        # Groups diagonal dimensions of the same length.
+        # This allows to construct a broadcastable diagonal mask
+        # in a single call (per unique dim length)
+        # hence reducing the number of kernel calls.
+        diag_groups: Dict[int, list[int]] = {}
+
+        for label, count in counts.items():
+            # Process only repeated labels.
+            if count > 1:
+                label_dims = [d for d, l in enumerate(orig_labels) if l == label]
+                label_dim_len = operand.shape[label_dims[0]]
+                diag_groups.setdefault(label_dim_len, []).extend(label_dims)
+                if label not in keep_labels:
+                    # Fully contract the labels which need no preservation
+                    # (for example, when they are not in the output).
+                    labels = labels.replace(label, "")
+                else:
+                    # Otherwise contract over first (count - 1) occurrencies.
+                    labels = labels.replace(label, "", count - 1)
+                    label_dims = label_dims[:-1]
+                dims.extend(label_dims)
+
+        if dims:
+            # Contract over each diagonal dims group.
+            for diag_dims in diag_groups.values():
+                diag = construct_broadcastable_diagonal(operand, diag_dims)
+                operand = where(diag, operand, 0)
+            operand = sum(operand, dims)
+        return operand, labels
+
+    # Process contraction path.
+    _, contractions = opt_einsum.contract_path(orig_eq, *operands, einsum_call=False)
+    for operand_indices, contraction_set, eineq, _, contr_op_type in contractions.contraction_list:
+        input_eq, output_eq = eineq.split("->")
+        input_labels = input_eq.split(",")
+
+        if len(operand_indices) == 1:
+            operand = operands.pop(operand_indices[0])
+            (labels,) = input_labels
+            counts = collections.Counter(labels)
+
+            # sum unique contraction indices.
+            unique_labels = [l for l in contraction_set if counts[l] == 1]
+            operand, labels = sum_unique_labels(operand, labels, unique_labels)
+
+            # sum repeated indices over "diagonalized" operand.
+            operand, labels = sum_repeated_labels(operand, labels, counts, output_eq)
+
+        elif len(operand_indices) == 2:
+            a, b = map(operands.pop, operand_indices)
+            a_labels, b_labels = input_labels
+
+            a_counts = collections.Counter(a_labels)
+            b_counts = collections.Counter(b_labels)
+
+            a_unique_labels = [l for l in contraction_set if a_counts[l] == 1 and b_counts[l] == 0]
+            b_unique_labels = [l for l in contraction_set if b_counts[l] == 1 and a_counts[l] == 0]
+
+            # sum out unique to each operand labels
+            a, a_labels = sum_unique_labels(a, a_labels, a_unique_labels)
+            b, b_labels = sum_unique_labels(b, b_labels, b_unique_labels)
+
+            # sum out repeated labels which are not in the output and not in the other operand.
+            a, a_labels = sum_repeated_labels(a, a_labels, a_counts, output_eq + b_labels)
+            b, b_labels = sum_repeated_labels(b, b_labels, b_counts, output_eq + a_labels)
+
+            # Process remaining contractions below.
+            a_labels_set = frozenset(a_labels)
+            b_labels_set = frozenset(b_labels)
+
+            # Filter out labels contracted over the previous steps.
+            contraction_set = contraction_set & a_labels_set & b_labels_set
+            # Non-contractable labels present in the output and in the operands
+            # form the basis of "batch" dimensions.
+            batch_labels_set = frozenset(output_eq) & a_labels_set & b_labels_set
+
+            # Partition operand's dimensions into
+            # batch dimensions, contraction dimensions, and the rest dimensions.
+            # Additionally, the batch dimensions are sorted lexicographically
+            # to facilitate operands' mutual alignment across batch dimensions.
+            def partition_align_dims(operand, labels, labels_set):
+                # Extract sublabels' corresponding dimension indices.
+                def get_dim_idxs(sublabels, force_lex_order=False):
+                    if force_lex_order:
+                        sublabels = sorted(sublabels)
+                    return [labels.index(c) for c in sublabels]
+
+                # Batch dimensions are shared among several operands
+                # (see the definition of batch_labels_set variable).
+                # As such, their order is fixed to enforce a matching alignment.
+                batch_idx = get_dim_idxs(batch_labels_set, force_lex_order=True)
+                contraction_idx = get_dim_idxs(contraction_set)
+                rest_dims_idx = get_dim_idxs(labels_set - batch_labels_set - contraction_set)
+                return batch_idx, contraction_idx, rest_dims_idx
+
+            def apply_perm(seq, perm):
+                return [seq[i] for i in perm]
+
+            a_batch, a_contr, a_rest = partition_align_dims(a, a_labels, a_labels_set)
+            b_batch, b_contr, b_rest = partition_align_dims(b, b_labels, b_labels_set)
+
+            def get_shape_numel(shape):
+                return reduce(operator.mul, shape, 1)
+
+            # a and b can be contracted with bmm if
+            # - contraction set is non-empty,
+            # - a's and b's contraction dimension have the same lenght,
+            #   NOTE: if needed, we can relax this requirement
+            #   to just being broadcastable.
+            #   TODO: investigate this.
+            # - both a_rest and b_rest dimensions are non-empty.
+            def is_bmm_contractable(a, a_contr, a_rest, b, b_contr, b_rest):
+                if (a_contr or b_contr) and (a_rest and b_rest):
+                    a_contr_shape = [a.shape[d] for d in a_contr]
+                    b_contr_shape = [b.shape[d] for d in b_contr]
+                    return get_shape_numel(a_contr_shape) == get_shape_numel(b_contr_shape)
+                return False
+
+            if contr_op_type and contr_op_type.startswith("OUTER"):
+                # Outer product path. It could also be identified by the contraction set being empty.
+                a = reshape(a, a.shape + (1,) * b.ndim)
+                operand = a * b
+                labels = a_labels + b_labels
+
+            elif (
+                dtypes.is_float_dtype(a.dtype)
+                and dtypes.is_float_dtype(b.dtype)
+                and is_bmm_contractable(a, a_contr, a_rest, b, b_contr, b_rest)
+            ):
+                # The path to contractions with a single matmul call.
+                # The a and b operands' dimensions are permuted into
+                # (a_batch, a_rest, a_contr) and (b_batch, b_contr, b_rest) shapes,
+                # then the "rest" and the "contraction" dimensions get squashed so that
+                # a and b represent batched matrices suitable for contracting
+                # with a single matmul call.
+
+                a_perm = a_batch + a_rest + a_contr
+                b_perm = b_batch + b_contr + b_rest
+
+                a = permute(a, a_perm)
+                b = permute(b, b_perm)
+
+                # broadcast shape of a_batch and b_batch dims.
+                res_batch_shape = clang.compute_broadcast_shape(a.shape[: len(a_batch)], b.shape[: len(b_batch)])
+                # shape of a_rest dims.
+                res_a_shape = a.shape[len(a_batch) : -len(contraction_set)]
+                # shape of b_rest dims.
+                res_b_shape = b.shape[len(b_batch) + len(contraction_set) :]
+                # The shape the result of matmul will be reshaped into.
+                res_shape = res_batch_shape + res_a_shape + res_b_shape
+
+                # reshape (a_batch, a_rest, a_contr) -> (a_batch, numel(a_rest), numel(a_contr)).
+                a_rest_shape = get_shape_numel(a.shape[len(a_batch) : len(a_batch) + len(a_rest)])
+                a_contr_shape = get_shape_numel(a.shape[-len(a_contr) :])
+                a = reshape(a, a.shape[: len(a_batch)] + (a_rest_shape, a_contr_shape))
+
+                # reshape (b_batch, b_contr, b_rest) -> (b_batch, numel(b_contr), numel(b_rest)).
+                b_rest_shape = get_shape_numel(b.shape[-len(b_rest) :])
+                b_contr_shape = get_shape_numel(b.shape[len(b_batch) : len(b_batch) + len(b_contr)])
+                b = reshape(b, b.shape[: len(b_batch)] + (b_contr_shape, b_rest_shape))
+
+                # Perform a gemm/bmm contraction and restore the full-dim shape.
+                operand = matmul(a, b)
+                operand = reshape(operand, res_shape)
+
+                # Update the operand's labels.
+                # These will correspond to the string "{batch_dims}{a_rest}{b_rest}".
+                a_labels = "".join(apply_perm(list(a_labels), a_perm))
+                b_labels = "".join(apply_perm(list(b_labels), b_perm))
+                labels = a_labels[: -len(a_contr)] + b_labels[-len(b_rest) :]
+
+            else:
+                # The path to contractions with sum, aka TDOT, if contraction set is non-empty.
+                # If it is empty, it is similar to the OUTER path above but with special treatment
+                # of "batch" dimensions that requires alignment and handling of broadcasting.
+                # When the contraction set is non-emtpy,
+                # the idea is very similar to what is done in the gemm/bmm path above.
+                # Note: contracting over last dimensions for best efficiency
+                # when reducing over a * b.
+                a_perm = a_batch + a_rest + a_contr
+                b_perm = b_batch + b_rest + b_contr
+
+                a = permute(a, a_perm)
+                b = permute(b, b_perm)
+
+                # a = (a_batch, a_rest, a_contr),
+                # b = (b_batch, b_rest, b_contr), so
+                # a and b are aligned to
+                # a = (a_batch, a_rest, 1(b_rest), a_contr),
+                # b = (b_batch, 1(a_rest), b_rest, b_contr).
+                a = reshape(
+                    a,
+                    a.shape[: len(a_batch) + len(a_rest)] + (1,) * len(b_rest) + a.shape[len(a_batch) + len(a_rest) :],
+                )
+                b = reshape(b, b.shape[: len(b_batch)] + (1,) * len(a_rest) + b.shape[len(b_batch) :])
+
+                # Contraction set could be empty.
+                # This case is distinguished since sum over empty dims
+                # sums all the elements, and we want to avoid that.
+                if contraction_set:
+                    dims = list(range(-len(contraction_set), 0))
+                    operand = sum(a * b, dims)
+                else:
+                    # Nothing to contract and a and b are already aligned and broadcastable,
+                    # so the result is a simple mul.
+                    operand = a * b
+
+                # Update the operand's labels.
+                # These will correspond to the string "{batch_dims}{a_rest}{b_rest}".
+                a_labels = "".join(apply_perm(list(a_labels), a_perm))
+                b_labels = "".join(apply_perm(list(b_labels), b_perm))
+                labels = a_labels[: len(a_batch) + len(a_rest)] + b_labels[len(b_batch) : len(b_batch) + len(b_rest)]
+
+        else:
+            raise NotImplementedError
+
+        # Check that contraction labels are contracted and the output's labels are preserved.
+        assert frozenset(labels) == frozenset(output_eq)
+        # Permute to the output's dim order.
+        if labels != output_eq:
+            perm = tuple(labels.index(label) for label in output_eq)
+            operand = permute(operand, perm)
+
+        operands.append(operand)
+
+    return operands[0]
 
 
 # NOTE: this wrapper for prim matmul just broadcasts batch dimensions
