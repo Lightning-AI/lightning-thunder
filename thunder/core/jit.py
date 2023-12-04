@@ -96,8 +96,8 @@ class JitCompileCtx:
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
 
-    def lookaside(self, fn: Callable, *args, **kwargs) -> tuple[bool, None | Any] | JIT_SIGNALS:
-        return self._fn_lookaside(fn)
+    def lookaside(self, fn: Callable, *args, **kwargs) -> None | Callable:
+        return self._fn_lookaside(fn, *args, **kwargs)
 
 
 _jitcompilectx = ContextVar("jitcompilectx")
@@ -133,6 +133,7 @@ class JitRuntimeCtx:
     def __init__(self):
         self.frame_stack: list[JITFrame] = []
         self._globals_dict: dict[str, Any] | None = None
+        self._history: list[dis.Instruction | str] = []
         self._interpreted_instructions: list[dis.Instruction] = []
 
     @property
@@ -144,6 +145,11 @@ class JitRuntimeCtx:
     @property
     def interpreted_instructions(self) -> list[dis.Instruction]:
         return self._interpreted_instructions
+
+    # The operations and opaque calls encountered while interpreting
+    @property
+    def history(self) -> list[dis.Instruction | str]:
+        return self._history
 
     def peek_interpreter_stack(self) -> list:
         return self.frame_stack[-1].interpreter_stack
@@ -160,9 +166,20 @@ class JitRuntimeCtx:
         assert self.frame_stack
         del self.frame_stack[-1]
 
-    def add_interpreted_instruction(self, inst: dis.Instruction) -> JitRuntimeCtx:
+    # TODO Instead of appending to both history and and interpreted_instructions we could
+    #   consider just appending to history and then filtering to only instructions when
+    #   interpreted_instructions is accessed
+    def record_interpreted_instruction(self, inst: dis.Instruction) -> JitRuntimeCtx:
         self._interpreted_instructions.append(inst)
+        self._history.append(inst)
         return self
+
+    def record_opaque_call(self, fn: Callable) -> JitRuntimeCtx:
+        self._history.append(f"Opaque call to {fn} with name {getattr(fn, '__name__', 'None')}")
+        return self
+
+    def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
+        self._history.append(f"Lookaside to {fn.__name__}")
 
 
 _jitruntimectx = ContextVar("jitruntimectx")
@@ -370,9 +387,32 @@ class register_opcode_handler:
         return _default_opcode_handler_map.get(self.name, fn)
 
 
+# Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
+def _bool_lookaside(x: Any) -> bool:
+    def impl():
+        # Handles objects that define __bool__
+        if hasattr(x, "__bool__"):
+            return getattr(x, "__bool__")()
+
+        # Handles objects that do not define __bool__ but define __len__
+        # TODO Add a len() lookaside
+        if hasattr(x, "__len__"):
+            return len(x) != 0
+
+        # NOTE By default, objects evaluate to True
+        return True
+
+    return _jit(impl)
+
+
+_default_lookaside_map: dict[Callable, Callable] = {
+    bool: _bool_lookaside,
+}
+
+
 # The default function lookaside -- currently it doesn't intercept anything
-def default_fn_lookaside(fn, *args, **kwargs) -> tuple[bool, None | Any] | JIT_SIGNALS:
-    return (False, None)
+def default_lookaside(fn, *args, **kwargs) -> None | Callable:
+    return _default_lookaside_map.get(fn, None)
 
 
 #
@@ -1205,7 +1245,14 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
     def impl():
         return bool(tos)
 
-    cnd: bool = _jit(impl)
+    # Acquires the condition, only calling bool() if tos requires conversion
+    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
+    cnd: bool
+    if tos is False or tos is True:
+        cnd = tos
+    else:
+        cnd = _jit(impl)
+
     if not cnd:
         return inst_ptr + inst.arg + 1
 
@@ -1222,7 +1269,14 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
     def impl():
         return bool(tos)
 
-    cnd: bool = _jit(impl)
+    # Acquires the condition, only calling bool() if tos requires conversion
+    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
+    cnd: bool
+    if tos is False or tos is True:
+        cnd = tos
+    else:
+        cnd = _jit(impl)
+
     if cnd:
         return inst_ptr + inst.arg + 1
 
@@ -1262,7 +1316,14 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
     def impl():
         return bool(tos)
 
-    cnd: bool = _jit(impl)
+    # Acquires the condition, only calling bool() if tos requires conversion
+    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
+    cnd: bool
+    if tos is False or tos is True:
+        cnd = tos
+    else:
+        cnd = _jit(impl)
+
     if not cnd:
         return inst.arg
     return None
@@ -1277,7 +1338,14 @@ def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     def impl():
         return bool(tos)
 
-    cnd: bool = _jit(impl)
+    # Acquires the condition, only calling bool() if tos requires conversion
+    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
+    cnd: bool
+    if tos is False or tos is True:
+        cnd = tos
+    else:
+        cnd = _jit(impl)
+
     if cnd:
         return inst.arg
     return None
@@ -1650,8 +1718,7 @@ def make_generator(
 # Interprets the callable with the given args and kwargs
 # NOTE There are (currently) 6 cases for interpretation:
 #
-#   (1) The callable has a lookaside, in which case it executes the operation or signals the operation
-#           is unsafe
+#   (1) The callable has a lookaside, in which case it's used to execute the operation
 #   (2) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
 #   (3) The callable is a partial object, in which case it's recursively unwrapped
@@ -1666,23 +1733,15 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
     # (1) Handles lookasides
-    lookaside_result: tuple[bool, None | Any] | JIT_SIGNALS = compilectx.lookaside(fn, *args, **kwargs)
-
-    # TODO Improve this error message
-    if lookaside_result is JIT_SIGNALS.UNSAFE_FUNCTION:
-        raise RuntimeError(f"Attempted to execute unsafe function {fn=}")
-
-    did_lookaside: bool
-    lookaside_retval: Any
-    did_lookaside, lookaside_retval = lookaside_result
-
-    # Returns value from lookaside
-    if did_lookaside:
-        return lookaside_retval
+    lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
+    if lookaside_fn:
+        runtimectx.record_lookaside(lookaside_fn)
+        return lookaside_fn(*args, **kwargs)
 
     # (2) Handles opaque functions
     if is_opaque(fn):
         opaque_result: Any = fn(*args, **kwargs)
+        runtimectx.record_opaque_call(fn)
         return opaque_result
 
     # (3) Handles partial objects
@@ -1797,7 +1856,7 @@ def _jit_run(
             assert frame.inst_ptr <= max_inst_ptr
             frame.inst_ptr += 1
         inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
-        runtimectx.add_interpreted_instruction(inst)
+        runtimectx.record_interpreted_instruction(inst)
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
         frame.nexti(inst)
@@ -1869,6 +1928,11 @@ class JIT_SIGNALS(Enum):
     EXCEPTION_RAISED = auto()
 
 
+#
+# Defines jit ux
+#
+
+
 # Interprets the Python program
 # The interpretation can be extended by specifying one or more of the following:
 #   (1) The opcode_interpreter function, which has the signature
@@ -1898,25 +1962,23 @@ class JIT_SIGNALS(Enum):
 #
 #   (2) The fn_lookaside function, which has the signature
 #
-#   fn_lookaside(fn, *args, **kwargs) -> tuple[bool, None | Any] | JIT_SIGNALS
+#   fn_lookaside(fn, *args, **kwargs) -> None | Callable
 #
 #   The function 'lookaside' is an opportunity to intercept functions and either provide custom
 #   implementations of them or raise exceptions if they are "unsafe".
 #   It is called whenever a function is jitted.
 #
-#   If the function is unsafe, then JIT_SIGNALS.UNSAFE_FUNCTION should be returned.
+#   If there is no lookaside, then None should be returned.
 #
-#   Otherwise, the function should return a tuple with two values:
+#   If the function is unsafe, then a callable that raises UnsafeOperator (to be implemented)
+#       should be returned.
 #
-#       - The first value is a boolean that is True if a lookaside occurred, and False otherwise
-#       - The second value should be the result of the lookaside, if it happened, or None
-#
-#   If a lookaside did not occur, then the second value in the tuple is ignored.
+#   Otherwise, the function should implement the lookaside when called with the same args and kwargs.
 def jit(
     fn: Callable,
     *,
     opcode_interpreter: Callable = default_opcode_interpreter,
-    fn_lookaside: Callable = default_fn_lookaside,
+    fn_lookaside: Callable = default_lookaside,
 ) -> Callable:
     compilectx: JitCompileCtx = JitCompileCtx(
         opcode_interpreter=opcode_interpreter,
@@ -1931,6 +1993,7 @@ def jit(
             try:
                 jit_result: Any = _jit(fn, *args, **kwargs)
                 fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
+                fn_._last_history = runtimectx.history
                 return jit_result
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
@@ -1944,3 +2007,7 @@ def jit(
 
 def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
     return getattr(fn, "_last_interpreted_instructions", None)
+
+
+def last_history(fn: Callable) -> None | list[dis.Instruction | str]:
+    return getattr(fn, "_last_history", None)

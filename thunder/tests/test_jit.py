@@ -922,6 +922,53 @@ def test_use_of_deleted_raises():
         jfoo(5)
 
 
+def test_bool_conversion():
+    def foo(a):
+        return bool(a)
+
+    jfoo = jit(foo)
+
+    literal_cases = (0, 1, False, True, -0.5, 73, complex(1, 2), None, [], (), "", "abc", [1, 3], (5, 6), {}, {1: 3})
+
+    for x in literal_cases:
+        assert jfoo(x) == foo(x)
+
+    # Checks default class behavior
+    class mycls:
+        pass
+
+    x = mycls()
+
+    assert jfoo(x) == foo(x)
+    assert jfoo(mycls) == foo(mycls)
+
+    # Checks dunder bool handling (by default classes are true)
+    class mycls:
+        def __bool__(self):
+            return False
+
+    x = mycls()
+
+    assert jfoo(x) == foo(x)
+
+    # Classes that define dunder len and not dunder bool use dunder len for their bool() conversion
+    class mycls:
+        def __len__(self):
+            return 0
+
+    x = mycls()
+
+    assert jfoo(x) == foo(x)
+
+    class mycls:
+        def __len__(self):
+            return 1
+
+    x = mycls()
+
+    assert jfoo(x) == foo(x)
+
+
 #
 # Network tests
 #
