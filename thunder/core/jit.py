@@ -369,7 +369,6 @@ def default_opcode_interpreter(inst: dis.Instruction, /, **interpreter_state) ->
     return handler(inst, **interpreter_state)
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1528
 class register_opcode_handler:
     def __init__(self, name: str, *, min_ver: tuple[int, int] | None = None, max_ver: tuple[int, int] | None = None):
         self.name: str = name
@@ -777,6 +776,21 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None
     stack.append(result)
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-COPY
+@register_opcode_handler("COPY", min_ver=(3, 11))
+def _copy_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    assert inst.arg >= 1
+    stack.append(stack[-inst.arg])
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-COPY_FREE_VARS
+@register_opcode_handler("COPY_FREE_VARS", min_ver=(3, 11))
+def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
+    # we already do this when setting up the function call in _jit
+    pass
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-DICT_MERGE
 @register_opcode_handler("DICT_MERGE")
 def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
@@ -807,36 +821,6 @@ def _dup_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-1])
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
-@register_opcode_handler("EXTENDED_ARG")
-def _extended_arg_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    pass
-
-
-# https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
-@register_opcode_handler("MAKE_CELL", min_ver=(3, 11))
-def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> None:
-    assert isinstance(inst.arg, int)
-    i: int = inst.arg
-    assert i >= 0 and i < len(frame.localsplus)
-    val = frame.localsplus[i]
-
-    if isinstance(val, Py_NULL):
-        # empty local variable slots (Py_NULL()) produce an empty cell
-        frame.localsplus[i] = CellType()
-    else:
-        # wrap the current val into a cell
-        frame.localsplus[i] = CellType(val)
-
-
-# https://docs.python.org/3.11/library/dis.html#opcode-COPY
-@register_opcode_handler("COPY", min_ver=(3, 11))
-def _copy_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert isinstance(inst.arg, int)
-    assert inst.arg >= 1
-    stack.append(stack[-inst.arg])
-
-
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
 @register_opcode_handler("DELETE_FAST")
 def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
@@ -854,6 +838,12 @@ def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     tos = stack.pop()
     tos1 = stack.pop()
     del tos1[tos]
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
+@register_opcode_handler("EXTENDED_ARG")
+def _extended_arg_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    pass
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
@@ -1171,6 +1161,22 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
         stack.append(meth)
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
+@register_opcode_handler("MAKE_CELL", min_ver=(3, 11))
+def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+    assert i >= 0 and i < len(frame.localsplus)
+    val = frame.localsplus[i]
+
+    if isinstance(val, Py_NULL):
+        # empty local variable slots (Py_NULL()) produce an empty cell
+        frame.localsplus[i] = CellType()
+    else:
+        # wrap the current val into a cell
+        frame.localsplus[i] = CellType(val)
+
+
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1526
 # https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
 @register_opcode_handler("MAKE_FUNCTION")
@@ -1207,13 +1213,6 @@ def _nop_handler(inst: dis.Instruction, /, **kwargs) -> None:
 # https://docs.python.org/3.11/library/dis.html#opcode-RESUME
 @register_opcode_handler("RESUME", min_ver=(3, 11))
 def _resume_handler(inst: dis.Instruction, /, **kwargs) -> None:
-    pass
-
-
-# https://docs.python.org/3.11/library/dis.html#opcode-COPY_FREE_VARS
-@register_opcode_handler("COPY_FREE_VARS", min_ver=(3, 11))
-def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
-    # we already do this when setting up the function call in _jit
     pass
 
 
@@ -1489,6 +1488,23 @@ def _swap_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
     stack[-1] = other
     stack[-i] = top
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_ATTR
+@register_opcode_handler("STORE_ATTR")
+def _store_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+    assert type(inst.arg) is int
+    namei: int = inst.arg
+
+    name: str = co.co_names[namei]
+
+    tos: Any = stack.pop()
+    tos1: Any = stack.pop()
+
+    def impl():
+        setattr(tos, name, tos1)
+
+    _jit(impl)
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552

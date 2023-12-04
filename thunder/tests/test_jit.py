@@ -969,6 +969,34 @@ def test_bool_conversion():
     assert jfoo(x) == foo(x)
 
 
+def test_store_attr():
+    def foo(a, v):
+        a.foo = v
+
+    jfoo = jit(foo)
+
+    class mycls:
+        pass
+
+    x = mycls()
+
+    jfoo(x, 5)
+    assert x.foo == 5
+
+    # Checks that dunder setattr is called
+    class mycls:
+        def __setattr__(self, name, value):
+            # NOTE This can't call __setattr__ again (not even indirectly, like through self.bar = value)
+            #   because that would cause infinite recursion
+            # This avoids the infinite recursion by calling objec'ts dunder setattr, which isn't hooked
+            super().__setattr__("bar", value)
+
+    x = mycls()
+
+    jfoo(x, 5)
+    assert x.bar == 5
+
+
 #
 # Network tests
 #
