@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import builtins
+import contextlib
+import contextvars
+import dataclasses
 import dis
-import sys
-import collections
-from collections.abc import Iterator, Sequence, Callable, Iterable, Mapping
-from dataclasses import dataclass, field
-import inspect
+import enum
+import functools
 import linecache
-from typing import Any
-from collections.abc import MutableMapping
+import inspect
+import sys
+from typing import Any, NamedTuple
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
+
 from types import (
     CellType,
     CodeType,
@@ -19,13 +23,6 @@ from types import (
     MethodWrapperType,
     WrapperDescriptorType,
 )
-import functools
-from functools import partial
-from enum import Enum, auto
-from numbers import Number
-from contextvars import ContextVar
-from contextlib import contextmanager
-import builtins
 
 import torch
 
@@ -100,7 +97,7 @@ class JitCompileCtx:
         return self._fn_lookaside(fn, *args, **kwargs)
 
 
-_jitcompilectx = ContextVar("jitcompilectx")
+_jitcompilectx = contextvars.ContextVar("jitcompilectx")
 
 
 # Sets the jit ctx
@@ -119,7 +116,7 @@ def reset_jitcompilectx(token) -> None:
 
 
 # Context manager for setting the jitctx
-@contextmanager
+@contextlib.contextmanager
 def jitcompilectx(_jitcompilectx: JitCompileCtx):
     tok: Any = set_jitcompilectx(_jitcompilectx)
     try:
@@ -182,7 +179,7 @@ class JitRuntimeCtx:
         self._history.append(f"Lookaside to {fn.__name__}")
 
 
-_jitruntimectx = ContextVar("jitruntimectx")
+_jitruntimectx = contextvars.ContextVar("jitruntimectx")
 
 
 # Sets the jit ctx
@@ -201,7 +198,7 @@ def reset_jitruntimectx(token) -> None:
 
 
 # Context manager for setting the jitctx
-@contextmanager
+@contextlib.contextmanager
 def jitruntimectx(_jitruntimectx: JitRuntimeCtx):
     tok: Any = set_jitruntimectx(_jitruntimectx)
     try:
@@ -211,7 +208,7 @@ def jitruntimectx(_jitruntimectx: JitRuntimeCtx):
 
 
 # A convenience helper for setting both the jit compile and runtime ctx
-@contextmanager
+@contextlib.contextmanager
 def jitctx(_jitcompilectx: JitCompileCtx, _jitruntimectx: JitRuntimeCtx):
     compile_tok: Any = set_jitcompilectx(_jitcompilectx)
     runtime_tok: Any = set_jitruntimectx(_jitruntimectx)
@@ -282,16 +279,13 @@ class PyErr_StackItem:
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
 if sys.version_info < (3, 11):
-    Positions = collections.namedtuple(
-        "Positions",
-        [
-            "lineno",
-            "end_lineno",
-            "col_offset",
-            "end_col_offset",
-        ],
-        defaults=[None] * 4,
-    )
+
+    class Positions(NamedTuple):
+        lineno: int = None
+        end_lineno: int = None
+        col_offset: int = None
+        end_col_offset: int = None
+
 else:
     Positions = dis.Positions
 
@@ -300,7 +294,7 @@ else:
 # It contains all information needed to execute the current code
 # so for generators (which need to suspend and resume) one only needs to
 # have the JITFrame around to continue execution.
-@dataclass
+@dataclasses.dataclass
 class JITFrame:
     code: CodeType
     qualname: str
@@ -309,12 +303,12 @@ class JITFrame:
     positions: Positions | None = None
     inst: dis.Instruction | None = None
     call_shape_kwnames: tuple[str] | None = None  # for KW_NAMES opcode in 3.11+
-    interpreter_stack: list[Any] = field(default_factory=list)
-    try_stack: list[PyTryBlock] = field(default_factory=list)
+    interpreter_stack: list[Any] = dataclasses.field(default_factory=list)
+    try_stack: list[PyTryBlock] = dataclasses.field(default_factory=list)
     inst_ptr: int = 0
 
     # in Python 3.11+ the slots are not split by local/cell/free any more
-    localsplus: list[Any] = field(default_factory=list)
+    localsplus: list[Any] = dataclasses.field(default_factory=list)
 
     # advance to the given instruction
     def nexti(self, inst: dis.Instruction):
@@ -419,7 +413,7 @@ def default_lookaside(fn, *args, **kwargs) -> None | Callable:
 #
 
 
-class BINARY_OP(Enum):
+class BINARY_OP(enum.Enum):
     ADD = 0
     AND = 1
     FLOORDIV = 2
@@ -1935,13 +1929,13 @@ def _jit_run(
 
 # Special signals for the interpreter
 # TODO Consider a different name for this class
-class JIT_SIGNALS(Enum):
-    UNHANDLED_OPCODE = auto()
-    UNSAFE_FUNCTION = auto()
-    RETURN_VALUE = auto()
-    RETURN_GENERATOR = auto()
-    YIELD_VALUE = auto()
-    EXCEPTION_RAISED = auto()
+class JIT_SIGNALS(enum.Enum):
+    UNHANDLED_OPCODE = enum.auto()
+    UNSAFE_FUNCTION = enum.auto()
+    RETURN_VALUE = enum.auto()
+    RETURN_GENERATOR = enum.auto()
+    YIELD_VALUE = enum.auto()
+    EXCEPTION_RAISED = enum.auto()
 
 
 #
