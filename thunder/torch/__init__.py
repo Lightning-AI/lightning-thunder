@@ -1745,6 +1745,13 @@ def take_along_dim(a: TensorLike, /, indices: TensorLike, dim: int) -> TensorLik
     return clang.take_along_axis(a, indices, dim)
 
 
+@torchsymbol(torch.index_put, is_method=True)
+def index_put(
+    a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
+) -> TensorLike:
+    return clang.index_put(a, indices, values, accumulate)
+
+
 #
 # Linear Algebra operations
 #

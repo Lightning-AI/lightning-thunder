@@ -3800,6 +3800,70 @@ index_add_opinfo = OpInfo(
 shape_ops.append(index_add_opinfo)
 
 
+# NOTE: index_put uses getitem in backward which currently doesn't support indices>1D and bool indices
+# Cases with indices>1D are only tested for forward
+# vjp test is disabled by setting values.requires_grad=False
+def index_put_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # a.shape, [index.shape], values.shape, accumulate
+    cases_0D_1Dindices = (
+        ((4,), [()], (), False),
+        ((4, 2, 3), [(), (), ()], (), True),
+        ((0,), [(0,)], (0,), False),
+        ((4, 2, 3), [(), (), ()], (), False),
+        ((4, 2, 3), [(3,), (3,), (3,)], (3,), False),
+        ((4, 2, 3), [(2,), (2,)], (), True),
+        ((4, 2, 3), [(4,), (), ()], (4,), True),
+        ((4, 2, 3), [(4,), (1,), ()], (1,), True),
+        ((4, 2, 3), [(), (2,), ()], (1,), False),
+        ((4, 2, 3), [(2,), (2,)], (1,), True),
+        ((4, 2, 3), [(3)], (1,), False),
+        ((4, 2, 3), [(0,)], (2, 3), False),
+        ((4, 2, 3), [(0,), (0,)], (1,), False),
+        ((4,), [(2,)], (1,), True),
+    )
+
+    cases = (
+        ((4, 2, 3), [(2, 2), (2, 2), (2, 2)], (2,), False),
+        ((4, 2, 3), [(2, 2), (2, 1)], (1,), True),
+        ((4, 2, 3), [(2, 2), (), (2, 1)], (2, 1), True),
+        ((4, 2, 3), [(4, 2)], (1, 1), False),
+        ((4,), [(2, 2)], (), True),
+    )
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, requires_grad=False)
+    make_values = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    # Cases with indices>1D are only tested for forward
+    # vjp test is disabled by setting values.requires_grad=False
+    for shape_a, index_shapes, shape_vals, accumulate in cases:
+        for index_dtype in [torch.int, torch.long]:
+            indices = []
+            a = make(shape_a)
+            vals = make_values(shape_vals)
+            for i, index_shape in enumerate(index_shapes):
+                indices.append(make_index(index_shape, low=-shape_a[i], high=shape_a[i], dtype=index_dtype))
+            yield SampleInput(a, indices, vals, accumulate)
+
+    # Tested for both forward and vjp tests
+    for shape_a, index_shapes, shape_vals, accumulate in cases_0D_1Dindices:
+        for index_dtype in [torch.int, torch.long]:
+            indices = []
+            a = make(shape_a)
+            vals = make(shape_vals)
+            for i, index_shape in enumerate(index_shapes):
+                indices.append(make_index(index_shape, low=-shape_a[i], high=shape_a[i], dtype=index_dtype))
+            yield SampleInput(a, indices, vals, accumulate)
+
+
+index_put_opinfo = OpInfo(
+    ltorch.index_put,
+    sample_input_generator=index_put_sample_generator,
+    torch_reference=torch.index_put,
+)
+shape_ops.append(index_put_opinfo)
+
+
 # a.shape, dim, b.shape
 take_along_axis_cases = (
     ((4, 2, 3), 0, (8, 2, 3)),

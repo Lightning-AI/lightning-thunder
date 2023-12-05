@@ -936,6 +936,32 @@ def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim
     return prims.scatter_add(a, indices, value, dim)
 
 
+# NOTE revisit the decomposition when fuser supports index_put
+@clang_ctx
+def index_put(
+    a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
+) -> TensorLike:
+    utils.check(
+        len(indices) <= a.ndim, lambda: f"Too many indices for tensor of dimension {a.ndim} (got {len(indices)} )"
+    )
+
+    # broadcast all index tensors together
+    broadcast_indices = maybe_broadcast(*indices)
+
+    # expand values
+    # the expand rule is: Left-align the input shape and the index shape,
+    # and join the index shape and the remaining input shape to form the expanded_shape. e.g.:
+    # a shape:      m n p q
+    # index shape   x y
+    # expand_shape: x y p q
+    if broadcast_indices:
+        dims_indexed = len(broadcast_indices)
+        expanded_shape = broadcast_indices[0].shape + a.shape[dims_indexed:]
+        values = expand(values, expanded_shape)
+
+    return prims.index_put(a, broadcast_indices, values, accumulate)
+
+
 # Unsqueezes a, adding zero or more dimensions of length 1
 # Added dimensions are specified by their position in the final tensor
 # Based on https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.expand_dims.html

@@ -1043,6 +1043,7 @@ _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 #
 
 index_add = _register_torch_operation("index_add")
+index_put = _register_torch_operation("index_put")
 scatter_add = _register_torch_operation("scatter_add")
 index_select = _register_torch_operation("index_select")
 take_along_dim = _register_torch_operation("take_along_dim")
@@ -1051,6 +1052,12 @@ take_along_dim = _register_torch_operation("take_along_dim")
 # NOTE PyTorch has a different order for and names of the parameters
 def _index_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     return index_add(a, dim, index, value)
+
+
+def _index_put_prim_transform(
+    a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
+) -> TensorLike:
+    return index_put(a, indices, values, accumulate)
 
 
 # NOTE torch.compile currently fails to compile scatter add in bfloat16
@@ -1084,6 +1091,7 @@ def _take_along_axis_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: 
 
 
 _register_implementation(prims.index_add, checker=_always_executable, execution_transform=_index_add_prim_transform)
+_register_implementation(prims.index_put, checker=_always_executable, execution_transform=_index_put_prim_transform)
 _register_implementation(prims.scatter_add, checker=_always_executable, execution_transform=_scatter_add_prim_transform)
 _register_implementation(prims.take, checker=_always_executable, execution_transform=_take_prim_transform)
 _register_implementation(
@@ -1091,6 +1099,7 @@ _register_implementation(
 )
 
 _register_implementation(ltorch.index_add, index_add, checker=_always_executable)
+_register_implementation(ltorch.index_put, index_put, checker=_always_executable)
 _register_implementation(ltorch.index_select, index_select, checker=_always_executable)
 _register_implementation(ltorch.scatter_add, checker=_always_executable, execution_transform=_scatter_add_transform)
 _register_implementation(ltorch.take_along_dim, take_along_dim, checker=_always_executable)

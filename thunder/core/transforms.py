@@ -3608,6 +3608,44 @@ def take_backward(
     return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim)
 
 
+@register_augmented_forward("torch.index_put")
+def index_put_aug_fwd(
+    a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool = False
+) -> VJPDual:
+    primal = clang.index_put(a, indices, values, accumulate)
+    residuals = (
+        indices,
+        values,
+        accumulate,
+    )
+    return VJPDual(primal, residuals)
+
+
+def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+    if not shape:
+        return a.sum()
+    leading_dims = a.ndim - len(shape)
+    reduce_dims = tuple(range(leading_dims)) + tuple(
+        i for i in range(leading_dims, a.ndim) if shape[i - leading_dims] == 1 and a.shape[i] != 1
+    )
+    a = ltorch.sum(a, dim=reduce_dims, keepdim=True)
+    if leading_dims > 0:
+        return ltorch.view(a, shape)
+    return a
+
+
+@register_backward("torch.index_put")
+def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool, g: TensorProxy):
+    g_values = g[indices]
+    # torch has extra logic to handle the expanded values
+    if not utils.same_shape(g_values.shape, values.shape):
+        if clang.compute_broadcast_shape(g_values.shape, values.shape):
+            g_values = sum_to(g_values, values.shape)
+    if accumulate:
+        return g, g_values
+    return clang.index_put(g, indices, ltorch.zeros_like(values), False), g_values
+
+
 @register_augmented_forward(prims.PrimIDs.TAKE_ALONG_AXIS)
 def take_along_axis_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
     primal = prims.take_along_axis(x, index, dim)

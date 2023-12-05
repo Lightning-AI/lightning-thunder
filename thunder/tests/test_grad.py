@@ -35,6 +35,7 @@ op_skip = {
     "index_select",
     # Finite difference approximation doesn't work for this function
     "embedding",
+    "index_put",
 }
 
 # Don't rely on the generated list of supported ops.
@@ -455,6 +456,32 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
+
+
+# Testing with finite differences has flaky accuracy fails
+@ops((op for op in opinfos if op.name == "index_put"), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # skip the test cases when indices > 1D or indices are bool
+        # values.requires_grad is used here just as a way to distinguish unsupported cases
+        if not sample.args[2].requires_grad:
+            continue
+
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        # args: a, indices, values, accumulate
+        grad_inputs = [sample.args[0], sample.args[2]]
+        expected = torch.autograd.grad(out, grad_inputs, v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        actual_out, actual_grad = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
+            flat_args, (v,)
+        )
+        comp(actual_out, out)
+        comp(actual_grad[0], expected[0])
+        comp(actual_grad[-2], expected[1])
 
 
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes

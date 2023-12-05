@@ -150,6 +150,7 @@ class PrimIDs(Enum):
     VAR_MEAN = auto()
     # Scatter and gather prims (Experimental!)
     INDEX_ADD = auto()
+    INDEX_PUT = auto()
     SCATTER_ADD = auto()
     TAKE = auto()
     TAKE_ALONG_AXIS = auto()
@@ -1938,6 +1939,39 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
 
 
 index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
+
+
+def index_put_meta(
+    a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool
+) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(values, TensorProxy)
+    utils.check_type(indices, Sequence)
+    utils.check_types(indices, TensorProxy)
+    utils.check(pytype(accumulate) is bool, f"Expected boolean {accumulate=}")
+
+    supported_index_dtype = {dtypes.int32, dtypes.int64}
+    for index in indices:
+        utils.check(dtypes.to_dtype(index) in supported_index_dtype, lambda: f"Unsupported input dtype {index.dtype}")
+
+    utils.check_same_device(a, values, *indices)
+    utils.check_same_dtype(a, values)
+
+    utils.check(
+        len(indices) <= a.ndim, lambda: f"Too many indices for tensor of dimension {a.ndim} (got {len(indices)} )"
+    )
+
+    if indices:
+        utils.check_same_shape(*indices)
+        expanded_shape = indices[0].shape + a.shape[len(indices) :]
+        utils.check(
+            utils.same_shape(values.shape, expanded_shape),
+            lambda: f"Expected 'values' to have the shape of {expanded_shape} (got {values.shape} )",
+        )
+    return TensorProxy(like=a)
+
+
+index_put = make_prim(PrimIDs.INDEX_PUT, "index_put", meta=index_put_meta)
 
 
 def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
