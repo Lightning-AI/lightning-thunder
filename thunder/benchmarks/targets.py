@@ -8,6 +8,7 @@ import pytest
 import torch
 import thunder
 from thunder.core.transforms import grad, grad_v1, clear_grads, populate_grads, get_grad, put_grad, put_grads
+from thunder.core.jit import jit
 
 from thunder.benchmarks import (
     Benchmark,
@@ -61,6 +62,26 @@ def wrap_for_benchmark(fn):
 def torch_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_executor(module)
+
+    if isinstance(module, torch.nn.Sequential):
+
+        def wrapper(*args):
+            result = fn_(args)
+            return result
+
+        return wrapper
+
+    def wrapper(*args, **kwargs):
+        result = fn_(*args, **kwargs)
+        return result
+
+    return wrapper
+
+
+def interpreter_fwd(b: Benchmark):
+    module = b.fn()
+    fn_ = torch_executor(module)
+    fn_ = jit(fn_)
 
     if isinstance(module, torch.nn.Sequential):
 
@@ -758,3 +779,25 @@ def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex:
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+#
+# Jit benchmarks
+#
+
+
+@pytest.mark.parametrize("executor,", (torch_fwd, interpreter_fwd), ids=("python", "interpreter"))
+def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
+    bench: Benchmark = NanoGPTBenchmark(
+        config="gpt2",
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=False,
+        only_return_loss=False,
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
