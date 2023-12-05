@@ -1,5 +1,5 @@
 import pytest
-from functools import partial
+from functools import partial, wraps
 
 import torch
 
@@ -40,10 +40,25 @@ def func_with_dropout(t0):
     return t5
 
 
+def disable_rematerialization_in_nvfuser_fusion(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from thunder.executors.nvfuserex_impl import ex
+
+        ex._use_rematerialization = False
+        try:
+            return func(*args, **kwargs)
+        finally:
+            ex._use_rematerialization = True
+
+    return wrapper
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
 )
+@disable_rematerialization_in_nvfuser_fusion
 def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
@@ -126,6 +141,7 @@ def test_apply_rematerialization_producer(executor, device, _):
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
 )
+@disable_rematerialization_in_nvfuser_fusion
 def test_apply_rematerialization_consumer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = thunder.compile(func, disable_preprocessing=True)

@@ -20,6 +20,7 @@ from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify, unvariableify, Variable, pyval
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.rematerialization import rematerialize
 from thunder.core.utils import OrderedSet, check
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
@@ -483,6 +484,10 @@ class nvFuserExecutor(FusionExecutor):
     def __init__(self):
         super().__init__("nvfuser", version=nvfuser.version())
 
+        # TODO: Replace this with a query to current CompileData after
+        # https://github.com/Lightning-AI/lightning-thunder/pull/1517 is merged
+        self._use_rematerialization = True
+
     def flatten(self, bsym: BoundSymbol) -> list[BoundSymbol]:
         flattened: list[BoundSymbol] = []
 
@@ -723,6 +728,13 @@ class nvFuserExecutor(FusionExecutor):
         #     fused_bsyms.append(fusion_bsym)
 
         fusedtrace.bound_symbols = fused_bsyms
+
+        # Some of the operations might be better placed with its consumers (for
+        # example residual connection in transformer block). This pass moves
+        # them to the consumer. See
+        # https://github.com/Lightning-AI/lightning-thunder/issues/1520
+        if self._use_rematerialization:
+            fusedtrace = rematerialize(fusedtrace)
 
         fusedtrace = remove_redundant_casts(fusedtrace)
         fusedtrace = self.cse(fusedtrace)

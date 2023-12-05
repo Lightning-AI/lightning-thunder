@@ -405,14 +405,14 @@ def _update_nvfusion_call_ctx(trace: TraceCtx, bsym: BoundSymbolInterface) -> Bo
     return nvfuser_executor.fuse(nvfusion_bsym_to_region(trace, bsym), counter)
 
 
-def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
+def rematerialize(trace: TraceCtx) -> TraceCtx:
     """Rematerialize the trace.
 
     Args:
         trace (TraceCtx): Trace object.
 
     Returns:
-        tuple[TraceCtx, list[TraceCtx]]: Rematerialized trace and the list of
+        TraceCtx: Rematerialized trace and the list of
             rematerialized traces.
     """
     start_time_ns = time.time_ns()
@@ -468,7 +468,7 @@ def rematerialize(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     elapsed_time_millis = elapsed_time_ns // 1000000
 
     rematerialized_trace.set_provenance(TraceProvenance(f"Rematerialization (took {elapsed_time_millis} milliseconds)"))
-    return rematerialized_trace, [rematerialized_trace]
+    return rematerialized_trace
 
 
 def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
@@ -500,7 +500,7 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     joint_extrace.bound_symbols.append(
         replace(fw_trace.bound_symbols[-1], args=(fw_trace.bound_symbols[-1].args[0], bw_trace.bound_symbols[-1].args))
     )
-    joint_extrace, _ = rematerialize(joint_extrace)
+    joint_extrace = rematerialize(joint_extrace)
 
     # We need to update "save_for_backward" sequence
     new_bw_bsyms = joint_extrace.bound_symbols[len(fw_trace.bound_symbols) :]
