@@ -27,6 +27,7 @@ import thunder.torch as ltorch
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor
 import thunder.executors as executors
 from thunder.executors.torch_autograd import thunder_backward
+from thunder.core.transforms import autocast
 
 import torch as torch
 import numpy as np
@@ -397,7 +398,7 @@ class _key_value_separator:
 
 
 # Returns a hashable key or None if the given args and kwargs are not hashable
-def _make_cache_key(args, kwargs) -> None | tuple:
+def _make_cache_key(args, kwargs, autocast_key=None) -> None | tuple:
     key = [None] * (len(args) + len(kwargs))
 
     # Constructs arg portion of key
@@ -423,12 +424,22 @@ def _make_cache_key(args, kwargs) -> None | tuple:
 
         key[offset + idx] = subkey
 
+    if autocast_key is not None:
+        key += autocast_key
+
     return tuple(key)
 
 
+# construct cache key for autocast operations
+def _make_autocast_cache_key(
+    is_autocast_enabled, is_autocast_cpu_enabled, autocast_gpu_dtype, autocast_cpu_dtype
+) -> list:
+    return [is_autocast_enabled, is_autocast_cpu_enabled, autocast_gpu_dtype, autocast_cpu_dtype]
+
+
 # Returns True if successfully cached, false otherwise
-def cache_put(cache: dict, fn, traces: Sequence[TraceCtx], args, kwargs) -> bool:
-    key = _make_cache_key(args, kwargs)
+def cache_put(cache: dict, fn, traces: Sequence[TraceCtx], args, kwargs, autocast_key=None) -> bool:
+    key = _make_cache_key(args, kwargs, autocast_key)
 
     if key is None:
         return False
@@ -437,8 +448,8 @@ def cache_put(cache: dict, fn, traces: Sequence[TraceCtx], args, kwargs) -> bool
     return True
 
 
-def cache_get(cache: dict, args, kwargs) -> tuple[None | Callable, None | Sequence[TraceCtx]]:
-    key = _make_cache_key(args, kwargs)
+def cache_get(cache: dict, args, kwargs, autocast_key=None) -> tuple[None | Callable, None | Sequence[TraceCtx]]:
+    key = _make_cache_key(args, kwargs, autocast_key)
     return cache.get(key, (None, None))
 
 
@@ -476,12 +487,6 @@ def trace(
         langctx_ = (
             compile_data.langctx if compile_data is not None and compile_data.langctx is not None else get_langctx()
         )
-
-        # Checks for PyTorch settings that would invalidate the trace
-        if torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled():
-            raise NotImplementedError(
-                "torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled are True, but tracing would ignore these settings"
-            )
 
         try:
             langctx_tok = set_langctx(langctx_)
@@ -559,13 +564,6 @@ def transform_for_execution(
     use_rematerialization=True,
     use_del_last_used=True,
 ) -> list[TraceCtx]:
-    # TODO Should we add more torch checks here?
-    if torch.is_autocast_enabled():
-        raise RuntimeError(
-            "A callable optimized by thunder will not respect `torch.autocast`. "
-            "If your use case needs to use `torch.autocast`, file a feature request issue."
-        )
-
     traces: list[TraceCtx] = []
 
     # TODO If only_execute_prims, then flatten to prims here
@@ -655,6 +653,22 @@ def _create_callable(
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
 
+        # autocast related operations
+        is_autocast_enabled = False
+        autocast_key = None
+        if torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled():
+            if torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled():
+                raise NotImplementedError(
+                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
+                )
+            is_autocast_enabled = True
+            autocast_gpu_dtype = ltorch.to_thunder_dtype(torch.get_autocast_gpu_dtype())
+            autocast_cpu_dtype = ltorch.to_thunder_dtype(torch.get_autocast_cpu_dtype())
+            autocast_key = _make_autocast_cache_key(
+                torch.is_autocast_enabled(), torch.is_autocast_cpu_enabled(), autocast_gpu_dtype, autocast_cpu_dtype
+            )
+            autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
         cs.last_trace_cache_start = time.time_ns()
@@ -671,7 +685,7 @@ def _create_callable(
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
         if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-            c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs)
+            c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key)
             if c is not None:
                 # Updates statistics before early termination
                 cs.cache_hits += 1
@@ -695,6 +709,11 @@ def _create_callable(
         # autograd.Function (which supports calling .backward() in PyTorch) is used when:
         #   1) The grad() transform is not applied
         #   2) At least one input tensor (or tensor proxy) requires grad
+        cd.processed_function = (
+            cd.processed_function
+            if not is_autocast_enabled
+            else autocast(cd.processed_function, dtype=autocast_thunder_dtype)
+        )
         if not _using_grad_transform:
             flat_args, _ = tree_flatten((args, kwargs))
             tensor_cls = (torch.Tensor, TensorProxy)
@@ -718,7 +737,7 @@ def _create_callable(
                 cs.last_trace_host_execution_stop = time.time_ns()
                 cs.last_executed = c
                 if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-                    cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs)
+                    cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs, autocast_key)
                 for ex in cd.executors_list:
                     if isinstance(ex, OperatorExecutor):
                         ex.is_active = False
@@ -784,7 +803,7 @@ def _create_callable(
 
         # (Possibly) Updates the cache
         if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-            cache_put(cs.cache, c, traces, args[cd.num_constant_args :], kwargs)
+            cache_put(cs.cache, c, traces, args[cd.num_constant_args :], kwargs, autocast_key)
 
         cs.last_trace_host_stop = time.time_ns()
         return result

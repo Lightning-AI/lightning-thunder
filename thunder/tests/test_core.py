@@ -1932,22 +1932,6 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     assert_close(out_t, expected_out_t)
 
 
-@instantiate(dtypes=NOTHING)
-def test_torch_autocast_exception(executor, device, _):
-    def f(a):
-        return 2.0 * a
-
-    executors_list = executor.executors_list()
-    compiled_f = thunder.compile(f, executors_list=executors_list)
-    a = torch.ones((), device=device, dtype=torch.float32)
-    devicetype = torch.device(device).type
-
-    with pytest.raises(RuntimeError) as excinfo:
-        with torch.autocast(device_type=devicetype):
-            compiled_f(a)
-    assert "torch.is_autocast_enabled()" in str(excinfo.value)
-
-
 def test_traceback():
     def f(a):
         return -(a > 0)  # negating a bool tensor raises
