@@ -177,6 +177,7 @@ class OperatorExecutor(Executor):
         meta: None | Callable = None,
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
+        bind_postprocess: None | Callable = None,
     ) -> Symbol:
         assert (like is None) ^ (meta is None), "Expected one and only one of 'like' and 'meta' to be specified"
         assert (module is not None) + (
@@ -188,7 +189,16 @@ class OperatorExecutor(Executor):
         meta = meta if meta is not None else like
         call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
 
-        sym = Symbol(name=name, id=name, meta=meta, is_prim=is_prim, _module=module, call_ctx=call_ctx, executor=self)
+        sym = Symbol(
+            name=name,
+            id=name,
+            meta=meta,
+            is_prim=is_prim,
+            _module=module,
+            call_ctx=call_ctx,
+            executor=self,
+            _bind_postprocess=bind_postprocess,
+        )
         self.opmap[name] = sym
 
         return sym
