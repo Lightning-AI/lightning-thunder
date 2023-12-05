@@ -88,16 +88,21 @@ builtins_dict: dict[str, Any] = {k: getattr(builtins, k) for k in dir(builtins)}
 # The Jit's compile context, which handles compilation directives
 # See the comment for jit() for how these functions work
 class JitCompileCtx:
-    def __init__(self, *, opcode_interpreter: Callable, fn_lookaside: Callable):
+    def __init__(self, *, opcode_interpreter: Callable, fn_lookaside: Callable, callbacks: dict[JIT_CALLBACKS, Callable]):
         self._opcode_interpreter: Callable = opcode_interpreter
         self._fn_lookaside: Callable = fn_lookaside
+        self._callbacks: dict[JIT_CALLBACKS, Callable] = callbacks
 
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
 
     def lookaside(self, fn: Callable, *args, **kwargs) -> None | Callable:
         return self._fn_lookaside(fn, *args, **kwargs)
-
+    
+    def callback(self, id: JIT_CALLBACKS) -> None | Callable:
+        cb: None | Callable = self._callbacks.get(id, None)
+        
+        return cb
 
 _jitcompilectx = contextvars.ContextVar("jitcompilectx")
 
@@ -439,6 +444,9 @@ class register_opcode_handler:
             return fn
         return _default_opcode_handler_map.get(self.name, fn)
 
+#
+# Lookaside logic
+#
 
 # Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
 def _bool_lookaside(x: Any) -> bool:
@@ -466,6 +474,28 @@ _default_lookaside_map: dict[Callable, Callable] = {
 # The default function lookaside -- currently it doesn't intercept anything
 def default_lookaside(fn, *args, **kwargs) -> None | Callable:
     return _default_lookaside_map.get(fn, None)
+
+#
+# Callback registration
+#
+
+# To register a callback, map from this enum to a callable. The args and kwargs for each
+#   event may be different, as documented below.
+#
+# LOAD_CALLBACK. Triggers when LOAD_FAST occurs.
+#   def load_callback(name: str, val: Any) -> new_val
+#   The returned value will be pushed onto the stack instead of the original value.
+#   
+# STORE_CALLBACK. Triggers when STORE_FAST occurs.
+#   def store_callback(name: str, val: Any) -> new_val
+#   The returned value will be stored in localsplus instead of the original value.
+class JIT_CALLBACKS(enum.Enum):
+    LOAD_CALLBACK = enum.auto()
+    STORE_CALLBACK = enum.auto()
+
+default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+    
+
 
 
 #
@@ -1204,15 +1234,21 @@ def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
 @register_opcode_handler("LOAD_FAST")
 def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     assert isinstance(inst.arg, int)
-    i: int = inst.arg
-    assert i >= 0 and i < len(frame.localsplus)
+    var_num: int = inst.arg
+    assert var_num >= 0 and var_num < len(frame.localsplus)
 
-    val: Any = frame.localsplus[i]
+    val: Any = frame.localsplus[var_num]
+    name: str = frame.get_localsplus_name(var_num)
 
     # empty local variable slots are initialized to Py_NULL()
     if isinstance(val, Py_NULL):
-        do_raise(UnboundLocalError(f"local variable '{frame.get_localsplus_name(i)}' referenced before assignment"))
+        do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
         return
+
+    compilectx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = compilectx.callback(JIT_CALLBACKS.LOAD_CALLBACK)
+    if cb is not None:
+        val = cb(name, val)
 
     stack.append(val)
 
@@ -1684,10 +1720,19 @@ def _store_global_handler(inst: dis.Instruction, /, stack: list, co: CodeType, f
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_FAST
 @register_opcode_handler("STORE_FAST")
 def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
-    a = stack.pop()
+    tos = stack.pop()
     assert type(inst.arg) is int
-    i: int = inst.arg
-    frame.localsplus[i] = a
+    var_num: int = inst.arg
+
+    name: str = co.co_varnames[var_num]
+
+    compilectx: JitCompileCtx = get_jitcompilectx()
+    cb = compilectx.callback(JIT_CALLBACKS.STORE_CALLBACK)
+    if cb is not None:
+        tos = cb(name, tos)
+
+    frame.localsplus[var_num] = tos
+    
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_NAME
@@ -2166,10 +2211,12 @@ def jit(
     *,
     opcode_interpreter: Callable = default_opcode_interpreter,
     fn_lookaside: Callable = default_lookaside,
+    callbacks: dict[JIT_CALLBACKS, Callable] = default_callbacks,
 ) -> Callable:
     compilectx: JitCompileCtx = JitCompileCtx(
         opcode_interpreter=opcode_interpreter,
         fn_lookaside=fn_lookaside,
+        callbacks=callbacks,
     )
 
     @functools.wraps(fn)
