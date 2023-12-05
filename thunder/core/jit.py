@@ -1217,7 +1217,6 @@ def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
     stack.append(val)
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1524
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_GLOBAL
 @register_opcode_handler("LOAD_GLOBAL")
 def _load_global_handler(
@@ -1241,8 +1240,7 @@ def _load_global_handler(
         try:
             obj = builtins_dict[co_name]
         except KeyError as e:
-            # TODO: UndefVariableError
-            do_raise(e)
+            do_raise(NameError(f"name '{co_name}' is not defined"))
     if (3, 11) <= sys.version_info:
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
@@ -1535,7 +1533,6 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
 
         _ex: BaseException = _value
         __cause: None | BaseException = None if isinstance(fixed_cause, Py_NULL) else fixed_cause
-        print(__cause)
         _ex.__cause__ = __cause
 
     # Call PyErr_SetObject() to update the thread's state
@@ -1870,7 +1867,12 @@ def make_generator(
                 except UserException as e:
                     if isinstance(e.__cause__, StopIteration):
                         return e.__cause__.value
-                    raise e.__cause__ from e
+                    # We modify the cause chain from
+                    # UserException -> real_exc -> further_causes to
+                    # real_exc -> UserException -> further causes
+                    real_exc = e.__cause__
+                    e.__cause__ = real_exc.__cause__
+                    raise real_exc from e
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
                     raise JITError(msg) from e
@@ -2183,7 +2185,12 @@ def jit(
                 fn_._last_history = runtimectx.history
                 return jit_result
             except UserException as e:
-                raise e.__cause__ from e
+                # We modify the cause chain from
+                # UserException -> real_exc -> further_causes to
+                # real_exc -> UserException -> further causes
+                real_exc = e.__cause__
+                e.__cause__ = real_exc.__cause__
+                raise real_exc from e
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction

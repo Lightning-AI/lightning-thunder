@@ -373,7 +373,6 @@ def test_match_as():
     assert jit(match_as) == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_raise_external():
     msg = "lorem ipsum"
 
@@ -905,7 +904,6 @@ def test_list_to_tuple():
     assert jit(ltt)() == ltt()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1640")
 def test_use_of_deleted_raises_correctly():
     def foo(a):
         b = a
@@ -927,11 +925,12 @@ def test_delete_fast():
         return a
 
     jfoo = jit(foo)
-    with pytest.raises(Exception):
+    with pytest.raises(UnboundLocalError, match="'b'"):
         jfoo(5)
 
 
 def test_delete_global():
+    global x
     x = 5
 
     def foo(a):
@@ -941,7 +940,7 @@ def test_delete_global():
 
     jfoo = jit(foo)
 
-    with pytest.raises(Exception):
+    with pytest.raises(NameError):
         jfoo(5)
 
 
