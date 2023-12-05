@@ -1084,6 +1084,66 @@ def test_comprehension_nonlocal_inplace():
     assert foo() == jfoo()
 
 
+def test_name_opcodes_and_print_expr():
+    from types import FunctionType
+    from contextlib import redirect_stdout
+    import io
+    import sys
+
+    co = compile("x = 5; print(x); del x;", "<string>", "single")
+    fn = FunctionType(co, globals())
+    jfn = jit(fn)
+
+    py_redirect = io.StringIO()
+    with redirect_stdout(py_redirect):
+        fn()
+    py_out: str = py_redirect.getvalue()
+
+    jit_redirect = io.StringIO()
+    with redirect_stdout(jit_redirect):
+        jfn()
+    jit_out: str = jit_redirect.getvalue()
+
+    assert py_out == jit_out
+
+    # Checks display hook setting
+    saved = sys.displayhook
+    try:
+
+        def foo(x):
+            print("display hook!")
+            print(x)
+
+        sys.displayhook = foo
+        co = compile("x = 5; print(x); del x;", "<string>", "single")
+        fn = FunctionType(co, globals())
+        jfn = jit(fn)
+
+        py_redirect = io.StringIO()
+        with redirect_stdout(py_redirect):
+            fn()
+        py_out: str = py_redirect.getvalue()
+
+        jit_redirect = io.StringIO()
+        with redirect_stdout(jit_redirect):
+            jfn()
+        jit_out: str = jit_redirect.getvalue()
+
+        assert "display hook!" in py_out
+        assert py_out == jit_out
+    finally:
+        sys.displayhook = saved
+
+    co = compile("x = 5; del x; print(x)", "<string>", "single")
+    fn = FunctionType(co, globals())
+    jfn = jit(fn)
+
+    # TODO Refine this exception
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1661
+    with pytest.raises(Exception):
+        jfn()
+
+
 #
 # Network tests
 #

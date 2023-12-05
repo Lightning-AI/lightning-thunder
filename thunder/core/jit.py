@@ -300,6 +300,9 @@ class JITFrame:
     qualname: str
     globals: dict[str, Any]
     builtins: dict[str, Any]
+    # Name storage, for LOAD_NAME, STORE_NAME, and DELETE_NAME
+    # TODO Is this the best way to model this?
+    names: dict[str, Any] = dataclasses.field(default_factory=dict)
     positions: Positions | None = None
     inst: dis.Instruction | None = None
     call_shape_kwnames: tuple[str] | None = None  # for KW_NAMES opcode in 3.11+
@@ -826,6 +829,17 @@ def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFra
     del frame.globals[name]
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-DELETE_NAME
+@register_opcode_handler("DELETE_NAME")
+def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+    namei: int = inst.arg
+    name: str = co.co_names[namei]
+
+    assert name in frame.names
+    del frame.names[name]
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
 @register_opcode_handler("DELETE_SUBSCR")
 def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1180,6 +1194,7 @@ def _load_global_handler(
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1525
+# https://docs.python.org/3.11/library/dis.html#opcode-LOAD_METHOD
 @register_opcode_handler("LOAD_METHOD")
 def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
     assert type(inst.arg) is int
@@ -1197,6 +1212,27 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     else:
         stack.append(Py_NULL())
         stack.append(meth)
+
+
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1661
+# https://docs.python.org/3.11/library/dis.html#opcode-LOAD_NAME
+@register_opcode_handler("LOAD_NAME")
+def _load_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    namei: int = inst.arg
+    name: str = co.co_names[namei]
+
+    value: Any
+    if name in frame.names:
+        value = frame.names[name]
+    elif name in frame.globals:
+        value = frame.globals[name]
+    else:
+        if name not in frame.builtins:
+            do_raise(NameError, f"named '{name}' is not defined")
+        value = frame.builtins[name]
+
+    stack.append(value)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
@@ -1448,6 +1484,14 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
     pass
 
 
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
+# https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
+@register_opcode_handler("PRINT_EXPR")
+def _print_expr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    sys.displayhook(tos)
+
+
 # https://docs.python.org/3.11/library/dis.html#opcode-PUSH_NULL
 @register_opcode_handler("PUSH_NULL", min_ver=(3, 11))
 def _push_null_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1585,6 +1629,17 @@ def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
     assert type(inst.arg) is int
     i: int = inst.arg
     frame.localsplus[i] = a
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_NAME
+@register_opcode_handler("STORE_NAME")
+def _store_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+    namei: int = inst.arg
+
+    name: str = co.co_names[namei]
+    tos: Any = stack.pop()
+    frame.names[name] = tos
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NOT
