@@ -177,7 +177,7 @@ def test_build_map_dict_merge():
     thunder_result = jfoo(*args, **kwargs)
     python_result = foo(*args, **kwargs)
 
-    with pytest.raises(JITError, match="got multiple values for keyword argument") as excinfo:
+    with pytest.raises(KeyError, match="got multiple values for keyword argument") as excinfo:
         d = {"a": 3, "b": 4}
         mergefail = lambda **kwargs: addall(**kwargs, **d)
         jfail = jit(mergefail)
@@ -289,15 +289,13 @@ def test_exception_traceback():
 
     args = (4,)
 
-    # TODO: change to ValueError once that is supported!
-    with pytest.raises(JITError) as excinfo:
+    with pytest.raises(ValueError) as excinfo:
         thunder_result = jfoo(*args)
-    print(str(excinfo.value))
-    assert "foo in file" in str(excinfo.value)
-    assert "bar in file" in str(excinfo.value)
+
+    assert "foo in file" in str(excinfo.value.__cause__)
+    assert "bar in file" in str(excinfo.value.__cause__)
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_raise():
     msg = "lorem ipsum"
 
@@ -306,11 +304,10 @@ def test_raise():
 
     jfoo = jit(foo)
 
-    with pytest.raises(JITError) as excinfo:
+    with pytest.raises(ValueError) as excinfo:
         jfoo()
 
-    assert type(excinfo.value.__cause__) == ValueError
-    assert msg in str(excinfo.value.__cause__)
+    assert msg in str(excinfo.value)
 
 
 @pytest.mark.xfail(reason="Not implemented yet.")
@@ -383,10 +380,10 @@ def test_raise_external():
     def raise_external():
         raise ValueError(msg)
 
-    with pytest.raises(JITError) as excinfo:
+    with pytest.raises(ValueError) as excinfo:
         jit(raise_external)()
 
-    assert msg in str(excinfo.value.__cause__)
+    assert msg in str(excinfo.value)
 
 
 @pytest.mark.xfail(reason="Not implemented yet.")
@@ -1138,9 +1135,7 @@ def test_name_opcodes_and_print_expr():
     fn = FunctionType(co, globals())
     jfn = jit(fn)
 
-    # TODO Refine this exception
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1661
-    with pytest.raises(Exception):
+    with pytest.raises(NameError, match="'x' is not defined"):
         jfn()
 
 

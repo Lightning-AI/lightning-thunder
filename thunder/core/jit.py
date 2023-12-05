@@ -10,6 +10,7 @@ import functools
 import linecache
 import inspect
 import sys
+import traceback
 from typing import Any, NamedTuple
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
@@ -22,6 +23,7 @@ from types import (
     BuiltinMethodType,
     MethodWrapperType,
     WrapperDescriptorType,
+    TracebackType,
 )
 
 import torch
@@ -178,6 +180,9 @@ class JitRuntimeCtx:
     def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
         self._history.append(f"Lookaside to {fn.__name__}")
 
+    def format_traceback(self):
+        return "\n".join(f.format_with_source() for f in self.frame_stack)
+
 
 _jitruntimectx = contextvars.ContextVar("jitruntimectx")
 
@@ -254,6 +259,21 @@ class JITError(RuntimeError):
     pass
 
 
+# Errors from the user will be wrapped with this with the original user error
+# as the __cause__. The user-facing function jit and the generator from
+# make_generator will unwrap this to return the original error.
+class UserException(RuntimeError):
+    def __init__(self, exception, tb):
+        super().__init__()
+        self.__cause__ = exception
+        self.tb = tb
+
+    def __str__(self):
+        traceback_str = "\n".join(f.format_with_source() for f in self.tb)
+        msg = f"Encountered user exception {type(self.__cause__).__name__}: {self.__cause__}:\n" f"{traceback_str}"
+        return msg
+
+
 class Py_NULL(metaclass=Singleton):
     pass
 
@@ -288,6 +308,40 @@ if sys.version_info < (3, 11):
 
 else:
     Positions = dis.Positions
+
+
+class PythonFrameWrapper:
+    def __init__(self, frame: FrameType):
+        self.frame: FrameType = frame
+        self.code = frame.f_code
+        # co_qualname is Python 3.11+
+        self.qualname = getattr(frame.f_code, "co_qualname", frame.f_code.co_name)
+        self.positions: Positions
+        if sys.version_info >= (3, 11):
+            self.positions = traceback._get_code_position(frame.f_code, frame.f_lasti)
+        else:
+            self.positions = Positions(frame.f_lineno, frame.f_lineno, 0, 999)
+
+    def format_with_source(self):
+        assert self.positions is not None
+        l = []
+        l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
+        if self.code.co_filename:
+            ls = linecache.getlines(self.code.co_filename)
+            lineno = self.positions.lineno
+            if lineno is None:
+                lineno = self.code.co_firstlineno
+            l.append("  " + ls[max(lineno - 1, 0)].rstrip())
+        return "\n".join(l)
+
+
+def get_python_tb(traceback: TracebackType):
+    res = []
+    tb = traceback
+    while tb != None:
+        res.append(PythonFrameWrapper(tb.tb_frame))
+        tb = tb.tb_next
+    return res
 
 
 # This is an interpreter frame, similar to Python's for use fo the JIT
@@ -331,10 +385,13 @@ class JITFrame:
         l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
             ls = linecache.getlines(self.code.co_filename)
-            lineno = self.positions.lineno
-            if lineno is None:
-                lineno = self.code.co_firstlineno
-            l.append("  " + ls[max(lineno - 1, 0)].rstrip())
+            if ls:
+                lineno = self.positions.lineno
+                if lineno is None:
+                    lineno = self.code.co_firstlineno
+                l.append("  " + ls[max(lineno - 1, 0)].rstrip())
+            else:
+                l.append("  <unavailable>")
         return "\n".join(l)
 
     def get_localsplus_name(self, idx: int) -> str:
@@ -858,7 +915,7 @@ def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
     assert isinstance(a, Mapping), a
     if overlap := b.keys() & a:
         # TODO: Raise inside interpreter
-        raise KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}")
+        do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
     b.update(a)
 
 
@@ -1185,7 +1242,7 @@ def _load_global_handler(
             obj = builtins_dict[co_name]
         except KeyError as e:
             # TODO: UndefVariableError
-            raise e
+            do_raise(e)
     if (3, 11) <= sys.version_info:
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
@@ -1203,7 +1260,7 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     try:
         meth = getattr(obj, name)
     except AttributeError as e:
-        raise e
+        do_raise(e)
 
     if inspect.ismethod(meth):
         stack.append(meth.__func__)
@@ -1229,7 +1286,7 @@ def _load_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
         value = frame.globals[name]
     else:
         if name not in frame.builtins:
-            do_raise(NameError, f"named '{name}' is not defined")
+            do_raise(NameError(f"named '{name}' is not defined"))
         value = frame.builtins[name]
 
     stack.append(value)
@@ -1478,10 +1535,12 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
 
         _ex: BaseException = _value
         __cause: None | BaseException = None if isinstance(fixed_cause, Py_NULL) else fixed_cause
+        print(__cause)
         _ex.__cause__ = __cause
 
     # Call PyErr_SetObject() to update the thread's state
-    pass
+
+    raise UserException(_value, [])
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
@@ -1806,7 +1865,15 @@ def make_generator(
         send_value: Any = None  # the value gotten from from <generator>.send
         while True:  # or maybe have return?
             with jitctx(compilectx, runtimectx):
-                res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                try:
+                    res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                except UserException as e:
+                    if isinstance(e.__cause__, StopIteration):
+                        return e.__cause__.value
+                    raise e.__cause__ from e
+                except Exception as e:
+                    msg = f"Encountered exception {type(e).__name__}: {e}"
+                    raise JITError(msg) from e
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return
             assert status == JIT_SIGNALS.YIELD_VALUE
@@ -1836,16 +1903,23 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
-        return lookaside_fn(*args, **kwargs)
+        try:
+            return lookaside_fn(*args, **kwargs)
+        except Exception as e:
+            raise UserException(e, get_python_tb(e.__traceback__))
 
     # (2) Handles opaque functions
     if is_opaque(fn):
-        opaque_result: Any = fn(*args, **kwargs)
         runtimectx.record_opaque_call(fn)
+        try:
+            opaque_result: Any = fn(*args, **kwargs)
+        except Exception as e:
+            raise UserException(e, get_python_tb(e.__traceback__))
         return opaque_result
 
     # (3) Handles partial objects
     if isinstance(fn, functools.partial):
+        # TODO: add traceback entry on the traceback in UserException?
         p: functools.partial = fn
         return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
 
@@ -1970,16 +2044,20 @@ def _jit_run(
         # TODO maybe also have inst_ptr?
         frame.nexti(inst)
         stack_size_before_handler: int = len(stack)
-        interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
-            inst,
-            inst_ptr=frame.inst_ptr,
-            stack=frame.interpreter_stack,
-            globals_dict=frame.globals,
-            builtins_dict=frame.builtins,
-            try_stack=frame.try_stack,
-            co=frame.code,
-            frame=frame,
-        )
+        try:
+            interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
+                inst,
+                inst_ptr=frame.inst_ptr,
+                stack=frame.interpreter_stack,
+                globals_dict=frame.globals,
+                builtins_dict=frame.builtins,
+                try_stack=frame.try_stack,
+                co=frame.code,
+                frame=frame,
+            )
+        except UserException as e:
+            e.tb.insert(0, frame)
+            raise
 
         # TODO Improve this error message
         if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
@@ -2104,9 +2182,11 @@ def jit(
                 fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
                 fn_._last_history = runtimectx.history
                 return jit_result
+            except UserException as e:
+                raise e.__cause__ from e
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
-                #   the line offset information in the instruction
+                #      the line offset information in the instruction
                 traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
                 msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
