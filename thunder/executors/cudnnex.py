@@ -101,10 +101,12 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
     )
 
     # TODO: update to do tensor.stride_order when available from FE
-    _, h, s_q, _ = query.size
+    b, h, s_q, _ = query.size
     _, _, _, d_v = value.size
+
+    dim_o = (b, h, s_q, d_v)
     stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
-    O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_stride(stride_o)
+    O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_dim(dim_o).set_stride(stride_o)
 
     graph.build([cudnn.heur_mode.A])
 
