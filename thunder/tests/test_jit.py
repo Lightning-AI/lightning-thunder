@@ -7,6 +7,7 @@ import torch
 from torch.testing import assert_close
 
 from thunder.core.jit import jit, JITError
+from thunder.core.jit_ext import phantom_jit
 
 
 def test_no_return():
@@ -1136,6 +1137,25 @@ def test_name_opcodes_and_print_expr():
 
     with pytest.raises(NameError, match="'x' is not defined"):
         jfn()
+
+
+#
+# "Phantom" / No-side-effect tests
+#
+
+
+def test_phantom_load_fast():
+    def foo(a):
+        a.append(4)
+        return a
+
+    pfoo = phantom_jit(foo)
+
+    l = [1, 2, 3]
+    result = pfoo(l)
+
+    assert result == [1, 2, 3, 4]
+    assert l == [1, 2, 3]
 
 
 #
