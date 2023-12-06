@@ -130,7 +130,7 @@ def torch_compile_compiled_bwd(b: Benchmark):
 
     def foo(*args, **kwargs):
         result = module(*args, **kwargs)
-        result.backward(result)
+        result.backward(torch.ones_like(result))
         return result
 
     cfoo = torch_compile_executor(foo)
@@ -173,15 +173,10 @@ def thunder_fwd(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
-# Requires the function output actually be computed to compute the grad
-def grad_specifier(x) -> None:
-    put_grad(x, x)
-
-
 def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
-    cfn_grad = grad(cfn, grad_specifier=grad_specifier)
+    cfn_grad = grad(cfn)
 
     if isinstance(module, torch.nn.Sequential):
 
@@ -236,7 +231,7 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
         def wrapper(*args):
             clear_grads(module)
             result = cfn(args)
-            result.backward(result)
+            result.backward(torch.ones_like(result))
             return result
 
         return wrapper
