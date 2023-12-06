@@ -13,71 +13,28 @@ defaults:
   run:
     shell: bash
 
-env:
-  TORCH_URL_RC: "https://download.pytorch.org/whl/test/cpu/torch_test.html"
-  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
-  TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
-
 jobs:
-  # https://github.com/marketplace/actions/deploy-to-github-pages
   build-docs:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout 🛎️
-        uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      # Note: This uses an internal pip API and may not always work
-      # https://github.com/actions/cache/blob/master/examples.md#multiple-oss-in-a-workflow
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements/*.txt') }}
-          restore-keys: pip-
-
-      #- name: install Texlive
-      #  # see https://linuxconfig.org/how-to-install-latex-on-ubuntu-20-04-focal-fossa-linux
-      #  run: |
-      #    sudo apt-get update --fix-missing
-      #    sudo apt-get install -y texlive-latex-extra dvipng texlive-pictures
-
-      - name: Install package & dependencies
-        run: |
-          sudo apt-get update -q --fix-missing
-          sudo apt-get install -y pandoc
-          pip --version
-          pip install --pre "torch>=2.1.0" --find-links="${TORCH_URL_RC}"
-          pip install . -U -r requirements/base.txt -r requirements/docs.txt
-          pip list
-
-      - name: Make Documentation
-        working-directory: ./docs
-        run: make html --jobs 2 --debug SPHINXOPTS="-W --keep-going"
-
-      - name: Upload built docs
-        uses: actions/upload-artifact@v3
-        with:
-          name: docs-${{ github.sha }}
-          path: docs/build/
-          retention-days: ${{ steps.keep-artifact.outputs.DAYS }}
-
+    uses: Lightning-AI/utilities/.github/workflows/check-docs.yml@v0.10.0
+    with:
+      python-version: "3.10"
+      requirements-file: "requirements/docs.txt"
+      install-tex: true
 
   deploy-docs:
+  # https://github.com/marketplace/actions/deploy-to-github-pages
     needs: build-docs
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
         uses: actions/checkout@v4
-        # If you're using actions/checkout@v4 you must set persist-credentials to false in most cases for the deployment to work correctly.
         with:
+          # If you're using actions/checkout@v4 you must set persist-credentials to false in most cases for the deployment to work correctly.
           persist-credentials: false
       - uses: actions/download-artifact@v3
         with:
-          name: docs-${{ github.sha }}
+          name: docs-html-${{ github.sha }}
           path: docs/build/
 
       - name: Deploy 🚀
