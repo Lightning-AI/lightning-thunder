@@ -1062,6 +1062,113 @@ def test_store_attr():
     assert x.bar == 5
 
 
+def test_simple_attribute():
+    class SimpleNamespace:
+        x: int
+        y: int
+
+    obj = SimpleNamespace()
+    obj.x = 1
+    obj.y = 2
+
+    def foo():
+        return obj.x + obj.y
+
+    jfoo = jit(foo)
+    assert foo() == jfoo()
+
+
+@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
+def test_dunder_getattr():
+    history = []
+
+    class X:
+        def __getattr__(self, name):
+            history.append(f"X.__getattr__ {is_jitting()}")
+            return 1
+
+    def foo():
+        return X().a
+
+    assert foo() == jit(foo)() == 1
+    assert tuple(history) == ("X.__getattr__ False", "X.__getattr__ True")
+
+
+@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
+def test_dunder_getattribute():
+    history = []
+
+    class MyClass:
+        def __getattribute__(self, name):
+            history.append(f"__getattr__ {is_jitting()}")
+            return 1
+
+    def foo():
+        x = MyClass()
+        x.a = 2  # __getattribute__ will take precedence
+        return x.a
+
+    assert foo() == jit(foo)() == 1
+    assert tuple(history) == ("__getattr__ False", "__getattr__ True")
+
+
+@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
+def test_property():
+    history = []
+
+    class MyClass:
+        @property
+        def x(self):
+            history.append(f"x {is_jitting()}")
+            return 1
+
+        @property
+        def lazy_x(self):
+            history.append(f"lazy_x {is_jitting()}")
+            result = getattr(self, "_x", None)
+            if result is None:
+                self._x = result = 2
+            return result
+
+    def foo():
+        return MyClass().x
+
+    assert foo() == jit(foo)() == 1
+    assert tuple(history) == ("x False", "x True")
+    history.clear()
+
+    def foo():
+        return MyClass().lazy_x
+
+    assert foo() == jit(foo)() == 2
+    assert tuple(history) == ("lazy_x False", "lazy_x True")
+    history.clear()
+
+
+@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
+def test_property_with_setter():
+    history = []
+
+    class MyClass:
+        @property
+        def x(self):
+            history.append(f"x {is_jitting()}")
+            return self._x
+
+        @x.setter
+        def x(self, value) -> None:
+            history.append(f"x.setter {is_jitting()}")
+            self._x = value
+
+    def foo():
+        my_class = MyClass()
+        my_class.x = 5
+        return my_class.x
+
+    assert foo() == jit(foo)() == 5
+    assert tuple(history) == ("x False", "x.setter False", "x True", "x.setter True")
+
+
 def test_comprehension():
     def foo():
         return tuple([i for i in range(10)])
