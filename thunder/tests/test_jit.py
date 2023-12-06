@@ -9,7 +9,7 @@ import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.core.jit import jit, JITError
+from thunder.core.jit import is_jitting, jit, JITError
 from thunder.core.jit_ext import phantom_jit, litjit
 
 
@@ -1184,6 +1184,23 @@ def test_load_build_class():
 
     assert any(i.opname == "LOAD_BUILD_CLASS" for i in dis.get_instructions(foo))
     assert any(i.opname == "LOAD_BUILD_CLASS" for i in jfoo._last_interpreted_instructions)
+
+
+def test_is_jitting():
+    def foo():
+        return is_jitting()
+
+    assert not foo()
+    assert jit(foo)()
+
+
+def test_is_jitting_opaque():
+    def foo():
+        return tuple(map(lambda _: is_jitting(), range(3)))
+
+    assert foo() == (False, False, False)
+    with pytest.raises(JITError):
+        jit(foo)()
 
 
 #

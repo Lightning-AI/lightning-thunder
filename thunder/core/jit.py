@@ -120,6 +120,10 @@ def get_jitcompilectx() -> JitCompileCtx:
     return _jitcompilectx.get()
 
 
+def get_jitcompilectx_if_available() -> JitCompileCtx | None:
+    return _jitcompilectx.get(None)
+
+
 # Resets the jitctx
 def reset_jitcompilectx(token) -> None:
     _jitcompilectx.reset(token)
@@ -451,6 +455,18 @@ class register_opcode_handler:
 #
 # Lookaside logic
 #
+def is_jitting():
+    """Allow code to behave differently under `@jit`. (For testing.)"""
+
+    # Guard against opaque functions which interrupt jitting.
+    if (ctx := get_jitcompilectx_if_available()) is not None:
+        raise JITError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+
+    return False
+
+
+def _is_jitting_lookaside():
+    return True
 
 
 # Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
@@ -472,6 +488,7 @@ def _bool_lookaside(x: Any) -> bool:
 
 
 _default_lookaside_map: dict[Callable, Callable] = {
+    is_jitting: _is_jitting_lookaside,
     bool: _bool_lookaside,
 }
 
