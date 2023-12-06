@@ -701,6 +701,19 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     stack.append(_jit(impl))
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_CONST_KEY_MAP
+@register_opcode_handler("BUILD_CONST_KEY_MAP")
+def _build_const_key_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
+    count: int = inst.arg
+
+    keys = stack.pop()
+    assert len(keys) == count
+    values = reversed([stack.pop() for _ in range(count)])
+    d: dict = dict(zip(keys, values))
+    stack.append(d)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_LIST
 @register_opcode_handler("BUILD_LIST")
 def _build_list_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -718,6 +731,14 @@ def _build_map_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     # NOTE The reversed() call below is necessary to handle key collisions properly
     d: dict = {k: v for v, k in reversed(tuple((stack.pop(), stack.pop()) for _ in range(count)))}
     stack.append(d)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BUILD_SET
+@register_opcode_handler("BUILD_SET")
+def _build_set_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
+    result: set = set(reversed([stack.pop() for _ in range(inst.arg)]))
+    stack.append(result)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_SLICE
@@ -1375,6 +1396,21 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, globals_dict: 
     stack.append(fn)
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-MAP_ADD
+@register_opcode_handler("MAP_ADD")
+def _map_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+
+    # NOTE Doesn't pop the dict that's extended
+    tos = stack.pop()
+    tos1 = stack.pop()
+    d: dict = stack[-i]
+
+    assert isinstance(d, dict)
+    d[tos1] = tos
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-NOP
 @register_opcode_handler("NOP")
 def _nop_handler(inst: dis.Instruction, /, **kwargs) -> None:
@@ -1639,6 +1675,20 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
     stack[-1] = second
     stack[-2] = top
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-SET_ADD
+@register_opcode_handler("SET_ADD")
+def _set_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+
+    # NOTE Doesn't pop the set that's extended
+    tos = stack.pop()
+    s: set = stack[-i]
+
+    assert isinstance(s, set)
+    s.add(tos)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_FINALLY

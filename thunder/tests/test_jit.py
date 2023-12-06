@@ -165,6 +165,21 @@ def test_call_function_ex():
     assert_close(res2, jres2)
 
 
+def test_build_const_key_map():
+    def fn1(a, b):
+        return {"a": a, "b": b}
+
+    # test order for collisions
+    def fn2(a, b):
+        return {"a": a, "a": b}
+
+    jfn1 = jit(fn1)
+    jfn2 = jit(fn2)
+
+    assert jfn1(1, 2) == fn1(1, 2)
+    assert jfn2(1, 2) == fn2(1, 2)
+
+
 def test_build_map_dict_merge():
     addall = lambda *args, **kwargs: sum(args) + sum(kwargs.values())
     foo = lambda *args, **kwargs: addall(*args, **kwargs)
@@ -490,6 +505,16 @@ def test_build_map():
 
     for a, b in cases:
         assert jfoo(a, b) == foo(a, b)
+
+
+def test_map_add_set_add():
+    def fn():
+        d = {i: i * 2 for i in range(10)}
+        s = {i * 2 for i in range(10)}
+        return d, s
+
+    jfn = jit(fn)
+    assert jfn() == fn()
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1543
