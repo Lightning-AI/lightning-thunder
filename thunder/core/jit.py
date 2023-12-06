@@ -1213,6 +1213,18 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kw
     stack.append(_jit(impl))
 
 
+@register_opcode_handler("LOAD_BUILD_CLASS", max_ver=(3, 10))
+def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
+    if "__build_class__" in frame.builtins.keys():
+        build_class = frame.builtins["__build_class__"]
+        stack.append(build_class)
+    elif "__build_class__" in frame.globals.keys():
+        build_class = frame.globals["__build_class__"]
+        stack.append(build_class)
+    else:
+        return do_raise(KeyError(f"__build_class__ not found"))
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
 @register_opcode_handler("LOAD_CLOSURE")
 def _load_closure_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
@@ -1563,7 +1575,7 @@ def _pop_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.pop()
 
 
-def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL(), **kwargs):
+def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
     # Get the type and exception being raised
     _type: Any = Py_NULL()
     _value: Any = Py_NULL()

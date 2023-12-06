@@ -1,5 +1,6 @@
 from functools import partial
 from itertools import product
+
 import sys
 import dis
 
@@ -1112,7 +1113,6 @@ def test_name_opcodes_and_print_expr():
     from types import FunctionType
     from contextlib import redirect_stdout
     import io
-    import sys
 
     co = compile("x = 5; print(x); del x;", "<string>", "single")
     fn = FunctionType(co, globals())
@@ -1164,6 +1164,26 @@ def test_name_opcodes_and_print_expr():
 
     with pytest.raises(NameError, match="'x' is not defined"):
         jfn()
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 11), reason="LOAD_BUILD_CLASS is Python 3.10 only.")
+def test_load_build_class():
+    def foo():
+        class C:
+            def __init__(self):
+                self.bar = 5
+
+        return C, C().bar
+
+    jfoo = jit(foo)
+
+    cp, cb = foo()
+    jp, jb = jfoo()
+    assert cb == jb
+    assert cp().bar == jp().bar
+
+    assert any(i.opname == "LOAD_BUILD_CLASS" for i in dis.get_instructions(foo))
+    assert any(i.opname == "LOAD_BUILD_CLASS" for i in jfoo._last_interpreted_instructions)
 
 
 #
