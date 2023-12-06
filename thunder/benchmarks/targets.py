@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from functools import partial
+from functools import partial, wraps
 from collections.abc import Sequence
 
 from lightning_utilities.core.imports import package_available
@@ -51,6 +51,7 @@ def make_setup(b: Benchmark):
 
 
 def wrap_for_benchmark(fn):
+    @wraps(fn)
     def fn_(*args, **kwargs):
         result = fn(*args, **kwargs)
         torch.cuda.synchronize()
@@ -65,12 +66,14 @@ def torch_fwd(b: Benchmark):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(fn_)
         def wrapper(*args):
             result = fn_(args)
             return result
 
         return wrapper
 
+    @wraps(fn_)
     def wrapper(*args, **kwargs):
         result = fn_(*args, **kwargs)
         return result
@@ -85,12 +88,14 @@ def interpreter_fwd(b: Benchmark):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(fn_)
         def wrapper(*args):
             result = fn_(args)
             return result
 
         return wrapper
 
+    @wraps(fn_)
     def wrapper(*args, **kwargs):
         result = fn_(*args, **kwargs)
         return result
@@ -104,12 +109,14 @@ def torch_compile_fwd(b: Benchmark):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(fn_)
         def wrapper(*args):
             result = fn_(args)
             return result
 
         return wrapper
 
+    @wraps(fn_)
     def wrapper(*args, **kwargs):
         result = fn_(*args, **kwargs)
         return result
@@ -130,12 +137,14 @@ def torch_compile_compiled_bwd(b: Benchmark):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(cfoo)
         def wrapper(*args):
             clear_grads(module)
             return cfoo(args)
 
         return wrapper
 
+    @wraps(cfoo)
     def wrapper(*args, **kwargs):
         clear_grads(module)
         result = cfoo(*args, **kwargs)
@@ -150,11 +159,13 @@ def thunder_fwd(b: Benchmark, compile_fn: Callable):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(cfn)
         def wrapper(*args):
             return cfn(args)
 
         return wrapper
 
+    @wraps(cfn)
     def wrapper(*args, **kwargs):
         result = cfn(*args, **kwargs)
         return result
@@ -174,6 +185,7 @@ def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(cfn_grad)
         def wrapper(*args):
             clear_grads(cfn)
             grads = cfn_grad(args)
@@ -181,6 +193,7 @@ def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
 
         return wrapper
 
+    @wraps(cfn_grad)
     def wrapper(*args, **kwargs):
         clear_grads(cfn)
         grads = cfn_grad(*args, **kwargs)
@@ -196,6 +209,7 @@ def thunder_grad_transform_v1(b: Benchmark, compile_fn: Callable):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(cfn_grad)
         def wrapper(*args):
             clear_grads(cfn)
             grads = cfn_grad(args)
@@ -203,6 +217,7 @@ def thunder_grad_transform_v1(b: Benchmark, compile_fn: Callable):
 
         return wrapper
 
+    @wraps(cfn_grad)
     def wrapper(*args, **kwargs):
         clear_grads(cfn)
         grads = cfn_grad(*args, **kwargs)
@@ -217,6 +232,7 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
 
     if isinstance(module, torch.nn.Sequential):
 
+        @wraps(cfn)
         def wrapper(*args):
             clear_grads(module)
             result = cfn(args)
@@ -225,13 +241,14 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
 
         return wrapper
 
+    @wraps(cfn)
     def wrapper(*args, **kwargs):
         clear_grads(module)
         result = cfn(*args, **kwargs)
         if isinstance(result, Sequence):
-            torch.autograd.backward(result, [torch.randn_like(x) for x in result])
+            torch.autograd.backward(result, [torch.ones_like(x) for x in result])
         else:
-            result.backward(torch.randn_like(result))
+            result.backward(torch.ones_like(result))
         return result
 
     return wrapper
