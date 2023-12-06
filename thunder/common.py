@@ -70,6 +70,8 @@ class CompileStats:
         # Callables and traces
         self.last_executed = None
         self.last_traces = None
+        self.last_interpreted_instructions = None
+        self.last_interpreted_history = None
 
         # torch.autograd.Function specific data
         self.primal_trace = None

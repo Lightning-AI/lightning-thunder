@@ -1,13 +1,15 @@
 from functools import partial
 from itertools import product
-
+import sys
 import dis
+
 import pytest
 import torch
 from torch.testing import assert_close
 
+import thunder
 from thunder.core.jit import jit, JITError
-from thunder.core.jit_ext import phantom_jit
+from thunder.core.jit_ext import phantom_jit, litjit
 
 
 def test_no_return():
@@ -1156,6 +1158,35 @@ def test_phantom_load_fast():
 
     assert result == [1, 2, 3, 4]
     assert l == [1, 2, 3]
+
+
+#
+# "Thunder" tests
+#
+
+
+@pytest.mark.skipif(sys.version_info > (3, 11), reason="Only supports Python 3.10 at the moment")
+def test_interpreter_stats():
+    def foo(a, b):
+        return a + b
+
+    ljfoo = litjit(foo)
+
+    result = ljfoo(5, 7)
+
+    assert result == 12
+
+    history: list = thunder.last_interpreted_history(ljfoo)
+
+    # Looks for the int instruction (there's almost certainly a nicer way to do this)
+    found: bool = False
+    for inst in history:
+        if isinstance(inst, str):
+            if inst.startswith("Opaque call to <method-wrapper '__add__' of int object"):
+                found = True
+                break
+
+    assert found
 
 
 #

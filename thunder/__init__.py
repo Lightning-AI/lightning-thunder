@@ -3,6 +3,7 @@ from typing import Dict, Set, Optional, Any, List, Tuple, Type
 from collections.abc import Callable
 from collections.abc import Sequence
 import os
+import dis
 
 from looseversion import LooseVersion
 
@@ -187,6 +188,16 @@ def cache_misses(fn) -> int:
 
 def list_transforms(fn) -> list:
     return fn._lc_transforms
+
+
+def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
+    cs = compile_stats(fn)
+    return cs.last_interpreted_instructions
+
+
+def last_interpreted_history(fn: Callable) -> None | list[dis.Instruction | str]:
+    cs = compile_stats(fn)
+    return cs.last_interpreted_history
 
 
 # TODO (mruberry) Update this
