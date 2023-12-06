@@ -8,6 +8,7 @@ import string
 import functools
 from functools import partial
 
+import dis
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface
 import thunder.core.dtypes as dtypes
@@ -177,6 +178,66 @@ _torch_dtype_to_str_map = {
     torch.complex64: "torch.complex64",
     torch.complex128: "torch.complex128",
 }
+
+
+# Function objects have a lot of stuff in them, that may not be relevant when we
+# just want to preview bytecode. Here, we make a list of the things we don't need to see.
+fnprint_exclude_attrs = {
+    "__class__",
+    "__doc__",
+    "co_code",
+    "co_lnotab",
+    "co_name",
+    "co_firstlineno",
+    "co_filename",
+    "co_kwonlyargcount",
+    "co_stacksize",
+    "co_flags",
+    "co_nlocals",
+    "co_linetable",
+}
+
+
+# View the bytecode and code object of a function or code object and any nested functions.
+# This is meant to be useful for figuring out what's going on in a function.
+# Example:
+#     @fnprint
+#     def foo(a, b):
+#         return a + b
+def fnprint(fn: Callable, first=True) -> Callable:
+    x = fn.__code__ if hasattr(fn, "__code__") else fn
+
+    if first:
+        try:
+            source = inspect.getsource(x)
+        except:
+            source = "Source could not be found."
+    else:
+        source = f"SUBFUNCTION {x.co_name}:"
+
+    print(source)
+    for k in dir(x):
+        v = getattr(x, k)
+        if hasattr(v, "__call__"):
+            continue
+        if k in fnprint_exclude_attrs:
+            continue
+        print(f"{k}: {v}")
+
+    print("co_code:")
+    dis.dis(x, depth=0)
+    print()
+
+    # Recurse for nested functions
+    for f in x.co_consts:
+        if f.__class__ == x.__class__:
+            fnprint(f, False)
+            print()
+
+    if first:
+        print("=" * 50)
+        print()
+    return fn
 
 
 # TODO Review prettyprinting other map types like dict -- these need to print strings in a particular way
