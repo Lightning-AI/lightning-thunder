@@ -1407,7 +1407,7 @@ def _map_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos1 = stack.pop()
     d: dict = stack[-i]
 
-    assert isinstance(d, dict)
+    assert type(d) is dict, type(d)
     d[tos1] = tos
 
 
@@ -1687,7 +1687,7 @@ def _set_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack.pop()
     s: set = stack[-i]
 
-    assert isinstance(s, set)
+    assert type(s) is set, type(s)
     s.add(tos)
 
 
