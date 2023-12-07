@@ -733,9 +733,7 @@ class nvFuserExecutor(FusionExecutor):
         # example residual connection in transformer block). This pass moves
         # them to the consumer. See
         # https://github.com/Lightning-AI/lightning-thunder/issues/1520
-        # TODO: enable rematerialize pass when issue is resolved:
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1684
-        if self._use_rematerialization and False:
+        if self._use_rematerialization:
             fusedtrace = rematerialize(fusedtrace)
 
         fusedtrace = remove_redundant_casts(fusedtrace)

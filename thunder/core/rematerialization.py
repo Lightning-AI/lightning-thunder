@@ -4,6 +4,7 @@ from itertools import chain, product, takewhile
 from typing import Optional, Tuple, Union
 from collections.abc import Callable
 from collections.abc import Sequence
+from collections import defaultdict
 import time
 
 from igraph import Graph
@@ -113,7 +114,9 @@ def apply_rematerialization_for_producer(
     # It's simple to update the producer node, all we need to do is to update
     # the producer's output with the cut information and the external outputs.
     cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
-    new_producer_output_names = tuple(x.name for x in external_producer_outputs) + cut_names
+    new_producer_output_names = (
+        tuple(x.name if isinstance(x, ProxyInterface) else x for x in external_producer_outputs) + cut_names
+    )
     # Remove the producer's inputs from the new producer's output.
     new_producer_output_names = tuple(
         x for x in new_producer_output_names if x not in (y.name for y in producer.flat_args)
@@ -434,6 +437,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     producers = {producer for producer, _ in pairs}
     consumers = {consumer for _, consumer in pairs}
     new_bsyms = {bsym: bsym for bsym in producers | consumers}
+    computed_cuts_for_producers = defaultdict(tuple)
     for i, (producer, consumer) in enumerate(pairs):
         current_producer = new_bsyms.get(producer, None) or producer
         current_consumer = new_bsyms.get(consumer, None) or consumer
@@ -447,6 +451,11 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
         # Find the minimal cut between the producer and the consumer
         cut = find_cut(external_producer_outputs, current_producer, current_consumer)
         if cut:
+            # If we have already computed the cut for the producer, we need to
+            # update the external producer outputs with the previous cut
+            # information.
+            external_producer_outputs += computed_cuts_for_producers.get(producer, tuple())
+
             updated_producer = apply_rematerialization_for_producer(external_producer_outputs, current_producer, cut)
             updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
             # As we replace bound symbols of the input trace with updated ones every iteration,
@@ -455,6 +464,8 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
             # ref: https://github.com/Lightning-AI/lightning-thunder/pull/868#discussion_r1305640813
             new_bsyms[producer] = new_bsyms[current_producer] = updated_producer
             new_bsyms[consumer] = new_bsyms[current_consumer] = updated_consumer
+
+            computed_cuts_for_producers[producer] += cut
 
     # New bound symbols are still incorrect. Its _ctx_call dict points to the
     # old nvFuser fusion. We need to update it to use the new definition.
