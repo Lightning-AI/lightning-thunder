@@ -8,10 +8,10 @@ import torch
 from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
 from thunder.core.prims import PrimIDs
 import thunder.core.utils as utils
-from thunder.core.pytree import tree_flatten
+from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.trace import TraceCtx
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.symbol import Symbol, BoundSymbol, BoundSymbolRHS
 import thunder.distributed.prims as dist_prims
 import thunder.torch as ltorch
 
@@ -101,12 +101,10 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
-            _apply_batch_allreduce_of_grads = (
-                compile_data is not None
-                and getattr(compile_data.fn, "use_ddp", False)
-                and getattr(compile_data.fn, "bucket_size_in_mb", 25) <= 0
+            _should_apply_batch_allreduce_of_grads = compile_data is not None and getattr(
+                compile_data.fn, "use_ddp", False
             )
-            if _apply_batch_allreduce_of_grads:
+            if _should_apply_batch_allreduce_of_grads:
                 bw_trace = batch_allreduce_of_grads(bw_trace, compile_data)
 
             # Now we can run the optimization passes on the backward trace
@@ -123,9 +121,11 @@ class ThunderFunction(torch.autograd.Function):
 
             # We need to sort the waits in forward and backward trace to overlap
             # computation with communication
-            if compile_data is not None and getattr(compile_data.fn, "use_fsdp", False):
-                fw_extrace = sort_waits(fw_extrace)
-                bw_extrace = sort_waits(bw_extrace)
+            if compile_data is not None:
+                if getattr(compile_data.fn, "use_fsdp", False):
+                    fw_extrace = sort_waits(fw_extrace)
+                if getattr(compile_data.fn, "use_ddp", False) or getattr(compile_data.fn, "use_fsdp", False):
+                    bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace = del_last_used(fw_extrace)
             fw_traces.append(fw_extrace)
@@ -307,6 +307,26 @@ if torch.distributed.is_available():
         backward_trace: TraceCtx,
         compile_data: "CompileData",
     ) -> TraceCtx:
+        """Reduce all_reduce of the given ``backward_trace`` with gradient bucketing.
+
+        This function collects pre-averaged gradient tensors, replace all existing ``dist_prims.all_reduce``
+        and ``dist_prims.wait`` with ``dist_prims.update_bucket_view``, ``dist_prims.pack``,
+        ``dist_prims.all_reduce``, ` dist_prims.wait` , and ` dist_prims.unpack` .
+
+        In the first iteration, `dist_prims.pack` creates buckets of greater than or equal to
+        ``bucket_size_in_mb`` that are bunching up one or more gradient tensors.
+        ``dist_prims.unpack`` writes out allreduce'd gradients to original gradient tensors.
+        ``dist_prims.update_bucket_view`` copies pre-averaged gradient tensors to the corresponding
+        view of bucket.
+
+        Args:
+            backward_trace:
+            compile_data:
+
+        Returns:
+            :class:`TraceCtx`
+        """
+
         from collections import defaultdict
         from torch.distributed.distributed_c10d import _get_default_group
         from thunder.core import dtypes
@@ -322,9 +342,11 @@ if torch.distributed.is_available():
         @dataclass
         class BatchAllReduceVisitor:
             process_group: torch.distributed.ProcessGroup
-            original_backward_trace_outputs: list[Any]
+            flat_backward_trace_output: list[Any]
+            backward_trace_output_spec: Any
             gradient_buckets: GradBuckets
             prims_to_filter: set[prims.PrimIDs, dist_prims.PrimIDs]
+            has_replaced_return: bool = False
 
             def __call__(self, bsym: BoundSymbol) -> None:
                 sym: Symbol = bsym.sym
@@ -334,73 +356,70 @@ if torch.distributed.is_available():
 
                 if sym.id == prims.PrimIDs.RETURN:
                     allreduced_grads = self.gradient_buckets.retrieve_allreduced_grads(self.process_group)
-                    prims.python_return(
-                        *[allreduced_grads.get(i, t) for i, t in enumerate(self.original_backward_trace_outputs)]
+                    new_return = tree_unflatten(
+                        [allreduced_grads.get(i, t) for i, t in enumerate(self.flat_backward_trace_output)],
+                        self.backward_trace_output_spec,
                     )
+                    prims.python_return(new_return)
+                    self.has_replaced_return = True
                     return VISIT_TYPE.REPLACE
 
                 # `grads` here are pre-averaged gradients. Thus we might want to make sure sym.id is prims.PrimIDs.DIV
                 grads_of_bsym = tuple(filter(lambda p: p in self.gradient_buckets.grad_to_bucket, bsym.flat_proxy_outs))
-
-                if not grads_of_bsym:
-                    return VISIT_TYPE.INSERT_AFTER
-
-                for grad in grads_of_bsym:
-                    self.gradient_buckets.tell(grad, self.process_group)
+                if grads_of_bsym:
+                    utils.check(
+                        bsym.sym.id in {PrimIDs.DIV, "torch.true_divide"},
+                        lambda: f"This bsym's sym.id is expected to be {PrimIDs.DIV=} or 'torch.true_divide' but {bsym.sym.id=}",
+                    )
+                    utils.check(len(grads_of_bsym) == 1, lambda: f"{len(grads_of_bsym)=} is expected to be 1")
+                    self.gradient_buckets.tell(grads_of_bsym[0], self.process_group)
                 return VISIT_TYPE.INSERT_AFTER
 
-        preaveraged_gradient_tensor_proxies = tree_flatten(
-            tuple(
-                bsym._flat_args[0]
-                for bsym in backward_trace.bound_symbols
-                if len(bsym._flat_outs) == 1 and isinstance(bsym._flat_outs[0], FutureTensorProxy)
-            )
-        )[0]
+        preaveraged_grads = [
+            bsym.flat_proxy_args[0]
+            for bsym in backward_trace.bound_symbols
+            if bsym.sym.id == dist_prims.PrimIDs.ALL_REDUCE
+        ]
 
-        backward_trace_outputs, _ = tree_flatten(backward_trace.output)
-        tensor_proxy_indices_of_trace_output = tuple(
-            i for i, t in enumerate(backward_trace_outputs) if isinstance(t, TensorProxy)
-        )
-        utils.check(
-            all(isinstance(t, TensorProxy) for t in preaveraged_gradient_tensor_proxies),
-            lambda: f"All elements need to be TensorProxy but {[type(a) for a in preaveraged_gradient_tensor_proxies]}",
-        )
-        utils.check(
-            len(preaveraged_gradient_tensor_proxies) == len(tensor_proxy_indices_of_trace_output),
-            lambda: (
-                f"return statement has {len(tensor_proxy_indices_of_trace_output)} `TensorProxy`s while "
-                f"{len(preaveraged_gradient_tensor_proxies)} all_reduce calls found"
-            ),
-        )
-
-        # Map from grad to index in trace.output
-        gradient_to_index = utils.ProxyDict()
-        for i, t in enumerate(backward_trace_outputs):
+        # Map from preaveraged grad to index in trace.output
+        preaveraged_to_index = utils.ProxyDict()
+        for i, t in enumerate(tree_flatten(backward_trace.output)[0]):
             if isinstance(t, TensorProxy):
-                producer_symbols = utils.find_producer_symbols(backward_trace, [t], preaveraged_gradient_tensor_proxies)
-                gradient_to_index[producer_symbols[0]._flat_args[0]] = i
+                producer_symbols = tuple(
+                    filter(
+                        lambda bsym: bsym.sym.id == dist_prims.PrimIDs.ALL_REDUCE,
+                        utils.find_producer_symbols(backward_trace, [t], preaveraged_grads),
+                    )
+                )
+                utils.check(len(producer_symbols) == 1, lambda: f"{len(producer_symbols)=} is expected to be 1")
+                bsym_of_allreduce: BoundSymbol = producer_symbols[0]
+                preaveraged_to_index[bsym_of_allreduce.flat_proxy_args[0]] = i
 
         gradients_of_same_dtype_and_device: dict[tuple[dtypes.dtype, devices.Device], list[TensorProxy]] = defaultdict(
             list
         )
-        for grad in preaveraged_gradient_tensor_proxies:
+        for grad in preaveraged_grads:
             key = (grad.dtype, grad.device)
             gradients_of_same_dtype_and_device[key].append(grad)
-        gradient_to_index = utils.ProxyDict()
         gradient_buckets = GradBuckets.build(
             gradients_of_same_dtype_and_device=gradients_of_same_dtype_and_device,
-            gradient_to_index=gradient_to_index,
+            gradient_to_index=preaveraged_to_index,
             bucket_cap_in_mb=bucket_size_in_mb,
             delay_allreduce=getattr(compile_data.fn, "delay_allreduce", False),
         )
 
-        return visitor_transform(
+        flat_backward_trace_output, backward_trace_output_spec = tree_flatten(backward_trace.output)
+        visit_callable = BatchAllReduceVisitor(
+            process_group=getattr(compile_data.fn, "process_group_for_ddp", _get_default_group()),
+            flat_backward_trace_output=flat_backward_trace_output,
+            backward_trace_output_spec=backward_trace_output_spec,
+            gradient_buckets=gradient_buckets,
+            prims_to_filter={dist_prims.PrimIDs.ALL_REDUCE, dist_prims.PrimIDs.WAIT},
+        )
+        updated_bwd_trace = visitor_transform(
             backward_trace,
-            BatchAllReduceVisitor(
-                process_group=getattr(compile_data.fn, "process_group_for_ddp", _get_default_group()),
-                original_backward_trace_outputs=backward_trace_outputs,
-                gradient_buckets=gradient_buckets,
-                prims_to_filter={dist_prims.PrimIDs.ALL_REDUCE, dist_prims.PrimIDs.WAIT},
-            ),
+            visit_callable,
             provenance="Batching all_reduce calls",
         )
+        utils.check(visit_callable.has_replaced_return, lambda: "")
+        return updated_bwd_trace

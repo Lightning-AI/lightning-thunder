@@ -419,6 +419,34 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
             self.assertEqual(actual, expected)
 
+    @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
+    def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
+        from thunder.distributed import ddp
+        from thunder.executors.torchex import pack_prim_impl, unpack_prim_impl, update_bucket_view_prim_impl
+
+        device = torch.device("cuda", self.rank)
+        m = ToyModel().to(device)
+        cm = thunder.compile(
+            ddp(m, self.rank, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
+            executors_list=executors_map[executor].executors_list(),
+        )
+        x = torch.ones((2, 10)).to(device)
+        cm(x).mean().backward()
+
+        bwd_extrace = thunder.last_traces(cm)[1][-1]
+        bsym_sym_id_list = [bsym.sym.id for bsym in bwd_extrace.bound_symbols]
+        pack_syms = tuple(filter(lambda a: a == pack_prim_impl.id, bsym_sym_id_list))
+        unpack_syms = tuple(filter(lambda a: a == unpack_prim_impl.id, bsym_sym_id_list))
+        update_bucket_view_syms = tuple(filter(lambda a: a == update_bucket_view_prim_impl.id, bsym_sym_id_list))
+        if bucket_size_in_mb == 0:
+            self.assertEqual(len(pack_syms), 0)
+            self.assertEqual(len(unpack_syms), 0)
+            self.assertEqual(len(update_bucket_view_syms), 0)
+        else:
+            self.assertEqual(len(pack_syms), 1, msg=f"{pack_syms}")
+            self.assertEqual(len(unpack_syms), 1, msg=f"{unpack_syms}")
+            self.assertEqual(len(update_bucket_view_syms), 4, msg=f"{update_bucket_view_prim_impl}")
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 
@@ -576,12 +604,12 @@ class ddp_wrapper:
         init_method = f"{FILE_SCHEMA}{file_name}"
 
         @wraps(test_stub)
-        def test_fn(executor, devices, dtype):
+        def test_fn(executor, devices, dtype, bucket_size_in_mb=0):
             world_size = len(devices)
             input_data = []
 
             for rank in range(world_size):
-                process_data = (init_method, world_size, rank, executor, devices[rank], dtype)
+                process_data = (init_method, world_size, rank, executor, devices[rank], dtype, bucket_size_in_mb)
                 input_data.append(process_data)
 
             ctx = mp.get_context("spawn")
@@ -618,7 +646,7 @@ class ddp_wrapper:
 # NOTE This assumes that one process will have rank=0 -- could generalize that to root
 # TODO Test training, this test just currently tests forward
 def _test_native_ddp_helper(input_data):
-    init_method, world_size, rank, executor, device, dtype = input_data
+    init_method, world_size, rank, executor, device, dtype, bucket_size_in_mb = input_data
 
     num_samples = 2
     tensor_shape = (2, 2)
@@ -703,13 +731,19 @@ def _test_native_ddp_helper(input_data):
     tdist.destroy_process_group(pg)
 
     if rank == 0:
-        return comparison_exceptions
+        bwd_extrace_sym_ids = [bsym.sym.id for bsym in thunder.last_traces(cmodel)[1][-1].bound_symbols]
+        pack_unpack_update_bucket_view_found = (
+            "torch_pack_prim_impl" in bwd_extrace_sym_ids
+            and "torch_unpack_prim_impl" in bwd_extrace_sym_ids
+            and "torch_update_bucket_view_prim_impl" in bwd_extrace_sym_ids
+        )
+        return comparison_exceptions and (pack_unpack_update_bucket_view_found or bucket_size_in_mb == 0)
 
     return None
 
 
 def _test_native_fsdp_helper(input_data):
-    init_method, world_size, rank, executor, device, dtype = input_data
+    init_method, world_size, rank, executor, device, dtype, _ = input_data
 
     num_samples = 2
     tensor_shape = (2, 2)
@@ -798,9 +832,13 @@ def _test_native_fsdp_helper(input_data):
 
 
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
-@instantiate(dtypes=(thunder.float32,), num_devices=2)
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
+)
 @ddp_wrapper("test_native_ddp", _test_native_ddp_helper)
-def test_native_ddp(executor, devices, dtype):
+def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
     pass
 
 

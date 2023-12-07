@@ -1518,11 +1518,7 @@ if torch.distributed.is_available():
 
     def _pack_prim_impl(tensors: list[torch.Tensor], bucket_key: str) -> torch.Tensor:
         if bucket_key not in _key_to_bucket_and_views:
-            buffer = torch.empty(
-                size=(sum(t.numel() for t in tensors),),
-                device=tensors[0].device,
-                dtype=tensors[0].dtype,
-            )
+            buffer = torch.cat([torch.flatten(t) for t in tensors])
             offset = 0
             views = []
             for t in tensors:

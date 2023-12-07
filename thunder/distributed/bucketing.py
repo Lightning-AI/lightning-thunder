@@ -41,7 +41,7 @@ class GradBucket:
     def tell(self, grad):
         utils.check(grad in self.grads, lambda: f"Wrong TensorProxy of {grad} passed")
         self.preaveraged_tensors.append(
-            dist_prims.update_bucket_view(grad, self.grad_names, self.bucket_key),
+            dist_prims.update_bucket_view(grad, self.grad_names.index(grad.name), self.bucket_key),
         )
 
     def ready_for_allreduce(self):

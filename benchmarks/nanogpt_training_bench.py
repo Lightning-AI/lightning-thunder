@@ -270,6 +270,10 @@ if args.dump_extrace and save_files:
     fwd_traces, bwd_traces = thunder.last_traces(model)
 
     with open(os.path.join(dir_for_outputs, "fwd_trace.py"), "w") as f:
+        f.write(preamble + str(fwd_traces[0]))
+    with open(os.path.join(dir_for_outputs, "fwd_extrace.py"), "w") as f:
         f.write(preamble + str(fwd_traces[-1]))
     with open(os.path.join(dir_for_outputs, "bwd_trace.py"), "w") as f:
+        f.write(preamble + str(bwd_traces[0]))
+    with open(os.path.join(dir_for_outputs, "bwd_extrace.py"), "w") as f:
         f.write(preamble + str(bwd_traces[-1]))
