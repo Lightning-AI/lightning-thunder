@@ -731,7 +731,7 @@ class SpdaBackend(Enum):
 
 
 # This helper function converts Thunder Proxy to PyTorch Meta Tensor
-def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
+def _convert_to_cuda_tensor(a: None | TensorProxy) -> None | torch.Tensor:
     from thunder.torch import _thunder_to_torch_dtype_map
 
     if a is None:
@@ -740,7 +740,7 @@ def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
         a.shape,
         dtype=_thunder_to_torch_dtype_map[a.dtype],
         requires_grad=a.requires_grad,
-        device="meta",
+        device="cuda",
     )
 
 
@@ -764,11 +764,16 @@ def _fused_sdp_choice(
     scale: None | float = None,
 ) -> int:
     input_tensors = (query, key, value, attn_mask)
-    meta_input_tensors = list(map(_convert_to_meta_tensor, input_tensors))
-    with FakeTensorMode() as mode:
-        fake_query, fake_key, fake_value, fake_attn_mask = list(
-            map(lambda a: _convert_to_fake_tensor(mode, a), meta_input_tensors)
-        )
+    fake_query, fake_key, fake_value, fake_attn_mask = list(map(_convert_to_cuda_tensor, input_tensors))
+
+    # TODO: FakeTensor usage is disabled temporarily due to a bug in PyTorch
+    # See https://github.com/pytorch/pytorch/issues/115362
+    # and https://github.com/Lightning-AI/lightning-thunder/issues/1703
+    # meta_input_tensors = list(map(_convert_to_meta_tensor, input_tensors))
+    # with FakeTensorMode() as mode:
+    #     fake_query, fake_key, fake_value, fake_attn_mask = list(
+    #         map(lambda a: _convert_to_fake_tensor(mode, a), meta_input_tensors)
+    #     )
 
     import thunder
 
