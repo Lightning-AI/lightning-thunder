@@ -4712,6 +4712,7 @@ einsum_opinfo = OpInfo(
     sample_input_generator=einsum_sample_generator,
     error_input_generator=einsum_error_generator,
     torch_reference=torch.einsum,
+    supports_grad=True,
     # TODO: test all integer types and figure out their dtype.
     dtypes=(datatypes.float32, datatypes.float64),
     # See https://github.com/Lightning-AI/lightning-thunder/issues/1643.

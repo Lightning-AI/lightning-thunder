@@ -1653,7 +1653,8 @@ def _sum_grad(
     if dim is None or keepdim:
         g = expand(g, a.shape)
     else:
-        broadcast_dimensions = [x for x in range(a.ndim) if x not in utils.sequencify(dim)]
+        dim = utils.canonicalize_dims(a.ndim, utils.sequencify(dim))
+        broadcast_dimensions = [d for d in range(a.ndim) if d not in dim]
         g = prims.broadcast_in_dim(g, a.shape, broadcast_dimensions)
 
     a_grad = g.to(a.dtype)
