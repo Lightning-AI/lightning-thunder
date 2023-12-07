@@ -106,6 +106,86 @@ def test_if():
         assert jfoo(*case) == foo(*case)
 
 
+def test_while():
+    # produces POP_JUMP_BACKWARD_IF_TRUE/FALSE in 3.11
+    def foo(l):
+        i = 0
+        res = []
+        v = l[0]
+        while v:
+            res.append(i)
+            i = i + 1
+            v = l[i]
+        return res
+
+    def bar(l):
+        i = 0
+        res = []
+        v = l[0]
+        while not v:
+            res.append(i)
+            i = i + 1
+            v = l[i]
+        return res
+
+    def baz(l):
+        i = 0
+        res = []
+        v = l[0]
+        while v is not None:
+            res.append(i)
+            i = i + 1
+            v = l[i]
+        return res
+
+    def tom(l):
+        i = 0
+        res = []
+        v = l[0]
+        while v is None:
+            res.append(i)
+            i = i + 1
+            v = l[i]
+        return res
+
+    l = [True, True, False, True]
+
+    assert foo(l) == jit(foo)(l)
+
+    l = [False, False, True]
+    assert bar(l) == jit(bar)(l)
+
+    l = [False, False, None]
+    assert baz(l) == jit(baz)(l)
+
+    l = [None, None, False]
+    assert tom(l) == jit(tom)(l)
+
+
+def test_and_or():
+    # JUMP_IF_TRUE/FALSE_OR_POP
+    def foo(a, b):
+        return a and b
+
+    def bar(a, b):
+        return a or b
+
+    jfoo = jit(foo)
+    jbar = jit(bar)
+
+    cases = (
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
+        (object(), True),
+        (object(), False),
+    )
+    for case in cases:
+        assert jfoo(*case) == foo(*case)
+        assert jbar(*case) == bar(*case)
+
+
 def test_dunder_bool():
     class mycls:
         def __init__(self, value):

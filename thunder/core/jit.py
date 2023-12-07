@@ -1256,6 +1256,58 @@ def _jump_if_not_exc_match_handler(inst: dis.Instruction, /, inst_ptr: int, stac
     return target
 
 
+def _bool_condition_helper(tos):
+    def impl():
+        return bool(tos)
+
+    # Acquires the condition, only calling bool() if tos requires conversion
+    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
+    if tos is False or tos is True:
+        return tos
+    else:
+        return _jit(impl)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_TRUE_OR_POP
+# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_TRUE_OR_POP
+@register_opcode_handler("JUMP_IF_TRUE_OR_POP")
+def _jump_if_true_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+    assert type(inst.arg) is int
+    target: int = inst.arg
+
+    tos = stack[-1]
+
+    cnd: bool = _bool_condition_helper(tos)
+
+    if not cnd:
+        stack.pop()
+        return
+
+    if sys.version_info >= (3, 11):
+        target += inst_ptr + 1
+    return target
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_FALSE_OR_POP
+# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_FALSE_OR_POP
+@register_opcode_handler("JUMP_IF_FALSE_OR_POP")
+def _jump_if_false_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+    assert type(inst.arg) is int
+    target: int = inst.arg
+
+    tos = stack[-1]
+
+    cnd: bool = _bool_condition_helper(tos)
+
+    if cnd:
+        stack.pop()
+        return
+
+    if sys.version_info >= (3, 11):
+        target += inst_ptr + 1
+    return target
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_APPEND
 @register_opcode_handler("LIST_APPEND")
 def _list_append_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1570,6 +1622,64 @@ def _pop_except_handler(
     exception_stack[-1] = exc_value
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_FALSE
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_FALSE", min_ver=(3, 11))
+def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+
+    cnd: bool = _bool_condition_helper(tos)
+
+    if not cnd:
+        return inst_ptr - inst.arg - 1
+
+    return None
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_NONE
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_NONE", min_ver=(3, 11))
+def _pop_jump_backward_if_none_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+
+    if tos is None:
+        return inst_ptr - inst.arg - 1
+
+    return None
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_NOT_NONE
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_NOT_NONE", min_ver=(3, 11))
+def _pop_jump_backward_if_not_none_handler(
+    inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
+) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+
+    if tos is not None:
+        return inst_ptr - inst.arg - 1
+
+    return None
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_TRUE
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_TRUE", min_ver=(3, 11))
+def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+
+    cnd: bool = _bool_condition_helper(tos)
+
+    if cnd:
+        return inst_ptr - inst.arg - 1
+
+    return None
+
+
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_FALSE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11))
 def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
@@ -1577,16 +1687,7 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
 
     tos = stack.pop()
 
-    def impl():
-        return bool(tos)
-
-    # Acquires the condition, only calling bool() if tos requires conversion
-    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
-    cnd: bool
-    if tos is False or tos is True:
-        cnd = tos
-    else:
-        cnd = _jit(impl)
+    cnd: bool = _bool_condition_helper(tos)
 
     if not cnd:
         return inst_ptr + inst.arg + 1
@@ -1601,16 +1702,7 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
 
     tos = stack.pop()
 
-    def impl():
-        return bool(tos)
-
-    # Acquires the condition, only calling bool() if tos requires conversion
-    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
-    cnd: bool
-    if tos is False or tos is True:
-        cnd = tos
-    else:
-        cnd = _jit(impl)
+    cnd: bool = _bool_condition_helper(tos)
 
     if cnd:
         return inst_ptr + inst.arg + 1
