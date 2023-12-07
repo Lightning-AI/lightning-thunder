@@ -13,6 +13,12 @@ from thunder.core.jit import is_jitting, jit, JITError
 from thunder.core.jit_ext import phantom_jit, litjit
 
 
+def xfailif_python_3_11_plus(f):
+    if sys.version_info >= (3, 11):
+        return pytest.mark.xfail(f, reason=f"not yet implemented for Python 3.11+, got {sys.version_info=}")
+    return f
+
+
 def test_no_return():
     def foo():
         pass
@@ -258,7 +264,6 @@ def test_inner_closure():
     assert_close(thunder_result, python_result)
 
 
-@pytest.mark.xfail(reason="Waits for do_raise to work")
 def test_delete_deref():
     def foo(a, b):
         value = 5
@@ -278,8 +283,6 @@ def test_delete_deref():
         python_result = foo(*args)
     with pytest.raises(NameError, match="'value'"):
         thunder_result = jfoo(*args)
-
-    assert_close(thunder_result, python_result)
 
 
 def test_unpack_sequence():
@@ -315,6 +318,35 @@ def test_exception_traceback():
     assert "bar in file" in str(excinfo.value.__cause__)
 
 
+def test_finally():
+    l = []
+
+    def foo():
+        try:
+            l.append(1)
+            raise ValueError("test")
+            l.append(2)
+        except KeyError:
+            l.append(3)
+        except ValueError:
+            l.append(4)
+            raise
+        finally:
+            l.append(5)
+
+    with pytest.raises(ValueError):
+        foo()
+
+    l_orig = l
+
+    l = []
+
+    with pytest.raises(ValueError):
+        jit(foo)()
+
+    assert l_orig == l
+
+
 def test_raise():
     msg = "lorem ipsum"
 
@@ -329,7 +361,6 @@ def test_raise():
     assert msg in str(excinfo.value)
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_bare_except():
     msg = "lorem ipsum"
 
@@ -342,7 +373,6 @@ def test_bare_except():
     assert jit(bare_except)() == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_trivial_try_finally():
     def trivial_try_finally():
         try:
@@ -353,7 +383,6 @@ def test_trivial_try_finally():
     assert jit(trivial_try_finally)() == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_try_finally():
     def try_finally():
         try:
@@ -367,7 +396,6 @@ def test_try_finally():
     assert jit(try_finally)() == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_match_exception():
     def match_exception():
         error_set = (ValueError, IndexError)
@@ -379,7 +407,6 @@ def test_match_exception():
     assert jit(match_exception)() == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_match_as():
     msg = "lorem ipsum"
 
@@ -387,9 +414,9 @@ def test_match_as():
         try:
             raise ValueError(msg)
         except ValueError as e:
-            return msg in str(e)
+            return str(e)
 
-    assert jit(match_as) == True
+    assert msg in jit(match_as)()
 
 
 def test_raise_external():
@@ -404,7 +431,7 @@ def test_raise_external():
     assert msg in str(excinfo.value)
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
+# @pytest.mark.xfail(reason="Not implemented yet.")
 def test_raise_from():
     msg = "lorem ipsum"
 
@@ -412,28 +439,29 @@ def test_raise_from():
         try:
             raise ValueError(msg) from IndexError(msg)
         except ValueError as e:
-            return msg in str(e) and msg in str(e.__cause__)
+            return (str(e), str(e.__cause__))
 
-    assert jit(raise_from) == True
+    res = jit(raise_from)()
+    assert msg in res[0] and msg in res[1]
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_raise_from_external():
     msg = "lorem ipsum"
 
     def raise_from_external():
         raise ValueError(msg) from IndexError(msg)
 
-    with pytest.raises(JITError) as excinfo:
+    with pytest.raises(ValueError) as excinfo:
         jit(raise_from_external)()
 
     e = excinfo.value
-    assert type(e) == JITError
-    assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
+    print(e.__cause__)
+    assert type(e) == ValueError
+    # TODO: If we drop the UserException here, update
+    # assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
     assert type(e.__cause__.__cause__) == IndexError and msg in str(e.__cause__.__cause__), excinfo.value
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_nested_try_except():
     def nested_try_except():
         try:
@@ -448,7 +476,6 @@ def test_nested_try_except():
     assert jit(nested_try_except)() == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_inner_nested_try_except():
     def inner_nested_try_except():
         try:
@@ -463,7 +490,6 @@ def test_inner_nested_try_except():
     assert jit(inner_nested_try_except)() == True
 
 
-@pytest.mark.xfail(reason="Not implemented yet.")
 def test_cross_function_exceptions():
     def foo():
         def bar():

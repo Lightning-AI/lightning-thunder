@@ -146,6 +146,14 @@ class JitRuntimeCtx:
         self._globals_dict: dict[str, Any] | None = None
         self._history: list[dis.Instruction | str] = []
         self._interpreted_instructions: list[dis.Instruction] = []
+        # The exception_stack mirrors the exc_info/exc_state from PyThreadState
+        # exception_stack is the stack of exceptions currently being handled, we only have exceptions here
+        self.exception_stack = [None]
+        # ts.exc_info is the top of the stack (self.exception_stack[-1]).
+        # Note that most of the time, we are changing the self.exception_stack[-1] instead of popping/pushing exceptions.
+        # `exception_stack[-1] = ...` is the equivalent of assiging ts.exc_info->exc_type/value/traceback.
+        # ts.exc_state is exc_info (the bottom-most element of the stack(?))
+        # ts.curexc_type / curexc_value / curexc_traceback are the UserException currently being raised
 
     @property
     def globals_dict(self) -> dict[str, Any]:
@@ -275,9 +283,13 @@ class JITError(RuntimeError):
 # as the __cause__. The user-facing function jit and the generator from
 # make_generator will unwrap this to return the original error.
 class UserException(RuntimeError):
-    def __init__(self, exception, tb):
+    def __init__(self, exception: BaseException, tb: list | TracebackType | None):
         super().__init__()
         self.__cause__ = exception
+
+        # TODO: handle things with TracebackType
+        if tb is None:
+            tb = []
         self.tb = tb
 
     def __str__(self):
@@ -290,23 +302,22 @@ class Py_NULL(metaclass=Singleton):
     pass
 
 
-# SETUP_FINALLY is Python <= 3.10
-SETUP_FINALLY_TYPE = dis.opmap.get("SETUP_FINALLY")
-
-
+# Python <= 3.10 keeps a stack of TryBlocks in the frame. When an exception happens, it unwinds the try block
+#                looking for handlers.
+# Python >= 3.11 does not use this and has an map from instruction (offsets) to exception handlers instead
+#                (code.co_excepttiontable), this is handled in _jit_run
 class PyTryBlock:
+    # These constants are from Python
+    SETUP_FINALLY_TYPE = dis.opmap.get("SETUP_FINALLY", 122)  # 122 is the opcode from 3.10
+    EXCEPT_HANDLER_TYPE = 257  # "implicit opcode from Include/opcode.h
+
     def __init__(self, typ: int, handler: int, level: int):
         self.typ = typ
         self.handler = handler
         self.level = level
 
-
-class PyErr_StackItem:
-    def __init__(self, exc_type: Any, exc_value: Any, exc_traceback: Any, previous: None | PyErr_StackItem = None):
-        self.exc_type = exc_type
-        self.exc_value = exc_value
-        self.exc_traceback = exc_traceback
-        self.previous = previous
+    def __str__(self):
+        return f"<{type(self)} typ={self.typ} handler={self.handler} level={self.level}>"
 
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
@@ -375,6 +386,7 @@ class JITFrame:
     interpreter_stack: list[Any] = dataclasses.field(default_factory=list)
     try_stack: list[PyTryBlock] = dataclasses.field(default_factory=list)
     inst_ptr: int = 0
+    lasti: int = 0  # this may deviate from inst_ptr due to RERAISE
 
     # in Python 3.11+ the slots are not split by local/cell/free any more
     localsplus: list[Any] = dataclasses.field(default_factory=list)
@@ -884,6 +896,16 @@ def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     stack.append(_jit(meth, *args))
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-CHECK_EXC_MATCH
+@register_opcode_handler("CHECK_EXC_MATCH", min_ver=(3, 11))
+def _check_exc_match_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    right = stack.pop()
+    left = stack[-1]
+    assert isinstance(left, BaseException)
+    # TODO: raise type error if right is  not an exception
+    stack.append(isinstance(left, right))
+
+
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1523
 # https://docs.python.org/3.10/library/dis.html#opcode-COMPARE_OP
 @register_opcode_handler("COMPARE_OP")
@@ -1169,7 +1191,7 @@ def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
     return inst_ptr - delta + 1
 
 
-# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD
+# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD_NO_INTERRUPT
 # TODO: we currently ignore the NO_INTERRUPT part,
 #       https://github.com/Lightning-AI/lightning-thunder/issues/1631
 @register_opcode_handler("JUMP_BACKWARD_NO_INTERRUPT", min_ver=(3, 11))
@@ -1177,6 +1199,21 @@ def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int,
     delta: int = inst.arg
     assert isinstance(delta, int)
     return inst_ptr - delta + 1
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_IF_NOT_EXC_MATCH
+@register_opcode_handler("JUMP_IF_NOT_EXC_MATCH")
+def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+    assert type(inst.arg) is int
+    target: int = inst.arg
+
+    right = stack.pop()
+    left = stack.pop()
+    if not isinstance(right, tuple):
+        right = (right,)
+    if any((isinstance(left, aright) or issubclass(left, aright)) for aright in right):
+        return
+    return target
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_APPEND
@@ -1239,7 +1276,7 @@ def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITF
         build_class = frame.globals["__build_class__"]
         stack.append(build_class)
     else:
-        return do_raise(KeyError(f"__build_class__ not found"))
+        do_raise(KeyError(f"__build_class__ not found"))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
@@ -1465,9 +1502,32 @@ def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_EXCEPT
-@register_opcode_handler("POP_EXCEPT")
-def _pop_except_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
-    try_stack.pop()
+# Note that Python <= 3.10 always has type/value/tracebackk on the stack as three items
+#           Python >= 3.11 only has one (but has the split in other places)
+@register_opcode_handler("POP_EXCEPT", max_ver=(3, 10))
+def _pop_except_handler(
+    inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], exception_stack: list, **kwargs
+) -> None:
+    try_block = try_stack.pop()
+    assert try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE
+    assert try_block.level + 3 <= len(stack) <= try_block.level + 4
+    assert exception_stack
+    exc_type = stack.pop()
+    exc_value = stack.pop()
+    exc_traceback = stack.pop()
+    # we assume that type and traceback are set on exc_value already (check?)
+    # CPython sets exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
+    exception_stack[-1] = exc_value
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-POP_EXCEPT
+@register_opcode_handler("POP_EXCEPT", min_ver=(3, 11))
+def _pop_except_handler(
+    inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], exception_stack: list, **kwargs
+) -> None:
+    exc_value = stack.pop()
+    # CPython sets exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
+    exception_stack[-1] = exc_value
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_FALSE
@@ -1594,33 +1654,36 @@ def _pop_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
     # Get the type and exception being raised
-    _type: Any = Py_NULL()
-    _value: Any = Py_NULL()
+    typ: Any = Py_NULL()
+    value: Any = Py_NULL()
     if exc is Py_NULL():
         # Re-raise
-        # Get topmost exception, pull type, value, and traceback from it
-        # Call _PyErr_Restore()
-        pass
-    elif isinstance(exc, type):  # TODO review this, it's PyExceptionClass_Check
-        _type = exc
-        _value = _jit(exc)
-        if not isinstance(_value, BaseException):  # PyExceptionInstance_Check
-            do_raise(
-                TypeError(f"calling {_type} should have returned an instance of BaseException, not {type(_value)}")
-            )
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        assert runtimectx.exception_stack
+        value = runtimectx.exception_stack[0]
+        if value == None:
+            raise UserException(RuntimeError("No active exception to reraise"), [])
+        assert isinstance(value, BaseException)
+        # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
+        raise UserException(value, value.__traceback__)
+
+    if isinstance(exc, type) and issubclass(exc, BaseException):
+        typ = exc
+        value = _jit(exc)
+        if not isinstance(value, BaseException):  # TODO: maybe drop: this is from CPython, but can it happen in Python?
+            do_raise(TypeError(f"calling {typ} should have returned an instance of BaseException, not {type(value)}"))
             return
-    elif isinstance(exc, BaseException):  # PyExceptionInstance_Check
-        _value = exc
-        _type = type(exc)  # TODO review this line
-        pass
+    elif isinstance(exc, BaseException):
+        value = exc
+        typ = type(exc)
     else:
-        do_raise(TypeError("exceptions must derive from BaseException"), Py_NULL())
-        return
+        do_raise(TypeError("exceptions must derive from BaseException"))
+        # does not return
 
     # Attach the cause
     if cause is not Py_NULL():
-        fixed_cause: Py_NULL | BaseException = Py_NULL()
-        if isinstance(cause, type):  # Another PyExceptionClass_Check
+        fixed_cause: BaseException | None = None
+        if isinstance(cause, type) and issubclass(cause, BaseException):
             fixed_cause = _jit(cause)
             # NOTE: This check is missing from cpython, seems like a bug in cpython.
             if not isinstance(fixed_cause, BaseException):
@@ -1629,22 +1692,19 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
                         f"calling {cause} should have returned an instance of BaseException, not {type(fixed_cause)}"
                     )
                 )
-                return
-        elif not isinstance(cause, BaseException):  # PyExceptionInstance_Check
+                # does not return
+        elif isinstance(cause, BaseException):  # PyExceptionInstance_Check
             fixed_cause = cause
         elif cause is None:
-            fixed_cause = Py_NULL()
+            fixed_cause = None
         else:
             do_raise(TypeError(f"exception causes must derive from BaseException"))
-            return
+            # does not return
 
-        _ex: BaseException = _value
-        __cause: None | BaseException = None if isinstance(fixed_cause, Py_NULL) else fixed_cause
-        _ex.__cause__ = __cause
+        value.__cause__ = fixed_cause
 
     # Call PyErr_SetObject() to update the thread's state
-
-    raise UserException(_value, [])
+    raise UserException(value, [])
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
@@ -1653,6 +1713,18 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
 def _print_expr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack.pop()
     sys.displayhook(tos)
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-PUSH_EXC_INFO
+@register_opcode_handler("PUSH_EXC_INFO", min_ver=(3, 11))
+def _push_exc_info_handler(inst: dis.Instruction, /, stack: list, exception_stack: list, **kwargs) -> None:
+    assert exception_stack
+    top = stack.pop()
+    # CPython reads exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
+    stack.append(exception_stack[-1])
+    stack.append(top)
+    assert isinstance(top, BaseException)
+    exception_stack[-1] = top
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-PUSH_NULL
@@ -1669,6 +1741,7 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
     assert type(inst.arg) is int
     if inst.arg == 2:
         cause = stack.pop()
+        exc = stack.pop()
     elif inst.arg == 1:
         exc = stack.pop()
     else:
@@ -1677,9 +1750,35 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
-@register_opcode_handler("RERAISE")
-def _reraise_handler(inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], **kwargs) -> None:
-    pass
+@register_opcode_handler("RERAISE", max_ver=(3, 10))
+def _reraise_handler(
+    inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], frame: JITFrame, **kwargs
+) -> None:
+    assert try_stack
+    assert type(inst.arg) is int
+
+    if inst.arg != 0:
+        frame.lasti = try_stack[-1].handler
+
+    exc = stack.pop()
+    val = stack.pop()
+    tb = stack.pop()
+    raise UserException(val, tb)
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-RERAISE
+@register_opcode_handler("RERAISE", min_ver=(3, 11))
+def _reraise_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
+    assert type(inst.arg) is int
+
+    val = stack.pop()
+    if inst.arg != 0:
+        # Note: The documentation is wrong here, this is from the ceval.c
+        lasti = stack[-inst.arg]
+        assert isinstance(lasti, int)
+        frame.lasti = lasti
+
+    raise UserException(val, val.__traceback__)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
@@ -1706,6 +1805,12 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack[-2] = top
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-ROT_FOUR
+@register_opcode_handler("ROT_FOUR")
+def _rot_four_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    stack[-4:] = (stack[-1], *stack[-4:-1])
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-SET_ADD
 @register_opcode_handler("SET_ADD")
 def _set_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -1722,16 +1827,19 @@ def _set_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_FINALLY
 @register_opcode_handler("SETUP_FINALLY")
-def _setup_finally_handler(inst: dis.Instruction, stack: list, try_stack: list[PyTryBlock], **kwargs) -> None:
+def _setup_finally_handler(
+    inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
+) -> None:
     assert inst.arg is not None
-    instr_offset = stack.index(inst) + inst.arg
-    try_stack.append(PyTryBlock(SETUP_FINALLY_TYPE, instr_offset, 0))
+    instr_offset = inst_ptr + inst.arg + 1
+    try_stack.append(PyTryBlock(PyTryBlock.SETUP_FINALLY_TYPE, instr_offset, len(stack)))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
 @register_opcode_handler("SETUP_WITH")
 def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     assert type(inst.arg) is int
+    raise Unimplemented("SETUP_WITH")
     try_stack.append(PyTryBlock())
 
 
@@ -2174,8 +2282,10 @@ def _jit_run(
         # Updates the stack frame to the current position
         # TODO maybe also have inst_ptr?
         frame.nexti(inst)
+        skip_stack_effect_check: bool = False  # the exception handling will change the stack wildly
         stack_size_before_handler: int = len(stack)
         try:
+            frame.lasti = frame.inst_ptr  # ???
             interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
                 inst,
                 inst_ptr=frame.inst_ptr,
@@ -2183,12 +2293,87 @@ def _jit_run(
                 globals_dict=frame.globals,
                 builtins_dict=frame.builtins,
                 try_stack=frame.try_stack,
+                exception_stack=runtimectx.exception_stack,
                 co=frame.code,
                 frame=frame,
             )
         except UserException as e:
-            e.tb.insert(0, frame)
-            raise
+            current_exception = e.__cause__
+
+            if sys.version_info >= (3, 11):
+                exception_table = dis._parse_exception_table(frame.code)
+
+                found = False
+                for et_start, et_end, et_handler, et_level, et_lasti in exception_table:
+                    found = et_start <= frame.inst_ptr * 2 < et_end
+                    if found:
+                        break
+                if found:
+                    assert len(frame.interpreter_stack) >= et_level
+                    del frame.interpreter_stack[et_level:]
+                    if et_lasti:
+                        frame.interpreter_stack.append(frame.lasti)
+                    frame.interpreter_stack.append(current_exception)
+                    current_exception = None
+                    skip_stack_effect_check = True
+                    interpretation_result = et_handler // 2
+            else:
+                # This is Python 3.10-style unwinding
+                skip_stack_effect_check = True  # or only do this in ifs below?
+                while frame.try_stack:
+                    try_block = frame.try_stack.pop()
+                    if try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE:
+                        assert len(frame.interpreter_stack) >= try_block.level + 3
+                        del frame.interpreter_stack[try_block.level + 3 :]
+                        exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
+                        exc_value = frame.interpreter_stack.pop()
+                        exc_traceback = frame.interpreter_stack.pop()
+                        if exc_value != None:
+                            exc_value.__traceback__ = exc_traceback
+                        assert runtimectx.exception_stack
+                        # CPython sets exc_info->exc_type/value/traceback
+                        # see RuntimeCtx inititalization of exception_stack for more info
+                        runtimectx.exception_stack[-1] = exc_value  # replace the exc_info
+                        # Python 3.10 has `continue` here, but there is no code except the else
+                    else:
+                        # There are actually only these two PyTryBlock types in 3.10
+                        assert try_block.typ == PyTryBlock.SETUP_FINALLY_TYPE
+
+                        # Python 3.10 UNWIND_BLOCK
+                        assert len(frame.interpreter_stack) >= try_block.level
+                        del frame.interpreter_stack[try_block.level :]
+
+                        # Python 3.10 handling of SETUP_FINALLY blocks
+                        frame.try_stack.append(
+                            PyTryBlock(PyTryBlock.EXCEPT_HANDLER_TYPE, frame.lasti, len(frame.interpreter_stack))
+                        )
+                        assert runtimectx.exception_stack
+                        # CPython sreads exc_info->exc_type/value/traceback
+                        # see RuntimeCtx inititalization of exception_stack for more info
+                        exc = runtimectx.exception_stack[-1]
+                        frame.interpreter_stack.append(exc.__traceback__ if exc is not None else None)
+                        frame.interpreter_stack.append(exc)
+                        frame.interpreter_stack.append(
+                            type(exc)
+                        )  # Python distinguishes explicit exc_type present or NULL/None
+                        current_exception = e.__cause__
+                        # NormalizeException ?
+
+                        # CPython sets exc_info->exc_type/value/traceback here
+                        # see RuntimeCtx inititalization of exception_stack for more info
+                        runtimectx.exception_stack[-1] = current_exception
+                        frame.interpreter_stack.append(current_exception.__traceback__ if exc is not None else None)
+                        frame.interpreter_stack.append(current_exception)
+                        frame.interpreter_stack.append(
+                            type(current_exception)
+                        )  # Python distinguishes explicit exc_type present or NULL/None
+                        current_exception = None
+                        interpretation_result = try_block.handler
+                        # f->f_state = FRAME_EXECUTING;  /* Resume normal execution */
+                        break  # continue with handler
+            if current_exception is not None:
+                e.tb.insert(0, frame)
+                raise
 
         # TODO Improve this error message
         if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
@@ -2207,32 +2392,33 @@ def _jit_run(
             assert frame.code.co_flags & inspect.CO_GENERATOR
             runtimectx.pop_frame_stack()
             return make_generator(frame, compilectx, runtimectx), interpretation_result
-        elif interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
-            raise Unimplemented("exception handling")
         elif interpretation_result is None:
             frame.inst_ptr += 1
         else:
             assert isinstance(interpretation_result, int)
             frame.inst_ptr = interpretation_result
 
-        # Verifies the handler had the expected stack effect (delta on stack sie)
-        actual_stack_effect: int = len(stack) - stack_size_before_handler
-        jumped: bool = isinstance(interpretation_result, int) and interpretation_result != -1
-        expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
+        if not skip_stack_effect_check:  # the exception handling will change the stack wildly
+            # Verifies the handler had the expected stack effect (delta on stack sie)
+            actual_stack_effect: int = len(stack) - stack_size_before_handler
+            jumped: bool = isinstance(interpretation_result, int) and interpretation_result != -1
+            expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
 
-        if (3, 11) <= sys.version_info < (3, 12):
-            # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
-            if inst.opname == "PRECALL":
-                assert type(inst.arg) is int
-                assert expected_stack_effect == -inst.arg, f"precall with stack effect {expected_stack_effect}, {inst}"
-                expected_stack_effect = 0
-            elif inst.opname == "CALL":
-                assert type(inst.arg) is int
-                assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
-                expected_stack_effect = -inst.arg - 1
-        assert (
-            actual_stack_effect == expected_stack_effect
-        ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
+            if (3, 11) <= sys.version_info < (3, 12):
+                # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
+                if inst.opname == "PRECALL":
+                    assert type(inst.arg) is int
+                    assert (
+                        expected_stack_effect == -inst.arg
+                    ), f"precall with stack effect {expected_stack_effect}, {inst}"
+                    expected_stack_effect = 0
+                elif inst.opname == "CALL":
+                    assert type(inst.arg) is int
+                    assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
+                    expected_stack_effect = -inst.arg - 1
+            assert (
+                actual_stack_effect == expected_stack_effect
+            ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
 
 
 # Special signals for the interpreter
@@ -2243,7 +2429,6 @@ class JIT_SIGNALS(enum.Enum):
     RETURN_VALUE = enum.auto()
     RETURN_GENERATOR = enum.auto()
     YIELD_VALUE = enum.auto()
-    EXCEPTION_RAISED = enum.auto()
 
 
 #
@@ -2270,7 +2455,8 @@ class JIT_SIGNALS(enum.Enum):
 #       - globals_dict, the globals dictionary
 #       - builtins_dict, the builtins dictionary
 #       - frame: JIT frame containing local variables, source loc etc.
-#       - try_stack, a stack to facilitate handling exceptions
+#       - try_stack, a "try block" stack to facilitate handling exceptions
+#       - exception_stack, the stack of currently handled exceptions
 #
 #   The handler can then return None, -1 to indicate a return statement, or a weakly positive integer
 #   to indicate that the interpreter should jump absolute to that instruction.
