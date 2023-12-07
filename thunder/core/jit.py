@@ -12,7 +12,7 @@ import inspect
 import sys
 import traceback
 from typing import Any, NamedTuple
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
 
 from types import (
     CellType,
@@ -894,6 +894,46 @@ def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
         meth = second_lm
 
     stack.append(_jit(meth, *args))
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-CONTAINS_OP
+# https://docs.python.org/3.10/reference/expressions.html#membership-test-operations
+@register_opcode_handler("CONTAINS_OP")
+def _contains_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    tos1 = stack.pop()
+
+    assert isinstance(inst.arg, int)
+    invert: bool = inst.arg == 1
+
+    def impl():
+        if hasattr(tos, "__contains__"):
+            return getattr(tos, "__contains__")(tos1)
+
+        if hasattr(tos, "__iter__"):
+            # TODO refactor when support for `any()` is added.
+            for v in tos:
+                if v is tos1 or v == tos1:
+                    return True
+            return False
+
+        if hasattr(tos, "__getitem__") and hasattr(tos, "__len__"):
+            # TODO refactor when support for `any()` is added.
+            for i in range(len(tos)):
+                if tos[i] is tos1 or tos[i] == tos1:
+                    return True
+            return False
+
+        err: NotImplementedError = NotImplementedError(
+            f"__contains__, __iter__, __getitem__, and __len__ are not implemented for input {type(tos)}'"
+        )
+        raise err
+
+    result = _jit(impl)
+    if invert:
+        result = _jit(lambda: not result)
+
+    stack.append(result)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-CHECK_EXC_MATCH

@@ -1241,6 +1241,97 @@ def test_comprehension_nonlocal_inplace():
     assert foo() == jfoo()
 
 
+def test_contains():
+    def foo(a, seq):
+        return a in seq
+
+    def nfoo(a, seq):
+        return a not in seq
+
+    jfoo = jit(foo)
+    jnfoo = jit(nfoo)
+
+    assert jfoo(2, (1, 2, 3)) == foo(2, (1, 2, 3))
+    assert jnfoo(2, (1, 2, 3)) == nfoo(2, (1, 2, 3))
+    assert jfoo(5, (1, 2, 3)) == foo(5, (1, 2, 3))
+    assert jnfoo(5, (1, 2, 3)) == nfoo(5, (1, 2, 3))
+
+    assert jfoo(2, [1, 2, 3]) == foo(2, [1, 2, 3])
+    assert jnfoo(2, [1, 2, 3]) == nfoo(2, [1, 2, 3])
+    assert jfoo(5, [1, 2, 3]) == foo(5, [1, 2, 3])
+    assert jnfoo(5, [1, 2, 3]) == nfoo(5, [1, 2, 3])
+
+    assert jfoo("a", {"a": 1, "b": 2, "c": 3}) == foo("a", {"a": 1, "b": 2, "c": 3})
+    assert jnfoo("a", {"a": 1, "b": 2, "c": 3}) == nfoo("a", {"a": 1, "b": 2, "c": 3})
+    assert jfoo("f", {"a": 1, "b": 2, "c": 3}) == foo("f", {"a": 1, "b": 2, "c": 3})
+    assert jnfoo("f", {"a": 1, "b": 2, "c": 3}) == nfoo("f", {"a": 1, "b": 2, "c": 3})
+
+    assert jfoo("a", {"a", "b", "c"}) == foo("a", {"a", "b", "c"})
+    assert jnfoo("a", {"a", "b", "c"}) == nfoo("a", {"a", "b", "c"})
+    assert jfoo("f", {"a", "b", "c"}) == foo("f", {"a", "b", "c"})
+    assert jnfoo("f", {"a", "b", "c"}) == nfoo("f", {"a", "b", "c"})
+
+
+def test_contains_custom_containers():
+    def foo(a, seq):
+        return a in seq
+
+    def nfoo(a, seq):
+        return a not in seq
+
+    jfoo = jit(foo)
+    jnfoo = jit(nfoo)
+
+    class mycontainscontainer:
+        def __init__(self, len):
+            self.list = [*range(len)]
+
+        def __contains__(self, v):
+            for a in self.list:
+                if v is a or v == a:
+                    return True
+            return False
+
+    o = mycontainscontainer(3)
+
+    assert jfoo(2, o) == foo(2, o)
+    assert jnfoo(2, o) == nfoo(2, o)
+    assert jfoo(5, o) == foo(5, o)
+    assert jnfoo(5, o) == nfoo(5, o)
+
+    class myitercontainer:
+        def __init__(self, len):
+            self.list = [*range(len)]
+
+        def __iter__(self):
+            return self.list.__iter__()
+
+    o = myitercontainer(3)
+
+    assert jfoo(2, o) == foo(2, o)
+    assert jnfoo(2, o) == nfoo(2, o)
+    assert jfoo(5, o) == foo(5, o)
+    assert jnfoo(5, o) == nfoo(5, o)
+
+    class mygetitemcontainer:
+        def __init__(self, len):
+            self.list = [*range(len)]
+            self.len = len
+
+        def __getitem__(self, i):
+            return self.list[i]
+
+        def __len__(self):
+            return self.len
+
+    o = mygetitemcontainer(3)
+
+    assert jfoo(2, o) == foo(2, o)
+    assert jnfoo(2, o) == nfoo(2, o)
+    assert jfoo(5, o) == foo(5, o)
+    assert jnfoo(5, o) == nfoo(5, o)
+
+
 def test_name_opcodes_and_print_expr():
     from types import FunctionType
     from contextlib import redirect_stdout
