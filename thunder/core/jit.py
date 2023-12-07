@@ -838,7 +838,7 @@ def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwar
 
 # NOTE This only accepts positional args
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION
-@register_opcode_handler("CALL_FUNCTION")
+@register_opcode_handler("CALL_FUNCTION", max_ver=(3, 10))
 def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
@@ -866,7 +866,7 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
-@register_opcode_handler("CALL_FUNCTION_KW")
+@register_opcode_handler("CALL_FUNCTION_KW", max_ver=(3, 10))
 def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     kw_names: tuple[str, ...] = stack.pop()
     kwarg_length: int = len(kw_names)
@@ -881,7 +881,7 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
-@register_opcode_handler("CALL_METHOD")
+@register_opcode_handler("CALL_METHOD", max_ver=(3, 10))
 def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert type(inst.arg) is int
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(inst.arg))))
@@ -1026,7 +1026,7 @@ def _dict_update_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DUP_TOP
-@register_opcode_handler("DUP_TOP")
+@register_opcode_handler("DUP_TOP", max_ver=(3, 10))
 def _dup_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(stack[-1])
 
@@ -1167,7 +1167,7 @@ def _is_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_ABSOLUTE
-@register_opcode_handler("JUMP_ABSOLUTE")
+@register_opcode_handler("JUMP_ABSOLUTE", max_ver=(3, 10))
 def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     assert type(inst.arg) is int
     target: int = inst.arg
@@ -1202,8 +1202,8 @@ def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int,
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_IF_NOT_EXC_MATCH
-@register_opcode_handler("JUMP_IF_NOT_EXC_MATCH")
-def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+@register_opcode_handler("JUMP_IF_NOT_EXC_MATCH", max_ver=(3, 10))
+def _jump_if_not_exc_match_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
     assert type(inst.arg) is int
     target: int = inst.arg
 
@@ -1496,7 +1496,7 @@ def _precall_handler(inst: dis.Instruction, /, co: CodeType, **kwargs) -> None:
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_BLOCK
-@register_opcode_handler("POP_BLOCK")
+@register_opcode_handler("POP_BLOCK", max_ver=(3, 10))
 def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     try_stack.pop()
 
@@ -1602,7 +1602,7 @@ def _pop_jump_forward_if_none_handler(inst: dis.Instruction, /, stack: list, ins
     return None
 
 
-@register_opcode_handler("POP_JUMP_IF_FALSE")
+@register_opcode_handler("POP_JUMP_IF_FALSE", max_ver=(3, 10))
 def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
     assert type(inst.arg) is int
 
@@ -1624,7 +1624,7 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
     return None
 
 
-@register_opcode_handler("POP_JUMP_IF_TRUE")
+@register_opcode_handler("POP_JUMP_IF_TRUE", max_ver=(3, 10))
 def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> int | None:
     assert type(inst.arg) is int
 
@@ -1788,7 +1788,7 @@ def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None:
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_N
-@register_opcode_handler("ROT_N")
+@register_opcode_handler("ROT_N", max_ver=(3, 10))
 def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     assert type(inst.arg) is int
     assert len(stack) >= inst.arg
@@ -1796,7 +1796,7 @@ def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_TWO
-@register_opcode_handler("ROT_TWO")
+@register_opcode_handler("ROT_TWO", max_ver=(3, 10))
 def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     top = stack[-1]
     second = stack[-2]
@@ -1806,7 +1806,7 @@ def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_FOUR
-@register_opcode_handler("ROT_FOUR")
+@register_opcode_handler("ROT_FOUR", max_ver=(3, 10))
 def _rot_four_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack[-4:] = (stack[-1], *stack[-4:-1])
 
@@ -1826,7 +1826,7 @@ def _set_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_FINALLY
-@register_opcode_handler("SETUP_FINALLY")
+@register_opcode_handler("SETUP_FINALLY", max_ver=(3, 10))
 def _setup_finally_handler(
     inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
 ) -> None:
@@ -1836,11 +1836,12 @@ def _setup_finally_handler(
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
-@register_opcode_handler("SETUP_WITH")
+@register_opcode_handler("SETUP_WITH", max_ver=(3, 10))
 def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
     assert type(inst.arg) is int
     raise Unimplemented("SETUP_WITH")
     try_stack.append(PyTryBlock())
+    raise NotImplementedError("SETUP_WITH")
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-SWAP

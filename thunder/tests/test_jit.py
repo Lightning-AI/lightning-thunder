@@ -455,7 +455,6 @@ def test_raise_from_external():
         jit(raise_from_external)()
 
     e = excinfo.value
-    print(e.__cause__)
     assert type(e) == ValueError
     # TODO: If we drop the UserException here, update
     # assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
