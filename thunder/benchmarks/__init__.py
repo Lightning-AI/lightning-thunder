@@ -1452,7 +1452,7 @@ class NanoGPTCSABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
 
         return (make(shape),), {}
@@ -1529,7 +1529,7 @@ class NanoGPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
 
         return (make(shape),), {}
@@ -1611,7 +1611,7 @@ class NanoGPTBlockLoopBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
 
         return (make(shape),), {}
@@ -1701,7 +1701,7 @@ class NanoGPTMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
 
         return (make(shape),), {}
@@ -2152,7 +2152,7 @@ class NanoGPTLayerNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
         shape = self.batchdims + (self.config.seq_len, self.config.n_embd)
 
         return (make(shape),), {}
@@ -2529,7 +2529,7 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.devices: list[str] = [device]
 
     def make_batch(self) -> tuple[list, dict]:
-        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
 
         a = make((self.sequences, self.seq_length, self.config.n_embd))
 
