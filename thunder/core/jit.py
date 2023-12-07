@@ -1359,7 +1359,8 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kw
     stack.append(_jit(impl))
 
 
-@register_opcode_handler("LOAD_BUILD_CLASS", max_ver=(3, 10))
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
+@register_opcode_handler("LOAD_BUILD_CLASS")
 def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
     if "__build_class__" in frame.builtins.keys():
         build_class = frame.builtins["__build_class__"]

@@ -1469,7 +1469,6 @@ def test_name_opcodes_and_print_expr():
         jfn()
 
 
-@pytest.mark.skipif(sys.version_info >= (3, 11), reason="LOAD_BUILD_CLASS is Python 3.10 only.")
 def test_load_build_class():
     def foo():
         class C:
