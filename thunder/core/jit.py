@@ -1625,7 +1625,7 @@ def _pop_except_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_FALSE
 @register_opcode_handler("POP_JUMP_BACKWARD_IF_FALSE", min_ver=(3, 11))
-def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+def _pop_jump_backward_if_false_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
