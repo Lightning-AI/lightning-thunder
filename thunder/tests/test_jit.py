@@ -1545,6 +1545,39 @@ def test_load_build_class():
     assert any(i.opname == "LOAD_BUILD_CLASS" for i in jfoo._last_interpreted_instructions)
 
 
+def test_super():
+    class A:
+        def foo(self):
+            return f"Hello {type(self)} {__class__}"
+
+    class B(A):
+        def foo(self):
+            return super().foo()
+
+    class C(A):
+        def foo(self):
+            return super(C, self).foo()
+
+    def foo():
+        b = B()
+        c = C()
+        return (b.foo(), c.foo())
+
+    assert jit(foo)() == foo()
+
+    def bar():
+        b = B()
+        c = C()
+        super(b, C)
+
+    with pytest.raises(TypeError) as exc_expected:
+        bar()
+    with pytest.raises(TypeError) as exc_actual:
+        jit(bar)()
+    # Python 3.11 improved the grammar, so do we
+    assert str(exc_expected.value).replace("be type", "be a type") == str(exc_actual.value)
+
+
 def test_is_jitting():
     def foo():
         return is_jitting()

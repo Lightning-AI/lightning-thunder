@@ -501,9 +501,56 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     return _jit(impl)
 
 
+class JITSuper:
+    def __init__(self, cls, obj):
+        self.cls = cls
+        self.obj = obj
+
+    def __getattr__(self, name):
+        for parent_cls in self.cls.mro()[1:]:
+            if hasattr(parent_cls, name):
+                res = getattr(parent_cls, name)
+                return MethodType(res, self.obj)
+        raise AttributeError(f"'super' object has no attribute '{name}'")
+
+
+def _super_lookaside(cls=Py_NULL(), obj=None):
+    # cls Py_NULL vs. obj None this is on purpose
+
+    # magic for super() per frame inspection. Note that we do not currently
+    # do frame entries for lookasides, so the thing calling super is at the top
+    if cls is Py_NULL() and obj is None:
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+        frame = runtimectx.frame_stack[-1]
+        self_name = frame.code.co_varnames[0]  # is this guaranteed to be self?
+        self_idx = None
+        class_idx = None
+        for i in range(len(frame.localsplus)):
+            if frame.get_localsplus_name(i) == self_name:
+                self_idx = i
+                # we cannot break because it might be put in a cell in Python 3.10
+            if frame.get_localsplus_name(i) == "__class__":
+                class_idx = i
+        if class_idx is None or not isinstance(frame.localsplus[class_idx], CellType):
+            return do_raise(RuntimeError("super(): __class__ cell not found"))
+        assert self_idx is not None
+        cls = frame.localsplus[class_idx].cell_contents
+        obj = frame.localsplus[self_idx]
+        if isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
+            obj = obj.cell_contents
+
+    # now cls and obj are set
+    if not isinstance(cls, type):
+        return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
+
+    return _jit(JITSuper, cls, obj)
+
+
 _default_lookaside_map: dict[Callable, Callable] = {
     is_jitting: _is_jitting_lookaside,
     bool: _bool_lookaside,
+    super: _super_lookaside,
 }
 
 
