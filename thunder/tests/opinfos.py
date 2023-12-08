@@ -4831,8 +4831,8 @@ def tensor_1d_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     cases = (
         (4, 3),
-        # TODO FIXME See https://github.com/Lightning-AI/lightning-thunder/issues/1397
-        # (5, 0),
+        (2, 1),
+        (5, 0),
     )
 
     for shape_a, shape_b in cases:
