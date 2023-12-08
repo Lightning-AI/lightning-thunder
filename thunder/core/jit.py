@@ -146,6 +146,7 @@ class JitRuntimeCtx:
         self._globals_dict: dict[str, Any] | None = None
         self._history: list[dis.Instruction | str] = []
         self._interpreted_instructions: list[dis.Instruction] = []
+        self.curexc = None
         # The exception_stack mirrors the exc_info/exc_state from PyThreadState
         # exception_stack is the stack of exceptions currently being handled, we only have exceptions here
         self.exception_stack = [None]
@@ -483,7 +484,7 @@ def _is_jitting_lookaside():
 
 
 # Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
-def _bool_lookaside(x: Any) -> bool:
+def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     def impl():
         # Handles objects that define __bool__
         if hasattr(x, "__bool__"):
@@ -532,6 +533,12 @@ class JIT_CALLBACKS(enum.Enum):
 
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+
+
+def check_and_append(stack, val):
+    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+        return val
+    stack.append(val)
 
 
 #
@@ -613,6 +620,8 @@ def _binary_op(stack: list, op: BINARY_OP, a, b):
             return NotImplemented
 
         res = _jit(impl)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            return res
 
     if idx < BINARY_OP.IADD.value or (res is NotImplemented):
 
@@ -627,6 +636,8 @@ def _binary_op(stack: list, op: BINARY_OP, a, b):
             return result
 
         res = _jit(impl)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            return res
 
     stack.append(res)
 
@@ -809,7 +820,7 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     def impl():
         return tos1.__getitem__(tos)
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_CONST_KEY_MAP
@@ -915,7 +926,8 @@ def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwar
         args = (func_or_self, *args)
     else:
         func = func_or_self
-    stack.append(_jit(func, *args, **kwargs))
+
+    return check_and_append(stack, _jit(func, *args, **kwargs))
 
 
 # NOTE This only accepts positional args
@@ -926,7 +938,7 @@ def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
     func: Callable = stack.pop()
-    stack.append(_jit(func, *args))
+    return check_and_append(stack, _jit(func, *args))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
@@ -944,7 +956,7 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
         null = stack.pop()
         assert isinstance(null, Py_NULL)
 
-    stack.append(_jit(func, *args, **kwargs))
+    return check_and_append(stack, _jit(func, *args, **kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
@@ -959,7 +971,7 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
     args = tuple(reversed(tuple(stack.pop() for _ in range(arg_length))))
     func: Callable = stack.pop()
 
-    stack.append(_jit(func, *args, **fn_kwargs))
+    return check_and_append(stack, _jit(func, *args, **fn_kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
@@ -975,7 +987,7 @@ def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     else:
         meth = second_lm
 
-    stack.append(_jit(meth, *args))
+    return check_and_append(stack, _jit(meth, *args))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CONTAINS_OP
@@ -1012,8 +1024,13 @@ def _contains_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
         raise err
 
     result = _jit(impl)
+    if result is JIT_SIGNALS.EXCEPTION_RAISED:
+        return result
+
     if invert:
         result = _jit(lambda: not result)
+        if result is JIT_SIGNALS.EXCEPTION_RAISED:
+            return result
 
     stack.append(result)
 
@@ -1133,7 +1150,7 @@ def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
     assert isinstance(a, Mapping), a
     if overlap := b.keys() & a:
         # TODO: Raise inside interpreter
-        do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
+        return do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
     b.update(a)
 
 
@@ -1199,7 +1216,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
         return formatted
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # TODO
@@ -1232,7 +1249,7 @@ def _iter_impl(obj):
 @register_opcode_handler("GET_ITER")
 def _get_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack.pop()
-    stack.append(_jit(_iter_impl(tos)))
+    return check_and_append(stack, _jit(_iter_impl(tos)))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
@@ -1259,7 +1276,7 @@ def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     def impl():
         return getattr(module, name)
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
@@ -1277,7 +1294,7 @@ def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
         module = __import__(module_name, fromlist=fromlist, level=level)
         return module
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IS_OP
@@ -1359,7 +1376,9 @@ def _jump_if_true_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack:
 
     tos = stack[-1]
 
-    cnd: bool = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+        return cnd
 
     if not cnd:
         stack.pop()
@@ -1379,7 +1398,9 @@ def _jump_if_false_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack
 
     tos = stack[-1]
 
-    cnd: bool = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+        return cnd
 
     if cnd:
         stack.pop()
@@ -1438,7 +1459,7 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kw
     def impl():
         return getattr(a, name)
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
@@ -1451,7 +1472,7 @@ def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITF
         build_class = frame.globals["__build_class__"]
         stack.append(build_class)
     else:
-        do_raise(KeyError(f"__build_class__ not found"))
+        return do_raise(KeyError(f"__build_class__ not found"))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
@@ -1490,10 +1511,9 @@ def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
     # it seems that the only way to check for an empty cell (short of
     # try... except) is comparison to another empty cell
     if cell == CellType():
-        do_raise(
+        return do_raise(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
-        return
     val = cell.cell_contents
     stack.append(val)
 
@@ -1510,8 +1530,7 @@ def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
 
     # empty local variable slots are initialized to Py_NULL()
     if isinstance(val, Py_NULL):
-        do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
-        return
+        return do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
 
     compilectx: JitCompileCtx = get_jitcompilectx()
     cb: None | Callable = compilectx.callback(JIT_CALLBACKS.LOAD_CALLBACK)
@@ -1544,7 +1563,7 @@ def _load_global_handler(
         try:
             obj = builtins_dict[co_name]
         except KeyError as e:
-            do_raise(NameError(f"name '{co_name}' is not defined"))
+            return do_raise(NameError(f"name '{co_name}' is not defined"))
     if (3, 11) <= sys.version_info:
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
@@ -1562,7 +1581,7 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     try:
         meth = getattr(obj, name)
     except AttributeError as e:
-        do_raise(e)
+        return do_raise(e)
 
     if inspect.ismethod(meth):
         stack.append(meth.__func__)
@@ -1588,7 +1607,7 @@ def _load_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
         value = frame.globals[name]
     else:
         if name not in frame.builtins:
-            do_raise(NameError(f"named '{name}' is not defined"))
+            return do_raise(NameError(f"named '{name}' is not defined"))
         value = frame.builtins[name]
 
     stack.append(value)
@@ -1712,7 +1731,9 @@ def _pop_jump_backward_if_false_handler(inst: dis.Instruction, /, stack: list, i
 
     tos = stack.pop()
 
-    cnd: bool = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+        return cnd
 
     if not cnd:
         return inst_ptr - inst.arg - 1
@@ -1755,7 +1776,9 @@ def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, in
 
     tos = stack.pop()
 
-    cnd: bool = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+        return cnd
 
     if cnd:
         return inst_ptr - inst.arg - 1
@@ -1770,7 +1793,9 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
 
     tos = stack.pop()
 
-    cnd: bool = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+        return cnd
 
     if not cnd:
         return inst_ptr + inst.arg + 1
@@ -1785,7 +1810,9 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
 
     tos = stack.pop()
 
-    cnd: bool = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+        return cnd
 
     if cnd:
         return inst_ptr + inst.arg + 1
@@ -1833,6 +1860,8 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: list, **kwargs) 
         cnd = tos
     else:
         cnd = _jit(impl)
+        if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+            return cnd
 
     if not cnd:
         return inst.arg
@@ -1855,6 +1884,8 @@ def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
         cnd = tos
     else:
         cnd = _jit(impl)
+        if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+            return cnd
 
     if cnd:
         return inst.arg
@@ -1871,55 +1902,62 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
     # Get the type and exception being raised
     typ: Any = Py_NULL()
     value: Any = Py_NULL()
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
     if exc is Py_NULL():
         # Re-raise
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
         assert runtimectx.exception_stack
         value = runtimectx.exception_stack[0]
         if value == None:
-            raise UserException(RuntimeError("No active exception to reraise"), [])
+            do_raise(RuntimeError("No active exception to reraise"), [])
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
-        raise UserException(value, value.__traceback__)
+        runtimectx.curexc = UserException(value, value.__traceback__)
+        return JIT_SIGNALS.EXCEPTION_RAISED
 
     if isinstance(exc, type) and issubclass(exc, BaseException):
         typ = exc
         value = _jit(exc)
+        if value is JIT_SIGNALS.EXCEPTION_RAISED:
+            return value
         if not isinstance(value, BaseException):  # TODO: maybe drop: this is from CPython, but can it happen in Python?
-            do_raise(TypeError(f"calling {typ} should have returned an instance of BaseException, not {type(value)}"))
-            return
+            return do_raise(
+                TypeError(f"calling {typ} should have returned an instance of BaseException, not {type(value)}")
+            )
+
     elif isinstance(exc, BaseException):
         value = exc
         typ = type(exc)
     else:
-        do_raise(TypeError("exceptions must derive from BaseException"))
-        # does not return
+        return do_raise(TypeError("exceptions must derive from BaseException"))
 
     # Attach the cause
     if cause is not Py_NULL():
         fixed_cause: BaseException | None = None
         if isinstance(cause, type) and issubclass(cause, BaseException):
             fixed_cause = _jit(cause)
+            if fixed_cause is JIT_SIGNALS.EXCEPTION_RAISED:
+                return fixed_cause
+
             # NOTE: This check is missing from cpython, seems like a bug in cpython.
             if not isinstance(fixed_cause, BaseException):
-                do_raise(
+                return do_raise(
                     TypeError(
                         f"calling {cause} should have returned an instance of BaseException, not {type(fixed_cause)}"
                     )
                 )
-                # does not return
         elif isinstance(cause, BaseException):  # PyExceptionInstance_Check
             fixed_cause = cause
         elif cause is None:
             fixed_cause = None
         else:
-            do_raise(TypeError(f"exception causes must derive from BaseException"))
+            return do_raise(TypeError(f"exception causes must derive from BaseException"))
             # does not return
 
         value.__cause__ = fixed_cause
 
     # Call PyErr_SetObject() to update the thread's state
-    raise UserException(value, [])
+    runtimectx.curexc = UserException(value, [])
+    return JIT_SIGNALS.EXCEPTION_RAISED
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
@@ -1961,7 +1999,7 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
         exc = stack.pop()
     else:
         assert inst.arg == 0
-    do_raise(exc, cause)
+    return do_raise(exc, cause)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
@@ -1978,7 +2016,9 @@ def _reraise_handler(
     exc = stack.pop()
     val = stack.pop()
     tb = stack.pop()
-    raise UserException(val, tb)
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx.curexc = UserException(val, tb)
+    return JIT_SIGNALS.EXCEPTION_RAISED
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RERAISE
@@ -1993,7 +2033,9 @@ def _reraise_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **k
         assert isinstance(lasti, int)
         frame.lasti = lasti
 
-    raise UserException(val, val.__traceback__)
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx.curexc = UserException(val, val.__traceback__)
+    return JIT_SIGNALS.EXCEPTION_RAISED
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
@@ -2087,7 +2129,7 @@ def _store_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
     def impl():
         setattr(tos, name, tos1)
 
-    _jit(impl)
+    return _jit(impl)
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
@@ -2161,7 +2203,7 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
     def impl():
         return tos1.__setitem__(tos, tos2)
 
-    _jit(impl)
+    return _jit(impl)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT
@@ -2177,7 +2219,7 @@ def _unary_invert_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
         raise TypeError(f"bad operand type for unary ~: '{type(tos).__name__}'")
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NOT
@@ -2190,7 +2232,7 @@ def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
             return False
         return True
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NEGATIVE
@@ -2206,7 +2248,7 @@ def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> 
 
         raise TypeError(f"bad operand type for unary -: '{type(tos).__name__}'")
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
@@ -2222,7 +2264,7 @@ def _unary_positive_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> 
 
         raise TypeError(f"bad operand type for unary +: '{type(tos).__name__}'")
 
-    stack.append(_jit(impl))
+    return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_EX
@@ -2255,6 +2297,8 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
         return results
 
     results = _jit(impl)
+    if results is JIT_SIGNALS.EXCEPTION_RAISED:
+        return results
 
     for x in reversed(results):
         stack.append(x)
@@ -2282,7 +2326,7 @@ def _gen_start_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     tos = stack[-1]
     if not (inspect.isgenerator(tos) or inspect.iscoroutine(tos)):
-        stack.append(_jit(_iter_impl(stack.pop())))
+        return check_and_append(stack, _jit(_iter_impl(stack.pop())))
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RETURN_GENERATOR
@@ -2311,12 +2355,16 @@ def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
         def impl():
             return generator.send(send_value)
 
-    try:
-        res = _jit(impl)
-    except StopIteration as si:
-        stack.pop()  # remove generator
-        stack.append(si.value)
-        return inst_ptr + inst.arg + 1
+    res = _jit(impl)
+    if res == JIT_SIGNALS.EXCEPTION_RAISED:
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        if isinstance(runtimectx.curexc, StopIteration):
+            stack.pop()  # remove generator
+            stack.append(runtimectx.curexc.value)
+            runtimectx.curexc = None
+            return inst_ptr + inst.arg + 1
+        else:
+            return res  # propagate exception
 
     stack.append(res)
 
@@ -2337,12 +2385,16 @@ def _yield_from_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, 
         def impl():
             return generator.send(send_value)
 
-    try:
-        res = _jit(impl)
-    except StopIteration as si:
-        stack.pop()  # remove generator
-        stack.append(si.value)
-        return
+    res = _jit(impl)
+    if res == JIT_SIGNALS.EXCEPTION_RAISED:
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        if isinstance(runtimectx.curexc, StopIteration):
+            stack.pop()  # remove generator
+            stack.append(runtimectx.curexc.value)
+            runtimectx.curexc = None
+            return
+        else:
+            return res  # propagate exception
 
     # this is a gross hack, this will be incremented so the inst_ptr is at this YIELD_FROM again
     # cleaner would be to introduce another JIT_SIGNALS
@@ -2370,7 +2422,12 @@ def make_generator(
             with jitctx(compilectx, runtimectx):
                 try:
                     res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
-                except UserException as e:
+                except Exception as e:
+                    msg = f"Encountered exception {type(e).__name__}: {e}"
+                    raise JITError(msg) from e
+                if status == JIT_SIGNALS.EXCEPTION_RAISED:
+                    e = runtimectx.curexc
+                    runtimectx.curexc = None
                     if isinstance(e.__cause__, StopIteration):
                         return e.__cause__.value
                     # We modify the cause chain from
@@ -2379,9 +2436,6 @@ def make_generator(
                     real_exc = e.__cause__
                     e.__cause__ = real_exc.__cause__
                     raise real_exc from e
-                except Exception as e:
-                    msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise JITError(msg) from e
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return
             assert status == JIT_SIGNALS.YIELD_VALUE
@@ -2411,10 +2465,11 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
-        try:
-            return lookaside_fn(*args, **kwargs)
-        except Exception as e:
-            raise UserException(e, get_python_tb(e.__traceback__))
+        # try:
+        return lookaside_fn(*args, **kwargs)
+        # except Exception as e:
+        #    runtimectx.curexc = UserException(e, get_python_tb(e.__traceback__))
+        # return JIT_SIGNALS.EXCEPTION_RAISED
 
     # (2) Handles opaque functions
     if is_opaque(fn):
@@ -2422,7 +2477,8 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         try:
             opaque_result: Any = fn(*args, **kwargs)
         except Exception as e:
-            raise UserException(e, get_python_tb(e.__traceback__))
+            runtimectx.curexc = UserException(e, get_python_tb(e.__traceback__))
+            return JIT_SIGNALS.EXCEPTION_RAISED
         return opaque_result
 
     # (3) Handles partial objects
@@ -2553,20 +2609,22 @@ def _jit_run(
         frame.nexti(inst)
         skip_stack_effect_check: bool = False  # the exception handling will change the stack wildly
         stack_size_before_handler: int = len(stack)
-        try:
-            frame.lasti = frame.inst_ptr  # ???
-            interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
-                inst,
-                inst_ptr=frame.inst_ptr,
-                stack=frame.interpreter_stack,
-                globals_dict=frame.globals,
-                builtins_dict=frame.builtins,
-                try_stack=frame.try_stack,
-                exception_stack=runtimectx.exception_stack,
-                co=frame.code,
-                frame=frame,
-            )
-        except UserException as e:
+
+        frame.lasti = frame.inst_ptr  # ???
+        interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
+            inst,
+            inst_ptr=frame.inst_ptr,
+            stack=frame.interpreter_stack,
+            globals_dict=frame.globals,
+            builtins_dict=frame.builtins,
+            try_stack=frame.try_stack,
+            exception_stack=runtimectx.exception_stack,
+            co=frame.code,
+            frame=frame,
+        )
+        if interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
+            e = runtimectx.curexc
+            runtimectx.curexc = None
             current_exception = e.__cause__
 
             if sys.version_info >= (3, 11):
@@ -2642,7 +2700,8 @@ def _jit_run(
                         break  # continue with handler
             if current_exception is not None:
                 e.tb.insert(0, frame)
-                raise
+                runtimectx.curexc = e
+                return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
 
         # TODO Improve this error message
         if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
@@ -2698,6 +2757,7 @@ class JIT_SIGNALS(enum.Enum):
     RETURN_VALUE = enum.auto()
     RETURN_GENERATOR = enum.auto()
     YIELD_VALUE = enum.auto()
+    EXCEPTION_RAISED = enum.auto()
 
 
 #
@@ -2767,22 +2827,26 @@ def jit(
         with jitctx(compilectx, runtimectx):
             try:
                 jit_result: Any = _jit(fn, *args, **kwargs)
-                fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
-                fn_._last_history = runtimectx.history
-                return jit_result
-            except UserException as e:
-                # We modify the cause chain from
-                # UserException -> real_exc -> further_causes to
-                # real_exc -> UserException -> further causes
-                real_exc = e.__cause__
-                e.__cause__ = real_exc.__cause__
-                raise real_exc from e
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
                 traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
                 msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
+            fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
+            fn_._last_history = runtimectx.history
+
+            if jit_result is JIT_SIGNALS.EXCEPTION_RAISED:
+                # We modify the cause chain from
+                # UserException -> real_exc -> further_causes to
+                # real_exc -> UserException -> further causes
+                e = runtimectx.curexc
+                runtimectx.curexc = None
+                real_exc = e.__cause__
+                e.__cause__ = real_exc.__cause__
+                raise real_exc from e
+
+            return jit_result
 
     return fn_
 
