@@ -13,6 +13,7 @@ if CUDNN_AVAILABLE:
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
+    cudnn_handle = cudnn.create_handle()
 
 
 def cudnn_available() -> bool:
@@ -53,10 +54,37 @@ def make_cacheable_cudnn_graph_inputs(func):
     return wrapper
 
 
-@make_cacheable_cudnn_graph_inputs
-@lru_cache(maxsize=1024)
+from collections import OrderedDict
+
+
+# Cache already built cudnn graphs to save on runtime compilation overhead
+class CudnnexLRUCache(OrderedDict):
+    def __init__(self, maxlen, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._maxlen = maxlen
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        elif len(self) == self._maxlen:
+            oldest = next(iter(self))
+            del self[oldest]
+        super().__setitem__(key, value)
+
+
+_cudnnex_cache = CudnnexLRUCache(maxlen=1024)
+
+
 def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
-    graph = cudnn.pygraph(intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT)
+    graph = cudnn.pygraph(
+        intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT, handle=cudnn_handle
+    )
+
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
     K = graph.tensor(name="K", dim=key.size, stride=key.stride, data_type=torch_to_cudnn_dtype(key.dtype))
     V = graph.tensor(name="V", dim=value.size, stride=value.stride, data_type=torch_to_cudnn_dtype(value.dtype))
@@ -108,21 +136,45 @@ def _make_cudnn_sdpa_graph(query, key, value, attn_mask, dropout_p, is_causal):
     stride_o = (h * s_q * d_v, s_q * d_v, d_v, 1)
     O.set_output(True).set_data_type(torch_to_cudnn_dtype(value.dtype)).set_dim(dim_o).set_stride(stride_o)
 
-    graph.build([cudnn.heur_mode.A])
+    # Validate the graph before querying the cache key
+    # Validation makes sure all missing properties are inferred and filled, as they affect cache key.
+    graph.validate()
+    cache_key = graph.key()
 
-    workspace = torch.empty(graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
+    # If a built graph does not exist in cache already, make one and place it in
+    if cache_key not in _cudnnex_cache:
+        graph.build_operation_graph()
+        graph.create_execution_plans([cudnn.heur_mode.A])
+        graph.check_support()
+        graph.build_plans(cudnn.build_plan_policy.HEURISTICS_CHOICE)
 
-    if Seed is not None:
-        seed_device_tensor = torch.full((1, 1, 1, 1), 123456, dtype=torch.int64, device="cuda")
-    else:
-        seed_device_tensor = None
+        workspace = torch.empty(graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
 
-    if Offset is not None:
-        offset_device_tensor = torch.full((1, 1, 1, 1), 1, dtype=torch.int64, device="cuda")
-    else:
-        offset_device_tensor = None
+        if Seed is not None:
+            seed_device_tensor = torch.full((1, 1, 1, 1), 123456, dtype=torch.int64, device="cuda")
+        else:
+            seed_device_tensor = None
 
-    return Q, K, V, Attn_scale, Bias, Seed, seed_device_tensor, Offset, offset_device_tensor, O, workspace, graph
+        if Offset is not None:
+            offset_device_tensor = torch.full((1, 1, 1, 1), 1, dtype=torch.int64, device="cuda")
+        else:
+            offset_device_tensor = None
+
+        _cudnnex_cache[cache_key] = (
+            Q,
+            K,
+            V,
+            Attn_scale,
+            Bias,
+            Seed,
+            seed_device_tensor,
+            Offset,
+            offset_device_tensor,
+            O,
+            workspace,
+            graph,
+        )
+    return _cudnnex_cache[cache_key]
 
 
 def torch_to_cudnn_dtype(lc_dtype: dtypes.dtype):
