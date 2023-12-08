@@ -28,6 +28,13 @@ sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
 register_executor(sdpa_ex)
 
 
+class SpdaBackend(Enum):
+    ERROR = -1
+    MATH = 0
+    FLASH_ATTENTION = 1
+    MEMORY_EFFICIENT = 2
+
+
 # Both flash attention and memory efficient sdpa require that the last stride be one.
 def _sdpa_enforce_input_tensor_contiguity(a: torch.Tensor) -> torch.Tensor:
     if a is None or a.stride(-1) == 1:
@@ -723,15 +730,8 @@ def _scaled_dot_product_attention_grad(
     return primal
 
 
-class SpdaBackend(Enum):
-    ERROR = -1
-    MATH = 0
-    FLASH_ATTENTION = 1
-    MEMORY_EFFICIENT = 2
-
-
 # This helper function converts Thunder Proxy to PyTorch Meta Tensor
-def _convert_to_cuda_tensor(a: None | TensorProxy) -> None | torch.Tensor:
+def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
     from thunder.torch import _thunder_to_torch_dtype_map
 
     if a is None:
@@ -740,7 +740,7 @@ def _convert_to_cuda_tensor(a: None | TensorProxy) -> None | torch.Tensor:
         a.shape,
         dtype=_thunder_to_torch_dtype_map[a.dtype],
         requires_grad=a.requires_grad,
-        device="cuda",
+        device="meta",
     )
 
 
@@ -764,34 +764,51 @@ def _fused_sdp_choice(
     scale: None | float = None,
 ) -> int:
     input_tensors = (query, key, value, attn_mask)
-    fake_query, fake_key, fake_value, fake_attn_mask = list(map(_convert_to_cuda_tensor, input_tensors))
-
-    # TODO: FakeTensor usage is disabled temporarily due to a bug in PyTorch
-    # See https://github.com/pytorch/pytorch/issues/115362
-    # and https://github.com/Lightning-AI/lightning-thunder/issues/1703
-    # meta_input_tensors = list(map(_convert_to_meta_tensor, input_tensors))
-    # with FakeTensorMode() as mode:
-    #     fake_query, fake_key, fake_value, fake_attn_mask = list(
-    #         map(lambda a: _convert_to_fake_tensor(mode, a), meta_input_tensors)
-    #     )
+    meta_input_tensors = list(map(_convert_to_meta_tensor, input_tensors))
+    with FakeTensorMode() as mode:
+        fake_query, fake_key, fake_value, fake_attn_mask = list(
+            map(lambda a: _convert_to_fake_tensor(mode, a), meta_input_tensors)
+        )
 
     import thunder
 
     if isinstance(is_causal, thunder.core.proxies.IntegerProxy):
         is_causal = is_causal.value
 
-    # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
-    backend = torch._fused_sdp_choice(
-        fake_query,
-        fake_key,
-        fake_value,
-        fake_attn_mask,
-        dropout_p,
-        is_causal,
-        scale=scale,
-    )
-    return SpdaBackend(backend)
+    if LooseVersion(torch.__version__) < LooseVersion("2.2.0"):
+        # NOTE Select fused sdpa using PyTorch eager mode selection behavior
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+        backend = torch._fused_sdp_choice(
+            fake_query,
+            fake_key,
+            fake_value,
+            fake_attn_mask,
+            dropout_p,
+            is_causal,
+            scale=scale,
+        )
+        return SpdaBackend(backend)
+    else:
+        from torch.backends.cuda import (
+            SDPAParams,
+            can_use_efficient_attention,
+            can_use_flash_attention,
+            flash_sdp_enabled,
+            math_sdp_enabled,
+            mem_efficient_sdp_enabled,
+        )
+
+        sdp_params = SDPAParams(fake_query, fake_key, fake_value, fake_attn_mask, dropout_p, is_causal)
+
+        # The debug boolean flag will print warning messages when a specific sdpa kernel is unavailable.
+        if flash_sdp_enabled and can_use_flash_attention(sdp_params, True):
+            return SpdaBackend.FLASH_ATTENTION
+        elif mem_efficient_sdp_enabled and can_use_efficient_attention(sdp_params, True):
+            return SpdaBackend.MEMORY_EFFICIENT
+        elif math_sdp_enabled:
+            return SpdaBackend.MATH
+        else:
+            return SpdaBackend.ERROR
 
 
 def _scaled_dot_product_attention_checker(
