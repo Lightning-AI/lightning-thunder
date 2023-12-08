@@ -4728,6 +4728,7 @@ einsum_opinfo = OpInfo(
         # https://github.com/Lightning-AI/lightning-thunder/issues/1542.
         DecorateInfo(
             pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
             executors=("nvfuser",),
             active_if=nvfuser_version >= LooseVersion("0.0.30"),
         ),
