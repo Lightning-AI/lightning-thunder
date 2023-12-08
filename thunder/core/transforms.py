@@ -4293,21 +4293,17 @@ def maybe_downcast_to(dtype, args):
         return args
 
 
+@register_autocast_rule("matmul")
 @register_autocast_rule(prims.PrimIDs.MATMUL)
 def autocast_matmul_rule(a, b, dtype):
     """Autocast rule for matmul"""
     return prims.matmul(*(maybe_downcast_to(dtype, (a, b))))
 
 
+@register_autocast_rule("linear")
 @register_autocast_rule(prims.PrimIDs.LINEAR)
 def autocast_linear_rule(a, w, bias, dtype):
     return prims.linear(*maybe_downcast_to(dtype, (a, w, bias)))
-
-
-def decomposed_fn_autocast_rule(*args, fn, dtype, **kwargs):
-    trace = construct_trace()(fn, *args, **kwargs)
-    trace = unwrap_one_level_of_subsymbols(trace)
-    return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
 
 def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dtype):
@@ -4319,9 +4315,7 @@ def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dty
     Returns:
         Callable: The callable implementing the autocast rule for the symbol.
     """
-    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.id)
-    if autocast_impl is None and bound_symbol.subsymbols:
-        return partial(decomposed_fn_autocast_rule, fn=bound_symbol.sym, dtype=dtype)
+    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.name)
     return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)
 
 
