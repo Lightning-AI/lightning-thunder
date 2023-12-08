@@ -499,6 +499,17 @@ def test_match_as():
     assert msg in jit(match_as)()
 
 
+def test_list():
+    def foo():
+        l = [1, 2, 3]
+        l[3:] = l[:2]
+        l[0] = l[-1]
+        del l[2]
+        return l
+
+    assert foo() == jit(foo)()
+
+
 def test_raise_external():
     msg = "lorem ipsum"
 
@@ -511,7 +522,6 @@ def test_raise_external():
     assert msg in str(excinfo.value)
 
 
-# @pytest.mark.xfail(reason="Not implemented yet.")
 def test_raise_from():
     msg = "lorem ipsum"
 
@@ -884,38 +894,27 @@ def test_generator():
         yield from range(5)
 
     def my_generator_2():
-        val = yield 1
+        yield 1
+        val = 1
         while True:
             val = yield 2 * val
 
     jgen_1 = jit(my_generator_1)
+    jgen_2 = jit(my_generator_2)
 
     actual = list(jgen_1())
     expected = list(my_generator_1())
     assert actual == expected
 
+    run_gen = my_generator_2()
+    j_run_gen = jgen_2()
+    actual = [j_run_gen.send(x) for x in [None, 1, 2, 3]]
+    expected = [run_gen.send(x) for x in [None, 1, 2, 3]]
+    assert actual == expected
+
 
 def test_binary_operations():
-    def foo(op, a, b):
-        return op(a, b)
-
-    jfoo = jit(foo)
-
-    import operator
-
-    number_ops = (
-        operator.add,
-        operator.floordiv,
-        operator.lshift,
-        operator.mul,
-        operator.mod,
-        operator.pow,
-        operator.rshift,
-        operator.sub,
-        operator.truediv,
-    )
-
-    bool_ops = (operator.and_, operator.or_, operator.xor)
+    ops = ["+", "&", "//", "<<", "@", "*", "%", "|", "**", ">>", "-", "/", "^"]
 
     # NOTE Not all of the number ops support floats (for example lshift)
     number_inps = (
@@ -924,22 +923,57 @@ def test_binary_operations():
         (8, 2),
     )
 
-    bools_inps = (
+    bool_inps = (
         (True, True),
         (False, True),
     )
 
-    for op, (a, b) in product(number_ops, number_inps):
-        assert jfoo(op, a, b) == foo(op, a, b)
+    tensor_a = torch.randint(1, 10, (2, 2))
+    tensor_b = torch.randint(1, 10, (2, 2))
 
-    for op, (a, b) in product(number_ops, bools_inps):
-        assert jfoo(op, a, b) == foo(op, a, b)
+    for op in ops:
+        foo = eval(f"lambda a, b: a {op} b")
+        jfoo = jit(foo)
+        d = {}
+        exec(f"def bar(a, b):\n a {op}= b\n return a", d)
+        bar = d["bar"]
+        jbar = jit(bar)
 
-    a = torch.randn((2, 2))
-    b = torch.randn((2, 2))
+        if op != "@":
+            for a, b in number_inps:
+                assert jfoo(a, b) == foo(a, b)
+                assert jbar(a, b) == bar(a, b)
 
-    # Tests matmul on actual torch tensors
-    assert_close(jfoo(operator.matmul, a, b), foo(operator.matmul, a, b))
+        if op in {"&", "|", "^"}:
+            for a, b in bool_inps:
+                assert jfoo(a, b) == foo(a, b)
+                assert jbar(a, b) == bar(a, b)
+
+        # // and ** these run into mysterious errors (signature parsing?)
+        # skip for now, see https://github.com/Lightning-AI/lightning-thunder/issues/1715
+        if op not in {"//", "**"}:
+            a1 = tensor_a.clone()
+            b1 = tensor_b.clone()
+            expected = foo(a1, b1)
+            a2 = tensor_a.clone()
+            b2 = tensor_b.clone()
+            actual = jfoo(a2, b2)
+            assert_close(a1, a2)
+            assert_close(b1, b2)
+            assert_close(actual, expected)
+
+            a1 = tensor_a.clone()
+            b1 = tensor_b.clone()
+            a2 = tensor_a.clone()
+            b2 = tensor_b.clone()
+            if op == "/":
+                a1 = a1.float()
+                a2 = a2.float()
+            actual = jbar(a2, b2)
+            expected = bar(a1, b1)
+            assert_close(a1, a2)
+            assert_close(b1, b2)
+            assert_close(actual, expected)
 
 
 def test_get_and_for_iter():
@@ -992,6 +1026,30 @@ def test_unary_not():
 
     assert jfoo([]) == foo([])
     assert jfoo([1, 2]) == foo([2, 3])
+
+
+def test_unary_neg_invert():
+    def invert(x):
+        return ~x
+
+    def neg(x):
+        return -x
+
+    def pos(x):
+        return +x
+
+    for fn in (invert, neg, pos):
+        jfn = jit(fn)
+        for v in [1, 2, torch.tensor(3)]:
+            assert fn(v) == jfn(v)
+
+    for fn in (invert, neg, pos):
+        jfn = jit(fn)
+        with pytest.raises(TypeError) as exc_expected:
+            fn(object())
+        with pytest.raises(TypeError) as exc_actual:
+            jfn(object())
+        assert str(exc_expected.value) == str(exc_actual.value)
 
 
 def test_unpack_ex():
@@ -1305,7 +1363,6 @@ def test_comprehension_nonlocal():
     assert foo() == jfoo()
 
 
-@pytest.mark.xfail(reason="INPLACE_ADD is not implemented")
 def test_comprehension_nonlocal_inplace():
     def foo():
         counter = 0

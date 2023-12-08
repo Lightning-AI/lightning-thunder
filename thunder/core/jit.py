@@ -459,6 +459,7 @@ class register_opcode_handler:
             self.max_ver is None or sys.version_info < (*self.max_ver[:-1], self.max_ver[-1] + 1)
         ):
             assert self.name not in _default_opcode_handler_map
+            assert self.name in dis.opmap
             _default_opcode_handler_map[self.name] = fn
             return fn
         return _default_opcode_handler_map.get(self.name, fn)
@@ -600,9 +601,20 @@ def _binary_op(stack: list, op: BINARY_OP, a, b):
     assert type(op) is BINARY_OP
     idx: int = op.value
 
-    binop_name, *method_names = ops[idx]
-    if len(method_names) == 2:
-        left_method, right_method = method_names
+    binop_name, *_ = ops[idx]
+    _, left_method, right_method = ops[idx % BINARY_OP.IADD.value]
+    _, inplace_method = ops[idx % BINARY_OP.IADD.value + BINARY_OP.IADD.value]
+
+    if idx >= BINARY_OP.IADD.value:
+
+        def impl():
+            if hasattr(a, inplace_method):
+                return getattr(a, inplace_method)(b)
+            return NotImplemented
+
+        res = _jit(impl)
+
+    if idx < BINARY_OP.IADD.value or (res is NotImplemented):
 
         def impl():
             if (not hasattr(a, left_method)) or ((result := getattr(a, left_method)(b)) is NotImplemented):
@@ -614,17 +626,9 @@ def _binary_op(stack: list, op: BINARY_OP, a, b):
 
             return result
 
-    else:
-        (method,) = method_names
+        res = _jit(impl)
 
-        def impl():
-            if (not hasattr(a, method)) or ((result := getattr(a, method)(b)) is NotImplemented):
-                err: TypeError = TypeError(f"Unsupported operand type(s) for {binop_name}: '{type(a)}' and '{type(b)}'")
-                raise err
-
-            return result
-
-    stack.append(_jit(impl))
+    stack.append(res)
 
 
 def _binary_op_helper(stack: list, op: BINARY_OP):
@@ -716,6 +720,84 @@ def _binary_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs)
 @register_opcode_handler("BINARY_XOR", max_ver=(3, 10))
 def _binary_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     return _binary_op_helper(stack, BINARY_OP.XOR)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_ADD
+@register_opcode_handler("INPLACE_ADD", max_ver=(3, 10))
+def _inplace_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IADD)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_AND
+@register_opcode_handler("INPLACE_AND", max_ver=(3, 10))
+def _inplace_and_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IAND)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_FLOOR_DIVIDE
+@register_opcode_handler("INPLACE_FLOOR_DIVIDE", max_ver=(3, 10))
+def _inplace_floor_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IFLOORDIV)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_LSHIFT
+@register_opcode_handler("INPLACE_LSHIFT", max_ver=(3, 10))
+def _inplace_lshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.ILSHIFT)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MATRIX_MULTIPLY
+@register_opcode_handler("INPLACE_MATRIX_MULTIPLY", max_ver=(3, 10))
+def _inplace_matrix_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IMATMUL)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MULTIPLY
+@register_opcode_handler("INPLACE_MULTIPLY", max_ver=(3, 10))
+def _inplace_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IMUL)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MODULO
+@register_opcode_handler("INPLACE_MODULO", max_ver=(3, 10))
+def _inplace_modulo_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IMOD)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_OR
+@register_opcode_handler("INPLACE_OR", max_ver=(3, 10))
+def _inplace_or_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IOR)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_POWER
+@register_opcode_handler("INPLACE_POWER", max_ver=(3, 10))
+def _inplace_power_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IPOW)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_RSHIFT
+@register_opcode_handler("INPLACE_RSHIFT", max_ver=(3, 10))
+def _inplace_rshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IRSHIFT)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_SUBTRACT
+@register_opcode_handler("INPLACE_SUBTRACT", max_ver=(3, 10))
+def _inplace_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.ISUB)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_TRUE_DIVIDE
+@register_opcode_handler("INPLACE_TRUE_DIVIDE", max_ver=(3, 10))
+def _inplace_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.ITRUEDIV)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_SUBTRACT
+@register_opcode_handler("INPLACE_XOR", max_ver=(3, 10))
+def _inplace_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    return _binary_op_helper(stack, BINARY_OP.IXOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
@@ -2069,6 +2151,35 @@ def _store_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
     frame.names[name] = tos
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-STORE_SUBSCR
+@register_opcode_handler("STORE_SUBSCR")
+def _store_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+    tos1 = stack.pop()
+    tos2 = stack.pop()
+
+    def impl():
+        return tos1.__setitem__(tos, tos2)
+
+    _jit(impl)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT
+@register_opcode_handler("UNARY_INVERT")
+def _unary_invert_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+
+    def impl():
+        if hasattr(tos, "__invert__"):
+            result = tos.__invert__()
+            if result is not NotImplemented:
+                return result
+
+        raise TypeError(f"bad operand type for unary ~: '{type(tos).__name__}'")
+
+    stack.append(_jit(impl))
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NOT
 @register_opcode_handler("UNARY_NOT")
 def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -2082,12 +2193,36 @@ def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.append(_jit(impl))
 
 
-# https://docs.python.org/id/3.5/library/dis.html#opcode-UNPACK_SEQUENCE
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NEGATIVE
 @register_opcode_handler("UNARY_NEGATIVE")
 def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    tos = stack[-1]
-    stack[-1] = -tos
+    tos = stack.pop()
+
+    def impl():
+        if hasattr(tos, "__neg__"):
+            result = tos.__neg__()
+            if result is not NotImplemented:
+                return result
+
+        raise TypeError(f"bad operand type for unary -: '{type(tos).__name__}'")
+
+    stack.append(_jit(impl))
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
+@register_opcode_handler("UNARY_POSITIVE")
+def _unary_positive_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    tos = stack.pop()
+
+    def impl():
+        if hasattr(tos, "__pos__"):
+            result = tos.__pos__()
+            if result is not NotImplemented:
+                return result
+
+        raise TypeError(f"bad operand type for unary +: '{type(tos).__name__}'")
+
+    stack.append(_jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_EX
@@ -2250,7 +2385,7 @@ def make_generator(
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return
             assert status == JIT_SIGNALS.YIELD_VALUE
-            sent_value = yield res
+            send_value = yield res
 
     return thunder_jit_generator()
 
