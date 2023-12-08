@@ -246,37 +246,6 @@ sdpea_gradfwd = sdpa_ex.register_operator(
 )
 
 
-def _grad_forward_scaled_dot_product_efficient_attention_checker(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: None | TensorLike = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    scale: None | float = None,
-) -> bool:
-    tensor_inputs = [query, key, value]
-    if attn_mask is not None:
-        tensor_inputs.append(attn_mask)
-
-    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
-    if any(map(lambda a: a.device is devices.cpu, tensor_inputs)):
-        return False
-
-    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
-    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
-        return False
-    return True
-
-
-sdpa_ex.register_implementation(
-    ltorch.grad_forward_scaled_dot_product_efficient_attention,
-    sdpea_gradfwd,
-    checker=_grad_forward_scaled_dot_product_efficient_attention_checker,
-)
-
-
 # This helper function maps to aten::_scaled_dot_product_flash_attention function.
 def _grad_forward_scaled_dot_product_flash_attention_meta(
     query: TensorLike,
@@ -347,38 +316,6 @@ sdpfa_gradfwd = sdpa_ex.register_operator(
     "sdpafx_grad_forward_scaled_dot_product_efficient_attention",
     meta=_grad_forward_scaled_dot_product_flash_attention_meta,
     fn=_grad_forward_scaled_dot_product_flash_attention_impl,
-)
-
-
-def _grad_forward_scaled_dot_product_flash_attention_checker(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: None | TensorLike = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    *,
-    scale: None | float = None,
-) -> bool:
-    tensor_inputs = [query, key, value]
-    if attn_mask is not None:
-        tensor_inputs.append(attn_mask)
-
-    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
-    if any(map(lambda a: a.device is devices.cpu, tensor_inputs)):
-        return False
-
-    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
-    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
-        return False
-    return True
-
-
-sdpa_ex.register_implementation(
-    ltorch.grad_forward_scaled_dot_product_flash_attention,
-    sdpea_gradfwd,
-    checker=_grad_forward_scaled_dot_product_flash_attention_checker,
 )
 
 
@@ -463,43 +400,6 @@ sdpea_bwd = sdpa_ex.register_operator(
 )
 
 
-def _scaled_dot_product_efficient_attention_backward_checker(
-    grad_out: TensorLike,
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: None | TensorLike,
-    out: TensorLike,
-    logsumexp: TensorLike,
-    philox_seed: TensorLike,
-    philox_offset: TensorLike,
-    dropout_p: float,
-    is_causal: bool = False,
-    *,
-    scale: None | float = None,
-) -> bool:
-    tensor_inputs = [query, key, value]
-    if attn_mask is not None:
-        tensor_inputs.append(attn_mask)
-
-    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
-    if any(map(lambda a: a.device is devices.cpu, tensor_inputs)):
-        return False
-
-    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
-    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
-        return False
-    return True
-
-
-sdpa_ex.register_implementation(
-    ltorch.scaled_dot_product_efficient_attention_backward,
-    sdpea_bwd,
-    checker=_scaled_dot_product_efficient_attention_backward_checker,
-)
-
-
 # The backward decomposition of scaled_dot_product_attention cannot be efficiently fused, so we have this
 # scaled_dot_product_flash_attention_backward primitive. Executors can override the primitive using
 # internal implementations.
@@ -577,43 +477,6 @@ sdpfa_bwd = sdpa_ex.register_operator(
     "sdpafx_scaled_dot_product_efficient_attention_backward",
     meta=_scaled_dot_product_flash_attention_backward_meta,
     fn=_scaled_dot_product_flash_attention_backward_impl,
-)
-
-
-def _scaled_dot_product_flash_attention_backward_checker(
-    grad_out: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    out: torch.Tensor,
-    logsumexp: torch.Tensor,
-    cum_seq_q: torch.Tensor,
-    cum_seq_k: torch.Tensor,
-    max_q: int,
-    max_k: int,
-    dropout_p: float,
-    is_causal: bool,
-    philox_seed: torch.Tensor,
-    philox_offset: torch.Tensor,
-    *,
-    scale: None | float,
-) -> bool:
-    tensor_inputs = [query, key, value]
-    # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_flash_attention' with arguments from the 'CPU' backend.
-    if any(map(lambda a: a.device is devices.cpu, tensor_inputs)):
-        return False
-
-    # TODO: Model PyTorch's choice of efficient kernels and fallbacks
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
-    if scale is not None and LooseVersion(torch.__version__) < LooseVersion("2.1.0"):
-        return False
-    return True
-
-
-sdpa_ex.register_implementation(
-    ltorch.scaled_dot_product_flash_attention_backward,
-    sdpea_bwd,
-    checker=_scaled_dot_product_flash_attention_backward_checker,
 )
 
 
