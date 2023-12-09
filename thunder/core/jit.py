@@ -594,17 +594,8 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 
 # To register a callback, map from this enum to a callable. The args and kwargs for each
 #   event may be different, as documented below.
-#
-# LOAD_CALLBACK. Triggers when LOAD_FAST occurs.
-#   def load_callback(name: str, val: Any) -> new_val
-#   The returned value will be pushed onto the stack instead of the original value.
-#
-# STORE_CALLBACK. Triggers when STORE_FAST occurs.
-#   def store_callback(name: str, val: Any) -> new_val
-#   The returned value will be stored in localsplus instead of the original value.
 class JIT_CALLBACKS(enum.Enum):
-    LOAD_CALLBACK = enum.auto()
-    STORE_CALLBACK = enum.auto()
+    pass
 
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
@@ -1569,6 +1560,12 @@ def _list_to_tuple_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     stack.append(tuple(tos))
 
 
+# https://docs.python.org/3.13/library/dis.html#opcode-LOAD_ASSERTION_ERROR
+@register_opcode_handler("LOAD_ASSERTION_ERROR")
+def _load_assertion_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    stack.append(AssertionError)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR")
 def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
@@ -1628,6 +1625,7 @@ def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
 
     assert i >= 0 and i < len(frame.localsplus)
     cell = frame.localsplus[i]
+    name: str = frame.get_localsplus_name(i)
 
     # it seems that the only way to check for an empty cell (short of
     # try... except) is comparison to another empty cell
@@ -1636,6 +1634,7 @@ def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
     val = cell.cell_contents
+
     stack.append(val)
 
 
@@ -1652,11 +1651,6 @@ def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fram
     # empty local variable slots are initialized to Py_NULL()
     if isinstance(val, Py_NULL):
         return do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
-
-    compilectx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = compilectx.callback(JIT_CALLBACKS.LOAD_CALLBACK)
-    if cb is not None:
-        val = cb(name, val)
 
     stack.append(val)
 
@@ -2328,12 +2322,6 @@ def _store_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
     var_num: int = inst.arg
 
     name: str = co.co_varnames[var_num]
-
-    compilectx: JitCompileCtx = get_jitcompilectx()
-    cb = compilectx.callback(JIT_CALLBACKS.STORE_CALLBACK)
-    if cb is not None:
-        tos = cb(name, tos)
-
     frame.localsplus[var_num] = tos
 
 
@@ -3036,7 +3024,7 @@ def jit(
                 msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
             fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
-            fn_._last_history = runtimectx.history
+            fn_._last_interpreted_history = runtimectx.history
 
             if jit_result is JIT_SIGNALS.EXCEPTION_RAISED:
                 # We modify the cause chain from
@@ -3059,5 +3047,5 @@ def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
     return getattr(fn, "_last_interpreted_instructions", None)
 
 
-def last_history(fn: Callable) -> None | list[dis.Instruction | str]:
-    return getattr(fn, "_last_history", None)
+def last_interpreted_history(fn: Callable) -> None | list[dis.Instruction | str]:
+    return getattr(fn, "_last_interpreted_history", None)

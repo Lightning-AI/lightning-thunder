@@ -1744,7 +1744,7 @@ def test_is_jitting_opaque():
 #
 
 
-def test_phantom_load_fast():
+def test_phantom_simple_list():
     def foo(a):
         a.append(4)
         return a
@@ -1756,6 +1756,190 @@ def test_phantom_load_fast():
 
     assert result == [1, 2, 3, 4]
     assert l == [1, 2, 3]
+
+
+def test_phantom_aliasing_lists():
+    def foo(a, b):
+        a.append(7)
+        return a, b
+
+    pfoo = phantom_jit(foo)
+
+    l = [3, 5]
+    a, b = pfoo(l, l)
+
+    assert l == [3, 5]
+    assert a == [3, 5, 7]
+    assert a == b
+
+
+def test_phantom_deep_aliasing_lists():
+    def foo(a, b):
+        a.append(7)
+        b[0].append(99)
+        return a, b
+
+    pfoo = phantom_jit(foo)
+
+    l = [3, 5]
+    a = [[1, 3, 5], l]
+    b = [l, [11, 13, 15]]
+    ra, rb = pfoo(a, b)
+
+    assert l == [3, 5]
+    assert a == [[1, 3, 5], l]
+    assert b == [l, [11, 13, 15]]
+
+    assert ra == [[1, 3, 5], [3, 5, 99], 7]
+    assert rb == [[3, 5, 99], [11, 13, 15]]
+
+
+def test_phantom_aliasing_dicts():
+    def foo(d):
+        d["hi"] = "bye"
+        d["also"] = "and then"
+        return d
+
+    pfoo = phantom_jit(foo)
+
+    d = {"hi": "hello", "x": "y"}
+
+    result = pfoo(d)
+
+    assert d == {"hi": "hello", "x": "y"}
+    assert result == {"hi": "bye", "x": "y", "also": "and then"}
+
+
+def test_phantom_is():
+    def foo(a, b):
+        return a is b
+
+    pfoo = phantom_jit(foo)
+
+    l = [1, 3]
+    assert pfoo(l, l) is True
+
+    l0 = [5, 7]
+    assert pfoo(l, l0) is False
+
+
+_test_phantom_global_global_value = 5
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1743")
+def test_phantom_global():
+    def foo(x):
+        global _test_phantom_global_global_value
+        _test_phantom_global_global_value += x
+        return _test_phantom_global_global_value
+
+    pfoo = phantom_jit(foo)
+
+    assert _test_phantom_global_global_value == 5
+    result = pfoo(3)
+    assert result == 8
+    assert _test_phantom_global_global_value == 5
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1744")
+def test_phantom_nonlocal():
+    y = 5
+
+    def foo(x):
+        nonlocal y
+        y += x
+        return y
+
+    pfoo = phantom_jit(foo)
+
+    assert y == 5
+    result = pfoo(3)
+    assert result == 8
+    assert y == 5
+
+
+# TODO This should probably throw an error that we attempted to modify the non-copyable operator module
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1745")
+def test_phantom_import():
+    def foo(a, b):
+        import operator
+
+        operator.hi = "bye"
+        return operator.add(a, b)
+
+    pfoo = phantom_jit(foo)
+
+    import operator
+
+    pfoo(1, 3)
+    assert not hasattr(operator, "hi")
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1746")
+def test_phantom_uncopyable_in_collection():
+    def foo(a):
+        a.append(7)
+        return a
+
+    pfoo = phantom_jit(foo)
+
+    # NOTE Modules cannot be deep-copied (which currently causes the deep copy of the entire list to fail)
+    import operator
+
+    l = [operator, 3, 5]
+
+    result = pfoo(l)
+
+    assert l == [operator, 3, 5]
+    assert result == [operator, 3, 5, 7]
+
+
+def test_phantom_object_aliasing():
+    def foo(a, b, c):
+        a.one = 2
+        b.append(a)
+        c["hi"] = "bye"
+
+        assert a.z is c
+
+        return a, b, c
+
+    pfoo = phantom_jit(foo)
+
+    class mycls:
+        pass
+
+    x = mycls()
+    y = [x, 3]
+    z = {0: x, 1: y}
+    x.z = z
+
+    a, b, c = pfoo(x, y, z)
+
+    assert not hasattr(x, "one")
+    assert a.one == 2
+    assert y == [x, 3]
+    # NOTE b, an output, does not contain x like y does, because x was replaced with a in the computation
+    assert b == [a, 3, a]
+    assert z == {0: x, 1: y}
+    # NOTE c, an output, does not contain keys x and y like z does, because x was replaced with a, and y replaced with b
+    assert c == {0: a, 1: b, "hi": "bye"}
+
+
+# TODO We should get rid of these warnings once https://github.com/Lightning-AI/lightning-thunder/issues/1747
+#   is resolved
+def test_phantom_modification_warning():
+    def foo(a):
+        a.one = 2
+        return a
+
+    pfoo = phantom_jit(foo)
+
+    class mycls:
+        pass
+
+    with pytest.warns(UserWarning):
+        pfoo(mycls)
 
 
 #

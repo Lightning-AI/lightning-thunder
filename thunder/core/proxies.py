@@ -729,9 +729,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __getattr__(self, attr):
         langctx = get_langctx()
         method = langctx.method_lookup(attr)
-
         baseutils.check(method is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
-
         return partial(method, self)
 
     #

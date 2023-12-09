@@ -1,9 +1,26 @@
 from typing import Any
+from types import ModuleType
 from collections.abc import Callable, Sequence
 
 from functools import partial, wraps
 import copy
 import contextvars
+import warnings
+
+import torch
+from thunder.core.proxies import proxy, Proxy, TensorProxy
+from thunder.core.trace import set_tracectx, reset_tracectx
+from thunder.core.jit import (
+    jit,
+    default_callbacks,
+    JIT_CALLBACKS,
+    default_opcode_interpreter,
+    _default_lookaside_map,
+    default_lookaside,
+    JITFrame,
+)
+from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
+from thunder.core.codeutils import get_siginfo
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -17,27 +34,60 @@ import contextvars
 # TODO Track deleted to deal with duplicate names
 # TODO Make proxy construction extensible
 # TODO Probably don't want to track what's stored or proxied based on name alone
-class PhantomJitRuntimeCtx:
+# TODO The current stored/proxify relationship is far from correct
+class PhantomInterpreterRuntimeCtx:
     def __init__(self):
-        self._stored: dict[str, Any] = {}
-        self._proxies: dict[str, Any] = {}
+        # Tracks stores to the localsplus list of JITFrame objects
+        self.localsplus_stores: set = set()
 
-    @property
-    def stored(self) -> dict[str, Any]:
-        return self._stored
+        # Maps from ids to input objects
+        # NOTE This extends the lifetime of all inputs to be at least the lifetime of the interpreter,
+        #   this prevents Python from reusing the id of one of the inputs, which is how we track them
+        # NOTE This means that the proxies of inputs have lifetimes that are at least the
+        #   lifetime of the interpreter, too
+        self.input_map: dict[int, Any] = {}
 
-    @property
-    def proxies(self) -> dict[str, Any]:
-        return self._proxies
+        # Maps from the ids of input objects to their corresponding proxy objects
+        # NOTE This dict is compatible with copy.deepcopy()'s memo dict
+        self.input_proxy_map: dict[int, Any] = {}
 
-    def record_stored(self, name: str, val: Any) -> None:
-        self._stored[name] = val
+        self.proxy_id_set: set[int] = set()
 
-    def proxify(self, name: str, x: Any) -> Any:
-        if name in self.proxies:
-            return self.proxies[name]
-        p = copy.deepcopy(x)
-        self._proxies[name] = p
+    # Returns the object's proxy (itself, if it is a proxy)
+    def proxify(self, name: str, val: Any, /) -> Any:
+        val_id = id(val)
+
+        # Checks if val itself is a proxy
+        if val_id in self.proxy_id_set:
+            return val
+
+        # Checks to see if val is associated with an existing proxy
+        p: None | Any = self.input_proxy_map.get(val_id, None)
+        if p is not None:
+            return p
+
+        # Copies the input_proxy_map because deepcopy might mutate it but then fail, and
+        #   if the deepcopy fails then we don't want to modify the input_proxy_map
+        memo = copy.copy(self.input_proxy_map)
+
+        try:
+            p = copy.deepcopy(val, memo=memo)
+        except TypeError as te:
+            warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
+            return val
+
+        # Some objects, like types, return themselves when deepcopied
+        if p is val:
+            warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
+            return val
+
+        # Removes the id(memo) entry (if deepcopy added it) and updates input_proxy_map with the new proxies
+        # NOTE deepcopy can add an id(memo) entry to store references to objects whose lifetimes it wants to
+        #   extend until the deepcopy finishes
+        memo_id = id(memo)
+        memo.pop(memo_id, None)
+        self.input_proxy_map = memo
+
         return p
 
 
@@ -45,12 +95,12 @@ _phantomctx = contextvars.ContextVar("phantomctx")
 
 
 # Sets the phantom ctx
-def set_phantomctx(ctx: PhantomJitRuntimeCtx) -> Any:
+def set_phantomctx(ctx: PhantomInterpreterRuntimeCtx) -> Any:
     return _phantomctx.set(ctx)
 
 
 # Returns the current phantom ctx
-def get_phantomctx() -> PhantomJitRuntimeCtx:
+def get_phantomctx() -> PhantomInterpreterRuntimeCtx:
     return _phantomctx.get()
 
 
@@ -59,48 +109,53 @@ def reset_phantomctx(token) -> None:
     _phantomctx.reset(token)
 
 
-from thunder.core.jit import jit, default_callbacks, JIT_CALLBACKS
-
 phantom_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
 
-def load_callback(name: str, val: Any):
-    ctx: PhantomJitRuntimeCtx = get_phantomctx()
-
-    if name in ctx.stored:
-        return val
-
-    return ctx.proxify(name, val)
-
-
-phantom_callbacks[JIT_CALLBACKS.LOAD_CALLBACK] = load_callback
-
-
-def store_callback(name: str, val: Any):
-    ctx: PhantomJitRuntimeCtx = get_phantomctx()
-    ctx.record_stored(name, val)
-    return val
-
-
-phantom_callbacks[JIT_CALLBACKS.STORE_CALLBACK] = store_callback
-
-
-def phantom_jit(fn: Callable, *args, **kwargs):
-    assert "callbacks" not in kwargs
-    kwargs["callbacks"] = phantom_callbacks
-    jfn = jit(fn, *args, **kwargs)
+def phantom_jit(
+    fn: Callable,
+    *,
+    opcode_interpreter: Callable = default_opcode_interpreter,
+    fn_lookaside: Callable = default_lookaside,
+    callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks,
+    ctx_cls: type = PhantomInterpreterRuntimeCtx,
+) -> Callable:
+    jfn = jit(fn, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks)
 
     @wraps(jfn)
     def fn(*args, **kwargs) -> Callable:
         try:
-            ctx: PhantomJitRuntimeCtx = PhantomJitRuntimeCtx()
+            ctx: PhantomInterpreterRuntimeCtx = ctx_cls()
             tok: Any = set_phantomctx(ctx)
-            result = jfn(*args, **kwargs)
+
+            si = get_siginfo(fn, args, kwargs)
+
+            pargs = []
+            for name, x in si.args:
+                p = ctx.proxify(name, x)
+                pargs.append(p)
+
+            if si.varargs is not None:
+                varargs_name, x = si.varargs
+                pvarargs = ctx.proxify(varargs_name, x)
+                pargs.extend(pvarargs)
+
+            pkwargs = {}
+            for name, x in si.kwargs.items():
+                p = ctx.proxify(name, x)
+                pkwargs[name] = x
+
+            if si.varkwargs is not None:
+                varkwargs_name, x = si.varkwargs
+                pvarkwargs = ctx.proxify(varkwargs_name, x)
+                pkwargs.update(pvarkwargs)
+
+            result = jfn(*pargs, **pkwargs)
 
             # Propagates metadata
-            # TODO Find a better way to do this?
+            # TODO Find a better way to do this? -- why doesn't wraps propagate these?
             fn._last_interpreted_instructions = jfn._last_interpreted_instructions
-            fn._last_history = jfn._last_history
+            fn._last_interpreted_history = jfn._last_interpreted_history
             return result
         finally:
             reset_phantomctx(tok)
@@ -119,13 +174,52 @@ from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx
 
+# NOTE Calls into symbols MUST use this lookaside -- we don't want to jit into them
+_thunder_lookaside_map = {
+    TensorProxy.__add__: TensorProxy.__add__,
+}
+
+_thunder_lookaside_map = _default_lookaside_map | _thunder_lookaside_map
+
+
+def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
+    return _thunder_lookaside_map.get(fn, None)
+
+
+class ThunderInterpreterRuntimeCtx(PhantomInterpreterRuntimeCtx):
+    def __init__(self):
+        self._stored: dict[str, Any] = {}
+        self._proxies: dict[str, Any] = {}
+
+    @property
+    def stored(self) -> dict[str, Any]:
+        return self._stored
+
+    @property
+    def proxies(self) -> dict[str, Any]:
+        return self._proxies
+
+    def record_stored(self, name: str, val: Any) -> None:
+        self._stored[name] = val
+
+    # TODO Extend proxies beyond torch tensors
+    # TODO Some objects are not copyable, like ModuleTypes, but we still
+    #   want to prevent mutation to them -- for now we just don't proxy them
+    # TODO Call the phantom interpreter's proxy method on non-thunder proxies
+    def proxify(self, name: str, x: Any) -> Any:
+        if isinstance(x, torch.Tensor):
+            return proxy(x)
+
+        return x
+
 
 def thunder_jit(fn: Callable, *args, **kwargs) -> Callable:
-    return phantom_jit(fn, *args, **kwargs)
+    return phantom_jit(fn, ctx_cls=ThunderInterpreterRuntimeCtx, fn_lookaside=thunder_lookaside)
 
 
 # TODO Add support for transforms
 # TODO Introduce caching
+# TODO Support other langctx
 def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
     jfn = thunder_jit(cd.fn)
 
@@ -137,10 +231,17 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         # TODO Caching goes here
 
         # Currently executes the program eagerly as a placeholder
-        # TODO Construct the initial trace
-        cs.last_trace_tracing_start = time.time_ns()
-        result = jfn(*args, **kwargs)
-        cs.last_trace_tracing_stop = time.time_ns()
+        computation_trace = TraceCtx()
+        lang = get_default_langctx()
+        try:
+            lang_tok = set_langctx(lang)
+            trace_tok = set_tracectx(computation_trace)
+            cs.last_trace_tracing_start = time.time_ns()
+            result = jfn(*args, **kwargs)
+            cs.last_trace_tracing_stop = time.time_ns()
+        finally:
+            reset_tracectx(trace_tok)
+            reset_langctx(lang_tok)
 
         # TODO Apply transforms
 
@@ -152,9 +253,8 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         # TODO Update cache
 
         # Updates metadata
-
         cs.last_interpreted_instructions = jfn._last_interpreted_instructions
-        cs.last_interpreted_history = jfn._last_history
+        cs.last_interpreted_history = jfn._last_interpreted_history
 
         cs.last_trace_host_stop = time.time_ns()
         return result
