@@ -19,6 +19,7 @@ from types import (
     CodeType,
     FunctionType,
     MethodType,
+    MethodDescriptorType,
     BuiltinFunctionType,
     BuiltinMethodType,
     MethodWrapperType,
@@ -510,7 +511,9 @@ class JITSuper:
         for parent_cls in self.cls.mro()[1:]:
             if hasattr(parent_cls, name):
                 res = getattr(parent_cls, name)
-                return MethodType(res, self.obj)
+                if isinstance(res, (FunctionType, MethodDescriptorType)):
+                    return MethodType(res, self.obj)
+                return res
         raise AttributeError(f"'super' object has no attribute '{name}'")
 
 
@@ -2099,6 +2102,18 @@ def _rot_n_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack[-inst.arg :] = (stack[-1], *stack[-inst.arg : -1])
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-ROT_THREE
+@register_opcode_handler("ROT_THREE", max_ver=(3, 10))
+def _rot_three_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    top = stack[-1]
+    second = stack[-2]
+    third = stack[-3]
+
+    stack[-1] = second
+    stack[-2] = third
+    stack[-3] = top
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_TWO
 @register_opcode_handler("ROT_TWO", max_ver=(3, 10))
 def _rot_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
@@ -2557,7 +2572,9 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
 
     # (6) Jits into the function
     # adjustments for "hidden" instructiions (EXTENDED_ARGS, CACHE, ...)
-    bound = inspect.signature(fn).bind(*args, **kwargs)
+    # TODO: use the code object as the authorative source
+    sig = inspect.signature(fn, follow_wrapped=False)
+    bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
 

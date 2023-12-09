@@ -1,4 +1,4 @@
-from functools import partial
+from functools import partial, wraps
 from itertools import product
 
 import sys
@@ -778,6 +778,21 @@ def test_calling_methods():
     assert jbar_static(x, 7) == bar_static(x, 7)
 
 
+def test_wrapped_functions():
+    def wrap(fn):
+        @wraps(fn)
+        def foo(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        return foo
+
+    @wrap
+    def foo(a, b):
+        return a + b
+
+    assert jit(foo)(3, 4) == foo(3, 4)
+
+
 def test_callable_classes():
     class mycls:
         def __init__(self, v: int):
@@ -949,31 +964,28 @@ def test_binary_operations():
                 assert jfoo(a, b) == foo(a, b)
                 assert jbar(a, b) == bar(a, b)
 
-        # // and ** these run into mysterious errors (signature parsing?)
-        # skip for now, see https://github.com/Lightning-AI/lightning-thunder/issues/1715
-        if op not in {"//", "**"}:
-            a1 = tensor_a.clone()
-            b1 = tensor_b.clone()
-            expected = foo(a1, b1)
-            a2 = tensor_a.clone()
-            b2 = tensor_b.clone()
-            actual = jfoo(a2, b2)
-            assert_close(a1, a2)
-            assert_close(b1, b2)
-            assert_close(actual, expected)
+        a1 = tensor_a.clone()
+        b1 = tensor_b.clone()
+        expected = foo(a1, b1)
+        a2 = tensor_a.clone()
+        b2 = tensor_b.clone()
+        actual = jfoo(a2, b2)
+        assert_close(a1, a2)
+        assert_close(b1, b2)
+        assert_close(actual, expected)
 
-            a1 = tensor_a.clone()
-            b1 = tensor_b.clone()
-            a2 = tensor_a.clone()
-            b2 = tensor_b.clone()
-            if op == "/":
-                a1 = a1.float()
-                a2 = a2.float()
-            actual = jbar(a2, b2)
-            expected = bar(a1, b1)
-            assert_close(a1, a2)
-            assert_close(b1, b2)
-            assert_close(actual, expected)
+        a1 = tensor_a.clone()
+        b1 = tensor_b.clone()
+        a2 = tensor_a.clone()
+        b2 = tensor_b.clone()
+        if op == "/":
+            a1 = a1.float()
+            a2 = a2.float()
+        actual = jbar(a2, b2)
+        expected = bar(a1, b1)
+        assert_close(a1, a2)
+        assert_close(b1, b2)
+        assert_close(actual, expected)
 
 
 def test_get_and_for_iter():
@@ -1332,6 +1344,16 @@ def test_property_with_setter():
     assert tuple(history) == ("x False", "x.setter False", "x True", "x.setter True")
 
 
+def test_compare():
+    # uses ROT_THREE in Python 3.10
+    def fn(a):
+        return 2 <= a <= 4
+
+    jfn = jit(fn)
+    for a in (1, 3, 5):
+        assert fn(a) == jfn(a)
+
+
 def test_comprehension():
     def foo():
         return tuple([i for i in range(10)])
@@ -1550,9 +1572,17 @@ def test_super():
         def foo(self):
             return f"Hello {type(self)} {__class__}"
 
+        @classmethod
+        def bar(self):
+            return f"Hello {type(self)} {__class__}"
+
     class B(A):
         def foo(self):
             return super().foo()
+
+        @classmethod
+        def bar(self):
+            return super().bar()
 
     class C(A):
         def foo(self):
@@ -1576,6 +1606,12 @@ def test_super():
         jit(bar)()
     # Python 3.11 improved the grammar, so do we
     assert str(exc_expected.value).replace("be type", "be a type") == str(exc_actual.value)
+
+    def baz():
+        b = B()
+        return b.bar()
+
+    assert jit(baz)() == baz()
 
 
 def test_is_jitting():
