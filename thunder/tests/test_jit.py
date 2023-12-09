@@ -370,12 +370,22 @@ def test_unpack_sequence():
         a, b = tup
         return a + b
 
+    def bar(tup):
+        a, b = map(lambda x: x, tup)  # unpack iterable
+        return a + b
+
     jfoo = jit(foo)
+    jbar = jit(bar)
 
     args = (4, 3)
 
     thunder_result = jfoo(args)
     python_result = foo(args)
+
+    assert_close(thunder_result, python_result)
+
+    thunder_result = jbar(args)
+    python_result = bar(args)
 
     assert_close(thunder_result, python_result)
 
@@ -1620,6 +1630,25 @@ def test_is_jitting():
 
     assert not foo()
     assert jit(foo)()
+
+
+def test_autograd_function():
+    class DoubleFn(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, a):
+            return a * 2
+
+        @staticmethod
+        def backward(ctx, grad_out):
+            return 2 * grad_out
+
+    a = torch.randn(5, 5, requires_grad=True)
+
+    def fn():
+        b = DoubleFn.apply(a)
+        return b
+
+    assert_close(fn(), jit(fn)())
 
 
 def test_is_jitting_opaque():

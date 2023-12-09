@@ -343,7 +343,7 @@ class PythonFrameWrapper:
         self.qualname = getattr(frame.f_code, "co_qualname", frame.f_code.co_name)
         self.positions: Positions
         if sys.version_info >= (3, 11):
-            self.positions = traceback._get_code_position(frame.f_code, frame.f_lasti)
+            self.positions = Positions(*traceback._get_code_position(frame.f_code, frame.f_lasti))
         else:
             self.positions = Positions(frame.f_lineno, frame.f_lineno, 0, 999)
 
@@ -502,21 +502,12 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     return _jit(impl)
 
 
-class JITSuper:
-    def __init__(self, cls, obj):
-        self.cls = cls
-        self.obj = obj
-
-    def __getattr__(self, name):
-        for parent_cls in self.cls.mro()[1:]:
-            if hasattr(parent_cls, name):
-                res = getattr(parent_cls, name)
-                if isinstance(res, (FunctionType, MethodDescriptorType)):
-                    return MethodType(res, self.obj)
-                return res
-        raise AttributeError(f"'super' object has no attribute '{name}'")
-
-
+# we do like the built-in super (and in fact it is impossible to implement
+# it in Python when it comes to builtin methods (torch.autograd.Function.apply
+# has a __self__ but not a __func__, so we cannot fill in the superclass self
+# in the call to the func), but super() without arguments needs to inspect
+# frames, so we do this inspection here and then instantiate the builtin super
+# with parameters
 def _super_lookaside(cls=Py_NULL(), obj=None):
     # cls Py_NULL vs. obj None this is on purpose
 
@@ -547,7 +538,7 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     if not isinstance(cls, type):
         return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
 
-    return _jit(JITSuper, cls, obj)
+    return super(cls, obj)
 
 
 _default_lookaside_map: dict[Callable, Callable] = {
@@ -2369,9 +2360,10 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_SEQUENCE
 @register_opcode_handler("UNPACK_SEQUENCE")
 def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    seq: Sequence = stack.pop()
+    # contrary to the opname, seq is an Iterable, not necessarily a sequence
+    seq: Iterable = stack.pop()
 
-    for x in reversed(seq):
+    for x in reversed(list(seq)):
         stack.append(x)
 
 
