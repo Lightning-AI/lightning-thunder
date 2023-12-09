@@ -2656,8 +2656,10 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
         if name.startswith("."):
             locals_dict[name] = locals_dict.pop(f"implicit{name[1:]}")
 
-    # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars)
-    # in Python 3.11+, these are not separated, in Python 3.10 we need to create cell vars here and add them to closures in Python 3.11 they will be dealt with though MAKE_CELL...
+    # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars), also the cellvars/freevars are set up on call
+    # in Python 3.11+, these are not separated and cells will be set up by the MAKE_CELL instruction
+    # in Thunder, we adopt the Python 3.11 way of allocating a single array for all localplus vars,
+    #             but for 3.10 we do need to do the 3.10-style setting-up-at-entry here.
     localsplus: list[Any] = []
 
     if (3, 10) <= sys.version_info < (3, 11):
