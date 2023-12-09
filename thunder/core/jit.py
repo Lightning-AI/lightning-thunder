@@ -2624,9 +2624,10 @@ def make_generator(
 #   (2) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
 #   (3) The callable is a partial object, in which case it's recursively unwrapped
-#   (4) The callable is a callable class, in which case its __call__ attribute is called recursively
-#   (5) The callable is a method, in which calls its __func__ attribute is called recursively
-#   (6) The callable is a FunctionType, in which case it's recursively interpretered by the jit
+#   (4) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (5) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (6) The callable is a method, in which calls its __func__ attribute is called recursively
+#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the jit
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
