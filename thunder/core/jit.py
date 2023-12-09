@@ -99,7 +99,7 @@ class JitCompileCtx:
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
 
-    def lookaside(self, fn: Callable, *args, **kwargs) -> None | Callable:
+    def lookaside(self, fn: Callable, /, *args, **kwargs) -> None | Callable:
         return self._fn_lookaside(fn, *args, **kwargs)
 
     def callback(self, id: JIT_CALLBACKS) -> None | Callable:
@@ -147,7 +147,7 @@ class JitRuntimeCtx:
         self._globals_dict: dict[str, Any] | None = None
         self._history: list[dis.Instruction | str] = []
         self._interpreted_instructions: list[dis.Instruction] = []
-        self.curexc = None
+        self._curexc = None
         # The exception_stack mirrors the exc_info/exc_state from PyThreadState
         # exception_stack is the stack of exceptions currently being handled, we only have exceptions here
         self.exception_stack = [None]
@@ -156,6 +156,17 @@ class JitRuntimeCtx:
         # `exception_stack[-1] = ...` is the equivalent of assiging ts.exc_info->exc_type/value/traceback.
         # ts.exc_state is exc_info (the bottom-most element of the stack(?))
         # ts.curexc_type / curexc_value / curexc_traceback are the UserException currently being raised
+
+    @property
+    def curexc(self) -> Exception | None:
+        return self._curexc
+
+    @curexc.setter
+    def curexc(self, value):
+        if value is not None:
+            assert isinstance(value, UserException)
+            assert isinstance(value.__cause__, Exception)
+        self._curexc = value
 
     @property
     def globals_dict(self) -> dict[str, Any]:
@@ -289,9 +300,10 @@ class UserException(RuntimeError):
         super().__init__()
         self.__cause__ = exception
 
-        # TODO: handle things with TracebackType
         if tb is None:
             tb = []
+        if isinstance(tb, TracebackType):
+            tb = get_python_tb(tb)
         self.tb = tb
 
     def __str__(self):
@@ -319,7 +331,10 @@ class PyTryBlock:
         self.level = level
 
     def __str__(self):
-        return f"<{type(self)} typ={self.typ} handler={self.handler} level={self.level}>"
+        return f"<{type(self).__name__} typ={self.typ} handler={self.handler} level={self.level}>"
+
+    def __repr__(self):
+        return self.__str__()
 
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
@@ -502,6 +517,23 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     return _jit(impl)
 
 
+def _locals_lookaside():
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    frame = runtimectx.frame_stack[-1]
+    locals = {}
+    for i, v in enumerate(frame.localsplus):
+        if isinstance(v, CellType):  # sketchy, we should keep this info
+            v = v.cell_value
+        locals[frame.get_localsplus_name(i)] = v
+    return locals
+
+
+def _globals_lookaside():
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    frame = runtimectx.frame_stack[-1]
+    return frame.globals
+
+
 # we do like the built-in super (and in fact it is impossible to implement
 # it in Python when it comes to builtin methods (torch.autograd.Function.apply
 # has a __self__ but not a __func__, so we cannot fill in the superclass self
@@ -544,12 +576,14 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
 _default_lookaside_map: dict[Callable, Callable] = {
     is_jitting: _is_jitting_lookaside,
     bool: _bool_lookaside,
+    globals: _globals_lookaside,
+    locals: _locals_lookaside,
     super: _super_lookaside,
 }
 
 
 # The default function lookaside -- currently it doesn't intercept anything
-def default_lookaside(fn, *args, **kwargs) -> None | Callable:
+def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
     return _default_lookaside_map.get(fn, None)
 
 
@@ -597,16 +631,18 @@ def _before_with_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     # python does a "special lookup"
     enter_method = _jit(getattr, mgr, "__enter__")
     if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
-        runtimectx.curexc = TypeError(
-            "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+        return do_raise(
+            TypeError(
+                "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+            )
         )
-        return enter_method
     exit_method = _jit(getattr, mgr, "__exit__")
     if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
-        runtimectx.curexc = TypeError(
-            "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+        return do_raise(
+            TypeError(
+                "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+            )
         )
-        return exit_method
 
     stack.append(exit_method)
 
@@ -887,7 +923,9 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
     def impl():
         return tos1.__getitem__(tos)
 
-    return check_and_append(stack, _jit(impl))
+    res = _jit(impl)
+
+    return check_and_append(stack, res)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BUILD_CONST_KEY_MAP
@@ -1145,6 +1183,22 @@ def _copy_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
     # we already do this when setting up the function call in _jit
     pass
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-DELETE_ATTR
+@register_opcode_handler("DELETE_ATTR")
+def _delete_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+    assert type(inst.arg) is int
+    namei: int = inst.arg
+
+    name: str = co.co_names[namei]
+
+    tos: Any = stack.pop()
+
+    def impl():
+        delattr(tos, name)
+
+    return _jit(impl)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_DEREF
@@ -2083,6 +2137,7 @@ def _reraise_handler(
     exc = stack.pop()
     val = stack.pop()
     tb = stack.pop()
+    assert isinstance(val, BaseException)
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     runtimectx.curexc = UserException(val, tb)
     return JIT_SIGNALS.EXCEPTION_RAISED
@@ -2101,6 +2156,7 @@ def _reraise_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **k
         frame.lasti = lasti
 
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    assert isinstance(val, BaseException)
     runtimectx.curexc = UserException(val, val.__traceback__)
     return JIT_SIGNALS.EXCEPTION_RAISED
 
@@ -2456,7 +2512,7 @@ def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
             return generator.send(send_value)
 
     res = _jit(impl)
-    if res == JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
         if isinstance(runtimectx.curexc, StopIteration):
             stack.pop()  # remove generator
@@ -2515,7 +2571,7 @@ def _yield_from_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, 
             return generator.send(send_value)
 
     res = _jit(impl)
-    if res == JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
         if isinstance(runtimectx.curexc, StopIteration):
             stack.pop()  # remove generator
@@ -2554,7 +2610,7 @@ def make_generator(
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
                     raise JITError(msg) from e
-                if status == JIT_SIGNALS.EXCEPTION_RAISED:
+                if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     runtimectx.curexc = None
                     if isinstance(e.__cause__, StopIteration):
@@ -2586,7 +2642,7 @@ def make_generator(
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
-def _jit(fn: Callable, *args, **kwargs) -> Any:
+def _jit(fn: Callable, /, *args, **kwargs) -> Any:
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
@@ -2621,15 +2677,25 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
             "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
         )
 
-    # (4) Handles callable classes
+    # (4) Handle types
+    if isinstance(fn, type):
+        if not hasattr(fn, "__new__"):
+            raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
+        obj = _jit(fn.__new__, fn, *args, **kwargs)
+        if obj is JIT_SIGNALS.EXCEPTION_RAISED:
+            return obj
+        res = _jit(obj.__init__, *args, **kwargs)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            return res
+        return obj
+
+    # (5) Handles objects that are callable
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
-            raise NotImplementedError(
-                f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
-            )
+            raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
         return _jit(fn.__call__, *args, **kwargs)
 
-    # (5) Handles (bound) methods
+    # (6) Handles (bound) methods
     #     while we unwrap methods to __func__ when processing LOAD_METHOD (so those will not run into this)
     #     methods may also originate from LOAD_ATTR e.g. assign to variable and calling that
     if inspect.ismethod(fn):
@@ -2637,7 +2703,7 @@ def _jit(fn: Callable, *args, **kwargs) -> Any:
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
-    # (6) Jits into the function
+    # (7) Jits into the function
     # adjustments for "hidden" instructiions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)
@@ -2758,6 +2824,8 @@ def _jit_run(
         if interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
             e = runtimectx.curexc
             runtimectx.curexc = None
+            assert isinstance(e, UserException)
+            assert isinstance(e.__cause__, Exception)
             current_exception = e.__cause__
 
             if sys.version_info >= (3, 11):
@@ -2832,6 +2900,7 @@ def _jit_run(
                         # f->f_state = FRAME_EXECUTING;  /* Resume normal execution */
                         break  # continue with handler
             if current_exception is not None:
+                e.__cause__ = current_exception
                 e.tb.insert(0, frame)
                 runtimectx.curexc = e
                 return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
@@ -2856,7 +2925,7 @@ def _jit_run(
         elif interpretation_result is None:
             frame.inst_ptr += 1
         else:
-            assert isinstance(interpretation_result, int)
+            assert isinstance(interpretation_result, int), interpretation_result
             frame.inst_ptr = interpretation_result
 
         if not skip_stack_effect_check:  # the exception handling will change the stack wildly
@@ -2974,6 +3043,8 @@ def jit(
                 # UserException -> real_exc -> further_causes to
                 # real_exc -> UserException -> further causes
                 e = runtimectx.curexc
+                assert isinstance(e, UserException)
+                assert e.__cause__ is not None
                 runtimectx.curexc = None
                 real_exc = e.__cause__
                 e.__cause__ = real_exc.__cause__

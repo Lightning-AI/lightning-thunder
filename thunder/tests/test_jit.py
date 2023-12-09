@@ -212,6 +212,14 @@ def test_dunder_bool():
 
 
 def test_function_call():
+    def fn(fn):
+        return fn
+
+    assert fn(fn) == jit(fn)(fn)
+    assert fn(fn=fn) == jit(fn)(fn=fn)
+
+
+def test_function_call():
     def bar(a, b):
         return a + b
 
@@ -363,6 +371,15 @@ def test_delete_deref():
         python_result = foo(*args)
     with pytest.raises(NameError, match="'value'"):
         thunder_result = jfoo(*args)
+
+
+def test_locals_globals():
+    def fn():
+        funny_name_nowhere_else = True
+        return locals() | globals()
+
+    assert "test_locals_globals" in jit(fn)()
+    assert "funny_name_nowhere_else" in jit(fn)()
 
 
 def test_unpack_sequence():
@@ -1223,7 +1240,11 @@ def test_store_attr():
     def foo(a, v):
         a.foo = v
 
+    def bar(a):
+        del a.foo
+
     jfoo = jit(foo)
+    jbar = jit(bar)
 
     class mycls:
         pass
@@ -1232,6 +1253,8 @@ def test_store_attr():
 
     jfoo(x, 5)
     assert x.foo == 5
+    jbar(x)
+    assert not hasattr(x, "foo")
 
     # Checks that dunder setattr is called
     class mycls:
@@ -1681,6 +1704,30 @@ def test_autograd_function():
         return b
 
     assert_close(fn(), jit(fn)())
+
+
+def test_torch_autocast_nograd():
+    def fn(a, b):
+        with torch.autocast("cpu"):
+            return a @ b
+
+    def fn2(a, b):
+        with torch.no_grad():
+            return a @ b
+
+    a = torch.randn(5, 5)
+    b = torch.randn(5, 5)
+    expected = fn(a, b)
+    actual = jit(fn)(a, b)
+
+    assert_close(actual, expected)  # also check dtype (should be bf16)
+
+    a = torch.randn(5, 5, requires_grad=True)
+    b = torch.randn(5, 5, requires_grad=True)
+    expected = fn2(a, b)
+    actual = jit(fn2)(a, b)
+
+    assert_close(actual, expected)  # also check dtype (should be bf16)
 
 
 def test_is_jitting_opaque():
