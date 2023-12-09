@@ -587,6 +587,32 @@ def check_and_append(stack, val):
 #
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
+@register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
+def _before_with_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+    mgr = stack.pop()
+
+    # python does a "special lookup"
+    enter_method = _jit(getattr, mgr, "__enter__")
+    if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
+        runtimectx.curexc = TypeError(
+            "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+        )
+        return enter_method
+    exit_method = _jit(getattr, mgr, "__exit__")
+    if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
+        runtimectx.curexc = TypeError(
+            "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+        )
+        return exit_method
+
+    stack.append(exit_method)
+
+    return check_and_append(stack, _jit(enter_method))
+
+
 class BINARY_OP(enum.Enum):
     ADD = 0
     AND = 1
@@ -2147,11 +2173,31 @@ def _setup_finally_handler(
 
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_WITH
 @register_opcode_handler("SETUP_WITH", max_ver=(3, 10))
-def _setup_with_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **kwargs) -> None:
+def _setup_with_handler(
+    inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
+) -> None:
     assert type(inst.arg) is int
-    raise Unimplemented("SETUP_WITH")
-    try_stack.append(PyTryBlock())
-    raise NotImplementedError("SETUP_WITH")
+    instr_offset = inst_ptr + inst.arg + 1
+
+    mgr = stack.pop()
+
+    # python does a "special lookup"
+    enter_method = _jit(getattr, mgr, "__enter__")
+    if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
+        return enter_method
+    exit_method = _jit(getattr, mgr, "__exit__")
+    if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
+        return exit_method
+
+    stack.append(exit_method)
+
+    res = _jit(enter_method)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    try_stack.append(PyTryBlock(PyTryBlock.SETUP_FINALLY_TYPE, instr_offset, len(stack)))
+
+    stack.append(res)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-SWAP
@@ -2421,6 +2467,35 @@ def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
             return res  # propagate exception
 
     stack.append(res)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-WITH_EXCEPT_START
+@register_opcode_handler("WITH_EXCEPT_START", max_ver=(3, 10))
+def _with_except_start_handler(
+    inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
+) -> None:
+    exc = stack[-1]
+    val = stack[-2]
+    tb = stack[-3]
+    assert exc is not None
+    assert not isinstance(exc, int)  # funny but from Python
+    exit_func = stack[-7]
+    return check_and_append(stack, _jit(exit_func, exc, val, tb))
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-WITH_EXCEPT_START
+@register_opcode_handler("WITH_EXCEPT_START", min_ver=(3, 11))
+def _with_except_start_handler(
+    inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
+) -> None:
+    # in 3.11 the exception representation changed to only val
+    val = stack[-1]
+    exc = type(val)
+    tb = val.__traceback__
+
+    assert isinstance(stack[-3], int)
+    exit_func = stack[-4]
+    return check_and_append(stack, _jit(exit_func, exc, val, tb))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-YIELD_FROM

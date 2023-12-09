@@ -1577,6 +1577,38 @@ def test_load_build_class():
     assert any(i.opname == "LOAD_BUILD_CLASS" for i in jfoo._last_interpreted_instructions)
 
 
+def test_with():
+    class CtxMgr:
+        def __init__(self, l):
+            self.l = l
+
+        def __enter__(self):
+            self.l.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.l.append((str(exc_type), str(exc_val)))
+
+    def fn(should_raise: bool = False):
+        l = []
+        with CtxMgr(l) as ctx:
+            ctx.l.append("within")
+            if should_raise:
+                raise RuntimeError("test", l)
+            return l
+
+    jfn = jit(fn)
+
+    assert fn() == jfn()
+
+    with pytest.raises(RuntimeError) as exc_expected:
+        fn(should_raise=True)
+    with pytest.raises(RuntimeError) as exc_actual:
+        jfn(should_raise=True)
+
+    assert exc_expected.value.args[1] == exc_actual.value.args[1]
+
+
 def test_super():
     class A:
         def foo(self):
