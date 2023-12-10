@@ -1433,6 +1433,14 @@ def test_comprehension_nonlocal_inplace():
     assert foo() == jfoo()
 
 
+def test_set_creation():
+    def foo():
+        return {1, *[2, 3]}
+
+    jfoo = jit(foo)
+    assert foo() == jfoo()
+
+
 def test_contains():
     def foo(a, seq):
         return a in seq

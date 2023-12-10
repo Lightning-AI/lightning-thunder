@@ -2211,6 +2211,21 @@ def _set_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     s.add(tos)
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-SET_UPDATE
+@register_opcode_handler("SET_UPDATE")
+def _set_update_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert isinstance(inst.arg, int)
+    i: int = inst.arg
+
+    # NOTE Doesn't pop the set that is updated
+    tos = stack.pop()
+    s: set = stack[-i]
+
+    # NOTE tos does not have to be a set
+    assert isinstance(s, set)
+    s.update(tos)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_FINALLY
 @register_opcode_handler("SETUP_FINALLY", max_ver=(3, 10))
 def _setup_finally_handler(
