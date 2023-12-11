@@ -30,6 +30,7 @@ from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
 
 from thunder.executors.utils import Region
+from thunder.executors.passes import update_fusion_call_ctx
 from thunder.extend import FusionExecutor, register_executor, add_default_executor
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -564,17 +565,10 @@ class nvFuserExecutor(FusionExecutor):
         Returns:
             :class:`TraceCtx` with common subexpression eliminated.
         """
-        from thunder.core.rematerialization import _update_nvfusion_call_ctx
 
         start_time_ns = time.time_ns()
 
         cse_trace = from_trace(trace)
-
-        def replace_bsym_and_update_call_ctx(bsym, new_bsyms):
-            new_bsym = new_bsyms.get(bsym, None)
-            if new_bsym is not None and new_bsym.sym.is_fusion:
-                return _update_nvfusion_call_ctx(cse_trace, new_bsym)
-            return new_bsym
 
         # The trace_rhs_to_bsym_map is used for CSE on trace outside of nvFusion region.
         # TODO: CSE on overall trace should NOT be inside fusion pass for nvfuser executor.
@@ -623,7 +617,7 @@ class nvFuserExecutor(FusionExecutor):
 
         # New bound symbols are still incorrect. Its _ctx_call dict points to the
         # old nvFuser fusion. We need to update it to use the new definition.
-        new_symbols = [replace_bsym_and_update_call_ctx(bsym, new_bsyms) for bsym in trace.bound_symbols]
+        new_symbols = [new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols]
         cse_trace.bound_symbols = list(filterfalse(lambda a: a is None, new_symbols))
 
         return_bsym = cse_trace.bound_symbols[-1]
@@ -739,6 +733,8 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace = remove_redundant_casts(fusedtrace)
         fusedtrace = self.cse(fusedtrace)
         fusedtrace = dce(fusedtrace)
+
+        fusedtrace = update_fusion_call_ctx(fusedtrace)
 
         end_time_ns: int = time.time_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
@@ -2060,13 +2056,6 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             _remove_redundant_casts(bsym, nbsyms, replacement_map, intermediate_map)
 
     rrctrace.bound_symbols = nbsyms
-
-    # update call_ctx information in nvFusion
-    from thunder.core.rematerialization import _update_nvfusion_call_ctx
-
-    for idx, bsym in enumerate(rrctrace.bound_symbols):
-        if bsym.sym.is_fusion:
-            rrctrace.bound_symbols[idx] = _update_nvfusion_call_ctx(rrctrace, bsym)
 
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns

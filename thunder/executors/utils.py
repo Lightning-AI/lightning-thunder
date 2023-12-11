@@ -70,11 +70,6 @@ class Region:
                     self.outputs.add(variableify(x))
                     break
 
-        # Set of shape operations to support determining if the region is composed of only shape operations
-        # TODO This should have more operations, and should handle symbols that decompose to shape primitives
-        # TODO Shape primitives should be programmatically queryable from prims
-        self._shape_ops = {PrimIDs.SLICE, PrimIDs.TRANSPOSE, PrimIDs.RESHAPE}
-
     def __repr__(self) -> str:
         s = f"[Region:"
 
@@ -84,10 +79,3 @@ class Region:
         s += "]"
 
         return s
-
-    def only_shape_operations(self) -> bool:
-        for bsym in self.bound_symbols:
-            if bsym.sym.id not in self._shape_ops:
-                return False
-
-        return True

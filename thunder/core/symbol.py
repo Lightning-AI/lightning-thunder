@@ -134,7 +134,6 @@ class Symbol:
     _hash: int | None = None
     executor: None | Any = None
     python_impl: None | Callable = None
-    call_ctx: None | dict[str, Callable] = None
 
     # An optional postprocessing function to modify the bound symbol resulting from bind()
     _bind_postprocess: None | Callable = None
@@ -178,7 +177,7 @@ class Symbol:
         #   an operation that is itself a partial or a wrapper they may expect to see that call
 
         module = self._module
-        if self.call_ctx is not None:
+        if self.is_fusion:
             return None
         if module is not None:
             result = module
@@ -205,14 +204,6 @@ class Symbol:
     def __repr__(self) -> str:
         return f"[Symbol name={self.name}]"
 
-    def name_with_module(self):
-        # Short-circuits if the symbol has no associated module
-        if self.module is None:
-            return f"{self.name}"
-
-        module_name = codeutils.module_shortname(self.module.__name__)
-        return f"{module_name}.{self.name}"
-
     def normalize(self, *args, **kwargs):
         si = inspect.signature(self.meta)
         ba = si.bind(*args, **kwargs)
@@ -223,10 +214,6 @@ class Symbol:
     def bind(self, *args, output, subsymbols=(), _call_ctx: None | dict = None, **kwargs) -> BoundSymbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
-
-        if self.call_ctx is not None:
-            baseutils.check(_call_ctx is None, lambda: f"Can't set {_call_ctx=} and {self.call_ctx=}")
-            _call_ctx = self.call_ctx
 
         b = BoundSymbol(
             self,
@@ -577,7 +564,12 @@ class BoundSymbol(BoundSymbolInterface):
     #     self.output = output
 
     def name_with_module(self):
-        return self.sym.name_with_module()
+        # Short-circuits if the symbol has no associated module
+        if self.sym.module is None or self._call_ctx is not None:
+            return f"{self.sym.name}"
+
+        module_name = codeutils.module_shortname(self.sym.module.__name__)
+        return f"{module_name}.{self.sym.name}"
 
     def _get_call_ctx(self):
         return self._call_ctx if self._call_ctx is not None else {}

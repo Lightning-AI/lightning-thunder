@@ -124,6 +124,9 @@ class FusionExecutor(Executor):
     def fusion_pass(trace: TraceCtx) -> TraceCtx:
         raise NotImplementedError
 
+    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:
+        raise NotImplementedError
+
     def register_supported(
         self,
         sym_or_id: Symbol | Hashable,
@@ -145,11 +148,9 @@ class FusionExecutor(Executor):
 
         def _bind_postprocess(bsym: BoundSymbol) -> None:
             bsym.subsymbols = tuple(bsyms)
+            bsym._call_ctx: dict[str, Callable] = {name: fn}
 
-        ctx: dict[str, Callable] = {name: fn}
-        sym = Symbol(
-            name=name, meta=_meta, is_fusion=True, call_ctx=ctx, _bind_postprocess=_bind_postprocess, executor=self
-        )
+        sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
         return sym.bind(*inputs, output=outputs)
 
 
@@ -189,15 +190,19 @@ class OperatorExecutor(Executor):
         meta = meta if meta is not None else like
         call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
 
+        def _bind_postprocess(bsym: BoundSymbol) -> None:
+            bsym._call_ctx = call_ctx
+            if bind_postprocess is not None:
+                bind_postprocess(bsym)
+
         sym = Symbol(
             name=name,
             id=name,
             meta=meta,
             is_prim=is_prim,
             _module=module,
-            call_ctx=call_ctx,
             executor=self,
-            _bind_postprocess=bind_postprocess,
+            _bind_postprocess=_bind_postprocess,
         )
         self.opmap[name] = sym
 

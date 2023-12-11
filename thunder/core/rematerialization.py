@@ -16,6 +16,7 @@ from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.executors.passes import update_fusion_call_ctx
 
 
 def find_external_producer_outputs(
@@ -367,47 +368,6 @@ def find_cut(
     return tuple(sorted(cut_nodes))
 
 
-# TODO: The following code is a temporary solution to update the call_ctx
-# information of the nvFusion BoundSymbol object. This is needed because the
-# nvFusion BoundSymbol object is created before the call_ctx information is
-# updated. See more details in
-# https://github.com/Lightning-AI/lightning-thunder/issues/515
-def _update_nvfusion_call_ctx(trace: TraceCtx, bsym: BoundSymbolInterface) -> BoundSymbolInterface:
-    """Update the call_ctx information of the nvFusion BoundSymbol object.
-
-    Args:
-        trace: The trace context.
-        bsym: The nvFusion BoundSymbol object.
-
-    Returns:
-        The updated nvFusion BoundSymbol object.
-    """
-    from thunder import nvfuser_executor
-
-    @dataclass
-    class BoundSymbolRegion:
-        trace: TraceCtx
-        inputs: tuple
-        outputs: tuple
-        bound_symbols: tuple
-        counter: int
-
-    counter = int(tuple(bsym._call_ctx.keys())[0].split("nvFusion")[-1])
-
-    def nvfusion_bsym_to_region(trace: TraceCtx, bsym: BoundSymbolInterface):
-        return BoundSymbolRegion(
-            trace=trace,
-            inputs=tuple(map(variableify, bsym.args)),
-            outputs=tuple(map(variableify, bsym.output)),
-            bound_symbols=bsym.subsymbols,
-            counter=counter,
-        )
-
-    # fuse returns a new BoundSymbol object with correct updated call_ctx
-    # information
-    return nvfuser_executor.fuse(nvfusion_bsym_to_region(trace, bsym), counter)
-
-
 def rematerialize(trace: TraceCtx) -> TraceCtx:
     """Rematerialize the trace.
 
@@ -419,12 +379,6 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
             rematerialized traces.
     """
     start_time_ns = time.time_ns()
-
-    def replace_bsym_and_update_call_ctx(bsym, new_bsyms):
-        new_bsym = new_bsyms.get(bsym, None)
-        if new_bsym is not None:
-            return _update_nvfusion_call_ctx(trace, new_bsym)
-        return bsym
 
     static_consumer_info = utils.consumers(trace)
 
@@ -467,12 +421,8 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
 
             computed_cuts_for_producers[producer] += cut
 
-    # New bound symbols are still incorrect. Its _ctx_call dict points to the
-    # old nvFuser fusion. We need to update it to use the new definition.
     rematerialized_trace = from_trace(trace)
-    rematerialized_trace.bound_symbols = tuple(
-        replace_bsym_and_update_call_ctx(bsym, new_bsyms) for bsym in trace.bound_symbols
-    )
+    rematerialized_trace.bound_symbols = tuple(new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols)
 
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -512,6 +462,9 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         replace(fw_trace.bound_symbols[-1], args=(fw_trace.bound_symbols[-1].args[0], bw_trace.bound_symbols[-1].args))
     )
     joint_extrace = rematerialize(joint_extrace)
+
+    # Update the call context
+    joint_extrace = update_fusion_call_ctx(joint_extrace)
 
     # We need to update "save_for_backward" sequence
     new_bw_bsyms = joint_extrace.bound_symbols[len(fw_trace.bound_symbols) :]

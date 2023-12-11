@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from collections.abc import Callable
 from collections.abc import Sequence
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from itertools import chain
 from functools import partial
 import time
@@ -155,6 +155,72 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
 
     extrace.set_provenance(TraceProvenance(f"Transform for execution (took {elapsed_time_millis} milliseconds)"))
     return extrace
+
+
+# NOTE: See more details for motivation in the following issue:
+# https://github.com/Lightning-AI/lightning-thunder/issues/515
+def _update_fusion_call_ctx(bsym: BoundSymbol) -> BoundSymbol:
+    """Update the call_ctx information of the fusion BoundSymbol object.
+
+    Args:
+        bsym: The fusion BoundSymbol object.
+
+    Returns:
+        The updated fusion BoundSymbol object.
+    """
+
+    @dataclass
+    class BoundSymbolRegion:
+        inputs: tuple
+        outputs: tuple
+        bound_symbols: tuple
+
+    def find_counter(s):
+        head = s.rstrip("0123456789")
+        counter = s[len(head) :]
+        return int(counter)
+
+    counter = find_counter(bsym.sym.name)
+
+    def fusion_bsym_to_region(bsym: BoundSymbol):
+        return BoundSymbolRegion(
+            inputs=tuple(filter(None, map(variableify, bsym.args))),
+            outputs=tuple(filter(None, map(variableify, bsym.output))),
+            bound_symbols=bsym.subsymbols,
+        )
+
+    # fuse returns a new BoundSymbol object with correct updated call_ctx
+    # information
+    return bsym.sym.executor.fuse(fusion_bsym_to_region(bsym), counter)
+
+
+def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
+    """Updates the call context of the trace to be the current call context.
+
+    Some of the fusion bound symbols may have been created with a different call
+    context and modified after the fact. This pass ensures that the call context
+    is correct.
+
+    Args:
+        trace (TraceCtx): trace to be transformed
+    Returns:
+        (TraceCtx): transformed trace
+    """
+    start_time_ns = time.time_ns()
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = []
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion:
+            new_trace.bound_symbols.append(_update_fusion_call_ctx(bsym))
+        else:
+            new_trace.bound_symbols.append(bsym)
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    new_trace.set_provenance(TraceProvenance(f"Update Call Context (took {elapsed_time_millis} milliseconds)"))
+    return new_trace
 
 
 # TODO Review deleting non-proxies
