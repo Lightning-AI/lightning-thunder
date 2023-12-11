@@ -3541,7 +3541,7 @@ def contiguous_aug_fwd(x: TensorProxy, /, *, memory_format: torch.memory_format 
 def contiguous_backward(*residuals_and_grad) -> TensorProxy:
     # Residuals is not empty because contiguous symbol has the same output as its input
     g = residuals_and_grad[-1]
-    return g * 1.0
+    return g
 
 
 @register_augmented_forward(prims.PrimIDs.WHERE)
