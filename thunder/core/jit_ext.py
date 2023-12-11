@@ -1,4 +1,5 @@
 from typing import Any
+from collections.abc import ValuesView
 from types import ModuleType
 from collections.abc import Callable, Sequence
 
@@ -18,6 +19,7 @@ from thunder.core.jit import (
     _default_lookaside_map,
     default_lookaside,
     JITFrame,
+    do_raise,
 )
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.codeutils import get_siginfo
@@ -51,7 +53,29 @@ class PhantomInterpreterRuntimeCtx:
         # NOTE This dict is compatible with copy.deepcopy()'s memo dict
         self.input_proxy_map: dict[int, Any] = {}
 
+        # ids of all proxies
         self.proxy_id_set: set[int] = set()
+
+        # Maps from lookups into global dicts to proxied values
+        # NOTE Handling global dicts are probably a good use case for a dict proxy object
+        # NOTE This assumes that global dicts persist for the lifetime our interpreter
+        #   (in fact, we're going to assume that they persist for the lifetime of the
+        #   Python interpreter)
+        self.global_lookups: dict[tuple[int, str], Any] = {}
+
+        # Records deleted values
+        self.global_deletions: set[tuple[int, str]] = set()
+
+    @property
+    def inputs(self) -> ValuesView[tuple[str, Any]]:
+        return self.input_map.values()
+
+    # TODO Extend to consider other immutable types
+    def is_immutable(self, val: Any) -> bool:
+        if isinstance(val, int):
+            return True
+
+        return False
 
     # Returns the object's proxy (itself, if it is a proxy)
     def proxify(self, name: str, val: Any, /) -> Any:
@@ -66,6 +90,13 @@ class PhantomInterpreterRuntimeCtx:
         if p is not None:
             return p
 
+        # Adds the object to the input map to ensure it lives as long as the interpreter does
+        self.input_map[val_id] = (name, val)
+
+        # Immutable objects are there own proxies
+        if self.is_immutable(val):
+            return val
+
         # Copies the input_proxy_map because deepcopy might mutate it but then fail, and
         #   if the deepcopy fails then we don't want to modify the input_proxy_map
         memo = copy.copy(self.input_proxy_map)
@@ -75,6 +106,9 @@ class PhantomInterpreterRuntimeCtx:
         except TypeError as te:
             warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
             return val
+
+        # Updates the proxy id set
+        self.proxy_id_set.add(id(p))
 
         # Some objects, like types, return themselves when deepcopied
         if p is val:
@@ -110,6 +144,68 @@ def reset_phantomctx(token) -> None:
 
 
 phantom_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+
+
+# TODO Handle deleting globals
+# TODO Use something like inspect.getmodule() and vars() to acquire the module of these globals, and then
+#   to acquire its globals in the future
+# Handles global loads and stores, essentially keeping an additional dictionary
+#   that tracks modifications to all the global dictionaries
+def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+
+    gid: int = id(globals_dict)
+    key: tuple[int, str] = (gid, name)
+
+    if key in ctx.global_deletions:
+        return do_raise(NameError(f"name '{name}' is not defined"))
+
+    p: None | Any = ctx.global_lookups.get(key, None)
+
+    if p is not None:
+        return p
+
+    val: Any = globals_dict[name]
+    p = ctx.proxify(name, val)
+    ctx.global_lookups[key] = p
+
+    return p
+
+
+phantom_callbacks[JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK] = _load_global_callback
+
+
+# TODO Consider if this should suppress the population of frame.globals[name] completely
+def _store_global_callback(globals_dict: dict, name: str, val: Any, /) -> Any:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+
+    # Records the store
+    gid: int = id(globals_dict)
+    key: tuple[int, str] = (gid, name)
+    ctx.global_lookups[key] = val
+
+    # Records that this object is no longer deleted (if it was)
+    ctx.global_deletions.discard(key)
+
+    # Returns the existing value (so it's unmodified)
+    return globals_dict[name]
+
+
+phantom_callbacks[JIT_CALLBACKS.STORE_GLOBAL_CALLBACK] = _store_global_callback
+
+
+def _delete_global_callback(globals_dict: dict, name: str, /) -> None:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+
+    assert name in globals_dict
+
+    # Records the deletion
+    gid: int = id(globals_dict)
+    key: tuple[int, str] = (gid, name)
+    ctx.global_deletions.add(key)
+
+
+phantom_callbacks[JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK] = _delete_global_callback
 
 
 def phantom_jit(

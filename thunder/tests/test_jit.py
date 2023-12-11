@@ -1831,24 +1831,6 @@ def test_phantom_is():
     assert pfoo(l, l0) is False
 
 
-_test_phantom_global_global_value = 5
-
-
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1743")
-def test_phantom_global():
-    def foo(x):
-        global _test_phantom_global_global_value
-        _test_phantom_global_global_value += x
-        return _test_phantom_global_global_value
-
-    pfoo = phantom_jit(foo)
-
-    assert _test_phantom_global_global_value == 5
-    result = pfoo(3)
-    assert result == 8
-    assert _test_phantom_global_global_value == 5
-
-
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1744")
 def test_phantom_nonlocal():
     y = 5
@@ -1948,6 +1930,70 @@ def test_phantom_modification_warning():
 
     with pytest.warns(UserWarning):
         pfoo(mycls)
+
+
+_test_phantom_globals_global = 5
+
+
+def test_phantom_globals():
+    # Reads a global
+    def foo(a):
+        return a + _test_phantom_globals_global
+
+    pfoo = phantom_jit(foo)
+
+    result = pfoo(5)
+
+    assert result == 10
+
+    # Writes to the global value don't affect the global value, but appear correctly
+    def foo(a):
+        global _test_phantom_globals_global
+        _test_phantom_globals_global = a
+        return _test_phantom_globals_global
+
+    pfoo = phantom_jit(foo)
+
+    result = pfoo(10)
+    assert result == 10
+    assert _test_phantom_globals_global == 5
+
+    # Deletes don't affect the global value
+    def foo():
+        global _test_phantom_globals_global
+        del _test_phantom_globals_global
+
+    pfoo = phantom_jit(foo)
+
+    pfoo()
+    assert _test_phantom_globals_global == 5
+
+    # Deletes are effected locally
+    def foo():
+        global _test_phantom_globals_global
+        del _test_phantom_globals_global
+        return _test_phantom_globals_global
+
+    pfoo = phantom_jit(foo)
+
+    with pytest.raises(NameError):
+        pfoo()
+
+    # Multiple loads of the same global work as expected
+    def bar(a):
+        global _test_phantom_globals_global
+        _test_phantom_globals_global = a + 1
+
+    def foo(a):
+        global _test_phantom_globals_global
+        bar(a)
+        return _test_phantom_globals_global + 1
+
+    pfoo = phantom_jit(foo)
+
+    result = pfoo(10)
+    assert result == 12
+    assert _test_phantom_globals_global == 5
 
 
 #

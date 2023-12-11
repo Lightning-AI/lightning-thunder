@@ -595,7 +595,20 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 # To register a callback, map from this enum to a callable. The args and kwargs for each
 #   event may be different, as documented below.
 class JIT_CALLBACKS(enum.Enum):
-    pass
+    # Called when deleting a value from a glocals dict in DELTETE_GLOBAL
+    #   callback(globals:dict, name: str, /) -> Any
+    #   If this callback is executed, the deletion does not occur as usual
+    DELETE_GLOBAL_CALLBACK = enum.auto()
+
+    # Called when loading a value from a globals dict in LOAD_GLOBAL
+    #   callback(globals: dict, name: str, /) -> Any
+    #   The value returned from the callback is loaded
+    LOAD_GLOBAL_CALLBACK = enum.auto()
+
+    # Called when storing a value to a globals dict in STORE_GLOBAL
+    #   callback(globals: dict, name: str, val: Any, /) -> Any
+    #   The value returned from the callback is stored instead
+    STORE_GLOBAL_CALLBACK = enum.auto()
 
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
@@ -1228,9 +1241,14 @@ def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame
 def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
     assert type(inst.arg) is int
     namei: int = inst.arg
-
     name: str = co.co_names[namei]
-    del frame.globals[name]
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK)
+    if cb is not None:
+        cb(frame.globals, name)
+    else:
+        del frame.globals[name]
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-DELETE_NAME
@@ -1674,6 +1692,13 @@ def _load_global_handler(
 
     try:
         obj = globals_dict[co_name]
+
+        # NOTE The callback only triggers for loads from the globals dict, not the builtins dict
+        ctx: JitCompileCtx = get_jitcompilectx()
+        cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK)
+        if cb is not None:
+            obj = cb(globals_dict, co_name)
+
     except KeyError:
         try:
             obj = builtins_dict[co_name]
@@ -2326,6 +2351,12 @@ def _store_global_handler(inst: dis.Instruction, /, stack: list, co: CodeType, f
 
     name: str = co.co_names[namei]
     tos = stack.pop()
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
+    if cb is not None:
+        tos = cb(frame.globals, name, tos)
+
     frame.globals[name] = tos
 
 
