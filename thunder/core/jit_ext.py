@@ -84,11 +84,6 @@ _uncopyable_types = {
     ModuleType,
 }
 
-# TODO Add deepcopy tuple
-# TODO Add deepcopy dict
-# TODO Add deepcopy list
-# TODO Add deepcopy method
-
 # Modifies the deepcopy() function defined here:
 #   https://github.com/python/cpython/blob/3.10/Lib/copy.py#L128
 #   to be "relaxed" and not fail if any part of the object cannot be deepcopied
@@ -128,7 +123,7 @@ def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
         rv = reductor()
     else:
         warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
-        y = copy.deepcopy_atomic(x, memo)
+        y = copy._deepcopy_atomic(x, memo)
 
     if rv is not None:
         if isinstance(rv, str):
@@ -248,6 +243,13 @@ class PhantomInterpreterRuntimeCtx:
         return type(val) in _immutable_types
 
     # Returns the object's proxy (itself, if it is a proxy)
+    # NOTE This must be called for each "unique deriviation" or "unique history" of each object
+    #   The same object might be acquired in multiple distinct ways -- accessed as a global,
+    #   an input in a list, an input in a dict... and each acquisition should call proxify
+    #   Whether proxify actually creates a proxy for each unique derivation or returns
+    #   a common proxy for each is dependent on how it's extended -- by default
+    #   the same proxy is returned for each derivation, but this behavior can
+    #   be overridden
     def proxify(self, name: str, val: Any, /) -> Any:
         val_id = id(val)
 
