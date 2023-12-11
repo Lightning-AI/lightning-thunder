@@ -2007,6 +2007,72 @@ def test_phantom_globals():
     assert _test_phantom_globals_global == 5
 
 
+# Tests that directly assigning to the globals() dict does not modify the actual globals dict
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1760")
+def test_phantom_globals_fn():
+    def foo(a):
+        g = globals()
+        g["_test_phantom_globals_fn_global"] = a
+
+    pfoo = phantom_jit(foo)
+
+    pfoo(5)
+
+    with pytest.raises(NameError):
+        assert "_test_phantom_globals_fn_global" not in globals()
+
+
+# Tests that the random state is preserved even when making random calls
+def test_phantom_randint():
+    import random
+
+    def foo():
+        return random.randint(0, 5)
+
+    pfoo = phantom_jit(foo)
+
+    s0 = random.getstate()
+
+    result0 = pfoo()
+    result1 = pfoo()
+
+    s1 = random.getstate()
+
+    assert s0 == s1
+    assert result0 == result1
+
+
+# Tests that the random state is preserved even when directly setting the random seed
+@pytest.mark.skipif(sys.version_info > (3, 11), reason="https://github.com/Lightning-AI/lightning-thunder/issues/1762")
+def test_phantom_seed():
+    import random
+
+    def foo():
+        random.seed(1234)
+        return random.randint(0, 5)
+
+    pfoo = phantom_jit(foo)
+
+    s0 = random.getstate()
+
+    result0 = pfoo()
+    result1 = pfoo()
+
+    s1 = random.getstate()
+
+    assert result0 == result1
+    assert s0 == s1
+
+    random_result: int
+    try:
+        random.seed(1234)
+        random_result = random.randint(0, 5)
+    finally:
+        random.setstate(s0)
+
+    assert random_result == result0
+
+
 #
 # "Thunder" tests
 #

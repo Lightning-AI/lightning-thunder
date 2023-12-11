@@ -3,7 +3,7 @@ from collections.abc import ValuesView
 from types import ModuleType, CodeType, BuiltinFunctionType, FunctionType, MethodType
 from collections.abc import Callable, Sequence
 import weakref
-
+import random
 from functools import partial, wraps
 import copy
 import contextvars
@@ -413,7 +413,19 @@ def phantom_jit(
                 pvarkwargs = ctx.proxify(varkwargs_name, x)
                 pkwargs.update(pvarkwargs)
 
-            result = jfn(*pargs, **pkwargs)
+            # Acquires the random state, which may be implicitly modified from calls to Python's
+            #   random module
+            # TODO Consider extending this block to be extensible and handle other
+            #   commonly used implicit states
+            # TODO Also consider modeling Python's random module explicitly so that
+            #   the random state appears to be an input
+            random_state = random.getstate()
+
+            try:
+                result = jfn(*pargs, **pkwargs)
+            finally:
+                # Resets the random state
+                random.setstate(random_state)
 
             # Propagates metadata
             # TODO Find a better way to do this? -- why doesn't wraps propagate these?
