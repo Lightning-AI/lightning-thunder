@@ -1,7 +1,8 @@
 from typing import Any
 from collections.abc import ValuesView
-from types import ModuleType
+from types import ModuleType, CodeType, BuiltinFunctionType, FunctionType, MethodType
 from collections.abc import Callable, Sequence
+import weakref
 
 from functools import partial, wraps
 import copy
@@ -27,6 +28,179 @@ from thunder.core.codeutils import get_siginfo
 #
 # jit_ext.py implements extensions of thunder's interpreter
 #
+
+#
+# Helpers
+#
+
+# Objects and funtions related to creating proxies
+# TODO Should these be version with the Python version?
+
+_relaxed_deepcopy_dispatch = {}
+
+_atomic_copy_types = {
+    type(None),
+    type(Ellipsis),
+    type(NotImplemented),
+    int,
+    float,
+    bool,
+    complex,
+    bytes,
+    str,
+    CodeType,
+    type,
+    range,
+    BuiltinFunctionType,
+    weakref.ref,
+    property,
+}
+
+for typ in _atomic_copy_types:
+    _relaxed_deepcopy_dispatch[typ] = copy._deepcopy_atomic
+
+_immutable_types = {
+    type(None),
+    type(Ellipsis),
+    type(NotImplemented),
+    int,
+    float,
+    bool,
+    complex,
+    bytes,
+    str,
+    type,
+    range,
+    BuiltinFunctionType,
+    weakref.ref,
+    property,
+    FunctionType,
+    tuple,
+    frozenset,
+    slice,
+}
+
+_uncopyable_types = {
+    ModuleType,
+}
+
+# TODO Add deepcopy tuple
+# TODO Add deepcopy dict
+# TODO Add deepcopy list
+# TODO Add deepcopy method
+
+# Modifies the deepcopy() function defined here:
+#   https://github.com/python/cpython/blob/3.10/Lib/copy.py#L128
+#   to be "relaxed" and not fail if any part of the object cannot be deepcopied
+
+from copyreg import dispatch_table
+
+
+def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
+    if memo is None:
+        memo = {}
+
+    d = id(x)
+    y = memo.get(d, _nil)
+    if y is not _nil:
+        return y
+
+    cls = type(x)
+
+    copier = _relaxed_deepcopy_dispatch.get(cls)
+    rv = None
+    if copier is not None:
+        y = copier(x, memo)
+    elif cls in _uncopyable_types:
+        # NOTE This addition is to handle attempts to deepcopy things like modules, which will otherwise fail
+        #   below because they define __reduce_ex__
+        warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
+        y = copy._deepcopy_atomic(x, memo)
+    elif issubclass(cls, type):
+        y = copy._deepcopy_atomic(x, memo)
+    elif (copier := getattr(x, "__deepcopy__", None)) is not None:
+        y = copier(memo)
+    elif reductor := dispatch_table.get(cls):
+        rv = reductor(x)
+    elif reductor := getattr(x, "__reduce_ex__", None):
+        rv = reductor(4)
+    elif reductor := getattr(x, "__reduce__", None):
+        rv = reductor()
+    else:
+        warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
+        y = copy.deepcopy_atomic(x, memo)
+
+    if rv is not None:
+        if isinstance(rv, str):
+            y = x
+        else:
+            y = copy._reconstruct(x, memo, *rv, deepcopy=relaxed_deepcopy)
+
+    # If is its own copy, don't memoize.
+    if y is not x:
+        memo[d] = y
+        copy._keep_alive(x, memo)  # Make sure x lives at least as long as d
+
+    return y
+
+
+def _deepcopy_list(x, memo, deepcopy=relaxed_deepcopy):
+    y = []
+    memo[id(x)] = y
+    append = y.append
+    for a in x:
+        append(deepcopy(a, memo))
+    return y
+
+
+_relaxed_deepcopy_dispatch[list] = _deepcopy_list
+
+
+def _deepcopy_tuple(x, memo, deepcopy=relaxed_deepcopy):
+    y = [deepcopy(a, memo) for a in x]
+    # We're not going to put the tuple in the memo, but it's still important we
+    # check for it, in case the tuple contains recursive mutable structures.
+    try:
+        return memo[id(x)]
+    except KeyError:
+        pass
+    for k, j in zip(x, y):
+        if k is not j:
+            y = tuple(y)
+            break
+    else:
+        y = x
+    return y
+
+
+_relaxed_deepcopy_dispatch[tuple] = _deepcopy_tuple
+
+
+def _deepcopy_dict(x, memo, deepcopy=relaxed_deepcopy):
+    y = {}
+    memo[id(x)] = y
+    for key, value in x.items():
+        y[deepcopy(key, memo)] = deepcopy(value, memo)
+    return y
+
+
+_relaxed_deepcopy_dispatch[dict] = _deepcopy_dict
+
+try:
+    from org.python.core import PyStringMap
+except ImportError:
+    PyStringMap = None
+
+if PyStringMap is not None:
+    _relaxed_deepcopy_dispatch[PyStringMap] = _deepcopy_dict
+
+
+# Copy instance methods
+def _deepcopy_method(x, memo, deepcopy=relaxed_deepcopy):
+    return type(x)(x.__func__, deepcopy(x.__self__, memo))
+
+
+_relaxed_deepcopy_dispatch[MethodType] = _deepcopy_method
 
 #
 # phantom mode (no side effects)
@@ -70,12 +244,8 @@ class PhantomInterpreterRuntimeCtx:
     def inputs(self) -> ValuesView[tuple[str, Any]]:
         return self.input_map.values()
 
-    # TODO Extend to consider other immutable types
     def is_immutable(self, val: Any) -> bool:
-        if isinstance(val, int):
-            return True
-
-        return False
+        return type(val) in _immutable_types
 
     # Returns the object's proxy (itself, if it is a proxy)
     def proxify(self, name: str, val: Any, /) -> Any:
@@ -97,15 +267,10 @@ class PhantomInterpreterRuntimeCtx:
         if self.is_immutable(val):
             return val
 
-        # Copies the input_proxy_map because deepcopy might mutate it but then fail, and
+        # Copies the input_proxy_map because relaxed_deepcopy might mutate it but then fail, and
         #   if the deepcopy fails then we don't want to modify the input_proxy_map
         memo = copy.copy(self.input_proxy_map)
-
-        try:
-            p = copy.deepcopy(val, memo=memo)
-        except TypeError as te:
-            warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
-            return val
+        p = relaxed_deepcopy(val, memo=memo)
 
         # Updates the proxy id set
         self.proxy_id_set.add(id(p))

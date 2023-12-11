@@ -1865,7 +1865,6 @@ def test_phantom_import():
     assert not hasattr(operator, "hi")
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1746")
 def test_phantom_uncopyable_in_collection():
     def foo(a):
         a.append(7)
@@ -1873,15 +1872,28 @@ def test_phantom_uncopyable_in_collection():
 
     pfoo = phantom_jit(foo)
 
-    # NOTE Modules cannot be deep-copied (which currently causes the deep copy of the entire list to fail)
+    # NOTE Modules cannot be deep-copied (which causes a warning to be thrown)
     import operator
 
     l = [operator, 3, 5]
 
-    result = pfoo(l)
+    with pytest.warns(UserWarning):
+        result = pfoo(l)
 
     assert l == [operator, 3, 5]
     assert result == [operator, 3, 5, 7]
+
+    def foo(a):
+        a[0].append(7)
+        return a
+
+    pfoo = phantom_jit(foo)
+
+    l = [[1, 3], operator]
+    result = pfoo(l)
+
+    assert l == [[1, 3], operator]
+    assert result == [[1, 3, 7], operator]
 
 
 def test_phantom_object_aliasing():
@@ -1916,8 +1928,7 @@ def test_phantom_object_aliasing():
     assert c == {0: a, 1: b, "hi": "bye"}
 
 
-# TODO We should get rid of these warnings once https://github.com/Lightning-AI/lightning-thunder/issues/1747
-#   is resolved
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1747")
 def test_phantom_modification_warning():
     def foo(a):
         a.one = 2
