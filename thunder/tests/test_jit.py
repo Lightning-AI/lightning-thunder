@@ -211,6 +211,18 @@ def test_dunder_bool():
         assert jfoo(*case) == foo(*case)
 
 
+def test_dunder_bool_instance():
+    class X:
+        def __bool__(self):
+            return False
+
+    x = X()
+    assert bool(x) == jit(bool)(x) == False
+
+    x.__bool__ = lambda: True  # dunder methods use class attribute, not instance attribute.
+    assert bool(x) == jit(bool)(x) == False
+
+
 def test_function_call():
     def fn(fn):
         return fn

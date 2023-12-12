@@ -512,8 +512,8 @@ def _is_jitting_lookaside():
 def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     def impl():
         # Handles objects that define __bool__
-        if hasattr(x, "__bool__"):
-            return getattr(x, "__bool__")()
+        if (dunder_bool := getattr(type(x), "__bool__", null := object())) is not null:
+            return dunder_bool(x)
 
         # Handles objects that do not define __bool__ but define __len__
         # TODO Add a len() lookaside
@@ -523,7 +523,7 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
         # NOTE By default, objects evaluate to True
         return True
 
-    return _jit(impl)
+    return x if x is True or x is False else _jit(impl)
 
 
 def _locals_lookaside():
@@ -1515,18 +1515,6 @@ def _jump_if_not_exc_match_handler(inst: dis.Instruction, /, inst_ptr: int, stac
     return target
 
 
-def _bool_condition_helper(tos):
-    def impl():
-        return bool(tos)
-
-    # Acquires the condition, only calling bool() if tos requires conversion
-    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
-    if tos is False or tos is True:
-        return tos
-    else:
-        return _jit(impl)
-
-
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_TRUE_OR_POP
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_TRUE_OR_POP
 @register_opcode_handler("JUMP_IF_TRUE_OR_POP")
@@ -1536,7 +1524,7 @@ def _jump_if_true_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack:
 
     tos = stack[-1]
 
-    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
@@ -1558,7 +1546,7 @@ def _jump_if_false_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack
 
     tos = stack[-1]
 
-    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
@@ -1924,7 +1912,7 @@ def _pop_jump_backward_if_false_handler(inst: dis.Instruction, /, stack: list, i
 
     tos = stack.pop()
 
-    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
@@ -1969,7 +1957,7 @@ def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, in
 
     tos = stack.pop()
 
-    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
@@ -1986,7 +1974,7 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
 
     tos = stack.pop()
 
-    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
@@ -2003,7 +1991,7 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
 
     tos = stack.pop()
 
-    cnd: bool | JIT_SIGNALS = _bool_condition_helper(tos)
+    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
