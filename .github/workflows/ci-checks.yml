@@ -26,7 +26,6 @@ jobs:
       actions-ref: v0.10.0
       import-name: "thunder"
       artifact-name: dist-packages-${{ github.sha }}
-      install-flags: "-f https://download.pytorch.org/whl/test/cpu/torch_test.html"
       testing-matrix: |
         {
           "os": ["ubuntu-latest", "macOS-latest", "windows-latest"],
