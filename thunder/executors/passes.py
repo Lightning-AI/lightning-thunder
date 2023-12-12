@@ -45,7 +45,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
     def preserve_bsym(bsym: BoundSymbol) -> Any:
         trace = get_tracectx()
-        trace.bound_symbols.append(bsym)
+        trace.scopes[-1].append(bsym)
         for p in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args):
             trace.names.add(p.name)
         return bsym.output

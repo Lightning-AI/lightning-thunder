@@ -4724,14 +4724,6 @@ einsum_opinfo = OpInfo(
             pytest.mark.skip(reason="vjp is tested with manual tests"),
             "test_vjp_correctness",
         ),
-        # NOTE: for nvfuser bugs see
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1542.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            executors=("nvfuser",),
-            active_if=nvfuser_version >= LooseVersion("0.0.30"),
-        ),
         DecorateInfo(
             # Some flakiness in phantom grad tests.
             # TODO: investigate and restore lower values.
