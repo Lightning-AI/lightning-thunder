@@ -338,6 +338,14 @@ def test_inner_function_definition():
 
     assert_close(foo(*args), jit(foo)(*args))
 
+    def foo(a, b):
+        def bar(a: int, *, b: int = b):
+            return a + b
+
+        return bar(a + 1)
+
+    assert_close(foo(*args), jit(foo)(*args))
+
 
 def test_inner_closure():
     # NOTE The addition of closing over value also tests
@@ -943,6 +951,14 @@ def test_import():
         from .lit_gpt_model import Config
 
         return Config
+
+    assert jit(foo)() is foo()
+
+    def foo():
+        # test relative import
+        from . import lit_gpt_model
+
+        return lit_gpt_model.Config
 
     assert jit(foo)() is foo()
 

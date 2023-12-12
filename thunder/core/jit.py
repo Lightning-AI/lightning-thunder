@@ -1445,7 +1445,8 @@ def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fr
         # cannot do this in impl easily, but error handling?
         current_name = frame.globals["__name__"]
         module_parts = current_name.split(".")[:-level]
-        module_parts.append(module_name)
+        if module_name:  # from . import foo will have '' as module_name
+            module_parts.append(module_name)
         module_name = ".".join(module_parts)
         level = 0
 
@@ -1819,20 +1820,32 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, globals_dict: 
         closure = None
 
     if inst.arg & 0x04:
-        raise NotImplementedError("Annotations on functions compiled inline are not yet supported")
+        annotations = stack.pop()
+        assert type(annotations) is tuple and len(annotations) % 2 == 0
+        annotations = dict(zip(annotations[::2], annotations[1::2]))
+    else:
+        annotations = None
 
     if inst.arg & 0x02:
-        raise NotImplementedError(
-            "Default values for keyword-only arguments on functions compiled inline are not yet supported"
-        )
+        kwdefaults = stack.pop()
+        assert type(kwdefaults) == dict
+    else:
+        kwdefaults = None
 
     if inst.arg & 0x01:
         argdefs = stack.pop()
-        assert isinstance(argdefs, tuple)
+        assert type(argdefs) == tuple
     else:
         argdefs = None
 
     fn = FunctionType(fn_co, globals_dict, name, argdefs=argdefs, closure=closure)
+
+    if kwdefaults is not None:
+        fn.__kwdefaults__ = kwdefaults
+
+    if annotations is not None:
+        fn.__annotations__ = annotations
+
     stack.append(fn)
 
 
