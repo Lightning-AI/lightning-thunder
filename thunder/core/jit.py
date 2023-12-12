@@ -190,13 +190,22 @@ class JitRuntimeCtx:
     def peek_frame_stack(self) -> JITFrame | None:
         return self.frame_stack[-1] if len(self.frame_stack) != 0 else None
 
-    def push_frame_stack(self, frame: JITFrame):
+    def _push_frame_stack(self, frame: JITFrame):
         self.frame_stack.append(frame)
 
     # for returning from method calls
-    def pop_frame_stack(self):
+    def _pop_frame_stack(self):
         assert self.frame_stack
-        del self.frame_stack[-1]
+        return self.frame_stack.pop()
+
+    @contextlib.contextmanager
+    def push_frame_stack(self, frame: JITFrame):
+        self._push_frame_stack(frame)
+        try:
+            yield
+        finally:
+            pf = self._pop_frame_stack()
+            assert pf is frame, "Frame stack inconsistency"
 
     # TODO Instead of appending to both history and and interpreted_instructions we could
     #   consider just appending to history and then filtering to only instructions when
@@ -584,7 +593,11 @@ _default_lookaside_map: dict[Callable, Callable] = {
 
 # The default function lookaside -- currently it doesn't intercept anything
 def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
-    return _default_lookaside_map.get(fn, None)
+    try:
+        return _default_lookaside_map.get(fn, None)
+    except TypeError:
+        # unhashable fn, e.g. weakref to a WeakSet
+        return None
 
 
 #
@@ -1404,14 +1417,20 @@ def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
     name: str = co.co_names[namei]
 
     def impl():
-        return getattr(module, name)
+        if hasattr(module, name):
+            return getattr(module, name)
+        # TODO: the below needs a test
+        # CPython links to https://bugs.python.org/issue17636
+        # TODO: check that module.__name__ is a valid name
+        fullname = f"{module.__name_}.{name}"
+        return __import__(fullname)
 
     return check_and_append(stack, _jit(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
 @register_opcode_handler("IMPORT_NAME")
-def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
 
@@ -1419,6 +1438,16 @@ def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
 
     fromlist = stack.pop()
     level = stack.pop()
+
+    # relative imports rely on the the current module's name (from the frame stac?)
+    # but that isn't available if we use impl, so we resolve it here.
+    if level > 0:  # relative import
+        # cannot do this in impl easily, but error handling?
+        current_name = frame.globals["__name__"]
+        module_parts = current_name.split(".")[:-level]
+        module_parts.append(module_name)
+        module_name = ".".join(module_parts)
+        level = 0
 
     def impl():
         module = __import__(module_name, fromlist=fromlist, level=level)
@@ -1781,9 +1810,6 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, globals_dict: 
     fn_co: CodeType = stack.pop()
     name = fn_co.co_name
 
-    if inst.arg != 0 and inst.arg != 0x08:
-        raise NotImplementedError("Annotations on functions compiled inline are not yet supported")
-
     if inst.arg & 0x08:
         # Python will have built at tuple of cell vars
         # (via STORE_DEREF, LOAD_CLOSURE)
@@ -1792,7 +1818,21 @@ def _make_function_handler(inst: dis.Instruction, /, stack: list, globals_dict: 
     else:
         closure = None
 
-    fn = FunctionType(fn_co, globals_dict, name, closure=closure)
+    if inst.arg & 0x04:
+        raise NotImplementedError("Annotations on functions compiled inline are not yet supported")
+
+    if inst.arg & 0x02:
+        raise NotImplementedError(
+            "Default values for keyword-only arguments on functions compiled inline are not yet supported"
+        )
+
+    if inst.arg & 0x01:
+        argdefs = stack.pop()
+        assert isinstance(argdefs, tuple)
+    else:
+        argdefs = None
+
+    fn = FunctionType(fn_co, globals_dict, name, argdefs=argdefs, closure=closure)
     stack.append(fn)
 
 
@@ -2818,172 +2858,170 @@ def _jit_run(
     send_value: Any = Py_NULL(),
 ):
     # Pushes the current stack frame for the current function
-    runtimectx.push_frame_stack(frame)
-    stack: list = frame.interpreter_stack
-    if send_value != Py_NULL():
-        stack.append(send_value)
+    with runtimectx.push_frame_stack(frame):
+        stack: list = frame.interpreter_stack
+        if send_value != Py_NULL():
+            stack.append(send_value)
 
-    insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
-    inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
-    max_inst_ptr = max(inst_ptr_to_idx.keys())
-    while True:
-        # we might have jumped or advanced to a "hidden" instruction such as cache,
-        # so move forward until we have something to look at.
-        # N.B.: For Python 3.12 there is a change coming up that changes how to
-        #       consider CACHE items in computing relative jumps.
-        #       This is discussed at the top of
-        #       https://docs.python.org/3.12/library/dis.html
-        while frame.inst_ptr not in inst_ptr_to_idx:
-            assert frame.inst_ptr <= max_inst_ptr
-            frame.inst_ptr += 1
-        inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
-        runtimectx.record_interpreted_instruction(inst)
-        # Updates the stack frame to the current position
-        # TODO maybe also have inst_ptr?
-        frame.nexti(inst)
-        skip_stack_effect_check: bool = False  # the exception handling will change the stack wildly
-        stack_size_before_handler: int = len(stack)
+        insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
+        inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
+        max_inst_ptr = max(inst_ptr_to_idx.keys())
+        while True:
+            # we might have jumped or advanced to a "hidden" instruction such as cache,
+            # so move forward until we have something to look at.
+            # N.B.: For Python 3.12 there is a change coming up that changes how to
+            #       consider CACHE items in computing relative jumps.
+            #       This is discussed at the top of
+            #       https://docs.python.org/3.12/library/dis.html
+            while frame.inst_ptr not in inst_ptr_to_idx:
+                assert frame.inst_ptr <= max_inst_ptr
+                frame.inst_ptr += 1
+            inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
+            runtimectx.record_interpreted_instruction(inst)
+            # Updates the stack frame to the current position
+            # TODO maybe also have inst_ptr?
+            frame.nexti(inst)
+            skip_stack_effect_check: bool = False  # the exception handling will change the stack wildly
+            stack_size_before_handler: int = len(stack)
 
-        frame.lasti = frame.inst_ptr  # ???
-        interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
-            inst,
-            inst_ptr=frame.inst_ptr,
-            stack=frame.interpreter_stack,
-            globals_dict=frame.globals,
-            builtins_dict=frame.builtins,
-            try_stack=frame.try_stack,
-            exception_stack=runtimectx.exception_stack,
-            co=frame.code,
-            frame=frame,
-        )
-        if interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
-            e = runtimectx.curexc
-            runtimectx.curexc = None
-            assert isinstance(e, UserException)
-            assert isinstance(e.__cause__, Exception)
-            current_exception = e.__cause__
+            frame.lasti = frame.inst_ptr  # ???
+            interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
+                inst,
+                inst_ptr=frame.inst_ptr,
+                stack=frame.interpreter_stack,
+                globals_dict=frame.globals,
+                builtins_dict=frame.builtins,
+                try_stack=frame.try_stack,
+                exception_stack=runtimectx.exception_stack,
+                co=frame.code,
+                frame=frame,
+            )
+            if interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
+                e = runtimectx.curexc
+                runtimectx.curexc = None
+                assert isinstance(e, UserException)
+                assert isinstance(e.__cause__, Exception)
+                current_exception = e.__cause__
 
-            if sys.version_info >= (3, 11):
-                exception_table = dis._parse_exception_table(frame.code)
+                if sys.version_info >= (3, 11):
+                    exception_table = dis._parse_exception_table(frame.code)
 
-                found = False
-                for et_start, et_end, et_handler, et_level, et_lasti in exception_table:
-                    found = et_start <= frame.inst_ptr * 2 < et_end
+                    found = False
+                    for et_start, et_end, et_handler, et_level, et_lasti in exception_table:
+                        found = et_start <= frame.inst_ptr * 2 < et_end
+                        if found:
+                            break
                     if found:
-                        break
-                if found:
-                    assert len(frame.interpreter_stack) >= et_level
-                    del frame.interpreter_stack[et_level:]
-                    if et_lasti:
-                        frame.interpreter_stack.append(frame.lasti)
-                    frame.interpreter_stack.append(current_exception)
-                    current_exception = None
-                    skip_stack_effect_check = True
-                    interpretation_result = et_handler // 2
-            else:
-                # This is Python 3.10-style unwinding
-                skip_stack_effect_check = True  # or only do this in ifs below?
-                while frame.try_stack:
-                    try_block = frame.try_stack.pop()
-                    if try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE:
-                        assert len(frame.interpreter_stack) >= try_block.level + 3
-                        del frame.interpreter_stack[try_block.level + 3 :]
-                        exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
-                        exc_value = frame.interpreter_stack.pop()
-                        exc_traceback = frame.interpreter_stack.pop()
-                        if exc_value != None:
-                            exc_value.__traceback__ = exc_traceback
-                        assert runtimectx.exception_stack
-                        # CPython sets exc_info->exc_type/value/traceback
-                        # see RuntimeCtx inititalization of exception_stack for more info
-                        runtimectx.exception_stack[-1] = exc_value  # replace the exc_info
-                        # Python 3.10 has `continue` here, but there is no code except the else
-                    else:
-                        # There are actually only these two PyTryBlock types in 3.10
-                        assert try_block.typ == PyTryBlock.SETUP_FINALLY_TYPE
-
-                        # Python 3.10 UNWIND_BLOCK
-                        assert len(frame.interpreter_stack) >= try_block.level
-                        del frame.interpreter_stack[try_block.level :]
-
-                        # Python 3.10 handling of SETUP_FINALLY blocks
-                        frame.try_stack.append(
-                            PyTryBlock(PyTryBlock.EXCEPT_HANDLER_TYPE, frame.lasti, len(frame.interpreter_stack))
-                        )
-                        assert runtimectx.exception_stack
-                        # CPython sreads exc_info->exc_type/value/traceback
-                        # see RuntimeCtx inititalization of exception_stack for more info
-                        exc = runtimectx.exception_stack[-1]
-                        frame.interpreter_stack.append(exc.__traceback__ if exc is not None else None)
-                        frame.interpreter_stack.append(exc)
-                        frame.interpreter_stack.append(
-                            type(exc)
-                        )  # Python distinguishes explicit exc_type present or NULL/None
-                        current_exception = e.__cause__
-                        # NormalizeException ?
-
-                        # CPython sets exc_info->exc_type/value/traceback here
-                        # see RuntimeCtx inititalization of exception_stack for more info
-                        runtimectx.exception_stack[-1] = current_exception
-                        frame.interpreter_stack.append(current_exception.__traceback__ if exc is not None else None)
+                        assert len(frame.interpreter_stack) >= et_level
+                        del frame.interpreter_stack[et_level:]
+                        if et_lasti:
+                            frame.interpreter_stack.append(frame.lasti)
                         frame.interpreter_stack.append(current_exception)
-                        frame.interpreter_stack.append(
-                            type(current_exception)
-                        )  # Python distinguishes explicit exc_type present or NULL/None
                         current_exception = None
-                        interpretation_result = try_block.handler
-                        # f->f_state = FRAME_EXECUTING;  /* Resume normal execution */
-                        break  # continue with handler
-            if current_exception is not None:
-                e.__cause__ = current_exception
-                e.tb.insert(0, frame)
-                runtimectx.curexc = e
-                return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
+                        skip_stack_effect_check = True
+                        interpretation_result = et_handler // 2
+                else:
+                    # This is Python 3.10-style unwinding
+                    skip_stack_effect_check = True  # or only do this in ifs below?
+                    while frame.try_stack:
+                        try_block = frame.try_stack.pop()
+                        if try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE:
+                            assert len(frame.interpreter_stack) >= try_block.level + 3
+                            del frame.interpreter_stack[try_block.level + 3 :]
+                            exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
+                            exc_value = frame.interpreter_stack.pop()
+                            exc_traceback = frame.interpreter_stack.pop()
+                            if exc_value != None:
+                                exc_value.__traceback__ = exc_traceback
+                            assert runtimectx.exception_stack
+                            # CPython sets exc_info->exc_type/value/traceback
+                            # see RuntimeCtx inititalization of exception_stack for more info
+                            runtimectx.exception_stack[-1] = exc_value  # replace the exc_info
+                            # Python 3.10 has `continue` here, but there is no code except the else
+                        else:
+                            # There are actually only these two PyTryBlock types in 3.10
+                            assert try_block.typ == PyTryBlock.SETUP_FINALLY_TYPE
 
-        # TODO Improve this error message
-        if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
-            raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.\n")
+                            # Python 3.10 UNWIND_BLOCK
+                            assert len(frame.interpreter_stack) >= try_block.level
+                            del frame.interpreter_stack[try_block.level :]
 
-        elif interpretation_result in (JIT_SIGNALS.RETURN_VALUE, JIT_SIGNALS.YIELD_VALUE):
-            # advance the inst_ptr, needed in particular for YIELD
-            frame.inst_ptr += 1
-            # get rhe result from the current stack
-            result = frame.interpreter_stack.pop()
-            # Restores the previous stack, the caller needs to put the value on it
-            runtimectx.pop_frame_stack()
-            return result, interpretation_result
-        elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
-            frame.inst_ptr += 1
-            assert frame.code.co_flags & inspect.CO_GENERATOR
-            runtimectx.pop_frame_stack()
-            return make_generator(frame, compilectx, runtimectx), interpretation_result
-        elif interpretation_result is None:
-            frame.inst_ptr += 1
-        else:
-            assert isinstance(interpretation_result, int), interpretation_result
-            frame.inst_ptr = interpretation_result
+                            # Python 3.10 handling of SETUP_FINALLY blocks
+                            frame.try_stack.append(
+                                PyTryBlock(PyTryBlock.EXCEPT_HANDLER_TYPE, frame.lasti, len(frame.interpreter_stack))
+                            )
+                            assert runtimectx.exception_stack
+                            # CPython sreads exc_info->exc_type/value/traceback
+                            # see RuntimeCtx inititalization of exception_stack for more info
+                            exc = runtimectx.exception_stack[-1]
+                            frame.interpreter_stack.append(exc.__traceback__ if exc is not None else None)
+                            frame.interpreter_stack.append(exc)
+                            frame.interpreter_stack.append(
+                                type(exc)
+                            )  # Python distinguishes explicit exc_type present or NULL/None
+                            current_exception = e.__cause__
+                            # NormalizeException ?
 
-        if not skip_stack_effect_check:  # the exception handling will change the stack wildly
-            # Verifies the handler had the expected stack effect (delta on stack sie)
-            actual_stack_effect: int = len(stack) - stack_size_before_handler
-            jumped: bool = isinstance(interpretation_result, int) and interpretation_result != -1
-            expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
+                            # CPython sets exc_info->exc_type/value/traceback here
+                            # see RuntimeCtx inititalization of exception_stack for more info
+                            runtimectx.exception_stack[-1] = current_exception
+                            frame.interpreter_stack.append(current_exception.__traceback__ if exc is not None else None)
+                            frame.interpreter_stack.append(current_exception)
+                            frame.interpreter_stack.append(
+                                type(current_exception)
+                            )  # Python distinguishes explicit exc_type present or NULL/None
+                            current_exception = None
+                            interpretation_result = try_block.handler
+                            # f->f_state = FRAME_EXECUTING;  /* Resume normal execution */
+                            break  # continue with handler
+                if current_exception is not None:
+                    e.__cause__ = current_exception
+                    e.tb.insert(0, frame)
+                    runtimectx.curexc = e
+                    return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
 
-            if (3, 11) <= sys.version_info < (3, 12):
-                # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
-                if inst.opname == "PRECALL":
-                    assert type(inst.arg) is int
-                    assert (
-                        expected_stack_effect == -inst.arg
-                    ), f"precall with stack effect {expected_stack_effect}, {inst}"
-                    expected_stack_effect = 0
-                elif inst.opname == "CALL":
-                    assert type(inst.arg) is int
-                    assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
-                    expected_stack_effect = -inst.arg - 1
-            assert (
-                actual_stack_effect == expected_stack_effect
-            ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
+            # TODO Improve this error message
+            if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
+                raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.\n")
+
+            elif interpretation_result in (JIT_SIGNALS.RETURN_VALUE, JIT_SIGNALS.YIELD_VALUE):
+                # advance the inst_ptr, needed in particular for YIELD
+                frame.inst_ptr += 1
+                # get rhe result from the current stack
+                result = frame.interpreter_stack.pop()
+                # Restores the previous stack, the caller needs to put the value on it
+                return result, interpretation_result
+            elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
+                frame.inst_ptr += 1
+                assert frame.code.co_flags & inspect.CO_GENERATOR
+                return make_generator(frame, compilectx, runtimectx), interpretation_result
+            elif interpretation_result is None:
+                frame.inst_ptr += 1
+            else:
+                assert isinstance(interpretation_result, int), interpretation_result
+                frame.inst_ptr = interpretation_result
+
+            if not skip_stack_effect_check:  # the exception handling will change the stack wildly
+                # Verifies the handler had the expected stack effect (delta on stack sie)
+                actual_stack_effect: int = len(stack) - stack_size_before_handler
+                jumped: bool = isinstance(interpretation_result, int) and interpretation_result != -1
+                expected_stack_effect: int = dis.stack_effect(inst.opcode, inst.arg, jump=jumped)
+
+                if (3, 11) <= sys.version_info < (3, 12):
+                    # PRECALL stack effect (3.11) has a -inst.arg stack effect in the function that we only see during CALL
+                    if inst.opname == "PRECALL":
+                        assert type(inst.arg) is int
+                        assert (
+                            expected_stack_effect == -inst.arg
+                        ), f"precall with stack effect {expected_stack_effect}, {inst}"
+                        expected_stack_effect = 0
+                    elif inst.opname == "CALL":
+                        assert type(inst.arg) is int
+                        assert expected_stack_effect == -1, f"call with stack effect {expected_stack_effect}, {inst}"
+                        expected_stack_effect = -inst.arg - 1
+                assert (
+                    actual_stack_effect == expected_stack_effect
+                ), f"Unexpected stack effect from {inst.opname}: expected {expected_stack_effect}, but the actual effect was {actual_stack_effect} at {inst}"
 
 
 # Special signals for the interpreter

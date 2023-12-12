@@ -330,6 +330,14 @@ def test_inner_function_definition():
 
     assert_close(thunder_result, python_result)
 
+    def foo(a, b):
+        def bar(a, b=b):
+            return a + b
+
+        return bar(a + 1)
+
+    assert_close(foo(*args), jit(foo)(*args))
+
 
 def test_inner_closure():
     # NOTE The addition of closing over value also tests
@@ -929,6 +937,25 @@ def test_import():
     a = torch.randn((2, 2))
 
     assert_close(jfoo(a), foo(a))
+
+    def foo():
+        # test relative import
+        from .lit_gpt_model import Config
+
+        return Config
+
+    assert jit(foo)() is foo()
+
+
+def test_unhashable_lookaside():
+    def fn():
+        import weakref
+
+        ws = weakref.WeakSet()
+        wr = weakref.ref(ws)
+        wr()
+
+    jit(fn)()
 
 
 def test_generator():
