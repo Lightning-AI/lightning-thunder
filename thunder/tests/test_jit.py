@@ -1325,6 +1325,11 @@ def test_store_attr():
     assert x.bar == 5
 
 
+def test_builtin_getattr():
+    x = 5
+    assert x.__add__ == jit(getattr)(x, "__add__")
+
+
 def test_simple_attribute():
     class SimpleNamespace:
         x: int
@@ -1341,7 +1346,6 @@ def test_simple_attribute():
     assert foo() == jfoo()
 
 
-@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
 def test_dunder_getattr():
     history = []
 
@@ -1357,7 +1361,7 @@ def test_dunder_getattr():
     assert tuple(history) == ("X.__getattr__ False", "X.__getattr__ True")
 
 
-@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
+@pytest.mark.xfail(reason="__getattribute__ support is not yet implemented.")
 def test_dunder_getattribute():
     history = []
 
@@ -1375,7 +1379,6 @@ def test_dunder_getattribute():
     assert tuple(history) == ("__getattr__ False", "__getattr__ True")
 
 
-@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
 def test_property():
     history = []
 
@@ -1408,8 +1411,32 @@ def test_property():
     history.clear()
 
 
-@pytest.mark.xfail(reason="Attribute support is not yet implemented.")
 def test_property_with_setter():
+    history = []
+
+    class MyClass:
+        @property
+        def x(self):
+            history.append(f"x {is_jitting()}")
+            return self._x
+
+        @x.setter
+        def x(self, value) -> None:
+            self._x = value
+
+    my_class = MyClass()
+    my_class.x = 5
+    my_class.__dict__["x"] = 8  # Make sure property takes precedence
+
+    def foo():
+        return my_class.x
+
+    assert foo() == jit(foo)() == 5
+    assert tuple(history) == ("x False", "x True")
+
+
+@pytest.mark.xfail(reason=".setter support is not yet implemented.")
+def test_property_with_instrumented_setter():
     history = []
 
     class MyClass:
@@ -1423,8 +1450,11 @@ def test_property_with_setter():
             history.append(f"x.setter {is_jitting()}")
             self._x = value
 
+    my_class = MyClass()
+    my_class.__dict__["x"] = 8  # Make sure property takes precedence
+    history.clear()
+
     def foo():
-        my_class = MyClass()
         my_class.x = 5
         return my_class.x
 
