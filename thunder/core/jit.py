@@ -12,13 +12,14 @@ import inspect
 import re
 import sys
 import traceback
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
 
 from types import (
     CellType,
     ClassMethodDescriptorType,
     CodeType,
+    FrameType,
     FunctionType,
     MethodType,
     MethodDescriptorType,
@@ -229,6 +230,7 @@ class JitRuntimeCtx:
 
     def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
         self._history.append(f"Lookaside to {fn.__name__}")
+        return self
 
     def format_traceback(self):
         return "\n".join(f.format_with_source() for f in self.frame_stack)
@@ -313,15 +315,11 @@ class JITError(RuntimeError):
 # as the __cause__. The user-facing function jit and the generator from
 # make_generator will unwrap this to return the original error.
 class UserException(RuntimeError):
-    def __init__(self, exception: BaseException, tb: list | TracebackType | None):
+    def __init__(self, exception: BaseException, tb: list | TracebackType | None = None):
         super().__init__()
         self.__cause__ = exception
 
-        if tb is None:
-            tb = []
-        if isinstance(tb, TracebackType):
-            tb = get_python_tb(tb)
-        self.tb = tb
+        self.tb = get_python_tb(tb)
 
     def __str__(self):
         traceback_str = "\n".join(f.format_with_source() for f in self.tb)
@@ -378,7 +376,8 @@ class PythonFrameWrapper:
         self.qualname = getattr(frame.f_code, "co_qualname", frame.f_code.co_name)
         self.positions: Positions
         if sys.version_info >= (3, 11):
-            self.positions = Positions(*traceback._get_code_position(frame.f_code, frame.f_lasti))
+            codepos = traceback._get_code_position(frame.f_code, frame.f_lasti)  # type: ignore (_get_code_position is undocumented)
+            self.positions = Positions(*codepos)
         else:
             self.positions = Positions(frame.f_lineno, frame.f_lineno, 0, 999)
 
@@ -395,9 +394,11 @@ class PythonFrameWrapper:
         return "\n".join(l)
 
 
-def get_python_tb(traceback: TracebackType):
+def get_python_tb(tb: list | TracebackType | None) -> list:
+    if isinstance(tb, list):
+        return tb
+
     res = []
-    tb = traceback
     while tb != None:
         res.append(PythonFrameWrapper(tb.tb_frame))
         tb = tb.tb_next
@@ -537,18 +538,18 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     return x if x is True or x is False else _jit(impl)
 
 
-def _locals_lookaside():
+def _locals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
-    locals = {}
+    _locals = {}
     for i, v in enumerate(frame.localsplus):
         if isinstance(v, CellType):  # sketchy, we should keep this info
-            v = v.cell_value
-        locals[frame.get_localsplus_name(i)] = v
-    return locals
+            v = v.cell_contents
+        _locals[frame.get_localsplus_name(i)] = v
+    return _locals
 
 
-def _globals_lookaside():
+def _globals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
     return frame.globals
@@ -754,7 +755,7 @@ def check_and_append(stack, val):
 
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
-def _before_with_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _before_with_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
     mgr = stack.pop()
@@ -842,37 +843,40 @@ def _binary_op(stack: list, op: BINARY_OP, a, b):
     assert type(op) is BINARY_OP
     idx: int = op.value
 
+    res = Py_NULL()
     binop_name, *_ = ops[idx]
     _, left_method, right_method = ops[idx % BINARY_OP.IADD.value]
     _, inplace_method = ops[idx % BINARY_OP.IADD.value + BINARY_OP.IADD.value]
 
+    # If the operator is an inplace operator, try to call the inplace method
     if idx >= BINARY_OP.IADD.value:
 
-        def impl():
+        def inplace_impl():
             if hasattr(a, inplace_method):
                 return getattr(a, inplace_method)(b)
             return NotImplemented
 
-        res = _jit(impl)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
-            return res
+        res = _jit(inplace_impl)
 
+    # Otherwise, if the method is inplace and not defined, or is an
+    # out of place operator, call the out of place operator (__add__/__radd__).
     if idx < BINARY_OP.IADD.value or (res is NotImplemented):
 
-        def impl():
+        def outofplace_impl():
             if (not hasattr(a, left_method)) or ((result := getattr(a, left_method)(b)) is NotImplemented):
                 if (not hasattr(b, right_method)) or ((result := getattr(b, right_method)(a)) is NotImplemented):
                     err: TypeError = TypeError(
-                        f"Unsupported operand type(s) for {binop_name}: '{type(a)}' and '{type(b)}'"
+                        f"unsupported operand type(s) for {binop_name}: '{type(a)}' and '{type(b)}'"
                     )
                     raise err
-
             return result
 
-        res = _jit(impl)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
-            return res
+        res = _jit(outofplace_impl)
 
+    # Either one or the other should have been called, and stored to res.
+    assert res is not Py_NULL()
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
     stack.append(res)
 
 
@@ -884,170 +888,170 @@ def _binary_op_helper(stack: list, op: BINARY_OP):
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
 @register_opcode_handler("BINARY_ADD", max_ver=(3, 10))
-def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ADD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_AND
 @register_opcode_handler("BINARY_AND", max_ver=(3, 10))
-def _binary_and_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_and_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.AND)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_FLOOR_DIVIDE
 @register_opcode_handler("BINARY_FLOOR_DIVIDE", max_ver=(3, 10))
-def _binary_floor_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_floor_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.FLOORDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_LSHIFT
 @register_opcode_handler("BINARY_LSHIFT", max_ver=(3, 10))
-def _binary_lshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_lshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.LSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MATRIX_MULTIPLY
 @register_opcode_handler("BINARY_MATRIX_MULTIPLY", max_ver=(3, 10))
-def _binary_matrix_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_matrix_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.MATMUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
 @register_opcode_handler("BINARY_MULTIPLY", max_ver=(3, 10))
-def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.MUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MODULO
 @register_opcode_handler("BINARY_MODULO", max_ver=(3, 10))
-def _binary_modulo_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_modulo_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.MOD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_OR
 @register_opcode_handler("BINARY_OR", max_ver=(3, 10))
-def _binary_or_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_or_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.OR)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-BINARY_OP
 @register_opcode_handler("BINARY_OP", min_ver=(3, 11))
-def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     return _binary_op_helper(stack, BINARY_OP(inst.arg))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_POWER
 @register_opcode_handler("BINARY_POWER", max_ver=(3, 10))
-def _binary_power_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_power_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.POW)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_RSHIFT
 @register_opcode_handler("BINARY_RSHIFT", max_ver=(3, 10))
-def _binary_rshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_rshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.RSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
 @register_opcode_handler("BINARY_SUBTRACT", max_ver=(3, 10))
-def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.SUB)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_TRUE_DIVIDE
 @register_opcode_handler("BINARY_TRUE_DIVIDE", max_ver=(3, 10))
-def _binary_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.TRUEDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
 @register_opcode_handler("BINARY_XOR", max_ver=(3, 10))
-def _binary_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.XOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_ADD
 @register_opcode_handler("INPLACE_ADD", max_ver=(3, 10))
-def _inplace_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_add_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IADD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_AND
 @register_opcode_handler("INPLACE_AND", max_ver=(3, 10))
-def _inplace_and_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_and_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IAND)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_FLOOR_DIVIDE
 @register_opcode_handler("INPLACE_FLOOR_DIVIDE", max_ver=(3, 10))
-def _inplace_floor_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_floor_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IFLOORDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_LSHIFT
 @register_opcode_handler("INPLACE_LSHIFT", max_ver=(3, 10))
-def _inplace_lshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_lshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ILSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MATRIX_MULTIPLY
 @register_opcode_handler("INPLACE_MATRIX_MULTIPLY", max_ver=(3, 10))
-def _inplace_matrix_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_matrix_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IMATMUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MULTIPLY
 @register_opcode_handler("INPLACE_MULTIPLY", max_ver=(3, 10))
-def _inplace_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_multiply_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IMUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MODULO
 @register_opcode_handler("INPLACE_MODULO", max_ver=(3, 10))
-def _inplace_modulo_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_modulo_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IMOD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_OR
 @register_opcode_handler("INPLACE_OR", max_ver=(3, 10))
-def _inplace_or_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_or_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_POWER
 @register_opcode_handler("INPLACE_POWER", max_ver=(3, 10))
-def _inplace_power_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_power_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IPOW)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_RSHIFT
 @register_opcode_handler("INPLACE_RSHIFT", max_ver=(3, 10))
-def _inplace_rshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_rshift_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IRSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_SUBTRACT
 @register_opcode_handler("INPLACE_SUBTRACT", max_ver=(3, 10))
-def _inplace_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_subtract_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ISUB)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_TRUE_DIVIDE
 @register_opcode_handler("INPLACE_TRUE_DIVIDE", max_ver=(3, 10))
-def _inplace_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_true_divide_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ITRUEDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_SUBTRACT
 @register_opcode_handler("INPLACE_XOR", max_ver=(3, 10))
-def _inplace_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _inplace_xor_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IXOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
 @register_opcode_handler("BINARY_SUBSCR")
-def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _binary_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
     tos1 = stack.pop()
 
@@ -1143,7 +1147,7 @@ def _kw_names_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame
 # NOTE This only accepts positional args
 # https://docs.python.org/3.11/library/dis.html#opcode-CALL
 @register_opcode_handler("CALL", min_ver=(3, 11))
-def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
+def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
@@ -1169,7 +1173,7 @@ def _call_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwar
 # NOTE This only accepts positional args
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION
 @register_opcode_handler("CALL_FUNCTION", max_ver=(3, 10))
-def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
@@ -1179,7 +1183,7 @@ def _call_function_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
 @register_opcode_handler("CALL_FUNCTION_EX")
-def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     kwargs = stack.pop() if inst.arg & 0x01 else {}
     args = stack.pop()
@@ -1197,7 +1201,7 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
 @register_opcode_handler("CALL_FUNCTION_KW", max_ver=(3, 10))
-def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     kw_names: tuple[str, ...] = stack.pop()
     kwarg_length: int = len(kw_names)
     kwargs_flat: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(kwarg_length))))
@@ -1212,7 +1216,7 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: list, **kwargs) -
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
 @register_opcode_handler("CALL_METHOD", max_ver=(3, 10))
-def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(inst.arg))))
     second_lm = stack.pop()
@@ -1229,7 +1233,7 @@ def _call_method_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 # https://docs.python.org/3.10/library/dis.html#opcode-CONTAINS_OP
 # https://docs.python.org/3.10/reference/expressions.html#membership-test-operations
 @register_opcode_handler("CONTAINS_OP")
-def _contains_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _contains_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
     tos1 = stack.pop()
 
@@ -1399,14 +1403,13 @@ def _delete_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> N
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DICT_MERGE
 @register_opcode_handler("DICT_MERGE")
-def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+def _dict_merge_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None | JIT_SIGNALS:
     a = stack.pop()
     b = stack[-1]
     # TODO: Raise inside interpreter
     assert isinstance(b, MutableMapping), b
     assert isinstance(a, Mapping), a
     if overlap := b.keys() & a:
-        # TODO: Raise inside interpreter
         return do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
     b.update(a)
 
@@ -1436,7 +1439,7 @@ def _extended_arg_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 # https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
 # TODO Extend the jitted implementation to
 @register_opcode_handler("FORMAT_VALUE")
-def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _format_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     FVC_MASK: int = 0x3
     FVC_NONE: int = 0x0
     FVC_STR: int = 0x1
@@ -1504,7 +1507,7 @@ def _iter_impl(obj):
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_ITER
 @register_opcode_handler("GET_ITER")
-def _get_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _get_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
     return check_and_append(stack, _jit(_iter_impl(tos)))
 
@@ -1522,7 +1525,7 @@ def _get_len_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 #   directly -- are we really worried that programs will put tensor operations in import hooks?
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_FROM
 @register_opcode_handler("IMPORT_FROM")
-def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
 
@@ -1544,7 +1547,9 @@ def _import_from_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
 @register_opcode_handler("IMPORT_NAME")
-def _import_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+def _import_name_handler(
+    inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs
+) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
 
@@ -1592,15 +1597,14 @@ def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
 def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     assert type(inst.arg) is int
     delta: int = inst.arg
-    assert isinstance(delta, int)
     return inst_ptr + delta + 1
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD
 @register_opcode_handler("JUMP_BACKWARD", min_ver=(3, 11))
 def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    assert type(inst.arg) is int
     delta: int = inst.arg
-    assert isinstance(delta, int)
     return inst_ptr - delta + 1
 
 
@@ -1609,14 +1613,16 @@ def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
 #       https://github.com/Lightning-AI/lightning-thunder/issues/1631
 @register_opcode_handler("JUMP_BACKWARD_NO_INTERRUPT", min_ver=(3, 11))
 def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
+    assert type(inst.arg) is int
     delta: int = inst.arg
-    assert isinstance(delta, int)
     return inst_ptr - delta + 1
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_IF_NOT_EXC_MATCH
 @register_opcode_handler("JUMP_IF_NOT_EXC_MATCH", max_ver=(3, 10))
-def _jump_if_not_exc_match_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+def _jump_if_not_exc_match_handler(
+    inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
     target: int = inst.arg
 
@@ -1625,14 +1631,16 @@ def _jump_if_not_exc_match_handler(inst: dis.Instruction, /, inst_ptr: int, stac
     if not isinstance(right, tuple):
         right = (right,)
     if any((isinstance(left, aright) or issubclass(left, aright)) for aright in right):
-        return
+        return None
     return target
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_TRUE_OR_POP
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_TRUE_OR_POP
 @register_opcode_handler("JUMP_IF_TRUE_OR_POP")
-def _jump_if_true_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+def _jump_if_true_or_pop_handler(
+    inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
     target: int = inst.arg
 
@@ -1644,7 +1652,7 @@ def _jump_if_true_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack:
 
     if not cnd:
         stack.pop()
-        return
+        return None
 
     if sys.version_info >= (3, 11):
         target += inst_ptr + 1
@@ -1654,7 +1662,9 @@ def _jump_if_true_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack:
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_FALSE_OR_POP
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_FALSE_OR_POP
 @register_opcode_handler("JUMP_IF_FALSE_OR_POP")
-def _jump_if_false_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs) -> int:
+def _jump_if_false_or_pop_handler(
+    inst: dis.Instruction, /, inst_ptr: int, stack: list, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
     target: int = inst.arg
 
@@ -1666,7 +1676,7 @@ def _jump_if_false_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack
 
     if cnd:
         stack.pop()
-        return
+        return None
 
     if sys.version_info >= (3, 11):
         target += inst_ptr + 1
@@ -1676,7 +1686,7 @@ def _jump_if_false_or_pop_handler(inst: dis.Instruction, /, inst_ptr: int, stack
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_APPEND
 @register_opcode_handler("LIST_APPEND")
 def _list_append_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert isinstance(inst.arg, int)
+    assert type(inst.arg) is int
     i: int = inst.arg
 
     # NOTE Doesn't pop the list that's extended
@@ -1690,7 +1700,7 @@ def _list_append_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
 @register_opcode_handler("LIST_EXTEND")
 def _list_extend_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
-    assert isinstance(inst.arg, int)
+    assert type(inst.arg) is int
     i: int = inst.arg
 
     # NOTE Doesn't pop the list that's extended
@@ -1718,7 +1728,7 @@ def _load_assertion_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR")
-def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
 
     a = stack.pop()
@@ -1732,7 +1742,7 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kw
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
 @register_opcode_handler("LOAD_BUILD_CLASS")
-def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
+def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
     if "__build_class__" in frame.builtins.keys():
         build_class = frame.builtins["__build_class__"]
         stack.append(build_class)
@@ -1746,7 +1756,7 @@ def _load_build_class_handler(inst: dis.Instruction, /, stack: list, frame: JITF
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
 @register_opcode_handler("LOAD_CLOSURE")
 def _load_closure_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
-    assert isinstance(inst.arg, int)
+    assert type(inst.arg) is int
     i: int = inst.arg
 
     if sys.version_info < (3, 11):
@@ -1766,8 +1776,10 @@ def _load_const_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **k
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_DEREF
 @register_opcode_handler("LOAD_DEREF")
-def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
-    assert isinstance(inst.arg, int)
+def _load_deref_handler(
+    inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs
+) -> None | JIT_SIGNALS:
+    assert type(inst.arg) is int
     i: int = inst.arg
 
     if sys.version_info < (3, 11):
@@ -1790,7 +1802,9 @@ def _load_deref_handler(inst: dis.Instruction, /, stack: list, co: CodeType, fra
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_FAST
 @register_opcode_handler("LOAD_FAST")
-def _load_fast_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+def _load_fast_handler(
+    inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs
+) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     var_num: int = inst.arg
     assert var_num >= 0 and var_num < len(frame.localsplus)
@@ -1815,7 +1829,7 @@ def _load_global_handler(
     globals_dict: dict[str, Any],
     builtins_dict: dict[str, Any],
     **kwargs,
-) -> None:
+) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     idx = inst.arg
     if (3, 11) <= sys.version_info:
@@ -1846,7 +1860,7 @@ def _load_global_handler(
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1525
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_METHOD
 @register_opcode_handler("LOAD_METHOD")
-def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None:
+def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     name = co.co_names[inst.arg]
     obj = stack.pop()
@@ -1867,7 +1881,9 @@ def _load_method_handler(inst: dis.Instruction, /, stack: list, co: CodeType, **
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1661
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_NAME
 @register_opcode_handler("LOAD_NAME")
-def _load_name_handler(inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs) -> None:
+def _load_name_handler(
+    inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs
+) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -1994,7 +2010,7 @@ def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **
 # Note that Python <= 3.10 always has type/value/tracebackk on the stack as three items
 #           Python >= 3.11 only has one (but has the split in other places)
 @register_opcode_handler("POP_EXCEPT", max_ver=(3, 10))
-def _pop_except_handler(
+def _pop_except_handler_3_10(
     inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], exception_stack: list, **kwargs
 ) -> None:
     try_block = try_stack.pop()
@@ -2011,7 +2027,7 @@ def _pop_except_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_EXCEPT
 @register_opcode_handler("POP_EXCEPT", min_ver=(3, 11))
-def _pop_except_handler(
+def _pop_except_handler_3_11(
     inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], exception_stack: list, **kwargs
 ) -> None:
     exc_value = stack.pop()
@@ -2021,7 +2037,9 @@ def _pop_except_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_FALSE
 @register_opcode_handler("POP_JUMP_BACKWARD_IF_FALSE", min_ver=(3, 11))
-def _pop_jump_backward_if_false_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+def _pop_jump_backward_if_false_handler(
+    inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
@@ -2066,7 +2084,9 @@ def _pop_jump_backward_if_not_none_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_TRUE
 @register_opcode_handler("POP_JUMP_BACKWARD_IF_TRUE", min_ver=(3, 11))
-def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+def _pop_jump_backward_if_true_handler(
+    inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
@@ -2083,7 +2103,9 @@ def _pop_jump_backward_if_true_handler(inst: dis.Instruction, /, stack: list, in
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_FALSE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11))
-def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+def _pop_jump_forward_if_false_handler(
+    inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
@@ -2100,7 +2122,9 @@ def _pop_jump_forward_if_false_handler(inst: dis.Instruction, /, stack: list, in
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_TRUE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11))
-def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+def _pop_jump_forward_if_true_handler_3_10(
+    inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
@@ -2117,7 +2141,9 @@ def _pop_jump_forward_if_true_handler(inst: dis.Instruction, /, stack: list, ins
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_NONE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_NONE", min_ver=(3, 11))
-def _pop_jump_forward_if_none_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> int | None:
+def _pop_jump_forward_if_none_handler_3_11(
+    inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
+) -> int | None:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
@@ -2193,7 +2219,7 @@ def _pop_top_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
     stack.pop()
 
 
-def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
+def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNALS.EXCEPTION_RAISED]:
     # Get the type and exception being raised
     typ: Any = Py_NULL()
     value: Any = Py_NULL()
@@ -2203,7 +2229,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
         assert runtimectx.exception_stack
         value = runtimectx.exception_stack[0]
         if value == None:
-            do_raise(RuntimeError("No active exception to reraise"), [])
+            return do_raise(RuntimeError("No active exception to reraise"))
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
         runtimectx.curexc = UserException(value, value.__traceback__)
@@ -2233,7 +2259,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
             if fixed_cause is JIT_SIGNALS.EXCEPTION_RAISED:
                 return fixed_cause
 
-            # NOTE: This check is missing from cpython, seems like a bug in cpython.
+            # NOTE: This was a bug in cpython, fixed by cpython PR #112216
             if not isinstance(fixed_cause, BaseException):
                 return do_raise(
                     TypeError(
@@ -2246,12 +2272,10 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()):
             fixed_cause = None
         else:
             return do_raise(TypeError(f"exception causes must derive from BaseException"))
-            # does not return
 
         value.__cause__ = fixed_cause
 
-    # Call PyErr_SetObject() to update the thread's state
-    runtimectx.curexc = UserException(value, [])
+    runtimectx.curexc = UserException(value)
     return JIT_SIGNALS.EXCEPTION_RAISED
 
 
@@ -2283,7 +2307,9 @@ def _push_null_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RAISE_VARARGS
 @register_opcode_handler("RAISE_VARARGS")
-def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], **kwargs) -> None:
+def _raise_varargs_handler(
+    inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], **kwargs
+) -> None | JIT_SIGNALS:
     cause: Any = Py_NULL()
     exc: Any = Py_NULL()
     assert type(inst.arg) is int
@@ -2299,9 +2325,9 @@ def _raise_varargs_handler(inst: dis.Instruction, /, stack: list, try_stack: lis
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE", max_ver=(3, 10))
-def _reraise_handler(
+def _reraise_handler_3_10(
     inst: dis.Instruction, /, stack: list, try_stack: list[PyTryBlock], frame: JITFrame, **kwargs
-) -> None:
+) -> None | JIT_SIGNALS:
     assert try_stack
     assert type(inst.arg) is int
 
@@ -2319,7 +2345,7 @@ def _reraise_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE", min_ver=(3, 11))
-def _reraise_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None:
+def _reraise_handler_3_11(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
 
     val = stack.pop()
@@ -2337,7 +2363,7 @@ def _reraise_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **k
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
 @register_opcode_handler("RETURN_VALUE")
-def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None:
+def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None | JIT_SIGNALS:
     return JIT_SIGNALS.RETURN_VALUE
 
 
@@ -2420,7 +2446,7 @@ def _setup_finally_handler(
 @register_opcode_handler("SETUP_WITH", max_ver=(3, 10))
 def _setup_with_handler(
     inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
-) -> None:
+) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     instr_offset = inst_ptr + inst.arg + 1
 
@@ -2552,7 +2578,7 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT
 @register_opcode_handler("UNARY_INVERT")
-def _unary_invert_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _unary_invert_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -2568,7 +2594,7 @@ def _unary_invert_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> No
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NOT
 @register_opcode_handler("UNARY_NOT")
-def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -2581,7 +2607,7 @@ def _unary_not_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NEGATIVE
 @register_opcode_handler("UNARY_NEGATIVE")
-def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -2597,7 +2623,7 @@ def _unary_negative_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
 @register_opcode_handler("UNARY_POSITIVE")
-def _unary_positive_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _unary_positive_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -2613,7 +2639,7 @@ def _unary_positive_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_EX
 @register_opcode_handler("UNPACK_EX")
-def _unpack_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _unpack_ex_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     counts: int = inst.arg
     before_list: int = counts & 0xFF
@@ -2662,13 +2688,14 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
 # https://docs.python.org/3.10/library/dis.html#opcode-GEN_START
 @register_opcode_handler("GEN_START", max_ver=(3, 10))
 def _gen_start_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    assert type(inst.arg) is int
     assert 0 <= inst.arg < 3  # yeah, we are not doing anything with it
     stack.pop()  # this should be None (sent to the generator), but Python does not check
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_YIELD_FROM_ITER
 @register_opcode_handler("GET_YIELD_FROM_ITER")
-def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     tos = stack[-1]
     if not (inspect.isgenerator(tos) or inspect.iscoroutine(tos)):
         return check_and_append(stack, _jit(_iter_impl(stack.pop())))
@@ -2676,13 +2703,13 @@ def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: list, **kwargs
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RETURN_GENERATOR
 @register_opcode_handler("RETURN_GENERATOR", min_ver=(3, 11))
-def _return_generator_handler(inst: dis.Instruction, /, **kwargs) -> None:
+def _return_generator_handler(inst: dis.Instruction, /, **kwargs) -> None | JIT_SIGNALS:
     return JIT_SIGNALS.RETURN_GENERATOR
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-SEND
 @register_opcode_handler("SEND", min_ver=(3, 11))
-def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> None:
+def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs) -> None | int | JIT_SIGNALS:
     # SEND(delta)
     # Equivalent to STACK[-1] = STACK[-2].send(STACK[-1]). Used in yield from and await statements.
     # If the call raises StopIteration, pop the top value from the stack, push the exception’s value attribute, and increment the bytecode counter by delta.
@@ -2716,9 +2743,9 @@ def _send_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kwargs
 
 # https://docs.python.org/3.10/library/dis.html#opcode-WITH_EXCEPT_START
 @register_opcode_handler("WITH_EXCEPT_START", max_ver=(3, 10))
-def _with_except_start_handler(
+def _with_except_start_handler_3_10(
     inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
-) -> None:
+) -> None | JIT_SIGNALS:
     exc = stack[-1]
     val = stack[-2]
     tb = stack[-3]
@@ -2730,9 +2757,9 @@ def _with_except_start_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-WITH_EXCEPT_START
 @register_opcode_handler("WITH_EXCEPT_START", min_ver=(3, 11))
-def _with_except_start_handler(
+def _with_except_start_handler_3_11(
     inst: dis.Instruction, *, inst_ptr: int, stack: list, try_stack: list[PyTryBlock], **kwargs
-) -> None:
+) -> None | JIT_SIGNALS:
     # in 3.11 the exception representation changed to only val
     val = stack[-1]
     exc = type(val)
@@ -2745,7 +2772,9 @@ def _with_except_start_handler(
 
 # https://docs.python.org/3.10/library/dis.html#opcode-YIELD_FROM
 @register_opcode_handler("YIELD_FROM", max_ver=(3, 10))
-def _yield_from_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, inst_ptr: int, **kwargs) -> None:
+def _yield_from_handler(
+    inst: dis.Instruction, /, stack: list, frame: JITFrame, inst_ptr: int, **kwargs
+) -> None | JIT_SIGNALS:
     send_value = stack.pop()
     generator = stack[-1]
 
@@ -2766,7 +2795,7 @@ def _yield_from_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, 
             stack.pop()  # remove generator
             stack.append(runtimectx.curexc.value)
             runtimectx.curexc = None
-            return
+            return None
         else:
             return res  # propagate exception
 
@@ -2780,7 +2809,7 @@ def _yield_from_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-YIELD_VALUE
 @register_opcode_handler("YIELD_VALUE")
-def _yield_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _yield_value_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None | JIT_SIGNALS:
     # note that the popping from the stack is done in the _jit_run loop
     return JIT_SIGNALS.YIELD_VALUE
 
@@ -2832,7 +2861,7 @@ def make_generator(
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
-def _jit(fn: Callable, /, *args, **kwargs) -> Any:
+def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
@@ -3223,8 +3252,10 @@ def jit(
                 traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
                 msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
-            fn_._last_interpreted_instructions = runtimectx.interpreted_instructions
-            fn_._last_interpreted_history = runtimectx.history
+
+            # NOTE: Wrapped functions are valid to assign new attributes to.
+            fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
+            fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
             if jit_result is JIT_SIGNALS.EXCEPTION_RAISED:
                 # We modify the cause chain from

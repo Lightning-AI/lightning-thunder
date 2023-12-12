@@ -1518,6 +1518,37 @@ def test_comprehension_nonlocal_inplace():
     assert foo() == jfoo()
 
 
+def test_unimpl_inplace():
+    class C:
+        def __init__(self, value):
+            self.value = value
+
+        def __add__(self, other):
+            return C(self.value + other.value)
+
+    def foo():
+        a = C(3)
+        b = C(5)
+        ida1 = id(a)
+        a += b
+        ida2 = id(a)
+        assert ida1 != ida2
+        assert a.value == 8
+
+    foo()
+    jit(foo)()
+
+
+def test_unsupported_operator():
+    def foo():
+        return 2 @ 3  # type: ignore
+
+    with pytest.raises(TypeError, match="unsupported operand type\\(s\\) for @:"):
+        foo()
+    with pytest.raises(TypeError, match="unsupported operand type\\(s\\) for @:"):
+        jit(foo)()
+
+
 def test_set_creation():
     def foo():
         return {1, *[2, 3]}
@@ -2090,6 +2121,17 @@ def test_phantom_globals():
     result = pfoo(10)
     assert result == 12
     assert _test_phantom_globals_global == 5
+
+
+@pytest.mark.xfail(reason="We know that not all opcodes are supported yet.")
+def test_instruction_coverage():
+    from thunder.core.jit import _default_opcode_handler_map
+
+    opnames = dis.opmap.keys()
+    supported_opnames = _default_opcode_handler_map.keys()
+
+    unsupported_opnames = set(opnames) - set(supported_opnames)
+    assert not unsupported_opnames, f"Unsupported opcodes: {unsupported_opnames}"
 
 
 # Tests that directly assigning to the globals() dict does not modify the actual globals dict
