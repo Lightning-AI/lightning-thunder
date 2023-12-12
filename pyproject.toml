@@ -31,6 +31,9 @@ addopts = [
     "--color=yes",
     "--disable-pytest-warnings",
 ]
+markers = [
+    "standalone: mark a test as standalone",
+]
 filterwarnings = [
     "error::FutureWarning",
 ]

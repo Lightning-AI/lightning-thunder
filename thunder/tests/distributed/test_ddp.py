@@ -844,7 +844,11 @@ def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
 
 # NOTE CPU is skipped because of
 # RuntimeError: no support for _allgather_base in Gloo process group
-@instantiate(dtypes=(thunder.float32,), num_devices=2, devicetypes=(devices.DeviceType.CUDA,))
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    devicetypes=(devices.DeviceType.CUDA,),
+)
 @ddp_wrapper("test_native_fsdp", _test_native_fsdp_helper)
 def test_native_fsdp(executor, devices, dtype):
     pass
