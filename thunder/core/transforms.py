@@ -844,6 +844,19 @@ register_grad(pids.ABS, _abs_prim_grad)
 
 
 @torchctx
+def _cos_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.abs(a)
+
+    g = get_grad(fwd)
+    put_grad(a, g * (-ltorch.sin(a)))
+
+    return fwd
+
+
+register_grad(pids.COS, _cos_prim_grad)
+
+
+@torchctx
 def _erf_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.erf(a)
 
@@ -913,6 +926,19 @@ def _rsqrt_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
 
 
 register_grad(pids.RSQRT, _rsqrt_prim_grad)
+
+
+@torchctx
+def _sin_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
+    fwd = prims.abs(a)
+
+    g = get_grad(fwd)
+    put_grad(a, g * ltorch.cos(a))
+
+    return fwd
+
+
+register_grad(pids.SIN, _sin_prim_grad)
 
 
 @torchctx

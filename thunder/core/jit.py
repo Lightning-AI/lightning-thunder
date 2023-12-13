@@ -229,7 +229,7 @@ class JitRuntimeCtx:
         return self
 
     def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
-        self._history.append(f"Lookaside to {fn.__name__}")
+        self._history.append(f"Lookaside to {fn.__name__ if hasattr(fn, '__name__') else 'partial object'}")
         return self
 
     def format_traceback(self):
