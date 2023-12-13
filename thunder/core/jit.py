@@ -1257,18 +1257,10 @@ def _contains_op_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
             return getattr(tos, "__contains__")(tos1)
 
         if hasattr(tos, "__iter__"):
-            # TODO refactor when support for `any()` is added.
-            for v in tos:
-                if v is tos1 or v == tos1:
-                    return True
-            return False
+            return any(v is tos1 or v == tos1 for v in tos)
 
         if hasattr(tos, "__getitem__") and hasattr(tos, "__len__"):
-            # TODO refactor when support for `any()` is added.
-            for i in range(len(tos)):
-                if tos[i] is tos1 or tos[i] == tos1:
-                    return True
-            return False
+            return any(tos[i] is tos1 or tos[i] == tos1 for i in range(len(tos)))
 
         err: NotImplementedError = NotImplementedError(
             f"__contains__, __iter__, __getitem__, and __len__ are not implemented for input {type(tos)}'"
