@@ -1730,6 +1730,48 @@ def test_name_opcodes_and_print_expr():
         jfn()
 
 
+def test_displayhook():
+    from contextlib import redirect_stdout
+    import io
+    import code
+
+    # TODO: Implement the lookaside for exec(). Under he hood, `code.InteractiveInterpreter().runsource('5;6;7')``
+    # just compiles the string and calls exec(), plus a little bit of irrelevant error handling.
+    # I'm not entirely convinced that the PRINT_EVAL is going through our system at the moment, but
+    # it for sure would with an exec() lookaside. I'm also not sure what makes InteractiveInterpreter
+    # interactive. It isn't *actually* in interactive mode. So, why is PRINT_EXPR in the interpreted
+    # instructions? A mystery.
+
+    py_redirect = io.StringIO()
+    with redirect_stdout(py_redirect):
+        # Avoid clobbering this interpreter's display hook, and ensure it's interactive.
+        # Why is this necessary? I'm not sure.
+        interpreter = code.InteractiveInterpreter()
+
+        def smt(s):
+            interpreter.runsource(s)
+
+        smt("from thunder.core.jit import jit")
+        smt(
+            """
+def foo():
+    import sys
+    import code
+    sys.displayhook = lambda x: print('redirected', x) if x is not None else None
+    # Create a new interpreter that's in interactive mode inside the jit
+    code.InteractiveInterpreter().runsource('5;6;7')
+    sys.displayhook = sys.__displayhook__
+    print('Reset.')
+"""
+        )
+        smt("jfoo = jit(foo)")
+        smt("jfoo()")
+        smt("assert any(i.opname == 'PRINT_EXPR' for i in jfoo._last_interpreted_instructions)")
+
+    py_out: str = py_redirect.getvalue()
+    assert py_out == "redirected 5\nredirected 6\nredirected 7\nReset.\n", py_out
+
+
 def test_load_build_class():
     def foo():
         class C:

@@ -2286,9 +2286,22 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
 # https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
 @register_opcode_handler("PRINT_EXPR")
-def _print_expr_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _print_expr_handler(inst: dis.Instruction, /, stack: list, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
+    def impl(tos):
+        # NOTE: There is no other way to obtain the display hook, other
+        #       than writing a C extension, so we mangle.
+        # NOTE: The display hook's return value is ignored by cpython.
+        # NOTE: By default, type(sys.__displayhook__) is <class 'builtin_function_or_method'>.
+        from sys import displayhook as __thunder_sys_displayhook
+
+        __thunder_sys_displayhook(tos)
+        return None
+
     tos = stack.pop()
-    sys.displayhook(tos)
+    val = _jit(impl, tos)
+    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+        return val
+    return None
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-PUSH_EXC_INFO
