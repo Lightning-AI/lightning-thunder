@@ -24,6 +24,7 @@ from types import (
     MethodType,
     MethodDescriptorType,
     ModuleType,
+    NoneType,
     BuiltinFunctionType,
     BuiltinMethodType,
     MethodDescriptorType,
@@ -282,7 +283,9 @@ def jitctx(_jitcompilectx: JitCompileCtx, _jitruntimectx: JitRuntimeCtx):
 
 
 def is_opaque(fn: Callable) -> bool:
-    if isinstance(fn, (BuiltinFunctionType, BuiltinMethodType, MethodWrapperType, WrapperDescriptorType)):
+    if isinstance(
+        fn, (BuiltinFunctionType, BuiltinMethodType, MethodDescriptorType, MethodWrapperType, WrapperDescriptorType)
+    ):
         return True
 
     # NOTE builtins.type has type type, but type() is an opaque function
@@ -2868,13 +2871,14 @@ def make_generator(
 # NOTE There are (currently) 6 cases for interpretation:
 #
 #   (1) The callable has a lookaside, in which case it's used to execute the operation
-#   (2) The callable is opaque, in which case it's executed by the CPython interpreter and its
+#   (2) The callable is a builtin method, in which case we see if we can unbind it.
+#   (3) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (3) The callable is a partial object, in which case it's recursively unwrapped
-#   (4) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
-#   (5) The callable is a callable object, in which case its __call__ attribute is called recursively
-#   (6) The callable is a method, in which calls its __func__ attribute is called recursively
-#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the jit
+#   (4) The callable is a partial object, in which case it's recursively unwrapped
+#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (7) The callable is a method, in which calls its __func__ attribute is called recursively
+#   (8) The callable is a FunctionType, in which case it's recursively interpretered by the jit
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
@@ -2892,7 +2896,23 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         #    runtimectx.curexc = UserException(e, get_python_tb(e.__traceback__))
         # return JIT_SIGNALS.EXCEPTION_RAISED
 
-    # (2) Handles opaque functions
+    # (2) Unbind builtin methods if possible
+    # unfortunately, we do not have `._func__ so we look at type(.__self__) but need to be careful
+    if isinstance(fn, BuiltinMethodType) and hasattr(fn, "__self__"):
+        self = fn.__self__
+        typ_self = type(fn.__self__)
+        fn_name = getattr(fn, "__name__", "")
+        if hasattr(typ_self, fn_name):
+            unbound_fn = getattr(typ_self, fn_name)
+            # one thing we need to avoid is to have methods that are defined on type unpacked too often
+            # it is not great but not too bad to err on the "fallthrough" side.
+            # This will happen e.g. for <class>.__new__, which is NOT a bound version of type.__new__
+            # even though type(<class>) is type.
+            expected_class = getattr(unbound_fn, "__objclass__", NoneType)
+            if isinstance(self, expected_class):
+                return _jit(unbound_fn, self, *args, **kwargs)
+
+    # (3) Handles opaque functions
     if is_opaque(fn):
         runtimectx.record_opaque_call(fn)
         try:
@@ -2902,7 +2922,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             return JIT_SIGNALS.EXCEPTION_RAISED
         return opaque_result
 
-    # (3) Handles partial objects
+    # (4) Handles partial objects
     if isinstance(fn, functools.partial):
         # TODO: add traceback entry on the traceback in UserException?
         p: functools.partial = fn
@@ -2913,7 +2933,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
         )
 
-    # (4) Handle types
+    # (5) Handle types
     if isinstance(fn, type):
         if not hasattr(fn, "__new__"):
             raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
@@ -2925,13 +2945,13 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             return res
         return obj
 
-    # (5) Handles objects that are callable
+    # (6) Handles objects that are callable
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
             raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
         return _jit(fn.__call__, *args, **kwargs)
 
-    # (6) Handles (bound) methods
+    # (7) Handles (bound) methods
     #     while we unwrap methods to __func__ when processing LOAD_METHOD (so those will not run into this)
     #     methods may also originate from LOAD_ATTR e.g. assign to variable and calling that
     if inspect.ismethod(fn):
@@ -2939,7 +2959,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
-    # (7) Jits into the function
+    # (8) Jits into the function
     # adjustments for "hidden" instructiions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)

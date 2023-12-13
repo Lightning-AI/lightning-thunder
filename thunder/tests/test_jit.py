@@ -1921,6 +1921,55 @@ def test_torch_autocast_nograd():
     assert_close(actual, expected)  # also check dtype (should be bf16)
 
 
+def test_module_hooks():
+    def cook_hook(l, name):
+        def fn(*args):
+            l.append((name, thunder.core.jit.is_jitting()))
+
+        return fn
+
+    m = torch.nn.Linear(4, 4)
+    l = []
+    handles = []
+
+    try:
+        handles.append(torch.nn.modules.module.register_module_forward_hook(cook_hook(l, "global forward")))
+        handles.append(torch.nn.modules.module.register_module_forward_pre_hook(cook_hook(l, "global forward pre")))
+        handles.append(torch.nn.modules.module.register_module_full_backward_hook(cook_hook(l, "global full backward")))
+        handles.append(
+            torch.nn.modules.module.register_module_full_backward_pre_hook(cook_hook(l, "global full backward pre"))
+        )
+        handles.append(m.register_forward_hook(cook_hook(l, "module forward")))
+        handles.append(m.register_forward_pre_hook(cook_hook(l, "module forward pre")))
+        handles.append(m.register_full_backward_hook(cook_hook(l, "module full backward")))
+        handles.append(m.register_full_backward_pre_hook(cook_hook(l, "module full backward pre")))
+
+        x = torch.randn(3, 4)
+
+        jm = jit(m)
+        y = jm(x)
+        y.sum().backward()
+
+        assert (
+            "Opaque call to <method 'register_hook' of 'torch._C._FunctionBase' objects> with name register_hook"
+            in jm._last_interpreted_history
+        )
+
+        jit_l = l[:]
+        l.clear()
+        y = m(x)
+        y.sum().backward()
+
+        assert len(jit_l) == len(l)
+        for (jn, jj), (pn, pj) in zip(jit_l, l):
+            assert jn == pn
+            # we expect forward to be execute via the jit, backward
+            # assert bool(jj), f"{jn} {jj=}"
+    finally:
+        for h in handles:
+            h.remove()
+
+
 def test_is_jitting_opaque():
     def foo():
         return tuple(map(lambda _: is_jitting(), range(3)))
