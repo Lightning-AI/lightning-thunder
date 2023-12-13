@@ -696,8 +696,20 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return result
 
 
+# https://docs.python.org/3/library/functions.html?highlight=any#any
+def _any_lookaside(obj: Iterable):
+    if not isinstance(obj, Iterable):
+        return do_raise(TypeError(f"object must be iterable, got '{type(obj).__name__}' instead"))
+
+    for element in obj:
+        if element:
+            return True
+    return False
+
+
 _default_lookaside_map: dict[Callable, Callable] = {
     is_jitting: _is_jitting_lookaside,
+    any: _any_lookaside,
     bool: _bool_lookaside,
     globals: _globals_lookaside,
     locals: _locals_lookaside,

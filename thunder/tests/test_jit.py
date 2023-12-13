@@ -986,6 +986,31 @@ def test_unhashable_lookaside():
     jit(fn)()
 
 
+def test_any_lookaside():
+    def foo(a):
+        return any(a)
+
+    jfoo = jit(foo)
+
+    assert jfoo([1, 2, 3]) == foo([1, 2, 3])
+
+    with pytest.raises(TypeError):
+        jfoo(True)
+
+    class myitercontainer:
+        def __init__(self, val):
+            self.list = [val] * 3
+
+        def __iter__(self):
+            return self.list.__iter__()
+
+    o = myitercontainer(True)
+    assert jfoo(o) == foo(o)
+
+    o = myitercontainer(False)
+    assert jfoo(o) == foo(o)
+
+
 def test_generator():
     def my_generator_1():
         yield from range(5)
