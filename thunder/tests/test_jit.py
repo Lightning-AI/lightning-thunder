@@ -2116,6 +2116,29 @@ def test_phantom_nonlocal():
     assert result == 8
     assert y == 5
 
+    # test nested
+
+    def foo(x):
+        x.append("foo 1")
+
+        def fn():
+            x.append("outer 1")
+
+            def fn():
+                x.append("inner 1")
+                return x
+
+            x.append("outer 2")
+            return fn
+
+        x.append("foo 2")
+        return fn()()
+
+    l = []
+    assert foo([]) == phantom_jit(foo)(l)
+    # check that the input is not changed
+    assert isinstance(l, list) and not l
+
 
 # TODO This should probably throw an error that we attempted to modify the non-copyable operator module
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1745")
