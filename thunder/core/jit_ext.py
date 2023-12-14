@@ -8,12 +8,14 @@ from functools import partial, wraps
 import copy
 import contextvars
 import warnings
+from enum import Enum, auto
 
 import torch
 from thunder.core.proxies import proxy, Proxy, TensorProxy
-from thunder.core.trace import set_tracectx, reset_tracectx
+from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
 from thunder.core.jit import (
     jit,
+    _jit,
     default_callbacks,
     JIT_CALLBACKS,
     default_opcode_interpreter,
@@ -21,9 +23,13 @@ from thunder.core.jit import (
     default_lookaside,
     JITFrame,
     do_raise,
+    get_jitcompilectx,
+    JitCompileCtx,
 )
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
-from thunder.core.codeutils import get_siginfo
+from thunder.core.codeutils import get_siginfo, SigInfo
+import thunder.core.prims as prims
+from thunder.common import transform_for_execution
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -59,6 +65,13 @@ _atomic_copy_types = {
 for typ in _atomic_copy_types:
     _relaxed_deepcopy_dispatch[typ] = copy._deepcopy_atomic
 
+
+# Returns (None, None) or (copier, dont_memoize), where if dont_memoize is true then the copy
+#   will not be recorded in the relaxed_deepcopies memo dictionary
+def relaxed_deepcopy_dispatch(cls: type, /) -> None | Callable:
+    return _relaxed_deepcopy_dispatch.get(cls, None)
+
+
 _immutable_types = {
     type(None),
     type(Ellipsis),
@@ -80,13 +93,23 @@ _immutable_types = {
     slice,
 }
 
+
+def is_immutable(val: Any, /) -> bool:
+    return type(val) in _immutable_types
+
+
 _uncopyable_types = {
     ModuleType,
 }
 
 # Modifies the deepcopy() function defined here:
 #   https://github.com/python/cpython/blob/3.10/Lib/copy.py#L128
-#   to be "relaxed" and not fail if any part of the object cannot be deepcopied
+#   to...
+#   ... be "relaxed" and not fail if any part of the object cannot be deepcopied
+#   ... have an extended dispatch that can optionally skip memoization
+#       (useful for associating multiple proxies with a single input tensor
+# NOTE If an object skips memoization then it will have a different proxy for everytime it appears
+#   in the input
 
 from copyreg import dispatch_table
 
@@ -102,7 +125,14 @@ def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
 
     cls = type(x)
 
-    copier = _relaxed_deepcopy_dispatch.get(cls)
+    ctx = get_phantomctx()
+    copier, dont_memoize = ctx.deepcopy_lookaside.get(cls, (None, None))
+
+    # NOTE In this case copier is a Callable
+    if dont_memoize:
+        return copier(x, memo)
+
+    copier = relaxed_deepcopy_dispatch(cls)
     rv = None
     if copier is not None:
         y = copier(x, memo)
@@ -131,12 +161,59 @@ def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
         else:
             y = copy._reconstruct(x, memo, *rv, deepcopy=relaxed_deepcopy)
 
-    # If is its own copy, don't memoize.
+    # Skips memoization if x is its own copy (which implies y is x)
     if y is not x:
         memo[d] = y
-        copy._keep_alive(x, memo)  # Make sure x lives at least as long as d
+        # Make sure x lives at least as long as d
+        copy._keep_alive(x, memo)
 
     return y
+
+
+class DeepCopyContext:
+    def __init__(self):
+        # TODO Make it nicer to set /get the history
+        self.id_to_histories_map: dict[int, list] = {}
+
+
+_deepcopyctx = contextvars.ContextVar("deepcopyctx")
+
+
+def set_deepcopyctx(ctx) -> Any:
+    return _deepcopyctx.set(ctx)
+
+
+def get_deepcopyctx() -> DeepCopyContext:
+    return _deepcopyctx.get()
+
+
+def reset_deepcopyctx(token: Any) -> None:
+    _deepcopyctx.reset(token)
+
+
+def _wrapper_lookaside(fn, /, *args, **kwargs) -> None | Callable:
+    if fn is _tensor_copier:
+        t, *_ = args
+        ctx: DeepCopyContext = get_deepcopyctx()
+        history = ctx.id_to_histories_map[id(t)]
+        return partial(_tensor_copier, history=history)
+
+    return default_lookaside(fn, *args, **kwargs)
+
+
+def relaxed_deepcopy_wrapper(x: Any, /, memo: dict, history) -> Any:
+    # Short-circuits if not interpreting thunder
+    # TODO Review whether we should support this at all
+    if not interpreting_thunder():
+        return relaxed_deepcopy(x, memo=memo)
+
+    try:
+        ctx = DeepCopyContext()
+        tok = set_deepcopyctx(ctx)
+        ctx.id_to_histories_map[id(x)] = history
+        return jit(relaxed_deepcopy, fn_lookaside=_wrapper_lookaside)(x, memo=memo)
+    finally:
+        reset_deepcopyctx(tok)
 
 
 def _deepcopy_list(x, memo, deepcopy=relaxed_deepcopy):
@@ -207,10 +284,7 @@ _relaxed_deepcopy_dispatch[MethodType] = _deepcopy_method
 # TODO Probably don't want to track what's stored or proxied based on name alone
 # TODO The current stored/proxify relationship is far from correct
 class PhantomInterpreterRuntimeCtx:
-    def __init__(self):
-        # Tracks stores to the localsplus list of JITFrame objects
-        self.localsplus_stores: set = set()
-
+    def __init__(self, *, deepcopy_lookaside: dict):
         # Maps from ids to input objects
         # NOTE This extends the lifetime of all inputs to be at least the lifetime of the interpreter,
         #   this prevents Python from reusing the id of one of the inputs, which is how we track them
@@ -218,9 +292,12 @@ class PhantomInterpreterRuntimeCtx:
         #   lifetime of the interpreter, too
         self.input_map: dict[int, Any] = {}
 
-        # Maps from the ids of input objects to their corresponding proxy objects
+        # For input objects that map to have a proxy based on id,
+        #   this maps from their ids to their unique proxy objects
         # NOTE This dict is compatible with copy.deepcopy()'s memo dict
-        self.input_proxy_map: dict[int, Any] = {}
+        # NOTE Not all inputs map to proxies by id
+        #   tensor inputs, for example, map to proxies based on how they're unpacked
+        self.input_id_to_proxy_map: dict[int, Any] = {}
 
         # ids of all proxies
         self.proxy_id_set: set[int] = set()
@@ -252,12 +329,13 @@ class PhantomInterpreterRuntimeCtx:
         # and the id is not reused.
         self.nonlocals_map: dict[int, CellType] = {}
 
+        # Overrides copying behavior
+        # Maps from cls: type -> (copier: Callable, dont_memoize: bool) tuples
+        self.deepcopy_lookaside = deepcopy_lookaside
+
     @property
     def inputs(self) -> ValuesView[tuple[str, Any]]:
         return self.input_map.values()
-
-    def is_immutable(self, val: Any) -> bool:
-        return type(val) in _immutable_types
 
     # Returns the object's proxy (itself, if it is a proxy)
     # NOTE This must be called for each "unique deriviation" or "unique history" of each object
@@ -267,7 +345,7 @@ class PhantomInterpreterRuntimeCtx:
     #   a common proxy for each is dependent on how it's extended -- by default
     #   the same proxy is returned for each derivation, but this behavior can
     #   be overridden
-    def proxify(self, name: str, val: Any, /) -> Any:
+    def proxify(self, name: str, val: Any, /, *, history=None) -> Any:
         val_id = id(val)
 
         # Checks if val itself is a proxy
@@ -275,7 +353,7 @@ class PhantomInterpreterRuntimeCtx:
             return val
 
         # Checks to see if val is associated with an existing proxy
-        p: None | Any = self.input_proxy_map.get(val_id, None)
+        p: None | Any = self.input_id_to_proxy_map.get(val_id, None)
         if p is not None:
             return p
 
@@ -283,13 +361,13 @@ class PhantomInterpreterRuntimeCtx:
         self.input_map[val_id] = (name, val)
 
         # Immutable objects are there own proxies
-        if self.is_immutable(val):
+        if is_immutable(val):
             return val
 
         # Copies the input_proxy_map because relaxed_deepcopy might mutate it but then fail, and
         #   if the deepcopy fails then we don't want to modify the input_proxy_map
-        memo = copy.copy(self.input_proxy_map)
-        p = relaxed_deepcopy(val, memo=memo)
+        memo = copy.copy(self.input_id_to_proxy_map)
+        p = relaxed_deepcopy_wrapper(val, memo=memo, history=history)
 
         # Updates the proxy id set
         self.proxy_id_set.add(id(p))
@@ -304,7 +382,7 @@ class PhantomInterpreterRuntimeCtx:
         #   extend until the deepcopy finishes
         memo_id = id(memo)
         memo.pop(memo_id, None)
-        self.input_proxy_map = memo
+        self.input_id_to_proxy_map = memo
         # Is this OKish? (it duplicates things because it isn't only the new.)
         # or is self.proxy_id_set = {id(v) for id in memo.values()} ?
         self.proxy_id_set.update(id(v) for v in memo.values())
@@ -476,37 +554,37 @@ def phantom_jit(
     *,
     opcode_interpreter: Callable = default_opcode_interpreter,
     fn_lookaside: Callable = default_lookaside,
+    deepcopy_lookaside: dict = {},
     callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks,
-    ctx_cls: type = PhantomInterpreterRuntimeCtx,
 ) -> Callable:
     jfn = jit(fn, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks)
 
     @wraps(jfn)
     def fn(*args, **kwargs) -> Callable:
         try:
-            ctx: PhantomInterpreterRuntimeCtx = ctx_cls()
+            ctx: PhantomInterpreterRuntimeCtx = PhantomInterpreterRuntimeCtx(deepcopy_lookaside=deepcopy_lookaside)
             tok: Any = set_phantomctx(ctx)
 
             si = get_siginfo(fn, args, kwargs)
 
             pargs = []
             for name, x in si.args:
-                p = ctx.proxify(name, x)
+                p = ctx.proxify(name, x, history=(hsig(name),))
                 pargs.append(p)
 
             if si.varargs is not None:
                 varargs_name, x = si.varargs
-                pvarargs = ctx.proxify(varargs_name, x)
+                pvarargs = ctx.proxify(varargs_name, x, history=(hsig(varargs_name),))
                 pargs.extend(pvarargs)
 
             pkwargs = {}
             for name, x in si.kwargs.items():
-                p = ctx.proxify(name, x)
+                p = ctx.proxify(name, x, history=(hsig(name),))
                 pkwargs[name] = p
 
             if si.varkwargs is not None:
                 varkwargs_name, x = si.varkwargs
-                pvarkwargs = ctx.proxify(varkwargs_name, x)
+                pvarkwargs = ctx.proxify(varkwargs_name, x, (hsig(varkwargs_name),))
                 pkwargs.update(pvarkwargs)
 
             # Acquires the random state, which may be implicitly modified from calls to Python's
@@ -537,7 +615,7 @@ def phantom_jit(
 #
 # thunder mode (no side effects + creates a thunder program to execute)
 #
-# WIP. This currently is just a scaffolding to report compilation statistics.
+
 
 import time
 
@@ -545,48 +623,121 @@ from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx
 
+#
+# Thunder lookasides
+#
+
 # NOTE Calls into symbols MUST use this lookaside -- we don't want to jit into them
+# TODO Add all thunder operations
 _thunder_lookaside_map = {
     TensorProxy.__add__: TensorProxy.__add__,
 }
 
-_thunder_lookaside_map = _default_lookaside_map | _thunder_lookaside_map
-
 
 def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
-    return _thunder_lookaside_map.get(fn, None)
+    thunder_lookaside: None | Callable = _thunder_lookaside_map.get(fn, None)
+
+    if thunder_lookaside is not None:
+        return thunder_lookaside
+
+    return default_lookaside(fn, *args, **kwargs)
 
 
-class ThunderInterpreterRuntimeCtx(PhantomInterpreterRuntimeCtx):
-    def __init__(self):
-        super().__init__()
-        self._stored: dict[str, Any] = {}
-        self._proxies: dict[str, Any] = {}
+#
+# Thunder interpreter proxies
+#
 
-    @property
-    def stored(self) -> dict[str, Any]:
-        return self._stored
 
-    @property
-    def proxies(self) -> dict[str, Any]:
-        return self._proxies
+# History-related objects and helpers
+# TODO Extend with additional ways of acquiring tensors
+class UNPACK_ACTION(Enum):
+    FROM_SIGNATURE = auto()
 
-    def record_stored(self, name: str, val: Any) -> None:
-        self._stored[name] = val
 
-    # TODO Extend proxies beyond torch tensors
-    # TODO Some objects are not copyable, like ModuleTypes, but we still
-    #   want to prevent mutation to them -- for now we just don't proxy them
-    # TODO Call the phantom interpreter's proxy method on non-thunder proxies
-    def proxify(self, name: str, x: Any) -> Any:
-        if isinstance(x, torch.Tensor):
-            return proxy(x)
+def hsig(name: str):
+    return (UNPACK_ACTION.FROM_SIGNATURE, name)
 
-        return x
+
+#
+# Thunder entrypoints
+#
+from thunder.core.proxies import proxy
+
+
+# NOTE Historical names are only derived from the signature parameters directly
+# TODO We could think about renaming tensors without names from parameters based on how they're
+#   named in the computation
+def get_name(history) -> None | str:
+    last = history[-1]
+    ua, *_ = last
+
+    if ua is UNPACK_ACTION.FROM_SIGNATURE:
+        ua, name = last
+        return name
+
+    return None
+
+
+# TODO Handle number proxies, too
+def _tensor_copier(t: torch.Tensor, /, memo, *, history):
+    assert isinstance(history, tuple)
+
+    name: None | str = get_name(history)
+
+    p: Proxy = proxy(t, name=name)
+
+    ctx = get_thunder_interpreterctx()
+    ctx.input_proxies_map[id(p)] = (p, history)
+
+    return p
+
+
+# cls -> (copier, dont_memoize)
+_thunder_deepcopy_lookaside_map = {
+    torch.Tensor: (_tensor_copier, True),
+}
+
+
+class ThunderInterpreterCtx:
+    def __init__(self, fn: Callable, *args, **kwargs):
+        self.fn = fn
+
+        self.prologue = TraceCtx(fn)
+        self.prologue.args = args
+        self.prologue.kwargs = kwargs
+
+        self.computation = TraceCtx()
+
+        # TODO Make updating this nicer
+        self.input_proxies_map: dict[int, Proxy] = {}
+
+
+_thunder_interpreterctx = contextvars.ContextVar("thunder_interpreterctx")
+
+
+def set_thunder_interpreterctx(ctx) -> Any:
+    return _thunder_interpreterctx.set(ctx)
+
+
+def get_thunder_interpreterctx() -> ThunderInterpreterCtx:
+    return _thunder_interpreterctx.get()
+
+
+def reset_thunder_interpreterctx(token: Any) -> None:
+    _thunder_interpreterctx.reset(token)
+
+
+def interpreting_thunder() -> bool:
+    try:
+        get_thunder_interpreterctx()
+        return True
+    except:
+        return False
 
 
 def thunder_jit(fn: Callable, *args, **kwargs) -> Callable:
-    return phantom_jit(fn, ctx_cls=ThunderInterpreterRuntimeCtx, fn_lookaside=thunder_lookaside)
+    result = phantom_jit(fn, fn_lookaside=thunder_lookaside, deepcopy_lookaside=_thunder_deepcopy_lookaside_map)
+    return result
 
 
 # TODO Add support for transforms
@@ -603,33 +754,90 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         # TODO Caching goes here
 
         # Currently executes the program eagerly as a placeholder
-        computation_trace = TraceCtx()
+        interpreter_ctx = ThunderInterpreterCtx(cd.fn, *args, **kwargs)
         lang = get_default_langctx()
         try:
+            interpreter_ctx_tok = set_thunder_interpreterctx(interpreter_ctx)
             lang_tok = set_langctx(lang)
-            trace_tok = set_tracectx(computation_trace)
+            trace_tok = set_tracectx(interpreter_ctx.computation)
             cs.last_trace_tracing_start = time.time_ns()
             result = jfn(*args, **kwargs)
+            prims.python_return(result)
             cs.last_trace_tracing_stop = time.time_ns()
         finally:
+            reset_thunder_interpreterctx(interpreter_ctx_tok)
             reset_tracectx(trace_tok)
             reset_langctx(lang_tok)
 
-        # TODO Apply transforms
+        # Constructs the prologue
+        #   The prologue ...
+        #   - Accepts the original function's parameters
+        #   - Acquires all inputs to the computation, including closures and globals
+        #   - Unpacks all inputs
+        #   - Validates that the input is valid for the computational trace it's associated with
+        #   - Returns the flattened inputs
+        # TODO Validate the inputs in the prologue, currently it just unpacks
+        prologue_trc = interpreter_ctx.prologue
+        computation_trc = interpreter_ctx.computation
+        prologue_rvals: list = []
+        with tracectx(prologue_trc):
+            for p, history in interpreter_ctx.input_proxies_map.values():
+                prims.unpack_trivial(p)
+                prologue_rvals.append(p)
+
+            # Returns all inputs
+            # TODO We should review the computation trace and only unpack and return the inputs that
+            #   actually get used in the computation
+
+            prims.python_return(tuple(prologue_rvals))
+
+        # Constructs the computation trace's signature
+        si = SigInfo("computation")
+        si.args = list((p.name, None) for p in prologue_rvals)
+        computation_trc._siginfo = si
+        computation_trc.args = prologue_rvals
+
+        # Unpacks inputs
+        # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
+        #   almost certainly a more elegant way to do this
+        with tracectx(computation_trc):
+            for p in prologue_rvals:
+                prims.unpack_trivial(p)
+
+        bsyms = computation_trc.bound_symbols
+        computation_trc.bound_symbols = bsyms[-len(prologue_rvals) :] + bsyms[: -len(prologue_rvals)]
+
+        # TODO Apply transforms like grad
+
+        extraces = transform_for_execution(
+            computation_trc,
+            executors_list=cd.executors_list,
+        )
+
+        # TODO Apply post-optimiation transforms
+
+        extrace = extraces[-1]
+
+        pro = prologue_trc.python_callable()
+        c = extrace.python_callable()
 
         # Executes the traced program
         cs.last_trace_host_execution_start = time.time_ns()
-        # TODO Execute the traced program (currently it's executed eagerly)
+        computation_result = c(*pro(*args, **kwargs))
         cs.last_trace_host_execution_stop = time.time_ns()
 
         # TODO Update cache
 
         # Updates metadata
+        # TODO What should the last_traces be in this case?
+        cs.last_traces = extraces
+        # TODO What should the last executed be in this case?
+        cs.last_executed = c
         cs.last_interpreted_instructions = jfn._last_interpreted_instructions
         cs.last_interpreted_history = jfn._last_interpreted_history
 
         cs.last_trace_host_stop = time.time_ns()
-        return result
+        return computation_result
 
     fn_._lc_cd = cd
     fn_._lc_cs = cs
@@ -653,7 +861,7 @@ def litjit(
         disable_torch_autograd_support=True,
         use_rematerialization=False,
         only_execute_prims=False,
-        disable_preprocessing=False,
+        disable_preprocessing=True,
     )
 
     cs = CompileStats()

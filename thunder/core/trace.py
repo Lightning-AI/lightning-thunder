@@ -89,10 +89,11 @@ class TraceCtx:
     # Methods related to the trace's signature
     #
     def siginfo(self) -> codeutils.SigInfo:
-        assert self.fn is not None, "Can't provide siginfo for a trace without a function signature"
-        if self._siginfo is None:
-            self._siginfo = codeutils.get_siginfo(self.fn, self.args, self.kwargs)
+        if self._siginfo is not None:
+            return self._siginfo
 
+        assert self.fn is not None, "Can't provide siginfo for a trace without a function signature"
+        self._siginfo = codeutils.get_siginfo(self.fn, self.args, self.kwargs)
         return self._siginfo
 
     #
@@ -314,7 +315,7 @@ class TraceCtx:
             import_ctx, call_ctx, object_ctx = self._gather_ctxs()
 
             # ... and from the signature
-            if self.fn is None:
+            if self._siginfo is None and self.fn is None:
                 signature_str = f"# No signature available"
             else:
                 si = self.siginfo()

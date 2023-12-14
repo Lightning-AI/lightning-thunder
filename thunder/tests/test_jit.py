@@ -2321,7 +2321,7 @@ def test_phantom_seed():
 
 
 @pytest.mark.skipif(sys.version_info > (3, 11), reason="Only supports Python 3.10 at the moment")
-def test_interpreter_stats():
+def test_thunder_interpreter_stats():
     def foo(a, b):
         return a + b
 
@@ -2342,6 +2342,18 @@ def test_interpreter_stats():
                 break
 
     assert found
+
+
+@pytest.mark.skipif(sys.version_info > (3, 11), reason="Only supports Python 3.10 at the moment")
+def test_thunder_simple():
+    def foo(a, b):
+        return a + b
+
+    a = torch.randn((2, 2))
+
+    ljfoo = litjit(foo)
+
+    assert_close(ljfoo(a, 5), foo(a, 5))
 
 
 #
