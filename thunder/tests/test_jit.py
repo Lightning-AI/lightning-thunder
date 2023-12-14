@@ -2285,7 +2285,6 @@ def test_phantom_randint():
 
 
 # Tests that the random state is preserved even when directly setting the random seed
-@pytest.mark.skipif(sys.version_info > (3, 11), reason="https://github.com/Lightning-AI/lightning-thunder/issues/1762")
 def test_phantom_seed():
     import random
 
@@ -2320,7 +2319,6 @@ def test_phantom_seed():
 #
 
 
-@pytest.mark.skipif(sys.version_info > (3, 11), reason="Only supports Python 3.10 at the moment")
 def test_thunder_interpreter_stats():
     def foo(a, b):
         return a + b
@@ -2344,7 +2342,6 @@ def test_thunder_interpreter_stats():
     assert found
 
 
-@pytest.mark.skipif(sys.version_info > (3, 11), reason="Only supports Python 3.10 at the moment")
 def test_thunder_simple():
     def foo(a, b):
         return a + b

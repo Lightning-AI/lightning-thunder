@@ -2111,7 +2111,7 @@ def _pop_jump_backward_if_false_handler(
         return cnd
 
     if not cnd:
-        return inst_ptr - inst.arg - 1
+        return inst_ptr - inst.arg + 1
 
     return None
 
@@ -2124,7 +2124,7 @@ def _pop_jump_backward_if_none_handler(inst: dis.Instruction, /, stack: list, in
     tos = stack.pop()
 
     if tos is None:
-        return inst_ptr - inst.arg - 1
+        return inst_ptr - inst.arg + 1
 
     return None
 
@@ -2139,7 +2139,7 @@ def _pop_jump_backward_if_not_none_handler(
     tos = stack.pop()
 
     if tos is not None:
-        return inst_ptr - inst.arg - 1
+        return inst_ptr - inst.arg + 1
 
     return None
 
@@ -2158,7 +2158,7 @@ def _pop_jump_backward_if_true_handler(
         return cnd
 
     if cnd:
-        return inst_ptr - inst.arg - 1
+        return inst_ptr - inst.arg + 1
 
     return None
 
@@ -3069,7 +3069,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             # those in locals_dict will use that index but will
             # see MAKE_CELL called for them for the conversion
             if n not in locals_dict:
-                localsplus.append(CellType())
+                localsplus.append(Py_NULL())
         if code.co_freevars:
             assert len(code.co_freevars) == len(fn.__closure__)
             localsplus.extend(fn.__closure__)
