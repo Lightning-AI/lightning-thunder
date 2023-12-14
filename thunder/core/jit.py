@@ -738,7 +738,7 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 # To register a callback, map from this enum to a callable. The args and kwargs for each
 #   event may be different, as documented below.
 class JIT_CALLBACKS(enum.Enum):
-    # Called when deleting a value from a glocals dict in DELTETE_GLOBAL
+    # Called when deleting a value from a glocals dict in DELETE_GLOBAL
     #   callback(globals:dict, name: str, /) -> Any
     #   If this callback is executed, the deletion does not occur as usual
     DELETE_GLOBAL_CALLBACK = enum.auto()
@@ -752,6 +752,38 @@ class JIT_CALLBACKS(enum.Enum):
     #   callback(globals: dict, name: str, val: Any, /) -> Any
     #   The value returned from the callback is stored instead
     STORE_GLOBAL_CALLBACK = enum.auto()
+
+    # Called when deleting a value from cell (freevar/cellvar) in DELETE_DEREF
+    #   callback(cell: CellType, /) -> None
+    #   If this callback is executed, the deletion does not occur as usual
+    DELETE_DEREF_CALLBACK = enum.auto()
+
+    # Called when loading a cell (freevar/cellvar) in LOAD_CLOSURE
+    #   The value returned from the callback is loaded
+    #   callback(cell: CellType, /) -> CellType
+    LOAD_CLOSURE_CALLBACK = enum.auto()
+
+    # Called when loading a value from a cell (freevar/cellvar) in LOAD_DEREF
+    #   The value returned from the callback is loaded
+    #   callback(cell: CellType, /) -> Any
+    LOAD_DEREF_CALLBACK = enum.auto()
+
+    # Called when storing a value to a cell (freevar/cellvar) in STORE_DEREF
+    # NOTE: No value is stored to the original cell if the callback
+    #       is called, the callback would has to change it if desired
+    #       callback(cell: CellType, value: Any, /) -> None
+    STORE_DEREF_CALLBACK = enum.auto()
+
+    # Called when starting to execute a non-opaque function after the
+    # jit frame has been created
+    #       callback(fn: Callable, frame: JITFrame, /) -> None
+    FUNCTION_START_CALLBACK = enum.auto()
+
+    # Called when creating a new cell with MAKE_CELL
+    #       callback(cell: CellType, /) -> CellType
+    # The cell is passed to the callback and the cell returned from the
+    # callback is stored to the slot.
+    MAKE_CELL_CALLBACK = enum.auto()
 
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
@@ -1360,7 +1392,12 @@ def _delete_deref_handler(
 
     assert i >= 0 and i < len(frame.localsplus)
 
-    del frame.localsplus[i].cell_contents
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.DELETE_DEREF_CALLBACK)
+    if cb is not None:
+        cb(frame.localsplus[i], co_name)
+    else:
+        del frame.localsplus[i].cell_contents
 
 
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
@@ -1771,6 +1808,11 @@ def _load_closure_handler(inst: dis.Instruction, /, stack: list, co: CodeType, f
 
     assert i >= 0 and i < len(frame.localsplus)
     val = frame.localsplus[i]
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_CLOSURE_CALLBACK)
+    if cb is not None:
+        val = cb(val)
     stack.append(val)
 
 
@@ -1802,7 +1844,13 @@ def _load_deref_handler(
         return do_raise(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
-    val = cell.cell_contents
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_DEREF_CALLBACK)
+    if cb is not None:
+        val = cb(cell)
+    else:
+        # normal operation
+        val = cell.cell_contents
 
     stack.append(val)
 
@@ -1918,10 +1966,17 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> N
 
     if isinstance(val, Py_NULL):
         # empty local variable slots (Py_NULL()) produce an empty cell
-        frame.localsplus[i] = CellType()
+        c = CellType()
     else:
         # wrap the current val into a cell
-        frame.localsplus[i] = CellType(val)
+        c = CellType(val)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.MAKE_CELL_CALLBACK)
+    if cb is not None:
+        c = cb(c)
+
+    frame.localsplus[i] = c
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1526
@@ -2541,7 +2596,14 @@ def _store_deref_handler(
     assert i >= 0 and i < len(frame.localsplus)
 
     tos = stack.pop()
-    frame.localsplus[i].cell_contents = tos
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.STORE_DEREF_CALLBACK)
+    if cb is not None:
+        cb(frame.localsplus[i], tos)
+    else:
+        # normal operation
+        frame.localsplus[i].cell_contents = tos
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_GLOBAL
@@ -3020,6 +3082,10 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     frame = JITFrame(
         code=code, localsplus=localsplus, globals=fn.__globals__, builtins=builtins_dict, qualname=fn.__qualname__
     )
+
+    cb: None | Callable = compilectx.callback(JIT_CALLBACKS.FUNCTION_START_CALLBACK)
+    if cb is not None:
+        cb(fn, frame)
 
     # Python 3.10 deals with creating the generator on call,
     # 3.11+ use the RETURN_GENERATOR opcode

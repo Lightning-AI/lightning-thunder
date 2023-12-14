@@ -1,6 +1,6 @@
 from typing import Any
 from collections.abc import ValuesView
-from types import ModuleType, CodeType, BuiltinFunctionType, FunctionType, MethodType
+from types import CellType, ModuleType, CodeType, BuiltinFunctionType, FunctionType, MethodType
 from collections.abc import Callable, Sequence
 import weakref
 import random
@@ -235,6 +235,23 @@ class PhantomInterpreterRuntimeCtx:
         # Records deleted values
         self.global_deletions: set[tuple[int, str]] = set()
 
+        # We get input nonlocals as elements of func.__closure__
+        self.nonlocals_inputs: dict[tuple[Callable, int], CellType] = {}
+
+        # We store here changes to nonlocals. Deletions are represented
+        # as clearing the cell.
+        # For cells from input_nonlocals, we expect to have a mapping from
+        # the input cell to another cell here.
+        # For nonlocals we created ourselves (and only those), we have
+        # key is value .
+        # There are two key ways that nonlocals can be outputs:
+        # - changing a value in an input cell,
+        # - being attached to a func.__closure__ for some func we hand out
+        # Cells identified by the id are either values in nonlocals_inputs
+        # or nonlocals_map itself, so it is guaranteed that they are alive
+        # and the id is not reused.
+        self.nonlocals_map: dict[int, CellType] = {}
+
     @property
     def inputs(self) -> ValuesView[tuple[str, Any]]:
         return self.input_map.values()
@@ -288,6 +305,9 @@ class PhantomInterpreterRuntimeCtx:
         memo_id = id(memo)
         memo.pop(memo_id, None)
         self.input_proxy_map = memo
+        # Is this OKish? (it duplicates things because it isn't only the new.)
+        # or is self.proxy_id_set = {id(v) for id in memo.values()} ?
+        self.proxy_id_set.update(id(v) for v in memo.values())
 
         return p
 
@@ -313,11 +333,23 @@ def reset_phantomctx(token) -> None:
 phantom_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
 
+def register_phantom_callback(key: JIT_CALLBACKS) -> Callable:
+    assert key not in phantom_callbacks
+
+    def deco(fn: Callable):
+        assert str(key).split(".")[-1].lower() in fn.__name__, f"{fn} as hook for {key}"
+        phantom_callbacks[key] = fn
+        return fn
+
+    return deco
+
+
 # TODO Handle deleting globals
 # TODO Use something like inspect.getmodule() and vars() to acquire the module of these globals, and then
 #   to acquire its globals in the future
 # Handles global loads and stores, essentially keeping an additional dictionary
 #   that tracks modifications to all the global dictionaries
+@register_phantom_callback(JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK)
 def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
     ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
 
@@ -339,10 +371,8 @@ def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
     return p
 
 
-phantom_callbacks[JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK] = _load_global_callback
-
-
 # TODO Consider if this should suppress the population of frame.globals[name] completely
+@register_phantom_callback(JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
 def _store_global_callback(globals_dict: dict, name: str, val: Any, /) -> Any:
     ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
 
@@ -358,9 +388,7 @@ def _store_global_callback(globals_dict: dict, name: str, val: Any, /) -> Any:
     return globals_dict[name]
 
 
-phantom_callbacks[JIT_CALLBACKS.STORE_GLOBAL_CALLBACK] = _store_global_callback
-
-
+@register_phantom_callback(JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK)
 def _delete_global_callback(globals_dict: dict, name: str, /) -> None:
     ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
 
@@ -372,7 +400,75 @@ def _delete_global_callback(globals_dict: dict, name: str, /) -> None:
     ctx.global_deletions.add(key)
 
 
-phantom_callbacks[JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK] = _delete_global_callback
+@register_phantom_callback(JIT_CALLBACKS.LOAD_DEREF_CALLBACK)
+def _load_deref_callback(cell: CellType, /) -> Any:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    assert id(cell) in ctx.nonlocals_map
+    return ctx.nonlocals_map[id(cell)].cell_contents
+
+
+# TODO: in principle this should also be done for LOAD_FAST if Python devs
+#       ever decide they want to merge the opcodes
+@register_phantom_callback(JIT_CALLBACKS.LOAD_CLOSURE_CALLBACK)
+def _load_closure_callback(cell: CellType, /) -> CellType:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    assert id(cell) in ctx.nonlocals_map
+    return ctx.nonlocals_map[id(cell)]
+
+
+@register_phantom_callback(JIT_CALLBACKS.STORE_DEREF_CALLBACK)
+def _store_deref_callback(cell: CellType, value: Any, /) -> None:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    assert id(cell) in ctx.nonlocals_map
+    ctx.nonlocals_map[id(cell)].cell_contents = value
+    return cell
+
+
+@register_phantom_callback(JIT_CALLBACKS.DELETE_DEREF_CALLBACK)
+def _delete_deref_callback(cell: CellType, /) -> None:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    assert id(cell) in ctx.nonlocals_map
+    del ctx.nonlocals_map[id(cell)].cell_contents
+
+
+@register_phantom_callback(JIT_CALLBACKS.MAKE_CELL_CALLBACK)
+def _make_cell_callback(cell: CellType, /) -> CellType:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx.nonlocals_map[id(cell)] = cell
+    return cell
+
+
+@register_phantom_callback(JIT_CALLBACKS.FUNCTION_START_CALLBACK)
+def _function_start_callback(fn: Callable, frame: JITFrame, /) -> None:
+    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    closure_rec = getattr(fn, "__closure__", None)
+    if closure_rec is None:
+        closure_rec = ()
+    for i, c in enumerate(closure_rec):
+        assert isinstance(c, CellType)
+        if id(c) not in ctx.nonlocals_map:
+            # unseen cell is an input
+            ctx.nonlocals_inputs[(fn, i)] = c
+            # copy cell
+            if c == CellType():
+                cc = CellType()
+            else:
+                val = c.cell_contents
+                p = ctx.proxify(fn.__code__.co_freevars[i], val)
+                cc = CellType(p)
+            ctx.nonlocals_map[id(c)] = cc
+        elif ctx.nonlocals_map[id(c)] is not c:
+            # it's an input that has been previously seen, but we see it again
+            ctx.nonlocals_inputs[(fn, i)] = c
+        else:
+            # it is a cell that we generated
+            pass
+
+    # strictly speaking, we would expect this to only happen in Python <= 3.10
+    for i, c in enumerate(frame.localsplus):
+        if isinstance(c, CellType) and frame.get_localsplus_name(i) in frame.code.co_cellvars:
+            # a cell that we create on call
+            ctx.nonlocals_map[id(c)] = c
 
 
 def phantom_jit(
@@ -406,7 +502,7 @@ def phantom_jit(
             pkwargs = {}
             for name, x in si.kwargs.items():
                 p = ctx.proxify(name, x)
-                pkwargs[name] = x
+                pkwargs[name] = p
 
             if si.varkwargs is not None:
                 varkwargs_name, x = si.varkwargs
@@ -463,6 +559,7 @@ def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
 
 class ThunderInterpreterRuntimeCtx(PhantomInterpreterRuntimeCtx):
     def __init__(self):
+        super().__init__()
         self._stored: dict[str, Any] = {}
         self._proxies: dict[str, Any] = {}
 

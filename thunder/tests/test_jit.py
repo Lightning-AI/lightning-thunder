@@ -2063,7 +2063,6 @@ def test_phantom_is():
     assert pfoo(l, l0) is False
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1744")
 def test_phantom_nonlocal():
     y = 5
 
