@@ -986,6 +986,44 @@ def test_unhashable_lookaside():
     jit(fn)()
 
 
+def test_len_lookaside():
+    class mycls:
+        def __init__(self, v=5):
+            self.v = v
+
+        def __len__(self):
+            return self.v
+
+    def foo(a):
+        return len(a)
+
+    jfoo = jit(foo)
+
+    o = mycls()
+    assert jfoo(o) == foo(o)
+    assert jfoo([1, 2, 3]) == foo([1, 2, 3])
+    assert jfoo("mystr") == foo("mystr")
+
+    o = mycls(-1)
+
+    with pytest.raises(RuntimeError):
+        jfoo(o)
+
+    o = mycls(0.42)
+
+    with pytest.raises(RuntimeError):
+        jfoo(o)
+
+    class myclswithoutlen:
+        def __init__(self):
+            pass
+
+    o = myclswithoutlen()
+
+    with pytest.raises(NotImplementedError):
+        jfoo(o)
+
+
 def test_any_lookaside():
     def foo(a):
         return any(a)

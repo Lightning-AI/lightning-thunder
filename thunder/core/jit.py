@@ -531,7 +531,6 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
             return dunder_bool(x)
 
         # Handles objects that do not define __bool__ but define __len__
-        # TODO Add a len() lookaside
         if hasattr(x, "__len__"):
             return len(x) != 0
 
@@ -699,6 +698,22 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return result
 
 
+# https://docs.python.org/3/library/functions.html?highlight=len#len
+# Calls https://docs.python.org/3/reference/datamodel.html?highlight=__len__#object.__len__
+def _len_lookaside(obj: Any):
+    if not hasattr(obj, "__len__"):
+        return do_raise(NotImplementedError(f"len(): __len__ not implemented for {type(obj).__name__}"))
+
+    result = getattr(obj, "__len__")()
+
+    if not isinstance(result, int) or result < 0:
+        return do_raise(
+            RuntimeError(f"len(): len should return an integer >= 0 but found {type(result).__name__}:{result}")
+        )
+
+    return result
+
+
 # https://docs.python.org/3/library/functions.html?highlight=any#any
 def _any_lookaside(obj: Iterable):
     if not isinstance(obj, Iterable):
@@ -715,6 +730,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     any: _any_lookaside,
     bool: _bool_lookaside,
     globals: _globals_lookaside,
+    len: _len_lookaside,
     locals: _locals_lookaside,
     super: _super_lookaside,
     getattr: _getattr_lookaside,
