@@ -699,7 +699,7 @@ def _cat_prim_grad(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
 register_grad(pids.CAT, _cat_prim_grad)
 
 
-def _reshape_prim_grad(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+def _reshape_prim_grad(a: TensorProxy, shape: tuple[int, ...]) -> TensorProxy:
     fwd = prims.reshape(a, shape)
 
     g = get_grad(fwd)

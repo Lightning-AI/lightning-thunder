@@ -808,7 +808,7 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
 
     # Short-circuits if no shape inference is needed
     if neg_one_idx is None:
-        return prims.reshape(a, shape)
+        return prims.reshape(a, tuple(shape))
 
     # Constructs the inferred shape, replacing -1 with the necessary length
     utils.check(a.numel % numel == 0, lambda: f"Trying to reshape, but can't infer how to reshape {a.shape} to {shape}")
@@ -817,7 +817,7 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
     shape[neg_one_idx] = remaining
     # NOTE alternatively a new tuple could be constructed as follows:
     # shape = shape[:neg_one_idx] + (remaining,) + shape[neg_one_idx + 1:]
-    return prims.reshape(a, shape)
+    return prims.reshape(a, tuple(shape))
 
 
 # https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.slice_in_dim.html

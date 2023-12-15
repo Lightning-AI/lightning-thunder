@@ -529,6 +529,28 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 
 @instantiate(
     dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_cse_issue1789(executor, device, _):
+    def func(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        a = x + x
+        v1 = a.view([6])
+        v2 = a.view([6])
+        return v1 + v2
+
+    x = make_tensor(2, 3, device=device, dtype=torch.float32)
+    compiled_func = thunder.compile(func)
+    compiled_func(x)
+
+    traces = thunder.last_traces(compiled_func)
+    extrace = traces[-1]
+    fusions = examine.get_fusion_symbols(extrace)
+    assert len(fusions) == 1
+    assert [subsymbol.sym.id for subsymbol in fusions[0].subsymbols].count(prims.PrimIDs.RESHAPE) == 1
+
+
+@instantiate(
+    dtypes=NOTHING,
     executors=(
         nvFuserExecutor,
         # NOTE torch executor does not have bookend optimization.

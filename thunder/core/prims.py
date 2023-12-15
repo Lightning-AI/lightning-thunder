@@ -1784,10 +1784,13 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: Sequence[int]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
+    # Requires `shape` to a tuple so CSE can hash it properly. `list` is not a
+    # hashable type. See #1789.
+    utils.check_type(shape, tuple)
 
     numel = reduce(operator.mul, shape, 1)
     utils.check(
