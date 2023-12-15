@@ -664,11 +664,11 @@ def _fused_sdp_choice(
         sdp_params = SDPAParams(fake_query, fake_key, fake_value, fake_attn_mask, dropout_p, is_causal)
 
         # The debug boolean flag will print warning messages when a specific sdpa kernel is unavailable.
-        if flash_sdp_enabled and can_use_flash_attention(sdp_params, True):
+        if flash_sdp_enabled() and can_use_flash_attention(sdp_params, True):
             return SpdaBackend.FLASH_ATTENTION
-        elif mem_efficient_sdp_enabled and can_use_efficient_attention(sdp_params, True):
+        elif mem_efficient_sdp_enabled() and can_use_efficient_attention(sdp_params, True):
             return SpdaBackend.MEMORY_EFFICIENT
-        elif math_sdp_enabled:
+        elif math_sdp_enabled():
             return SpdaBackend.MATH
         else:
             return SpdaBackend.ERROR
