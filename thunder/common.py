@@ -200,11 +200,11 @@ class CompileData:
         self.additional_return_names = None
         self.num_constant_args = 0
 
-        self.processed_function: Callable
+        self._processed_function: Callable
         if disable_preprocessing:
-            self.processed_function = fn
+            self._processed_function = fn
         else:
-            self.processed_function = preprocess(fn, is_module=self.is_module)
+            self._processed_function = preprocess(fn, is_module=self.is_module)
 
             # TODO Revisit assuming parameters are const
             if self.is_module:
@@ -212,6 +212,11 @@ class CompileData:
                 self.additional_param_values = self.processed_function._additional_param_values
                 self.additional_return_names = self.processed_function._additional_return_names
                 self.num_constant_args = len(self.additional_param_values)
+
+    # Disallow overwriting processed_function
+    @property
+    def processed_function(self):
+        return self._processed_function
 
 
 # Common UX functions
@@ -711,7 +716,7 @@ def _create_callable(
         # autograd.Function (which supports calling .backward() in PyTorch) is used when:
         #   1) The grad() transform is not applied
         #   2) At least one input tensor (or tensor proxy) requires grad
-        cd.processed_function = (
+        processed_function = (
             cd.processed_function
             if not is_autocast_enabled
             else autocast(cd.processed_function, dtype=autocast_thunder_dtype)
@@ -734,7 +739,7 @@ def _create_callable(
                 # torch.autograd.Function to support embedding of Thunder-compiled
                 # functions in torch's Autograd
                 cs.last_trace_host_execution_start = time.time_ns()
-                c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(cd.processed_function)
+                c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(processed_function)
                 result = c(*args, **kwargs)
                 cs.last_trace_host_execution_stop = time.time_ns()
                 cs.last_executed = c
@@ -756,7 +761,7 @@ def _create_callable(
         # Acquires the trace OR inlines the trace into an existing trace and
         #   returns the (proxied) result of the operation
         cs.last_trace_tracing_start = time.time_ns()
-        trc_or_result = trace(compile_data=cd)(cd.processed_function, *args, **kwargs)
+        trc_or_result = trace(compile_data=cd)(processed_function, *args, **kwargs)
         cs.last_trace_tracing_stop = time.time_ns()
 
         # Checks for inlined transforms

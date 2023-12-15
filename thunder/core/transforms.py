@@ -4319,17 +4319,35 @@ def maybe_downcast_to(dtype, args):
         return args
 
 
-@register_autocast_rule("matmul")
+@register_autocast_rule("torch.matmul")
 @register_autocast_rule(prims.PrimIDs.MATMUL)
 def autocast_matmul_rule(a, b, dtype):
     """Autocast rule for matmul"""
     return prims.matmul(*(maybe_downcast_to(dtype, (a, b))))
 
 
-@register_autocast_rule("linear")
+@register_autocast_rule("torch.nn.functional.linear")
 @register_autocast_rule(prims.PrimIDs.LINEAR)
 def autocast_linear_rule(a, w, bias, dtype):
     return prims.linear(*maybe_downcast_to(dtype, (a, w, bias)))
+
+
+@register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
+def autocast_scaled_dot_product_attention(
+    query,
+    key,
+    value,
+    attn_mask,
+    dropout_p,
+    is_causal,
+    *,
+    dtype,
+    scale,
+):
+    from thunder.torch import scaled_dot_product_attention
+
+    q, k, v = maybe_downcast_to(dtype, (query, key, value))
+    return scaled_dot_product_attention(q, k, v, attn_mask, dropout_p, is_causal, scale=scale)
 
 
 def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dtype):
@@ -4341,7 +4359,7 @@ def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dty
     Returns:
         Callable: The callable implementing the autocast rule for the symbol.
     """
-    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.name)
+    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.id)
     return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)
 
 

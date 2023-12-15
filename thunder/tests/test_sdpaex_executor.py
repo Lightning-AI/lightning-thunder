@@ -2,9 +2,9 @@ import pytest
 import torch
 
 import thunder
+from thunder.executors.sdpaex import sdpa_ex
 from thunder.tests.framework import requiresCUDA, run_snippet
 from thunder.tests.opinfos import get_opinfo
-from thunder.executors.sdpaex import sdpa_ex
 
 
 @pytest.mark.parametrize(
@@ -38,6 +38,39 @@ def test_sdpa(device: str, dtype: torch.dtype):
     assert any(
         bsym.sym.name == "sdpaex_grad_forward_scaled_dot_product_efficient_attention" for bsym in extrace.bound_symbols
     )
+
+
+@requiresCUDA
+def test_sdpa_autocast_flash():
+    batch = 1
+    seq_len = 2
+    num_heads = 14
+    dim_per_head = 8
+
+    q = torch.randn((batch, seq_len, num_heads, dim_per_head), device="cuda", dtype=torch.float32)
+    k = torch.randn((batch, seq_len, num_heads, dim_per_head), device="cuda", dtype=torch.float32)
+    v = torch.randn((batch, seq_len, num_heads, dim_per_head), device="cuda", dtype=torch.float32)
+
+    def fn(q, k, v):
+        return torch.nn.functional.scaled_dot_product_attention(q, k, v)
+
+    cfn = thunder.compile(fn, executors_list=[sdpa_ex])
+
+    # Verifies the result is close to PyTorch
+    for autocast_dtype in (torch.bfloat16, torch.float16):
+        with torch.cuda.amp.autocast(dtype=autocast_dtype):
+            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+                thunder_result = cfn(q, k, v)
+                torch_result = fn(q, k, v)
+                assert thunder_result.dtype == torch_result.dtype
+                torch.testing.assert_close(thunder_result, torch_result)
+
+                # Verifies sdpa was called
+                extrace = thunder.last_traces(cfn)[-1]
+                assert any(
+                    bsym.sym.name == "sdpafx_grad_forward_scaled_dot_product_efficient_attention"
+                    for bsym in extrace.bound_symbols
+                )
 
 
 def snippet_torch_consistency(op, torch_op, sample):
