@@ -124,14 +124,6 @@ def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
         return y
 
     cls = type(x)
-
-    ctx = get_phantomctx()
-    copier, dont_memoize = ctx.deepcopy_lookaside.get(cls, (None, None))
-
-    # NOTE In this case copier is a Callable
-    if dont_memoize:
-        return copier(x, memo)
-
     copier = relaxed_deepcopy_dispatch(cls)
     rv = None
     if copier is not None:
@@ -168,52 +160,6 @@ def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
         copy._keep_alive(x, memo)
 
     return y
-
-
-class DeepCopyContext:
-    def __init__(self):
-        # TODO Make it nicer to set /get the history
-        self.id_to_histories_map: dict[int, list] = {}
-
-
-_deepcopyctx = contextvars.ContextVar("deepcopyctx")
-
-
-def set_deepcopyctx(ctx) -> Any:
-    return _deepcopyctx.set(ctx)
-
-
-def get_deepcopyctx() -> DeepCopyContext:
-    return _deepcopyctx.get()
-
-
-def reset_deepcopyctx(token: Any) -> None:
-    _deepcopyctx.reset(token)
-
-
-def _wrapper_lookaside(fn, /, *args, **kwargs) -> None | Callable:
-    if fn is _tensor_copier:
-        t, *_ = args
-        ctx: DeepCopyContext = get_deepcopyctx()
-        history = ctx.id_to_histories_map[id(t)]
-        return partial(_tensor_copier, history=history)
-
-    return default_lookaside(fn, *args, **kwargs)
-
-
-def relaxed_deepcopy_wrapper(x: Any, /, memo: dict, history) -> Any:
-    # Short-circuits if not interpreting thunder
-    # TODO Review whether we should support this at all
-    if not interpreting_thunder():
-        return relaxed_deepcopy(x, memo=memo)
-
-    try:
-        ctx = DeepCopyContext()
-        tok = set_deepcopyctx(ctx)
-        ctx.id_to_histories_map[id(x)] = history
-        return jit(relaxed_deepcopy, fn_lookaside=_wrapper_lookaside)(x, memo=memo)
-    finally:
-        reset_deepcopyctx(tok)
 
 
 def _deepcopy_list(x, memo, deepcopy=relaxed_deepcopy):
@@ -279,12 +225,37 @@ _relaxed_deepcopy_dispatch[MethodType] = _deepcopy_method
 #
 
 
+class PhantomInterpreterCtxInterface:
+    def __init__(self):
+        # We get input nonlocals as elements of func.__closure__
+        self.nonlocals_inputs: dict[tuple[Callable, int], CellType] = {}
+
+        # We store here changes to nonlocals. Deletions are represented
+        # as clearing the cell.
+        # For cells from input_nonlocals, we expect to have a mapping from
+        # the input cell to another cell here.
+        # For nonlocals we created ourselves (and only those), we have
+        # key is value .
+        # There are two key ways that nonlocals can be outputs:
+        # - changing a value in an input cell,
+        # - being attached to a func.__closure__ for some func we hand out
+        # Cells identified by the id are either values in nonlocals_inputs
+        # or nonlocals_map itself, so it is guaranteed that they are alive
+        # and the id is not reused.
+        self.nonlocals_map: dict[int, CellType] = {}
+
+    def proxify(self, val: Any, /, *, name: None | str = None, **kwargs) -> Any:
+        raise NotImplementedError("Abstract method!")
+
+
 # TODO Track deleted to deal with duplicate names
 # TODO Make proxy construction extensible
 # TODO Probably don't want to track what's stored or proxied based on name alone
 # TODO The current stored/proxify relationship is far from correct
-class PhantomInterpreterRuntimeCtx:
-    def __init__(self, *, deepcopy_lookaside: dict):
+class PhantomInterpreterCtx(PhantomInterpreterCtxInterface):
+    def __init__(self):
+        super().__init__()
+
         # Maps from ids to input objects
         # NOTE This extends the lifetime of all inputs to be at least the lifetime of the interpreter,
         #   this prevents Python from reusing the id of one of the inputs, which is how we track them
@@ -312,27 +283,6 @@ class PhantomInterpreterRuntimeCtx:
         # Records deleted values
         self.global_deletions: set[tuple[int, str]] = set()
 
-        # We get input nonlocals as elements of func.__closure__
-        self.nonlocals_inputs: dict[tuple[Callable, int], CellType] = {}
-
-        # We store here changes to nonlocals. Deletions are represented
-        # as clearing the cell.
-        # For cells from input_nonlocals, we expect to have a mapping from
-        # the input cell to another cell here.
-        # For nonlocals we created ourselves (and only those), we have
-        # key is value .
-        # There are two key ways that nonlocals can be outputs:
-        # - changing a value in an input cell,
-        # - being attached to a func.__closure__ for some func we hand out
-        # Cells identified by the id are either values in nonlocals_inputs
-        # or nonlocals_map itself, so it is guaranteed that they are alive
-        # and the id is not reused.
-        self.nonlocals_map: dict[int, CellType] = {}
-
-        # Overrides copying behavior
-        # Maps from cls: type -> (copier: Callable, dont_memoize: bool) tuples
-        self.deepcopy_lookaside = deepcopy_lookaside
-
     @property
     def inputs(self) -> ValuesView[tuple[str, Any]]:
         return self.input_map.values()
@@ -345,7 +295,7 @@ class PhantomInterpreterRuntimeCtx:
     #   a common proxy for each is dependent on how it's extended -- by default
     #   the same proxy is returned for each derivation, but this behavior can
     #   be overridden
-    def proxify(self, name: str, val: Any, /, *, history=None) -> Any:
+    def proxify(self, val: Any, /, *, name: None | str = None, **kwargs) -> Any:
         val_id = id(val)
 
         # Checks if val itself is a proxy
@@ -367,7 +317,7 @@ class PhantomInterpreterRuntimeCtx:
         # Copies the input_proxy_map because relaxed_deepcopy might mutate it but then fail, and
         #   if the deepcopy fails then we don't want to modify the input_proxy_map
         memo = copy.copy(self.input_id_to_proxy_map)
-        p = relaxed_deepcopy_wrapper(val, memo=memo, history=history)
+        p = relaxed_deepcopy(val, memo=memo)
 
         # Updates the proxy id set
         self.proxy_id_set.add(id(p))
@@ -394,12 +344,12 @@ _phantomctx = contextvars.ContextVar("phantomctx")
 
 
 # Sets the phantom ctx
-def set_phantomctx(ctx: PhantomInterpreterRuntimeCtx) -> Any:
+def set_phantomctx(ctx: PhantomInterpreterCtx) -> Any:
     return _phantomctx.set(ctx)
 
 
 # Returns the current phantom ctx
-def get_phantomctx() -> PhantomInterpreterRuntimeCtx:
+def get_phantomctx() -> PhantomInterpreterCtx:
     return _phantomctx.get()
 
 
@@ -429,7 +379,7 @@ def register_phantom_callback(key: JIT_CALLBACKS) -> Callable:
 #   that tracks modifications to all the global dictionaries
 @register_phantom_callback(JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK)
 def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
 
     gid: int = id(globals_dict)
     key: tuple[int, str] = (gid, name)
@@ -443,7 +393,7 @@ def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
         return p
 
     val: Any = globals_dict[name]
-    p = ctx.proxify(name, val)
+    p = ctx.proxify(val, name=name)
     ctx.global_lookups[key] = p
 
     return p
@@ -452,7 +402,7 @@ def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
 # TODO Consider if this should suppress the population of frame.globals[name] completely
 @register_phantom_callback(JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
 def _store_global_callback(globals_dict: dict, name: str, val: Any, /) -> Any:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
 
     # Records the store
     gid: int = id(globals_dict)
@@ -468,7 +418,7 @@ def _store_global_callback(globals_dict: dict, name: str, val: Any, /) -> Any:
 
 @register_phantom_callback(JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK)
 def _delete_global_callback(globals_dict: dict, name: str, /) -> None:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
 
     assert name in globals_dict
 
@@ -480,7 +430,7 @@ def _delete_global_callback(globals_dict: dict, name: str, /) -> None:
 
 @register_phantom_callback(JIT_CALLBACKS.LOAD_DEREF_CALLBACK)
 def _load_deref_callback(cell: CellType, /) -> Any:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
     assert id(cell) in ctx.nonlocals_map
     return ctx.nonlocals_map[id(cell)].cell_contents
 
@@ -489,14 +439,14 @@ def _load_deref_callback(cell: CellType, /) -> Any:
 #       ever decide they want to merge the opcodes
 @register_phantom_callback(JIT_CALLBACKS.LOAD_CLOSURE_CALLBACK)
 def _load_closure_callback(cell: CellType, /) -> CellType:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
     assert id(cell) in ctx.nonlocals_map
     return ctx.nonlocals_map[id(cell)]
 
 
 @register_phantom_callback(JIT_CALLBACKS.STORE_DEREF_CALLBACK)
 def _store_deref_callback(cell: CellType, value: Any, /) -> None:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
     assert id(cell) in ctx.nonlocals_map
     ctx.nonlocals_map[id(cell)].cell_contents = value
     return cell
@@ -504,21 +454,21 @@ def _store_deref_callback(cell: CellType, value: Any, /) -> None:
 
 @register_phantom_callback(JIT_CALLBACKS.DELETE_DEREF_CALLBACK)
 def _delete_deref_callback(cell: CellType, /) -> None:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
     assert id(cell) in ctx.nonlocals_map
     del ctx.nonlocals_map[id(cell)].cell_contents
 
 
 @register_phantom_callback(JIT_CALLBACKS.MAKE_CELL_CALLBACK)
 def _make_cell_callback(cell: CellType, /) -> CellType:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
     ctx.nonlocals_map[id(cell)] = cell
     return cell
 
 
 @register_phantom_callback(JIT_CALLBACKS.FUNCTION_START_CALLBACK)
 def _function_start_callback(fn: Callable, frame: JITFrame, /) -> None:
-    ctx: PhantomInterpreterRuntimeCtx = get_phantomctx()
+    ctx: PhantomInterpreterCtx = get_phantomctx()
     closure_rec = getattr(fn, "__closure__", None)
     if closure_rec is None:
         closure_rec = ()
@@ -532,7 +482,7 @@ def _function_start_callback(fn: Callable, frame: JITFrame, /) -> None:
                 cc = CellType()
             else:
                 val = c.cell_contents
-                p = ctx.proxify(fn.__code__.co_freevars[i], val)
+                p = ctx.proxify(val, name=fn.__code__.co_freevars[i], history=())
                 cc = CellType(p)
             ctx.nonlocals_map[id(c)] = cc
         elif ctx.nonlocals_map[id(c)] is not c:
@@ -554,52 +504,53 @@ def phantom_jit(
     *,
     opcode_interpreter: Callable = default_opcode_interpreter,
     fn_lookaside: Callable = default_lookaside,
-    deepcopy_lookaside: dict = {},
+    ctx: None | PhantomInterpreterCtxInterface = None,
     callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks,
 ) -> Callable:
     jfn = jit(fn, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks)
 
     @wraps(jfn)
     def fn(*args, **kwargs) -> Callable:
+        # Acquires the random state, which may be implicitly modified from calls to Python's
+        #   random module
+        # TODO Consider extending this block to be extensible and handle other
+        #   commonly used implicit states
+        # TODO Also consider modeling Python's random module explicitly so that
+        #   the random state appears to be an input
+
+        initial_random_state = random.getstate()
         try:
-            ctx: PhantomInterpreterRuntimeCtx = PhantomInterpreterRuntimeCtx(deepcopy_lookaside=deepcopy_lookaside)
-            tok: Any = set_phantomctx(ctx)
+            ctx_ = PhantomInterpreterCtx() if ctx is None else ctx
+
+            tok: Any = set_phantomctx(ctx_)
 
             si = get_siginfo(fn, args, kwargs)
 
             pargs = []
             for name, x in si.args:
-                p = ctx.proxify(name, x, history=(hsig(name),))
+                p = ctx_.proxify(x, name=name, history=(hsig(name),))
                 pargs.append(p)
 
             if si.varargs is not None:
                 varargs_name, x = si.varargs
-                pvarargs = ctx.proxify(varargs_name, x, history=(hsig(varargs_name),))
+                pvarargs = ctx_.proxify(x, name=varargs_name, history=(hsig(varargs_name),))
                 pargs.extend(pvarargs)
 
             pkwargs = {}
             for name, x in si.kwargs.items():
-                p = ctx.proxify(name, x, history=(hsig(name),))
+                p = ctx_.proxify(x, name=name, history=(hsig(name),))
                 pkwargs[name] = p
 
             if si.varkwargs is not None:
                 varkwargs_name, x = si.varkwargs
-                pvarkwargs = ctx.proxify(varkwargs_name, x, (hsig(varkwargs_name),))
+                pvarkwargs = ctx_.proxify(x, name=varkwargs_name, history=(hsig(varkwargs_name),))
                 pkwargs.update(pvarkwargs)
-
-            # Acquires the random state, which may be implicitly modified from calls to Python's
-            #   random module
-            # TODO Consider extending this block to be extensible and handle other
-            #   commonly used implicit states
-            # TODO Also consider modeling Python's random module explicitly so that
-            #   the random state appears to be an input
-            random_state = random.getstate()
 
             try:
                 result = jfn(*pargs, **pkwargs)
             finally:
                 # Resets the random state
-                random.setstate(random_state)
+                random.setstate(initial_random_state)
 
             # Propagates metadata
             # TODO Find a better way to do this? -- why doesn't wraps propagate these?
@@ -679,73 +630,90 @@ def get_name(history) -> None | str:
 
 
 # TODO Handle number proxies, too
-def _tensor_copier(t: torch.Tensor, /, memo, *, history):
-    assert isinstance(history, tuple)
-
+def _tensor_copier(t: torch.Tensor, /, *, history: tuple):
     name: None | str = get_name(history)
-
     p: Proxy = proxy(t, name=name)
-
-    ctx = get_thunder_interpreterctx()
-    ctx.input_proxies_map[id(p)] = (p, history)
 
     return p
 
 
-# cls -> (copier, dont_memoize)
-_thunder_deepcopy_lookaside_map = {
-    torch.Tensor: (_tensor_copier, True),
-}
+class InterpreterInfo:
+    def __init__(self, obj: Any, proxy: Any, history: None | tuple):
+        self.obj = obj
+        self.proxy = proxy
+        self.history = history
 
 
-class ThunderInterpreterCtx:
+class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
     def __init__(self, fn: Callable, *args, **kwargs):
+        super().__init__()
+
         self.fn = fn
 
-        self.prologue = TraceCtx(fn)
-        self.prologue.args = args
-        self.prologue.kwargs = kwargs
+        self._prologue_trc: TraceCtx = TraceCtx(fn)
+        self._prologue_trc.args = args
+        self._prologue_trc.kwargs = kwargs
 
-        self.computation = TraceCtx()
+        self._computation_trc: TraceCtx = TraceCtx()
 
-        # TODO Make updating this nicer
-        self.input_proxies_map: dict[int, Proxy] = {}
+        self._input_ids_to_info_map: dict[int, InterpreterInfo] = {}
+        self._proxy_ids_to_info_map: dict[int, InterpreterInfo] = {}
+
+    @property
+    def prologue_trace(self) -> TraceCtx:
+        return self._prologue_trc
+
+    @property
+    def computation_trace(self) -> TraceCtx:
+        return self._computation_trc
+
+    @property
+    def inputs(self) -> ValuesView[InterpreterInfo]:
+        return self._input_ids_to_info_map.values()
+
+    def get_info(self, val) -> None | InterpreterInfo:
+        ii: None | InterpreterInfo = self._input_ids_to_info_map.get(id(val), None)
+
+        if ii:
+            return ii
+
+        ii = self._proxy_ids_to_info_map.get(id(val), None)
+        return ii
+
+    def proxify(self, val: Any, /, *, name: None | str = None, history: tuple, **kwargs) -> Any:
+        # Checks if we've already seen this object (currently not supported)
+        ii: None | InterpreterInfo = self.get_info(val)
+
+        # TODO Resolve multiple histories -- sometimes proxify is called on an object
+        #   which is actually not introduced through a novel mechanism
+        if ii is not None:
+            return ii.proxy
+
+        # Immutable objects are there own proxies
+        # TODO Update this
+        if is_immutable(val):
+            return val
+
+        p: Any
+        if isinstance(val, torch.Tensor):
+            p = _tensor_copier(val, history=history)
+            ii = InterpreterInfo(val, p, history)
+            self._input_ids_to_info_map[id(val)] = ii
+            self._proxy_ids_to_info_map[id(p)] = ii
+        else:
+            raise NotImplementedError(f"Can't proxy objects like {name=}, {val=}")
+
+        return p
 
 
-_thunder_interpreterctx = contextvars.ContextVar("thunder_interpreterctx")
-
-
-def set_thunder_interpreterctx(ctx) -> Any:
-    return _thunder_interpreterctx.set(ctx)
-
-
-def get_thunder_interpreterctx() -> ThunderInterpreterCtx:
-    return _thunder_interpreterctx.get()
-
-
-def reset_thunder_interpreterctx(token: Any) -> None:
-    _thunder_interpreterctx.reset(token)
-
-
-def interpreting_thunder() -> bool:
-    try:
-        get_thunder_interpreterctx()
-        return True
-    except:
-        return False
-
-
-def thunder_jit(fn: Callable, *args, **kwargs) -> Callable:
-    result = phantom_jit(fn, fn_lookaside=thunder_lookaside, deepcopy_lookaside=_thunder_deepcopy_lookaside_map)
-    return result
+def thunder_jit(fn: Callable, ctx: ThunderInterpreterCtx) -> Callable:
+    return phantom_jit(fn, fn_lookaside=thunder_lookaside, ctx=ctx)
 
 
 # TODO Add support for transforms
 # TODO Introduce caching
 # TODO Support other langctx
 def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
-    jfn = thunder_jit(cd.fn)
-
     @wraps(cd.fn)
     def fn_(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()
@@ -754,18 +722,18 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         # TODO Caching goes here
 
         # Currently executes the program eagerly as a placeholder
+        jfn: Callable
         interpreter_ctx = ThunderInterpreterCtx(cd.fn, *args, **kwargs)
         lang = get_default_langctx()
         try:
-            interpreter_ctx_tok = set_thunder_interpreterctx(interpreter_ctx)
             lang_tok = set_langctx(lang)
-            trace_tok = set_tracectx(interpreter_ctx.computation)
+            trace_tok = set_tracectx(interpreter_ctx.computation_trace)
             cs.last_trace_tracing_start = time.time_ns()
+            jfn = thunder_jit(cd.fn, ctx=interpreter_ctx)
             result = jfn(*args, **kwargs)
             prims.python_return(result)
             cs.last_trace_tracing_stop = time.time_ns()
         finally:
-            reset_thunder_interpreterctx(interpreter_ctx_tok)
             reset_tracectx(trace_tok)
             reset_langctx(lang_tok)
 
@@ -777,11 +745,13 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         #   - Validates that the input is valid for the computational trace it's associated with
         #   - Returns the flattened inputs
         # TODO Validate the inputs in the prologue, currently it just unpacks
-        prologue_trc = interpreter_ctx.prologue
-        computation_trc = interpreter_ctx.computation
+        prologue_trc = interpreter_ctx.prologue_trace
+        computation_trc = interpreter_ctx.computation_trace
         prologue_rvals: list = []
         with tracectx(prologue_trc):
-            for p, history in interpreter_ctx.input_proxies_map.values():
+            ii: InterpreterInfo
+            for ii in interpreter_ctx.inputs:
+                p = ii.proxy
                 prims.unpack_trivial(p)
                 prologue_rvals.append(p)
 

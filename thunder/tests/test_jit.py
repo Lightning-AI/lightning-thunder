@@ -2330,7 +2330,7 @@ def test_phantom_randint():
     import random
 
     def foo():
-        return random.randint(0, 5)
+        return random.randint(0, 99)
 
     pfoo = phantom_jit(foo)
 
@@ -2351,7 +2351,7 @@ def test_phantom_seed():
 
     def foo():
         random.seed(1234)
-        return random.randint(0, 5)
+        return random.randint(0, 99)
 
     pfoo = phantom_jit(foo)
 
@@ -2368,7 +2368,7 @@ def test_phantom_seed():
     random_result: int
     try:
         random.seed(1234)
-        random_result = random.randint(0, 5)
+        random_result = random.randint(0, 99)
     finally:
         random.setstate(s0)
 
