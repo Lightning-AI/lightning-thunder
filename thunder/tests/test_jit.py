@@ -2414,6 +2414,29 @@ def test_thunder_simple():
     assert_close(ljfoo(a, 5), foo(a, 5))
 
 
+def test_thunder_return_dict():
+    def foo(d):
+        return d
+
+    d = {}
+
+    ljfoo = litjit(foo)
+    assert ljfoo(d) == foo(d)
+
+
+def test_thunder_from_dict():
+    def foo(d):
+        return d[0] + d[1]
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {0: a, 1: b}
+
+    ljfoo = litjit(foo)
+    assert_close(ljfoo(d), foo(d))
+
+
 #
 # Network tests
 #

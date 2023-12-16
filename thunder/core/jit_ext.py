@@ -11,7 +11,7 @@ import warnings
 from enum import Enum, auto
 
 import torch
-from thunder.core.proxies import proxy, Proxy, TensorProxy
+from thunder.core.proxies import proxy, Proxy, TensorProxy, make_proxy_name, variableify, unvariableify
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
 from thunder.core.jit import (
     jit,
@@ -25,6 +25,7 @@ from thunder.core.jit import (
     do_raise,
     get_jitcompilectx,
     JitCompileCtx,
+    is_opaque,
 )
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.codeutils import get_siginfo, SigInfo
@@ -344,12 +345,12 @@ _phantomctx = contextvars.ContextVar("phantomctx")
 
 
 # Sets the phantom ctx
-def set_phantomctx(ctx: PhantomInterpreterCtx) -> Any:
+def set_phantomctx(ctx: PhantomInterpreterCtxInterface) -> Any:
     return _phantomctx.set(ctx)
 
 
 # Returns the current phantom ctx
-def get_phantomctx() -> PhantomInterpreterCtx:
+def get_phantomctx() -> PhantomInterpreterCtxInterface:
     return _phantomctx.get()
 
 
@@ -528,23 +529,23 @@ def phantom_jit(
 
             pargs = []
             for name, x in si.args:
-                p = ctx_.proxify(x, name=name, history=(hsig(name),))
+                p = hsig(x, name)
                 pargs.append(p)
 
             if si.varargs is not None:
                 varargs_name, x = si.varargs
-                pvarargs = ctx_.proxify(x, name=varargs_name, history=(hsig(varargs_name),))
-                pargs.extend(pvarargs)
+                p = hsig(x, varargs_name)
+                pargs.extend(p)
 
             pkwargs = {}
             for name, x in si.kwargs.items():
-                p = ctx_.proxify(x, name=name, history=(hsig(name),))
+                p = hsig(x, name)
                 pkwargs[name] = p
 
             if si.varkwargs is not None:
                 varkwargs_name, x = si.varkwargs
-                pvarkwargs = ctx_.proxify(x, name=varkwargs_name, history=(hsig(varkwargs_name),))
-                pkwargs.update(pvarkwargs)
+                p = hsig(x, varkwargs_name)
+                pkwargs.update(p)
 
             try:
                 result = jfn(*pargs, **pkwargs)
@@ -585,7 +586,50 @@ _thunder_lookaside_map = {
 }
 
 
+# TODO Currently this has to capture fn to get __self__, we should really revise the way
+#   lookasides are called from _jit so that self is passed as the first argument here
+def _thunder_getitem_lookaside(fn, *args):
+    assert len(args) == 2 or (len(args) == 1 and hasattr(fn, "__self__"))
+
+    slf: Any
+    key: Any
+    if len(args) == 2:
+        slf, key = args
+    else:
+        slf = fn.__self__
+        (key,) = args
+
+    result: Any = slf.__getitem__(key)
+
+    # TODO Probably want to make a simpler pattern for this
+    ctx: ThunderInterpreterCtx = get_phantomctx()
+    ii: None | InterpreterInfo = ctx.get_info(slf)
+
+    # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
+    #   item is an intermediate, and does not need its provenance tracked)
+    if ii is None:
+        return result
+
+    return hgetitem(ii.history, result, slf, key)
+
+
+# String name to function
+_thunder_opaque_dunder_lookaside_map = {
+    "__getitem__": _thunder_getitem_lookaside,
+}
+
+
+# Looks for an interpreter lookaside first, then for a thunder lookaside, and finally
+#   looks for the default lookaside
 def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
+    ctx: ThunderInterpreterCtx = get_phantomctx()
+
+    # TODO Acquire names more consistently
+    if is_opaque(fn) and hasattr(fn, "__name__"):
+        thunder_interpreter_lookaside: None | Callable = _thunder_opaque_dunder_lookaside_map.get(fn.__name__, None)
+        if thunder_interpreter_lookaside:
+            return partial(thunder_interpreter_lookaside, fn)
+
     thunder_lookaside: None | Callable = _thunder_lookaside_map.get(fn, None)
 
     if thunder_lookaside is not None:
@@ -603,10 +647,19 @@ def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
 # TODO Extend with additional ways of acquiring tensors
 class UNPACK_ACTION(Enum):
     FROM_SIGNATURE = auto()
+    GETITEM = auto()
 
 
-def hsig(name: str):
-    return (UNPACK_ACTION.FROM_SIGNATURE, name)
+def hsig(obj: Any, name: str, /):
+    ctx = get_phantomctx()
+    history = ((UNPACK_ACTION.FROM_SIGNATURE, obj, name),)
+    return ctx.proxify(obj, name=name, history=history)
+
+
+def hgetitem(prior_history, obj: Any, origin: Any, key: Any, /):
+    ctx = get_phantomctx()
+    history = prior_history + ((UNPACK_ACTION.GETITEM, obj, origin, key),)
+    return ctx.proxify(obj, history=history)
 
 
 #
@@ -623,7 +676,7 @@ def get_name(history) -> None | str:
     ua, *_ = last
 
     if ua is UNPACK_ACTION.FROM_SIGNATURE:
-        ua, name = last
+        ua, obj, name = last
         return name
 
     return None
@@ -637,10 +690,19 @@ def _tensor_copier(t: torch.Tensor, /, *, history: tuple):
     return p
 
 
+# Tracks the provenance of objects, as well as how inputs are proxied and what objects they are "replaced" with
+#   The "replacement" is the object we provide to our interpreter, it could be:
+#       1) The original object (if the object is immutable or we are assuming it is for the moment)
+#       2) A shallow copy of the object (to avoid modifying the original)
+#       3) A Proxy instead of the original object (like TensorProxy objects for torch.Tensor objects)
 class InterpreterInfo:
-    def __init__(self, obj: Any, proxy: Any, history: None | tuple):
+    def __init__(self, obj: Any, *, replacement: Any, proxy: Proxy, history: None | tuple):
         self.obj = obj
+        self.replacement = replacement
+
+        assert isinstance(proxy, Proxy)
         self.proxy = proxy
+
         self.history = history
 
 
@@ -657,7 +719,7 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         self._computation_trc: TraceCtx = TraceCtx()
 
         self._input_ids_to_info_map: dict[int, InterpreterInfo] = {}
-        self._proxy_ids_to_info_map: dict[int, InterpreterInfo] = {}
+        self._replacement_ids_to_info_map: dict[int, InterpreterInfo] = {}
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -677,9 +739,10 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         if ii:
             return ii
 
-        ii = self._proxy_ids_to_info_map.get(id(val), None)
+        ii = self._replacement_ids_to_info_map.get(id(val), None)
         return ii
 
+    # TODO Proxy name construction has to be unified on this ctx so that both traces see all names
     def proxify(self, val: Any, /, *, name: None | str = None, history: tuple, **kwargs) -> Any:
         # Checks if we've already seen this object (currently not supported)
         ii: None | InterpreterInfo = self.get_info(val)
@@ -687,7 +750,7 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         # TODO Resolve multiple histories -- sometimes proxify is called on an object
         #   which is actually not introduced through a novel mechanism
         if ii is not None:
-            return ii.proxy
+            return ii.replacement
 
         # Immutable objects are there own proxies
         # TODO Update this
@@ -697,9 +760,14 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         p: Any
         if isinstance(val, torch.Tensor):
             p = _tensor_copier(val, history=history)
-            ii = InterpreterInfo(val, p, history)
+            ii = InterpreterInfo(val, replacement=p, proxy=p, history=history)
             self._input_ids_to_info_map[id(val)] = ii
-            self._proxy_ids_to_info_map[id(p)] = ii
+            self._replacement_ids_to_info_map[id(p)] = ii
+        elif isinstance(val, dict):
+            p = copy.copy(val)
+            ii = InterpreterInfo(val, replacement=p, proxy=Proxy(name=name), history=history)
+            self._input_ids_to_info_map[id(val)] = ii
+            self._replacement_ids_to_info_map[id(p)] = ii
         else:
             raise NotImplementedError(f"Can't proxy objects like {name=}, {val=}")
 
@@ -745,37 +813,66 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         #   - Validates that the input is valid for the computational trace it's associated with
         #   - Returns the flattened inputs
         # TODO Validate the inputs in the prologue, currently it just unpacks
+        # TODO Only unpack values actually used in the computation (and the intermediates necessary to acquire them)
         prologue_trc = interpreter_ctx.prologue_trace
         computation_trc = interpreter_ctx.computation_trace
-        prologue_rvals: list = []
+        prologue_rvals: set = set()
+        already_unpacked: set[int] = set()
+
+        def unpack(ii: InterpreterInfo):
+            if id(ii.obj) in already_unpacked:
+                return ii.proxy
+
+            def from_signature_action(_, obj: Any, name: str):
+                bsym = prims.unpack_trivial.bind(ii.proxy, output=ii.proxy)
+                prologue_trc.bound_symbols.append(bsym)
+                prologue_rvals.add(variableify(ii.proxy))
+
+            def getitem_action(_, obj: Any, origin: Any, key: Any):
+                unpacked = unpack(interpreter_ctx.get_info(origin))
+                bsym = prims.unpack_key.bind(unpacked, key, output=ii.proxy)
+                prologue_trc.bound_symbols.append(bsym)
+                prologue_rvals.add(variableify(ii.proxy))
+
+            d = {
+                UNPACK_ACTION.FROM_SIGNATURE: from_signature_action,
+                UNPACK_ACTION.GETITEM: getitem_action,
+            }
+
+            action = ii.history[-1]
+            ua, *_ = action
+            d[ua](*action)
+
+            already_unpacked.add(id(ii.obj))
+            return ii.proxy
+
+        rvals: tuple
         with tracectx(prologue_trc):
             ii: InterpreterInfo
             for ii in interpreter_ctx.inputs:
-                p = ii.proxy
-                prims.unpack_trivial(p)
-                prologue_rvals.append(p)
+                unpack(ii)
 
             # Returns all inputs
             # TODO We should review the computation trace and only unpack and return the inputs that
             #   actually get used in the computation
-
-            prims.python_return(tuple(prologue_rvals))
+            rvals = tuple(unvariableify(x) for x in prologue_rvals)
+            prims.python_return(rvals)
 
         # Constructs the computation trace's signature
         si = SigInfo("computation")
-        si.args = list((p.name, None) for p in prologue_rvals)
+        si.args = list((p.name, None) for p in rvals)
         computation_trc._siginfo = si
-        computation_trc.args = prologue_rvals
+        computation_trc.args = rvals
 
         # Unpacks inputs
         # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
         #   almost certainly a more elegant way to do this
         with tracectx(computation_trc):
-            for p in prologue_rvals:
+            for p in rvals:
                 prims.unpack_trivial(p)
 
         bsyms = computation_trc.bound_symbols
-        computation_trc.bound_symbols = bsyms[-len(prologue_rvals) :] + bsyms[: -len(prologue_rvals)]
+        computation_trc.bound_symbols = bsyms[-len(rvals) :] + bsyms[: -len(rvals)]
 
         # TODO Apply transforms like grad
 

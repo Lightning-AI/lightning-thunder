@@ -53,37 +53,42 @@ def unvariableify(x: Any) -> Any:
     return x
 
 
+def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
+    trc = get_tracectx()
+
+    if name is not None:
+        trc.add_name(name)
+        return name
+
+    return trc.make_name(prefix=prefix)
+
+
 # TODO Document this class
 class Proxy(VariableInterface, ProxyInterface):
     def __init__(self, name: str | None = None, *, prefix: None | str = None):
-        trace = get_tracectx()
-        if name is None:
-            if prefix is None:
-                if isinstance(self, FloatProxy):
-                    prefix = "f"
-                elif isinstance(self, ComplexProxy):
-                    prefix = "c"
-                elif isinstance(self, IntegerProxy):
-                    if self.python_type is int:
-                        prefix = "i"
-                    elif self.python_type is bool:
-                        prefix = "b"
-                    else:
-                        baseutils.check(
-                            False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}"
-                        )
-                elif isinstance(self, NumberProxy):
-                    prefix = "n"
-                elif isinstance(self, TensorProxy):
-                    prefix = "t"
-                elif isinstance(self, CollectionProxy):
-                    prefix = "C"
+        # Determines the prefix
+        if prefix is None:
+            if isinstance(self, FloatProxy):
+                prefix = "f"
+            elif isinstance(self, ComplexProxy):
+                prefix = "c"
+            elif isinstance(self, IntegerProxy):
+                if self.python_type is int:
+                    prefix = "i"
+                elif self.python_type is bool:
+                    prefix = "b"
+                else:
+                    baseutils.check(False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}")
+            elif isinstance(self, NumberProxy):
+                prefix = "n"
+            elif isinstance(self, TensorProxy):
+                prefix = "t"
+            elif isinstance(self, CollectionProxy):
+                prefix = "C"
+            else:
+                prefix = "p"
 
-            name = trace.make_name(prefix=prefix)
-        else:
-            trace.add_name(name)
-
-        self._name = name
+        self._name = make_proxy_name(name=name, prefix=prefix)
         self._has_weak_name: bool = name is None
 
     @property
