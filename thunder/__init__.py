@@ -174,6 +174,12 @@ def last_traces(fn) -> None | list[TraceCtx] | tuple[list[TraceCtx], list[TraceC
     return cs.last_traces
 
 
+def last_prologue(fn) -> None | TraceCtx:
+    cs = compile_stats(fn)
+
+    return cs.last_prologue
+
+
 def cache_mode(fn) -> CACHE_MODES:
     return compile_data(fn).cache_mode
 

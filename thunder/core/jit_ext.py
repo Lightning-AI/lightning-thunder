@@ -995,6 +995,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         cs.last_executed = c
         cs.last_interpreted_instructions = jfn._last_interpreted_instructions
         cs.last_interpreted_history = jfn._last_interpreted_history
+        cs.last_prologue = prologue_trc
 
         cs.last_trace_host_stop = time.time_ns()
         return computation_result
