@@ -103,6 +103,11 @@ _uncopyable_types = {
     ModuleType,
 }
 
+
+def is_uncopyable(val: Any, /) -> bool:
+    return type(val) in _uncopyable_types
+
+
 # Modifies the deepcopy() function defined here:
 #   https://github.com/python/cpython/blob/3.10/Lib/copy.py#L128
 #   to...
@@ -126,33 +131,44 @@ def relaxed_deepcopy(x: Any, /, memo: dict = None, _nil=[]) -> Any:
 
     cls = type(x)
     copier = relaxed_deepcopy_dispatch(cls)
-    rv = None
+
+    y = _nil
     if copier is not None:
         y = copier(x, memo)
-    elif cls in _uncopyable_types:
+    elif is_uncopyable(x):
         # NOTE This addition is to handle attempts to deepcopy things like modules, which will otherwise fail
         #   below because they define __reduce_ex__
-        warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
+        # warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
         y = copy._deepcopy_atomic(x, memo)
     elif issubclass(cls, type):
         y = copy._deepcopy_atomic(x, memo)
     elif (copier := getattr(x, "__deepcopy__", None)) is not None:
         y = copier(memo)
-    elif reductor := dispatch_table.get(cls):
-        rv = reductor(x)
-    elif reductor := getattr(x, "__reduce_ex__", None):
-        rv = reductor(4)
-    elif reductor := getattr(x, "__reduce__", None):
-        rv = reductor()
-    else:
-        warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
-        y = copy._deepcopy_atomic(x, memo)
 
-    if rv is not None:
-        if isinstance(rv, str):
-            y = x
-        else:
-            y = copy._reconstruct(x, memo, *rv, deepcopy=relaxed_deepcopy)
+    # NOTE Copying with a reductor is so exception-prone that
+    #   we wrap it in a try/except block
+    if y is _nil:
+        rv = None
+        try:
+            if reductor := dispatch_table.get(cls):
+                rv = reductor(x)
+            elif reductor := getattr(x, "__reduce_ex__", None):
+                rv = reductor(4)
+            elif reductor := getattr(x, "__reduce__", None):
+                rv = reductor()
+
+            if rv is not None:
+                if isinstance(rv, str):
+                    y = x
+                else:
+                    y = copy._reconstruct(x, memo, *rv, deepcopy=relaxed_deepcopy)
+        except Exception as ex:
+            # TODO Think about refining this to just catch type errors
+            rv = None
+
+        if rv is None:
+            # warnings.warn(f"Couldn't proxy object {x} of type {type(x)}; modifications to it will not be prevented")
+            y = copy._deepcopy_atomic(x, memo)
 
     # Skips memoization if x is its own copy (which implies y is x)
     if y is not x:
@@ -311,8 +327,8 @@ class PhantomInterpreterCtx(PhantomInterpreterCtxInterface):
         # Adds the object to the input map to ensure it lives as long as the interpreter does
         self.input_map[val_id] = (name, val)
 
-        # Immutable objects are there own proxies
-        if is_immutable(val):
+        # Immutable objects are their own proxies
+        if is_immutable(val) or is_uncopyable(val):
             return val
 
         # Copies the input_proxy_map because relaxed_deepcopy might mutate it but then fail, and
@@ -322,10 +338,11 @@ class PhantomInterpreterCtx(PhantomInterpreterCtxInterface):
 
         # Updates the proxy id set
         self.proxy_id_set.add(id(p))
+        self.input_id_to_proxy_map[val_id] = p
 
         # Some objects, like types, return themselves when deepcopied
         if p is val:
-            warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
+            # warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
             return val
 
         # Removes the id(memo) entry (if deepcopy added it) and updates input_proxy_map with the new proxies
@@ -381,6 +398,7 @@ def register_phantom_callback(key: JIT_CALLBACKS) -> Callable:
 @register_phantom_callback(JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK)
 def _load_global_callback(globals_dict: dict, name: str, /) -> Any:
     ctx: PhantomInterpreterCtx = get_phantomctx()
+    ctx.proxify(globals_dict)
 
     gid: int = id(globals_dict)
     key: tuple[int, str] = (gid, name)
@@ -574,16 +592,19 @@ import time
 from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx
+from thunder.torch import _torch_to_thunder_function_map
 
 #
 # Thunder lookasides
 #
 
 # NOTE Calls into symbols MUST use this lookaside -- we don't want to jit into them
-# TODO Add all thunder operations
+# TODO Add all thunder operations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
 _thunder_lookaside_map = {
     TensorProxy.__add__: TensorProxy.__add__,
 }
+
+_thunder_lookaside_map.update(_torch_to_thunder_function_map)
 
 
 # TODO Currently this has to capture fn to get __self__, we should really revise the way
@@ -599,8 +620,6 @@ def _thunder_getitem_lookaside(fn, *args):
         slf = fn.__self__
         (key,) = args
 
-    result: Any = slf.__getitem__(key)
-
     # TODO Probably want to make a simpler pattern for this
     ctx: ThunderInterpreterCtx = get_phantomctx()
     ii: None | InterpreterInfo = ctx.get_info(slf)
@@ -608,8 +627,9 @@ def _thunder_getitem_lookaside(fn, *args):
     # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
     #   item is an intermediate, and does not need its provenance tracked)
     if ii is None:
-        return result
+        return slf.__getitem__(key)
 
+    result = ii.obj.__getitem__(key)
     return hgetitem(ii.history, result, slf, key)
 
 
@@ -648,18 +668,25 @@ def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
 class UNPACK_ACTION(Enum):
     FROM_SIGNATURE = auto()
     GETITEM = auto()
+    GLOBALS_DICT = auto()
 
 
-def hsig(obj: Any, name: str, /):
+def hsig(obj: Any, name: str, /) -> Any:
     ctx = get_phantomctx()
     history = ((UNPACK_ACTION.FROM_SIGNATURE, obj, name),)
     return ctx.proxify(obj, name=name, history=history)
 
 
-def hgetitem(prior_history, obj: Any, origin: Any, key: Any, /):
+def hgetitem(prior_history, obj: Any, origin: Any, key: Any, /) -> Any:
     ctx = get_phantomctx()
     history = prior_history + ((UNPACK_ACTION.GETITEM, obj, origin, key),)
     return ctx.proxify(obj, history=history)
+
+
+def hglobalsdict(globals_dict: dict, /) -> Any:
+    ctx = get_phantomctx()
+    history = ((UNPACK_ACTION.GLOBALS_DICT, globals_dict, globals_dict["__name__"]),)
+    return ctx.proxify(globals_dict, history=history)
 
 
 #
@@ -742,7 +769,8 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         ii = self._replacement_ids_to_info_map.get(id(val), None)
         return ii
 
-    # TODO Proxy name construction has to be unified on this ctx so that both traces see all names
+    # NOTE All proxies are constructed in the context of the computation trace, and their
+    #   names must be added to the prologue trace (this is done when constructing the prologue trace)
     def proxify(self, val: Any, /, *, name: None | str = None, history: tuple, **kwargs) -> Any:
         # Checks if we've already seen this object (currently not supported)
         ii: None | InterpreterInfo = self.get_info(val)
@@ -752,7 +780,7 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         if ii is not None:
             return ii.replacement
 
-        # Immutable objects are there own proxies
+        # Immutable objects are their own proxies
         # TODO Update this
         if is_immutable(val):
             return val
@@ -763,19 +791,60 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
             ii = InterpreterInfo(val, replacement=p, proxy=p, history=history)
             self._input_ids_to_info_map[id(val)] = ii
             self._replacement_ids_to_info_map[id(p)] = ii
-        elif isinstance(val, dict):
+        elif is_uncopyable(val):
+            # TODO We should probably expand our understanding
+            #   of uncopyable objects. For the phantom jit
+            #   we should prevent their modification. For
+            #   the thunder jit it's OK to modify them
+            #   in the computation.
+            return val
+        else:
             p = copy.copy(val)
             ii = InterpreterInfo(val, replacement=p, proxy=Proxy(name=name), history=history)
             self._input_ids_to_info_map[id(val)] = ii
             self._replacement_ids_to_info_map[id(p)] = ii
-        else:
-            raise NotImplementedError(f"Can't proxy objects like {name=}, {val=}")
 
         return p
 
 
+def _thunder_load_global_callback(globals_dict: dict, key: str, /) -> Any:
+    hglobalsdict(globals_dict)
+
+    def impl():
+        return globals_dict[key]
+
+    return _jit(impl)
+
+
+def _thunder_store_global_callback(globals_dict: dict, key: str, val: Any, /) -> Any:
+    hglobalsdict(globals_dict)
+
+    def impl():
+        globals_dict[key] = val
+
+    return _jit(impl)
+
+
+def _thunder_delete_global_callback(globals_dict: dict, key: str, /) -> None:
+    hglobalsdict(globals_dict)
+
+    def impl():
+        del globals_dict[key]
+
+    return _jit(impl)
+
+
+_thunder_callbacks = {
+    JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK: _thunder_load_global_callback,
+    JIT_CALLBACKS.STORE_GLOBAL_CALLBACK: _thunder_store_global_callback,
+    JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK: _thunder_delete_global_callback,
+}
+
+thunder_callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks | _thunder_callbacks
+
+
 def thunder_jit(fn: Callable, ctx: ThunderInterpreterCtx) -> Callable:
-    return phantom_jit(fn, fn_lookaside=thunder_lookaside, ctx=ctx)
+    return phantom_jit(fn, fn_lookaside=thunder_lookaside, ctx=ctx, callbacks=thunder_callbacks)
 
 
 # TODO Add support for transforms
@@ -818,6 +887,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         computation_trc = interpreter_ctx.computation_trace
         prologue_rvals: set = set()
         already_unpacked: set[int] = set()
+        global_dicts: dict = {}
 
         def unpack(ii: InterpreterInfo):
             if id(ii.obj) in already_unpacked:
@@ -834,9 +904,16 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 prologue_trc.bound_symbols.append(bsym)
                 prologue_rvals.add(variableify(ii.proxy))
 
+            def globals_dict_action(_, globals_dict: dict, module_name: str):
+                bsym = prims.python_vars.bind(module_name, output=ii.proxy)
+                prologue_trc.bound_symbols.append(bsym)
+                prologue_rvals.add(variableify(ii.proxy))
+                global_dicts[module_name] = globals_dict
+
             d = {
                 UNPACK_ACTION.FROM_SIGNATURE: from_signature_action,
                 UNPACK_ACTION.GETITEM: getitem_action,
+                UNPACK_ACTION.GLOBALS_DICT: globals_dict_action,
             }
 
             action = ii.history[-1]
@@ -844,6 +921,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             d[ua](*action)
 
             already_unpacked.add(id(ii.obj))
+            prologue_trc.add_name(ii.proxy.name)
             return ii.proxy
 
         rvals: tuple
@@ -885,7 +963,9 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 
         extrace = extraces[-1]
 
-        pro = prologue_trc.python_callable()
+        print(f"{prologue_trc=}")
+
+        pro = prologue_trc.python_callable(global_dicts=global_dicts)
         c = extrace.python_callable()
 
         # Executes the traced program

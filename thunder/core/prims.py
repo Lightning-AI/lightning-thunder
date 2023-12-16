@@ -21,6 +21,7 @@ from thunder.core.proxies import (
     proxy,
     numberproxy,
     pytype,
+    Proxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -38,7 +39,8 @@ from thunder.core.langctx import langctx
 
 
 class PrimIDs(Enum):
-    # Unpacking prims
+    # Unpacking and input acquiring prims
+    PYTHON_VARS = auto()
     UNPACK_EMPTY_DICT = auto()
     UNPACK_KEY = auto()
     UNPACK_SEQUENCE = auto()
@@ -208,6 +210,77 @@ def make_prim(
 #
 # Unpacking prims
 #
+
+
+def python_vars_impl(arg: None | str = None, /) -> dict:
+    if arg is None:
+        return vars()
+    return vars(arg)
+
+
+def python_vars_meta(arg: None | str = None, /) -> Proxy:
+    return Proxy()
+
+
+def python_vars_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) <= 1,
+        lambda: f"Expected at most one argument for vars but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for vars but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        type(out_printables) is Proxy,
+        lambda: f"Expected a proxy output for vars, but got {out_printables=}",
+        exception_type=AssertionError,
+    )
+
+    out_str = codeutils.prettyprint(out_printables)
+    (args,) = arg_printables
+    arg_str = codeutils.prettyprint(args)
+    utils.check(
+        type(arg_str) is str,
+        lambda: f"Expected a string argument for vars, but got {arg_str}",
+        exception_type=AssertionError,
+    )
+
+    # NOTE Implementing vars (mruberry)
+    # thunder programs are compiled by Python's builtin compile
+    #   this means that their globals() is defined by the
+    #   dictionary passed to compile, and we want to be able
+    #   to access a variety of global dicts, including the
+    #   globals dict of the "main" module (which is not directly
+    #   accessible, as best I can tell). To do this, for now
+    #   at least, we assume that vars() is always being called
+    #   in one of our "prologue" traces, where we add the key
+    #   "__globals_dicts" to the dict that we pass to compile,
+    #   and it contains the various global dictionaries indexed
+    #   by their module names. In the future the prologue
+    #   trace could import modules (other than the main module)
+    #   and call vars directly on those module names, which
+    #   would be more readable.
+
+    # Special cases dunder main
+    # TODO Review this -- maybe we should acquire the globals by
+    #   getting dunder globals on the compiled function itself
+
+    s = f"{out_str} = globals()['__global_dicts'][{arg_str}]"
+    return s
+
+
+python_vars = make_prim(
+    PrimIDs.PYTHON_VARS,
+    "python_vars",
+    meta=python_vars_meta,
+    python_printer=python_vars_printer,
+    python_impl=python_vars_impl,
+)
 
 
 def _collectify(x: Any, *, name: str | None = None) -> Any:

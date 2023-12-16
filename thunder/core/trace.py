@@ -399,7 +399,7 @@ class TraceCtx:
     # Returns a Python callable that executes the trace
     # TODO https://github.com/Lightning-AI/lightning-thunder/issues/323
     #   Create a mechanism for freezing traces and cache the compilation
-    def python_callable(self) -> Callable:
+    def python_callable(self, *, global_dicts: None | dict = None) -> Callable:
         python_str: str
 
         # Writes the program to allow it to be edited before execution
@@ -417,6 +417,8 @@ class TraceCtx:
             python_str = self.python()
 
         ctx = self.python_ctx()
+        if global_dicts is not None:
+            ctx["__global_dicts"] = global_dicts
 
         callable = baseutils.compile_and_exec(
             self.siginfo().name, python_str=python_str, program_name="LC.gen", ctx=ctx
