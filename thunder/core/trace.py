@@ -109,8 +109,6 @@ class TraceCtx:
     #
     # Methods related to name construction
     #
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/329
-    #   Improve variable naming for readable and to avoid collisions with other names
 
     def add_name(self, name: str) -> None:
         baseutils.check(
@@ -119,22 +117,11 @@ class TraceCtx:
         )
         self.names.add(name)
 
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/329
-    # NOTE The following algorithm does not work as desired (it produces duplicate names)
+    def has_name(self, name: str) -> bool:
+        return name in self.names
+
     def _gen_name(self, ctr):
         return ctr
-        # chars = tuple(string.ascii_lowercase)
-
-        # place = 0
-        # s = []
-        # while ctr >= 0:
-        #     if place > 0:
-        #         ctr = ctr // (place * len(chars))
-        #     idx = ctr % (len(chars))
-        #     s.append(chars[idx])
-        #     ctr = ctr - (idx + 1 + place * len(chars))
-        #     place += 1
-        # return "".join(s)
 
     def _make_name(self, *, prefix: str | None = None, is_object_name: bool = False, obj: Any | None = None) -> str:
         name: str

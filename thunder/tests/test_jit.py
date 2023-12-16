@@ -2563,6 +2563,72 @@ def test_thunder_tensor_properties():
     assert ljfoo(a) == foo(a)
 
 
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1809")
+def test_thunder_intermediates():
+    def foo(a, b, c):
+        d = a + b
+        e = d - c
+        f = d @ e
+        for x in (a, b):
+            d = d * x
+        return d, e, f
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    c = torch.randn((2, 2))
+
+    assert_close(ljfoo(a, b, c), foo(a, b, c))
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1810")
+def test_thunder_object_inputs():
+    def foo(a):
+        return a
+
+    ljfoo = litjit(foo)
+
+    class mycls:
+        pass
+
+    for x in (
+        "str",
+        5,
+        complex(1, 1),
+        True,
+        None,
+        mycls(),
+        {"a": 9},
+        [True, 1],
+        (5, 4),
+        torch.nn.Linear(20, 30),
+        torch.float32,
+        torch.cpu.current_device(),
+        foo,
+    ):
+        assert ljfoo(x) == x
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1811")
+def test_thunder_list_iteration():
+    def foo(l):
+        a = l[0]
+        for x in l[1:]:
+            a = a + x
+        return a
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    c = torch.randn((2, 2))
+
+    l = [a, b, c]
+
+    assert_close(ljfoo(l), foo(l))
+
+
 #
 # Network tests
 #

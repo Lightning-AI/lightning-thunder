@@ -56,7 +56,7 @@ def unvariableify(x: Any) -> Any:
 def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
     trc = get_tracectx()
 
-    if name is not None:
+    if name is not None and not trc.has_name(name):
         trc.add_name(name)
         return name
 
