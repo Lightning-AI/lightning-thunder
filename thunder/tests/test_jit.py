@@ -11,6 +11,9 @@ from torch.testing import assert_close
 import thunder
 from thunder.core.jit import is_jitting, jit, JITError
 from thunder.core.jit_ext import phantom_jit, litjit
+import thunder.clang as clang
+import thunder.torch as ltorch
+import thunder.core.prims as prims
 
 
 def skipif_python_3_11_plus(f):
@@ -2477,7 +2480,6 @@ def test_thunder_torch_ops():
     assert_close(ljfoo(a, b), foo(a, b))
 
 
-@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1804")
 def test_thunder_tensor_dunders():
     def foo(a, b):
         return a - b
@@ -2521,6 +2523,44 @@ def test_thunder_obj():
     x.b = b
 
     assert_close(ljfoo(x), foo(x))
+
+
+def test_thunder_symbols():
+    # torch dispatch
+    def _torch(a, shape):
+        return torch.reshape(a, shape)
+
+    # ltorch dispatch
+    def _ltorch(a, shape):
+        return ltorch.reshape(a, shape)
+
+    # clang dispatch
+    def _clang(a, shape):
+        return clang.reshape(a, shape)
+
+    # prims dispatch
+    def _prims(a, shape):
+        return prims.reshape(a, shape)
+
+    a = torch.randn((2, 2))
+    shape = (4, 1)
+
+    torch_result = _torch(a, shape)
+
+    for fn in (_torch, _ltorch, _clang, _prims):
+        ljfn = litjit(fn)
+        assert_close(ljfn(a, shape), torch_result)
+
+
+def test_thunder_tensor_properties():
+    def foo(a):
+        return a.shape
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+
+    assert ljfoo(a) == foo(a)
 
 
 #

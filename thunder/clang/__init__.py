@@ -33,11 +33,16 @@ def _module_extractor() -> None:
     pass
 
 
+_clang_fn_set: set = set()
+
+
 def clang_ctx(fn):
     module_name = clang_ctx.__module__
     module = utils.get_module(module_name)
     _fn = langctx(module)(fn)
-    return noinline(_fn)
+    _fn = noinline(_fn)
+    _clang_fn_set.add(_fn)
+    return _fn
 
 
 #

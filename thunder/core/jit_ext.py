@@ -31,6 +31,7 @@ from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
 from thunder.common import transform_for_execution
+from thunder.core.symbol import Symbol
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -101,6 +102,7 @@ def is_immutable(val: Any, /) -> bool:
 
 _uncopyable_types = {
     ModuleType,
+    contextvars.ContextVar,
 }
 
 
@@ -593,6 +595,7 @@ from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx
 from thunder.torch import _torch_to_thunder_function_map
+from thunder.clang import _clang_fn_set
 
 #
 # Thunder lookasides
@@ -600,11 +603,8 @@ from thunder.torch import _torch_to_thunder_function_map
 
 # NOTE Calls into symbols MUST use this lookaside -- we don't want to jit into them
 # TODO Add all thunder operations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
-_thunder_lookaside_map = {
-    TensorProxy.__add__: TensorProxy.__add__,
-}
-
-_thunder_lookaside_map.update(_torch_to_thunder_function_map)
+_thunder_symbol_lookaside_map = {}
+_thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 
 
 # TODO Currently this has to capture fn to get __self__, we should really revise the way
@@ -644,16 +644,27 @@ _thunder_opaque_dunder_lookaside_map = {
 def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
     ctx: ThunderInterpreterCtx = get_phantomctx()
 
+    # Performs dunder lookasides
     # TODO Acquire names more consistently
     if is_opaque(fn) and hasattr(fn, "__name__"):
         thunder_interpreter_lookaside: None | Callable = _thunder_opaque_dunder_lookaside_map.get(fn.__name__, None)
         if thunder_interpreter_lookaside:
             return partial(thunder_interpreter_lookaside, fn)
 
-    thunder_lookaside: None | Callable = _thunder_lookaside_map.get(fn, None)
+    # Performs symbol lookasides
+    thunder_lookaside: None | Callable = _thunder_symbol_lookaside_map.get(fn, None)
 
     if thunder_lookaside is not None:
         return thunder_lookaside
+
+    # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
+    if isinstance(fn, Symbol):
+        return fn
+
+    # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+    # TODO In the future we probably shouldn't NEED to do this, but it will likely make for an easier UX
+    if fn in _clang_fn_set:
+        return fn
 
     return default_lookaside(fn, *args, **kwargs)
 
@@ -797,6 +808,9 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
             #   we should prevent their modification. For
             #   the thunder jit it's OK to modify them
             #   in the computation.
+            ii = InterpreterInfo(val, replacement=val, proxy=Proxy(name=name), history=history)
+            self._input_ids_to_info_map[id(val)] = ii
+            self._replacement_ids_to_info_map[id(val)] = ii
             return val
         else:
             p = copy.copy(val)
@@ -916,6 +930,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 UNPACK_ACTION.GLOBALS_DICT: globals_dict_action,
             }
 
+            assert len(ii.history) > 0, f"Trying to unpack {ii.obj} without a history"
             action = ii.history[-1]
             ua, *_ = action
             d[ua](*action)
@@ -962,8 +977,6 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         # TODO Apply post-optimiation transforms
 
         extrace = extraces[-1]
-
-        print(f"{prologue_trc=}")
 
         pro = prologue_trc.python_callable(global_dicts=global_dicts)
         c = extrace.python_callable()
