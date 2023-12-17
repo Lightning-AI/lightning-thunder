@@ -509,6 +509,12 @@ class register_opcode_handler:
 #
 # Lookaside logic
 #
+
+#
+# Jit lookasides
+#
+
+
 def is_jitting():
     """Allow code to behave differently under `@jit`. (For testing.)"""
 
@@ -521,6 +527,22 @@ def is_jitting():
 
 def _is_jitting_lookaside():
     return True
+
+
+#
+# Python builtin lookasides (ordered alphabetically)
+#
+
+
+# https://docs.python.org/3/library/functions.html?highlight=any#any
+def _any_lookaside(obj: Iterable):
+    if not isinstance(obj, Iterable):
+        return do_raise(TypeError(f"object must be iterable, got '{type(obj).__name__}' instead"))
+
+    for element in obj:
+        if element:
+            return True
+    return False
 
 
 # Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
@@ -538,62 +560,6 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
         return True
 
     return x if x is True or x is False else _jit(impl)
-
-
-def _locals_lookaside() -> dict[str, Any]:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
-    frame = runtimectx.frame_stack[-1]
-    _locals = {}
-    for i, v in enumerate(frame.localsplus):
-        if isinstance(v, CellType):  # sketchy, we should keep this info
-            v = v.cell_contents
-        _locals[frame.get_localsplus_name(i)] = v
-    return _locals
-
-
-def _globals_lookaside() -> dict[str, Any]:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
-    frame = runtimectx.frame_stack[-1]
-    return frame.globals
-
-
-# we do like the built-in super (and in fact it is impossible to implement
-# it in Python when it comes to builtin methods (torch.autograd.Function.apply
-# has a __self__ but not a __func__, so we cannot fill in the superclass self
-# in the call to the func), but super() without arguments needs to inspect
-# frames, so we do this inspection here and then instantiate the builtin super
-# with parameters
-def _super_lookaside(cls=Py_NULL(), obj=None):
-    # cls Py_NULL vs. obj None this is on purpose
-
-    # magic for super() per frame inspection. Note that we do not currently
-    # do frame entries for lookasides, so the thing calling super is at the top
-    if cls is Py_NULL() and obj is None:
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
-
-        frame = runtimectx.frame_stack[-1]
-        self_name = frame.code.co_varnames[0]  # is this guaranteed to be self?
-        self_idx = None
-        class_idx = None
-        for i in range(len(frame.localsplus)):
-            if frame.get_localsplus_name(i) == self_name:
-                self_idx = i
-                # we cannot break because it might be put in a cell in Python 3.10
-            if frame.get_localsplus_name(i) == "__class__":
-                class_idx = i
-        if class_idx is None or not isinstance(frame.localsplus[class_idx], CellType):
-            return do_raise(RuntimeError("super(): __class__ cell not found"))
-        assert self_idx is not None
-        cls = frame.localsplus[class_idx].cell_contents
-        obj = frame.localsplus[self_idx]
-        if isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
-            obj = obj.cell_contents
-
-    # now cls and obj are set
-    if not isinstance(cls, type):
-        return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
-
-    return super(cls, obj)
 
 
 # The `__get__`, `__set__`, and `__delete__` methods on a property are implemented in C
@@ -698,6 +664,12 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return result
 
 
+def _globals_lookaside() -> dict[str, Any]:
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    frame = runtimectx.frame_stack[-1]
+    return frame.globals
+
+
 # https://docs.python.org/3/library/functions.html?highlight=len#len
 # Calls https://docs.python.org/3/reference/datamodel.html?highlight=__len__#object.__len__
 def _len_lookaside(obj: Any):
@@ -714,26 +686,81 @@ def _len_lookaside(obj: Any):
     return result
 
 
-# https://docs.python.org/3/library/functions.html?highlight=any#any
-def _any_lookaside(obj: Iterable):
-    if not isinstance(obj, Iterable):
-        return do_raise(TypeError(f"object must be iterable, got '{type(obj).__name__}' instead"))
+def _locals_lookaside() -> dict[str, Any]:
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    frame = runtimectx.frame_stack[-1]
+    _locals = {}
+    for i, v in enumerate(frame.localsplus):
+        if isinstance(v, CellType):  # sketchy, we should keep this info
+            v = v.cell_contents
+        _locals[frame.get_localsplus_name(i)] = v
+    return _locals
 
-    for element in obj:
-        if element:
-            return True
-    return False
+
+# https://docs.python.org/3.13/library/functions.html#next
+_nil = []
+
+
+def _next_lookaside(iterator, default=_nil):
+    try:
+        return iterator.__next__()
+    except StopIteration as si:
+        if default is not _nil:
+            return default
+        raise si
+
+
+# we do like the built-in super (and in fact it is impossible to implement
+# it in Python when it comes to builtin methods (torch.autograd.Function.apply
+# has a __self__ but not a __func__, so we cannot fill in the superclass self
+# in the call to the func), but super() without arguments needs to inspect
+# frames, so we do this inspection here and then instantiate the builtin super
+# with parameters
+def _super_lookaside(cls=Py_NULL(), obj=None):
+    # cls Py_NULL vs. obj None this is on purpose
+
+    # magic for super() per frame inspection. Note that we do not currently
+    # do frame entries for lookasides, so the thing calling super is at the top
+    if cls is Py_NULL() and obj is None:
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+        frame = runtimectx.frame_stack[-1]
+        self_name = frame.code.co_varnames[0]  # is this guaranteed to be self?
+        self_idx = None
+        class_idx = None
+        for i in range(len(frame.localsplus)):
+            if frame.get_localsplus_name(i) == self_name:
+                self_idx = i
+                # we cannot break because it might be put in a cell in Python 3.10
+            if frame.get_localsplus_name(i) == "__class__":
+                class_idx = i
+        if class_idx is None or not isinstance(frame.localsplus[class_idx], CellType):
+            return do_raise(RuntimeError("super(): __class__ cell not found"))
+        assert self_idx is not None
+        cls = frame.localsplus[class_idx].cell_contents
+        obj = frame.localsplus[self_idx]
+        if isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
+            obj = obj.cell_contents
+
+    # now cls and obj are set
+    if not isinstance(cls, type):
+        return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
+
+    return super(cls, obj)
 
 
 _default_lookaside_map: dict[Callable, Callable] = {
+    # Jit lookasides
     is_jitting: _is_jitting_lookaside,
+    # Python builtin lookasides
     any: _any_lookaside,
     bool: _bool_lookaside,
+    getattr: _getattr_lookaside,
     globals: _globals_lookaside,
     len: _len_lookaside,
     locals: _locals_lookaside,
+    next: _next_lookaside,
     super: _super_lookaside,
-    getattr: _getattr_lookaside,
 }
 
 
@@ -1549,10 +1576,12 @@ def _for_iter_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kw
     tos: Iterator = stack[-1]
     assert isinstance(tos, Iterator)
 
+    def _next_impl():
+        return next(tos)
+
     v: Any
     try:
-        v = next(tos)
-        stack.append(v)
+        check_and_append(stack, _jit(_next_impl))
     except StopIteration:
         stack.pop()
         return inst_ptr + delta + 1

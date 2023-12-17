@@ -510,7 +510,8 @@ def _function_start_callback(fn: Callable, frame: JITFrame, /) -> None:
                 cc = CellType()
             else:
                 val = c.cell_contents
-                p = ctx.proxify(val, name=fn.__code__.co_freevars[i], history=())
+                name: str = fn.__code__.co_freevars[i]
+                p = ctx.proxify(val, name=name, history=())
                 cc = CellType(p)
             ctx.nonlocals_map[id(c)] = cc
         elif ctx.nonlocals_map[id(c)] is not c:
@@ -802,6 +803,8 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         # TODO Update this
         if is_immutable(val):
             return val
+
+        assert len(history) > 0, f"Attempting to proxy {val=}, but it has no history"
 
         p: Any
         if isinstance(val, torch.Tensor):
