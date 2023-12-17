@@ -223,6 +223,15 @@ def _deepcopy_dict(x, memo, deepcopy=relaxed_deepcopy):
 
 _relaxed_deepcopy_dispatch[dict] = _deepcopy_dict
 
+
+def _deepcopy_tensor(x, memo, deepcopy=relaxed_deepcopy):
+    y = x.detach()
+    memo[id(x)] = y
+    return y
+
+
+_relaxed_deepcopy_dispatch[torch.Tensor] = _deepcopy_tensor
+
 try:
     from org.python.core import PyStringMap
 except ImportError:
@@ -335,7 +344,7 @@ class PhantomInterpreterCtx(PhantomInterpreterCtxInterface):
 
         # Copies the input_proxy_map because relaxed_deepcopy might mutate it but then fail, and
         #   if the deepcopy fails then we don't want to modify the input_proxy_map
-        memo = copy.copy(self.input_id_to_proxy_map)
+        memo = self.input_id_to_proxy_map
         p = relaxed_deepcopy(val, memo=memo)
 
         # Updates the proxy id set
@@ -347,12 +356,10 @@ class PhantomInterpreterCtx(PhantomInterpreterCtxInterface):
             # warnings.warn(f"Couldn't proxy {name} of type {type(val)}; modifications to it will not be prevented")
             return val
 
-        # Removes the id(memo) entry (if deepcopy added it) and updates input_proxy_map with the new proxies
-        # NOTE deepcopy can add an id(memo) entry to store references to objects whose lifetimes it wants to
-        #   extend until the deepcopy finishes
-        memo_id = id(memo)
-        memo.pop(memo_id, None)
-        self.input_id_to_proxy_map = memo
+        # We used to removes the id(memo) entry, however this runs into problems
+        # when the next deepcopy finds copies of old objects under the id.
+        # We thus keep everything, even if this means that we waste memory.
+
         # Is this OKish? (it duplicates things because it isn't only the new.)
         # or is self.proxy_id_set = {id(v) for id in memo.values()} ?
         self.proxy_id_set.update(id(v) for v in memo.values())

@@ -2378,6 +2378,14 @@ def test_phantom_seed():
     assert random_result == result0
 
 
+def test_phantom_litgpt():
+    a = torch.randint(1, 25, (1, 10))
+    m = thunder.tests.lit_gpt_model.GPT.from_name("llama2-like")
+    cm = thunder.core.jit_ext.phantom_jit(m)
+
+    assert_close(cm(a), m(a))
+
+
 #
 # "Thunder" tests
 #
