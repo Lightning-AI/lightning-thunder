@@ -2689,7 +2689,6 @@ def test_thunder_list_iteration():
     assert_close(ljfoo(l), foo(l))
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1818")
 def test_thunder_linear():
     def foo(m, x):
         return m(x)
@@ -2699,6 +2698,16 @@ def test_thunder_linear():
     a = torch.randn(2, 2)
     m = torch.nn.Linear(2, 2)
     assert_close(ljfoo(m, a), foo(m, a))
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1820")
+def test_thunder_compile_module():
+    m = torch.nn.Linear(2, 2)
+    ljm = litjit(m)
+
+    a = torch.randn((2, 2))
+
+    assert_close(ljm(a), m(a))
 
 
 #

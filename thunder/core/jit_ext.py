@@ -618,8 +618,10 @@ _thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 from thunder.core.jit import _getattr_lookaside
 
 
+# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1817
+#   This currently just calls getattr, assuming that call has no side effects
 def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> Any:
-    val = _getattr_lookaside(origin, key, maybe_default)
+    val = getattr(origin, key, *maybe_default)
 
     ctx = ThunderInterpreterCtx = get_phantomctx()
     ii: None | InterpreterInfo = ctx.get_info(origin)
@@ -628,7 +630,8 @@ def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> An
     if ii is None:
         return val
 
-    return hgetattr(ii.history, val, origin, key)
+    val = hgetattr(ii.history, val, origin, key)
+    return val
 
 
 _thunder_symbol_lookaside_map[getattr] = _thunder_getattr_lookaside
