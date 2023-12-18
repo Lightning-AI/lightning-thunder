@@ -2500,7 +2500,7 @@ def test_thunder_tensor_dunders():
     assert_close(ljfoo(a, b), foo(a, b))
 
 
-def test_thunder_list():
+def test_thunder_lists():
     def foo(l):
         return l[0] + l[1]
 
@@ -2511,6 +2511,34 @@ def test_thunder_list():
     l = [a, b]
 
     assert_close(ljfoo(l), foo(l))
+
+
+def test_thunder_tuples():
+    def foo(tup):
+        return tup[0] + tup[1]
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    tup = (a, b)
+
+    assert_close(ljfoo(tup), foo(tup))
+
+
+def test_thunder_lists_within_lists():
+    def foo(l):
+        a, b = l[0], l[1]
+        return a[1] + b[2]
+
+    ljfoo = litjit(foo)
+
+    a, b, c, d, e = (torch.randn((2, 2)) for _ in range(5))
+
+    l0 = [a, b]
+    l1 = [c, d, e]
+
+    assert_close(ljfoo([l0, l1]), foo([l0, l1]))
 
 
 def test_thunder_obj():
@@ -2585,12 +2613,14 @@ def test_thunder_intermediates():
 
     assert_close(ljfoo(a, b, c), foo(a, b, c))
 
+
 def test_thunder_intermediates_extended():
     def foo(a, x):
         b = a + x.l[2]
         c = b + x.a
         d = b + x.y.l[0]
         return c, d, x.y.a
+
     ljfoo = litjit(foo)
 
     a, xa, xya, b, c, d, e = (torch.randn((2, 2)) for _ in range(7))
@@ -2657,6 +2687,18 @@ def test_thunder_list_iteration():
     l = [a, b, c]
 
     assert_close(ljfoo(l), foo(l))
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1818")
+def test_thunder_linear():
+    def foo(m, x):
+        return m(x)
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn(2, 2)
+    m = torch.nn.Linear(2, 2)
+    assert_close(ljfoo(m, a), foo(m, a))
 
 
 #

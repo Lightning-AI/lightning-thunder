@@ -874,6 +874,7 @@ class JIT_CALLBACKS(enum.Enum):
     # The returned object is put onto or into the stack, instead
     PUSH_STACK_CALLBACK = enum.auto()
 
+
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
 

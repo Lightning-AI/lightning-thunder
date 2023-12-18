@@ -390,6 +390,7 @@ unpack_sequence = make_prim(
     python_impl=unpack_sequence_impl,
 )
 
+
 # NOTE UNPACK_ATTR is intended only to be bound to directly, and not called
 def unpack_attr_meta(o: Any, key: str) -> Any:
     raise NotImplementedError

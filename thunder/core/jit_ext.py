@@ -616,6 +616,8 @@ _thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 
 
 from thunder.core.jit import _getattr_lookaside
+
+
 def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> Any:
     val = _getattr_lookaside(origin, key, maybe_default)
 
@@ -628,7 +630,9 @@ def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> An
 
     return hgetattr(ii.history, val, origin, key)
 
+
 _thunder_symbol_lookaside_map[getattr] = _thunder_getattr_lookaside
+
 
 # TODO Currently this has to capture fn to get __self__, we should really revise the way
 #   lookasides are called from _jit so that self is passed as the first argument here
@@ -722,6 +726,7 @@ def hglobalsdict(globals_dict: dict, /) -> Any:
     ctx = get_phantomctx()
     history = ((UNPACK_ACTION.GLOBALS_DICT, globals_dict, globals_dict["__name__"]),)
     return ctx.proxify(globals_dict, history=history)
+
 
 def hgetattr(prior_history, obj: Any, origin: Any, key: Any, /) -> Any:
     ctx = get_phantomctx()
@@ -896,9 +901,11 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
 
         return p
 
+
 #
 # Thuder interpreter callbacks
 #
+
 
 def _thunder_push_stack_callback(val: Any, /) -> Any:
     ctx: ThunderInterpreterCtx = get_phantomctx()
