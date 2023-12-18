@@ -41,6 +41,7 @@ from thunder.core.langctx import langctx
 class PrimIDs(Enum):
     # Unpacking and input acquiring prims
     PYTHON_VARS = auto()
+    UNPACK_ATTR = auto()
     UNPACK_EMPTY_DICT = auto()
     UNPACK_KEY = auto()
     UNPACK_SEQUENCE = auto()
@@ -387,6 +388,46 @@ unpack_sequence = make_prim(
     meta=unpack_sequence_meta,
     python_printer=unpack_sequence_printer,
     python_impl=unpack_sequence_impl,
+)
+
+# NOTE UNPACK_ATTR is intended only to be bound to directly, and not called
+def unpack_attr_meta(o: Any, key: str) -> Any:
+    raise NotImplementedError
+
+
+def unpack_attr_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = key
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.{keystr}"
+
+
+def unpack_attr_impl(o: Any, key: str) -> Any:
+    return getattr(o, key)
+
+
+unpack_attr = make_prim(
+    PrimIDs.UNPACK_ATTR,
+    "unpack_attr",
+    meta=unpack_attr_meta,
+    python_printer=unpack_attr_printer,
+    python_impl=unpack_attr_impl,
 )
 
 

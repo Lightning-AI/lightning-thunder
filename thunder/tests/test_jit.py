@@ -2513,7 +2513,6 @@ def test_thunder_list():
     assert_close(ljfoo(l), foo(l))
 
 
-@pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1805")
 def test_thunder_obj():
     def foo(obj):
         return obj.a + obj.b
@@ -2585,6 +2584,32 @@ def test_thunder_intermediates():
     c = torch.randn((2, 2))
 
     assert_close(ljfoo(a, b, c), foo(a, b, c))
+
+def test_thunder_intermediates_extended():
+    def foo(a, x):
+        b = a + x.l[2]
+        c = b + x.a
+        d = b + x.y.l[0]
+        return c, d, x.y.a
+    ljfoo = litjit(foo)
+
+    a, xa, xya, b, c, d, e = (torch.randn((2, 2)) for _ in range(7))
+
+    class mycls:
+        pass
+
+    x = mycls()
+    y = mycls()
+
+    xl = [c, d, e]
+    yl = [b]
+    y.a = xya
+    y.l = yl
+    x.y = y
+    x.a = xa
+    x.l = xl
+
+    assert_close(ljfoo(a, x), foo(a, x))
 
 
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1810")

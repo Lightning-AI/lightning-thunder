@@ -614,6 +614,22 @@ from thunder.clang import _clang_fn_set
 _thunder_symbol_lookaside_map = {}
 _thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 
+
+from thunder.core.jit import _getattr_lookaside
+def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> Any:
+    val = _getattr_lookaside(origin, key, maybe_default)
+
+    ctx = ThunderInterpreterCtx = get_phantomctx()
+    ii: None | InterpreterInfo = ctx.get_info(origin)
+
+    # Short-circuits if the origin is not tracked (indicating the origin is an intermediate)
+    if ii is None:
+        return val
+
+    return hgetattr(ii.history, val, origin, key)
+
+_thunder_symbol_lookaside_map[getattr] = _thunder_getattr_lookaside
+
 # TODO Currently this has to capture fn to get __self__, we should really revise the way
 #   lookasides are called from _jit so that self is passed as the first argument here
 def _thunder_getitem_lookaside(fn, *args):
@@ -709,7 +725,7 @@ def hglobalsdict(globals_dict: dict, /) -> Any:
 
 def hgetattr(prior_history, obj: Any, origin: Any, key: Any, /) -> Any:
     ctx = get_phantomctx()
-    history = prior_history + ((UNPACK_ACTION.GETATTR, obj, origin, key))
+    history = prior_history + ((UNPACK_ACTION.GETATTR, obj, origin, key),)
     return ctx.proxify(obj, history=history)
 
 
@@ -982,6 +998,12 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 prologue_trc.bound_symbols.append(bsym)
                 prologue_rvals.add(variableify(ii.proxy))
 
+            def getattr_action(_, obj: Any, origin: Any, key: str):
+                unpacked = unpack(interpreter_ctx.get_info(origin))
+                bsym = prims.unpack_attr.bind(unpacked, key, output=ii.proxy)
+                prologue_trc.bound_symbols.append(bsym)
+                prologue_rvals.add(variableify(ii.proxy))
+
             def getitem_action(_, obj: Any, origin: Any, key: Any):
                 unpacked = unpack(interpreter_ctx.get_info(origin))
                 bsym = prims.unpack_key.bind(unpacked, key, output=ii.proxy)
@@ -996,7 +1018,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 
             d = {
                 UNPACK_ACTION.FROM_SIGNATURE: from_signature_action,
-                UNPACK_ACTION.GETATTR: None,
+                UNPACK_ACTION.GETATTR: getattr_action,
                 UNPACK_ACTION.GETITEM: getitem_action,
                 UNPACK_ACTION.GLOBALS_DICT: globals_dict_action,
             }
