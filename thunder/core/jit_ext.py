@@ -614,7 +614,6 @@ from thunder.clang import _clang_fn_set
 _thunder_symbol_lookaside_map = {}
 _thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 
-
 # TODO Currently this has to capture fn to get __self__, we should really revise the way
 #   lookasides are called from _jit so that self is passed as the first argument here
 def _thunder_getitem_lookaside(fn, *args):
@@ -686,6 +685,7 @@ def thunder_lookaside(fn, *args, **kwargs) -> None | Callable:
 # TODO Extend with additional ways of acquiring tensors
 class UNPACK_ACTION(Enum):
     FROM_SIGNATURE = auto()
+    GETATTR = auto()
     GETITEM = auto()
     GLOBALS_DICT = auto()
 
@@ -706,6 +706,11 @@ def hglobalsdict(globals_dict: dict, /) -> Any:
     ctx = get_phantomctx()
     history = ((UNPACK_ACTION.GLOBALS_DICT, globals_dict, globals_dict["__name__"]),)
     return ctx.proxify(globals_dict, history=history)
+
+def hgetattr(prior_history, obj: Any, origin: Any, key: Any, /) -> Any:
+    ctx = get_phantomctx()
+    history = prior_history + ((UNPACK_ACTION.GETATTR, obj, origin, key))
+    return ctx.proxify(obj, history=history)
 
 
 #
@@ -875,8 +880,11 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
 
         return p
 
+#
+# Thuder interpreter callbacks
+#
 
-def _push_stack_callback(val: Any, /) -> Any:
+def _thunder_push_stack_callback(val: Any, /) -> Any:
     ctx: ThunderInterpreterCtx = get_phantomctx()
     ctx._intermediates.add(val)
     return val
@@ -910,7 +918,7 @@ def _thunder_delete_global_callback(globals_dict: dict, key: str, /) -> None:
 
 
 _thunder_callbacks = {
-    JIT_CALLBACKS.PUSH_STACK_CALLBACK: _push_stack_callback,
+    JIT_CALLBACKS.PUSH_STACK_CALLBACK: _thunder_push_stack_callback,
     JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK: _thunder_load_global_callback,
     JIT_CALLBACKS.STORE_GLOBAL_CALLBACK: _thunder_store_global_callback,
     JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK: _thunder_delete_global_callback,
@@ -988,6 +996,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 
             d = {
                 UNPACK_ACTION.FROM_SIGNATURE: from_signature_action,
+                UNPACK_ACTION.GETATTR: None,
                 UNPACK_ACTION.GETITEM: getitem_action,
                 UNPACK_ACTION.GLOBALS_DICT: globals_dict_action,
             }

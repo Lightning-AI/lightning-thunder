@@ -670,7 +670,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
-        if (instance_value := dict.get(obj_dict, name, null)) is not null:
+        if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
             return instance_value
 
     if descr_get is not null:
@@ -822,7 +822,7 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 #   event may be different, as documented below.
 class JIT_CALLBACKS(enum.Enum):
     # Called when deleting a value from a glocals dict in DELETE_GLOBAL
-    #   callback(globals:dict, name: str, /) -> Any
+    #   callback(globals: dict, name: str, /) -> Any
     #   If this callback is executed, the deletion does not occur as usual
     DELETE_GLOBAL_CALLBACK = enum.auto()
 
@@ -873,7 +873,6 @@ class JIT_CALLBACKS(enum.Enum):
     #       callback(val: Any, /) -> Any
     # The returned object is put onto or into the stack, instead
     PUSH_STACK_CALLBACK = enum.auto()
-
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
