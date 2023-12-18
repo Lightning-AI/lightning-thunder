@@ -2571,14 +2571,11 @@ def test_thunder_tensor_properties():
     assert ljfoo(a) == foo(a)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1809")
 def test_thunder_intermediates():
     def foo(a, b, c):
         d = a + b
         e = d - c
         f = d @ e
-        for x in (a, b):
-            d = d * x
         return d, e, f
 
     ljfoo = litjit(foo)

@@ -408,6 +408,46 @@ def get_python_tb(tb: list | TracebackType | None) -> list:
     return res
 
 
+class InterpreterStack:
+    def __init__(self):
+        self._stack = []
+
+    # NOTE push is an alias for append
+    def push(self, val: Any, /):
+        return self.append(val)
+
+    # NOTE Append is a helper for dunder setitem
+    def append(self, val: Any, /):
+        ctx: JitCompileCtx = get_jitcompilectx()
+        cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
+        if cb is not None:
+            val = cb(val)
+
+        return self._stack.append(val)
+
+    def pop(self) -> Any:
+        return self._stack.pop()
+
+    def __len__(self) -> int:
+        return len(self._stack)
+
+    def __getitem__(self, key: int, /) -> Any:
+        return self._stack[key]
+
+    def __setitem__(self, key: int, val: Any, /):
+        # TODO Consider a different name than PUSH_STACK_CALLBACK since it's
+        #   also called for dunder setitem?
+        ctx: JitCompileCtx = get_jitcompilectx()
+        cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
+        if cb is not None:
+            val = cb(val)
+
+        self._stack[key] = val
+
+    def __delitem__(self, key: int, /):
+        del self._stack[key]
+
+
 # This is an interpreter frame, similar to Python's for use fo the JIT
 # It contains all information needed to execute the current code
 # so for generators (which need to suspend and resume) one only needs to
@@ -424,7 +464,7 @@ class JITFrame:
     positions: Positions | None = None
     inst: dis.Instruction | None = None
     call_shape_kwnames: tuple[str] | None = None  # for KW_NAMES opcode in 3.11+
-    interpreter_stack: list[Any] = dataclasses.field(default_factory=list)
+    interpreter_stack: list[Any] = dataclasses.field(default_factory=InterpreterStack)
     try_stack: list[PyTryBlock] = dataclasses.field(default_factory=list)
     inst_ptr: int = 0
     lasti: int = 0  # this may deviate from inst_ptr due to RERAISE
@@ -827,6 +867,12 @@ class JIT_CALLBACKS(enum.Enum):
     # The cell is passed to the callback and the cell returned from the
     # callback is stored to the slot.
     MAKE_CELL_CALLBACK = enum.auto()
+
+    # Called when a value is pushed onto the stack or replaces an existing
+    #   value on the stack (using dunder setitem)
+    #       callback(val: Any, /) -> Any
+    # The returned object is put onto or into the stack, instead
+    PUSH_STACK_CALLBACK = enum.auto()
 
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}

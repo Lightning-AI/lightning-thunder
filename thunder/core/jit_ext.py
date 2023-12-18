@@ -752,6 +752,45 @@ class InterpreterInfo:
         self.history = history
 
 
+# Tracks a set of objects
+# NOTE Ideally we would just be able to use a class like weakref.WeakValueDictionary to track
+#   objects without holding a reference to them, but not every object can have a weak reference.
+#   This deals with the issue by holding an actual reference to objects that cannot have a weak
+#   reference.
+# TODO Maybe there's a better name for this class?
+# TODO Handle tracking weakrefs better, https://github.com/Lightning-AI/lightning-thunder/issues/1816
+class Tracker:
+    def __init__(self):
+        self.d = {}
+
+    def add(self, obj: Any):
+        obj_id: int = id(obj)
+
+        if obj_id in self.d:
+            # Asserts that the weak reference is still alive
+            #   (if it's not, it should have been deleted from the
+            #    dictionary because of the callback created below)
+            val = self.d[obj_id]
+            if isinstance(val, weakref.ref):
+                assert val() is not None
+
+            return
+
+        try:
+
+            def cb(x, d=self.d, key=obj_id):
+                del d[key]
+
+            w = weakref.ref(obj, cb)
+            self.d[obj_id] = w
+        except:
+            self.d[obj_id] = obj
+
+    def __contains__(self, obj: Any) -> bool:
+        obj_id: int = id(obj)
+        return obj_id in self.d
+
+
 class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
     def __init__(self, fn: Callable, *args, **kwargs):
         super().__init__()
@@ -766,6 +805,8 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
 
         self._input_ids_to_info_map: dict[int, InterpreterInfo] = {}
         self._replacement_ids_to_info_map: dict[int, InterpreterInfo] = {}
+
+        self._intermediates: Tracker = Tracker()
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -804,6 +845,10 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         if is_immutable(val):
             return val
 
+        # Intermediate values are not proxied
+        if val in self._intermediates:
+            return val
+
         assert len(history) > 0, f"Attempting to proxy {val=}, but it has no history"
 
         p: Any
@@ -829,6 +874,12 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
             self._replacement_ids_to_info_map[id(p)] = ii
 
         return p
+
+
+def _push_stack_callback(val: Any, /) -> Any:
+    ctx: ThunderInterpreterCtx = get_phantomctx()
+    ctx._intermediates.add(val)
+    return val
 
 
 def _thunder_load_global_callback(globals_dict: dict, key: str, /) -> Any:
@@ -859,6 +910,7 @@ def _thunder_delete_global_callback(globals_dict: dict, key: str, /) -> None:
 
 
 _thunder_callbacks = {
+    JIT_CALLBACKS.PUSH_STACK_CALLBACK: _push_stack_callback,
     JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK: _thunder_load_global_callback,
     JIT_CALLBACKS.STORE_GLOBAL_CALLBACK: _thunder_store_global_callback,
     JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK: _thunder_delete_global_callback,
