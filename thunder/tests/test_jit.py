@@ -2710,6 +2710,26 @@ def test_thunder_compile_module():
     assert_close(ljm(a), m(a))
 
 
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1822")
+def test_thunder_nanogpt_mlp():
+    from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTMLPBenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    def foo(fn, args, kwargs):
+        return fn(*args, **kwargs)
+
+    jfn = litjit(foo)
+    result = jfn(fn, args, kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
 #
 # Network tests
 #
