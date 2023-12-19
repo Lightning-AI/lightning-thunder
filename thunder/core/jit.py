@@ -2869,7 +2869,15 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: list, **kwargs) ->
     # contrary to the opname, seq is an Iterable, not necessarily a sequence
     seq: Iterable = stack.pop()
 
-    for x in reversed(list(seq)):
+    def impl():
+        return list(reversed(list(seq)))
+
+    unpacked = _jit(impl)
+
+    if unpacked is JIT_SIGNALS.EXCEPTION_RAISED:
+        return unpacked
+
+    for x in unpacked:
         stack.append(x)
 
 

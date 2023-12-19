@@ -2513,7 +2513,6 @@ def test_thunder_lists():
     assert_close(ljfoo(l), foo(l))
 
 
-@pytest.mark.xfail(reason="Pushes actual tensors onto the stack")
 def test_thunder_tuples():
     def foo(tup):
         return tup[0] + tup[1]
@@ -2524,6 +2523,44 @@ def test_thunder_tuples():
     b = torch.randn((2, 2))
     tup = (a, b)
 
+    assert_close(ljfoo(tup), foo(tup))
+
+
+def test_thunder_tuple_list_conversion():
+    def foo(tup):
+        return list(tup)
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    tup = (a, b)
+
+    assert_close(ljfoo(tup), foo(tup))
+
+    def bar(l):
+        return tuple(l)
+
+    ljfoo = litjit(bar)
+
+    l = tup = [a, b]
+    assert_close(ljfoo(l), foo(l))
+
+
+def test_thunder_unpack_sequence():
+    def foo(seq):
+        a, b = seq
+        return a + b
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    tup = (a, b)
+
+    assert_close(ljfoo(tup), foo(tup))
+
+    tup = (a, 4)
     assert_close(ljfoo(tup), foo(tup))
 
 

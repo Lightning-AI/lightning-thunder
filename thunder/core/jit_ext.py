@@ -615,9 +615,6 @@ _thunder_symbol_lookaside_map = {}
 _thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 
 
-from thunder.core.jit import _getattr_lookaside
-
-
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1817
 #   This currently just calls getattr, assuming that call has no side effects
 def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> Any:
@@ -634,7 +631,51 @@ def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> An
     return val
 
 
-_thunder_symbol_lookaside_map[getattr] = _thunder_getattr_lookaside
+def _thunder_list_lookaside(*args):
+    if len(args) == 0:
+        return []
+
+    (iterable,) = args
+
+    def impl():
+        l = []
+        for x in iterable:
+            l.append(x)
+        return l
+
+    return _jit(impl)
+
+
+# TODO This lookaside -- and the list lookaside above -- could probably be replaced with
+#   a more general callback that would review all inputs to opaque functions. That more
+#   general callback would associate provenance with all inputs, so if they were
+#   reproduced by the function then their provenance would be clear
+def _thunder_tuple_lookaside(*args):
+    if len(args) == 0:
+        return ()
+
+    (iterable,) = args
+
+    # NOTE The following might seem very silly, as it just pulls all the items
+    #   in the iterable and puts them in a list, and then the actual call to
+    #   tuple() happens outside the jitted region. However the important
+    #   thing is that we capture the provenance of the objects within
+    #   the iterable.
+    def impl():
+        l = []
+        for x in iterable:
+            l.append(x)
+        return l
+
+    return tuple(_jit(impl))
+
+
+_thunder_symbol_lookaside_map_update = {
+    getattr: _thunder_getattr_lookaside,
+    list: _thunder_list_lookaside,
+    tuple: _thunder_tuple_lookaside,
+}
+_thunder_symbol_lookaside_map.update(_thunder_symbol_lookaside_map_update)
 
 
 # TODO Currently this has to capture fn to get __self__, we should really revise the way
@@ -693,7 +734,11 @@ def _thunder_next_lookaside(fn, *args):
     # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
     #   item is an intermediate, and does not need its provenance tracked)
     if ii is None:
-        return origin.__next__()
+        val = origin.__next__()
+        assert not isinstance(
+            val, torch.Tensor
+        ), f"The thunder interpreter's __next__ lookaside would produce a torch.Tensor object from an untracked {origin=}"
+        return val
 
     result = ii.obj.__next__()
     ii.iterator_counter += 1
@@ -925,13 +970,13 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
         if ii is not None:
             return ii.replacement
 
-        # Immutable objects are their own proxies
-        # TODO Update this
-        if is_immutable(val):
-            return val
-
         # Intermediate values are not proxied
         if val in self._intermediates:
+            return val
+
+        # TODO FIXME This is a temporary hack to allow loading objects like modules and functions whose
+        #   provenance we don't yet understand
+        if len(history) == 0 and is_immutable(val):
             return val
 
         assert len(history) > 0, f"Attempting to proxy {val=}, but it has no history"
@@ -942,7 +987,7 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
             ii = InterpreterInfo(val, replacement=p, proxy=p, history=history)
             self._input_ids_to_info_map[id(val)] = ii
             self._replacement_ids_to_info_map[id(p)] = ii
-        elif is_uncopyable(val):
+        elif is_uncopyable(val) or is_immutable(val):
             # TODO We should probably expand our understanding
             #   of uncopyable objects. For the phantom jit
             #   we should prevent their modification. For
