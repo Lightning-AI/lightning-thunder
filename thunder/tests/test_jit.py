@@ -2513,6 +2513,7 @@ def test_thunder_lists():
     assert_close(ljfoo(l), foo(l))
 
 
+@pytest.mark.xfail(reason="Pushes actual tensors onto the stack")
 def test_thunder_tuples():
     def foo(tup):
         return tup[0] + tup[1]
@@ -2688,6 +2689,7 @@ def test_thunder_list_iteration():
     assert_close(ljfoo(l), foo(l))
 
 
+@pytest.mark.xfail(reason="Pushes actual tensors onto the stack")
 def test_thunder_double_list_iteration():
     def foo(initial, a, b):
         accum = initial
@@ -2706,6 +2708,7 @@ def test_thunder_double_list_iteration():
     assert_close(ljfoo(initial, l0, l1), foo(initial, l0, l1))
 
 
+@pytest.mark.xfail(reason="Pushes actual tensors onto the stack")
 def test_thunder_iter_iter():
     def foo(l):
         i0 = iter(l)

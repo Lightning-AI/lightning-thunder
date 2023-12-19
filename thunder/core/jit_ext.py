@@ -966,7 +966,13 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
 #
 
 
-def _thunder_push_stack_callback(val: Any, /) -> Any:
+def _thunder_push_stack_callback(val: Any, /, *, source: None | str = None) -> Any:
+    if isinstance(val, torch.Tensor):
+        source_str: str = "" if source is None else f"Its source was {source}"
+        raise AssertionError(
+            f"The thunder interpreter attempted to push an actual torch.tensor object onto the stack. The tensor had shape {val.shape} and dtype {val.dtype}. {source_str}"
+        )
+
     ctx: ThunderInterpreterCtx = get_phantomctx()
     ctx._intermediates.add(val)
     return val

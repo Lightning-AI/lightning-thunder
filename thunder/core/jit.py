@@ -419,9 +419,11 @@ class InterpreterStack:
     # NOTE Append is a helper for dunder setitem
     def append(self, val: Any, /):
         ctx: JitCompileCtx = get_jitcompilectx()
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
         cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
         if cb is not None:
-            val = cb(val)
+            opname: str = runtimectx.peek_frame_stack().inst.opname
+            val = cb(val, source=opname)
 
         return self._stack.append(val)
 
@@ -438,9 +440,11 @@ class InterpreterStack:
         # TODO Consider a different name than PUSH_STACK_CALLBACK since it's
         #   also called for dunder setitem?
         ctx: JitCompileCtx = get_jitcompilectx()
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
         cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
         if cb is not None:
-            val = cb(val)
+            opname: str = runtimectx.peek_frame_stack().inst.opname
+            val = cb(val, source=opname)
 
         self._stack[key] = val
 
@@ -875,7 +879,8 @@ class JIT_CALLBACKS(enum.Enum):
 
     # Called when a value is pushed onto the stack or replaces an existing
     #   value on the stack (using dunder setitem)
-    #       callback(val: Any, /) -> Any
+    #       callback(val: Any, /, *, source: None | str = None) -> Any
+    # source may be a string with information about what pushed the value
     # The returned object is put onto or into the stack, instead
     PUSH_STACK_CALLBACK = enum.auto()
 
