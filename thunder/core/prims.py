@@ -43,6 +43,8 @@ class PrimIDs(Enum):
     PYTHON_VARS = auto()
     UNPACK_ATTR = auto()
     UNPACK_EMPTY_DICT = auto()
+    UNPACK_ITER = auto()
+    UNPACK_NEXT = auto()
     UNPACK_KEY = auto()
     UNPACK_SEQUENCE = auto()
     UNPACK_TRIVIAL = auto()
@@ -429,6 +431,86 @@ unpack_attr = make_prim(
     meta=unpack_attr_meta,
     python_printer=unpack_attr_printer,
     python_impl=unpack_attr_impl,
+)
+
+
+# NOTE UNPACK_ITER is intended only to be bound to directly, and not called
+def unpack_iter_meta(o: Any, /) -> Any:
+    raise NotImplementedError
+
+
+def unpack_iter_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_iter but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_iter but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    (origin,) = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.__iter__()"
+
+
+def unpack_iter_impl(o: Any, /) -> Any:
+    return o.__iter__()
+
+
+unpack_iter = make_prim(
+    PrimIDs.UNPACK_ITER,
+    "unpack_iter",
+    meta=unpack_iter_meta,
+    python_printer=unpack_iter_printer,
+    python_impl=unpack_iter_impl,
+)
+
+
+# NOTE UNPACK_NEXT is intended only to be bound to directly, and not called
+def unpack_next_meta(o: Any, /) -> Any:
+    raise NotImplementedError
+
+
+def unpack_next_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_next but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_next but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    (origin,) = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.__next__()"
+
+
+def unpack_next_impl(o: Any, /) -> Any:
+    return o.__next__()
+
+
+unpack_next = make_prim(
+    PrimIDs.UNPACK_NEXT,
+    "unpack_next",
+    meta=unpack_next_meta,
+    python_printer=unpack_next_printer,
+    python_impl=unpack_next_impl,
 )
 
 

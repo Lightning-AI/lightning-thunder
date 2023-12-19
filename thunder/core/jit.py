@@ -741,9 +741,14 @@ def _locals_lookaside() -> dict[str, Any]:
 _nil = []
 
 
+# TODO Seems like we should be able to jit all of this?
 def _next_lookaside(iterator, default=_nil):
     try:
-        return iterator.__next__()
+
+        def impl():
+            return iterator.__next__()
+
+        return _jit(impl)
     except StopIteration as si:
         if default is not _nil:
             return default
@@ -1627,7 +1632,13 @@ def _for_iter_handler(inst: dis.Instruction, /, stack: list, inst_ptr: int, **kw
 
     v: Any
     try:
-        check_and_append(stack, _jit(_next_impl))
+        r = _jit(_next_impl)
+
+        if r is JIT_SIGNALS.EXCEPTION_RAISED:
+            ctx = get_jitruntimectx()
+            raise ctx.curexc.__cause__
+
+        stack.append(r)
     except StopIteration:
         stack.pop()
         return inst_ptr + delta + 1

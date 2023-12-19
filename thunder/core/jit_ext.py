@@ -663,9 +663,48 @@ def _thunder_getitem_lookaside(fn, *args):
     return hgetitem(ii.history, result, slf, key)
 
 
+def _thunder_iter_lookaside(fn, *args):
+    assert hasattr(fn, "__self__")
+    assert len(args) == 0
+
+    origin = fn.__self__
+
+    ctx: ThunderInterpreterCtx = get_phantomctx()
+    ii: None | InterpreterInfo = ctx.get_info(origin)
+
+    # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
+    #   item is an intermediate, and does not need its provenance tracked)
+    if ii is None:
+        return origin.__iter__()
+
+    result = ii.obj.__iter__()
+    return hiter(ii.history, result, origin)
+
+
+def _thunder_next_lookaside(fn, *args):
+    assert hasattr(fn, "__self__")
+    assert len(args) == 0
+
+    origin = fn.__self__
+
+    ctx: ThunderInterpreterCtx = get_phantomctx()
+    ii: None | InterpreterInfo = ctx.get_info(origin)
+
+    # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
+    #   item is an intermediate, and does not need its provenance tracked)
+    if ii is None:
+        return origin.__next__()
+
+    result = ii.obj.__next__()
+    ii.iterator_counter += 1
+    return hnext(ii.history, result, origin, ii.iterator_counter)
+
+
 # String name to function
 _thunder_opaque_dunder_lookaside_map = {
     "__getitem__": _thunder_getitem_lookaside,
+    "__iter__": _thunder_iter_lookaside,
+    "__next__": _thunder_next_lookaside,
 }
 
 
@@ -711,6 +750,8 @@ class UNPACK_ACTION(Enum):
     GETATTR = auto()
     GETITEM = auto()
     GLOBALS_DICT = auto()
+    ITER = auto()
+    NEXT = auto()
 
 
 def hsig(obj: Any, name: str, /) -> Any:
@@ -734,6 +775,18 @@ def hglobalsdict(globals_dict: dict, /) -> Any:
 def hgetattr(prior_history, obj: Any, origin: Any, key: Any, /) -> Any:
     ctx = get_phantomctx()
     history = prior_history + ((UNPACK_ACTION.GETATTR, obj, origin, key),)
+    return ctx.proxify(obj, history=history)
+
+
+def hiter(prior_history, obj: Any, origin: Any, /) -> Any:
+    ctx = get_phantomctx()
+    history = prior_history + ((UNPACK_ACTION.ITER, obj, origin),)
+    return ctx.proxify(obj, history=history)
+
+
+def hnext(prior_history, obj: Any, origin: Any, iter_counter, /) -> Any:
+    ctx = get_phantomctx()
+    history = prior_history + ((UNPACK_ACTION.NEXT, obj, origin, iter_counter),)
     return ctx.proxify(obj, history=history)
 
 
@@ -779,6 +832,9 @@ class InterpreterInfo:
         self.proxy = proxy
 
         self.history = history
+
+        # NOTE The following is just to properly record iterator state
+        self.iterator_counter: int = 0
 
 
 # Tracks a set of objects
@@ -1026,11 +1082,57 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 prologue_rvals.add(variableify(ii.proxy))
                 global_dicts[module_name] = globals_dict
 
+            def iter_action(_, obj: Any, origin: Any):
+                unpacked = unpack(interpreter_ctx.get_info(origin))
+                bsym = prims.unpack_iter.bind(unpacked, output=ii.proxy)
+                prologue_trc.bound_symbols.append(bsym)
+                prologue_rvals.add(variableify(ii.proxy))
+
+            # NOTE The next action is special in that it deals with a stateful iterator,
+            #   so it handles calling next() however many times the next() is called on the iterator
+            # TODO Consider modeling next as returning the iterator, so that the
+            #   state effect on the iterator appears functional
+            def next_action(_, obj: Any, origin: Any, iter_counter: int):
+                unpacked = unpack(interpreter_ctx.get_info(origin))
+
+                # Finds all other elements unpacked from this iterator
+                unpacks = []
+                for ii in interpreter_ctx.inputs:
+                    h = ii.history
+                    last = h[-1]
+                    ua, *_ = action
+
+                    if ua is UNPACK_ACTION.NEXT:
+                        _, other, other_origin, other_iter_counter = action
+                        if other_origin is origin:
+                            unpacks.append(action)
+
+                for (
+                    _,
+                    other,
+                    _,
+                    _,
+                ) in sorted(unpacks, key=lambda x: x[3]):
+                    other_ii = interpreter_ctx.get_info(other)
+
+                    if id(other_ii.obj) in already_unpacked:
+                        continue
+
+                    other_p = other_ii.proxy
+                    bsym = prims.unpack_next.bind(unpacked, output=other_p)
+                    prologue_trc.bound_symbols.append(bsym)
+                    prologue_rvals.add(variableify(other_p))
+                    already_unpacked.add(id(other_ii.obj))
+                    if not prologue_trc.has_name(other_p.name):
+                        prologue_trc.add_name(other_p.name)
+
             d = {
                 UNPACK_ACTION.FROM_SIGNATURE: from_signature_action,
                 UNPACK_ACTION.GETATTR: getattr_action,
                 UNPACK_ACTION.GETITEM: getitem_action,
                 UNPACK_ACTION.GLOBALS_DICT: globals_dict_action,
+                UNPACK_ACTION.ITER: iter_action,
+                UNPACK_ACTION.NEXT: next_action,
             }
 
             assert len(ii.history) > 0, f"Trying to unpack {ii.obj} without a history"
@@ -1039,7 +1141,8 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             d[ua](*action)
 
             already_unpacked.add(id(ii.obj))
-            prologue_trc.add_name(ii.proxy.name)
+            if not prologue_trc.has_name(ii.proxy.name):
+                prologue_trc.add_name(ii.proxy.name)
             return ii.proxy
 
         rvals: tuple

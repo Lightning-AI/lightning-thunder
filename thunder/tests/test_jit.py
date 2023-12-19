@@ -2670,7 +2670,6 @@ def test_thunder_object_inputs():
         assert ljfoo(x) == x
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1811")
 def test_thunder_list_iteration():
     def foo(l):
         a = l[0]
@@ -2687,6 +2686,48 @@ def test_thunder_list_iteration():
     l = [a, b, c]
 
     assert_close(ljfoo(l), foo(l))
+
+
+def test_thunder_double_list_iteration():
+    def foo(initial, a, b):
+        accum = initial
+        for _a, _b in zip(a, b):
+            accum = _a + _b
+        return accum
+
+    ljfoo = litjit(foo)
+
+    initial = torch.randn((2, 2))
+
+    a, b, c, d, e, f = (torch.randn((2, 2)) for _ in range(6))
+    l0 = [a, b, c]
+    l1 = [d, e, f]
+
+    assert_close(ljfoo(initial, l0, l1), foo(initial, l0, l1))
+
+
+def test_thunder_iter_iter():
+    def foo(l):
+        i0 = iter(l)
+        i1 = iter(l)
+
+        a, b = i0
+        c, d = i1
+
+        return (a * d) + (b * c)
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    l = [a, b]
+
+    assert_close(ljfoo(l), foo(l))
+
+
+#
+# Thunder interpreter module tests
+#
 
 
 def test_thunder_linear():
