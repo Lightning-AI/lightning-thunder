@@ -730,6 +730,16 @@ def _len_lookaside(obj: Any):
     return result
 
 
+def _iter_lookaside(obj, *sentinel):
+    if len(sentinel) != 0:
+        raise NotImplementedError(f"iter() with a sentinel value is not supported at this time")
+
+    def impl():
+        return obj.__iter__()
+
+    return _jit(impl)
+
+
 def _locals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
@@ -806,6 +816,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     bool: _bool_lookaside,
     getattr: _getattr_lookaside,
     globals: _globals_lookaside,
+    iter: _iter_lookaside,
     len: _len_lookaside,
     locals: _locals_lookaside,
     next: _next_lookaside,

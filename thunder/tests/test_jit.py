@@ -2564,6 +2564,20 @@ def test_thunder_unpack_sequence():
     assert_close(ljfoo(tup), foo(tup))
 
 
+def test_thunder_unpack_ex():
+    def foo(seq):
+        (*a,) = seq
+        return a[0] + a[1]
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    seq = (a, b)
+
+    assert_close(ljfoo(seq), foo(seq))
+
+
 def test_thunder_lists_within_lists():
     def foo(l):
         a, b = l[0], l[1]
@@ -2745,7 +2759,6 @@ def test_thunder_double_list_iteration():
     assert_close(ljfoo(initial, l0, l1), foo(initial, l0, l1))
 
 
-@pytest.mark.xfail(reason="Pushes actual tensors onto the stack")
 def test_thunder_iter_iter():
     def foo(l):
         i0 = iter(l)
