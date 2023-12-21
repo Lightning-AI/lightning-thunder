@@ -24,7 +24,6 @@ printf "source path: $test_path\n"
 printf "pyetest arg: ``$pytest_arg\n"
 
 python -um pytest $test_path -q --collect-only $pytest_arg --pythonwarnings ignore 2>&1 > $TEST_FILE
-g
 
 # if any command in a shell script returns a non-zero exit status,
 #  the script will immediately terminate and the remaining commands will not be executed
