@@ -71,6 +71,16 @@ def test_input_tensor_addition():
     assert_close(thunder_result, python_result)
 
 
+def test_dup_top_two():
+    def foo(a):
+        a[-1] += a.pop()
+        return a
+
+    if "DUP_TOP_TWO" in dis.opmap.keys():
+        assert any(i.opname == "DUP_TOP_TWO" for i in dis.get_instructions(foo))
+    assert jit(foo)([1, 2, 3]) == foo([1, 2, 3])
+
+
 def test_constant_if():
     def foo(a, b):
         if 3 < 5:
@@ -658,6 +668,8 @@ def test_walrus_operator():
         c = (a := b)
         return c
 
+    if "DUP_TOP" in dis.opmap.keys():
+        assert any(i.opname == "DUP_TOP" for i in dis.get_instructions(foo))
     jfoo = jit(foo)
 
     assert jfoo(3, 8) == foo(3, 8)
@@ -976,6 +988,68 @@ def test_import():
         return lit_gpt_model.Config
 
     assert jit(foo)() is foo()
+
+
+def test_locals_lookaside():
+    def foo():
+        try:
+            # Locals starts empty
+            assert locals() == {}
+
+            # Modifications to locals are preserved
+            l = locals()
+            assert locals()["l"] is not None, locals()
+            l["a"] = 5
+
+            # The identity of locals() is the same across calls
+            assert l is locals(), (l, locals())
+
+            # Deletions in localsplus are deleted in locals
+            del l
+            assert not "l" in locals().keys(), locals()
+
+            # The objects stored in variables are the same as those in locals
+            b = object()
+            assert b is locals()["b"]
+
+            # Modifying locals does not modify localsplus
+            assert locals()["a"] == 5, locals()
+            name_err = a == 5  # type: ignore (intentional)
+            raise Exception("Unreachable.")
+        except NameError as e:
+            assert "not defined" in str(e)
+
+    foo()
+    jit(foo)()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1824")
+def test_exec_import_star():
+    # Assert that we can actually generate the instruction
+    to_exec = "from itertools import *"
+    compiled = compile(to_exec, "<string>", "exec")
+    assert any(i.opname == "IMPORT_STAR" for i in dis.get_instructions(compiled))
+
+    # Run with globals dict of current frame,
+    def foo():
+        exec_globals = globals().copy()
+        exec(to_exec, exec_globals)
+        assert list(exec_globals["repeat"](None, 2)) == [None, None]  # type: ignore
+
+    jfoo = jit(foo)
+    jfoo()
+
+
+def test_import_star_module():
+    def foo():
+        c = compile("from thunder.tests.module_example import *", "<string>", "exec")
+        exec(c, globals())
+        assert "_returns_three" not in globals().keys()
+        assert "returns_two" in globals().keys()
+        return globals()["returns_five"]()
+
+    assert foo() == 5
+    assert foo() == jit(foo)()
 
 
 def test_unhashable_lookaside():

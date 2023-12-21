@@ -1,3 +1,4 @@
+from types import CodeType, FunctionType, MethodType
 from typing import List, Dict, Tuple, Set, Deque, Any
 from numbers import Number
 from collections import deque
@@ -204,8 +205,13 @@ fnprint_exclude_attrs = {
 #     @fnprint
 #     def foo(a, b):
 #         return a + b
-def fnprint(fn: Callable, first=True) -> Callable:
-    x = fn.__code__ if hasattr(fn, "__code__") else fn
+def fnprint(fn: FunctionType | MethodType | CodeType, first=True) -> Callable:
+    if isinstance(fn, FunctionType):
+        x = fn.__code__
+    elif isinstance(fn, MethodType):
+        x = fn.__func__.__code__  # type: ignore
+    else:
+        x = fn
 
     if first:
         try:
@@ -237,7 +243,11 @@ def fnprint(fn: Callable, first=True) -> Callable:
     if first:
         print("=" * 50)
         print()
-    return fn
+
+    def error_fn(*args, **kwargs):
+        raise ValueError("A code object was passed to fnprint(). Cannot return a callable of it.")
+
+    return fn if isinstance(fn, Callable) else error_fn
 
 
 # TODO Review prettyprinting other map types like dict -- these need to print strings in a particular way

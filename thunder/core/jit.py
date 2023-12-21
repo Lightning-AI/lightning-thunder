@@ -174,13 +174,13 @@ class JitRuntimeCtx:
     @curexc.setter
     def curexc(self, value):
         if value is not None:
-            assert isinstance(value, UserException)
-            assert isinstance(value.__cause__, Exception)
+            assert isinstance(value, UserException), value
+            assert isinstance(value.__cause__, Exception), value
         self._curexc = value
 
     @property
     def globals_dict(self) -> dict[str, Any]:
-        assert self._globals_dict is not None
+        assert self._globals_dict is not None, self._globals_dict
         return self._globals_dict
 
     # The operations encountered while interpreting
@@ -205,7 +205,7 @@ class JitRuntimeCtx:
 
     # for returning from method calls
     def _pop_frame_stack(self):
-        assert self.frame_stack
+        assert self.frame_stack, self
         return self.frame_stack.pop()
 
     @contextlib.contextmanager
@@ -326,8 +326,10 @@ class UserException(RuntimeError):
 
     def __str__(self):
         traceback_str = "\n".join(f.format_with_source() for f in self.tb)
-        msg = f"Encountered user exception {type(self.__cause__).__name__}: {self.__cause__}:\n" f"{traceback_str}"
-        return msg
+        if self.__cause__ is not None:
+            return f"Encountered user exception {type(self.__cause__).__name__}: {self.__cause__}:\n" f"{traceback_str}"
+        else:
+            return f"Encountered user exception with no cause:\n{traceback_str}"
 
 
 class Py_NULL(metaclass=Singleton):
@@ -385,7 +387,7 @@ class PythonFrameWrapper:
             self.positions = Positions(frame.f_lineno, frame.f_lineno, 0, 999)
 
     def format_with_source(self):
-        assert self.positions is not None
+        assert self.positions is not None, self
         l = []
         l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
@@ -413,11 +415,11 @@ class InterpreterStack:
         self._stack = []
 
     # NOTE push is an alias for append
-    def push(self, val: Any, /):
+    def push(self, val: Any, /) -> None:
         return self.append(val)
 
     # NOTE Append is a helper for dunder setitem
-    def append(self, val: Any, /):
+    def append(self, val: Any, /) -> None:
         ctx: JitCompileCtx = get_jitcompilectx()
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
         cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
@@ -427,7 +429,11 @@ class InterpreterStack:
             opname: str = frame.inst.opname
             val = cb(val, source=opname)
 
-        return self._stack.append(val)
+        self._stack.append(val)
+
+    def extend(self, vals: Iterable[Any], /) -> None:
+        for v in vals:
+            self.append(v)
 
     def pop(self) -> Any:
         return self._stack.pop()
@@ -438,7 +444,7 @@ class InterpreterStack:
     def __getitem__(self, key: int | slice, /) -> Any:
         return self._stack[key]
 
-    def __setitem__(self, key: int, val: Any, /):
+    def __setitem__(self, key: int, val: Any, /) -> None:
         # TODO Consider a different name than PUSH_STACK_CALLBACK since it's
         #   also called for dunder setitem?
 
@@ -453,7 +459,7 @@ class InterpreterStack:
 
         self._stack[key] = val
 
-    def __delitem__(self, key: int | slice, /):
+    def __delitem__(self, key: int | slice, /) -> None:
         del self._stack[key]
 
 
@@ -478,8 +484,15 @@ class JITFrame:
     inst_ptr: int = 0
     lasti: int = 0  # this may deviate from inst_ptr due to RERAISE
 
+    def __repr__(self):
+        return f"<{type(self).__name__} {self.code.co_name} at {self.code.co_filename}:{self.positions.lineno if self.positions else None}>"
+
     # in Python 3.11+ the slots are not split by local/cell/free any more
     localsplus: list[Any] = dataclasses.field(default_factory=list)
+
+    # This is not used for name lookup, it's the return value of locals(), as provided by the locals lookaside.
+    # If you want to modify the current value of locals, modify localsplus instead.
+    _locals: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     # advance to the given instruction
     def nexti(self, inst: dis.Instruction):
@@ -494,7 +507,7 @@ class JITFrame:
 
     def format_with_source(self):
         # todo: multiple lines in positions, underline, indent
-        assert self.positions is not None
+        assert self.positions is not None, self
         l = []
         l.append(f"  in {self.qualname} in file: {self.code.co_filename}, line {self.positions.lineno}:")
         if self.code.co_filename:
@@ -548,8 +561,8 @@ class register_opcode_handler:
         if (self.min_ver is None or self.min_ver <= sys.version_info) and (
             self.max_ver is None or sys.version_info < (*self.max_ver[:-1], self.max_ver[-1] + 1)
         ):
-            assert self.name not in _default_opcode_handler_map
-            assert self.name in dis.opmap
+            assert self.name not in _default_opcode_handler_map, self.name
+            assert self.name in dis.opmap, self.name
             _default_opcode_handler_map[self.name] = fn
             return fn
         return _default_opcode_handler_map.get(self.name, fn)
@@ -611,6 +624,67 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
         return True
 
     return x if x is True or x is False else _jit(impl)
+
+
+def eval_lookaside(
+    source: str | bytes | bytearray | CodeType,  # A python expression
+    globals: dict[str, Any] | None = None,
+    locals: Mapping[str, object] | None = None,
+    /,
+    *,
+    closure: tuple[CellType, ...] | None = None,
+) -> Any:
+    """Emulate the builtin `eval` function, but evaluate the code in the interpreter."""
+
+    __globals = globals if globals is not None else _globals_lookaside()
+    __locals = locals if locals is not None else (globals if globals else _locals_lookaside())
+    __closure = closure
+
+    if not isinstance(source, CodeType):
+        source = compile(str(source), "<string>", "eval")
+
+    rctx = get_jitruntimectx()
+    to_exec = FunctionType(code=source, globals=__globals, name="<eval>", argdefs=None, closure=__closure)
+
+    res: JIT_SIGNALS | Any = _jit(to_exec)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        assert rctx._curexc is not None, rctx._curexc
+        exc = rctx._curexc
+        rctx._curexc = None
+        raise exc
+    return res
+
+
+def exec_lookaside(
+    source: str | bytes | bytearray | CodeType,  # A python statement
+    globals: dict[str, Any] | None = None,
+    locals: Mapping[str, object] | None = None,
+    /,
+    *,
+    closure: tuple[CellType, ...] | None = None,
+):
+    """Emulate the builtin `exec` function, but evaluate the code in the interpreter."""
+
+    # globals and locals have been overwritten as local vars.
+    __globals = globals if globals is not None else _globals_lookaside()
+    __locals = locals if locals is not None else (globals if globals else _locals_lookaside())
+    __closure = closure
+
+    if not isinstance(source, CodeType):
+        source = compile(str(source), "<string>", "exec")
+
+    # TODO: FunctionType doesn't do anything with the locals dict.
+    # We need some way to say "Evaluate this in this context."
+    rctx = get_jitruntimectx()
+    to_exec = FunctionType(code=source, globals=__globals, name="<exec>", argdefs=None, closure=__closure)
+
+    res: JIT_SIGNALS | Any = _jit(to_exec)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        assert rctx._curexc is not None, rctx._curexc
+        exc = rctx._curexc
+        rctx._curexc = None
+        raise exc
+    return None
 
 
 # The `__get__`, `__set__`, and `__delete__` methods on a property are implemented in C
@@ -763,11 +837,18 @@ def _iter_lookaside(obj, *sentinel):
 def _locals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
-    _locals = {}
+    _locals = frame._locals
     for i, v in enumerate(frame.localsplus):
-        if isinstance(v, CellType):  # sketchy, we should keep this info
+        name = frame.get_localsplus_name(i)
+        if v is Py_NULL():
+            # Only delete identifiers to avoid breaking pytest, which
+            # rewrites assertions using locals() for some reason.
+            if name.isidentifier() and name in _locals.keys():
+                del _locals[name]
+            continue
+        elif isinstance(v, CellType):  # sketchy, we should keep this info
             v = v.cell_contents
-        _locals[frame.get_localsplus_name(i)] = v
+        _locals[name] = v
     return _locals
 
 
@@ -834,6 +915,8 @@ _default_lookaside_map: dict[Callable, Callable] = {
     # Python builtin lookasides
     any: _any_lookaside,
     bool: _bool_lookaside,
+    exec: exec_lookaside,
+    eval: eval_lookaside,
     getattr: _getattr_lookaside,
     globals: _globals_lookaside,
     iter: _iter_lookaside,
@@ -1613,6 +1696,12 @@ def _dup_top_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
     stack.append(stack[-1])
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-DUP_TOP_TWO
+@register_opcode_handler("DUP_TOP_TWO", max_ver=(3, 10))
+def _dup_top_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+    stack.extend(stack[-2:])
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
 @register_opcode_handler("EXTENDED_ARG")
 def _extended_arg_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
@@ -1769,6 +1858,61 @@ def _import_name_handler(
         return module
 
     return check_and_append(stack, _jit(impl))
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
+@register_opcode_handler("IMPORT_STAR")
+def _import_star_handler(
+    inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs
+) -> None | JIT_SIGNALS:
+    # The module is actually imported from another instruction.
+    # This instruction can only be parsed at top level and modify globals,
+    # since localsplus is of fixed length/positions. It can't be parsed inside a function.
+
+    # `from operator import *` compiles as
+    #  0 LOAD_CONST    0 (0)
+    #  2 LOAD_CONST    1 (('*',))
+    #  4 IMPORT_NAME   0 (operator)
+    #  6 IMPORT_STAR
+
+    module = stack.pop()
+    assert isinstance(module, ModuleType)
+
+    # Get the locals of the current frame, not the frame created by jitting impl() below.
+    _locals = _locals_lookaside()
+
+    # For every name in __all__ if present in the module, or every name in __dict__ not
+    # starting with _ if __all__ is not present, add the name to the current locals() dict,
+    # and produce the same exceptions as cpython would.
+    def impl():
+        skip_leading_underscores = False
+        all_names = getattr(module, "__all__", None)
+        if all_names is None:
+            if not hasattr(module, "__dict__") or not hasattr(module.__dict__, "keys"):
+                raise ImportError("from-import-* object has no __dict__ and no __all__")
+            skip_leading_underscores = True
+            all_names = module.__dict__.keys()
+
+        assert all_names is not None
+        for name in all_names:
+            if not isinstance(name, str):
+                modname = module.__name__
+                if not isinstance(modname, str):
+                    raise TypeError(f"module __name__ must be a string, not {modname}")
+                # NOTE import * has different error messages if trying to acquire from __dict__ vs. __all__
+                if skip_leading_underscores:
+                    raise TypeError(f"Key in {modname}.__dict__ must be str, not {type(name)}")
+                raise TypeError(f"Item in {modname}.__all__ must be str, not {type(name)}")
+
+            if skip_leading_underscores and name.startswith("_"):
+                continue
+            _locals[name] = getattr(module, name)
+
+    res = _jit(impl)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    return None
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IS_OP
@@ -2393,7 +2537,7 @@ def _pop_jump_forward_if_none_handler(
 
 
 @register_opcode_handler("POP_JUMP_IF_FALSE", max_ver=(3, 10))
-def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None:
+def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
 
     tos = stack.pop()
@@ -2407,9 +2551,11 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack
     if tos is False or tos is True:
         cnd = tos
     else:
-        cnd = _jit(impl)
-        if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
-            return cnd
+        res = _jit(impl)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            return res
+        assert res is False or res is True
+        cnd = res
 
     if not cnd:
         return inst.arg
@@ -2417,7 +2563,7 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack
 
 
 @register_opcode_handler("POP_JUMP_IF_TRUE", max_ver=(3, 10))
-def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None:
+def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
 
     tos = stack.pop()
@@ -2431,9 +2577,12 @@ def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: InterpreterStack,
     if tos is False or tos is True:
         cnd = tos
     else:
-        cnd = _jit(impl)
-        if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
-            return cnd
+        tmp = _jit(impl)
+        if tmp is JIT_SIGNALS.EXCEPTION_RAISED:
+            return tmp
+        else:
+            assert tmp is False or tmp is True
+            cnd = tmp
 
     if cnd:
         return inst.arg
@@ -2446,6 +2595,7 @@ def _pop_top_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
     stack.pop()
 
 
+# Returns either
 def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNALS.EXCEPTION_RAISED]:
     # Get the type and exception being raised
     typ: Any = Py_NULL()
@@ -2482,9 +2632,11 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
     if cause is not Py_NULL():
         fixed_cause: BaseException | None = None
         if isinstance(cause, type) and issubclass(cause, BaseException):
-            fixed_cause = _jit(cause)
-            if fixed_cause is JIT_SIGNALS.EXCEPTION_RAISED:
-                return fixed_cause
+            jret = _jit(cause)
+            assert isinstance(jret, BaseException)
+            if jret is JIT_SIGNALS.EXCEPTION_RAISED:
+                return jret
+            fixed_cause = jret
 
             # NOTE: This was a bug in cpython, fixed by cpython PR #112216
             if not isinstance(fixed_cause, BaseException):
@@ -3574,8 +3726,8 @@ def jit(
                 # UserException -> real_exc -> further_causes to
                 # real_exc -> UserException -> further causes
                 e = runtimectx.curexc
-                assert isinstance(e, UserException)
-                assert e.__cause__ is not None
+                assert isinstance(e, UserException), e
+                assert e.__cause__ is not None, e
                 runtimectx.curexc = None
                 real_exc = e.__cause__
                 e.__cause__ = real_exc.__cause__
