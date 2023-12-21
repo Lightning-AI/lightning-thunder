@@ -1091,18 +1091,12 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    # nvFuser cat fusion is currently disabled due to
-    #   https://github.com/Lightning-AI/lightning-thunder/issues/1071
-    return False
+    if nv_version < LooseVersion("0.1.3"):
+        return False
 
     # Validates tensors and concatenated dimension lengths
     for t in tensors:
         if not is_supported_tensor(t):
-            return False
-
-        # See https://github.com/NVIDIA/Fuser/issues/21
-        #   nvFuser cannot concatenate dimensions of length 1
-        if t.shape[dim] == 1:
             return False
 
     return True
