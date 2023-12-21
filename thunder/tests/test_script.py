@@ -251,8 +251,7 @@ def test_inline_submodule():
 @pytest.mark.parametrize(
     "name",
     (
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1408
-        # "gpt-neox-like",
+        "gpt-neox-like",
         "llama1-like",
         "long-context-like",
         "llama2-like",
