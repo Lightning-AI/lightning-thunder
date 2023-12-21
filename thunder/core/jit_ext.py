@@ -1,5 +1,5 @@
 from typing import Any
-from collections.abc import ValuesView
+from collections.abc import ValuesView, Iterable, Iterator
 from types import CellType, ModuleType, CodeType, BuiltinFunctionType, FunctionType, MethodType
 from collections.abc import Callable, Sequence
 import weakref
@@ -631,7 +631,8 @@ def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> An
     return val
 
 
-def _thunder_list_lookaside(*args):
+# https://docs.python.org/3.13/library/functions.html#func-list
+def _thunder_list_lookaside(*args) -> list:
     if len(args) == 0:
         return []
 
@@ -646,21 +647,16 @@ def _thunder_list_lookaside(*args):
     return _jit(impl)
 
 
-# TODO This lookaside -- and the list lookaside above -- could probably be replaced with
-#   a more general callback that would review all inputs to opaque functions. That more
-#   general callback would associate provenance with all inputs, so if they were
-#   reproduced by the function then their provenance would be clear
-def _thunder_tuple_lookaside(*args):
+# https://docs.python.org/3.13/library/functions.html#func-tuple
+def _thunder_tuple_lookaside(*args) -> tuple:
     if len(args) == 0:
         return ()
 
     (iterable,) = args
 
-    # NOTE The following might seem very silly, as it just pulls all the items
-    #   in the iterable and puts them in a list, and then the actual call to
-    #   tuple() happens outside the jitted region. However the important
-    #   thing is that we capture the provenance of the objects within
-    #   the iterable.
+    # NOTE It's odd that this returns a list, but it's necessary to show
+    #   how the items are extracted from the iterable so they can be proxied
+    #   correctly
     def impl():
         l = []
         for x in iterable:
@@ -670,10 +666,32 @@ def _thunder_tuple_lookaside(*args):
     return tuple(_jit(impl))
 
 
+# https://docs.python.org/3.13/library/functions.html#zip
+# Records the provenance of the top-level items in the iterables being zipped
+def _thunder_zip_lookaside(*iterables, strict: bool = False) -> tuple:
+    seqs = []
+    for seq in iterables:
+        # NOTE It's odd that this returns a list, but it's necessary to show
+        #   how the items are extracted from the iterable so they can be
+        #   proxied correctly
+        # NOTE We can't just capture seq in a closure here, because
+        #   that would bind to the last seq enumerated
+        def impl(seq):
+            l = []
+            for x in seq:
+                l.append(x)
+            return l
+
+        seqs.append(_jit(impl, seq))
+
+    return zip(*seqs, strict=strict)
+
+
 _thunder_symbol_lookaside_map_update = {
     getattr: _thunder_getattr_lookaside,
     list: _thunder_list_lookaside,
     tuple: _thunder_tuple_lookaside,
+    zip: _thunder_zip_lookaside,
 }
 _thunder_symbol_lookaside_map.update(_thunder_symbol_lookaside_map_update)
 
@@ -735,9 +753,10 @@ def _thunder_next_lookaside(fn, *args):
     #   item is an intermediate, and does not need its provenance tracked)
     if ii is None:
         val = origin.__next__()
-        assert not isinstance(
-            val, torch.Tensor
-        ), f"The thunder interpreter's __next__ lookaside would produce a torch.Tensor object from an untracked {origin=}"
+        if isinstance(val, torch.Tensor):
+            raise AssertionError(
+                f"The thunder interpreter's __next__ lookaside would produce a torch.Tensor object from an untracked {origin=}"
+            )
         return val
 
     result = ii.obj.__next__()

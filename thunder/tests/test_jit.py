@@ -2814,7 +2814,6 @@ def test_thunder_list_iteration():
     assert_close(ljfoo(l), foo(l))
 
 
-@pytest.mark.xfail(reason="Pushes actual tensors onto the stack")
 def test_thunder_double_list_iteration():
     def foo(initial, a, b):
         accum = initial
