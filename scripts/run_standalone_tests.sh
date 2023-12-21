@@ -14,7 +14,6 @@
 # limitations under the License.
 
 # THIS FILE ASSUMES IT IS RUN INSIDE THE tests DIRECTORY
-set -e
 
 # Get all the tests marked with standalone marker
 TEST_FILE="standalone_tests.txt"
@@ -24,8 +23,14 @@ pytest_arg=$2  # use `-m standalone`
 printf "source path: $test_path\n"
 printf "pyetest arg: ``$pytest_arg\n"
 
-python -um pytest $test_path -q --collect-only $pytest_arg --pythonwarnings ignore > $TEST_FILE
-cat $TEST_FILE
+python -um pytest $test_path -q --collect-only $pytest_arg --pythonwarnings ignore 2>&1 > $TEST_FILE
+g
+
+# if any command in a shell script returns a non-zero exit status,
+#  the script will immediately terminate and the remaining commands will not be executed
+set -e
+
+# removes the last line of the file
 sed -i '$d' $TEST_FILE
 
 # Declare an array to store test results
