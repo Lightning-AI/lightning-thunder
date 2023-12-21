@@ -318,25 +318,24 @@ if torch.distributed.is_available():
                     self.gradient_buckets.tell(grads_of_bsym[0], self.process_group)
                 return VISIT_TYPE.INSERT_AFTER
 
-        preaveraged_grads = [
-            bsym.flat_proxy_args[0]
-            for bsym in backward_trace.bound_symbols
-            if bsym.sym.id == dist_prims.PrimIDs.ALL_REDUCE
-        ]
+        def get_bsym_of_allreduce_of_grad(tensor: TensorProxy, producers: utils.ProxyDict) -> BoundSymbol:
+            prod_bsym = producers[tensor]
+            if prod_bsym.sym.id == dist_prims.PrimIDs.ALL_REDUCE:
+                return prod_bsym
+            t = prod_bsym.flat_proxy_args[0]
+            utils.check_type(t, (TensorProxy, FutureTensorProxy))
+            return get_bsym_of_allreduce_of_grad(t, producers)
 
         # Map from preaveraged grad to index in trace.output
+        producers = utils.producers(backward_trace)
+        preaveraged_grads: list[TensorProxy] = []
         preaveraged_to_index = utils.ProxyDict()
         for i, t in enumerate(tree_flatten(backward_trace.output)[0]):
             if isinstance(t, TensorProxy):
-                producer_symbols = tuple(
-                    filter(
-                        lambda bsym: bsym.sym.id == dist_prims.PrimIDs.ALL_REDUCE,
-                        utils.find_producer_symbols(backward_trace, [t], preaveraged_grads),
-                    )
-                )
-                utils.check(len(producer_symbols) == 1, lambda: f"{len(producer_symbols)=} is expected to be 1")
-                bsym_of_allreduce: BoundSymbol = producer_symbols[0]
-                preaveraged_to_index[bsym_of_allreduce.flat_proxy_args[0]] = i
+                bsym_of_allreduce: BoundSymbol = get_bsym_of_allreduce_of_grad(t, producers)
+                preaveraged_grad_tensor_proxy: TensorProxy = bsym_of_allreduce.flat_proxy_args[0]
+                preaveraged_to_index[preaveraged_grad_tensor_proxy] = i
+                preaveraged_grads.append(preaveraged_grad_tensor_proxy)
 
         gradients_of_same_dtype_and_device: dict[tuple[dtypes.dtype, devices.Device], list[TensorProxy]] = defaultdict(
             list

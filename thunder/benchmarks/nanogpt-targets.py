@@ -3,19 +3,12 @@ import argparse
 import torch
 
 from thunder.benchmarks import (
-    run_benchmark,
     run_multiprocess_benchmark,
     NanoGPTConfig,
     NanoGPTBenchmark,
-    torch_executor,
-    torch_compile_executor,
-    thunder_nvfuser_executor,
     default_torch_ddp_executor,
     default_torch_compile_ddp_executor,
-    default_thunder_dynamic_strides_executor_no_grad,
     get_default_thunder_ddp_dynamic_strides_executor,
-    default_thunder_apex_executor,
-    default_thunder_triton_executor,
 )
 
 

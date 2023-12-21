@@ -36,16 +36,17 @@ class GradBucket:
         self.grad_to_index = utils.ProxyDict()
         for g, i in zip(grads, grad_indices):
             self.grad_to_index[g] = i
-        self.preaveraged_tensors = []
+        self.preaveraged_tensors = [None for _ in self.orig_grads]
 
     def tell(self, grad):
         utils.check(grad in self.grads, lambda: f"Wrong TensorProxy of {grad} passed")
-        self.preaveraged_tensors.append(
-            dist_prims.update_bucket_view(grad, self.grad_names.index(grad.name), self.bucket_key),
+        index = self.grad_names.index(grad.name)
+        self.preaveraged_tensors[index] = dist_prims.update_bucket_view(
+            grad, self.grad_names.index(grad.name), self.bucket_key
         )
 
     def ready_for_allreduce(self):
-        return len(self.preaveraged_tensors) == len(self.grads._dict)
+        return all(t is not None for t in self.preaveraged_tensors)
 
     def pack(self):
         return dist_prims.pack(self.preaveraged_tensors, self.bucket_key)
