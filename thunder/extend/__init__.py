@@ -4,7 +4,7 @@ from collections.abc import Hashable
 from types import ModuleType
 
 from thunder.core.utils import check
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import Proxy
 
@@ -179,6 +179,7 @@ class OperatorExecutor(Executor):
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
         bind_postprocess: None | Callable = None,
+        python_printer: Callable = default_python_printer,
     ) -> Symbol:
         assert (like is None) ^ (meta is None), "Expected one and only one of 'like' and 'meta' to be specified"
         assert (module is not None) + (
@@ -203,6 +204,7 @@ class OperatorExecutor(Executor):
             _module=module,
             executor=self,
             _bind_postprocess=_bind_postprocess,
+            python_printer=python_printer,
         )
         self.opmap[name] = sym
 

@@ -28,6 +28,7 @@ from thunder.core.devices import Device, DeviceType
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
+from thunder.core.profile import add_markers
 
 from thunder.executors.utils import Region
 from thunder.executors.passes import update_fusion_call_ctx
@@ -361,6 +362,7 @@ class FusionDefinitionWrapper:
     """
 
     get_fd: Callable[[tuple[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]], ...]], FusionDefinition]
+    name: str
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
@@ -375,10 +377,11 @@ class FusionDefinitionWrapper:
             if nv_version >= LooseVersion("0.0.13") and hasattr(fd, "_selected_device")
             else {}
         )
-        return fd.execute(args, **kwargs)
+        with add_markers(self.name):
+            return fd.execute(args, **kwargs)
 
     def __repr__(self):
-        return f"FusionDefinitionWrapper"
+        return f"FusionDefinitionWrapper({self.name})"
 
 
 # Group bookend meta operations into separate regions
@@ -453,7 +456,7 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> list[Region]
 
 
 def create_fusion_definition_wrapper(
-    bsyms: list[BoundSymbol], sorted_unique_inputs: list[Proxy], sorted_unique_outputs: list[Proxy]
+    bsyms: list[BoundSymbol], name: str, sorted_unique_inputs: list[Proxy], sorted_unique_outputs: list[Proxy]
 ) -> FusionDefinitionWrapper:
     # NOTE Region Inputs and Outputs
     # The inputs and outputs to a region are represented as sets, which are sorted by name
@@ -477,7 +480,7 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, get_fd.cache_info, get_fd.cache_clear)
+    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
     return fdw
 
 
@@ -541,11 +544,11 @@ class nvFuserExecutor(FusionExecutor):
 
         flattened_bsyms = self._dce_bsyms(sorted_unique_outputs, flattened_bsyms)
 
-        fdw: FusionDefinitionWrapper = create_fusion_definition_wrapper(
-            flattened_bsyms, sorted_unique_inputs, sorted_unique_outputs
-        )
-
         fusion_name = f"nvFusion{fusion_counter}"
+        annotation = f"{fusion_name}: ({', '.join(bsym.sym.name for bsym in flattened_bsyms)})"
+        fdw: FusionDefinitionWrapper = create_fusion_definition_wrapper(
+            flattened_bsyms, annotation, sorted_unique_inputs, sorted_unique_outputs
+        )
 
         fusion_bsym: BoundSymbol = self.register_temporary_operation(
             fusion_name, fdw, inputs=sorted_unique_inputs, outputs=sorted_unique_outputs, bsyms=flattened_bsyms
