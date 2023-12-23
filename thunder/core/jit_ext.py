@@ -536,7 +536,8 @@ def phantom_jit(
     ctx: None | PhantomInterpreterCtxInterface = None,
     callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks,
 ) -> Callable:
-    jfn = jit(fn, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks)
+    jit_ = partial(jit, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks)
+    jfn = jit_(fn)
 
     @wraps(jfn)
     def fn(*args, **kwargs) -> Callable:
@@ -561,9 +562,16 @@ def phantom_jit(
                 pargs.append(p)
 
             if si.varargs is not None:
-                varargs_name, x = si.varargs
-                p = hsig(x, varargs_name)
+                varargs_name, varargs = si.varargs
+                p = hsig(varargs, varargs_name)
                 pargs.extend(p)
+
+                # Eagerly unpacks varargs
+                def _varargs_unpack(varargs):
+                    for x in varargs:
+                        pass
+
+                jit_(_varargs_unpack)(varargs)
 
             pkwargs = {}
             for name, x in si.kwargs.items():
@@ -716,7 +724,8 @@ def _thunder_getitem_lookaside(fn, *args):
     # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
     #   item is an intermediate, and does not need its provenance tracked)
     if ii is None:
-        return slf.__getitem__(key)
+        result = slf.__getitem__(key)
+        return result
 
     result = ii.obj.__getitem__(key)
     return hgetitem(ii.history, result, slf, key)
@@ -753,10 +762,6 @@ def _thunder_next_lookaside(fn, *args):
     #   item is an intermediate, and does not need its provenance tracked)
     if ii is None:
         val = origin.__next__()
-        if isinstance(val, torch.Tensor):
-            raise AssertionError(
-                f"The thunder interpreter's __next__ lookaside would produce a torch.Tensor object from an untracked {origin=}"
-            )
         return val
 
     result = ii.obj.__next__()
@@ -969,7 +974,7 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
     def inputs(self) -> ValuesView[InterpreterInfo]:
         return self._input_ids_to_info_map.values()
 
-    def get_info(self, val) -> None | InterpreterInfo:
+    def get_info(self, val: Any, /) -> None | InterpreterInfo:
         ii: None | InterpreterInfo = self._input_ids_to_info_map.get(id(val), None)
 
         if ii:
@@ -977,6 +982,11 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
 
         ii = self._replacement_ids_to_info_map.get(id(val), None)
         return ii
+
+    def get_replacement(self, val: Any, /) -> None | Any:
+        if (info := self.get_info(val)) is not None:
+            return info.replacement
+        return None
 
     # NOTE All proxies are constructed in the context of the computation trace, and their
     #   names must be added to the prologue trace (this is done when constructing the prologue trace)
@@ -1030,14 +1040,30 @@ class ThunderInterpreterCtx(PhantomInterpreterCtxInterface):
 #
 
 
+# Called whenever an object is pushed onto the stack
+#   This does two things:
+#       1) If the value to be pushed has a replacement value, the replacement value is pushed
+#           instead. A common example of this is pushing a TensorProxy instead of a torch.Tensor object.
+#           This assumes that when objects are acquired from other places -- like the globals dict, or
+#           or closures -- that they are also converted to replacement values OR simply pushed on the
+#           stack without inspection.
+#       2) Adds the values to the context's "intermediates." This will even add input objects to
+#           "intemediates," and we should update this to only push objects that are known to be
+#           intermediates or change the name "intermediates." Currently, objects which
+#           are actually intermediates can be discovered by diffing "intermediates" with the context's
+#           input tracking datastructures.
 def _thunder_push_stack_callback(val: Any, /, *, source: None | str = None) -> Any:
+    ctx: ThunderInterpreterCtx = get_phantomctx()
+
+    if (replacement := ctx.get_replacement(val)) is not None:
+        return replacement
+
     if isinstance(val, torch.Tensor):
         source_str: str = "" if source is None else f"Its source was {source}"
         raise AssertionError(
             f"The thunder interpreter attempted to push an actual torch.tensor object onto the stack. The tensor had shape {val.shape} and dtype {val.dtype}. {source_str}"
         )
 
-    ctx: ThunderInterpreterCtx = get_phantomctx()
     ctx._intermediates.add(val)
     return val
 

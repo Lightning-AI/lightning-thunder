@@ -3380,13 +3380,12 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
     # (8) Jits into the function
-    # adjustments for "hidden" instructiions (EXTENDED_ARGS, CACHE, ...)
+    # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     locals_dict: dict[str, Any] = dict(bound.arguments)
-
     code: CodeType = extract_code(fn)
 
     # Comprehensions:

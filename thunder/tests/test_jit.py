@@ -2851,6 +2851,19 @@ def test_thunder_iter_iter():
     assert_close(ljfoo(l), foo(l))
 
 
+def test_thunder_varargs():
+    def foo(*args):
+        a, b = args
+        return a + b, (args[0] + args[1])
+
+    ljfoo = litjit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    assert_close(ljfoo(a, b), foo(a, b))
+
+
 #
 # Thunder interpreter module tests
 #
