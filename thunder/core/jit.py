@@ -14,6 +14,7 @@ import sys
 import traceback
 from typing import Any, Literal, NamedTuple
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
+from io import StringIO
 
 from types import (
     CellType,
@@ -152,7 +153,7 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
 
 # The Jit's runtime context, which tracks stack changes in Python mode
 class JitRuntimeCtx:
-    def __init__(self):
+    def __init__(self, *, debug_log: None | StringIO = False):
         self.frame_stack: list[JITFrame] = []
         self._globals_dict: dict[str, Any] | None = None
         self._history: list[dis.Instruction | str] = []
@@ -166,6 +167,8 @@ class JitRuntimeCtx:
         # `exception_stack[-1] = ...` is the equivalent of assiging ts.exc_info->exc_type/value/traceback.
         # ts.exc_state is exc_info (the bottom-most element of the stack(?))
         # ts.curexc_type / curexc_value / curexc_traceback are the UserException currently being raised
+
+        self.debug_log = debug_log
 
     @property
     def curexc(self) -> Exception | None:
@@ -192,6 +195,12 @@ class JitRuntimeCtx:
     @property
     def history(self) -> list[dis.Instruction | str]:
         return self._history
+
+    def record(self, val: Any, /) -> None:
+        self._history.append(val)
+
+        if self.debug_log is not None:
+            self.debug_log.write(f"{str(val)}\n")
 
     def peek_interpreter_stack(self) -> InterpreterStack:
         return self.frame_stack[-1].interpreter_stack
@@ -222,15 +231,15 @@ class JitRuntimeCtx:
     #   interpreted_instructions is accessed
     def record_interpreted_instruction(self, inst: dis.Instruction) -> JitRuntimeCtx:
         self._interpreted_instructions.append(inst)
-        self._history.append(inst)
+        self.record(inst)
         return self
 
     def record_opaque_call(self, fn: Callable) -> JitRuntimeCtx:
-        self._history.append(f"Opaque call to {fn} with name {getattr(fn, '__name__', 'None')}")
+        self.record(f"Opaque call to {fn} with name {getattr(fn, '__name__', 'None')}")
         return self
 
     def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
-        self._history.append(f"Lookaside to {fn.__name__ if hasattr(fn, '__name__') else 'partial object'}")
+        self.record(f"Lookaside to {fn.__name__ if hasattr(fn, '__name__') else 'partial object'}")
         return self
 
     def format_traceback(self):
@@ -3695,6 +3704,7 @@ def jit(
     opcode_interpreter: Callable = default_opcode_interpreter,
     fn_lookaside: Callable = default_lookaside,
     callbacks: dict[JIT_CALLBACKS, Callable] = default_callbacks,
+    debug_log: None | StringIO = None,
 ) -> Callable:
     compilectx: JitCompileCtx = JitCompileCtx(
         opcode_interpreter=opcode_interpreter,
@@ -3704,7 +3714,7 @@ def jit(
 
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
-        runtimectx: JitRuntimeCtx = JitRuntimeCtx()
+        runtimectx: JitRuntimeCtx = JitRuntimeCtx(debug_log=debug_log)
 
         with jitctx(compilectx, runtimectx):
             try:

@@ -6,6 +6,7 @@ import time
 from collections.abc import Hashable, Sequence
 from functools import wraps
 import os
+from io import StringIO
 
 
 from thunder.core.utils import check, is_collection
@@ -147,6 +148,7 @@ class CompileData:
         use_torch_compile: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
+        debug_log: None | StringIO = None,
     ):
         #
         # Determines the cache mode
@@ -186,6 +188,7 @@ class CompileData:
         self.use_cudagraphs = use_cudagraphs
         self.use_torch_compile = use_torch_compile
         self.disable_torch_autograd_support = disable_torch_autograd_support
+        self.debug_log = debug_log
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
 

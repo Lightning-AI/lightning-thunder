@@ -9,6 +9,7 @@ import copy
 import contextvars
 import warnings
 from enum import Enum, auto
+from io import StringIO
 
 import torch
 from thunder.core.proxies import proxy, Proxy, TensorProxy, make_proxy_name, variableify, unvariableify
@@ -535,8 +536,11 @@ def phantom_jit(
     fn_lookaside: Callable = default_lookaside,
     ctx: None | PhantomInterpreterCtxInterface = None,
     callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks,
+    debug_log: None | StringIO = None,
 ) -> Callable:
-    jit_ = partial(jit, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks)
+    jit_ = partial(
+        jit, opcode_interpreter=opcode_interpreter, fn_lookaside=fn_lookaside, callbacks=callbacks, debug_log=debug_log
+    )
     jfn = jit_(fn)
 
     @wraps(jfn)
@@ -1105,8 +1109,8 @@ _thunder_callbacks = {
 thunder_callbacks: dict[JIT_CALLBACKS, Callable] = phantom_callbacks | _thunder_callbacks
 
 
-def thunder_jit(fn: Callable, ctx: ThunderInterpreterCtx) -> Callable:
-    return phantom_jit(fn, fn_lookaside=thunder_lookaside, ctx=ctx, callbacks=thunder_callbacks)
+def thunder_jit(fn: Callable, ctx: ThunderInterpreterCtx, *, debug_log: None | StringIO = None) -> Callable:
+    return phantom_jit(fn, fn_lookaside=thunder_lookaside, ctx=ctx, callbacks=thunder_callbacks, debug_log=debug_log)
 
 
 # TODO Add support for transforms
@@ -1128,7 +1132,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             lang_tok = set_langctx(lang)
             trace_tok = set_tracectx(interpreter_ctx.computation_trace)
             cs.last_trace_tracing_start = time.time_ns()
-            jfn = thunder_jit(cd.fn, ctx=interpreter_ctx)
+            jfn = thunder_jit(cd.fn, ctx=interpreter_ctx, debug_log=cd.debug_log)
             result = jfn(*args, **kwargs)
             prims.python_return(result)
             cs.last_trace_tracing_stop = time.time_ns()
@@ -1311,8 +1315,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 # NOTE This is an analogue to thunder.compile, because how it handles trace generation
 #   is sufficiently distinct that merging the two would be quite tricky
 def litjit(
-    fn: Callable,
-    executors_list: None | Sequence[Executor] = None,
+    fn: Callable, executors_list: None | Sequence[Executor] = None, debug_log: None | StringIO = None
 ) -> Callable:
     cd = CompileData(
         fn=fn,
@@ -1325,6 +1328,7 @@ def litjit(
         use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
+        debug_log=debug_log,
     )
 
     cs = CompileStats()
