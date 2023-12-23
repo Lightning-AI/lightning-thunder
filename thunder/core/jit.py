@@ -169,6 +169,8 @@ class JitRuntimeCtx:
         # ts.curexc_type / curexc_value / curexc_traceback are the UserException currently being raised
 
         self.debug_log = debug_log
+        self._prev_filename: None | str = None
+        self._prev_lineno: int = -1
 
     @property
     def curexc(self) -> Exception | None:
@@ -229,17 +231,27 @@ class JitRuntimeCtx:
     # TODO Instead of appending to both history and and interpreted_instructions we could
     #   consider just appending to history and then filtering to only instructions when
     #   interpreted_instructions is accessed
-    def record_interpreted_instruction(self, inst: dis.Instruction) -> JitRuntimeCtx:
+    def record_interpreted_instruction(self, inst: dis.Instruction, /) -> JitRuntimeCtx:
         self._interpreted_instructions.append(inst)
         self.record(inst)
         return self
 
-    def record_opaque_call(self, fn: Callable) -> JitRuntimeCtx:
+    def record_opaque_call(self, fn: Callable, /) -> JitRuntimeCtx:
         self.record(f"Opaque call to {fn} with name {getattr(fn, '__name__', 'None')}")
         return self
 
-    def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
+    def record_lookaside(self, fn: Callable, /) -> JitRuntimeCtx:
         self.record(f"Lookaside to {fn.__name__ if hasattr(fn, '__name__') else 'partial object'}")
+        return self
+
+    def record_position(self, filename: None | str, lineno: int, line: str, /) -> JitRuntimeCtx:
+        # Only records a change in the Python line
+        if filename == self._prev_filename and lineno == self._prev_lineno:
+            return self
+
+        self._prev_lineno = lineno
+        self._prev_filename = filename
+        self.record(f"Line {filename}:{lineno}")
         return self
 
     def format_traceback(self):
@@ -513,6 +525,11 @@ class JITFrame:
             self.positions = inst.positions
         else:
             raise NotImplementedError(f"Python {sys.version_info} not supported")
+
+        ctx: JitRuntimeCtx = get_jitruntimectx()
+        file_name: None | str = self.code.co_filename
+        lineno: int = -1 if self.positions is None else self.positions.lineno
+        ctx.record_position(file_name, lineno, "")
 
     def format_with_source(self):
         # todo: multiple lines in positions, underline, indent
