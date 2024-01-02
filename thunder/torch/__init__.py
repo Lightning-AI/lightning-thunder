@@ -715,6 +715,30 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.reshape(a, shape)
 
 
+@torchsymbol(torch.select, is_method=True)
+def select(a: TensorLike, /, dim: int, index: int):
+    # dim check
+    utils.check(
+        a.ndim != 0,
+        lambda: f"select() cannot be applied to a 0-dim tensor.",
+    )
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    # index check
+    dim_length = a.shape[dim]
+
+    wrapped_index = index + dim_length if index < 0 else index
+    utils.check(
+        (wrapped_index < dim_length and wrapped_index >= 0),
+        lambda: f"select(): index {index} out of range for tensor of size {a.shape} at dimension {dim}",
+    )
+
+    # `torch.select` returns view with given dimension removed
+    # while `slice_in_dim` preserves the sliced dim, hence the `squeeze`
+    a_sliced = clang.slice_in_dim(a, wrapped_index, wrapped_index + 1, dim=dim)
+    return squeeze(a_sliced, dim)
+
+
 # TODO consider revising this to just call _split_indices
 # Splits a tensor along a split dimension dim into n tensors
 # If input is divisible by n then every tensor will have the same length along the split dimension

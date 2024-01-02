@@ -3352,6 +3352,46 @@ slice_prim_opinfo = OpInfo(
 shape_ops.append(slice_prim_opinfo)
 
 
+def select_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim, index
+    cases = (
+        ((1, 3, 3), 1, 1),
+        # Extreme dims
+        ((4, 5, 6), 0, 2),
+        ((4, 5, 6), 2, 0),
+        ((4, 5, 6), -1, 1),
+        ((4, 5, 6), -3, 1),
+        # Extreme indices
+        ((4, 5, 6), 0, 0),
+        ((4, 5, 6), 0, 3),
+        ((4, 5, 6), 1, -5),
+        ((4, 5, 6), 1, -1),
+    )
+
+    for shape, dim, index in cases:
+        yield SampleInput(make(shape), dim, index)
+
+
+def select_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+    yield (SampleInput(make(), 0, 0), RuntimeError, r"select\(\) cannot be applied to a 0-dim tensor.")
+    msg = r"out of range for tensor of size \(1, 2, 3\) at dimension"
+    yield (SampleInput(make((1, 2, 3)), 1, 2), RuntimeError, msg)
+    msg = r"out of range for tensor of size \(1, 2, 3\) at dimension"
+    yield (SampleInput(make((1, 2, 3)), 1, -3), RuntimeError, msg)
+
+
+select_opinfo = OpInfo(
+    ltorch.select,
+    sample_input_generator=select_sample_generator,
+    error_input_generator=select_error_generator,
+    torch_reference=torch.select,
+)
+shape_ops.append(select_opinfo)
+
+
 def split_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
