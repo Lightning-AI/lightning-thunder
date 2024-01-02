@@ -772,10 +772,9 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
 
     dim = utils.canonicalize_dim(a.ndim, dim)
 
-    utils.check(
+    utils.check_type(
         size_or_sections,
         (int, Sequence),
-        lambda: f"size_or_sections={size_or_sections} should be an integer or a Sequence",
     )
 
     # TODO: consider revising this to just call _split_indices

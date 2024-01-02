@@ -3371,9 +3371,16 @@ def split_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(make(shape), size_or_sections, dim)
 
 
+def split_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+    msg = r"is zero then the length of the split dimension \(4\) must also be zero"
+    yield (SampleInput(make(4, 5, 6), 0, 0), RuntimeError, msg)
+
+
 split_opinfo = OpInfo(
     ltorch.split,
     sample_input_generator=split_sample_generator,
+    error_input_generator=split_error_generator,
     torch_reference=torch.split,
 )
 shape_ops.append(split_opinfo)
