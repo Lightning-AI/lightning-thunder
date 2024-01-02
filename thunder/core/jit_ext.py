@@ -632,7 +632,7 @@ _thunder_symbol_lookaside_map.update(_torch_to_thunder_function_map)
 def _thunder_getattr_lookaside(origin: Any, key: str, *maybe_default: Any) -> Any:
     val = getattr(origin, key, *maybe_default)
 
-    ctx = ThunderInterpreterCtx = get_phantomctx()
+    ctx: ThunderInterpreterCtx = get_phantomctx()
     ii: None | InterpreterInfo = ctx.get_info(origin)
 
     # Short-circuits if the origin is not tracked (indicating the origin is an intermediate)
