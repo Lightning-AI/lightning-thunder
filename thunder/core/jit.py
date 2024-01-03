@@ -1596,6 +1596,32 @@ def _copy_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -
     stack.append(stack[-inst.arg])
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-COPY_DICT_WITHOUT_KEYS
+@register_opcode_handler("COPY_DICT_WITHOUT_KEYS", max_ver=(3, 10))
+def _copy_dict_without_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    keys = stack.pop()
+    assert isinstance(keys, Iterable)
+    match_subject = stack[-1]
+    assert isinstance(match_subject, MutableMapping)
+
+    # This could be better expressed as:
+    # stack.append({k: v for k, v in subject.items() if k not in keys})
+    # However in cpython the instruction is implemented with
+    # PyDict_DelItem, which calls PyObject_Hash, which can have side effects.
+    # So, we begrudgingly follow cpython.
+    def impl(keys, match_subject):
+        rest = {}
+        rest.update(match_subject)
+        for k in keys:
+            del rest[k]
+        return rest
+
+    res = _jit(impl, keys, match_subject)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+    stack.append(res)
+
+
 # https://docs.python.org/3.11/library/dis.html#opcode-COPY_FREE_VARS
 @register_opcode_handler("COPY_FREE_VARS", min_ver=(3, 11))
 def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
@@ -2373,6 +2399,30 @@ def _map_add_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 
     assert type(d) is dict, type(d)
     d[tos1] = tos
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-MATCH_CLASS
+@register_opcode_handler("MATCH_CLASS")
+def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    raise NotImplementedError("MATCH_CLASS not implemented")
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-MATCH_KEYS
+@register_opcode_handler("MATCH_KEYS")
+def _match_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    raise NotImplementedError("MATCH_KEYS not implemented")
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-MATCH_MAPPING
+@register_opcode_handler("MATCH_MAPPING")
+def _match_mapping_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    raise NotImplementedError("MATCH_MAPPING not implemented")
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-MATCH_SEQUENCE
+@register_opcode_handler("MATCH_SEQUENCE")
+def _match_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    raise NotImplementedError("MATCH_SEQUENCE not implemented")
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-NOP
