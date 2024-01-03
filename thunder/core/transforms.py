@@ -744,8 +744,8 @@ register_grad(pids.SLICE, _slice_prim_grad)
 
 
 @torchctx
-def _squeeze_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
-    fwd = prims.squeeze(a, dims)
+def _squeeze_prim_grad(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
+    fwd = prims.squeeze(a, tuple(dims))
 
     g = get_grad(fwd)
     # NOTE This calls clang.unsqueeze, and not torch.unsqueeze, because torch.unsqueeze only supports
@@ -796,12 +796,12 @@ register_grad(pids.TAKE_ALONG_AXIS, _take_along_axis_prim_grad)
 
 
 @torchctx
-def _transpose_prim_grad(a: TensorProxy, permutation: Sequence[int]) -> TensorProxy:
-    fwd = prims.transpose(a, permutation)
+def _transpose_prim_grad(a: TensorProxy, permutation: tuple[int, ...]) -> TensorProxy:
+    fwd = prims.transpose(a, tuple(permutation))
 
     g = get_grad(fwd)
     undo = _argsort(permutation)
-    a_grad = prims.transpose(g, undo)
+    a_grad = prims.transpose(g, tuple(undo))
     put_grad(a, a_grad)
 
     return fwd
@@ -1742,7 +1742,7 @@ not_mapped = NotMapped()
 def movedim(x, src: int, dst: int):
     perm = [i for i in range(x.ndim) if i != src]
     perm.insert(dst, src)
-    return prims.transpose(x, perm)
+    return prims.transpose(x, tuple(perm))
 
 
 def move_batch_dim(axis_size, src, dst, x):
@@ -2925,7 +2925,7 @@ def _argsort(seq):
 
 @register_augmented_forward(prims.PrimIDs.TRANSPOSE)
 def transpose_aug_fwd(a, permutation):
-    primal = prims.transpose(a, permutation)
+    primal = prims.transpose(a, tuple(permutation))
     residuals = (permutation,)
     return VJPDual(primal, residuals)
 
@@ -2933,7 +2933,7 @@ def transpose_aug_fwd(a, permutation):
 @register_backward(prims.PrimIDs.TRANSPOSE)
 def transpose_backward(permutation, g):
     undo = _argsort(permutation)
-    return prims.transpose(g, undo)
+    return prims.transpose(g, tuple(undo))
 
 
 @register_augmented_forward(prims.PrimIDs.RESHAPE)

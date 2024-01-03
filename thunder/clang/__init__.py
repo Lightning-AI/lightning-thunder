@@ -578,7 +578,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     result = prims.slice_prim(a, start_indices, end_indices, strides)
 
     if len(squeeze_dims) > 0:
-        result = prims.squeeze(result, squeeze_dims)
+        result = prims.squeeze(result, tuple(squeeze_dims))
 
     return result
 
@@ -860,7 +860,7 @@ def slice_in_dim(a, start_index, limit_index, stride=1, dim=0):
 @clang_ctx
 def squeeze(a, dims):
     dims = utils.canonicalize_dims(a.ndim, dims)
-    result = prims.squeeze(a, dims)
+    result = prims.squeeze(a, tuple(dims))
     return result
 
 
@@ -868,7 +868,7 @@ def squeeze(a, dims):
 @clang_ctx
 def transpose(a, permutation):
     permutation = utils.canonicalize_dims(a.ndim, permutation)
-    return prims.transpose(a, permutation)
+    return prims.transpose(a, tuple(permutation))
 
 
 # TODO Consider moving this out of the core language and into something like NumPy's

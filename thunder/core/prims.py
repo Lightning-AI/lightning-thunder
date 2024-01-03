@@ -2059,10 +2059,10 @@ def slice_meta(
 slice_prim = make_prim(PrimIDs.SLICE, "slice", meta=slice_meta, tags=(OpTags.SHAPE_OP,))
 
 
-def squeeze_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
+def squeeze_meta(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
     # Checks types
     utils.check_type(a, TensorProxy)
-    utils.check_type(dims, Sequence)
+    utils.check_type(dims, tuple)
 
     # Checks that no dims are redundant
     utils.check_no_duplicates(dims)
@@ -2230,8 +2230,9 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
 
 
-def transpose_meta(a: TensorProxy, /, permutation: Sequence[int]) -> TensorProxy:
-    utils.check(isinstance(a, TensorProxy), lambda: f"Expected a={a} to be a TensorProxy!")
+def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(permutation, tuple)
     utils.check(
         a.ndim == len(permutation),
         lambda: f"Expected the length ({len(permutation)}) of the permutation={permutation} to be the number of dimensions ({a.ndim}) of a={a}",
