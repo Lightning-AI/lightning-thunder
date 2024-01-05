@@ -20,7 +20,7 @@ ARG IMAGE_TYPE="devel"
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="8.9.7.29-1"
-ARG CUDNN_FRONTEND_BRANCH="1.0/release"
+ARG CUDNN_FRONTEND_CHECKOUT="v1.0.1"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_CHECKOUT="v2.1.0"
 
@@ -84,7 +84,7 @@ RUN \
     && \
     rm -rf /root/.cache && \
     rm -rf /var/lib/apt/lists/* && \
-    git clone --branch ${CUDNN_FRONTEND_BRANCH} https://github.com/NVIDIA/cudnn-frontend.git && \
+    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
     CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
     rm -rf cudnn-frontend
 
