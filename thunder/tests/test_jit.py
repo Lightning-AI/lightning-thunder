@@ -1938,6 +1938,58 @@ def test_with():
     assert exc_expected.value.args[1] == exc_actual.value.args[1]
 
 
+def test_async_with():
+    class ACtxMgr:
+        def __init__(self, l):
+            self.l = l
+
+        async def __aenter__(self):
+            self.l.append("enter")
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self.l.append((str(exc_type), str(exc_val)))
+
+    async def fn(should_raise: bool = False):
+        l = []
+        async with ACtxMgr(l) as ctx:
+            ctx.l.append("within")
+            if should_raise:
+                raise RuntimeError("test", l)
+            return l
+
+    jfn = jit(fn)
+
+    import asyncio
+
+    assert asyncio.run(fn()) == asyncio.run(jfn())
+
+    with pytest.raises(RuntimeError) as exc_expected:
+        asyncio.run(fn(should_raise=True))
+    with pytest.raises(RuntimeError) as exc_actual:
+        asyncio.run(jfn(should_raise=True))
+
+    assert exc_expected.value.args[1] == exc_actual.value.args[1]
+
+
+def test_async_for():
+    async def async_gen():
+        for i in range(5):
+            yield i
+
+    async def fn():
+        l = [i * 2 async for i in async_gen()]
+        async for i in async_gen():
+            l.append(i * 3)
+        return l
+
+    jfn = jit(fn)
+
+    import asyncio
+
+    assert asyncio.run(fn()) == asyncio.run(jfn())
+
+
 def test_super():
     class A:
         def foo(self):

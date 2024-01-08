@@ -21,6 +21,7 @@ from types import (
     CellType,
     ClassMethodDescriptorType,
     CodeType,
+    CoroutineType,
     FrameType,
     FunctionType,
     MethodType,
@@ -894,18 +895,17 @@ def _locals_lookaside() -> dict[str, Any]:
 _nil = []
 
 
-# TODO Seems like we should be able to jit all of this?
 def _next_lookaside(iterator, default=_nil):
-    try:
+    def impl():
+        return iterator.__next__()
 
-        def impl():
-            return iterator.__next__()
+    res = _jit(impl)
 
-        return _jit(impl)
-    except StopIteration as si:
-        if default is not _nil:
-            return default
-        raise si
+    if default is not _nil and res is JIT_SIGNALS.EXCEPTION_RAISED:
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        if isinstance(runtimectx.cur_exc.__cause__, StopIteration):
+            res = default
+    return res
 
 
 # we do like the built-in super (and in fact it is impossible to implement
@@ -1051,6 +1051,44 @@ def check_and_append(stack, val):
 #
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-ASYNC_GEN_WRAP
+@register_opcode_handler("ASYNC_GEN_WRAP", min_ver=(3, 11))
+def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    # the next thing will be to yield the value, but we delegate this along with the wrapping to thunder_jit_async_generator
+    pass
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-BEFORE_ASYNC_WITH
+@register_opcode_handler("BEFORE_ASYNC_WITH")
+def _before_async_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+    mgr = stack.pop()
+
+    # python does a "special lookup"
+    enter_method = _jit(getattr, mgr, "__aenter__")
+    if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
+        return do_raise(
+            TypeError(
+                "{'type(mgr).__name__}' object does not support the async context manager protocol (missed __aenter__ method)"
+            )
+        )
+    exit_method = _jit(getattr, mgr, "__aexit__")
+    if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
+        return do_raise(
+            TypeError(
+                "{'type(mgr).__name__}' object does not support the context manager protocol (missed __aexit__ method)"
+            )
+        )
+
+    assert callable(enter_method)
+    assert callable(exit_method)
+
+    stack.append(exit_method)
+
+    return check_and_append(stack, _jit(enter_method))
+
+
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
@@ -1070,7 +1108,7 @@ def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
         return do_raise(
             TypeError(
-                "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
+                "{'type(mgr).__name__}' object does not support the context manager protocol (missed __exit__ method)"
             )
         )
 
@@ -1766,6 +1804,79 @@ def _dup_top_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> Non
     stack.extend(stack[-2:])
 
 
+# The exception representation and handling changed between 3.10 and 3.11
+# https://docs.python.org/3.10/library/dis.html#opcode-END_ASYNC_FOR
+@register_opcode_handler("END_ASYNC_FOR", max_ver=(3, 10))
+def _end_async_for_handler_3_10(
+    inst: dis.Instruction,
+    /,
+    stack: InterpreterStack,
+    try_stack: list[PyTryBlock],
+    inst_ptr: int,
+    frame: JITFrame,
+    exception_stack: list,
+    **kwargs,
+) -> None:
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    assert inst.arg is None
+
+    exc = stack.pop()
+    assert issubclass(exc, BaseException)
+
+    if issubclass(exc, StopAsyncIteration):
+        try_block = try_stack.pop()
+        assert try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE
+        assert try_block.level + 3 <= len(stack)
+        assert exception_stack
+
+        assert len(stack) >= try_block.level + 3
+        del stack[try_block.level + 3 :]
+        exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
+        exc_value = frame.interpreter_stack.pop()
+        exc_traceback = frame.interpreter_stack.pop()
+        if exc_value != None:
+            exc_value.__traceback__ = exc_traceback
+        assert runtimectx.exception_stack
+        # CPython sets exc_info->exc_type/value/traceback
+        # see RuntimeCtx inititalization of exception_stack for more info
+        runtimectx.exception_stack[-1] = exc_value  # replace the exc_info
+        # Python 3.10 has `continue` here, but there is no code except the else
+        stack.pop()
+        return
+    else:
+        val = stack.pop()
+        tb = stack.pop()
+        assert isinstance(val, BaseException)
+        runtimectx.curexc = UserException(val, tb)
+        return JIT_SIGNALS.EXCEPTION_RAISED
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-END_ASYNC_FOR
+@register_opcode_handler("END_ASYNC_FOR", min_ver=(3, 11))
+def _end_async_for_handler_3_11(
+    inst: dis.Instruction,
+    /,
+    stack: InterpreterStack,
+    try_stack: list[PyTryBlock],
+    inst_ptr: int,
+    frame: JITFrame,
+    exception_stack: list,
+    **kwargs,
+) -> None:
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    assert inst.arg is None
+
+    val = stack.pop()
+    assert isinstance(val, BaseException)
+
+    if isinstance(val, StopAsyncIteration):
+        stack.pop()
+        return
+    else:
+        runtimectx.curexc = UserException(val, val.__traceback__)
+        return JIT_SIGNALS.EXCEPTION_RAISED
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
 @register_opcode_handler("EXTENDED_ARG")
 def _extended_arg_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
@@ -1842,6 +1953,72 @@ def _for_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, inst_pt
     except StopIteration:
         stack.pop()
         return inst_ptr + delta + 1
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-GET_AITER
+@register_opcode_handler("GET_AITER")
+def _get_aiter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    tos = stack.pop()
+
+    def impl():
+        if not hasattr(tos, "__aiter__"):
+            raise TypeError(f"'async for' requires an object with __aiter__ method, got {type(tos).__name__}")
+        ait = tos.__aiter__()
+        if not hasattr(ait, "__anext__"):
+            raise TypeError(
+                f"'async for' received an object from __aiter__ that does not implement __anext__: {type(ait).__name__}"
+            )
+        return ait
+
+    return check_and_append(stack, _jit(impl))
+
+
+def is_coro_or_iter(o):
+    if type(o) is CoroutineType:
+        return True
+    codeobj = getattr(o, "gi_code", None)
+    if isinstance(codeobj, CodeType) and codeobj.co_flags & inspect.CO_COROUTINE:
+        return True
+    return False
+
+
+# PyCoro_GetAwaitableIter:
+def get_awaitable_iter(tos):
+    if is_coro_or_iter(tos):
+        return tos
+
+    if not hasattr(tos, "__await__"):
+        raise TypeError(f"object {type(tos).__name__} can't be used in 'await' expression")
+
+    res = tos.__await__()
+
+    if is_coro_or_iter(res):
+        raise TypeError("__await__() returned a coroutine")
+
+    # check for iterator
+    if not hasattr(res, "__next__"):
+        raise TypeError(f"__await__() returned non-iterator of type '{type(res).__name__}'")
+
+    return res
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-GET_ANEXT
+@register_opcode_handler("GET_ANEXT")
+def _get_anext_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    tos = stack[-1]
+
+    def impl():
+        an = tos.__anext__()
+        return get_awaitable_iter(an)
+
+    return check_and_append(stack, _jit(impl))
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-GET_AWAITABLE
+@register_opcode_handler("GET_AWAITABLE")
+def _get_awaitable_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    tos = stack.pop()
+    return check_and_append(stack, _jit(get_awaitable_iter, tos))
 
 
 def _iter_impl(obj):
@@ -2955,6 +3132,19 @@ def _set_update_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
     s.update(tos)
 
 
+# https://docs.python.org/3.10/library/dis.html#opcode-SETUP_ASYNC_WITH
+@register_opcode_handler("SETUP_ASYNC_WITH", max_ver=(3, 10))
+def _setup_async_with_handler(
+    inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
+) -> None | JIT_SIGNALS:
+    assert type(inst.arg) is int
+    instr_offset = inst_ptr + inst.arg + 1
+
+    aenter_res = stack.pop()
+    try_stack.append(PyTryBlock(PyTryBlock.SETUP_FINALLY_TYPE, instr_offset, len(stack)))
+    stack.append(aenter_res)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-SETUP_FINALLY
 @register_opcode_handler("SETUP_FINALLY", max_ver=(3, 10))
 def _setup_finally_handler(
@@ -3272,7 +3462,7 @@ def _send_handler(
     send_value = stack.pop()
     generator = stack[-1]
 
-    if send_value is None:
+    if send_value is None and hasattr(generator, "__next__"):
         # iterators don't have a .send method
         def impl():
             return generator.__next__()
@@ -3285,9 +3475,9 @@ def _send_handler(
     res = _jit(impl)
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        if isinstance(runtimectx.curexc, StopIteration):
+        if isinstance(runtimectx.curexc.__cause__, StopIteration):
             stack.pop()  # remove generator
-            stack.append(runtimectx.curexc.value)
+            stack.append(runtimectx.curexc.__cause__.value)
             runtimectx.curexc = None
             return inst_ptr + inst.arg + 1
         else:
@@ -3333,7 +3523,7 @@ def _yield_from_handler(
     send_value = stack.pop()
     generator = stack[-1]
 
-    if send_value is None:
+    if send_value is None and hasattr(generator, "__next__"):
         # iterators don't have a .send method
         def impl():
             return generator.__next__()
@@ -3346,9 +3536,9 @@ def _yield_from_handler(
     res = _jit(impl)
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        if isinstance(runtimectx.curexc, StopIteration):
+        if isinstance(runtimectx.curexc.__cause__, StopIteration):
             stack.pop()  # remove generator
-            stack.append(runtimectx.curexc.value)
+            stack.append(runtimectx.curexc.__cause__.value)
             runtimectx.curexc = None
             return None
         else:
@@ -3395,11 +3585,77 @@ def make_generator(
                     e.__cause__ = real_exc.__cause__
                     raise real_exc from e
             if status == JIT_SIGNALS.RETURN_VALUE:
-                return
+                return  # TODO: should this return res?
             assert status == JIT_SIGNALS.YIELD_VALUE
             send_value = yield res
 
     return thunder_jit_generator()
+
+
+def make_async_generator(
+    frame: JITFrame,
+    compilectx: JitCompileCtx,
+    runtimectx: JitRuntimeCtx,
+):
+    async def thunder_jit_async_generator():
+        send_value: Any = None  # the value gotten from from <generator>.send
+        while True:  # or maybe have return?
+            with jitctx(compilectx, runtimectx):
+                try:
+                    res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                except Exception as e:
+                    msg = f"Encountered exception {type(e).__name__}: {e}"
+                    raise JITError(msg) from e
+                if status is JIT_SIGNALS.EXCEPTION_RAISED:
+                    e = runtimectx.curexc
+                    runtimectx.curexc = None
+                    if isinstance(e.__cause__, StopIteration):
+                        return
+                    # We modify the cause chain from
+                    # UserException -> real_exc -> further_causes to
+                    # real_exc -> UserException -> further causes
+                    real_exc = e.__cause__
+                    e.__cause__ = real_exc.__cause__
+                    raise real_exc from e
+            if status == JIT_SIGNALS.RETURN_VALUE:
+                return  # TODO: should this return res?
+            assert status == JIT_SIGNALS.YIELD_VALUE
+            send_value = yield res
+
+    return thunder_jit_async_generator()
+
+
+def make_coroutine(
+    frame: JITFrame,
+    compilectx: JitCompileCtx,
+    runtimectx: JitRuntimeCtx,
+):
+    async def thunder_jit_coroutine():
+        send_value: Any = None  # the value gotten from from <generator>.send
+        while True:  # or maybe have return?
+            with jitctx(compilectx, runtimectx):
+                try:
+                    res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                except Exception as e:
+                    msg = f"Encountered exception {type(e).__name__}: {e}"
+                    raise JITError(msg) from e
+                if status is JIT_SIGNALS.EXCEPTION_RAISED:
+                    e = runtimectx.curexc
+                    runtimectx.curexc = None
+                    if isinstance(e.__cause__, StopIteration):
+                        return e.__cause__.value
+                    # We modify the cause chain from
+                    # UserException -> real_exc -> further_causes to
+                    # real_exc -> UserException -> further causes
+                    real_exc = e.__cause__
+                    e.__cause__ = real_exc.__cause__
+                    raise real_exc from e
+            if status == JIT_SIGNALS.RETURN_VALUE:
+                return res
+            assert status == JIT_SIGNALS.YIELD_VALUE
+            raise UnimplementedError("not implemented")
+
+    return thunder_jit_coroutine()
 
 
 # Interprets the callable with the given args and kwargs
@@ -3512,11 +3768,8 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
-        # try:
+        # we expect lookasides to use do_raise rather than raising exceptions
         return lookaside_fn(*args, **kwargs)
-        # except Exception as e:
-        #    runtimectx.curexc = UserException(e, get_python_tb(e.__traceback__))
-        # return JIT_SIGNALS.EXCEPTION_RAISED
 
     # (2) Handles partial objects
     if isinstance(fn, functools.partial):
@@ -3633,6 +3886,10 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     if sys.version_info < (3, 11):
         if code.co_flags & inspect.CO_GENERATOR:
             return make_generator(frame, compilectx, runtimectx)
+        if code.co_flags & inspect.CO_COROUTINE:
+            return make_coroutine(frame, compilectx, runtimectx)
+        if code.co_flags & inspect.CO_ASYNC_GENERATOR:
+            return make_async_generator(frame, compilectx, runtimectx)
 
     res, status = _jit_run(frame, compilectx, runtimectx)
     return res
@@ -3776,14 +4033,21 @@ def _jit_run(
             elif interpretation_result in (JIT_SIGNALS.RETURN_VALUE, JIT_SIGNALS.YIELD_VALUE):
                 # advance the inst_ptr, needed in particular for YIELD
                 frame.inst_ptr += 1
-                # get rhe result from the current stack
+                # get the result from the current stack
                 result = frame.interpreter_stack.pop()
                 # Restores the previous stack, the caller needs to put the value on it
                 return result, interpretation_result
             elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
                 frame.inst_ptr += 1
-                assert frame.code.co_flags & inspect.CO_GENERATOR
-                return make_generator(frame, compilectx, runtimectx), interpretation_result
+                if frame.code.co_flags & inspect.CO_GENERATOR:
+                    return make_generator(frame, compilectx, runtimectx), interpretation_result
+                if frame.code.co_flags & inspect.CO_COROUTINE:
+                    return make_coroutine(frame, compilectx, runtimectx), interpretation_result
+                if frame.code.co_flags & inspect.CO_ASYNC_GENERATOR:
+                    return make_async_generator(frame, compilectx, runtimectx), interpretation_result
+                raise NotImplementedError(
+                    f"Not implemented: RETURN_GENERATOR from code of {frame.qualname} with flags {dis.pretty_flags(frame.code.co_flags)}"
+                )
             elif interpretation_result is None:
                 frame.inst_ptr += 1
             else:
