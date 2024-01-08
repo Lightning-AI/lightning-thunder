@@ -736,10 +736,13 @@ def _thunder_getitem_lookaside(fn, *args):
 
 
 def _thunder_iter_lookaside(fn, *args):
-    assert hasattr(fn, "__self__")
-    assert len(args) == 0
-
-    origin = fn.__self__
+    if hasattr(fn, "__self__"):
+        # TODO: can this happen after we changed unpacking?
+        assert len(args) == 0
+        origin = fn.__self__
+    else:
+        assert len(args) == 1
+        (origin,) = args
 
     ctx: ThunderInterpreterCtx = get_phantomctx()
     ii: None | InterpreterInfo = ctx.get_info(origin)
@@ -754,10 +757,13 @@ def _thunder_iter_lookaside(fn, *args):
 
 
 def _thunder_next_lookaside(fn, *args):
-    assert hasattr(fn, "__self__")
-    assert len(args) == 0
-
-    origin = fn.__self__
+    if hasattr(fn, "__self__"):
+        # TODO: can this happen after we changed unpacking?
+        assert len(args) == 0
+        origin = fn.__self__
+    else:
+        assert len(args) == 1
+        (origin,) = args
 
     ctx: ThunderInterpreterCtx = get_phantomctx()
     ii: None | InterpreterInfo = ctx.get_info(origin)

@@ -4,6 +4,7 @@ import builtins
 import contextlib
 import contextvars
 import dataclasses
+import datetime
 import dis
 import enum
 import functools
@@ -328,6 +329,17 @@ def extract_code(fn: Callable) -> CodeType:
     code: CodeType = fn.__code__
 
     return code
+
+
+# TODO There may be a better way to determine if an object is a PyCapsule, like
+#   importing a known PyCapsule and acquiring its type
+
+CapsuleType = type(datetime.datetime_CAPI)
+
+
+def is_pycapsule(x: Any) -> bool:
+    typ: type = type(x)
+    return isinstance(typ, CapsuleType)
 
 
 # Our own exception class for reporting compilation problems
@@ -3391,23 +3403,110 @@ def make_generator(
 
 
 # Interprets the callable with the given args and kwargs
-# NOTE There are (currently) 6 cases for interpretation:
+# NOTE There are (currently) 7 cases for interpretation:
 #
+#   (0) Methods are unwrapped
+#       (0a) The callable is a bound method, in which case it's canonicalized
+#       (0b) The callable is a builtin method, in which case we try to unbind it
 #   (1) The callable has a lookaside, in which case it's used to execute the operation
-#   (2) The callable is a builtin method, in which case we see if we can unbind it.
+#   (2) The callable is a partial object, in which case it's recursively unwrapped
+#           Note that this case is after (1), which allows for lookasides on partial objects
 #   (3) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (4) The callable is a partial object, in which case it's recursively unwrapped
-#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
-#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
-#   (7) The callable is a method, in which calls its __func__ attribute is called recursively
-#   (8) The callable is a FunctionType, in which case it's recursively interpretered by the jit
+#   (4) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (5) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (6) The callable is a FunctionType, in which case it's recursively interpretered by the jit
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
 def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    # (0) Methods are unwrapped
+    # (0a) The callable is a bound method, in which case it's unwrapped
+    if inspect.ismethod(fn):
+        return _jit(fn.__func__, fn.__self__, *args, **kwargs)  # type: ignore
+
+    # (0b) The callable is a builtin method, in which case it's canonicalized
+    #   A builtin is canonicalized when it's a call on a type or a module (or their equivalent)
+    #   Ex. The append method of a list
+    #       l = [0, 1, 2]
+    #       type(l.append)  # builtin_function_or_method
+    #       isinstance(l.append, BuiltinMethodType)  # True
+    #       l.append.__self__  # [0, 1, 2]
+    #
+    #   However, l.append is a method specific to the list l, and we'd like to canonicalize
+    #   it to list.append.
+    #   We do this by acquiring the function's name from the __self__ object's type. In this case
+    #   getattr(type(l), "append").
+    #
+    #   Ex. The __new__ method of a type
+    #       type(list.__new__)  # builtin_function_or_method
+    #       isinstance(list.__new__, BuiltinMethodType)  # True
+    #       list.__new__.__self__  # list
+    #       type(list).__new__  # <function type.__new__(*args, **kwargs)>
+    #
+    #   We don't want to unwrap calls on types, because these calls are already
+    #   canonicalized.
+    #
+    #   Ex. A method on a module
+    #       import builtins
+    #       type(builtins.hasattr) # builtin_function_or_method
+    #
+    #   Like with types in the above example, we don't want to unwrap method calls
+    #   on modules, because they are already canonicalized.
+    #
+    #   Ex. Builtin methods with __self__ = None
+    #       import torch
+    #       torch.relu.__self__  # None
+    #
+    #   Builtin methods with __self__ = None cannot be further canonicalized
+    #
+    #   Ex. Builtin methods on PyCapsules (see https://docs.python.org/3/c-api/capsule.html)
+    #       import torch
+    #       torch._C._are_functorch_transforms_active.__self__  # <capsule object NULL at 0x7bcf01e69f20>
+    #       type(torch._C._are_functorch_transforms_active.__self__)  # PyCapsule
+    #
+    #   Like with types and modules, the base PyCapsule class does not have the methods we're looking for.
+    #
+    #   Ex.
+    # NOTE Builtin Methods
+    #   Builtin methods are not considered methods by inspect.ismethod
+    if isinstance(fn, (BuiltinMethodType, MethodWrapperType)):
+        assert is_opaque(fn)
+        slf = fn.__self__
+
+        if slf is not None and not isinstance(slf, (type, ModuleType)) and not is_pycapsule(slf):
+            # NOTE: we need to walk the mro because we need to deal with super().foo
+            #       using the qualname is not good here because Python qualnames come with no
+            #       guarantees (e.g. random._random.Random.seed and random.Random.seed are distinct
+            #       but have the same qualname (Random.seed).
+            #       Binding (using <unmound_method>.__get__) is what super does to get a bound method-
+            #       While it will be a new object every time __get__ is called (so no `is`), equality
+            #       works.
+            #       The next trouble is that types that are not subclassable might not implement __get__
+            #       for their methods (e.g. re.Pattern.match). But those can only appear as the 0th item in mro.
+            #       Also, if there is no unbound method defined on the type, it might be a bound method on the
+            #       type itself (e.g. object.__or__, which will be checked e.g. from int.__or__ when traversing
+            #       the mro).
+            unbound_fn = None
+            for t in type(slf).mro()[1:]:
+                unbound_fn_candidate = getattr(t, fn.__name__, None)
+                if (
+                    unbound_fn_candidate is not None
+                    and isinstance(unbound_fn_candidate, (WrapperDescriptorType, MethodDescriptorType))
+                    and unbound_fn_candidate.__get__(slf) == fn
+                ):
+                    unbound_fn = unbound_fn_candidate
+                    break
+
+            # this gets the method from the "top" type
+            if unbound_fn is None:
+                unbound_fn = getattr(type(slf), fn.__name__, None)
+
+            if unbound_fn is not None:
+                assert not isinstance(unbound_fn, BuiltinFunctionType)
+                return _jit(unbound_fn, slf, *args, **kwargs)
 
     # (1) Handles lookasides
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
@@ -3419,21 +3518,16 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         #    runtimectx.curexc = UserException(e, get_python_tb(e.__traceback__))
         # return JIT_SIGNALS.EXCEPTION_RAISED
 
-    # (2) Unbind builtin methods if possible
-    # unfortunately, we do not have `._func__ so we look at type(.__self__) but need to be careful
-    if isinstance(fn, BuiltinMethodType) and hasattr(fn, "__self__"):
-        self = fn.__self__
-        typ_self = type(fn.__self__)
-        fn_name = getattr(fn, "__name__", "")
-        if hasattr(typ_self, fn_name):
-            unbound_fn = getattr(typ_self, fn_name)
-            # one thing we need to avoid is to have methods that are defined on type unpacked too often
-            # it is not great but not too bad to err on the "fallthrough" side.
-            # This will happen e.g. for <class>.__new__, which is NOT a bound version of type.__new__
-            # even though type(<class>) is type.
-            expected_class = getattr(unbound_fn, "__objclass__", NoneType)
-            if isinstance(self, expected_class):
-                return _jit(unbound_fn, self, *args, **kwargs)
+    # (2) Handles partial objects
+    if isinstance(fn, functools.partial):
+        # TODO: add traceback entry on the traceback in UserException?
+        p: functools.partial = fn
+        return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
+
+    if isinstance(fn, functools.partialmethod):
+        raise NotImplementedError(
+            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
+        )
 
     # (3) Handles opaque functions
     if is_opaque(fn):
@@ -3445,18 +3539,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             return JIT_SIGNALS.EXCEPTION_RAISED
         return opaque_result
 
-    # (4) Handles partial objects
-    if isinstance(fn, functools.partial):
-        # TODO: add traceback entry on the traceback in UserException?
-        p: functools.partial = fn
-        return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
-
-    if isinstance(fn, functools.partialmethod):
-        raise NotImplementedError(
-            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
-        )
-
-    # (5) Handle types
+    # (4) Handle types
     if isinstance(fn, type):
         if not hasattr(fn, "__new__"):
             raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
@@ -3468,21 +3551,17 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             return res
         return obj
 
-    # (6) Handles objects that are callable
+    # (5) Handles callable objects (with a dunder call method)
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
-            raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
+            raise NotImplementedError(
+                f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
+            )
         return _jit(fn.__call__, *args, **kwargs)
-
-    # (7) Handles (bound) methods
-    #     while we unwrap methods to __func__ when processing LOAD_METHOD (so those will not run into this)
-    #     methods may also originate from LOAD_ATTR e.g. assign to variable and calling that
-    if inspect.ismethod(fn):
-        return _jit(fn.__func__, fn.__self__, *args, **kwargs)  # type: ignore
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
-    # (8) Jits into the function
+    # (6) Jits into the function
     # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)

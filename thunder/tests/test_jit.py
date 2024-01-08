@@ -2481,7 +2481,7 @@ def test_thunder_interpreter_stats():
     found: bool = False
     for inst in history:
         if isinstance(inst, str):
-            if inst.startswith("Opaque call to <method-wrapper '__add__' of int object"):
+            if inst.startswith("Opaque call to <slot wrapper '__add__' of 'int' objects"):
                 found = True
                 break
 
