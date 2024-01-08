@@ -1300,6 +1300,76 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return loss
 
 
+class EinsumBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="shapes",
+            description="A sequence of input tensors' shapes. Default is ((16, 16), (16, 16))",
+        ),
+        BenchmarkArg(
+            name="equation",
+            description="A string representing an einsum equation. Default is 'ij,jk->ik'",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "einsum"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Einsum Benchmark"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        shapes: Sequence[Sequence[int]] = ((16, 16), (16, 16)),
+        equation: str = "ij,jk->ik",
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.shapes: Sequence[Sequence[int]] = shapes
+        self.equation = equation
+        self.device: str = device
+        self.dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, low=-1, high=+1, device=self.device, requires_grad=self.requires_grad)
+
+        operands = tuple(make(shape, dtype=self.dtype, requires_grad=self.requires_grad) for shape in self.shapes)
+        return (self.equation, operands), {}
+
+    def fn(self) -> Callable:
+        def einsum(eq, operands):
+            return torch.einsum(eq, *operands)
+
+        return einsum
+
+
 class NanoGPTCrossEntropyBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
