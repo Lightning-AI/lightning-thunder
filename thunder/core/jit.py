@@ -153,7 +153,7 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
 
 # The Jit's runtime context, which tracks stack changes in Python mode
 class JitRuntimeCtx:
-    def __init__(self, *, debug_log: None | StringIO = False):
+    def __init__(self, *, debug_log: None | StringIO = None):
         self.frame_stack: list[JITFrame] = []
         self._globals_dict: dict[str, Any] | None = None
         self._history: list[dis.Instruction | str] = []
@@ -1598,7 +1598,7 @@ def _copy_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -
 
 # https://docs.python.org/3.10/library/dis.html#opcode-COPY_DICT_WITHOUT_KEYS
 @register_opcode_handler("COPY_DICT_WITHOUT_KEYS", max_ver=(3, 10))
-def _copy_dict_without_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+def _copy_dict_without_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     keys = stack.pop()
     assert isinstance(keys, Iterable)
     match_subject = stack[-1]
@@ -2409,8 +2409,29 @@ def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_KEYS
 @register_opcode_handler("MATCH_KEYS")
-def _match_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    raise NotImplementedError("MATCH_KEYS not implemented")
+def _match_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    keys = stack[-1]
+    subject = stack[-2]
+    assert isinstance(keys, tuple)
+    assert isinstance(subject, Mapping)
+
+    def impl(keys, subject):
+        dummy = object()
+        values_or_none = []
+        for k in keys:
+            v = subject.get(k, default=dummy)
+            if v is not dummy:
+                values_or_none.append(v)
+            else:
+                values_or_none = None
+                break
+
+        stack.append(tuple(values_or_none) if values_or_none is not None else None)
+        stack.append(values_or_none is not None)
+
+    ret = _jit(impl, keys, subject)
+    if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+        return ret
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_MAPPING
@@ -2422,7 +2443,13 @@ def _match_mapping_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_SEQUENCE
 @register_opcode_handler("MATCH_SEQUENCE")
 def _match_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    raise NotImplementedError("MATCH_SEQUENCE not implemented")
+    # NOTE: We cannot check tp_flags but this is, according to the docs, close enough.
+    # tp_flags is a bitfield containing on the type containing information about what protocols the type supports. We
+    # do not model it, because it constantly changes from version to version, and inheritance of each flag is complicated.
+    # Thankfully, somebody else seems to have had this conversation with the cpython devs before us, and the following
+    # is the documented workaround.
+    supported_sequence: bool = isinstance(stack[-1], Sequence) and not isinstance(stack[-1], (str, bytes, bytearray))
+    stack.push(supported_sequence)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-NOP
