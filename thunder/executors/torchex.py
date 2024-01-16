@@ -1148,6 +1148,9 @@ log_softmax = _register_torch_operation("log_softmax", module=torch.nn.functiona
 log_softmax_backward = _register_torch_operation(
     "torch.ops.aten._log_softmax_backward_data", like=ltorch.log_softmax_backward
 )
+max_pool1d = _register_torch_operation("max_pool1d", module=torch.nn.functional)
+max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
+max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
@@ -1390,6 +1393,9 @@ _register_implementation(ltorch.log_softmax, checker=_always_executable, executi
 _register_implementation(
     ltorch.log_softmax_backward, checker=_always_executable, execution_transform=_log_softmax_backward_transform
 )
+_register_implementation(ltorch.max_pool1d, max_pool1d, checker=_always_executable)
+_register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable)
+_register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl

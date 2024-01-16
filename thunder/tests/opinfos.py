@@ -5303,6 +5303,36 @@ def conv3d_error_generator(op, device, dtype=torch.float32, **kwargs):
             yield (s, ex_type, err_msg)
 
 
+def generic_max_pool_sample_generator(conv_sample_generator):
+    def sample_generator(op, device, dtype, requires_grad, **kwargs):
+        make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+        for sample in conv_sample_generator(op, device, dtype, requires_grad, **kwargs):
+            # Filter out "same" padding for simplicity
+            padding = sample.kwargs.get("padding", 0)
+            if padding == "valid":
+                padding = 0
+            else:
+                continue
+
+            input, weights, *_ = sample.args
+
+            # Empty channels is not supported!
+            in_channels = input.shape[0] if input.ndim != weights.ndim else input.shape[1]
+            if in_channels == 0:
+                continue
+
+            kernel_size = weights.shape[2:]
+            stride = sample.kwargs.get("stride", None)
+            dilation = sample.kwargs.get("dilation", 1)
+
+            yield SampleInput(make(input.shape), kernel_size, padding=padding, stride=stride, dilation=dilation)
+            # stride == None implies stride = kernel_size
+            yield SampleInput(make(input.shape), kernel_size, padding=padding, stride=None, dilation=dilation)
+
+    return sample_generator
+
+
 convolution_opinfo = OpInfo(
     clang.convolution,
     sample_input_generator=convolution_sample_generator,
@@ -5428,6 +5458,78 @@ conv3d_opinfo = OpInfo(
     ),
 )
 nn_ops.append(conv3d_opinfo)
+
+
+max_pool1d_opinfo = OpInfo(
+    ltorch.max_pool1d,
+    sample_input_generator=generic_max_pool_sample_generator(conv1d_sample_generator),
+    torch_reference=torch.nn.functional.max_pool1d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
+        DecorateInfo(
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+nn_ops.append(max_pool1d_opinfo)
+
+
+max_pool2d_opinfo = OpInfo(
+    ltorch.max_pool2d,
+    sample_input_generator=generic_max_pool_sample_generator(conv2d_sample_generator),
+    torch_reference=torch.nn.functional.max_pool2d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
+        DecorateInfo(
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+nn_ops.append(max_pool2d_opinfo)
+
+
+max_pool3d_opinfo = OpInfo(
+    ltorch.max_pool3d,
+    sample_input_generator=generic_max_pool_sample_generator(conv3d_sample_generator),
+    torch_reference=torch.nn.functional.max_pool3d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
+        DecorateInfo(
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+nn_ops.append(max_pool3d_opinfo)
 
 
 def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):

@@ -5,7 +5,7 @@ import collections
 import re
 from collections.abc import Sequence
 from enum import Enum
-from functools import partial, reduce
+from functools import partial, reduce, wraps
 from numbers import Number
 from typing import Any, Union, Optional, Tuple
 from collections.abc import Callable
@@ -1803,6 +1803,23 @@ def index_put(
 #
 
 
+# Constructs a generalized diagonal tensor of the given rank
+# of shape (dim_len,) * rank and boolean dtype.
+def generalized_diagonal_tensor(dim_len, rank, device):
+    assert rank >= 2
+
+    def construct_eye(dim_len):
+        iota = arange(dim_len, device=device)
+        eye = unsqueeze(iota, -1) == unsqueeze(iota, 0)
+        return eye
+
+    eye = construct_eye(dim_len)
+    diag = eye
+    for _ in range(2, rank):
+        diag = unsqueeze(diag, -1) * eye
+    return diag
+
+
 @torchsymbol(torch.einsum, is_method=False)
 def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> TensorLike:
     utils.check(
@@ -1968,22 +1985,6 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
     except Exception as e:
         raise ValueError("Implied by ellipsis operands' dimensions do not jointy broadcast") from e
     # }
-
-    # Constructs a generalized diagonal tensor of the given rank
-    # of shape (dim_len,) * rank and boolean dtype.
-    def generalized_diagonal_tensor(dim_len, rank, device):
-        assert rank >= 2
-
-        def construct_eye(dim_len):
-            iota = arange(dim_len, device=device)
-            eye = unsqueeze(iota, -1) == unsqueeze(iota, 0)
-            return eye
-
-        eye = construct_eye(dim_len)
-        diag = eye
-        for _ in range(2, rank):
-            diag = unsqueeze(diag, -1) * eye
-        return diag
 
     # Constructs a generalized diagonal mask that broadcasts
     # over t, with diagonals across dimensions from the
@@ -2417,7 +2418,63 @@ def convolution(
     )
 
 
-# TODO: all transposed and layout.
+# Helper functions that are useful for "window"-based ops
+# like convolution, pooling and similar. {
+def handle_nn_op_batch_dim(f):
+    @wraps(f)
+    def batch_handler(dim, a, *args, **kwargs):
+        # Insert batch dim into a if not present.
+        # This is needed for most nn ops.
+        batch_dim_inserted: bool = False
+        if a.ndim == dim + 1:
+            a = unsqueeze(a, 0)
+            batch_dim_inserted = True
+
+        res = f(dim, a, *args, **kwargs)
+
+        if batch_dim_inserted:
+            res = squeeze(res, 0)
+
+        return res
+
+    return batch_handler
+
+
+def int_to_seq(param):
+    if isinstance(param, int):
+        return (param,)
+    else:
+        return param
+
+
+def maybe_to_rank_len_sequence(param, rank):
+    param = int_to_seq(param)
+    if len(param) == 1:
+        return (param[0],) * rank
+    else:
+        return tuple(param)
+
+
+def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
+    padding = maybe_to_rank_len_sequence(padding, dim)
+    kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
+    utils.check(
+        len(padding) == dim and all(isinstance(p, int) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
+        lambda: f"Implied {padding=} (with dimensionality {dim}) should contain integers "
+        f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})",
+    )
+
+    # No need to pad batch and channels dims, only spatial dims.
+    new_padding = [(0, 0, 0), (0, 0, 0)]
+    for p in padding:
+        new_padding.append((p, p, 0))
+
+    a = prims.pad(a, clang.maybe_convert_to_dtype(pad_value, a.dtype, enforce_safe_casting=True), new_padding)
+    return a
+
+
+# TODO: add support for transposed and layout.
+@handle_nn_op_batch_dim
 def _conv_helper(
     dim: int,
     a: TensorProxy,
@@ -2432,20 +2489,7 @@ def _conv_helper(
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
     utils.check(weight.ndim == dim + 2, lambda: f"{weight.ndim=} should be equal to {dim + 2}")
 
-    # insert batch dim into a if not present.
-    # This is required for prims.convolution.
-    batch_dim_inserted: bool = False
-    if a.ndim == dim + 1:
-        a = unsqueeze(a, 0)
-        batch_dim_inserted = True
-
     # Handle stride, padding, dilation {
-    def int_to_seq(param):
-        if isinstance(param, int):
-            return (param,)
-        else:
-            return param
-
     def process_padding_str(padding, stride: Sequence[int], dilation: Sequence[int], a: TensorProxy):
         if isinstance(padding, str):
             # Means no padding
@@ -2502,12 +2546,121 @@ def _conv_helper(
     res = clang.convolution(
         a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
     )
-
-    # Undo batch dim insertion if needed.
-    if batch_dim_inserted:
-        res = res.squeeze(0)
-
     return res
+
+
+@handle_nn_op_batch_dim
+def _max_pool_helper(
+    dim: int,
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    return_indices: bool = False,
+    ceil_mode: bool = False,
+) -> TensorProxy:
+    utils.check(
+        not return_indices,
+        lambda: "{return_indices=} is not supported",
+        NotImplementedError,
+    )
+
+    utils.check(
+        not ceil_mode,
+        lambda: "{ceil_mode=} is not supported",
+        NotImplementedError,
+    )
+
+    if stride is None:
+        stride = kernel_size
+
+    kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
+    utils.check(
+        len(kernel_size) == dim and all(isinstance(k, int) and k > 0 for k in kernel_size),
+        lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
+        f"or a sequence of non-negative integers of length {dim}",
+    )
+
+    # Check channels > 0 {
+    n_channels = a.shape[1]
+    utils.check(n_channels > 0, lambda: f"in_channels={n_channels} should be greater than zero")
+    # }
+
+    # Apply padding {
+    a = apply_padding_for_pool_ops(dim, a, padding, kernel_size, -float("inf"))
+    # }
+
+    # Dimensionality of the kernel.
+    kernel_numel = reduce(operator.mul, kernel_size, 1)
+
+    # Construct the kernel basis which is represented as eye(kernel_numel).
+    kernel_basis = generalized_diagonal_tensor(kernel_numel, rank=2, device=a.device)
+    kernel_basis = to(kernel_basis, a.dtype)
+
+    # Next steps - reshape kernel_basis to be used as weights in the convolution op.
+    # We will use the trick of groups=n_channels to make sure that convolution does not occur
+    # across several channel dimensions, this implies n_channels / groups == 1 and is reflected
+    # in the 1-len dimension inserted to the left from the spatial dimensions.
+    # The very first new 1-len dimension is expanded to n_channels so that per-channel
+    # max pool is retained.
+    kernel_basis = reshape(kernel_basis, (1, kernel_numel, 1, *kernel_size))
+    kernel_basis = expand(kernel_basis, (n_channels, kernel_numel, 1, *kernel_size))
+    # Flatten channels and the kernel basis dimensions.
+    kernel_basis = flatten(kernel_basis, 0, 1)
+
+    # Decompose (project) input in the kernel basis.
+    res = _conv_helper(dim, a, kernel_basis, None, stride, padding=0, dilation=dilation, groups=n_channels)
+
+    # Reshape projection by splitting the out_channels dimension
+    # into channels and the kernel basis dimensions.
+    res = reshape(res, (res.shape[0], n_channels, kernel_numel) + res.shape[-dim:])
+    # Find a basis vector that has the largest projection scalar.
+    # This is the max_pool result.
+    res = amax(res, 2)
+    return res
+
+
+@torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
+def max_pool1d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    return_indices: bool = False,
+    ceil_mode: bool = False,
+) -> TensorProxy:
+    return _max_pool_helper(1, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
+
+
+@torchsymbol(torch.max_pool2d, torch.nn.functional.max_pool2d, id="torch.nn.functional.max_pool2d", is_method=False)
+def max_pool2d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    return_indices: bool = False,
+    ceil_mode: bool = False,
+) -> TensorProxy:
+    return _max_pool_helper(2, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
+
+
+@torchsymbol(torch.max_pool3d, torch.nn.functional.max_pool3d, id="torch.nn.functional.max_pool3d", is_method=False)
+def max_pool3d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    return_indices: bool = False,
+    ceil_mode: bool = False,
+) -> TensorProxy:
+    return _max_pool_helper(3, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
 
 
 @torchsymbol(torch.conv1d, torch.nn.functional.conv1d, id="torch.nn.functional.conv1d", is_method=False)

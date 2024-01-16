@@ -2609,8 +2609,8 @@ def convolution_meta(
             padded_a_dim >= dilated_weight_dim,
             lambda: f"Inconsistent shapes at dimension {tensor_dim} between `a` and `weight`. "
             f"The padded `a` dimension {tensor_dim} is equal to {padded_a_dim} "
-            f"(i.e. a.shape[{tensor_dim}] + 2 * dilation[{dim}] = "
-            f"{a.shape[tensor_dim]} + 2 * {dilation[dim]}) "
+            f"(i.e. a.shape[{tensor_dim}] + 2 * padding[{dim}] = "
+            f"{a.shape[tensor_dim]} + 2 * {padding[dim]}) "
             "and should be greater or equal to the dilated `weight` shape at the same dimension "
             f"which is equal to {dilated_weight_dim} "
             f"(i.e. dilation[{dim}] * (weight.shape[{tensor_dim}] - 1) + 1 = "
