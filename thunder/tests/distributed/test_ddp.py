@@ -681,7 +681,7 @@ def _test_native_ddp_helper(input_data):
     )
 
     comparison_exceptions = []
-    for epoch in range(num_epochs):
+    for _ in range(num_epochs):
         for step, data in enumerate(dataloader):
             (inp,) = data
             pred = cmodel(inp)
@@ -795,7 +795,7 @@ def _test_native_fsdp_helper(input_data):
     )
 
     comparison_exceptions = []
-    for epoch in range(num_epochs):
+    for _ in range(num_epochs):
         for step, data in enumerate(dataloader):
             (inp,) = data
             pred = cmodel(inp)

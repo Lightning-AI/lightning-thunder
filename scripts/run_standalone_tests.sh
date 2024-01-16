@@ -21,13 +21,13 @@ TEST_FILE="standalone_tests.txt"
 test_path=$1
 pytest_arg=$2  # use `-m standalone`
 printf "source path: $test_path\n"
-printf "pyetest arg: ``$pytest_arg\n"
+printf "pytest arg: ``$pytest_arg\n"
 
 python -um pytest $test_path -q --collect-only $pytest_arg --pythonwarnings ignore 2>&1 > $TEST_FILE
 
 # if any command in a shell script returns a non-zero exit status,
 #  the script will immediately terminate and the remaining commands will not be executed
-set -e
+#set -e
 
 # removes the last line of the file
 sed -i '$d' $TEST_FILE
@@ -37,28 +37,20 @@ declare -a results
 
 # Get test list and run each test individually
 tests=$(grep -oP '\S+::test_\S+' "$TEST_FILE")
-echo $tests
+printf "collected tests:\n----------------\n$tests\n================\n"
+status=0
 for test in $tests; do
-  result=$(python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test"-results.xml | tail -n 1)
-  pattern='([0-9]+) (.*) in ([0-9.]+s)'
-  status=""
-  if [[ $result =~ $pattern ]]; then
-      status="${BASH_REMATCH[2]}"
-  fi
-  result="$test:${status^^}"
-  echo $result
-  if [[ $status == "failed" ]]; then
-    cat $test-results.xml
-    exit 1
-  fi
-  results+=("$result")
-done
+  python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test-results.xml" 2>&1 > "$test-output.txt"
+  pytest_status=$?
+  printf "$test status >>> $pytest_status\n"
 
-echo "===== STANDALONE TEST STATUS BEGIN ====="
-for result in "${results[@]}"; do
-  echo "$result"
+  if [ $pytest_status -ne 0 ]; then
+    status=$pytest_status
+    cat "$test-output.txt"
+  fi
 done
-echo "===== STANDALONE TEST STATUS END ====="
 
 #find . -name "*.xml" -exec cp -a -t . --parents {} +
 rm $TEST_FILE
+
+exit $status
