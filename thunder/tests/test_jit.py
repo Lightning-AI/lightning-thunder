@@ -2137,6 +2137,19 @@ def test_module_hooks():
             h.remove()
 
 
+def test_eval_exec_exception():
+    def fn_eval():
+        return eval("1/0")
+
+    def fn_exec():
+        exec("a = 1/0")
+
+    with pytest.raises(ZeroDivisionError):
+        jit(fn_eval)()
+    with pytest.raises(ZeroDivisionError):
+        jit(fn_exec)()
+
+
 def test_is_jitting_opaque():
     def foo():
         return tuple(map(lambda _: is_jitting(), range(3)))

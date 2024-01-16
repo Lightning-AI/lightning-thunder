@@ -153,6 +153,38 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
         reset_jitcompilectx(tok)
 
 
+# How the JIT deals with exceptions:
+# Conceptually, there are two sources of exceptions that we want to distinguish:
+# - Things arising from user code ("User Exceptions").
+# - Things that stem from the JIT itself ("JIT Errors").
+
+# To the JIT User Exceptions are part of its normal operations. So we usually
+# don't use Python's exception mechanism to handle these. Instead the
+# JIT mimics CPython's implementation of exception handling by
+# defining analoguous structures (curexec and exception_stack) set by do_raise and returns
+# JIT_SIGNALS.EXCEPTION_RAISED when running things that raised exceptions.
+# Here in particular:
+# - Handlers are "inside JIT",
+# - _jit(...) is "inside JIT",
+# - lookasides are "inside JIT",
+# - opaque functions are necessarily outside the JIT,
+# - function objects, iterators, generators,... created in the JIT are NOT per se in inside the JIT,
+#   so they should raise as usual. When called with _jit(...) that will be handled appropriately
+#   in the RAISE_VALUE handler.
+
+# To simplilfy tracebacks, User Exceptions are INTERNALLY wrapped inside a UserException
+# instance by setting the original exception as the __cause__.
+# However, as soon as we interact with the outside world, we have to remove the UserException
+# wrapper in order to give the users an exception of the right shape. But as the UserException
+# contains the traceback information (and the original exception does not because we don't
+# have frame objects for the traceback), we want to keep it around, so we make it the __cause__
+# of the original exception and any original __cause__ to the UserException.
+
+
+# JIT Errors are raised wrapped in a JITError exception to signal that we have run into
+# something with the JIT itself or how it was called.
+
+
 # The Jit's runtime context, which tracks stack changes in Python mode
 class JitRuntimeCtx:
     def __init__(self, *, debug_log: None | StringIO = None):
@@ -686,11 +718,6 @@ def eval_lookaside(
     to_exec = FunctionType(code=source, globals=__globals, name="<eval>", argdefs=None, closure=__closure)
 
     res: JIT_SIGNALS | Any = _jit(to_exec)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
-        assert rctx._curexc is not None, rctx._curexc
-        exc = rctx._curexc
-        rctx._curexc = None
-        raise exc
     return res
 
 
@@ -719,10 +746,7 @@ def exec_lookaside(
 
     res: JIT_SIGNALS | Any = _jit(to_exec)
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
-        assert rctx._curexc is not None, rctx._curexc
-        exc = rctx._curexc
-        rctx._curexc = None
-        raise exc
+        return res
     return None
 
 
@@ -3559,6 +3583,12 @@ def _yield_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     return JIT_SIGNALS.YIELD_VALUE
 
 
+# In order to support "colored functions" that suspend and resume execution
+# (generator, async generator, coroutine), we define generic equivalents here
+# that take the JIT frame and execute until the next yield point.
+# The way these functions work in Python is that objects are created and
+# retruned either on invocation (Python <=3.10) or by the RETURN_GENERATOR
+# opcode (Python >= 3.11).
 def make_generator(
     frame: JITFrame,
     compilectx: JitCompileCtx,
@@ -3592,6 +3622,7 @@ def make_generator(
     return thunder_jit_generator()
 
 
+# factory to create an async generator for a given JIT frame, see comment for make_generator
 def make_async_generator(
     frame: JITFrame,
     compilectx: JitCompileCtx,
@@ -3625,6 +3656,7 @@ def make_async_generator(
     return thunder_jit_async_generator()
 
 
+# factory to create a coroutine for a given JIT frame, see comment for make_generator
 def make_coroutine(
     frame: JITFrame,
     compilectx: JitCompileCtx,
@@ -3760,6 +3792,16 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             if unbound_fn is None:
                 unbound_fn = getattr(type(slf), fn.__name__, None)
 
+            # TODO: The above is our best attempt to get the unbound function.
+            #       If it fails for whatever reason (and unbound_fn is None here),
+            #       we have two options:
+            #       - (currently done) fall through and treat this as an opaque
+            #         function call (maybe we could warn)
+            #       - refuse to work and raise an exception
+            #       Given that the main reason to do this unwrapping is to be able
+            #       to define lookasides on methods as <class>.method and have
+            #       them work when called on objects, the harm done by the first
+            #       approach seems limited (as long as people test their lookasides).
             if unbound_fn is not None:
                 assert not isinstance(unbound_fn, BuiltinFunctionType)
                 return _jit(unbound_fn, slf, *args, **kwargs)
