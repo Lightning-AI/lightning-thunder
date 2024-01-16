@@ -2,9 +2,7 @@ from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
 from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
-from collections.abc import Callable
-from collections.abc import Hashable
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Hashable, Sequence
 import time
 from copy import copy
 from itertools import chain, filterfalse
@@ -388,7 +386,7 @@ class FusionDefinitionWrapper:
 # This function returns a List[Region] which changes the executor of meta regions to torchex
 #
 # NOTE this function assumes bound_symbols in region is toposorted
-def group_bookend_meta_ops(producers, consumers, region: Region) -> list[Region]:
+def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str, Region]:
     front_meta_cluster = list()
     middle_cluster = list()
     rear_meta_cluster = list()
@@ -677,7 +675,11 @@ class nvFuserExecutor(FusionExecutor):
             #   so that we can continue to generate single node fusions when testing.
             # if len(bsyms) > 1:
             region = Region(producers, consumers, bsyms)
-            bookend_result = group_bookend_meta_ops(producers, consumers, region)
+            enable_bookend = True
+            if enable_bookend:
+                bookend_result = group_bookend_meta_ops(producers, consumers, region)
+            else:
+                bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
 
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
