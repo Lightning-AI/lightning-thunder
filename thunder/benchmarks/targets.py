@@ -362,7 +362,7 @@ def test_nanogpt_gelu_fwd(benchmark, executor: Callable):
     fn = executor(gelu_bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -379,7 +379,7 @@ def test_nanogpt_gelu_grad(benchmark, executor: Callable):
     fn = executor(gelu_bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
@@ -401,7 +401,7 @@ def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
@@ -423,7 +423,7 @@ def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
@@ -445,7 +445,7 @@ def test_nanogpt_layer_norm_fwd(benchmark, executor: None | Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -463,7 +463,7 @@ def test_nanogpt_sdpa_fwd(benchmark, executor: None | Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # TODO Fix thunder-fwd-bwd+nvfuser
@@ -481,7 +481,7 @@ def test_nanogpt_sdpa_grad(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -498,7 +498,7 @@ def test_nanogpt_mlp_fwd(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -515,7 +515,7 @@ def test_nanogpt_mlp_grad(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
 # NOTE The CSA module is linear -> sdpa -> dropout
@@ -536,7 +536,7 @@ def test_nanogpt_csa_fwd(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # NOTE The CSA module is linear -> sdpa -> dropout
@@ -557,7 +557,7 @@ def test_nanogpt_csa_grad(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
@@ -575,7 +575,7 @@ def test_nanogpt_block_fwd(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
@@ -593,7 +593,7 @@ def test_nanogpt_block_grad(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
 
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark -- why does thunder trigger it but regular torch.compile does not
@@ -615,7 +615,7 @@ def test_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
 
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
@@ -637,7 +637,7 @@ def test_nanogpt_gpt2_grad(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -658,7 +658,7 @@ def test_nanogpt_gpt2xl_fwd(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
 
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
@@ -680,7 +680,7 @@ def test_nanogpt_gpt2xl_grad(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
 
 #
@@ -699,7 +699,7 @@ def test_open_llama_7b_fwd(benchmark, executor: Callable):
     fn = executor(b)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -713,7 +713,7 @@ def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
     fn = executor(b)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(
@@ -812,4 +812,4 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     fn = executor(bench)
     fn = wrap_for_benchmark(fn)
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=0)
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
