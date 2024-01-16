@@ -1928,6 +1928,87 @@ class LlamaCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmark
         return module
 
 
+class LlamaRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="n_embd",
+            description="Size of the input for the layer.",
+        ),
+        BenchmarkArg(
+            name="dim",
+            description="Dimension over which apply the norm.",
+        ),
+        BenchmarkArg(
+            name="eps",
+            description="Epsilon value.",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype (thunder.dtypes.dtype, torch.dtype, or str) of the input and model. Default is thunder.bfloat16.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "llama-rmsnorm"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Llama's RMS norm operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        n_embd: int,
+        dim: int = -1,
+        eps: float = 1e-5,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.bfloat16,
+        requires_grad: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.size = n_embd
+        self.dim = dim
+        self.eps = eps
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = (self.size,)
+        return (make(shape),), {}
+
+    def fn(self) -> Callable:
+        module = (
+            lit_llama_model.RMSNorm(self.size, self.dim, self.eps)
+            .to(device=self.device, dtype=self.tdtype)
+            .requires_grad_(self.requires_grad)
+        )
+        return module
+
+
 class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(

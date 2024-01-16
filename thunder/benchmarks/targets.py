@@ -755,6 +755,23 @@ def test_llama2_causal_self_attention_7b_grad(benchmark, executor: Callable):
 
 
 @pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
+    from thunder.benchmarks import LlamaRMSNormBenchmark
+
+    bench: Benchmark = LlamaRMSNormBenchmark(n_embd=4096, device="cuda:0", dtype=thunder.bfloat16, requires_grad=True)
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
     "executor,use_apex,",
     (
         (torch_fwd_bwd, False),
