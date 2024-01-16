@@ -22,7 +22,8 @@ FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 ARG CUDNN_VERSION="8.9.7.29-1"
 ARG CUDNN_FRONTEND_CHECKOUT="v1.0.1"
 ARG PYTHON_VERSION="3.10"
-ARG TORCH_CHECKOUT="v2.1.0"
+ARG TORCH_VERSION="2.1.2"
+ARG TRITON_VERSION="2.1.0"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -77,7 +78,7 @@ RUN \
     CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
     CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
     CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \
-    apt update && \
+    apt update -qq --fix-missing && \
     apt upgrade -y --allow-change-held-packages \
       libcudnn${CUDNN_BASE_VER}=${CUDNN_PACKAGE_VER} \
       libcudnn${CUDNN_BASE_VER}-dev=${CUDNN_PACKAGE_VER} \
@@ -95,16 +96,31 @@ ENV \
     TORCH_CUDA_ARCH_LIST="8.0" \
     CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
+ARG TORCH_INSTALL="wheel"
+
 RUN \
-    git clone --recursive https://github.com/pytorch/pytorch && \
-    cd pytorch && \
-    git checkout ${TORCH_CHECKOUT} && \
-    git submodule sync && \
-    git submodule update --init --recursive && \
-    pip install . && \
-    make triton && \
-    cd .. && \
-    rm -rf pytorch
+    if [ "${TORCH_INSTALL}" == "source" ]; then \
+        # building pytorch from source
+        git clone --recursive https://github.com/pytorch/pytorch && \
+        cd pytorch && \
+        git checkout "${TORCH_VERSION}" && \
+        git submodule sync && \
+        git submodule update --init --recursive && \
+        pip install . && \
+        make triton && \
+        cd .. && \
+        rm -rf pytorch; \
+    elif [ "${TORCH_INSTALL}" == "test" ]; then \
+        # installing pytorch from wheels
+        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+        pip install "torch==${TORCH_VERSION}" "triton==${TRITON_VERSION}" \
+          --index-url="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}"; \
+    else \
+        # installing pytorch from wheels \
+        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+        pip install "torch==${TORCH_VERSION}" "triton==${TRITON_VERSION}" \
+          --index-url="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}"; \
+    fi
 
 RUN \
     # building nvFuser from source
