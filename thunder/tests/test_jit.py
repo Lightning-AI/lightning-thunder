@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
 
@@ -1230,6 +1231,70 @@ def test_get_and_for_iter():
     d = {"start": 5, "stop": 9}
 
     assert jfoo(d) == foo(d)
+
+
+def test_iter_lookaside_and_sentinel():
+    def foo():
+        gen = iter([1, 2, 3, None, "Unreachable"])
+        for x in iter(lambda: next(gen), None):
+            assert x != "Unreachable"
+
+        sentinel = object()
+        l = [1, 2, 3, "Unreachable"]
+        for x in iter(lambda: l.pop(0) if len(l) is not 1 else sentinel, sentinel):
+            assert x != "Unreachable"
+        assert l == ["Unreachable"]
+
+    foo()
+    jit(foo)()
+
+
+def test_iter_lookaside_types():
+    class IterableExample(Iterable):
+        def __iter__(self):
+            return iter([1, 2, 3])
+
+    class NonIterableExample:
+        def __iter__(self):
+            return iter([1, 2, 3])
+
+    class SequenceExample(Sequence):
+        def __len__(self):
+            return 3
+
+        def __getitem__(self, idx):
+            if idx >= len(self):
+                raise IndexError
+            return idx + 1
+
+    class NonSequenceExample:
+        def __len__(self):
+            return 3
+
+        def __getitem__(self, idx):
+            if idx >= len(self):
+                raise IndexError
+            return idx + 1
+
+    def foo():
+        example_classes = (IterableExample, NonIterableExample, SequenceExample, NonSequenceExample)
+        for C in example_classes:
+            it = iter(C())
+            li = list(it)
+            assert li == [1, 2, 3]
+
+    foo()
+    jit(foo)()
+
+    def seqiter():
+        return iter(NonSequenceExample())
+
+    def calliter():
+        sentinel = object()
+        return iter(lambda: sentinel, sentinel)
+
+    assert type(seqiter()) is type(jit(seqiter)())
+    assert type(calliter()) is type(jit(calliter)())
 
 
 def test_unary_not():

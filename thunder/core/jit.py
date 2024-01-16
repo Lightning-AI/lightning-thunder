@@ -352,7 +352,8 @@ def is_opaque(fn: Callable) -> bool:
 
 # Acquires the code object from a function or method (converting methods to functions)
 # TODO Print a nicer error message
-def extract_code(fn: Callable) -> CodeType:
+def extract_code(fn) -> CodeType:
+    assert isinstance(fn, Callable), fn
     if isinstance(fn, MethodType):
         return extract_code(fn.__func__)
 
@@ -396,6 +397,26 @@ class UserException(RuntimeError):
             return f"Encountered user exception {type(self.__cause__).__name__}: {self.__cause__}:\n" f"{traceback_str}"
         else:
             return f"Encountered user exception with no cause:\n{traceback_str}"
+
+
+# Python doesn't expose the builtin iterator classes, of the iterable or the callable variety.
+# This is a helper class, and should not be accessible from user code.
+class _CallableIterator:
+    def __init__(self, fn: Callable, s: Any):
+        self._fn = fn
+        self._sentinel = s
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> Any:
+        # TODO: This call to _fn() needs to be jitted.
+        # We should decide how to accomplish this, because
+        # this object could outlive the jit/runtime contexts.
+        # Perhaps all calls to builtin iterators by _jit should be looked aside?
+        if (n := self._fn()) == self._sentinel:
+            raise StopIteration
+        return n
 
 
 class Py_NULL(metaclass=Singleton):
@@ -887,14 +908,70 @@ def _len_lookaside(obj: Any):
     return result
 
 
-def _iter_lookaside(obj, *sentinel):
+def _iter_lookaside(obj, *sentinel) -> Iterator | JIT_SIGNALS:
+    # If sentinel is provided
     if len(sentinel) != 0:
-        raise NotImplementedError(f"iter() with a sentinel value is not supported at this time")
+        assert len(sentinel) == 1, f"Too many arguments to iter(): {sentinel}"
+        sentinel, *_ = sentinel
 
-    def impl():
-        return obj.__iter__()
+        def sentinel_impl():
+            if not callable(obj):
+                raise TypeError(f"obj must be callable, not {type(obj).__name__}")
+            return _CallableIterator(obj, sentinel)
 
-    return _jit(impl)
+        ret = _jit(sentinel_impl)
+        if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+            return ret
+        assert isinstance(ret, _CallableIterator)
+        return iter(lambda: next(ret), sentinel)
+
+    # If sentinel is not provided
+    else:
+
+        def nosentinel_impl():
+            if isinstance(obj, dict):
+                raise TypeError(f"{type(object)} object is not iterable")
+            elif hasattr(obj, "__iter__"):
+                return obj.__iter__()
+            elif hasattr(obj, "__getitem__"):
+                # Python linters don't have an issue converting to Sequence, although the language may
+                # say that isinstance(obj, Sequence) is false for some objects with a __getitem__.
+                seq: Sequence = obj
+
+                # Create an iterator for the iterable.
+                # We don't check __len__ here, because cpython doesn't check __len__ here, it just
+                # keeps blindly calling getitem with increasing numbers until it hits an IndexError.
+                it_idx = 0
+                sentinel = object()
+
+                def next_item():
+                    try:
+                        nonlocal it_idx
+                        ret = seq[it_idx]
+                        it_idx += 1
+                        return ret
+                    except IndexError:
+                        return sentinel
+
+                return _CallableIterator(next_item, sentinel)
+            else:
+                raise TypeError(f"{type(object)} object is not iterable")
+
+        ret = _jit(nosentinel_impl)
+        if isinstance(ret, _CallableIterator):
+            # Trick iter() into constructing a new iterator of the correct type.
+            class _IteratorSequenceWrapper:
+                def __init__(self, it: _CallableIterator):
+                    self._it = it
+
+                def __getitem__(self, i):
+                    r = self._it.__next__()
+                    if r is self._it._sentinel:
+                        raise IndexError
+                    return r
+
+            return iter(_IteratorSequenceWrapper(ret))
+        return ret
 
 
 def _locals_lookaside() -> dict[str, Any]:
@@ -968,7 +1045,7 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     if not isinstance(cls, type):
         return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
 
-    return super(cls, obj)
+    return super(cls, obj)  # type: ignore
 
 
 _default_lookaside_map: dict[Callable, Callable] = {
@@ -2056,7 +2133,7 @@ def _iter_impl(obj):
 @register_opcode_handler("GET_ITER")
 def _get_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop()
-    return check_and_append(stack, _jit(_iter_impl(tos)))
+    return check_and_append(stack, _jit(iter, tos))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
@@ -3465,7 +3542,7 @@ def _gen_start_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
 def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     tos = stack[-1]
     if not (inspect.isgenerator(tos) or inspect.iscoroutine(tos)):
-        return check_and_append(stack, _jit(_iter_impl(stack.pop())))
+        return check_and_append(stack, _jit(iter, stack.pop()))
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RETURN_GENERATOR
