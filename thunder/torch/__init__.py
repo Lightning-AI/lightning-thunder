@@ -681,6 +681,28 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return clang.movedim(a, source, destination)
 
 
+@torchsymbol(torch.nn.functional.pad)
+def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: Number | None = None):
+    utils.check(mode == "constant", lambda: f"Mode arguments other than constant are not supported")
+    utils.check(len(pad) % 2 == 0, lambda: f"Padding length must be divisible by 2")
+    utils.check(
+        len(pad) <= a.ndim * 2,
+        lambda: f"Padding length should be less than or equal to two times the input dimension.",
+    )
+
+    pad_config = []
+    for dim in range(a.ndim * 2 - 1, 0, -2):
+        if dim >= len(pad):
+            pad_config.append((0, 0, 0))
+        else:
+            pad_config.append((pad[dim - 1], pad[dim], 0))
+
+    if value is None:
+        value = 0
+
+    return clang.pad(a, value, pad_config)
+
+
 @torchsymbol(torch.permute, is_method=True)
 def permute(a: TensorLike, /, *dims: int) -> TensorLike:
     dims = utils.extract_shape_from_varargs(dims)

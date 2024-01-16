@@ -3186,6 +3186,65 @@ pad_opinfo = OpInfo(
 shape_ops.append(pad_opinfo)
 
 
+def pad_torch_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, padding_config
+    cases = (
+        ((1,), (0, 2)),
+        ((1, 3), (0, 0, 0, 0)),
+        ((2, 2), (1, 1, 1, 2)),
+        ((2, 0, 3), (1, 0, 1, 1, 0, 0)),
+        ((2, 0, 3), (1, 0, 1, 1)),
+        ((5, 2, 1), ()),
+        ((3, 3, 4, 2), (-1, -1)),
+        ((3, 3, 4, 2), (-1, 0, 5, 2)),
+        ((3, 3, 4, 4), (-1, -1, 5, 2)),
+        ((3, 3, 4, 2), (1, 2, -3, 2)),
+        ((3, 3, 4, 2), (1, 1, -2, -1)),
+    )
+
+    for shape, padding_config in cases:
+        yield SampleInput(make(shape), padding_config, "constant", make_number(dtype=dtype))
+
+
+def pad_torch_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, padding_config, error type, error message
+    cases = (
+        ((), (1, 1), RuntimeError, "Padding length should be less than or equal to two times the input dimension"),
+        ((), (1,), RuntimeError, "Padding length must be divisible by 2"),
+        (
+            (1,),
+            (1, 1, 1, 1),
+            RuntimeError,
+            "Padding length should be less than or equal to two times the input dimension",
+        ),
+    )
+
+    for shape, padding_config, err_type, err_msg in cases:
+        yield SampleInput(make(shape), padding_config, "constant", make_number(dtype=dtype)), err_type, err_msg
+
+
+pad_torch_opinfo = OpInfo(
+    ltorch.pad,
+    name="torch_pad",
+    sample_input_generator=pad_torch_sample_generator,
+    error_input_generator=pad_torch_error_generator,
+    torch_reference=torch.nn.functional.pad,
+    test_directives=(
+        # PyTorch's pad doesn't support complex padding values
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("torch",),
+            dtypes=(datatypes.complexfloating,),
+        ),
+    ),
+)
+shape_ops.append(pad_torch_opinfo)
+
+
 # TODO: only remove these cases when the executor is nvfuser
 # FIXME: Zero-dim cases are skipped due to https://github.com/csarofeen/pytorch/issues/2383
 # FIXME: tensors with no elements are skipped because of no nvfuser support

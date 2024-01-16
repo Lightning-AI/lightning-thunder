@@ -796,6 +796,11 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return transpose(a, perm)
 
 
+@clang_ctx
+def pad(input: TensorProxy, padding_value: TensorProxy, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:
+    return prims.pad(input, padding_value, padding_config)
+
+
 # NOTE shape may have a single -1 value, which is a marker that the length of that dimension
 #   should be inferred
 @clang_ctx
