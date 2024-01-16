@@ -1,8 +1,6 @@
 import time
-from pathlib import Path
 
 import lightning as L
-import numpy as np
 import torch
 from torch.utils.data import DataLoader, IterableDataset
 
@@ -24,9 +22,6 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
     t0 = time.perf_counter()
     with fabric.init_module():
         og_model = model = GPT(config)
-    # tinyllama support
-    if not hasattr(model, "max_seq_length"):
-        model.max_seq_length = model.config.block_size
     print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
     if compile == "inductor":

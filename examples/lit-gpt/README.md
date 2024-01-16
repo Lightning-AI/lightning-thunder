@@ -19,37 +19,36 @@ Runs a single forward call with a (B=10 x T=2048) tensor:
 
 | Method    | Speed  | Memory  |
 |-----------|--------|---------|
-| Inductor  | 1.19 s | 17.3 GB |
-| TinyLlama | 1.25 s | 18.8 GB |
-| Thunder   | 1.30 s | 16.4 GB |
+| Inductor  | 1.18 s | 17.3 GB |
+| Thunder   | 1.26 s | 16.3 GB |
 | Eager     | 1.48 s | 17.4 GB |
 
 ## [Compiled model inference](compiled_model_inference.py)
 
 ```shell
 # setup
-python download.py --repo_id openlm-research/open_llama_7b
-python convert_hf_checkpoint.py --checkpoint_dir checkpoints/openlm-research/open_llama_7b
+python download.py --repo_id meta-llama/Llama-2-7b-hf
+python convert_hf_checkpoint.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf
 # run
-python compiled_model_inference.py --compile thunder --fake false
+python compiled_model_inference.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf --compile thunder --fake false
 ```
 
 Runs the existing generation logic with the model `forward` compiled:
 
 | Method   | Speed        | Memory  |
 |----------|--------------|---------|
-| Inductor | 89.9 tok/sec | 13.8 GB |
-| Eager    | 47.3 tok/sec | 13.6 GB |
-| Thunder  | 45.5 tok/sec | 13.8 GB |
+| Inductor | 89.5 tok/sec | 13.8 GB |
+| Eager    | 46.7 tok/sec | 13.6 GB |
+| Thunder  | 40.0 tok/sec | 13.8 GB |
 
 ## [Compiled generation inference](compiled_generation_inference.py)
 
 ```shell
 # setup
-python download.py --repo_id openlm-research/open_llama_7b
-python convert_hf_checkpoint.py --checkpoint_dir checkpoints/openlm-research/open_llama_7b
+python download.py --repo_id meta-llama/Llama-2-7b-hf
+python convert_hf_checkpoint.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf
 # run
-python compiled_generation_inference.py --compile thunder --fake false
+python compiled_generation_inference.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf --compile thunder --fake false
 ```
 
 Runs a customized generation logic that is compiled and a customized multinomial implementation.
@@ -57,9 +56,9 @@ This is advantageous because `torch.multinomial(probs, num_samples=1)` is very s
 
 | Method   | Speed        | Memory  |
 |----------|--------------|---------|
-| Inductor | 93.8 tok/sec | 13.8 GB |
-| Eager    | 46.7 tok/sec | 13.6 GB |
-| Thunder  | 45.5 tok/sec | 13.8 GB |
+| Inductor | 93.5 tok/sec | 13.8 GB |
+| Eager    | 46.5 tok/sec | 13.6 GB |
+| Thunder  | 40.0 tok/sec | 13.8 GB |
 
 ## [Training](train.py)
 
@@ -72,15 +71,15 @@ python train.py --compile thunder --dynamic false
 
 Static shapes (45 iters)
 
-| Method    | Speed  | Memory  |
+| Method    | Time   | Memory  |
 |-----------|--------|---------|
 | Inductor  | 20.3 s | 20.9 GB |
-| Thunder   | 22.7 s | 28.0 GB |
+| Thunder   | 22.1 s | 29.3 GB |
 | Eager     | 24.6 s | 24.2 GB |
 
 Dynamic shapes (45 iters)
 
-| Method    | Speed  |
+| Method    | Time   |
 |-----------|--------|
 | Inductor  | 14.7 s |
 | Eager     | 17.5 s |
@@ -88,30 +87,16 @@ Dynamic shapes (45 iters)
 
 ## Setup
 
-```shell
+```text
+Python version: 3.10.12 (main, Jun 11 2023, 05:26:28) [GCC 11.4.0] (64-bit runtime)
 Is debug build: False
 CUDA used to build PyTorch: 12.1
 CUDA runtime version: 12.1.105
 GPU 0: NVIDIA A100-SXM4-40GB
 Nvidia driver version: 525.125.06
+
+pytorch-triton==2.3.0.dev20240115+cu121
+torch==2.3.0.dev20240115+cu121
+lightning-thunder==c12bc0dee63e883bf5f8a236439613ebf573bfac
+nvfuser_cu121==0.1.5.dev20240116
 ```
-
-Inductor and Thunder
-
-```text
-pytorch-triton==2.1.0+6e4932cda8
-torch==2.2.0.dev20231108+cu121
-thunder==b108132a7e2c8d68791138db53c210357e8a9e76
-nvfuser-cu121==0.1.2
-```
-
-TinyLlama:
-
-```text
-pytorch-triton==2.1.0+6e4932cda8
-torch==2.1.0+cu121
-flash-attn==2.2.2
-xformers==0.0.22.post4
-```
-
-(Cannot upgrade `torch` because `flash-attn` breaks)

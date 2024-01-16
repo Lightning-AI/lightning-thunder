@@ -69,7 +69,7 @@ def generate(
 
 @torch.inference_mode()
 def main(
-    checkpoint_dir: Path = Path("checkpoints/openlm-research/open_llama_7b"),
+    checkpoint_dir: Path = Path("checkpoints/meta-llama/Llama-2-7b-hf"),
     num_samples: int = 10,
     max_new_tokens: int = 200,
     compile: str = "eager",

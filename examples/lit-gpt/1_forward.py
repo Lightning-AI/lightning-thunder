@@ -16,9 +16,6 @@ def main(name: str = "open_llama_7b", num_samples: int = 10, compile: str = "eag
 
     with device:
         model = GPT.from_name(name)
-        # tinyllama support
-        if not hasattr(model, "max_seq_length"):
-            model.max_seq_length = model.config.block_size
         encoded = torch.randint(0, model.config.padded_vocab_size, (10, model.max_seq_length))
 
     model.eval()
