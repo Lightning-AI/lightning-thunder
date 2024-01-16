@@ -1,22 +1,32 @@
 documentation:
-  - docs/**/*
-  - dev_tutorials/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**/*
+          - dev_tutorials/*
 
 "ci":
-  - .azure/*
-  - .github/*
-  - .github/workflows/*
-  - dockers/**/*
+  - changed-files:
+      - any-glob-to-any-file:
+          - .azure/*
+          - .github/*
+          - .github/workflows/*
+          - dockers/**/*
 
 "docker":
-  - dockers/**/*
-  - .azure/docker-build.yml
+  - changed-files:
+      - any-glob-to-any-file:
+          - dockers/**/*
+          - .azure/docker-build.yml
 
 "install":
-  - setup.py
-  - pyproject.toml
-  - MANIFEST.in
+  - changed-files:
+      - any-glob-to-any-file:
+          - setup.py
+          - pyproject.toml
+          - MANIFEST.in
 
 "dependencies":
-  - requirements/*
-  - requirements.txt
+  - changed-files:
+      - any-glob-to-any-file:
+          - requirements/*
+          - requirements.txt
