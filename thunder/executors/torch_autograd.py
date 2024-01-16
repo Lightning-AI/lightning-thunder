@@ -130,7 +130,7 @@ class ThunderFunction(torch.autograd.Function):
             fw_extrace = del_last_used(fw_extrace)
             fw_traces.append(fw_extrace)
 
-            bw_extrace = del_last_used(bw_extrace)
+            bw_extrace = del_last_used(bw_extrace, clear_collections=True)
             bw_traces.append(bw_extrace)
 
             if compile_stats is not None:
@@ -162,7 +162,26 @@ class ThunderFunction(torch.autograd.Function):
     @staticmethod
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):
-        grads = ctx.compiled_backward((ctx.saved_tensors, ctx.saved_other), args)
+        # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
+        # backward is a really long function that takes all the tensors saved in
+        # forward and gradually uses them to compute the gradients of the
+        # inputs. Unfortunately, Python holds a reference to all arguments of a
+        # function until the function returns, even if we delete the variable
+        # "saved_tensors" inside the function, the tensors will still be held in
+        # memory until the function returns. Fortunately, Python passes mutable
+        # objects by reference, so we can just replace the saved_tensors with an
+        # empty list and the memory will be freed immediately. We must also
+        # delete the reference to the saved_tensors in the context, otherwise
+        # the memory will be freed only when the context is deleted.
+        saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
+
+        # This is an undocumented API, but it's the only way to clear the
+        # reference to the saved tensors in the context
+        ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
+        grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
+
+        # Inside the compiled backward we must clear the saved_tensors_list
+        assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         return (None, None, None, None, *grads)
 
 

@@ -21,7 +21,7 @@ from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
 from thunder.torch import to_thunder_dtype as thunder_dtype
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI
+from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
 
@@ -702,6 +702,80 @@ def test_multiple_output_vjp(executor, device, _):
     assert trace.bound_symbols[4].sym.name == "sincos"
     # The first output should be from sincos
     assert trace.output[0] == trace.bound_symbols[4].output
+
+
+@requiresCUDA
+def test_torch_autograd_saved_tensors_memory_release():
+    # This test checks that the saved tensors are released during compiled
+    # backward function execution. It's a regression test for the memory leak.
+
+    from thunder.core.prims import make_prim
+    from thunder.core.transforms import register_augmented_forward, register_backward
+    from thunder.core.proxies import TensorProxy
+    from thunder.core import codeutils
+
+    def noop_meta(x):
+        return TensorProxy(like=x)
+
+    def noop_printer(bsym, out_printables, arg_printables, kwarg_printables):
+        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
+        arg_string = ", ".join(codeutils.prettyprint(x, literals_allowed=False) for x in arg_printables)
+        return result_str + f"{arg_string}.clone()"
+
+    noop = make_prim(
+        "noop",
+        "noop",
+        meta=noop_meta,
+        python_printer=noop_printer,
+        python_impl=lambda x: x,
+    )
+
+    def noop_backward_meta(x, g):
+        return TensorProxy(like=g)
+
+    def noop_backward_printer(bsym, out_printables, arg_printables, kwarg_printables):
+        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
+        return result_str + "torch.tensor(torch.cuda.memory_allocated())"
+
+    noop_backward = make_prim(
+        "noop_backward",
+        "noop_backward",
+        meta=noop_backward_meta,
+        python_printer=noop_backward_printer,
+        python_impl=lambda x, g: g,
+    )
+
+    @register_augmented_forward("noop")
+    def noop_vjp_rule(x):
+        out = noop(x)
+        saved = (out,)
+        return out, saved
+
+    @register_backward("noop")
+    def noop_backward_rule(out, g):
+        return noop_backward(out, g)
+
+    def func(x):
+        x = x + 0
+        for i in range(10):
+            x = noop(x)
+        return x
+
+    cfunc = thunder.compile(func, disable_preprocessing=True, executors_list=[thunder.executors.torchex.ex])
+
+    initial_allocated = torch.cuda.memory_allocated()
+
+    x = torch.tensor(1e20, device="cuda", requires_grad=True)
+    v = torch.tensor(1e20, device="cuda")
+
+    fw_out = cfunc(x)
+    intermediate_allocated = torch.cuda.memory_allocated()
+    fw_out.backward(v)
+    final_allocated = torch.cuda.memory_allocated()
+
+    assert int(x.grad.item() - initial_allocated) == 2048
+    assert intermediate_allocated - initial_allocated == 6144
+    assert final_allocated - initial_allocated == 2048
 
 
 @instantiate(

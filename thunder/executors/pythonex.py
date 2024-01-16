@@ -12,8 +12,9 @@ import platform
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
@@ -87,6 +88,17 @@ def _signbit_prim_impl(a: Number) -> bool:
     return a < 0
 
 
+def _clear_collection_meta(coll: CollectionProxy) -> None:
+    baseutils.check_type(coll, CollectionProxy)
+    baseutils.check_type(coll.coll, Sequence)
+    return None
+
+
+def _clear_collection_prim_impl(a: Sequence) -> None:
+    if isinstance(a, list):
+        a.clear()
+
+
 acos = ex.register_operator("acos", like=prims.acos, module=math)
 acosh = ex.register_operator("acosh", like=prims.acosh, module=math)
 asin = ex.register_operator("asin", like=prims.asin, module=math)
@@ -98,6 +110,7 @@ tensor_abs = ex.register_operator("tensor_abs", like=prims.abs, fn=_tensor_abs_p
 neg = ex.register_operator("neg", like=prims.neg, module=operator)
 real = ex.register_operator("real", like=prims.real, fn=_real_prim_impl)
 signbit = ex.register_operator("signbit", like=prims.signbit, fn=_signbit_prim_impl)
+clear_collection = ex.register_operator("clear_collection", meta=_clear_collection_meta, fn=_clear_collection_prim_impl)
 
 ex.register_implementation(prims.acos, acos, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.acosh, acosh, checker=_elementwise_unary_checker)
