@@ -63,7 +63,7 @@ def examine(fn: Callable, *args, **kwargs):
     for name, op in collected_ops:
         if op in _torch_to_thunder_function_map:
             supported_ops.add((name, op))
-        elif name.startswith("_TensorBase.") or name.startswith("Tensor."):
+        elif name.startswith("_TensorBase.") or name.startswith("TensorBase.") or name.startswith("Tensor."):
             # Identifies properties and methods
             # NOTE The approach of testing if the name starts with "_TensorBase." or "Tensor." seems a little hacky
 
@@ -71,10 +71,13 @@ def examine(fn: Callable, *args, **kwargs):
             attr: str
             if name.startswith("_TensorBase."):
                 _, attr = name.split(".")
-            elif name.startswith("Tensor."):
+            elif name.startswith("Tensor.") or name.startswith("TensorBase."):
                 # Ex name 'Tensor.__rpow__ of torch._tensor'
                 _, attr = name.split(" ")[0].split(".")
 
+            # # torch.Tensor still has `__rdiv__` and sets `__rtruediv__=__rdiv__`
+            # # Ref: https://github.com/pytorch/pytorch/blob/1deb75b5846c6bb39773a4f210379f983250d802/torch/_tensor.py#L935-L939
+            attr = "__rtruediv__" if attr == "__rdiv__" else attr
             if hasattr(TensorProxy, attr):
                 supported_ops.add((name, op))
 
