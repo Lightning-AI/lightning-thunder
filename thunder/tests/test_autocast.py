@@ -103,7 +103,6 @@ def test_no_autocast(executor, device, dtype):
 
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
-    decorators=(pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1898"),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor

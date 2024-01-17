@@ -40,7 +40,6 @@ def test_sdpa(device: str, dtype: torch.dtype):
     )
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1898")
 @requiresCUDA
 def test_sdpa_autocast_flash():
     batch = 1
