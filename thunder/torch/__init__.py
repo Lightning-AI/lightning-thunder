@@ -3494,6 +3494,11 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     return attn_weight @ value
 
 
+@torchsymbol(torch.sigmoid, torch.nn.functional.sigmoid, torch.special.expit, is_method=True)
+def sigmoid(a: TensorLike, /) -> TensorLike:
+    return clang.sigmoid(a)
+
+
 # CompositeImplicitAutograd - don't register decomp
 @torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
 def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
