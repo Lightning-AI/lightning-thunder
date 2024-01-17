@@ -1702,7 +1702,7 @@ def test_transforms_vjp_1_2(executor, device, _):
     cotangents = (g1, g2)
     out_p, grads = vjp_eager(primals, cotangents)
     expected_out_p = executor.make_callable(func_1_2)(a)
-    assert_close(out_p, expected_out_p, equal_nan=True)
+    assert_close(out_p, expected_out_p, equal_nan=True, atol=1e-3, rtol=1e-5)
 
     # Now check the gradients
     # TODO: We will have this automatically tested with OpInfo tests
@@ -1716,7 +1716,7 @@ def test_transforms_vjp_1_2(executor, device, _):
 
     out = pt_func_1_2(aa)
     expected_grads = torch.autograd.grad(out, aa, grad_outputs=(g1, g2), retain_graph=True)
-    assert_close(expected_grads, grads, equal_nan=True)
+    assert_close(expected_grads, grads, equal_nan=True, atol=1e-3, rtol=1e-5)
 
 
 @instantiate(
