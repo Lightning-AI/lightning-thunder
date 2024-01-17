@@ -8,7 +8,7 @@ pytest-timestamper ==0.0.9
 graphviz ==0.20.1
 fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
-hypothesis ==6.92.1  # for test_ddp.py
+hypothesis ==6.94.0  # for test_ddp.py
 numpy  # for test_ops.py
 
 # Installs JAX on Linux and MacOS
