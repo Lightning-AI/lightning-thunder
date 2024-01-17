@@ -12,6 +12,7 @@ from io import StringIO
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
+from thunder.core.compile_data import compile_data
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx, get_langctx
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
@@ -712,112 +713,100 @@ def _create_callable(
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.time_ns()
 
-        for ex in cd.executors_list:
-            if isinstance(ex, OperatorExecutor):
-                ex.is_active = True
+        with compile_data(cd):
+            # Determines whether to use autograd.Function or not
+            # autograd.Function (which supports calling .backward() in PyTorch) is used when:
+            #   1) The grad() transform is not applied
+            #   2) At least one input tensor (or tensor proxy) requires grad
+            if not _using_grad_transform:
+                flat_args, _ = tree_flatten((args, kwargs))
+                tensor_cls = (torch.Tensor, TensorProxy)
+                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
+                if not cd.disable_torch_autograd_support and requires_grad:
+                    compile_config = {
+                        "langctx": cd.langctx,
+                        "executors_list": cd.executors_list,
+                        "only_execute_prims": cd.only_execute_prims,
+                        "cache_mode": cd.cache_mode,
+                        "use_rematerialization": cd.use_rematerialization,
+                        "use_cudagraphs": cd.use_cudagraphs,
+                    }
 
-        # Determines whether to use autograd.Function or not
-        # autograd.Function (which supports calling .backward() in PyTorch) is used when:
-        #   1) The grad() transform is not applied
-        #   2) At least one input tensor (or tensor proxy) requires grad
-        processed_function = (
-            cd.processed_function
-            if not is_autocast_enabled
-            else autocast(cd.processed_function, dtype=autocast_thunder_dtype)
-        )
-        if not _using_grad_transform:
-            flat_args, _ = tree_flatten((args, kwargs))
-            tensor_cls = (torch.Tensor, TensorProxy)
-            requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
-            if not cd.disable_torch_autograd_support and requires_grad:
-                compile_config = {
-                    "langctx": cd.langctx,
-                    "executors_list": cd.executors_list,
-                    "only_execute_prims": cd.only_execute_prims,
-                    "cache_mode": cd.cache_mode,
-                    "use_rematerialization": cd.use_rematerialization,
-                    "use_cudagraphs": cd.use_cudagraphs,
-                }
+                    # thunder_backward may recursively call compile and wraps the result in a
+                    # torch.autograd.Function to support embedding of Thunder-compiled
+                    # functions in torch's Autograd
+                    cs.last_trace_host_execution_start = time.time_ns()
+                    c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(cd.processed_function)
+                    result = c(*args, **kwargs)
+                    cs.last_trace_host_execution_stop = time.time_ns()
+                    cs.last_executed = c
+                    if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
+                        cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs)
+                    cs.last_trace_host_stop = time.time_ns()
+                    return result
 
-                # thunder_backward may recursively call compile and wraps the result in a
-                # torch.autograd.Function to support embedding of Thunder-compiled
-                # functions in torch's Autograd
-                cs.last_trace_host_execution_start = time.time_ns()
-                c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(processed_function)
-                result = c(*args, **kwargs)
-                cs.last_trace_host_execution_stop = time.time_ns()
-                cs.last_executed = c
-                if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-                    cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs, autocast_key)
-                for ex in cd.executors_list:
-                    if isinstance(ex, OperatorExecutor):
-                        ex.is_active = False
-                cs.last_trace_host_stop = time.time_ns()
+            # TODO Revisit compile() behavior when hit in a trace ctx
+            #   This will inline the invocation of compile into the current
+            #   trace (UNLESS there was a cache hit, per above)
+            #   This interaction between the cache and tracing seems odd
+            # TODO Support a practitioner who wants to explicitly and separately compile
+            #   part of the program
+
+            # Acquires the trace OR inlines the trace into an existing trace and
+            #   returns the (proxied) result of the operation
+            cs.last_trace_tracing_start = time.time_ns()
+            trc_or_result = trace(compile_data=cd)(cd.processed_function, *args, **kwargs)
+            cs.last_trace_tracing_stop = time.time_ns()
+
+            # Checks for inlined transforms
+            current_trace = get_tracectx()
+            check(
+                current_trace is None or len(transforms) == 0,
+                lambda: f"Inlining transformed traces is not yet supported",
+                exception_type=NotImplementedError,
+            )
+
+            # Returns the (proxied) result if this call to compile was inlined
+            if current_trace is not None:
+                result = trc_or_result
                 return result
 
-        # TODO Revisit compile() behavior when hit in a trace ctx
-        #   This will inline the invocation of compile into the current
-        #   trace (UNLESS there was a cache hit, per above)
-        #   This interaction between the cache and tracing seems odd
-        # TODO Support a practitioner who wants to explicitly and separately compile
-        #   part of the program
+            # Starts recording a sequence of traces (this is not inlined)
+            trc: TraceCtx = trc_or_result
+            traces: list[TraceCtx] = [trc]
 
-        # Acquires the trace OR inlines the trace into an existing trace and
-        #   returns the (proxied) result of the operation
-        cs.last_trace_tracing_start = time.time_ns()
-        trc_or_result = trace(compile_data=cd)(processed_function, *args, **kwargs)
-        cs.last_trace_tracing_stop = time.time_ns()
+            # Applies transforms
+            # TODO If PyTorch's autocast is enabled, then the autocast transform should be added here
+            #   (Consider if it should only be added if the autocast transform is not already one of the transforms)
+            #   See https://github.com/Lightning-AI/lightning-thunder/issues/1898
+            for transform in transforms:
+                trc = transform(trc, executors_list=cd.executors_list)
+                traces.append(trc)
 
-        # Checks for inlined transforms
-        current_trace = get_tracectx()
-        check(
-            current_trace is None or len(transforms) == 0,
-            lambda: f"Inlining transformed traces is not yet supported",
-            exception_type=NotImplementedError,
-        )
+            #
+            # Executes the trace, then updates the CompiledData and possibly
+            #   updates a cache
+            #
+            cs.last_trace_host_execution_start = time.time_ns()
+            result, c, extraces = _execute_trace(
+                trc,
+                args=args,
+                kwargs=kwargs,
+                compile_data=cd,
+                post_optimization_transforms=post_optimization_transforms,
+            )
+            cs.last_trace_host_execution_stop = time.time_ns()
 
-        # Returns the (proxied) result if this call to compile was inlined
-        if current_trace is not None:
-            result = trc_or_result
+            traces.extend(extraces)
+            cs.last_traces = traces
+            cs.last_executed = c
+
+            # (Possibly) Updates the cache
+            if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
+                cache_put(cs.cache, c, traces, args[cd.num_constant_args :], kwargs)
+
+            cs.last_trace_host_stop = time.time_ns()
             return result
-
-        # Starts recording a sequence of traces (this is not inlined)
-        trc: TraceCtx = trc_or_result
-        traces: list[TraceCtx] = [trc]
-
-        # Applies transforms
-        for transform in transforms:
-            trc = transform(trc, executors_list=cd.executors_list)
-            traces.append(trc)
-
-        for ex in cd.executors_list:
-            if isinstance(ex, OperatorExecutor):
-                ex.is_active = False
-
-        #
-        # Executes the trace, then updates the CompiledData and possibly
-        #   updates a cache
-        #
-        cs.last_trace_host_execution_start = time.time_ns()
-        result, c, extraces = _execute_trace(
-            trc,
-            args=args,
-            kwargs=kwargs,
-            compile_data=cd,
-            post_optimization_transforms=post_optimization_transforms,
-        )
-        cs.last_trace_host_execution_stop = time.time_ns()
-
-        traces.extend(extraces)
-        cs.last_traces = traces
-        cs.last_executed = c
-
-        # (Possibly) Updates the cache
-        if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-            cache_put(cs.cache, c, traces, args[cd.num_constant_args :], kwargs, autocast_key)
-
-        cs.last_trace_host_stop = time.time_ns()
-        return result
 
     if cd.is_module:
         _fn = ThunderOptimizedModule(

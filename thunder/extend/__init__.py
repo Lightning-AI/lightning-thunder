@@ -160,9 +160,6 @@ class OperatorExecutor(Executor):
 
         self._opmap: dict[str, Symbol] = {}
 
-        # When an executor is used, it is marked as active
-        self.is_active = False
-
     @property
     def opmap(self) -> dict[str, Symbol]:
         return self._opmap

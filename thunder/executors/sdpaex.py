@@ -752,7 +752,10 @@ def scaled_dot_product_efficient_attention_aug_fw_rule_check(
     *,
     scale: None | float,
 ) -> bool:
-    if sdpa_ex.is_active:
+    from thunder.core.compile_data import get_compile_data
+
+    cd = get_compile_data()
+    if sdpa_ex in cd.executors_list:
         return _scaled_dot_product_attention_checker(query, key, value, attn_mask, dropout_p, is_causal, scale=scale)
     return False
 

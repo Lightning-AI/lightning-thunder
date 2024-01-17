@@ -235,7 +235,10 @@ def cross_entropy_forward_rule_checker(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> bool:
-    if apex_ex.is_active:
+    from thunder.core.compile_data import get_compile_data
+
+    cd = get_compile_data()
+    if apex_ex in cd.executors_list:
         return _cross_entropy_checker(
             a,
             target=target,
