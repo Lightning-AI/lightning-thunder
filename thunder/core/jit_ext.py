@@ -771,10 +771,16 @@ def _thunder_next_lookaside(fn, *args):
     # Short-circuits if we were not tracking the object we're performing the getitem on (indicating that the
     #   item is an intermediate, and does not need its provenance tracked)
     if ii is None:
-        val = origin.__next__()
+        try:
+            val = origin.__next__()
+        except Exception as e:
+            return do_raise(e)
         return val
 
-    result = ii.obj.__next__()
+    try:
+        result = ii.obj.__next__()
+    except Exception as e:
+        return do_raise(e)
     ii.iterator_counter += 1
     return hnext(ii.history, result, origin, ii.iterator_counter)
 

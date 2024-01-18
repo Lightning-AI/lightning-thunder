@@ -464,8 +464,9 @@ def test_exception_traceback():
     with pytest.raises(ValueError) as excinfo:
         thunder_result = jfoo(*args)
 
-    assert "foo in file" in str(excinfo.value.__cause__)
-    assert "bar in file" in str(excinfo.value.__cause__)
+    tb_string = "".join(str(tbe) for tbe in excinfo.traceback)
+    assert "in foo\n" in tb_string
+    assert "in bar\n" in tb_string
 
 
 def test_finally():
@@ -618,7 +619,7 @@ def test_raise_from_external():
     assert type(e) == ValueError
     # TODO: If we drop the UserException here, update
     # assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
-    assert type(e.__cause__.__cause__) == IndexError and msg in str(e.__cause__.__cause__), excinfo.value
+    assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
 
 
 def test_nested_try_except():

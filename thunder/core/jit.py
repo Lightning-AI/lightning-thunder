@@ -171,16 +171,8 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
 # - function objects, iterators, generators,... created in the JIT are NOT per se in inside the JIT,
 #   so they should raise as usual. When called with _jit(...) that will be handled appropriately
 #   in the RAISE_VALUE handler.
-
-# To simplilfy tracebacks, User Exceptions are INTERNALLY wrapped inside a UserException
-# instance by setting the original exception as the __cause__.
-# However, as soon as we interact with the outside world, we have to remove the UserException
-# wrapper in order to give the users an exception of the right shape. But as the UserException
-# contains the traceback information (and the original exception does not because we don't
-# have frame objects for the traceback), we want to keep it around, so we make it the __cause__
-# of the original exception and any original __cause__ to the UserException.
-
-
+# Note that for user exceptions, we need to manually amend the traceback as we unwrap. We do so in
+# _jit_run.
 # JIT Errors are raised wrapped in a JITError exception to signal that we have run into
 # something with the JIT itself or how it was called.
 
@@ -192,7 +184,7 @@ class JitRuntimeCtx:
         self._globals_dict: dict[str, Any] | None = None
         self._history: list[dis.Instruction | str] = []
         self._interpreted_instructions: list[dis.Instruction] = []
-        self._curexc: UserException | None = None
+        self._curexc: BaseException | None = None
         # The exception_stack mirrors the exc_info/exc_state from PyThreadState
         # exception_stack is the stack of exceptions currently being handled, we only have exceptions here
         self.exception_stack = [None]
@@ -200,7 +192,7 @@ class JitRuntimeCtx:
         # Note that most of the time, we are changing the self.exception_stack[-1] instead of popping/pushing exceptions.
         # `exception_stack[-1] = ...` is the equivalent of assiging ts.exc_info->exc_type/value/traceback.
         # ts.exc_state is exc_info (the bottom-most element of the stack(?))
-        # ts.curexc_type / curexc_value / curexc_traceback are the UserException currently being raised
+        # ts.curexc (in Python 3.10 as _type / _value / _traceback) is the exception currently being raised
 
         self.debug_log = debug_log
         self._prev_filename: None | str = None
@@ -213,8 +205,7 @@ class JitRuntimeCtx:
     @curexc.setter
     def curexc(self, value):
         if value is not None:
-            assert isinstance(value, UserException), value
-            assert isinstance(value.__cause__, Exception), value
+            assert isinstance(value, BaseException), value
         self._curexc = value
 
     @property
@@ -381,24 +372,6 @@ class JITError(RuntimeError):
     pass
 
 
-# Errors from the user will be wrapped with this with the original user error
-# as the __cause__. The user-facing function jit and the generator from
-# make_generator will unwrap this to return the original error.
-class UserException(RuntimeError):
-    def __init__(self, exception: BaseException, tb: list | TracebackType | None = None):
-        super().__init__()
-        self.__cause__ = exception
-
-        self.tb = get_python_tb(tb)
-
-    def __str__(self):
-        traceback_str = "\n".join(f.format_with_source() for f in self.tb)
-        if self.__cause__ is not None:
-            return f"Encountered user exception {type(self.__cause__).__name__}: {self.__cause__}:\n" f"{traceback_str}"
-        else:
-            return f"Encountered user exception with no cause:\n{traceback_str}"
-
-
 # Python doesn't expose the builtin iterator classes, of the iterable or the callable variety.
 # This is a helper class, and should not be accessible from user code.
 class _CallableIterator:
@@ -484,6 +457,9 @@ class PythonFrameWrapper:
                 lineno = self.code.co_firstlineno
             l.append("  " + ls[max(lineno - 1, 0)].rstrip())
         return "\n".join(l)
+
+    def get_or_make_python_frame(self) -> FrameType:
+        return self.frame
 
 
 def get_python_tb(tb: list | TracebackType | None) -> list:
@@ -625,6 +601,26 @@ class JITFrame:
         else:
             # _varname_from_oparg is not documented
             return self.code._varname_from_oparg(idx)  # type: ignore
+
+    def get_or_make_python_frame(self) -> FrameType:
+        def fn():
+            raise ValueError()
+
+        lineno = self.positions.lineno
+        if lineno is None:
+            lineno = self.code.co_firstlineno
+        replacements = dict(co_filename=self.code.co_filename, co_firstlineno=lineno - 1, co_name=self.code.co_name)
+        if hasattr(fn.__code__, "co_qualname"):
+            replacements["co_qualname"] = self.qualname
+        fn.__code__ = fn.__code__.replace(**replacements)
+
+        try:
+            fn()
+        except Exception as e:
+            tb = e.__traceback__
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        return tb.tb_frame
 
 
 #
@@ -860,11 +856,7 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     ctx: JitRuntimeCtx = get_jitruntimectx()
 
     # `__getattr__` is only triggered if `__getattribute__` fails.
-    if (
-        result is JIT_SIGNALS.EXCEPTION_RAISED
-        and ctx.curexc is not None
-        and isinstance(ctx.curexc.__cause__, AttributeError)
-    ):
+    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError):
         # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
         null = object()
         obj_getattr = getattr(obj, "__getattr__", null)
@@ -873,12 +865,7 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
             result = _jit(obj_getattr, name)
 
     # And finally if all else fails apply the default. (If provided.)
-    if (
-        result is JIT_SIGNALS.EXCEPTION_RAISED
-        and ctx.curexc is not None
-        and isinstance(ctx.curexc.__cause__, AttributeError)
-        and maybe_default
-    ):
+    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
         ctx.curexc = None
         (default,) = maybe_default
         return default
@@ -1004,7 +991,7 @@ def _next_lookaside(iterator, default=_nil):
 
     if default is not _nil and res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        if isinstance(runtimectx.cur_exc.__cause__, StopIteration):
+        if isinstance(runtimectx.cur_exc, StopIteration):
             res = default
     return res
 
@@ -1948,7 +1935,8 @@ def _end_async_for_handler_3_10(
         val = stack.pop()
         tb = stack.pop()
         assert isinstance(val, BaseException)
-        runtimectx.curexc = UserException(val, tb)
+        val.__traceback__ = tb
+        runtimectx.curexc = val
         return JIT_SIGNALS.EXCEPTION_RAISED
 
 
@@ -1974,7 +1962,7 @@ def _end_async_for_handler_3_11(
         stack.pop()
         return
     else:
-        runtimectx.curexc = UserException(val, val.__traceback__)
+        runtimectx.curexc = val
         return JIT_SIGNALS.EXCEPTION_RAISED
 
 
@@ -2027,7 +2015,6 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
     return check_and_append(stack, _jit(impl))
 
 
-# TODO
 # https://docs.python.org/3.10/library/dis.html#opcode-FOR_ITER
 @register_opcode_handler("FOR_ITER")
 def _for_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs) -> int | None:
@@ -2041,19 +2028,16 @@ def _for_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, inst_pt
         return next(tos)
 
     v: Any
-    try:
-        r = _jit(_next_impl)
+    r = _jit(_next_impl)
 
-        if r is JIT_SIGNALS.EXCEPTION_RAISED:
-            ctx = get_jitruntimectx()
-            assert ctx.curexc is not None, "No exception raised"
-            assert ctx.curexc.__cause__ is not None, "Exception has no cause."
-            raise ctx.curexc.__cause__
+    if r is JIT_SIGNALS.EXCEPTION_RAISED:
+        ctx = get_jitruntimectx()
+        if isinstance(ctx.curexc, StopIteration):
+            stack.pop()
+            return inst_ptr + delta + 1
+        return r
 
-        stack.append(r)
-    except StopIteration:
-        stack.pop()
-        return inst_ptr + delta + 1
+    stack.append(r)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_AITER
@@ -3002,7 +2986,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
             return do_raise(RuntimeError("No active exception to reraise"))
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
-        runtimectx.curexc = UserException(value, value.__traceback__)
+        runtimectx.curexc = value
         return JIT_SIGNALS.EXCEPTION_RAISED
 
     if isinstance(exc, type) and issubclass(exc, BaseException):
@@ -3047,7 +3031,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
 
         value.__cause__ = fixed_cause
 
-    runtimectx.curexc = UserException(value)
+    runtimectx.curexc = value
     return JIT_SIGNALS.EXCEPTION_RAISED
 
 
@@ -3126,7 +3110,8 @@ def _reraise_handler_3_10(
     tb = stack.pop()
     assert isinstance(val, BaseException)
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
-    runtimectx.curexc = UserException(val, tb)
+    val.__traceback__ = tb
+    runtimectx.curexc = val
     return JIT_SIGNALS.EXCEPTION_RAISED
 
 
@@ -3146,7 +3131,7 @@ def _reraise_handler_3_11(
 
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     assert isinstance(val, BaseException)
-    runtimectx.curexc = UserException(val, val.__traceback__)
+    runtimectx.curexc = val
     return JIT_SIGNALS.EXCEPTION_RAISED
 
 
@@ -3576,9 +3561,9 @@ def _send_handler(
     res = _jit(impl)
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        if isinstance(runtimectx.curexc.__cause__, StopIteration):
+        if isinstance(runtimectx.curexc, StopIteration):
             stack.pop()  # remove generator
-            stack.append(runtimectx.curexc.__cause__.value)
+            stack.append(runtimectx.curexc.value)
             runtimectx.curexc = None
             return inst_ptr + inst.arg + 1
         else:
@@ -3637,9 +3622,9 @@ def _yield_from_handler(
     res = _jit(impl)
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        if isinstance(runtimectx.curexc.__cause__, StopIteration):
+        if isinstance(runtimectx.curexc, StopIteration):
             stack.pop()  # remove generator
-            stack.append(runtimectx.curexc.__cause__.value)
+            stack.append(runtimectx.curexc.value)
             runtimectx.curexc = None
             return None
         else:
@@ -3683,14 +3668,9 @@ def make_generator(
                 if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     runtimectx.curexc = None
-                    if isinstance(e.__cause__, StopIteration):
-                        return e.__cause__.value
-                    # We modify the cause chain from
-                    # UserException -> real_exc -> further_causes to
-                    # real_exc -> UserException -> further causes
-                    real_exc = e.__cause__
-                    e.__cause__ = real_exc.__cause__
-                    raise real_exc from e
+                    if isinstance(e, StopIteration):
+                        return e.value
+                    raise e
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == JIT_SIGNALS.YIELD_VALUE
@@ -3717,14 +3697,9 @@ def make_async_generator(
                 if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     runtimectx.curexc = None
-                    if isinstance(e.__cause__, StopIteration):
+                    if isinstance(e, StopIteration):
                         return
-                    # We modify the cause chain from
-                    # UserException -> real_exc -> further_causes to
-                    # real_exc -> UserException -> further causes
-                    real_exc = e.__cause__
-                    e.__cause__ = real_exc.__cause__
-                    raise real_exc from e
+                    raise e
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == JIT_SIGNALS.YIELD_VALUE
@@ -3751,14 +3726,9 @@ def make_coroutine(
                 if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     runtimectx.curexc = None
-                    if isinstance(e.__cause__, StopIteration):
-                        return e.__cause__.value
-                    # We modify the cause chain from
-                    # UserException -> real_exc -> further_causes to
-                    # real_exc -> UserException -> further causes
-                    real_exc = e.__cause__
-                    e.__cause__ = real_exc.__cause__
-                    raise real_exc from e
+                    if isinstance(e, StopIteration):
+                        return e.value
+                    raise e
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return res
             assert status == JIT_SIGNALS.YIELD_VALUE
@@ -3892,7 +3862,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
     # (2) Handles partial objects
     if isinstance(fn, functools.partial):
-        # TODO: add traceback entry on the traceback in UserException?
+        # TODO: add traceback entry if exceptions are raised?
         p: functools.partial = fn
         return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
 
@@ -3907,7 +3877,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         try:
             opaque_result: Any = fn(*args, **kwargs)
         except Exception as e:
-            runtimectx.curexc = UserException(e, get_python_tb(e.__traceback__))
+            runtimectx.curexc = e
             return JIT_SIGNALS.EXCEPTION_RAISED
         return opaque_result
 
@@ -4063,9 +4033,8 @@ def _jit_run(
             if interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
                 runtimectx.curexc = None
-                assert isinstance(e, UserException)
-                assert isinstance(e.__cause__, Exception)
-                current_exception = e.__cause__
+                assert isinstance(e, BaseException)
+                current_exception = e
 
                 if sys.version_info >= (3, 11):
                     exception_table = dis._parse_exception_table(frame.code)  # type: ignore (_parse_exception_table is undocumented)
@@ -4124,7 +4093,7 @@ def _jit_run(
                             frame.interpreter_stack.append(
                                 type(exc)
                             )  # Python distinguishes explicit exc_type present or NULL/None
-                            current_exception = e.__cause__
+                            current_exception = e
                             # NormalizeException ?
 
                             # CPython sets exc_info->exc_type/value/traceback here
@@ -4140,8 +4109,11 @@ def _jit_run(
                             # f->f_state = FRAME_EXECUTING;  /* Resume normal execution */
                             break  # continue with handler
                 if current_exception is not None:
-                    e.__cause__ = current_exception
-                    e.tb.insert(0, frame)
+                    e = current_exception
+                    # We need to cheat a bit to get a Python frame here...
+                    python_frame = frame.get_or_make_python_frame()
+                    tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+                    e.__traceback__ = tb
                     runtimectx.curexc = e
                     return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
 
@@ -4287,16 +4259,10 @@ def jit(
             fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
             if jit_result is JIT_SIGNALS.EXCEPTION_RAISED:
-                # We modify the cause chain from
-                # UserException -> real_exc -> further_causes to
-                # real_exc -> UserException -> further causes
                 e = runtimectx.curexc
-                assert isinstance(e, UserException), e
-                assert e.__cause__ is not None, e
+                assert isinstance(e, BaseException), e
                 runtimectx.curexc = None
-                real_exc = e.__cause__
-                e.__cause__ = real_exc.__cause__
-                raise real_exc from e
+                raise e
 
             return jit_result
 
