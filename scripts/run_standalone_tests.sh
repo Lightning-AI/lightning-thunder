@@ -32,12 +32,10 @@ python -um pytest $test_path -q --collect-only $pytest_arg --pythonwarnings igno
 # removes the last line of the file
 sed -i '$d' $TEST_FILE
 
-# Declare an array to store test results
-declare -a results
-
 # Get test list and run each test individually
 tests=$(grep -oP '\S+::test_\S+' "$TEST_FILE")
 printf "collected tests:\n----------------\n$tests\n================\n"
+
 status=0
 for test in $tests; do
   python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test-results.xml" 2>&1 > "$test-output.txt"
