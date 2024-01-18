@@ -4,6 +4,7 @@ from itertools import product
 
 import sys
 import dis
+from typing import Callable
 
 import pytest
 import torch
@@ -1393,6 +1394,41 @@ def test_list_to_tuple():
 
     assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
     assert jit(ltt)() == ltt()
+
+
+def test_annotations():
+    annotation_executed = inner_executed = False
+    jitting = False
+
+    def annotation(fn: Callable[[], int]) -> Callable[[], Callable[[], int]]:
+        if jitting:
+            assert is_jitting()
+        nonlocal annotation_executed
+        annotation_executed = True
+        return lambda: fn
+
+    def foo():
+        if jitting:
+            assert is_jitting()
+
+        @annotation
+        def inner() -> int:
+            if jitting:
+                assert is_jitting()
+
+            nonlocal inner_executed
+            inner_executed = True
+            return 5
+
+        return inner()()
+
+    assert foo() == 5
+    assert annotation_executed and inner_executed, (annotation_executed, inner_executed)
+
+    annotation_executed = inner_executed = False
+    jitting = True
+    assert jit(foo)() == 5
+    assert annotation_executed and inner_executed, (annotation_executed, inner_executed)
 
 
 def test_use_of_deleted_raises_correctly():
