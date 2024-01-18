@@ -988,6 +988,8 @@ sum = _register_torch_operation("sum")
 cumsum = _register_torch_operation("cumsum")
 var = _register_torch_operation("var")
 var_mean = _register_torch_operation("var_mean")
+argmax = _register_torch_operation("argmax")
+argmin = _register_torch_operation("argmin")
 
 
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
@@ -1024,12 +1026,22 @@ def _cumsum_transform(a: TensorProxy, dim: int, *, dtype: None | dtypeLike = Non
     return cumsum(a, dim, dtype=torch_dtype)
 
 
+def _argmax_transform(a: TensorProxy, /, dim: int):
+    return argmax(a, dim)
+
+
+def _argmin_transform(a: TensorProxy, /, dim: int):
+    return argmin(a, dim)
+
+
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
 _register_implementation(prims.amin, checker=_always_executable, execution_transform=_amin_prim_transform)
 _register_implementation(prims.prod, checker=_always_executable, execution_transform=_prod_prim_transform)
 _register_implementation(prims.sum, checker=_always_executable, execution_transform=_sum_prim_transform)
 _register_implementation(prims.var, checker=_always_executable, execution_transform=_var_prim_transform)
 _register_implementation(prims.var_mean, checker=_always_executable, execution_transform=_var_mean_prim_transform)
+_register_implementation(prims.argmax, checker=_always_executable, execution_transform=_argmax_transform)
+_register_implementation(prims.argmin, checker=_always_executable, execution_transform=_argmin_transform)
 
 _register_implementation(ltorch.amax, amax, checker=_always_executable)
 _register_implementation(ltorch.amin, amin, checker=_always_executable)
@@ -1039,6 +1051,8 @@ _register_implementation(ltorch.sum, sum, checker=_always_executable)
 _register_implementation(ltorch.cumsum, checker=_always_executable, execution_transform=_cumsum_transform)
 _register_implementation(ltorch.var, var, checker=_always_executable)
 _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
+_register_implementation(ltorch.argmax, argmax, checker=_always_executable)
+_register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 
 #
 # Scatter and gather operations

@@ -4,6 +4,7 @@ from functools import reduce
 import operator
 import builtins
 import math
+from types import NoneType
 from typing import Union, Type, Any, List, Dict, Tuple, Optional
 from collections.abc import Callable
 from collections.abc import Hashable
@@ -153,6 +154,8 @@ class PrimIDs(Enum):
     SUM = auto()
     VAR = auto()
     VAR_MEAN = auto()
+    ARGMAX = auto()
+    ARGMIN = auto()
     # Scatter and gather prims (Experimental!)
     INDEX_ADD = auto()
     INDEX_PUT = auto()
@@ -2315,6 +2318,40 @@ amin = make_prim(PrimIDs.AMIN, "amin", meta=_reduction_meta, tags=(OpTags.REDUCT
 prod = make_prim(PrimIDs.PROD, "prod", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
 
 sum = make_prim(PrimIDs.SUM, "sum", meta=_reduction_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+# Note: We have seperate meta function for `argmin/argmax` instead of
+#       reusing `_reduction_meta` as these operations expect Optional[int] for `dim`
+#       and return output with integer dtype.
+#
+#       When `dim=None`, this operation returns linear index of `max/min` value
+#       on the flattened version of the array.
+#       These operators don't support reducing over multiple dimensions.
+#       We can support multiple dimensions by flattening the passed dimension
+#       and returning the linear index of `max/min`. Other approach could be
+#       to return co-ordinate indices which can actually be used for indexing.
+#       For now, we stick to reducing over only 1 dimension like other frameworks.
+def _argmin_argmax_meta(a: TensorProxy, /, dim: int | None) -> TensorProxy:
+    """Meta function for argmax and argmin."""
+
+    # Validates types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, NoneType))
+
+    if a.numel == 0:
+        utils.check(dim is not None, lambda: f"Expected reduction dim to be specified for a.numel() == 0.")
+
+    if a.ndim > 0:
+        utils.check(a.shape[dim], lambda: f"Expected reduction dim {dim} to have non-zero size.")
+
+    output_shape = _compute_reduction_output_shape(a.shape, (dim,))
+
+    return TensorProxy(like=a, shape=output_shape, dtype=dtypes.int64)
+
+
+argmax = make_prim(PrimIDs.ARGMAX, "argmax", meta=_argmin_argmax_meta, tags=(OpTags.REDUCTION_OP,))
+
+argmin = make_prim(PrimIDs.ARGMIN, "argmin", meta=_argmin_argmax_meta, tags=(OpTags.REDUCTION_OP,))
 
 
 # NOTE var doesn't use _reduction_meta because it has the correction parameter

@@ -4470,6 +4470,54 @@ cumsum_opinfo = OpInfo(
 reduction_ops.append(cumsum_opinfo)
 
 
+def argmin_argmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim
+    cases = (
+        ((), 0),
+        ((3, 0), 0),
+        ((4, 4), 1),
+        ((4, 1, 6), -1),
+        ((4, 7, 5, 1), -3),
+    )
+
+    for shape, dim in cases:
+        for keepdim in (True, False):
+            yield (SampleInput(make(shape), dim, keepdim=keepdim))
+
+
+def argmin_argmax_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    err_msg = r"Expected reduction dim .* to have non-zero size."
+    yield (SampleInput(make(3, 0), 1), RuntimeError, err_msg)
+
+    err_msg = r"Expected reduction dim to be specified for a.numel\(\) == 0."
+    yield (SampleInput(make(3, 0)), RuntimeError, err_msg)
+
+    err_msg = r"Expected reduction dim to be specified for a.numel\(\) == 0."
+    yield (SampleInput(make(3, 0)), RuntimeError, err_msg)
+
+
+argmax_opinfo = OpInfo(
+    clang.argmax,
+    sample_input_generator=argmin_argmax_sample_generator,
+    error_input_generator=argmin_argmax_error_generator,
+    torch_reference=torch.argmax,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+)
+reduction_ops.append(argmax_opinfo)
+
+argmin_opinfo = OpInfo(
+    clang.argmin,
+    sample_input_generator=argmin_argmax_sample_generator,
+    error_input_generator=argmin_argmax_error_generator,
+    torch_reference=torch.argmin,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+)
+reduction_ops.append(argmin_opinfo)
+
 opinfos.extend(reduction_ops)
 
 

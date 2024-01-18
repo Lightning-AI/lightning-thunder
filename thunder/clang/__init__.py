@@ -5,7 +5,7 @@ from typing import Union, List, Optional, Any
 from collections.abc import Sequence
 from collections import namedtuple
 import operator
-from types import EllipsisType
+from types import EllipsisType, NoneType
 import copy
 
 import thunder.core.dtypes as dtypes
@@ -1763,3 +1763,28 @@ def where(pred, a, b):
         return b
 
     return prims.where(pred, a, b)
+
+
+# Helper function to support `keepdim` argument
+def _argmaxmin_helper(prim, a: TensorProxy, dim: int | None, keepdim: bool | None):
+    assert prim in (prims.argmax, prims.argmin)
+    if dim is not None:
+        dim = utils.canonicalize_dim(len(a.shape), dim)
+
+    result = prim(a, dim)
+
+    # For keepdim, unsqueeze only if a.ndim > 0
+    if keepdim and a.ndim > 0:
+        result = unsqueeze(result, dim)
+
+    return result
+
+
+@clang_ctx
+def argmax(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = False):
+    return _argmaxmin_helper(prims.argmax, a, dim, keepdim)
+
+
+@clang_ctx
+def argmin(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = False):
+    return _argmaxmin_helper(prims.argmin, a, dim, keepdim)

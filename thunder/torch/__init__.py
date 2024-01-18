@@ -1764,6 +1764,16 @@ def var_mean(
     return result
 
 
+@torchsymbol(torch.argmax)
+def argmax(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
+    return clang.argmax(a, dim, keepdim)
+
+
+@torchsymbol(torch.argmin)
+def argmin(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
+    return clang.argmin(a, dim, keepdim)
+
+
 #
 # Scatter and gather-related operations
 #
