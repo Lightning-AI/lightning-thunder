@@ -60,7 +60,7 @@ This is advantageous because `torch.multinomial(probs, num_samples=1)` is very s
 | Eager    | 46.5 tok/sec | 13.6 GB |
 | Thunder  | 40.0 tok/sec | 13.8 GB |
 
-## [Training](train.py)
+## [Single-device training](train.py)
 
 ```shell
 # setup
@@ -74,7 +74,7 @@ Static shapes (45 iters)
 | Method    | Time   | Memory  |
 |-----------|--------|---------|
 | Inductor  | 20.3 s | 20.9 GB |
-| Thunder   | 22.1 s | 29.3 GB |
+| Thunder   | 22.1 s | 23.6 GB |
 | Eager     | 24.6 s | 24.2 GB |
 
 Dynamic shapes (45 iters)
@@ -84,6 +84,23 @@ Dynamic shapes (45 iters)
 | Inductor  | 14.7 s |
 | Eager     | 17.5 s |
 | Thunder   | 1600 s |
+
+## [Multi-device training](train_fsdp.py)
+
+```shell
+# setup
+python download.py --repo_id openlm-research/open_llama_3b --tokenizer_only true
+# run
+python train_fsdp.py --compile thunder  # set to use 2 devices
+```
+
+Static shapes (45 iters)
+
+| Method    | Time   | Memory  |
+|-----------|--------|---------|
+| Thunder   | 23.5 s | 26.9 GB |
+| Inductor  | 25.0 s | 17.5 GB |
+| Eager     | 28.8 s | 20.7 GB |
 
 ## Setup
 
@@ -97,6 +114,6 @@ Nvidia driver version: 525.125.06
 
 pytorch-triton==2.3.0.dev20240115+cu121
 torch==2.3.0.dev20240115+cu121
-lightning-thunder==c12bc0dee63e883bf5f8a236439613ebf573bfac
+lightning-thunder==20bca2a73aa394f3304ca48b307c3fcf1b2484d1
 nvfuser_cu121==0.1.5.dev20240116
 ```
