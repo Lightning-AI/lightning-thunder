@@ -168,43 +168,66 @@ def compile_stats(fn) -> CompileStats | None:
 
 
 # TODO We should remove compiledata.last_traces in favor of forward_last_traces and backward_last_traces
-def last_traces(fn) -> None | list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
+def last_traces(fn) -> list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
     cs = compile_stats(fn)
-
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
     if cs.forward_last_traces is not None and cs.backward_last_traces is not None:
         return cs.forward_last_traces, cs.backward_last_traces
+    if cs.last_traces is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_traces
 
 
-def last_prologue(fn) -> None | TraceCtx:
+def last_prologue(fn) -> TraceCtx:
     cs = compile_stats(fn)
-
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_prologue is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_prologue
 
 
 def cache_mode(fn) -> CACHE_MODES:
-    return compile_data(fn).cache_mode
+    cd = compile_data(fn)
+    if cd is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    return cd.cache_mode
 
 
 def cache_hits(fn) -> int:
-    return compile_stats(fn).cache_hits
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    return cs.cache_hits
 
 
 def cache_misses(fn) -> int:
-    return compile_stats(fn).cache_misses
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    return cs.cache_misses
 
 
 def list_transforms(fn) -> list:
     return fn._lc_transforms
 
 
-def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
+def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
     cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_interpreted_instructions is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_interpreted_instructions
 
 
-def last_interpreted_history(fn: Callable) -> None | list[dis.Instruction | str]:
+def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
     cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_interpreted_history is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_interpreted_history
 
 
