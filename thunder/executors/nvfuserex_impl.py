@@ -2,6 +2,7 @@ from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
 from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
+from types import NoneType
 from collections.abc import Callable, Mapping, Hashable, Sequence
 import time
 from copy import copy
@@ -27,6 +28,7 @@ import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
 from thunder.core.profile import add_markers
+from thunder.core.compile_data import get_compile_option
 
 from thunder.executors.utils import Region
 from thunder.executors.passes import update_fusion_call_ctx
@@ -675,7 +677,13 @@ class nvFuserExecutor(FusionExecutor):
             #   so that we can continue to generate single node fusions when testing.
             # if len(bsyms) > 1:
             region = Region(producers, consumers, bsyms)
-            enable_bookend = True
+
+            # Acquires the nv_enable_bookend compile option, which defaults to True
+            enable_bookend: None | bool = get_compile_option(
+                "nv_enable_bookend", "Whether to enable nvFuser's 'bookending' of metadata operations."
+            )
+            assert isinstance(enable_bookend, (NoneType, bool))
+            enable_bookend = True if enable_bookend is None else enable_bookend
             if enable_bookend:
                 bookend_result = group_bookend_meta_ops(producers, consumers, region)
             else:

@@ -1,7 +1,7 @@
 from typing import Any, Optional
 from collections.abc import Callable
 from enum import Enum, auto
-from collections import deque
+from collections import deque, defaultdict
 import time
 from collections.abc import Hashable, Sequence
 from functools import wraps
@@ -12,7 +12,7 @@ from io import StringIO
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
-from thunder.core.compile_data import compile_data
+from thunder.core.compile_data import compile_data_and_stats
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx, get_langctx
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
@@ -97,6 +97,9 @@ class CompileStats:
         self.cache_hits: int = 0
         self.cache_misses: int = 0
 
+        # Compiler option stats
+        self.last_compile_reasons: dict = defaultdict(list)
+
 
 import thunder.core.script.frontend as script_frontend
 import thunder.core.script.instrumentation as script_instrumentation
@@ -150,6 +153,7 @@ class CompileData:
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
+        compile_options: dict[str, Any] = {},
     ):
         #
         # Determines the cache mode
@@ -191,6 +195,9 @@ class CompileData:
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
+        # TODO Consider validating that this dict has exclusively string keys
+        self.compile_options = compile_options
+
         self.is_module = isinstance(self.fn, torch.nn.Module)
 
         # We set the process_group_for_ddp attribute on the module when
@@ -218,7 +225,7 @@ class CompileData:
                 self.additional_return_names = self.processed_function._additional_return_names
                 self.num_constant_args = len(self.additional_param_values)
 
-    # Disallow overwriting processed_function
+    # Disallows overwriting processed_function
     @property
     def processed_function(self):
         return self._processed_function
@@ -720,7 +727,9 @@ def _create_callable(
             else autocast(cd.processed_function, dtype=autocast_thunder_dtype)
         )
 
-        with compile_data(cd):
+        # Resets use of compile flags
+        cs.last_compile_reasons = defaultdict(list)
+        with compile_data_and_stats(cd, cs):
             # Determines whether to use autograd.Function or not
             # autograd.Function (which supports calling .backward() in PyTorch) is used when:
             #   1) The grad() transform is not applied

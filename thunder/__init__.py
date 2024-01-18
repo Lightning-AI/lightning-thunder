@@ -138,6 +138,7 @@ def compile(
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
     disable_preprocessing: bool = False,
+    **kwargs,
 ) -> Callable:
     cd = CompileData(
         fn=fn,
@@ -150,6 +151,7 @@ def compile(
         use_rematerialization=use_rematerialization,
         only_execute_prims=only_execute_prims,
         disable_preprocessing=disable_preprocessing,
+        compile_options=kwargs,
     )
 
     cs = CompileStats()
@@ -204,6 +206,43 @@ def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
 def last_interpreted_history(fn: Callable) -> None | list[dis.Instruction | str]:
     cs = compile_stats(fn)
     return cs.last_interpreted_history
+
+
+# Prints how compiled options were used (or not)
+def last_compile_options(fn: Callable, /) -> None:
+    cd = compile_data(fn)
+    cs = compile_stats(fn)
+
+    # NOTE Different categories of compile options
+    # Specified and Queried --- in cs.last_compile_reasons and cd.compile_options
+    # Queried but not Specified --- in cs.last_compile_reasons but not in cd.compile_options (not printed)
+    # Specified but not Queried --- in cd.compile_options but not in cs.last_compile_reasons
+
+    specified: set = set(cd.compile_options.keys())
+    queried: set = set(cs.last_compile_reasons.keys())
+
+    # Prints used options
+    print("Used compile options:")
+    used = specified & queried
+
+    if len(used) == 0:
+        print("\tNo used options")
+
+    for option in used:
+        reasons = set(cs.last_compile_reasons[option])
+
+        for reason in reasons:
+            print(f"\t{option}. {reason}")
+
+    # Prints unused options
+    print("Unused compile options:")
+    unused: set = specified - queried
+
+    if len(unused) == 0:
+        print("\tNo unused options")
+
+    for option in unused:
+        print(f"\t{option}")
 
 
 # TODO (mruberry) Update this

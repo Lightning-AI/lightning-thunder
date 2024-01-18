@@ -1242,7 +1242,7 @@ def test_iter_lookaside_and_sentinel():
 
         sentinel = object()
         l = [1, 2, 3, "Unreachable"]
-        for x in iter(lambda: l.pop(0) if len(l) is not 1 else sentinel, sentinel):
+        for x in iter(lambda: l.pop(0) if len(l) != 1 else sentinel, sentinel):
             assert x != "Unreachable"
         assert l == ["Unreachable"]
 
