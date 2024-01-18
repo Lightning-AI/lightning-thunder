@@ -5333,6 +5333,23 @@ def generic_max_pool_sample_generator(conv_sample_generator):
     return sample_generator
 
 
+def generic_avg_pool_sample_generator(max_pool_sample_generator):
+    def sample_generator(op, device, dtype, requires_grad, **kwargs):
+        make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+        for sample in max_pool_sample_generator(op, device, dtype, requires_grad, **kwargs):
+            input, *rest = sample.args
+
+            # No dilation for avg_pool for some reason in PyTorch.
+            # Good news: we can easily support that if needed!
+            kwargs = sample.kwargs.copy()
+            del kwargs["dilation"]
+
+            yield SampleInput(make(input.shape), *rest, **kwargs)
+
+    return sample_generator
+
+
 convolution_opinfo = OpInfo(
     clang.convolution,
     sample_input_generator=convolution_sample_generator,
@@ -5458,6 +5475,84 @@ conv3d_opinfo = OpInfo(
     ),
 )
 nn_ops.append(conv3d_opinfo)
+
+
+avg_pool1d_opinfo = OpInfo(
+    ltorch.avg_pool1d,
+    sample_input_generator=generic_avg_pool_sample_generator(
+        generic_max_pool_sample_generator(conv1d_sample_generator)
+    ),
+    torch_reference=torch.nn.functional.avg_pool1d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
+        DecorateInfo(
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+nn_ops.append(avg_pool1d_opinfo)
+
+
+avg_pool2d_opinfo = OpInfo(
+    ltorch.avg_pool2d,
+    sample_input_generator=generic_avg_pool_sample_generator(
+        generic_max_pool_sample_generator(conv2d_sample_generator)
+    ),
+    torch_reference=torch.nn.functional.avg_pool2d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
+        DecorateInfo(
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+nn_ops.append(avg_pool2d_opinfo)
+
+
+avg_pool3d_opinfo = OpInfo(
+    ltorch.avg_pool3d,
+    sample_input_generator=generic_avg_pool_sample_generator(
+        generic_max_pool_sample_generator(conv3d_sample_generator)
+    ),
+    torch_reference=torch.nn.functional.avg_pool3d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support {b}float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Skipped because it is slow.
+        # TODO: remove once the grad tests are fast.
+        DecorateInfo(
+            pytest.mark.skip(reason="Slow test. Skipping for now."),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+nn_ops.append(avg_pool3d_opinfo)
 
 
 max_pool1d_opinfo = OpInfo(

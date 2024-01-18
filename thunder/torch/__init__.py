@@ -2420,6 +2420,12 @@ def convolution(
 
 # Helper functions that are useful for "window"-based ops
 # like convolution, pooling and similar. {
+
+
+# A decorator function for conv/pool-like functions that handles
+# batch dim insertion if needed.
+# PyTorch frontend allows inputs without batch dim, but our
+# prim backend does not, hence this helper.
 def handle_nn_op_batch_dim(f):
     @wraps(f)
     def batch_handler(dim, a, *args, **kwargs):
@@ -2432,6 +2438,7 @@ def handle_nn_op_batch_dim(f):
 
         res = f(dim, a, *args, **kwargs)
 
+        # Undo batch dim insertion if needed.
         if batch_dim_inserted:
             res = squeeze(res, 0)
 
@@ -2440,6 +2447,8 @@ def handle_nn_op_batch_dim(f):
     return batch_handler
 
 
+# A helper function to converts an interger to 1-len tuple.
+# It is used to handle arguments like stride/dilation/padding and similar.
 def int_to_seq(param):
     if isinstance(param, int):
         return (param,)
@@ -2447,6 +2456,9 @@ def int_to_seq(param):
         return param
 
 
+# Transforms (x,) -> (x,) * rank.
+# It is used to map arguments like stride/dilation/padding to a rank-len
+# tuples for easier subsequent processing.
 def maybe_to_rank_len_sequence(param, rank):
     param = int_to_seq(param)
     if len(param) == 1:
@@ -2455,6 +2467,11 @@ def maybe_to_rank_len_sequence(param, rank):
         return tuple(param)
 
 
+# }
+
+
+# Pad input with `pad_value`. Pool-like padding has some restrictions,
+# see the checks below.
 def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
     padding = maybe_to_rank_len_sequence(padding, dim)
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
@@ -2619,6 +2636,114 @@ def _max_pool_helper(
     # This is the max_pool result.
     res = amax(res, 2)
     return res
+
+
+@handle_nn_op_batch_dim
+def _avg_pool_helper(
+    dim: int,
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    divisor_override: Number | None = None,
+) -> TensorProxy:
+    utils.check(
+        not ceil_mode,
+        lambda: "{ceil_mode=} is not supported",
+        NotImplementedError,
+    )
+
+    utils.check(
+        count_include_pad,
+        lambda: "{count_include_pad=} is not supported",
+        NotImplementedError,
+    )
+
+    if stride is None:
+        stride = kernel_size
+
+    kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
+    utils.check(
+        len(kernel_size) == dim and all(isinstance(k, int) and k > 0 for k in kernel_size),
+        lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
+        f"or a sequence of non-negative integers of length {dim}",
+    )
+
+    # Check channels > 0 {
+    n_channels = a.shape[1]
+    utils.check(n_channels > 0, lambda: f"in_channels={n_channels} should be greater than zero")
+    # }
+
+    # Apply padding {
+    a = apply_padding_for_pool_ops(dim, a, padding, kernel_size, 0)
+    # }
+
+    # Dimensionality of the kernel.
+    kernel_numel = reduce(operator.mul, kernel_size, 1)
+
+    # nn.functional.avg_pool does not have `divisor_override` for some reason.
+    # TODO: seems like an oversight from PyTorch and/or 1d case is very niche.
+    # If needed, handle it with checks and transforms. For now unconditionally
+    # override value with kernel_numel.
+    if divisor_override is None or dim == 1:
+        divisor_override = kernel_numel
+
+    utils.check(
+        isinstance(divisor_override, Number) and divisor_override > 0,
+        lambda: f"{divisor_override=} should be a greater than 0 scalar",
+    )
+
+    kernel = ones(*kernel_size, device=a.device, dtype=a.dtype) / divisor_override
+    kernel = reshape(kernel, (1, 1, *kernel_size))
+    kernel = expand(kernel, (n_channels, 1, *kernel_size))
+
+    # groups set to n_channels as pool ops operate over spatial domains and never over channels.
+    res = _conv_helper(dim, a, kernel, None, stride, padding=0, dilation=1, groups=n_channels)
+    return res
+
+
+@torchsymbol(torch.avg_pool1d, torch.nn.functional.avg_pool1d, id="torch.nn.functional.avg_pool1d", is_method=False)
+def avg_pool1d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    divisor_override: Number | None = None,
+) -> TensorProxy:
+    return _avg_pool_helper(1, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
+@torchsymbol(torch.nn.functional.avg_pool2d, id="torch.nn.functional.avg_pool2d", is_method=False)
+def avg_pool2d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    divisor_override: Number | None = None,
+) -> TensorProxy:
+    return _avg_pool_helper(2, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
+@torchsymbol(torch.nn.functional.avg_pool3d, id="torch.nn.functional.avg_pool3d", is_method=False)
+def avg_pool3d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    divisor_override: Number | None = None,
+) -> TensorProxy:
+    return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
