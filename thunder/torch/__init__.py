@@ -1996,6 +1996,18 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         raise ValueError("Implied by ellipsis operands' dimensions do not jointy broadcast") from e
     # }
 
+    # A helper function that removes characters from a string.
+    def removechars(s, chars):
+        return s.translate(str.maketrans(dict.fromkeys(chars)))
+
+    # Given an operand and it's labels, contract along dimensions specified
+    # in the index form in contr_dims and in the label form in contr_labels.
+    def contract_operand(operand, operand_labels, contr_dims, contr_labels):
+        if contr_dims:
+            operand = sum(operand, contr_dims)
+            operand_labels = removechars(operand_labels, contr_labels)
+        return operand, operand_labels
+
     # Constructs a generalized diagonal mask that broadcasts
     # over t, with diagonals across dimensions from the
     # diagonal_dims argument.
@@ -2008,19 +2020,15 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
         return prims.broadcast_in_dim(gen_diagonal, t.shape, diagonal_dims)
 
     # Labels unique to each operand are trivially contractable with sum.
-    def sum_unique_labels(operand, labels, unique_labels):
-        def removechars(s, chars):
-            return s.translate(str.maketrans(dict.fromkeys(chars)))
-
+    def find_unique_labels(operand, labels, unique_labels):
         if unique_labels:
             dims = [labels.index(name) for name in unique_labels]
-            operand = sum(operand, dims)
-            labels = removechars(labels, unique_labels)
-
-        return operand, labels
+            return dims, unique_labels
+        else:
+            return [], []
 
     # Repeated labels imply contractions over masked diagonals.
-    def sum_repeated_labels(operand, labels, counts, keep_labels):
+    def find_repated_labels(operand, labels, counts, keep_labels):
         orig_labels = labels
         # Dims to contract over, these correspond to repeated labels.
         dims = []
@@ -2042,17 +2050,38 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
                     labels = labels.replace(label, "")
                 else:
                     # Otherwise contract over first (count - 1) occurrencies.
-                    labels = labels.replace(label, "", count - 1)
-                    label_dims = label_dims[:-1]
+                    labels = labels[::-1].replace(label, "", count - 1)[::-1]
+                    label_dims = label_dims[1:]
                 dims.extend(label_dims)
 
         if dims:
-            # Contract over each diagonal dims group.
+            # "Diagonalize" over each dim group.
             for diag_dims in diag_groups.values():
                 diag = construct_broadcastable_diagonal(operand, diag_dims)
                 operand = where(diag, operand, 0)
-            operand = sum(operand, dims)
-        return operand, labels
+
+        return operand, labels, dims, []
+
+    def find_broadcast_labels(a, a_labels, b, b_labels):
+        common_contraction_set = frozenset(a_labels) & frozenset(b_labels) & contraction_set
+        a_contr_dims = [a_labels.index(l) for l in common_contraction_set]
+        b_contr_dims = [b_labels.index(l) for l in common_contraction_set]
+
+        a_broadcast_dims = []
+        a_broadcast_labels = []
+
+        b_broadcast_dims = []
+        b_broadcast_labels = []
+
+        for a_contr_dim, b_contr_dim in zip(a_contr_dims, b_contr_dims):
+            if a.shape[a_contr_dim] == 1 or b.shape[b_contr_dim] == 1:
+                a_broadcast_dims.append(a_contr_dim)
+                a_broadcast_labels.append(a_labels[a_contr_dim])
+
+                b_broadcast_dims.append(b_contr_dim)
+                b_broadcast_labels.append(b_labels[b_contr_dim])
+
+        return a_broadcast_dims, a_broadcast_labels, b_broadcast_dims, b_broadcast_labels
 
     # Process contraction path.
     _, contractions = opt_einsum.contract_path(orig_eq, *operands, einsum_call=False)
@@ -2065,12 +2094,22 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             (labels,) = input_labels
             counts = collections.Counter(labels)
 
-            # sum unique contraction indices.
+            # Find unique contraction indices.
             unique_labels = [l for l in contraction_set if counts[l] == 1]
-            operand, labels = sum_unique_labels(operand, labels, unique_labels)
+            unique_contr_dims, unique_contr_labels = find_unique_labels(operand, labels, unique_labels)
 
-            # sum repeated indices over "diagonalized" operand.
-            operand, labels = sum_repeated_labels(operand, labels, counts, output_eq)
+            # Find repeated indices over "diagonalized" operand.
+            operand, labels, repeated_contr_dims, repeated_contr_labels = find_repated_labels(
+                operand, labels, counts, output_eq
+            )
+
+            # Contract over unique and repeated dims/labels
+            operand, labels = contract_operand(
+                operand,
+                labels,
+                unique_contr_dims + repeated_contr_dims,
+                unique_contr_labels + repeated_contr_labels,
+            )
 
         elif len(operand_indices) == 2:
             a, b = map(operands.pop, operand_indices)
@@ -2082,13 +2121,39 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             a_unique_labels = [l for l in contraction_set if a_counts[l] == 1 and b_counts[l] == 0]
             b_unique_labels = [l for l in contraction_set if b_counts[l] == 1 and a_counts[l] == 0]
 
-            # sum out unique to each operand labels
-            a, a_labels = sum_unique_labels(a, a_labels, a_unique_labels)
-            b, b_labels = sum_unique_labels(b, b_labels, b_unique_labels)
+            # Find unique to each operand dims/labels
+            a_unique_contr_dims, a_unique_contr_labels = find_unique_labels(a, a_labels, a_unique_labels)
+            b_unique_contr_dims, b_unique_contr_labels = find_unique_labels(b, b_labels, b_unique_labels)
 
-            # sum out repeated labels which are not in the output and not in the other operand.
-            a, a_labels = sum_repeated_labels(a, a_labels, a_counts, output_eq + b_labels)
-            b, b_labels = sum_repeated_labels(b, b_labels, b_counts, output_eq + a_labels)
+            # Find repeated labels which are not in the output and not in the other operand.
+            a, a_labels, a_repeated_contr_dims, a_repeated_contr_labels = find_repated_labels(
+                a, a_labels, a_counts, output_eq + b_labels
+            )
+            b, b_labels, b_repeated_contr_dims, b_repeated_contr_labels = find_repated_labels(
+                b, b_labels, b_counts, output_eq + a_labels
+            )
+
+            # Find broadcast dims that we can also sum out to reduce op domain.
+            (
+                a_broadcast_contr_dims,
+                a_broadcast_contr_labels,
+                b_broadcast_contr_dims,
+                b_broadcast_contr_labels,
+            ) = find_broadcast_labels(a, a_labels, b, b_labels)
+
+            # Contract dims/labels from the previous steps
+            a, a_labels = contract_operand(
+                a,
+                a_labels,
+                a_unique_contr_dims + a_repeated_contr_dims + a_broadcast_contr_dims,
+                a_unique_contr_labels + a_repeated_contr_labels + a_broadcast_contr_labels,
+            )
+            b, b_labels = contract_operand(
+                b,
+                b_labels,
+                b_unique_contr_dims + b_repeated_contr_dims + b_broadcast_contr_dims,
+                b_unique_contr_labels + b_repeated_contr_labels + b_broadcast_contr_labels,
+            )
 
             # Process remaining contractions below.
             a_labels_set = frozenset(a_labels)
@@ -2122,9 +2187,6 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
             def apply_perm(seq, perm):
                 return [seq[i] for i in perm]
 
-            a_batch, a_contr, a_rest = partition_align_dims(a, a_labels, a_labels_set)
-            b_batch, b_contr, b_rest = partition_align_dims(b, b_labels, b_labels_set)
-
             def get_shape_numel(shape):
                 return reduce(operator.mul, shape, 1)
 
@@ -2141,6 +2203,9 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
                     b_contr_shape = [b.shape[d] for d in b_contr]
                     return get_shape_numel(a_contr_shape) == get_shape_numel(b_contr_shape)
                 return False
+
+            a_batch, a_contr, a_rest = partition_align_dims(a, a_labels, a_labels_set)
+            b_batch, b_contr, b_rest = partition_align_dims(b, b_labels, b_labels_set)
 
             if contr_op_type and contr_op_type.startswith("OUTER"):
                 # Outer product path. It could also be identified by the contraction set being empty.

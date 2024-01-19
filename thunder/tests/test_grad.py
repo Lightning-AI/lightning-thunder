@@ -566,6 +566,11 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
 
 @ops((get_opinfo("einsum"),), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor and dtype is dtypes.float64:
+        pytest.skip("nvFuser issue #1645")
+
     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
         # Compute vjp result using PyTorch
         out = op.torch_reference(*sample.args, **sample.kwargs)
