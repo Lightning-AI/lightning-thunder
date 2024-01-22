@@ -4476,10 +4476,13 @@ def argmin_argmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape, dim
     cases = (
         ((), 0),
+        ((), None),
         ((3, 0), 0),
         ((4, 4), 1),
         ((4, 1, 6), -1),
+        ((4, 2, 3), None),
         ((4, 7, 5, 1), -3),
+        ((4, 2, 5, 1), None),
     )
 
     for shape, dim in cases:
@@ -4492,9 +4495,6 @@ def argmin_argmax_error_generator(op, device, **kwargs):
 
     err_msg = r"Expected reduction dim .* to have non-zero size."
     yield (SampleInput(make(3, 0), 1), RuntimeError, err_msg)
-
-    err_msg = r"Expected reduction dim to be specified for a.numel\(\) == 0."
-    yield (SampleInput(make(3, 0)), RuntimeError, err_msg)
 
     err_msg = r"Expected reduction dim to be specified for a.numel\(\) == 0."
     yield (SampleInput(make(3, 0)), RuntimeError, err_msg)

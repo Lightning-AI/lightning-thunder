@@ -1775,6 +1775,9 @@ def _argmaxmin_helper(prim, a: TensorProxy, dim: int | None, keepdim: bool | Non
 
     # For keepdim, unsqueeze only if a.ndim > 0
     if keepdim and a.ndim > 0:
+        # restore all dims as `1` for keepdim=True and dim=None
+        if dim is None:
+            dim = range(a.ndim)
         result = unsqueeze(result, dim)
 
     return result

@@ -1764,12 +1764,12 @@ def var_mean(
     return result
 
 
-@torchsymbol(torch.argmax)
+@torchsymbol(torch.argmax, is_method=True)
 def argmax(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
     return clang.argmax(a, dim, keepdim)
 
 
-@torchsymbol(torch.argmin)
+@torchsymbol(torch.argmin, is_method=True)
 def argmin(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = False):
     return clang.argmin(a, dim, keepdim)
 

@@ -2341,10 +2341,13 @@ def _argmin_argmax_meta(a: TensorProxy, /, dim: int | None) -> TensorProxy:
     if a.numel == 0:
         utils.check(dim is not None, lambda: f"Expected reduction dim to be specified for a.numel() == 0.")
 
-    if a.ndim > 0:
+    if dim is not None and a.ndim > 0:
         utils.check(a.shape[dim], lambda: f"Expected reduction dim {dim} to have non-zero size.")
 
-    output_shape = _compute_reduction_output_shape(a.shape, (dim,))
+    # `_compute_reduction_output_shape` expects sequence of ints.
+    dims = range(a.ndim) if dim is None else (dim,)
+
+    output_shape = _compute_reduction_output_shape(a.shape, dims)
 
     return TensorProxy(like=a, shape=output_shape, dtype=dtypes.int64)
 
