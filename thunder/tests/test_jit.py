@@ -1026,6 +1026,97 @@ def test_locals_lookaside():
     jit(foo)()
 
 
+def test_match_statement():
+    def foo():
+        dct = {"a": 1, "b": 2, "z": 3}
+        match dct:
+            case {"a": a, "b": b, **rest}:
+                assert rest == {"z": 3}
+                return a + b
+            case _:
+                assert False
+
+    jfoo = jit(foo)
+    assert foo() == 3
+    assert jfoo() == 3
+    assert any(i.opname == "MATCH_KEYS" for i in jfoo._last_interpreted_instructions)
+    assert any(i.opname == "MATCH_MAPPING" for i in jfoo._last_interpreted_instructions)
+    if "COPY_DICT_WITHOUT_KEYS" in dis.opmap.keys():
+        assert any(i.opname == "COPY_DICT_WITHOUT_KEYS" for i in jfoo._last_interpreted_instructions)
+
+    # Test MATCH_SEQUENCE
+    def bar():
+        lst = [1, 2, 3]
+        match lst:
+            case [a, b, *rest]:
+                assert rest == [3]
+                return a + b
+            case _:
+                assert False
+
+    jbar = jit(bar)
+    assert bar() == 3
+    assert jbar() == 3
+    assert any(i.opname == "MATCH_SEQUENCE" for i in jbar._last_interpreted_instructions)
+    assert any(i.opname == "GET_LEN" for i in jbar._last_interpreted_instructions)
+    assert any(i.opname == "UNPACK_EX" for i in jbar._last_interpreted_instructions)
+
+
+def test_class_match_statement():
+    class Cls:
+        __match_args__ = ("a", "b")
+
+        def __init__(self, a, b):
+            self.a = a
+            self.b = b
+
+    def foo():
+        c = Cls(1, 2)
+        match c:
+            case Cls(a, b):
+                assert a == 1
+                assert b == 2
+                return a + b
+            case _:
+                assert False
+
+    jfoo = jit(foo)
+    assert foo() == 3
+    assert jfoo() == 3
+    assert any(i.opname == "MATCH_CLASS" for i in jfoo._last_interpreted_instructions)
+
+
+def test_match_fallthrough():
+    def foo():
+        dct = {"a": 1, "b": 2}
+        match dct:
+            case 1:
+                assert False
+            case "str":
+                assert False
+            case [a, b]:
+                assert False
+            case {"y": y, "z": z}:
+                assert False
+
+        match dct:
+            case 1:
+                assert False
+            case [a, b]:
+                assert False
+            case "str":
+                assert False
+            case {"y": y, "z": z}:
+                assert False
+            case _:
+                return True
+        assert False
+
+    jfoo = jit(foo)
+    assert foo() is True
+    assert jfoo() is True
+
+
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1824")
 def test_exec_import_star():
     # Assert that we can actually generate the instruction

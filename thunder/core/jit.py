@@ -2122,9 +2122,14 @@ def _get_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwarg
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
 @register_opcode_handler("GET_LEN")
-def _get_len_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    a = stack.pop()
-    stack.append(len(a))
+def _get_len_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    def impl(tos):
+        return len(tos)
+
+    ret = _jit(impl, stack[-1])
+    if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+        return ret
+    stack.append(ret)
 
 
 # NOTE (mruberry) The actual implementation of IMPORT_FROM is quite complicated, and there doesn't appear
@@ -2684,10 +2689,92 @@ def _map_add_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
     d[tos1] = tos
 
 
+# NOTE: The behavior should match match_class() in cpython.
+def _match_class_impl(kw_names, typ, subject, count) -> tuple | None:
+    seen = []
+    attrs = []
+
+    if not isinstance(subject, typ):
+        return None
+
+    if hasattr(typ, "__match_args__"):
+        match_self = False
+        match_args = typ.__match_args__
+    else:
+        match_self = True
+        match_args = ()
+
+    if not type(match_args) is tuple:
+        raise TypeError(f"{typ.__name__}.__match_args__ must be a tuple (got {type(match_args)})")
+
+    allowed = 1 if match_self else len(match_args)
+    if allowed < count:
+        plural = "" if allowed == 1 else "s"
+        raise TypeError(f"{typ.__name__}() accepts {allowed} positional sub-pattern{plural} ({count} given)")
+
+    if not match_self:
+        # Match positional sub-patterns
+        for attr_name in match_args:
+            if not isinstance(attr_name, str):
+                raise TypeError(f"__match_args__ elements must be strings (got {type(attr_name).__name__})")
+
+            if attr_name in seen:
+                raise TypeError(f"{typ.__name__}() got multiple sub-patterns for attribute {attr_name}")
+            seen.append(attr_name)
+
+            try:
+                attrs.append(getattr(subject, attr_name))
+            except AttributeError:
+                return None
+
+    # Match keyword subpatterns
+    for attr_name in kw_names:
+        assert isinstance(attr_name, str)
+
+        if attr_name in seen:
+            raise TypeError(f"{typ.__name__}() got multiple sub-patterns for attribute {attr_name}")
+        seen.append(attr_name)
+
+        try:
+            attrs.append(getattr(subject, attr_name))
+        except AttributeError:
+            return None
+
+    return tuple(attrs)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_CLASS
 @register_opcode_handler("MATCH_CLASS")
-def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    raise NotImplementedError("MATCH_CLASS not implemented")
+def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+    assert type(inst.arg) is int
+    count: int = inst.arg
+
+    kw_attr_names = stack.pop()
+    typ = stack.pop()
+    subject = stack.pop()
+    assert type(kw_attr_names) is tuple
+
+    ret = _jit(_match_class_impl, kw_attr_names, typ, subject, count)
+    if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+        return ret
+
+    stack.append(ret if ret is not None else stack[-2])
+    if sys.version_info < (3, 11):
+        stack.append(True if ret is not None else False)
+
+
+def _match_keys_impl(keys, subject):
+    marker = object()
+    values_or_none = []
+    for k in keys:
+        v = subject.get(k, marker)
+        if v is not marker:
+            values_or_none.append(v)
+        else:
+            values_or_none = None
+            break
+
+    return tuple(values_or_none) if values_or_none is not None else None
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_KEYS
@@ -2698,39 +2785,31 @@ def _match_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
     assert isinstance(keys, tuple)
     assert isinstance(subject, Mapping)
 
-    def impl(keys, subject):
-        dummy = object()
-        values_or_none = []
-        for k in keys:
-            v = subject.get(k, default=dummy)
-            if v is not dummy:
-                values_or_none.append(v)
-            else:
-                values_or_none = None
-                break
-
-        stack.append(tuple(values_or_none) if values_or_none is not None else None)
-        stack.append(values_or_none is not None)
-
-    ret = _jit(impl, keys, subject)
+    ret = _jit(_match_keys_impl, keys, subject)
     if ret is JIT_SIGNALS.EXCEPTION_RAISED:
         return ret
+
+    stack.append(ret)
+    if sys.version_info < (3, 11):
+        stack.append(ret is not None)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_MAPPING
 @register_opcode_handler("MATCH_MAPPING")
 def _match_mapping_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    raise NotImplementedError("MATCH_MAPPING not implemented")
+    # NOTE: We cannot check tp_flags but this is, according to the docs, close enough.
+    # tp_flags is a bitfield containing on the type containing information about what protocols the type supports. We
+    # do not model it, because it constantly changes from version to version, and inheritance of each flag is complicated.
+    # Thankfully, somebody else seems to have had this conversation with the cpython devs before us, and the following
+    # is the documented workaround.
+    stack.push(isinstance(stack[-1], Mapping))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_SEQUENCE
 @register_opcode_handler("MATCH_SEQUENCE")
 def _match_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     # NOTE: We cannot check tp_flags but this is, according to the docs, close enough.
-    # tp_flags is a bitfield containing on the type containing information about what protocols the type supports. We
-    # do not model it, because it constantly changes from version to version, and inheritance of each flag is complicated.
-    # Thankfully, somebody else seems to have had this conversation with the cpython devs before us, and the following
-    # is the documented workaround.
+    # See the comment on MATCH_MAPPING.
     supported_sequence: bool = isinstance(stack[-1], Sequence) and not isinstance(stack[-1], (str, bytes, bytearray))
     stack.push(supported_sequence)
 
