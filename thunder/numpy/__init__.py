@@ -104,7 +104,7 @@ tensor_cls = np.ndarray
 #   AND then schedules a conversion of that ndarray to a tensor
 def tensorproxy(name: str, a: np.ndarray) -> TensorProxy:
     device = devices.cpu
-    dtype = numpy_to_thunder_dtype(a.dtype)
+    dtype = to_thunder_dtype(a.dtype)
 
     p = TensorProxy(name, shape=a.shape, device=device, dtype=dtype, requires_grad=False)
 

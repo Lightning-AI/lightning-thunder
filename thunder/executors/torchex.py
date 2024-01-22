@@ -1,4 +1,5 @@
 import operator
+import importlib
 from dataclasses import replace
 from contextlib import ContextDecorator
 from functools import wraps, partial
@@ -1607,3 +1608,23 @@ if torch.distributed.is_available():
         fn=_update_bucket_view_prim_impl,
     )
     _register_implementation(dist_prims.update_bucket_view, update_bucket_view_prim_impl, checker=_always_executable)
+
+
+has_einops = importlib.util.find_spec("einops") is not None
+if has_einops:
+    import einops
+    from einops._backends import TorchBackend
+
+    class EinopsThunderBackend(TorchBackend):
+        framework_name = "thunder"
+
+        def __init__(self):
+            super().__init__()
+
+            self.torch = ltorch
+
+        def is_appropriate_type(self, input):
+            return isinstance(input, TensorLike)
+
+        def is_float_type(self, input):
+            return dtypes.is_float_dtype(input.dtype)
