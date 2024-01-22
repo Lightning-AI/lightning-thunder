@@ -256,6 +256,11 @@ class torchsymbol:
 #
 
 
+@torchsymbol(torch.Tensor.dim, is_method=True)
+def dim(a: TensorLike, /) -> int:
+    return a.ndim
+
+
 def size(a):
     def fn_(idx: int | None = None):
         if idx is None:
