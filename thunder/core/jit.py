@@ -2205,7 +2205,9 @@ def _import_star_handler(
     assert isinstance(module, ModuleType)
 
     # Get the locals of the current frame, not the frame created by jitting impl() below.
-    _locals = _locals_lookaside()
+    _locals = _jit(locals)
+    if _locals is JIT_SIGNALS.EXCEPTION_RAISED:
+        return _locals
 
     # For every name in __all__ if present in the module, or every name in __dict__ not
     # starting with _ if __all__ is not present, add the name to the current locals() dict,
@@ -2546,15 +2548,22 @@ def _load_method_handler(
     assert type(inst.arg) is int
     name = co.co_names[inst.arg]
     obj = stack.pop()
-    try:
-        meth = getattr(obj, name)
-    except AttributeError as e:
-        return do_raise(e)
+
+    meth = _jit(getattr, obj, name)
+    if meth is JIT_SIGNALS.EXCEPTION_RAISED:
+        return meth
 
     if inspect.ismethod(meth):
-        stack.append(meth.__func__)
-        # meth.__self__ ihis is obj for regular methods but cls for class methods
-        stack.append(meth.__self__)
+        func_attr = _jit(getattr, meth, "__func__")
+        if func_attr is JIT_SIGNALS.EXCEPTION_RAISED:
+            return func_attr
+        # meth.__self__ is obj for regular methods but cls for class methods
+        self_attr = _jit(getattr, meth, "__self__")
+        if self_attr is JIT_SIGNALS.EXCEPTION_RAISED:
+            return self_attr
+
+        stack.append(func_attr)
+        stack.append(self_attr)
     else:
         stack.append(Py_NULL())
         stack.append(meth)
