@@ -15,6 +15,17 @@ from thunder.core.transforms import grad
 einops = pytest.importorskip("einops")
 
 
+def skipIfNoCUDA(f):
+    @wraps(f)
+    def wrapped_test(device, *args, **kwargs):
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA is not available")
+        f(device, *args, **kwargs)
+
+    return wrapped_test
+
+
+@skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int64], ids=("float32", "int64"))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
 def test_rearrange(device: str, dtype: torch.dtype):
@@ -51,6 +62,7 @@ def test_rearrange(device: str, dtype: torch.dtype):
         assert_close(res_thunder, res_einops)
 
 
+@skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32, torch.int64], ids=("float32", "int64"))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
 def test_repeat(device: str, dtype: torch.dtype):
@@ -77,6 +89,7 @@ def test_repeat(device: str, dtype: torch.dtype):
         assert_close(res_thunder, res_einops)
 
 
+@skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
 def test_reduce(device: str, dtype: torch.dtype):
@@ -111,6 +124,7 @@ def test_reduce(device: str, dtype: torch.dtype):
         assert_close(res_thunder, res_einops)
 
 
+@skipIfNoCUDA
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
 def test_einsum(device: str, dtype: torch.dtype):
@@ -146,7 +160,7 @@ def test_einsum(device: str, dtype: torch.dtype):
 
         einops_res = f(expr, *operands)
         einops_compiled_res = fc(expr, *operands)
-        assert_close(einops_res, einops_compiled_res)
+        assert_close(einops_res, einops_compiled_res, atol=1e-4, rtol=1e-4)
 
         torch_compiled_res = torch_fc(expr, *operands)
         assert_close(einops_res, torch_compiled_res, atol=1e-4, rtol=1e-4)

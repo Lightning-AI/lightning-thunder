@@ -10,6 +10,7 @@ fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
 hypothesis ==6.94.0  # for test_ddp.py
 numpy  # for test_ops.py
+einops  # for test_einops.py
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
