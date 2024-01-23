@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from functools import partial, wraps
 from collections.abc import Sequence
+import os
 
 from lightning_utilities.core.imports import package_available
 
@@ -166,13 +167,18 @@ def thunder_fwd(b: Benchmark, compile_fn: Callable):
 
         @wraps(cfn)
         def wrapper(*args):
-            return cfn(args)
+            result = cfn(args)
+            if os.getenv("LIGHTNING_BENCH_TRACE") is not None:
+                print("thunder trace:", thunder.last_traces(cfn)[-1])
+            return result
 
         return wrapper
 
     @wraps(cfn)
     def wrapper(*args, **kwargs):
         result = cfn(*args, **kwargs)
+        if os.getenv("LIGHTNING_BENCH_TRACE") is not None:
+            print("thunder trace:", thunder.last_traces(cfn)[-1])
         return result
 
     return wrapper
@@ -213,6 +219,8 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
             clear_grads(module)
             result = cfn(args)
             result.backward(torch.ones_like(result))
+            if os.getenv("LIGHTNING_BENCH_TRACE") is not None:
+                print("thunder trace:", thunder.last_traces(cfn)[-1])
             return result
 
         return wrapper
@@ -225,6 +233,8 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
             torch.autograd.backward(result, [torch.ones_like(x) for x in result])
         else:
             result.backward(torch.ones_like(result))
+        if os.getenv("LIGHTNING_BENCH_TRACE") is not None:
+            print("thunder trace:", thunder.last_traces(cfn)[-1])
         return result
 
     return wrapper
