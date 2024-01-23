@@ -1,5 +1,7 @@
 from typing import Any
 from collections.abc import Callable
+import collections
+import traceback
 
 import thunder
 import thunder.core.script.instrumentation as script_instrumentation
@@ -13,8 +15,8 @@ from warnings import warn
 
 # TODO Maybe make collect_into a set?
 class CollectFunctionsUsed(torch.overrides.TorchFunctionMode):
-    def __init__(self, collect_into: list):
-        self.functions = set()
+    def __init__(self, collect_into: dict):
+        self.functions_call_sites = collections.defaultdict(list)
         self.collect_into = collect_into
 
     def __torch_function__(self, func, types, args=(), kwargs=None):
@@ -27,11 +29,11 @@ class CollectFunctionsUsed(torch.overrides.TorchFunctionMode):
             modstr = " of " + mod
         else:
             modstr = ""
-        self.functions.add((f"{qn or func}{modstr}", func))
+        self.functions_call_sites[(f"{qn or func}{modstr}", func)].append(traceback.format_stack())
         return func(*args, **kwargs)
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.collect_into.extend(sorted(self.functions))
+        self.collect_into.update(sorted(self.functions_call_sites.items()))
         super().__exit__(exc_type, exc_value, traceback)
 
 
@@ -45,10 +47,13 @@ _method_name_remap_map = {
 # TODO Accept kwargs for compile (like langctx)
 # TODO Add profiling (or profiling option) to determine if we have a slowdown
 # TODO If an error occurs, try to minify the program to produce a smaller sample to reproduce the error
-def examine(fn: Callable, *args, **kwargs):
+def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
+    """
+    show_call_stack: bool | int=False:  if you pass True, a call stack will be printed for each invocation of an unknown function. If you pass a number, the stack will be limited to a depth of that value.
+    """
     # Step 0, runs the operation with our torch function mode to collection information
     #   and ensure the operation itself is working correctly
-    collected_ops = []
+    collected_ops = {}
     torch_result: Any
     with CollectFunctionsUsed(collected_ops):
         try:
@@ -60,7 +65,7 @@ def examine(fn: Callable, *args, **kwargs):
 
     # Step 1 Identifies supported (and unsupported) operations
     supported_ops = set()
-    for name, op in collected_ops:
+    for name, op in collected_ops.keys():
         if op in _torch_to_thunder_function_map:
             supported_ops.add((name, op))
         elif name.startswith("_TensorBase.") or name.startswith("TensorBase.") or name.startswith("Tensor."):
@@ -115,6 +120,24 @@ def examine(fn: Callable, *args, **kwargs):
 
             for name, op in unsupported_ops:
                 print(f"{name}")
+                if show_call_stack is not False:
+                    call_sites = collected_ops[(name, op)]
+                    for i, cs in enumerate(call_sites[:5]):
+                        if i == 0:
+                            print("  used in")
+                        else:
+                            print("  and in")
+                        if show_call_stack is True:
+                            start_idx = 0
+                            while start_idx < len(cs) and "thunder/examine/__init__.py" not in cs[start_idx]:
+                                start_idx += 1
+                            start_idx += 1
+                        else:
+                            start_idx = -1 - show_call_stack
+
+                        print("  " + "  ".join(cs[start_idx:-1]))  # stop before -1 to split off the collector
+                    if len(call_sites) > i + 1:
+                        print(f"  ...and {len(call_sites) - i - 1} more")
 
         if preprocessing_exception is not None:
             print("Encountered an error while preprocessing the function")
