@@ -36,15 +36,6 @@ from types import (
     TracebackType,
 )
 
-import torch
-
-from thunder.core.trace import TraceCtx, tracectx
-import thunder.core.prims as prims
-from thunder.common import _execute_trace, CompileData, CompileStats, CACHE_MODES
-from thunder.extend import Executor
-import thunder.torch as ltorch
-from thunder.torch import _torch_to_thunder_function_map
-from thunder.core.proxies import Proxy
 from thunder.core.baseutils import Singleton
 
 #
@@ -117,7 +108,6 @@ class JitCompileCtx:
 
     def callback(self, id: JIT_CALLBACKS) -> None | Callable:
         cb: None | Callable = self._callbacks.get(id, None)
-
         return cb
 
 
@@ -483,15 +473,6 @@ class InterpreterStack:
 
     # NOTE Append is a helper for dunder setitem
     def append(self, val: Any, /) -> None:
-        ctx: JitCompileCtx = get_jitcompilectx()
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
-        if cb is not None:
-            frame = runtimectx.peek_frame_stack()
-            assert frame is not None and frame.inst is not None, frame.inst if frame is not None else None
-            opname: str = frame.inst.opname
-            val = cb(val, source=opname)
-
         self._stack.append(val)
 
     def extend(self, vals: Iterable[Any], /) -> None:
@@ -508,18 +489,6 @@ class InterpreterStack:
         return self._stack[key]
 
     def __setitem__(self, key: int, val: Any, /) -> None:
-        # TODO Consider a different name than PUSH_STACK_CALLBACK since it's
-        #   also called for dunder setitem?
-
-        ctx: JitCompileCtx = get_jitcompilectx()
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        cb: None | Callable = ctx.callback(JIT_CALLBACKS.PUSH_STACK_CALLBACK)
-        if cb is not None:
-            frame = runtimectx.peek_frame_stack()
-            assert frame is not None and frame.inst is not None, frame.inst if frame is not None else None
-            opname: str = frame.inst.opname
-            val = cb(val, source=opname)
-
         self._stack[key] = val
 
     def __delitem__(self, key: int | slice, /) -> None:
@@ -772,105 +741,105 @@ def exec_lookaside(
 _PROPERTY_ALIASES = {"__get__": "fget", "__set__": "fset", "__delete__": "fdel"}
 
 
-def _object_getattribute_lookaside(obj: Any, name: str):
-    """Implements the `object.__getattribute__` portion of `getattr`.
+# def _object_getattribute_lookaside(obj: Any, name: str):
+#     """Implements the `object.__getattribute__` portion of `getattr`.
 
-    https://docs.python.org/3/howto/descriptor.html#invocation-from-an-instance
-    """
-    objtype = type(obj)
-    null = cls_var = descr_get = object()
+#     https://docs.python.org/3/howto/descriptor.html#invocation-from-an-instance
+#     """
+#     objtype = type(obj)
+#     null = cls_var = descr_get = object()
 
-    if type(name) is not str:
-        return do_raise(TypeError("getattr(): attribute name must be string"))
+#     if type(name) is not str:
+#         return do_raise(TypeError("getattr(): attribute name must be string"))
 
-    # TODO: classes and super have a slightly different resolution behavior
-    #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
-    #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
-    if isinstance(obj, (type, super)):
-        return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
+#     # TODO: classes and super have a slightly different resolution behavior
+#     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
+#     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
+#     if isinstance(obj, (type, super)):
+#         return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
 
-    # This is too coarse grained, but there is a lot of nuance in the dunder methods
-    # for fundamental types, so for now we just bail out. Specifically:
-    #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
-    #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
-    # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
-    if DUNDER_PATTERN.match(name) or isinstance(obj, (type, super)):
-        return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
+#     # This is too coarse grained, but there is a lot of nuance in the dunder methods
+#     # for fundamental types, so for now we just bail out. Specifically:
+#     #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
+#     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
+#     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
+#     if DUNDER_PATTERN.match(name) or isinstance(obj, (type, super)):
+#         return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
 
-    def lookup_descriptor_field(field_name):
-        # Bypass the C portions of `property` so we don't break the `_jit` chain
-        if type(cls_var) is property and (shortcut := _PROPERTY_ALIASES.get(field_name)):
-            # `property` will define `__set__` / `__delete__` even if `fget` / `fdelete` are null
-            # However in those cases we should not go through the data descriptor path.
-            if (method := getattr(cls_var, shortcut)) is None:
-                return null
+#     def lookup_descriptor_field(field_name):
+#         # Bypass the C portions of `property` so we don't break the `_jit` chain
+#         if type(cls_var) is property and (shortcut := _PROPERTY_ALIASES.get(field_name)):
+#             # `property` will define `__set__` / `__delete__` even if `fget` / `fdelete` are null
+#             # However in those cases we should not go through the data descriptor path.
+#             if (method := getattr(cls_var, shortcut)) is None:
+#                 return null
 
-            # We need to emulate a pure Python version of `property.__get__ / __set__ / __delete__`
-            return lambda _, obj, __: method(obj)
-        result = _jit(getattr, type(cls_var), field_name, null)
+#             # We need to emulate a pure Python version of `property.__get__ / __set__ / __delete__`
+#             return lambda _, obj, __: method(obj)
+#         result = _jit(getattr, type(cls_var), field_name, null)
 
-        # TODO: For now we can't handle custom `__getattr__`s which raise when we check for
-        #       __get__, __set__, or __delete__.
-        assert result is not JIT_SIGNALS.EXCEPTION_RAISED
-        return result
+#         # TODO: For now we can't handle custom `__getattr__`s which raise when we check for
+#         #       __get__, __set__, or __delete__.
+#         assert result is not JIT_SIGNALS.EXCEPTION_RAISED
+#         return result
 
-    # Check for class variables.
-    for base in objtype.__mro__:
-        if (cls_var := vars(base).get(name, null)) is not null:
-            descr_get = lookup_descriptor_field("__get__")
-            break
+#     # Check for class variables.
+#     for base in objtype.__mro__:
+#         if (cls_var := vars(base).get(name, null)) is not null:
+#             descr_get = lookup_descriptor_field("__get__")
+#             break
 
-    if descr_get is not null:
-        assert cls_var is not null
-        if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
-            assert callable(descr_get)
-            return _jit(descr_get, cls_var, obj, objtype)
+#     if descr_get is not null:
+#         assert cls_var is not null
+#         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
+#             assert callable(descr_get)
+#             return _jit(descr_get, cls_var, obj, objtype)
 
-    # NOTE: `__dict__` is somewhat special, since we can't look inside `__dict__` when we call `obj.__dict__`.
-    #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
-    #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
-    #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
-    if (obj_dict := _jit(getattr, obj, "__dict__", null)) is not null:
-        assert isinstance(obj_dict, dict), obj_dict  # This should be enforced by `PyObject`
+#     # NOTE: `__dict__` is somewhat special, since we can't look inside `__dict__` when we call `obj.__dict__`.
+#     #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
+#     #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
+#     #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
+#     if (obj_dict := _jit(getattr, obj, "__dict__", null)) is not null:
+#         assert isinstance(obj_dict, dict), obj_dict  # This should be enforced by `PyObject`
 
-        # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
-        # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
-        # attribute resolution.
-        if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
-            return instance_value
+#         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
+#         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
+#         # attribute resolution.
+#         if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
+#             return instance_value
 
-    if descr_get is not null:
-        assert callable(descr_get)
-        return _jit(descr_get, cls_var, obj, objtype)
+#     if descr_get is not null:
+#         assert callable(descr_get)
+#         return _jit(descr_get, cls_var, obj, objtype)
 
-    if cls_var is not null:
-        return cls_var
+#     if cls_var is not null:
+#         return cls_var
 
-    return do_raise(AttributeError(name))
+#     return do_raise(AttributeError(name))
 
 
-def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
-    """Emulate slot_tp_getattr_hook()."""
+# def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
+#     """Emulate slot_tp_getattr_hook()."""
 
-    result = _object_getattribute_lookaside(obj, name)
-    ctx: JitRuntimeCtx = get_jitruntimectx()
+#     result = _object_getattribute_lookaside(obj, name)
+#     ctx: JitRuntimeCtx = get_jitruntimectx()
 
-    # `__getattr__` is only triggered if `__getattribute__` fails.
-    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError):
-        # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
-        null = object()
-        obj_getattr = getattr(obj, "__getattr__", null)
-        if obj_getattr is not null:
-            assert callable(obj_getattr)
-            result = _jit(obj_getattr, name)
+#     # `__getattr__` is only triggered if `__getattribute__` fails.
+#     if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError):
+#         # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
+#         null = object()
+#         obj_getattr = getattr(obj, "__getattr__", null)
+#         if obj_getattr is not null:
+#             assert callable(obj_getattr)
+#             result = _jit(obj_getattr, name)
 
-    # And finally if all else fails apply the default. (If provided.)
-    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
-        ctx.curexc = None
-        (default,) = maybe_default
-        return default
+#     # And finally if all else fails apply the default. (If provided.)
+#     if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
+#         ctx.curexc = None
+#         (default,) = maybe_default
+#         return default
 
-    return result
+#     return result
 
 
 def _globals_lookaside() -> dict[str, Any]:
@@ -1043,7 +1012,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     bool: _bool_lookaside,
     exec: exec_lookaside,
     eval: eval_lookaside,
-    getattr: _getattr_lookaside,
+    # getattr: _getattr_lookaside,
     globals: _globals_lookaside,
     iter: _iter_lookaside,
     len: _len_lookaside,
@@ -1070,62 +1039,44 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 # To register a callback, map from this enum to a callable. The args and kwargs for each
 #   event may be different, as documented below.
 class JIT_CALLBACKS(enum.Enum):
-    # Called when deleting a value from a glocals dict in DELETE_GLOBAL
-    #   callback(globals: dict, name: str, /) -> Any
-    #   If this callback is executed, the deletion does not occur as usual
-    DELETE_GLOBAL_CALLBACK = enum.auto()
+    # Called when a locals (in localsplus) is created
+    #   (name: str, value: Any, /) -> Any
+    #   The returned value is used in place of the original value
+    LOCAL_CALLBACK = enum.auto()
 
-    # Called when loading a value from a globals dict in LOAD_GLOBAL
-    #   callback(globals: dict, name: str, /) -> Any
-    #   The value returned from the callback is loaded
-    LOAD_GLOBAL_CALLBACK = enum.auto()
-
-    # Called when storing a value to a globals dict in STORE_GLOBAL
-    #   callback(globals: dict, name: str, val: Any, /) -> Any
-    #   The value returned from the callback is stored instead
-    STORE_GLOBAL_CALLBACK = enum.auto()
-
-    # Called when deleting a value from cell (freevar/cellvar) in DELETE_DEREF
-    #   callback(cell: CellType, /) -> None
-    #   If this callback is executed, the deletion does not occur as usual
-    DELETE_DEREF_CALLBACK = enum.auto()
-
-    # Called when loading a cell (freevar/cellvar) in LOAD_CLOSURE
-    #   The value returned from the callback is loaded
-    #   callback(cell: CellType, /) -> CellType
-    LOAD_CLOSURE_CALLBACK = enum.auto()
-
-    # Called when loading a value from a cell (freevar/cellvar) in LOAD_DEREF
-    #   The value returned from the callback is loaded
-    #   callback(cell: CellType, /) -> Any
-    LOAD_DEREF_CALLBACK = enum.auto()
-
-    # Called when storing a value to a cell (freevar/cellvar) in STORE_DEREF
-    # NOTE: No value is stored to the original cell if the callback
-    #       is called, the callback would has to change it if desired
-    #       callback(cell: CellType, value: Any, /) -> None
-    STORE_DEREF_CALLBACK = enum.auto()
-
-    # Called when starting to execute a non-opaque function after the
-    # jit frame has been created
-    #       callback(fn: Callable, frame: JITFrame, /) -> None
-    FUNCTION_START_CALLBACK = enum.auto()
-
-    # Called when creating a new cell with MAKE_CELL
-    #       callback(cell: CellType, /) -> CellType
-    # The cell is passed to the callback and the cell returned from the
-    # callback is stored to the slot.
-    MAKE_CELL_CALLBACK = enum.auto()
-
-    # Called when a value is pushed onto the stack or replaces an existing
-    #   value on the stack (using dunder setitem)
-    #       callback(val: Any, /, *, source: None | str = None) -> Any
-    # source may be a string with information about what pushed the value
-    # The returned object is put onto or into the stack, instead
-    PUSH_STACK_CALLBACK = enum.auto()
+    # Called when a freevar is created
+    #   (name: str, value: Any, /) -> Any
+    #   The returned value is used in place of the original value
+    FREEVAR_CALLBACK = enum.auto()
 
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+
+
+def local_callback(name: str, value: Any, /) -> Any:
+    assert isinstance(name, str)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOCAL_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(name, value)
+
+
+def freevar_callback(name: str, cell: CellType, /) -> CellType:
+    assert isinstance(name, str)
+    assert isinstance(cell, CellType)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.FREEVAR_CALLBACK)
+
+    if cb is None:
+        return cell
+
+    contents: Any = cb(name, cell.cell_contents)
+    return CellType(contents)
 
 
 def check_and_append(stack, val):
@@ -1289,7 +1240,7 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
     # out of place operator, call the out of place operator (__add__/__radd__).
     if idx < BINARY_OP.IADD.value or (res is NotImplemented):
 
-        def outofplace_impl():
+        def outofplace_impl(a, b, left_method, right_method, binop_name):
             if (not hasattr(a, left_method)) or ((result := getattr(a, left_method)(b)) is NotImplemented):
                 if (not hasattr(b, right_method)) or ((result := getattr(b, right_method)(a)) is NotImplemented):
                     err: TypeError = TypeError(
@@ -1298,7 +1249,7 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
                     raise err
             return result
 
-        res = _jit(outofplace_impl)
+        res = _jit(outofplace_impl, a, b, left_method, right_method, binop_name)
 
     # Either one or the other should have been called, and stored to res.
     assert res is not Py_NULL()
@@ -1801,13 +1752,7 @@ def _delete_deref_handler(
         i += co.co_nlocals
 
     assert i >= 0 and i < len(frame.localsplus)
-
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.DELETE_DEREF_CALLBACK)
-    if cb is not None:
-        cb(frame.localsplus[i], co.co_name)
-    else:
-        del frame.localsplus[i].cell_contents
+    del frame.localsplus[i].cell_contents
 
 
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
@@ -1828,12 +1773,7 @@ def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFra
     namei: int = inst.arg
     name: str = co.co_names[namei]
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.DELETE_GLOBAL_CALLBACK)
-    if cb is not None:
-        cb(frame.globals, name)
-    else:
-        del frame.globals[name]
+    del frame.globals[name]
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-DELETE_NAME
@@ -2441,10 +2381,6 @@ def _load_closure_handler(
     assert i >= 0 and i < len(frame.localsplus)
     val = frame.localsplus[i]
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_CLOSURE_CALLBACK)
-    if cb is not None:
-        val = cb(val)
     stack.append(val)
 
 
@@ -2476,13 +2412,7 @@ def _load_deref_handler(
         return do_raise(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_DEREF_CALLBACK)
-    if cb is not None:
-        val = cb(cell)
-    else:
-        # normal operation
-        val = cell.cell_contents
+    val = cell.cell_contents
 
     stack.append(val)
 
@@ -2523,15 +2453,9 @@ def _load_global_handler(
         idx = idx // 2
     co_name: str = co.co_names[idx]
 
+    obj: Any
     try:
         obj = globals_dict[co_name]
-
-        # NOTE The callback only triggers for loads from the globals dict, not the builtins dict
-        ctx: JitCompileCtx = get_jitcompilectx()
-        cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_GLOBAL_CALLBACK)
-        if cb is not None:
-            obj = cb(globals_dict, co_name)
-
     except KeyError:
         try:
             obj = builtins_dict[co_name]
@@ -2541,6 +2465,7 @@ def _load_global_handler(
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
             stack.append(Py_NULL())
+
     stack.append(obj)
 
 
@@ -2611,11 +2536,6 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> N
     else:
         # wrap the current val into a cell
         c = CellType(val)
-
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.MAKE_CELL_CALLBACK)
-    if cb is not None:
-        c = cb(c)
 
     frame.localsplus[i] = c
 
@@ -3413,14 +3333,7 @@ def _store_deref_handler(
     assert i >= 0 and i < len(frame.localsplus)
 
     tos = stack.pop()
-
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.STORE_DEREF_CALLBACK)
-    if cb is not None:
-        cb(frame.localsplus[i], tos)
-    else:
-        # normal operation
-        frame.localsplus[i].cell_contents = tos
+    frame.localsplus[i].cell_contents = tos
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_GLOBAL
@@ -3433,12 +3346,6 @@ def _store_global_handler(
 
     name: str = co.co_names[namei]
     tos = stack.pop()
-
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
-    if cb is not None:
-        tos = cb(frame.globals, name, tos)
-
     frame.globals[name] = tos
 
 
@@ -4018,7 +3925,13 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     if (3, 10) <= sys.version_info < (3, 11):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
-            localsplus.append(locals_dict.get(n, Py_NULL()))
+            local = locals_dict.get(n, Py_NULL())
+            local = local_callback(n, local)
+            localsplus.append(local)
+            # NOTE Updates locals_dict on Python 3.10, so co_cellvars has the same replacements
+            #   as localsplus does (this is not necessary on Python 3.11, because there cellvars are
+            #   constructed using the MAKE_CELL instruction)
+            locals_dict[n] = local
         for n in code.co_cellvars:
             if n in locals_dict:
                 localsplus.append(CellType(locals_dict[n]))
@@ -4028,13 +3941,17 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         if code.co_freevars:
             assert fn.__closure__
             assert len(code.co_freevars) == len(fn.__closure__)
-            localsplus.extend(fn.__closure__)
+            for name, value in zip(code.co_freevars, fn.__closure__):
+                local = freevar_callback(name, value)
+                localsplus.append(local)
         else:
             assert not fn.__closure__
     elif (3, 11) <= sys.version_info < (3, 12):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
-            localsplus.append(locals_dict.get(n, Py_NULL()))
+            local = locals_dict.get(n, Py_NULL())
+            local = local_callback(n, local)
+            localsplus.append(local)
         for n in code.co_cellvars:
             # those in locals_dict will use that index but will
             # see MAKE_CELL called for them for the conversion
@@ -4043,7 +3960,9 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         if code.co_freevars:
             assert fn.__closure__
             assert len(code.co_freevars) == len(fn.__closure__)
-            localsplus.extend(fn.__closure__)
+            for name, value in zip(code.co_freevars, fn.__closure__):
+                local = freevar_callback(name, value)
+                localsplus.append(local)
     else:
         raise NotImplementedError(
             f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."
@@ -4053,10 +3972,6 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     frame = JITFrame(
         code=code, localsplus=localsplus, globals=fn.__globals__, builtins=builtins_dict, qualname=fn.__qualname__
     )
-
-    cb: None | Callable = compilectx.callback(JIT_CALLBACKS.FUNCTION_START_CALLBACK)
-    if cb is not None:
-        cb(fn, frame)
 
     # Python 3.10 deals with creating the generator on call,
     # 3.11+ use the RETURN_GENERATOR opcode
@@ -4341,10 +4256,14 @@ def jit(
                 traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
                 msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
                 raise JITError(msg) from e
+            finally:
+                # NOTE: Wrapped functions are valid to assign new attributes to.
+                fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
+                fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
-            # NOTE: Wrapped functions are valid to assign new attributes to.
-            fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
-            fn_._last_interpreted_history = runtimectx.history  # type: ignore
+            # # NOTE: Wrapped functions are valid to assign new attributes to.
+            # fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
+            # fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
             if jit_result is JIT_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc

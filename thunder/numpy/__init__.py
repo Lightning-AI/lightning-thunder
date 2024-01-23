@@ -102,11 +102,11 @@ tensor_cls = np.ndarray
 
 # NOTE This both extracts the metadata from an ndarray to create a TensorProxy
 #   AND then schedules a conversion of that ndarray to a tensor
-def tensorproxy(name: str, a: np.ndarray) -> TensorProxy:
+def tensorproxy(name: str, a: np.ndarray, *, history: None | tuple = None) -> TensorProxy:
     device = devices.cpu
     dtype = to_thunder_dtype(a.dtype)
 
-    p = TensorProxy(name, shape=a.shape, device=device, dtype=dtype, requires_grad=False)
+    p = TensorProxy(name, shape=a.shape, device=device, dtype=dtype, requires_grad=False, history=history)
 
     tracectx = get_tracectx()
     tracectx.post_unpack(lambda: prims.numpy_array_to_torch_tensor(p))

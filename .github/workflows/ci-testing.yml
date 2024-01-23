@@ -98,8 +98,9 @@ jobs:
       #continue-on-error: true
       run: |
         python -m pytest \
-          thunder/tests/test_jit.py \
+          thunder/tests/test_interpreter.py \
           -v --durations=50 --cov=thunder
+        python -m pytest thunder/tests/test_literpreter.py -v --durations=50 --cov=thunder
 
     - name: Statistics
       run: |

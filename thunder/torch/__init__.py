@@ -145,14 +145,22 @@ def to_torch_dtype(dtype: None | dtypeLike) -> None | torch.dtype:
 tensor_cls = torch.Tensor
 
 
-def tensorproxy(name: None | str, t: torch.Tensor) -> TensorProxy:
+# TODO Change the signature of this to be:
+#   (t, /, *, name, history)
+def tensorproxy(name: None | str, t: torch.Tensor, /, *, history: None | tuple = None) -> TensorProxy:
     device = devices.device_from_string(str(t.device))
     dtype = to_thunder_dtype(t.dtype)
     # See Note [DistributedDataParallel and ddp_type]
     ddp_type = getattr(t, "ddp_type", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
-        name, shape=tuple(t.shape), device=device, dtype=dtype, requires_grad=t.requires_grad, ddp_type=ddp_type
+        name,
+        shape=tuple(t.shape),
+        device=device,
+        dtype=dtype,
+        requires_grad=t.requires_grad,
+        ddp_type=ddp_type,
+        history=history,
     )
 
 

@@ -64,8 +64,9 @@ def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> st
 
 
 # TODO Document this class
+# TODO Support multiple histories
 class Proxy(VariableInterface, ProxyInterface):
-    def __init__(self, name: str | None = None, *, prefix: None | str = None):
+    def __init__(self, name: str | None = None, *, prefix: None | str = None, history: None | tuple = None):
         # Determines the prefix
         if prefix is None:
             if isinstance(self, FloatProxy):
@@ -90,6 +91,7 @@ class Proxy(VariableInterface, ProxyInterface):
 
         self._name = make_proxy_name(name=name, prefix=prefix)
         self._has_weak_name: bool = name is None
+        self.history = history
 
     @property
     def name(self) -> str:
@@ -150,6 +152,18 @@ class Proxy(VariableInterface, ProxyInterface):
 
     def __ixor__(self, other):
         raise RuntimeError("Inplace operators are not supported.")
+
+
+class StringProxy(str, Proxy):
+    def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
+        return str.__new__(cls, s)
+
+    def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._s: str = s
+
+    def __str__(self) -> str:
+        return self._s
 
 
 class CollectionProxy(Proxy):
@@ -671,8 +685,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
         requires_grad: bool | None = None,
         prefix: None | str = None,
         ddp_type: DDPType | None = None,
+        history: None | tuple = None,
     ):
-        super().__init__(name, prefix=prefix)
+        super().__init__(name, prefix=prefix, history=history)
 
         (
             self._shape,
@@ -1017,12 +1032,15 @@ def is_proxyable(x: Any) -> bool:
 # TODO defer to langctx for tensor type -- consider all possible langctxs
 # TODO maybe consider what happens when a proxy is passed to this
 # TODO handle complex number type
-def proxy(x: Any, *, name: str | None = None) -> Any:
+def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any:
     langctx = langctx_for(x)
 
     tensor_cls = langctx.tensor_cls
     if isinstance(x, tensor_cls):
-        return langctx.tensorproxy(name, x)
+        return langctx.tensorproxy(name, x, history=history)
+
+    if isinstance(x, str):
+        return StringProxy(x, name=name, history=history)
 
     if isinstance(x, Number):
         if isinstance(x, complex):
