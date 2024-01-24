@@ -6,8 +6,8 @@ import lightning as L
 import torch
 import torch._dynamo.config
 import torch._inductor.config
-
 from lit_gpt import Tokenizer
+
 from thunder.tests.lit_gpt_model import GPT
 
 

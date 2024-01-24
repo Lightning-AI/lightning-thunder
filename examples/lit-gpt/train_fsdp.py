@@ -2,10 +2,14 @@ import logging
 import re
 import time
 from contextlib import nullcontext
-from typing import Any, Callable, ContextManager, Dict, Optional, Union
+from typing import Any, Callable, ContextManager, Dict, List, Literal, Optional, Union
 
 import lightning as L
 import torch
+from lightning.fabric.accelerators.accelerator import Accelerator
+from lightning.fabric.plugins.environments.cluster_environment import ClusterEnvironment
+from lightning.fabric.plugins.io.checkpoint_io import CheckpointIO
+from lightning.fabric.plugins.precision import Precision
 from lightning.fabric.strategies import FSDPStrategy
 from lightning.fabric.strategies.launchers.subprocess_script import _SubprocessScriptLauncher
 from lightning.fabric.strategies.parallel import ParallelStrategy
@@ -29,7 +33,11 @@ from torch.utils.data import DataLoader, IterableDataset
 from typing_extensions import override
 
 import thunder
+from thunder.distributed import FSDPType, fsdp
 from thunder.tests.lit_gpt_model import GPT, Config
+
+_FSDP_TYPE = Union[FSDPType, Literal["ZERO2", "ZERO3"]]
+
 
 model_name = "open_llama_3b"
 learning_rate = 6e-4
@@ -38,6 +46,20 @@ max_iters = 50
 
 
 class FSDPThunderStrategy(ParallelStrategy, _Sharded):
+    def __init__(
+        self,
+        accelerator: Optional[Accelerator] = None,
+        parallel_devices: Optional[List[torch.device]] = None,
+        cluster_environment: Optional[ClusterEnvironment] = None,
+        checkpoint_io: Optional[CheckpointIO] = None,
+        precision: Optional[Precision] = None,
+        sharding_strategy: "_FSDP_TYPE" = "FULL_SHARD",
+    ):
+        super().__init__(accelerator=accelerator, checkpoint_io=checkpoint_io, precision=precision)
+        self.parallel_devices = parallel_devices
+        self.cluster_environment: Optional[ClusterEnvironment] = cluster_environment
+        self.sharding_strategy = FSDPType[sharding_strategy.upper()] if isinstance(sharding_strategy, str) else sharding_strategy
+
     @property
     @override
     def root_device(self) -> torch.device:
@@ -70,10 +92,8 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
 
     @override
     def setup_module(self, module: Module) -> Module:
-        from thunder.distributed import fsdp
-
         module = module.to(self.root_device)
-        module = fsdp(module, rank=self.local_rank, broadcast_from=0)
+        module = fsdp(module, rank=self.local_rank, broadcast_from=0, sharding_strategy=self.sharding_strategy)
 
         # NOTE @IvanYaschuck says that `fsdp(compile(model))` could be supported in the future so that the user owns the `compile` call.
         # we would still `compile(fsdp(undo_compile(compile(model))))` internally
@@ -167,14 +187,16 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         rank_zero_only.rank = utils_rank_zero_only.rank = self.global_rank
 
 
-def main(compile: str = "eager") -> None:
+def main(compile: str = "eager", devices: int = 2, stage: str = "2") -> None:
+    fsdp_type = {"2": "ZERO2", "3": "ZERO3"}[stage]
+    sharding_strategy = {"2": "SHARD_GRAD_OP", "3": "FULL_SHARD"}[stage]
     strategy = (
-        FSDPThunderStrategy()
-        if compile == "thunder" else
-        FSDPStrategy(auto_wrap_policy=always_wrap_policy, sharding_strategy="SHARD_GRAD_OP")
+        FSDPThunderStrategy(sharding_strategy=fsdp_type)
+        if compile == "thunder"
+        else FSDPStrategy(auto_wrap_policy=always_wrap_policy, sharding_strategy=sharding_strategy)
     )
 
-    fabric = L.Fabric(devices="2", strategy=strategy, precision="bf16-true")
+    fabric = L.Fabric(devices=devices, strategy=strategy, precision="bf16-true")
     fabric.launch()
 
     fabric.seed_everything(1337, workers=True)  # same seed for every process to init model (FSDP)
@@ -235,9 +257,7 @@ def train(
 
         loss_item = loss.item()  # synchronization
         t1 = time.perf_counter()
-        fabric.print(
-            f"iter {i}: loss {loss_item :.4f}, iter time: {(t1 - iter_t0) * 1000:.2f}ms, t: {input_ids.size(1)}"
-        )
+        fabric.print(f"iter {i}: loss {loss_item :.4f}, iter time: {(t1 - iter_t0) * 1000:.2f}ms")
     fabric.print(f"Total time: {(t1 - t0):.2f}s")
 
 
