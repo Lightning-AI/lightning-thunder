@@ -1,4 +1,5 @@
 from typing import Optional, Any
+from enum import auto, Enum
 
 import torch
 import torch.distributed as tdist
@@ -207,6 +208,19 @@ def ddp(
     return model
 
 
+class FSDPType(Enum):
+    """
+    This specifies the sharding strategy to be used for FSDP in Thunder.
+
+    Attributes:
+        ZERO2: Similar to torch.distributed.fsdp.ShardingStrategy.SHARD_GRAD_OP
+        ZERO3: Similar to torch.distributed.fsdp.ShardingStrategy.FULL_SHARD
+    """
+
+    ZERO2 = auto()
+    ZERO3 = auto()
+
+
 def fsdp(
     model: torch.nn.Module,
     rank: int,
@@ -214,13 +228,16 @@ def fsdp(
     world: Any | None = None,
     broadcast_from: int | None = None,
     process_group: tdist.ProcessGroup | None = None,
+    sharding_strategy: FSDPType = FSDPType.ZERO2,
 ) -> torch.nn.Module:
+    utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     # We are going to use DDP to broadcast the parameters
     distributed_params_module = ddp(
         model, rank, world=world, broadcast_from=broadcast_from, process_group=process_group
     )
     distributed_params_module.use_ddp = False
     distributed_params_module.use_fsdp = True
+    distributed_params_module.sharding_strategy = sharding_strategy
     process_group = distributed_params_module.process_group_for_ddp
 
     current_rank = tdist.get_rank(group=process_group)

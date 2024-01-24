@@ -368,6 +368,86 @@ def find_cut(
     return tuple(sorted(cut_nodes))
 
 
+def rematerialize_all_gather(trace: TraceCtx, N: int) -> TraceCtx:
+    """Insert a new allgather+wait for the first consumer whose index is greater than or equal to the length N.
+    Note N should be the length of the forward trace"""
+    utils.check(
+        N >= 0,
+        "N must be greater than or equal to 0",
+    )
+    from thunder.core.proxies import FutureTensorProxy
+    from thunder.core.trace import reset_tracectx, set_tracectx
+    from thunder.distributed.prims import PrimIDs as distPrimIDs
+    from thunder.executors.torchex import all_gather_prim_impl, wait_prim_impl
+
+    new_trace = from_trace(trace)
+    consumers = utils.consumers(trace)
+
+    # Find all waits that consume all_gather outputs
+    all_gathers = tuple(x for x in trace.bound_symbols if x.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id})
+    all_gather_outputs = tuple(chain.from_iterable((y for y in x.flat_outs) for x in all_gathers))
+    waits = tuple(consumers[o][0] for o in all_gather_outputs)
+    wait_outputs = tuple(chain.from_iterable((y for y in x.flat_outs) for x in waits))
+
+    visited_wait_output = set()
+    # map the output of the original waitop to the output of the new waitop
+    wait_output_replacement_map = {}
+    wait_output_to_all_gather = utils.ProxyDict()
+    wait_output_to_wait = utils.ProxyDict()
+    for v, o in utils.safe_zip(wait_outputs, all_gathers):
+        wait_output_to_all_gather[v] = o
+    for v, w in utils.safe_zip(wait_outputs, waits):
+        wait_output_to_wait[v] = w
+
+    try:
+        token = set_tracectx(new_trace)
+        new_symbols = []
+        new_trace.bound_symbols = new_symbols
+        for idx, bsym in enumerate(trace.bound_symbols):
+            if idx == N:
+                visited_wait_output.clear()
+            if bsym.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id}:
+                continue
+            if bsym.sym.id in {distPrimIDs.WAIT, wait_prim_impl.id} and bsym in waits:
+                continue
+            # update the unpack operators in the joint_fn trace
+            if bsym.sym.id in {PrimIDs.UNPACK_SEQUENCE, PrimIDs.UNPACK_TRIVIAL}:
+                bsym = bsym.from_bsym_swap_proxies(wait_output_replacement_map, skip_subsymbols=True)
+                new_symbols.append(bsym)
+                continue
+
+            used_wait_outputs = tuple(
+                x for x in bsym.flat_args if isinstance(x, ProxyInterface) and x in wait_output_to_wait
+            )
+            if used_wait_outputs:
+                for used_wait_output in used_wait_outputs:
+                    # Skip inserting all_gather+wait if it's not the first consumer in the first half of length=N
+                    # or the remainder
+                    if used_wait_output.name in visited_wait_output:
+                        continue
+                    visited_wait_output.add(used_wait_output.name)
+                    all_gather_bsym = wait_output_to_all_gather[used_wait_output]
+                    all_gather_out = FutureTensorProxy(like=all_gather_bsym.output)
+                    new_all_gather_bsym = replace(all_gather_bsym, output=all_gather_out)
+                    new_symbols.append(new_all_gather_bsym)
+
+                    wait_bsym = wait_output_to_wait[used_wait_output]
+                    wait_out = TensorProxy(like=wait_bsym.output)
+                    new_wait_bsym = replace(wait_bsym, output=wait_out, args=(all_gather_out,))
+                    new_symbols.append(new_wait_bsym)
+                    wait_output_replacement_map[variableify(used_wait_output)] = wait_out
+
+                new_bsym = bsym.from_bsym_swap_proxies(wait_output_replacement_map)
+                new_symbols.append(new_bsym)
+                continue
+            new_symbols.append(bsym)
+
+    finally:
+        reset_tracectx(token)
+
+    return new_trace
+
+
 def rematerialize(trace: TraceCtx) -> TraceCtx:
     """Rematerialize the trace.
 
@@ -432,12 +512,15 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     return rematerialized_trace
 
 
-def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
+def rematerialize_forward_and_backward(
+    fw_trace: TraceCtx, bw_trace: TraceCtx, rematerialize_params_in_backward: bool = False
+) -> tuple[TraceCtx, TraceCtx]:
     """Apply rematerialization optimization to the forward and backward traces.
 
     Args:
         fw_trace (TraceCtx): Forward trace.
         bw_trace (TraceCtx): Backward trace.
+        rematerialize_params_in_backward (bool): used for FSDP, indicates whether to insert all_gathers for parameters at the start of the backward trace
 
     Returns:
         tuple[TraceCtx, TraceCtx]: Rematerialized forward and backward traces.
@@ -452,6 +535,7 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         pass
 
     joint_extrace = TraceCtx(joint_fn)
+    joint_extrace.names = set.union(fw_trace.names, bw_trace.names)
     joint_extrace.args = (fw_trace.args, fw_trace.kwargs, bw_trace.args[1])
     assert fw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
     assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
@@ -462,6 +546,9 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         replace(fw_trace.bound_symbols[-1], args=(fw_trace.bound_symbols[-1].args[0], bw_trace.bound_symbols[-1].args))
     )
     joint_extrace = rematerialize(joint_extrace)
+
+    if rematerialize_params_in_backward:
+        joint_extrace = rematerialize_all_gather(joint_extrace, len(fw_trace.bound_symbols) - 1)
 
     # Update the call context
     joint_extrace = update_fusion_call_ctx(joint_extrace)

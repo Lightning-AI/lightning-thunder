@@ -25,7 +25,7 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.core.rematerialization import rematerialize_forward_and_backward
         from thunder.core.transforms import forward_and_backward_from_trace
         from thunder.cudagraphs import CUDAGraphExecutor
-        from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs
+        from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
 
         def make_trace(func):
             return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=True), func)
@@ -115,16 +115,35 @@ class ThunderFunction(torch.autograd.Function):
             )
             bw_traces.append(bw_extrace)
 
-            fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+            from thunder.distributed import FSDPType
+
+            # only enable rematerialize_params_in_backward when using FSDP ZeRO3
+            _rematerialize_params_in_backward = (
+                compile_data is not None
+                and getattr(compile_data.fn, "use_fsdp", False)
+                and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
+            )
+            fw_extrace, bw_extrace = rematerialize_forward_and_backward(
+                fw_extrace, bw_extrace, _rematerialize_params_in_backward
+            )
             fw_traces.append(fw_extrace)
             bw_traces.append(bw_extrace)
 
             # We need to sort the waits in forward and backward trace to overlap
             # computation with communication
             if compile_data is not None:
+                # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
+                # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
+                # backward trace and increases the peak allocated memory
                 if getattr(compile_data.fn, "use_fsdp", False):
-                    fw_extrace = sort_waits(fw_extrace)
-                if getattr(compile_data.fn, "use_ddp", False) or getattr(compile_data.fn, "use_fsdp", False):
+                    assert hasattr(compile_data.fn, "sharding_strategy")
+                    if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
+                        fw_extrace = sort_waits_for_zero3(fw_extrace)
+                        bw_extrace = sort_waits_for_zero3(bw_extrace)
+                    if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
+                        fw_extrace = sort_waits(fw_extrace)
+                        bw_extrace = sort_waits(bw_extrace)
+                if getattr(compile_data.fn, "use_ddp", False):
                     bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace = del_last_used(fw_extrace)

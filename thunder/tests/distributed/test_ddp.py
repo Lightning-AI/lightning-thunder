@@ -447,6 +447,110 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             self.assertEqual(len(unpack_syms), 1, msg=f"{unpack_syms}")
             self.assertEqual(len(update_bucket_view_syms), 4, msg=f"{update_bucket_view_prim_impl}")
 
+    def test_rematerialize_all_gather(self):
+        from thunder.core.transforms import vjp
+        from thunder.distributed.prims import DDPType
+
+        pg = c10d.new_group()
+        device = f"cuda:{self.rank}"
+
+        # Usually the compile data is created when compiled function is created, here we mock this for testing
+        def fake_compile_data():
+            pass
+
+        fake_compile_data.process_group_for_ddp = pg
+        fake_compile_data.langctx = None
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def replace_trace_function():
+            old_func = thunder.trace
+            # There's no way to pass 'insert_ddp_syncs' to thunder.trace, so we have to monkey-patch it
+            thunder.trace = partial(thunder.trace, insert_ddp_syncs=True, compile_data=fake_compile_data)
+            try:
+                yield
+            finally:
+                thunder.trace = old_func
+
+        @partial(thunder.compile, disable_preprocessing=True)
+        @vjp
+        def func1(x, y):
+            z = x @ x
+            a = x + y
+            return a + z, y
+
+        a = torch.randn(512 // self.world_size, 512, device=device)
+        a.ddp_type = DDPType.FULLY_SHARDED
+        b = torch.randn(512 // self.world_size, 512, device=device)
+        b.ddp_type = DDPType.FULLY_SHARDED
+
+        g = torch.randn(512, 512, device=device)
+        g1 = torch.randn(512, 512, device=device)
+        from thunder.core.rematerialization import rematerialize_all_gather
+
+        with replace_trace_function():
+            func1((a, b), (g, g1))
+
+        def get_output_to_consumer_index_map(allgather_symbols, consumers):
+            rec: dict = {}
+            for sym in allgather_symbols:
+                waitop = consumers[sym.output][0]
+                for o in waitop.flat_outs:
+                    waitop_consumers = consumers[o]
+                    for waitop_consumer in waitop_consumers:
+                        if o.name in rec:
+                            rec[o.name].append(trc.bound_symbols.index(waitop_consumer))
+                        else:
+                            rec[o.name] = [trc.bound_symbols.index(waitop_consumer)]
+            return rec
+
+        trc = thunder.last_traces(func1)[0]
+        from thunder.distributed.prims import PrimIDs
+
+        allgather_symbols = tuple(filter(lambda x: x.sym.id == PrimIDs.ALL_GATHER, trc.bound_symbols))
+        assert len(allgather_symbols) == 2
+        consumers = thunder.core.utils.consumers(trc)
+
+        output_to_consumer_idx = get_output_to_consumer_index_map(allgather_symbols, consumers)
+
+        def get_number_of_insert(indices, n: int):
+            if not indices:
+                return 0
+            if n <= indices[0] or n > indices[-1]:
+                return 1
+            return 2
+
+        def test_rematerialize_all_gather_N(N: int, output_to_consumer_idx):
+            trc_after = rematerialize_all_gather(trc, N)
+
+            allgather_symbols = tuple(filter(lambda x: x.sym.id == PrimIDs.ALL_GATHER, trc_after.bound_symbols))
+            allgather_input_to_all_gather = {}
+            for sym in allgather_symbols:
+                if sym.args[0].name in allgather_input_to_all_gather:
+                    allgather_input_to_all_gather[sym.args[0].name].append(sym)
+                else:
+                    allgather_input_to_all_gather[sym.args[0].name] = [sym]
+
+            cnt_map = {}
+            for k, v in output_to_consumer_idx.items():
+                cnt = get_number_of_insert(v, N)
+                cnt_map[k] = cnt
+            # Ensure that the expected number(calculated by get_number_of_insert) and the actual number of inserts are equal.
+            assert len(allgather_input_to_all_gather["t0"]) == cnt_map["t5"]
+            assert len(allgather_input_to_all_gather["t1"]) == cnt_map["t7"]
+
+        # test for rematerialize_all_gather with different N
+        with replace_trace_function():
+            test_rematerialize_all_gather_N(10, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(9, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(0, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(13, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(8, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(25, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(15, output_to_consumer_idx)
+            test_rematerialize_all_gather_N(100, output_to_consumer_idx)
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 

@@ -21,7 +21,7 @@ from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify
+from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
 
 from thunder.core.trace import (
     get_tracectx,
@@ -398,6 +398,8 @@ class BoundSymbol(BoundSymbolInterface):
             swapped = []
             for fa in flats:
                 visited: set[VariableInterface] = set()
+                if isinstance(fa, CollectionProxy):
+                    fa.coll = tree_map(swap, fa.collection())
                 if isinstance(fa, Proxy):
                     ovfa = variableify(fa)
                     vfa = ovfa

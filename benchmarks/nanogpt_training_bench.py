@@ -52,6 +52,7 @@ parser.add_argument("--profile", action="store_true")
 parser.add_argument("--nsys-profile", action="store_true")
 parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.keys()))
 parser.add_argument("--ddp-mode", default="ddp", choices=("ddp", "fsdp"))
+parser.add_argument("--shard-mode", default="zero2", choices=("zero2", "zero3"))
 parser.add_argument("--bucket-size-in-mb", type=float, default=25.0)
 parser.add_argument("--seq-len", type=int, default=128)
 parser.add_argument("--dump-extrace", action="store_true")
@@ -71,6 +72,7 @@ compile_mode = args.compile_mode
 print_loss = args.print_loss
 use_ddp = False
 ddp_mode = args.ddp_mode
+shard_mode = args.shard_mode
 bucket_size_in_mb: float = args.bucket_size_in_mb
 if args.dump_extrace:
     assert compile_mode == "thunder"
@@ -123,9 +125,12 @@ if use_ddp:
                     bucket_size_in_mb=bucket_size_in_mb,
                 )
             case "fsdp":
-                from thunder.distributed import fsdp
+                from thunder.distributed import fsdp, FSDPType
 
-                model = fsdp(model, rank=local_rank, broadcast_from=0, process_group=pg)
+                sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[shard_mode]
+                model = fsdp(
+                    model, rank=local_rank, broadcast_from=0, process_group=pg, sharding_strategy=sharding_strategy
+                )
             case _:
                 raise ValueError(f"Unknown ddp_mode: {ddp_mode}")
     else:
@@ -144,7 +149,10 @@ if use_ddp:
                     transformer_auto_wrap_policy, transformer_layer_cls={Block}
                 )
                 zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
-                sharding_strategy: ShardingStrategy = ShardingStrategy.SHARD_GRAD_OP  # ZeRO-2
+                sharding_strategy: ShardingStrategy = {
+                    "zero2": ShardingStrategy.SHARD_GRAD_OP,
+                    "zero3": ShardingStrategy.FULL_SHARD,
+                }[shard_mode]
                 # AssertionError: Dynamo only supports FSDP with use_orig_params=True
                 torch.cuda.set_device(local_rank)
                 model = FSDP(
@@ -200,6 +208,7 @@ for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
         if args.nsys_profile:
             put_nvtx_markers = True
             torch.cuda.profiler.start()
+        torch.cuda.reset_peak_memory_stats(device)
     torch.cuda.synchronize()
     t0 = time.time()
     with context:
@@ -245,10 +254,19 @@ for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
     t1 = time.time()
     dt = t1 - t0
     if stage == 1:
+        memory_stats = torch.cuda.memory_stats(device)
+        memory_allocated = memory_stats["allocated_bytes.all.peak"]
+        memory_reserved = memory_stats["reserved_bytes.all.peak"]
         if local_rank is None:
             print(f"time per iteration: {dt/num_steps*1000:.4f}ms")
+            print(
+                f"peak allocated memory: {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+            )
         else:
             print(f"time per iteration at rank{local_rank}: {dt/num_steps*1000:.4f}ms")
+            print(
+                f"peak allocated memory at rank{local_rank}: {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+            )
 if args.nsys_profile:
     torch.cuda.profiler.stop()
 if losses:
