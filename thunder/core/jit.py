@@ -346,6 +346,22 @@ def extract_code(fn) -> CodeType:
     return code
 
 
+def extract_callable_name(fn: Callable | CodeType) -> str:
+    if isinstance(fn, CodeType):
+        return fn.co_qualname if hasattr(fn, "co_qualname") else fn.co_name
+    elif hasattr(fn, "__qualname__"):
+        return fn.__qualname__
+    elif hasattr(fn, "__name__"):
+        return fn.__name__
+    elif hasattr(fn, "__class__"):
+        return fn.__class__.__name__
+    elif isinstance(fn, functools.partial):
+        return f"<partial with inner type {extract_callable_name(fn.func)}>"
+    else:
+        assert isinstance(fn, Callable), (fn, type(fn))
+        return f"<callable of type {type(fn).__name__}>"
+
+
 # TODO There may be a better way to determine if an object is a PyCapsule, like
 #   importing a known PyCapsule and acquiring its type
 
