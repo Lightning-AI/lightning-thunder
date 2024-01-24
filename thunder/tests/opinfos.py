@@ -6731,3 +6731,26 @@ prob_distr_ops.append(multinomial_prim_opinfo)
 
 
 opinfos.extend(prob_distr_ops)
+
+
+# Memory access ops
+memory_access_ops = []
+
+
+def item_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Different flavors of 1-numel arrays with dims 0-4
+    for d in range(5):
+        yield SampleInput(make((1,) * d))
+
+
+item_opinfo = OpInfo(
+    prims.item,
+    sample_input_generator=item_sample_generator,
+    torch_reference=torch.Tensor.item,
+)
+memory_access_ops.append(item_opinfo)
+
+
+opinfos.extend(memory_access_ops)

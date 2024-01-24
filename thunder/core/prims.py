@@ -170,6 +170,8 @@ class PrimIDs(Enum):
     EMBEDDING_BACKWARD = auto()
     LINEAR = auto()
     PAD = auto()
+    # Memory access methods
+    ITEM = auto()
 
 
 class OpTags(Enum):
@@ -180,6 +182,8 @@ class OpTags(Enum):
     SHAPE_OP = auto()
     REDUCTION_OP = auto()
     RANDOM_OP = auto()
+    # Ops that might cause a device sync
+    DEVICE_SYNC_OP = auto()
 
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
@@ -1938,6 +1942,18 @@ cat = make_prim(
     "cat",
     meta=cat_meta,
 )
+
+
+def item_meta(a: TensorProxy) -> NumberProxy:
+    utils.check_type(a, TensorProxy)
+
+    utils.check(a.numel == 1, lambda: f"Expects input with numel=1 but got {a.numel=} instead", ValueError)
+
+    numbertype = dtypes.dtype_to_numbertype(a.dtype)
+    return numberproxy(numbertype, value=None)
+
+
+item = make_prim(PrimIDs.ITEM, "item", meta=item_meta, tags=(OpTags.DEVICE_SYNC_OP,))
 
 
 def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:

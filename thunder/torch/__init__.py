@@ -3471,6 +3471,11 @@ def interpolate(
         return _interpolate_scale_factor_helper(a, scale_factor, mode)
 
 
+@torchsymbol(torch.Tensor.item, is_method=True)
+def item(a: TensorLike) -> Number:
+    return prims.item(a)
+
+
 # TODO Move this to nn.functional
 @torchsymbol(torch.nn.functional.linear)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:

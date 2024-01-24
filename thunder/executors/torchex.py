@@ -1610,6 +1610,11 @@ if torch.distributed.is_available():
     _register_implementation(dist_prims.update_bucket_view, update_bucket_view_prim_impl, checker=_always_executable)
 
 
+# Memory access operations
+item = _register_torch_operation("item", module=torch.Tensor)
+_register_implementation(prims.item, item, checker=_always_executable)
+
+
 has_einops = importlib.util.find_spec("einops") is not None
 if has_einops:
     import einops
