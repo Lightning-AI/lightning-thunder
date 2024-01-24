@@ -136,7 +136,7 @@ def ddp(
     )
     utils.check(
         world is not None or broadcast_from is not None,
-        lambda: "At least one of world_size or broadcast_from must be specified",
+        lambda: "At least one of world or broadcast_from must be specified",
     )
 
     pg = tdist.distributed_c10d._get_default_group() if process_group is None else process_group
