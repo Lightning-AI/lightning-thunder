@@ -743,6 +743,16 @@ class TensorProxy(Proxy, TensorProxyInterface):
         langctx = get_langctx()
         return langctx.size(self)
 
+    # We need to implement `__len__` as
+    # > In addition to bypassing any instance attributes in the
+    # > interest of correctness, implicit special method lookup
+    # > generally also bypasses the __getattribute__() method
+    # > even of the object’s metaclass
+    # Ref: https://docs.python.org/3/reference/datamodel.html#special-method-lookup
+    def __len__(self):
+        langctx = get_langctx()
+        return langctx.compute_len(self)
+
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
         langctx = get_langctx()

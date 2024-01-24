@@ -269,6 +269,19 @@ def dim(a: TensorLike, /) -> int:
     return a.ndim
 
 
+# NOTE: Named `compute_len` so that it doesn't
+#       conflict with built-in `len`
+def compute_len(a: TensorLike, /) -> int:
+    if a.ndim == 0:
+        raise TypeError("len() of a 0-d tensor")
+    return a.shape[0]
+
+
+@torchsymbol(torch.is_floating_point, is_method=True)
+def is_floating_point(a: TensorLike, /) -> bool:
+    return dtypes.is_float_dtype(a.dtype)
+
+
 def size(a):
     def fn_(idx: int | None = None):
         if idx is None:

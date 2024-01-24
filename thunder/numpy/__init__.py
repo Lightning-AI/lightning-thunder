@@ -137,6 +137,12 @@ def numpy_symbol(fn):
 #
 
 
+# NOTE: Named `compute_len` so that it doesn't
+#       conflict with built-in `len`
+def compute_len(a: TensorProxy, /) -> int:
+    return a.shape[0]
+
+
 def size(a):
     return a.numel
 
