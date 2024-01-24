@@ -1679,7 +1679,6 @@ def test_simple_attribute():
     assert foo() == jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1940")
 def test_dunder_getattr():
     history = []
 
@@ -1713,7 +1712,6 @@ def test_dunder_getattribute():
     assert tuple(history) == ("__getattr__ False", "__getattr__ True")
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1940")
 def test_property():
     history = []
 
@@ -1746,7 +1744,6 @@ def test_property():
     history.clear()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1940")
 def test_property_with_setter():
     history = []
 

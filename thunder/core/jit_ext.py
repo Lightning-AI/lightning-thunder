@@ -13,7 +13,7 @@ from io import StringIO
 import time
 
 import torch
-from thunder.core.proxies import proxy, Proxy, TensorProxy, make_proxy_name, variableify, unvariableify
+from thunder.core.proxies import proxy, Proxy, StringProxy, TensorProxy, make_proxy_name, variableify, unvariableify
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
 from thunder.core.jit import (
     jit,
@@ -150,7 +150,7 @@ class LitCtx:
         if isinstance(val, torch.Tensor):
             return proxy(val, name=name, history=history)
 
-        raise NotImplementedError(f"Can't yet handle input {val} of type {type(val)}")
+        return proxy(val, name=name, history=history)
 
 
 _litctx = contextvars.ContextVar("litctx")
@@ -192,6 +192,22 @@ _lit_lookaside_map = {}
 _lit_lookaside_map.update(_torch_to_thunder_function_map)
 
 
+def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
+    assert type(name) in (str, StringProxy)
+    name = str(name)
+    getattr_lookaside = default_lookaside(getattr)
+    if getattr_lookaside is None:
+        getattr_lookaside = getattr
+    res = getattr_lookaside(obj, name, *maybe_default)
+    if not isinstance(res, Proxy):
+        ctx: LitCtx = get_litctx()
+        return ctx.proxify(res, name=name, history=(UNPACK_ACTION.FROM_GETATTR, name, obj))
+    return res
+
+
+_lit_lookaside_map[getattr] = _lit_getattr_lookaside
+
+
 # TODO Document this function (with steps)
 # TODO Implement safety --- UNSAFE, PERMISSIVE, SAFE
 def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
@@ -218,6 +234,8 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
 class UNPACK_ACTION(Enum):
     FROM_SIGNATURE = auto()
+    FROM_CLOSURE = auto()
+    FROM_GETATTR = auto()
 
 
 def _lit_local_callback(name: str, value: Any, /) -> Any:
@@ -225,11 +243,10 @@ def _lit_local_callback(name: str, value: Any, /) -> Any:
     return ctx.proxify(value, name=name, history=(UNPACK_ACTION.FROM_SIGNATURE, name))
 
 
-def _lit_freevar_callback(name: str, value: Any, /) -> Any:
+def _lit_freevar_callback(name: str, value: Any, /, *, fn: Callable, idx: int) -> Any:
     if not isinstance(value, Proxy):
-        raise NotImplementedError(
-            f"The thunder extension does not yet support non-proxy freevars, but encountered freevar '{name}' with {value=}"
-        )
+        ctx: LitCtx = get_litctx()
+        return ctx.proxify(value, name=name, history=(UNPACK_ACTION.FROM_CLOSURE, name, fn, idx))
     return value
 
 

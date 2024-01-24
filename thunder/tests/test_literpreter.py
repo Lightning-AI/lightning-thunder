@@ -29,13 +29,6 @@ def skipif_python_3_11_plus(f):
     return f
 
 
-# This test is just here to prevent pytest from complaining that it couldn't find any tests on Python 3.11
-#   This can be removed as soon as some tests are passing on 3.11
-def test_dummy():
-    pass
-
-
-@skipif_python_3_11_plus
 def test_binary_add_tensors():
     def foo(a, b):
         return a + b
@@ -51,7 +44,6 @@ def test_binary_add_tensors():
     assert_close(actual, expected)
 
 
-@skipif_python_3_11_plus
 def test_torch_add_tensors():
     def foo(a, b):
         return torch.add(a, b)
@@ -67,7 +59,6 @@ def test_torch_add_tensors():
     assert_close(actual, expected)
 
 
-@skipif_python_3_11_plus
 def test_torch_add_tensors_closure():
     def foo(a, b):
         c = a + b
@@ -88,7 +79,6 @@ def test_torch_add_tensors_closure():
     assert_close(actual, expected)
 
 
-@skipif_python_3_11_plus
 def test_intermediate_torch_operations():
     def foo(a, b):
         c = a + b
@@ -109,7 +99,6 @@ def test_intermediate_torch_operations():
     assert_close(actual, expected)
 
 
-@skipif_python_3_11_plus
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1933", raises=BaseException)
 def test_add_numbers():
     def foo(a, b):
@@ -129,7 +118,6 @@ def test_add_numbers():
 _test_add_global_global = 2
 
 
-@skipif_python_3_11_plus
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1935", raises=BaseException)
 def test_global_fails():
     def foo():
@@ -141,7 +129,6 @@ def test_global_fails():
         jfoo()
 
 
-@skipif_python_3_11_plus
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1936", raises=BaseException)
 def test_nonlocal_outside_interpreter_fails():
     def foo():

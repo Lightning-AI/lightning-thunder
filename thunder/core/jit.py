@@ -741,105 +741,105 @@ def exec_lookaside(
 _PROPERTY_ALIASES = {"__get__": "fget", "__set__": "fset", "__delete__": "fdel"}
 
 
-# def _object_getattribute_lookaside(obj: Any, name: str):
-#     """Implements the `object.__getattribute__` portion of `getattr`.
+def _object_getattribute_lookaside(obj: Any, name: str):
+    """Implements the `object.__getattribute__` portion of `getattr`.
 
-#     https://docs.python.org/3/howto/descriptor.html#invocation-from-an-instance
-#     """
-#     objtype = type(obj)
-#     null = cls_var = descr_get = object()
+    https://docs.python.org/3/howto/descriptor.html#invocation-from-an-instance
+    """
+    objtype = type(obj)
+    null = cls_var = descr_get = object()
 
-#     if type(name) is not str:
-#         return do_raise(TypeError("getattr(): attribute name must be string"))
+    if type(name) is not str:
+        return do_raise(TypeError("getattr(): attribute name must be string"))
 
-#     # TODO: classes and super have a slightly different resolution behavior
-#     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
-#     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
-#     if isinstance(obj, (type, super)):
-#         return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
+    # TODO: classes and super have a slightly different resolution behavior
+    #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
+    #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
+    if isinstance(obj, (type, super)):
+        return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
 
-#     # This is too coarse grained, but there is a lot of nuance in the dunder methods
-#     # for fundamental types, so for now we just bail out. Specifically:
-#     #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
-#     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
-#     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
-#     if DUNDER_PATTERN.match(name) or isinstance(obj, (type, super)):
-#         return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
+    # This is too coarse grained, but there is a lot of nuance in the dunder methods
+    # for fundamental types, so for now we just bail out. Specifically:
+    #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
+    #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
+    # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
+    if DUNDER_PATTERN.match(name) or isinstance(obj, (type, super)):
+        return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
 
-#     def lookup_descriptor_field(field_name):
-#         # Bypass the C portions of `property` so we don't break the `_jit` chain
-#         if type(cls_var) is property and (shortcut := _PROPERTY_ALIASES.get(field_name)):
-#             # `property` will define `__set__` / `__delete__` even if `fget` / `fdelete` are null
-#             # However in those cases we should not go through the data descriptor path.
-#             if (method := getattr(cls_var, shortcut)) is None:
-#                 return null
+    def lookup_descriptor_field(field_name):
+        # Bypass the C portions of `property` so we don't break the `_jit` chain
+        if type(cls_var) is property and (shortcut := _PROPERTY_ALIASES.get(field_name)):
+            # `property` will define `__set__` / `__delete__` even if `fget` / `fdelete` are null
+            # However in those cases we should not go through the data descriptor path.
+            if (method := getattr(cls_var, shortcut)) is None:
+                return null
 
-#             # We need to emulate a pure Python version of `property.__get__ / __set__ / __delete__`
-#             return lambda _, obj, __: method(obj)
-#         result = _jit(getattr, type(cls_var), field_name, null)
+            # We need to emulate a pure Python version of `property.__get__ / __set__ / __delete__`
+            return lambda _, obj, __: method(obj)
+        result = _jit(getattr, type(cls_var), field_name, null)
 
-#         # TODO: For now we can't handle custom `__getattr__`s which raise when we check for
-#         #       __get__, __set__, or __delete__.
-#         assert result is not JIT_SIGNALS.EXCEPTION_RAISED
-#         return result
+        # TODO: For now we can't handle custom `__getattr__`s which raise when we check for
+        #       __get__, __set__, or __delete__.
+        assert result is not JIT_SIGNALS.EXCEPTION_RAISED
+        return result
 
-#     # Check for class variables.
-#     for base in objtype.__mro__:
-#         if (cls_var := vars(base).get(name, null)) is not null:
-#             descr_get = lookup_descriptor_field("__get__")
-#             break
+    # Check for class variables.
+    for base in objtype.__mro__:
+        if (cls_var := vars(base).get(name, null)) is not null:
+            descr_get = lookup_descriptor_field("__get__")
+            break
 
-#     if descr_get is not null:
-#         assert cls_var is not null
-#         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
-#             assert callable(descr_get)
-#             return _jit(descr_get, cls_var, obj, objtype)
+    if descr_get is not null:
+        assert cls_var is not null
+        if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
+            assert callable(descr_get)
+            return _jit(descr_get, cls_var, obj, objtype)
 
-#     # NOTE: `__dict__` is somewhat special, since we can't look inside `__dict__` when we call `obj.__dict__`.
-#     #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
-#     #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
-#     #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
-#     if (obj_dict := _jit(getattr, obj, "__dict__", null)) is not null:
-#         assert isinstance(obj_dict, dict), obj_dict  # This should be enforced by `PyObject`
+    # NOTE: `__dict__` is somewhat special, since we can't look inside `__dict__` when we call `obj.__dict__`.
+    #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
+    #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
+    #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
+    if (obj_dict := _jit(getattr, obj, "__dict__", null)) is not null:
+        assert isinstance(obj_dict, dict), obj_dict  # This should be enforced by `PyObject`
 
-#         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
-#         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
-#         # attribute resolution.
-#         if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
-#             return instance_value
+        # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
+        # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
+        # attribute resolution.
+        if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
+            return instance_value
 
-#     if descr_get is not null:
-#         assert callable(descr_get)
-#         return _jit(descr_get, cls_var, obj, objtype)
+    if descr_get is not null:
+        assert callable(descr_get)
+        return _jit(descr_get, cls_var, obj, objtype)
 
-#     if cls_var is not null:
-#         return cls_var
+    if cls_var is not null:
+        return cls_var
 
-#     return do_raise(AttributeError(name))
+    return do_raise(AttributeError(name))
 
 
-# def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
-#     """Emulate slot_tp_getattr_hook()."""
+def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
+    """Emulate slot_tp_getattr_hook()."""
 
-#     result = _object_getattribute_lookaside(obj, name)
-#     ctx: JitRuntimeCtx = get_jitruntimectx()
+    result = _object_getattribute_lookaside(obj, name)
+    ctx: JitRuntimeCtx = get_jitruntimectx()
 
-#     # `__getattr__` is only triggered if `__getattribute__` fails.
-#     if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError):
-#         # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
-#         null = object()
-#         obj_getattr = getattr(obj, "__getattr__", null)
-#         if obj_getattr is not null:
-#             assert callable(obj_getattr)
-#             result = _jit(obj_getattr, name)
+    # `__getattr__` is only triggered if `__getattribute__` fails.
+    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError):
+        # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
+        null = object()
+        obj_getattr = getattr(obj, "__getattr__", null)
+        if obj_getattr is not null:
+            assert callable(obj_getattr)
+            result = _jit(obj_getattr, name)
 
-#     # And finally if all else fails apply the default. (If provided.)
-#     if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
-#         ctx.curexc = None
-#         (default,) = maybe_default
-#         return default
+    # And finally if all else fails apply the default. (If provided.)
+    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
+        ctx.curexc = None
+        (default,) = maybe_default
+        return default
 
-#     return result
+    return result
 
 
 def _globals_lookaside() -> dict[str, Any]:
@@ -1012,7 +1012,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     bool: _bool_lookaside,
     exec: exec_lookaside,
     eval: eval_lookaside,
-    # getattr: _getattr_lookaside,
+    getattr: _getattr_lookaside,
     globals: _globals_lookaside,
     iter: _iter_lookaside,
     len: _len_lookaside,
@@ -1065,7 +1065,7 @@ def local_callback(name: str, value: Any, /) -> Any:
     return cb(name, value)
 
 
-def freevar_callback(name: str, cell: CellType, /) -> CellType:
+def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) -> CellType:
     assert isinstance(name, str)
     assert isinstance(cell, CellType)
 
@@ -1075,7 +1075,7 @@ def freevar_callback(name: str, cell: CellType, /) -> CellType:
     if cb is None:
         return cell
 
-    contents: Any = cb(name, cell.cell_contents)
+    contents: Any = cb(name, cell.cell_contents, fn=fn, idx=idx)
     return CellType(contents)
 
 
@@ -2346,10 +2346,7 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: Co
     a = stack.pop()
     name: str = co.co_names[inst.arg]
 
-    def impl():
-        return getattr(a, name)
-
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _jit(getattr, a, name))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
@@ -3921,7 +3918,6 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     # in Thunder, we adopt the Python 3.11 way of allocating a single array for all localplus vars,
     #             but for 3.10 we do need to do the 3.10-style setting-up-at-entry here.
     localsplus: list[Any] = []
-
     if (3, 10) <= sys.version_info < (3, 11):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
@@ -3941,8 +3937,8 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         if code.co_freevars:
             assert fn.__closure__
             assert len(code.co_freevars) == len(fn.__closure__)
-            for name, value in zip(code.co_freevars, fn.__closure__):
-                local = freevar_callback(name, value)
+            for i, (name, value) in enumerate(zip(code.co_freevars, fn.__closure__)):
+                local = freevar_callback(name, value, fn=fn, idx=i)
                 localsplus.append(local)
         else:
             assert not fn.__closure__
@@ -3960,9 +3956,11 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         if code.co_freevars:
             assert fn.__closure__
             assert len(code.co_freevars) == len(fn.__closure__)
-            for name, value in zip(code.co_freevars, fn.__closure__):
-                local = freevar_callback(name, value)
+            for i, (name, value) in enumerate(zip(code.co_freevars, fn.__closure__)):
+                local = freevar_callback(name, value, fn=fn, idx=i)
                 localsplus.append(local)
+        else:
+            assert not fn.__closure__
     else:
         raise NotImplementedError(
             f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."

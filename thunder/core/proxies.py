@@ -154,6 +154,12 @@ class Proxy(VariableInterface, ProxyInterface):
         raise RuntimeError("Inplace operators are not supported.")
 
 
+class AnyProxy(Proxy):
+    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
+        super().__init__(name=name, history=history)
+        self._o = o
+
+
 class StringProxy(str, Proxy):
     def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
         return str.__new__(cls, s)
