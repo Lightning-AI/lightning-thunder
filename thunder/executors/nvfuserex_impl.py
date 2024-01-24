@@ -679,9 +679,16 @@ class nvFuserExecutor(FusionExecutor):
             region = Region(producers, consumers, bsyms)
 
             # Acquires the nv_enable_bookend compile option, which defaults to True
-            enable_bookend: None | bool = get_compile_option(
-                "nv_enable_bookend", "Whether to enable nvFuser's 'bookending' of metadata operations."
-            )
+            bookend_help = """
+nvFuser's 'bookending' heuristic tries to gather metadata operations---such as
+transpose, reshape, or view---into the beginning and ends of blocks that utilize
+nvFuser. By pushing these ops to the edges, they will get dropped by the nvFuser
+executor and picked up by other executors, such as Torch's eager mode, that will
+often just instantly return an alias. For some complicated cases (typically when
+the metadata operation is awkward enough to force the output tensor to be
+instantiated) this heuristic actually leads to worse code.
+"""
+            enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
             assert isinstance(enable_bookend, (NoneType, bool))
             enable_bookend = True if enable_bookend is None else enable_bookend
             if enable_bookend:
