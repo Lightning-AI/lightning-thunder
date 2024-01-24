@@ -134,6 +134,7 @@ class Symbol:
     _hash: int | None = None
     executor: None | Any = None
     python_impl: None | Callable = None
+    _print_as_impl: bool = False  # If not None, w
 
     # An optional postprocessing function to modify the bound symbol resulting from bind()
     _bind_postprocess: None | Callable = None
@@ -535,8 +536,12 @@ class BoundSymbol(BoundSymbolInterface):
         self._out_printables, self._arg_printables, self._kwarg_printables
         if self.sym is not None and self.sym.python_impl is not None:
             # NOTE BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
-            #   to not need any imports to run properly
-            import_ctx = {}
+            #   to not need any imports to run properly, unless _import_prims is True
+            if self.sym._print_as_impl:
+                module_name = self.sym.module.__name__
+                import_ctx = {module_name: self.sym.module}
+            else:
+                import_ctx = {}
         elif self._call_ctx is not None:
             # NOTE If the call ctx was specified directly, then no import is needed to call the function
             import_ctx = {}
@@ -571,7 +576,13 @@ class BoundSymbol(BoundSymbolInterface):
             return f"{self.sym.name}"
 
         module_name = codeutils.module_shortname(self.sym.module.__name__)
-        return f"{module_name}.{self.sym.name}"
+        fn_name = self.sym.name
+
+        # TODO There is almost certainly a better way to model this -- maybe by passing the
+        #   function?
+        if self.sym._print_as_impl:
+            fn_name = f"{fn_name}_impl"
+        return f"{module_name}.{fn_name}"
 
     def _get_call_ctx(self):
         return self._call_ctx if self._call_ctx is not None else {}

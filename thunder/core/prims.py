@@ -40,7 +40,8 @@ from thunder.core.langctx import langctx
 
 
 class PrimIDs(Enum):
-    # Unpacking and input acquiring prims
+    # Unpacking and input validation prims
+    ASSERT_TENSOR_METADATA = auto()
     PYTHON_VARS = auto()
     UNPACK_ATTR = auto()
     UNPACK_EMPTY_DICT = auto()
@@ -203,6 +204,7 @@ def make_prim(
     python_impl: None | Callable = None,
     _bind_postprocess: None | Callable = None,
     tags: None | Sequence[OpTags] = None,
+    _print_as_impl: bool = False,
 ):
     sym = Symbol(
         name=name,
@@ -213,13 +215,37 @@ def make_prim(
         python_printer=python_printer,
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
+        _print_as_impl=_print_as_impl,
     )
     return sym
 
 
 #
-# Unpacking prims
+# Unpacking and input validation prims
 #
+
+
+# TODO Add a tag for these assertions
+# TODO Review performance (comparisons and string construction)
+# TODO Constrain on device and dtype, too -- requires translating to torch devices and dtypes and comparing for equality
+def assert_tensor_metadata_impl(t: torch.Tensor, /, rank: int) -> None:
+    if t.ndim == rank:
+        return
+
+    raise AssertionError(f"Tensor with rank {t.ndim} was expected to have rank {rank}")
+
+
+def assert_tensor_metadata_meta(t: TensorProxy, /, rank: int) -> None:
+    return
+
+
+assert_tensor_metadata = make_prim(
+    PrimIDs.ASSERT_TENSOR_METADATA,
+    "assert_tensor_metadata",
+    meta=assert_tensor_metadata_meta,
+    python_impl=assert_tensor_metadata_impl,
+    _print_as_impl=True,
+)
 
 
 def python_vars_impl(arg: None | str = None, /) -> dict:

@@ -93,6 +93,7 @@ class CompileStats:
 
         # Cache stats
         self.cache = {}
+        self.interpreter_cache: list = []
         self.calls: int = 0
         self.cache_hits: int = 0
         self.cache_misses: int = 0

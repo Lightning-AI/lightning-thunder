@@ -266,7 +266,16 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
 
+        # TODO Implement distinct cache modes
         # TODO Caching goes here
+        for prologue, computation in cs.interpreter_cache:
+            try:
+                inps = prologue(*args, **kwargs)
+                cs.cache_hits += 1
+                return computation(*inps)
+            except Exception as ex:
+                pass
+        cs.cache_misses += 1
 
         # Currently executes the program eagerly as a placeholder
         jfn: Callable
@@ -332,6 +341,14 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             action, *args = p.history
             d[action](*args)
             already_unpacked.add(v)
+
+            # Adds cache constraints
+            # TODO Consider refactoring these contraints
+            # TODO Constrain on rank, device, and dtype
+            if isinstance(p, TensorProxy):
+                with tracectx(prologue_trc):
+                    prims.assert_tensor_metadata(p, p.ndim)
+
             return p
 
         v: Variable
@@ -381,7 +398,8 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         computation_result = c(*pro(*args, **kwargs))
         cs.last_trace_host_execution_stop = time.time_ns()
 
-        # TODO Update cache
+        # Updates the cache
+        cs.interpreter_cache.append((pro, c))
 
         # Updates metadata
         # TODO What should the last_traces be in this case?

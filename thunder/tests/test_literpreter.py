@@ -99,6 +99,34 @@ def test_intermediate_torch_operations():
     assert_close(actual, expected)
 
 
+def test_cache_basic():
+    def foo(a, b):
+        return a + b
+
+    jfoo = litjit(foo)
+
+    a = torch.randn((2, 2), device="cpu")
+    b = torch.randn((2, 2), device="cpu")
+
+    jfoo(a, b)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    jfoo(a, b)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    a = torch.randn((2), device="cpu")
+
+    jfoo(a, b)
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    jfoo(a, b)
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1933", raises=BaseException)
 def test_add_numbers():
     def foo(a, b):
