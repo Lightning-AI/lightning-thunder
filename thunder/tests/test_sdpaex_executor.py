@@ -59,18 +59,32 @@ def test_sdpa_autocast_flash():
     # Verifies the result is close to PyTorch
     for autocast_dtype in (torch.bfloat16, torch.float16):
         with torch.cuda.amp.autocast(dtype=autocast_dtype):
-            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
-                thunder_result = cfn(q, k, v)
-                torch_result = fn(q, k, v)
-                assert thunder_result.dtype == torch_result.dtype
-                torch.testing.assert_close(thunder_result, torch_result)
+            # NOTE The new context manager torch.nn.attention.sdpa_kernel takes
+            # an opt-in approach. Any backends not included in the arguments
+            # list are disabled within the context and restored when exiting context.
+            # For example, in this case, we would use:
+            # torch.nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION)
 
-                # Verifies sdpa was called
-                extrace = thunder.last_traces(cfn)[-1]
-                assert any(
-                    bsym.sym.name == "sdpafx_grad_forward_scaled_dot_product_efficient_attention"
-                    for bsym in extrace.bound_symbols
-                )
+            # Only use flash attention in this test
+            torch.backends.cuda.enable_flash_sdp(True)
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
+            torch.backends.cuda.enable_math_sdp(False)
+
+            thunder_result = cfn(q, k, v)
+            torch_result = fn(q, k, v)
+            assert thunder_result.dtype == torch_result.dtype
+            torch.testing.assert_close(thunder_result, torch_result)
+
+            # Verifies sdpa was called
+            extrace = thunder.last_traces(cfn)[-1]
+            assert any(
+                bsym.sym.name == "sdpafx_grad_forward_scaled_dot_product_efficient_attention"
+                for bsym in extrace.bound_symbols
+            )
+
+            # Enable memory efficient and math backends
+            torch.backends.cuda.enable_mem_efficient_sdp(True)
+            torch.backends.cuda.enable_math_sdp(True)
 
 
 def snippet_torch_consistency(op, torch_op, sample):
