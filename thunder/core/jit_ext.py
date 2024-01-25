@@ -347,7 +347,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             # TODO Constrain on rank, device, and dtype
             if isinstance(p, TensorProxy):
                 with tracectx(prologue_trc):
-                    prims.assert_tensor_metadata(p, p.ndim)
+                    prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
 
             return p
 

@@ -224,18 +224,68 @@ def make_prim(
 # Unpacking and input validation prims
 #
 
+# TODO Refactor this so it's not redundantly implemented in torch/__init__.py
+_thunder_to_torch_dtype_map = {
+    bool: torch.bool,
+    int: torch.int32,
+    float: torch.float32,
+    complex: torch.complex64,
+    dtypes.bool8_: torch.bool,
+    dtypes.bool8: torch.bool,
+    dtypes.uint8_: torch.uint8,
+    dtypes.uint8: torch.uint8,
+    dtypes.int8_: torch.int8,
+    dtypes.int8: torch.int8,
+    dtypes.int16_: torch.int16,
+    dtypes.int16: torch.int16,
+    dtypes.int32_: torch.int32,
+    dtypes.int32: torch.int32,
+    dtypes.int64_: torch.int64,
+    dtypes.int64: torch.int64,
+    dtypes.bfloat16_: torch.bfloat16,
+    dtypes.bfloat16: torch.bfloat16,
+    dtypes.float16_: torch.float16,
+    dtypes.float16: torch.float16,
+    dtypes.float32_: torch.float32,
+    dtypes.float32: torch.float32,
+    dtypes.float64_: torch.float64,
+    dtypes.float64: torch.float64,
+    dtypes.complex32_: torch.complex32,
+    dtypes.complex32: torch.complex32,
+    dtypes.complex64_: torch.complex64,
+    dtypes.complex64: torch.complex64,
+    dtypes.complex128_: torch.complex128,
+    dtypes.complex128: torch.complex128,
+}
+
 
 # TODO Add a tag for these assertions
 # TODO Review performance (comparisons and string construction)
-# TODO Constrain on device and dtype, too -- requires translating to torch devices and dtypes and comparing for equality
-def assert_tensor_metadata_impl(t: torch.Tensor, /, rank: int) -> None:
-    if t.ndim == rank:
+# TODO Change shape check into a rank check once constraints are generated on dimension lengths separately
+# TODO The conversions to torch devices and dtypes could be done at compile time instead of runtime
+# Checks type, shape, device, and dtype
+def assert_tensor_metadata_impl(
+    t: torch.Tensor, /, shape: tuple[int], device: devices.Device, dtype: dtypes.dtype, requires_grad: bool
+) -> None:
+    dtype = _thunder_to_torch_dtype_map[dtype]
+
+    if (
+        type(t) is torch.Tensor
+        and tuple(t.shape) == shape
+        and str(t.device) == str(device)
+        and t.dtype == dtype
+        and t.requires_grad == requires_grad
+    ):
         return
 
-    raise AssertionError(f"Tensor with rank {t.ndim} was expected to have rank {rank}")
+    raise AssertionError(
+        f"Object had unexpected metadata. Expected type {type}, shape {shape}, device {str(device)}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
+    )
 
 
-def assert_tensor_metadata_meta(t: TensorProxy, /, rank: int) -> None:
+def assert_tensor_metadata_meta(
+    t: torch.Tensor, /, shape: tuple[int], device: devices.Device, dtype: dtypes.dtype, requires_grad: bool
+) -> None:
     return
 
 

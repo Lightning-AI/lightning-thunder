@@ -108,23 +108,64 @@ def test_cache_basic():
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
 
-    jfoo(a, b)
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 0
 
-    jfoo(a, b)
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 1
 
+    # Tests rank changing
     a = torch.randn((2), device="cpu")
 
-    jfoo(a, b)
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
     assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 1
 
-    jfoo(a, b)
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
     assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 2
+
+    # Tests dtype changing
+    a = torch.randn((2, 2), device="cpu", dtype=torch.bfloat16)
+    b = torch.randn((2, 2), device="cpu", dtype=torch.bfloat16)
+
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 2
+
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 3
+
+    # Tests shape changing
+    a = torch.randn((2, 1), device="cpu", dtype=torch.bfloat16)
+    b = torch.randn((2, 1), device="cpu", dtype=torch.bfloat16)
+
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 4
+    assert thunder.cache_hits(jfoo) == 3
+
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 4
+    assert thunder.cache_hits(jfoo) == 4
 
 
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1933", raises=BaseException)
