@@ -79,6 +79,27 @@ def test_torch_add_tensors_closure():
     assert_close(actual, expected)
 
 
+def test_torch_add_tensors_closure_external():
+    a = torch.randn((2, 2), device="cpu")
+    b = torch.randn((2, 2), device="cpu")
+
+    def bar(b):
+        return torch.add(a, b)
+
+    def foo():
+        bar(b)
+
+    jbar = litjit(bar)
+    actual = jbar(b)
+    expected = bar(b)
+    assert_close(actual, expected)
+
+    jfoo = litjit(foo)
+    actual = jfoo()
+    expected = foo()
+    assert_close(actual, expected)
+
+
 def test_intermediate_torch_operations():
     def foo(a, b):
         c = a + b

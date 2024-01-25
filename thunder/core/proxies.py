@@ -154,6 +154,10 @@ class Proxy(VariableInterface, ProxyInterface):
         raise RuntimeError("Inplace operators are not supported.")
 
 
+# This is a proxy for anything not covered by more type-specific proxies.
+# We do need this within the litjit to track history but differs from the other
+# proxies in that we do not try as much to mimick the proxied object as
+# for the other proxies.
 class AnyProxy(Proxy):
     def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
         super().__init__(name=name, history=history)

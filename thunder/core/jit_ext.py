@@ -192,9 +192,9 @@ _lit_lookaside_map = {}
 _lit_lookaside_map.update(_torch_to_thunder_function_map)
 
 
+# lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
+# rely on the default JIT getattr lookaside (as returned from default_lookaside).
 def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
-    assert type(name) in (str, StringProxy)
-    name = str(name)
     getattr_lookaside = default_lookaside(getattr)
     if getattr_lookaside is None:
         getattr_lookaside = getattr
@@ -334,8 +334,24 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 bsym = prims.unpack_trivial.bind(p, output=p)
                 prologue_trc.bound_symbols.append(bsym)
 
+            def from_closure(name: str, fn: Callable, idx: int):
+                # if fn is the function being compiled, we need to acquire it,
+                # else it will come from our scope and be available
+                if fn == cd.fn:
+                    bsym_fn = prims.unpack_function_obj.bind(fn, output=fn)
+                    prologue_trc.bound_symbols.append(bsym_fn)
+                bsym_closure = prims.unpack_attr.bind(fn, "__closure__", output=fn.__closure__)
+                prologue_trc.bound_symbols.append(bsym_closure)
+                bsym = prims.unpack_attr.bind(fn.__closure__[idx], "cell_contents", output=p)
+                prologue_trc.bound_symbols.append(bsym)
+
+            def from_getattr(name: str, obj: Any):
+                raise NotImplementedError("unpacking from getattr")
+
             d = {
                 UNPACK_ACTION.FROM_SIGNATURE: from_signature,
+                UNPACK_ACTION.FROM_CLOSURE: from_closure,
+                UNPACK_ACTION.FROM_GETATTR: from_getattr,
             }
 
             action, *args = p.history

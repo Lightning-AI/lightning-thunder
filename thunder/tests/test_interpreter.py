@@ -1663,6 +1663,18 @@ def test_builtin_getattr():
     assert x.__add__ == jit(getattr)(x, "__add__")
 
 
+def test_builtin_getattr_str_subclass():
+    x = 5
+
+    class S(str):
+        pass
+
+    s = S("__add__")
+    add1 = getattr(x, s)
+    add2 = jit(getattr)(x, s)
+    assert add1 == add2
+
+
 def test_simple_attribute():
     class SimpleNamespace:
         x: int

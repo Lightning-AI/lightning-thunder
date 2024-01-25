@@ -43,6 +43,7 @@ class PrimIDs(Enum):
     # Unpacking and input validation prims
     ASSERT_TENSOR_METADATA = auto()
     PYTHON_VARS = auto()
+    UNPACK_FUNCTION_OBJ = auto()
     UNPACK_ATTR = auto()
     UNPACK_EMPTY_DICT = auto()
     UNPACK_ITER = auto()
@@ -384,6 +385,33 @@ def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
     return _collectify(x, name=name)
 
 
+def unpack_function_obj_impl(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_function_obj_meta(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_function_obj_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 0,
+        lambda: f"Expected zero arguments for unpack_trivial but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) <= 1,
+        lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    s = f"{result_str} = globals()['__function_obj']"
+    return s
+
+
 def unpack_trivial_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ) -> str:
@@ -414,6 +442,16 @@ unpack_trivial = make_prim(
     meta=unpack_trivial_meta,
     python_printer=unpack_trivial_printer,
     python_impl=unpack_trivial_impl,
+    _bind_postprocess=_unpack_trivial_bind_postprocess,
+)
+
+
+unpack_function_obj = make_prim(
+    PrimIDs.UNPACK_FUNCTION_OBJ,
+    "unpack_function_obj",
+    meta=unpack_function_obj_meta,
+    python_printer=unpack_function_obj_printer,
+    python_impl=unpack_function_obj_impl,
     _bind_postprocess=_unpack_trivial_bind_postprocess,
 )
 

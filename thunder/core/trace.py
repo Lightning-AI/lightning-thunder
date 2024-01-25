@@ -406,6 +406,7 @@ class TraceCtx:
         ctx = self.python_ctx()
         if global_dicts is not None:
             ctx["__global_dicts"] = global_dicts
+        ctx["__function_obj"] = self.fn
 
         callable = baseutils.compile_and_exec(
             self.siginfo().name, python_str=python_str, program_name="LC.gen", ctx=ctx

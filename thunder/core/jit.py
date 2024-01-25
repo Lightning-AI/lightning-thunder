@@ -765,7 +765,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     objtype = type(obj)
     null = cls_var = descr_get = object()
 
-    if type(name) is not str:
+    if not isinstance(name, str):
         return do_raise(TypeError("getattr(): attribute name must be string"))
 
     # TODO: classes and super have a slightly different resolution behavior
@@ -1061,7 +1061,7 @@ class JIT_CALLBACKS(enum.Enum):
     LOCAL_CALLBACK = enum.auto()
 
     # Called when a freevar is created
-    #   (name: str, value: Any, /) -> Any
+    #   (name: str, value: Any, /, * fn: Callable, idx: int) -> Any
     #   The returned value is used in place of the original value
     FREEVAR_CALLBACK = enum.auto()
 
