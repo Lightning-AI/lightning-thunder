@@ -168,6 +168,25 @@ def test_cache_basic():
     assert thunder.cache_hits(jfoo) == 4
 
 
+def test_cache_always_trace():
+    def foo(a, b):
+        return a + b
+
+    jfoo = litjit(foo, cache_mode="always trace")
+
+    a = torch.randn((2, 2), device="cpu")
+    b = torch.randn((2, 2), device="cpu")
+
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    actual = jfoo(a, b)
+    actual = jfoo(a, b)
+    actual = jfoo(a, b)
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 0
+    assert thunder.cache_hits(jfoo) == 0
+
+
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1933", raises=BaseException)
 def test_add_numbers():
     def foo(a, b):

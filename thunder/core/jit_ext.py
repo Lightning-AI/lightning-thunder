@@ -33,7 +33,7 @@ from thunder.core.jit import (
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution
+from thunder.common import transform_for_execution, CACHE_MODES
 from thunder.core.symbol import Symbol, BoundSymbol
 
 from thunder.extend import Executor
@@ -267,15 +267,15 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         cs.calls += 1
 
         # TODO Implement distinct cache modes
-        # TODO Caching goes here
-        for prologue, computation in cs.interpreter_cache:
-            try:
-                inps = prologue(*args, **kwargs)
-                cs.cache_hits += 1
-                return computation(*inps)
-            except Exception as ex:
-                pass
-        cs.cache_misses += 1
+        if cd.cache_mode is not CACHE_MODES.ALWAYS_TRACE:
+            for prologue, computation in cs.interpreter_cache:
+                try:
+                    inps = prologue(*args, **kwargs)
+                    cs.cache_hits += 1
+                    return computation(*inps)
+                except Exception as ex:
+                    pass
+            cs.cache_misses += 1
 
         # Currently executes the program eagerly as a placeholder
         jfn: Callable
@@ -399,7 +399,8 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         cs.last_trace_host_execution_stop = time.time_ns()
 
         # Updates the cache
-        cs.interpreter_cache.append((pro, c))
+        if cd.cache_mode is not CACHE_MODES.ALWAYS_TRACE:
+            cs.interpreter_cache.append((pro, c))
 
         # Updates metadata
         # TODO What should the last_traces be in this case?
@@ -420,13 +421,17 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 # NOTE This is an analogue to lit.compile, because how it handles trace generation
 #   is sufficiently distinct that merging the two would be quite tricky
 def litjit(
-    fn: Callable, executors_list: None | Sequence[Executor] = None, debug_log: None | StringIO = None
+    fn: Callable,
+    /,
+    executors_list: None | Sequence[Executor] = None,
+    debug_log: None | StringIO = None,
+    cache_mode: str | CACHE_MODES = None,
 ) -> Callable:
     cd = CompileData(
         fn=fn,
         langctx=None,
         executors_list=executors_list,
-        cache_mode=None,
+        cache_mode=cache_mode,
         use_cudagraphs=False,
         use_torch_compile=False,
         disable_torch_autograd_support=True,
