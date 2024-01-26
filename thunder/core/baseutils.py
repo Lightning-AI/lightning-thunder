@@ -2,6 +2,9 @@
 #   This feature is available in Python 3.7 and later.
 #   This import (like all __future__ imports) must be at the beginning of the file.
 from __future__ import annotations
+from enum import Enum
+import functools
+import os
 
 import sys
 import collections.abc
@@ -9,7 +12,7 @@ from numbers import Number
 from typing import Any, Type, Union, Optional, Tuple, List
 from collections.abc import Callable
 from collections.abc import Sequence
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 import re
 import inspect
 
@@ -242,3 +245,103 @@ def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict
         raise e
     finally:
         _exec_ctr += 1
+
+
+#
+# Other utility functions without dependencies on the rest of the codebase
+#
+
+
+class TermColors(Enum):
+    BLACK = "\033[90m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    WHITE = "\033[97m"
+    RESET = "\033[0m"
+
+
+def run_once(f: Callable[[], Any]) -> Callable[[], Any]:
+    """
+    Wraps a function with no arguments so that it caches the output and only runs once.
+    This is similar to functools.cache, but unlike the standard wrapper does not cache the arguments,
+    and provides a strong guarantee that the function will only be run once.
+    """
+
+    def wrapper(*args, **kwargs):
+        if not wrapper._has_run:
+            wrapper._result = f(*args, **kwargs)
+            wrapper._has_run = True
+            return wrapper._result
+        else:
+            return wrapper._result
+
+    wrapper._has_run = False
+    wrapper._result = None
+    return wrapper
+
+
+supported_terms = ["ansi", "linux", "cygwin", "screen", "eterm", "konsole", "rxvt", "kitty", "tmux"]
+startswith_terms = ["vt1", "vt2", "xterm"]
+
+
+@run_once
+def warn_term_variable_once() -> None:
+    import warnings
+
+    warnings.warn(
+        f"Could not determine the terminal type, terminal colors are disabled. To enable colors, set the TERM environment variable to a supported value.{os.sep}"
+        f"Supported values are: {supported_terms}{os.sep}"
+        f"Or any value starting with: {startswith_terms}{os.sep}"
+        f"To disable this message, set TERM to 'dumb'."
+    )
+
+
+@run_once
+def init_windows_terminal() -> None:
+    """Initializes the Windows terminal to support ANSI colors by calling the command processor."""
+    os.system("")
+
+
+@functools.cache
+def init_colors(force_enable: bool | None = None) -> dict[str, str]:
+    """
+    Returns a dictionary mapping color names to the sequences required to switch to that color.
+    See TermColors for the list of color names.
+
+    If force_enable is None or not specified, then we attempt to discern if the environment supports colors.
+    If force_enable is True, then we return the sequences anyway, even if we detect it is not supported.
+    If force_enable is False, then we return empty strings for the colors.
+
+    Regardless of the value of force_enable, if the TERM environment variable is set to 'dumb', we return empty strings for the colors.
+    """
+
+    windows = os.name == "nt"
+    windows_terminal = windows and (os.environ.get("WT_SESSION", False) is False)
+    term = os.environ.get("TERM", None)
+
+    # Check if colors should be enabled
+    if term == "dumb":
+        colors_enabled = False
+    elif force_enable is None:
+        if windows_terminal:
+            colors_enabled = True
+        elif term is None:
+            colors_enabled = False
+            warn_term_variable_once()
+        elif term not in supported_terms and not any(term.startswith(t) for t in startswith_terms):
+            colors_enabled = False
+            warn_term_variable_once()
+        else:  # Terminal supported
+            colors_enabled = True
+    else:
+        colors_enabled = force_enable
+
+    # Do initialization for windows terminal (and potentially other terminals on windows that go through it)
+    if colors_enabled and windows:
+        init_windows_terminal()
+
+    return {k.name: k.value if colors_enabled else "" for k in TermColors}
