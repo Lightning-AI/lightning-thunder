@@ -173,6 +173,42 @@ def thunder_fwd(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
+# TODO Actually return the fwd, currently just requires computation
+# by making the fwd equal to the grad
+def thunder_value_and_grad_transform(b: Benchmark, compile_fn: Callable):
+    module: torch.nn.Module = b.fn()
+    cfn = compile_fn(module)
+
+    # Note on grad_specifier:
+    # requires the function output actually be computed to compute the grad
+    def grad_specifier(outs):
+        if not isinstance(outs, Sequence):
+            outs = (outs,)
+
+        for out in outs:
+            put_grad(out, out)
+
+    cfn_grad = grad(cfn, grad_specifier=grad_specifier)
+
+    if isinstance(module, torch.nn.Sequential):
+
+        @wraps(cfn_grad)
+        def wrapper(*args):
+            clear_grads(cfn)
+            grads = cfn_grad(args)
+            populate_grads(grads, cfn, args=args)
+
+        return wrapper
+
+    @wraps(cfn_grad)
+    def wrapper(*args, **kwargs):
+        clear_grads(cfn)
+        grads = cfn_grad(*args, **kwargs)
+        populate_grads(grads, cfn, args=args, kwargs=kwargs)
+
+    return wrapper
+
+
 def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
@@ -256,17 +292,22 @@ torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executo
 # Executing with just PyTorch
 thunder_torch_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_executor)
 thunder_torch_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_executor)
+thunder_torch_value_and_grad = partial(thunder_value_and_grad_transform, compile_fn=thunder_torch_executor)
 
 # Default thunder configs
 thunder_fwd = partial(thunder_fwd, compile_fn=thunder_executor)
 thunder_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=thunder_executor)
 thunder_grad = partial(thunder_grad_transform, compile_fn=thunder_executor)
 thunder_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_executor)
+thunder_value_and_grad = partial(thunder_value_and_grad_transform, compile_fn=thunder_executor)
 
 # Executing with torchcompile
 thunder_torchcompile_fwd = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
 thunder_torchcompile_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
 thunder_torchcompile_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
+thunder_torchcompile_value_and_grad = partial(
+    thunder_value_and_grad_transform, compile_fn=thunder_torch_compile_executor
+)
 
 # Executing with just the sdpa executor
 thunder_sdpa_grad = partial(thunder_grad_transform, compile_fn=thunder_sdpa_executor)
@@ -318,8 +359,10 @@ grad_executors = (
     thunder_grad,
     thunder_gradv1,
     thunder_fwd_bwd,
+    thunder_value_and_grad,
     thunder_torchcompile_grad,
     thunder_torchcompile_gradv1,
+    thunder_torchcompile_value_and_grad,
 )
 grad_executors_ids = (
     "torch",
@@ -327,8 +370,10 @@ grad_executors_ids = (
     "thunder-grad",
     "thunder-gradv1",
     "thunder-fwd-bwd",
+    "thunder-value-and-grad",
     "thunder+torchcompile-grad",
     "thunder+torchcompile-gradv1",
+    "thunder+torchcompile-value-and-grad",
 )
 
 apex_grad_executors = (thunder_apex_grad, thunder_apex_nvfuser_grad)
