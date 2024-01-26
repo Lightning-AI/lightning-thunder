@@ -208,20 +208,47 @@ def test_cache_always_trace():
     assert thunder.cache_hits(jfoo) == 0
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1933", raises=BaseException)
 def test_add_numbers():
+    def foo(a, b):
+        return torch.add(a, b)
+
+    jfoo = litjit(foo)
+
+    # TODO Add test for bool
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1990
+    cases = (
+        (2, 3),
+        (2.1, 3.4),
+        (complex(1, 1), complex(-1, 2)),
+    )
+
+    for a, b in cases:
+        actual = jfoo(a, b)
+        expected = a + b
+
+        assert_close(actual, expected)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1989")
+def test_binary_add_numbers():
     def foo(a, b):
         return a + b
 
     jfoo = litjit(foo)
 
-    a = 2
-    b = 3
+    # TODO Add test for bool
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1990
+    cases = (
+        (2, 3),
+        (2.1, 3.4),
+        (complex(1, 1), complex(-1, 2)),
+    )
 
-    actual = jfoo(a, b)
-    expected = foo(a, b)
+    for a, b in cases:
+        actual = jfoo(a, b)
+        expected = foo(a, b)
 
-    assert_close(actual, expected)
+        assert_close(actual, expected)
 
 
 _test_add_global_global = 2

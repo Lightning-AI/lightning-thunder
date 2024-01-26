@@ -191,11 +191,13 @@ class CollectionProxy(Proxy):
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
-    def __init__(self, name: str | None = None, value: Number | None = None, *, python_type: type):
+    def __init__(
+        self, name: str | None = None, value: Number | None = None, *, python_type: type, history: None | tuple = None
+    ):
         self.value = value
         self.python_type = python_type
 
-        Proxy.__init__(self, name)
+        Proxy.__init__(self, name, history=history)
 
     # NOTE: Python numbers hash to themselves, and this mimics that behavior
     def __hash__(self) -> int:
@@ -472,14 +474,14 @@ def pytype(x: NumberProxy | Number) -> type:
 
 
 class ComplexProxy(NumberProxy, complex):
-    def __new__(cls, *, name=None, value):
+    def __new__(cls, *, name=None, value, history: None | tuple = None):
         if value is None:
             value = complex(float("nan"), float("nan"))
 
         return complex.__new__(cls, value)
 
-    def __init__(self, name=None, value=None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex)
+    def __init__(self, name=None, value=None, history: None | tuple = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -493,16 +495,16 @@ class ComplexProxy(NumberProxy, complex):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy, int):
-    def __new__(cls, *, name: str | None = None, value: Number):
+    def __new__(cls, *, name: str | None = None, value: Number, history: None | tuple = None):
         if value is None:
             value = -9999
 
         return int.__new__(cls, value)
 
-    def __init__(self, name: str | None = None, value=None):
+    def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type)
+        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -521,14 +523,14 @@ class IntegerProxy(NumberProxy, int):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy, float):
-    def __new__(cls, *, name=None, value):
+    def __new__(cls, *, name=None, value, history: None | tuple = None):
         if value is None:
             value = float("nan")
 
         return float.__new__(cls, value)
 
-    def __init__(self, name=None, value=None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float)
+    def __init__(self, name=None, value=None, history: None | tuple = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -1068,7 +1070,7 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         if isinstance(x, float):
             return FloatProxy(name=name, value=x)
         if isinstance(x, int):
-            return IntegerProxy(name=name, value=x)
+            return IntegerProxy(name=name, value=x, history=history)
 
         raise NotImplementedError
 
