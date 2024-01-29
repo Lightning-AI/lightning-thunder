@@ -3259,7 +3259,9 @@ def reshape_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     reversible_cases = (
-        ((4,), (4,)),
+        ((4,), (4,)),  # no-op
+        ((2, 2), (2, 2)),  # no-op
+        ((1, 2, 1), (1, 2, 1)),  # no-op
         ((2, 2, 2), (4, 2)),
         ((125,), (25, 5)),
         ((25, 25), (1, 5, 5, 1, 5, 1, 5, 1)),

@@ -805,6 +805,12 @@ def pad(input: TensorProxy, padding_value: TensorProxy, padding_config: Sequence
 #   should be inferred
 @clang_ctx
 def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
+    # Short-circuit on a no-op reshape.
+    # Useful to produce simpler traces for complex decompositions
+    # like einsum, for example.
+    if a.shape == tuple(shape):
+        return a
+
     # Checks for -1 marker value
     numel = 1
     neg_one_idx = None
@@ -825,9 +831,10 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
     remaining = a.numel // numel
     shape = list(shape)
     shape[neg_one_idx] = remaining
+    shape = tuple(shape)
     # NOTE alternatively a new tuple could be constructed as follows:
     # shape = shape[:neg_one_idx] + (remaining,) + shape[neg_one_idx + 1:]
-    return prims.reshape(a, tuple(shape))
+    return prims.reshape(a, shape)
 
 
 # https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.slice_in_dim.html
