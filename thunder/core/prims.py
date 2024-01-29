@@ -42,6 +42,7 @@ from thunder.core.langctx import langctx
 class PrimIDs(Enum):
     # Unpacking and input validation prims
     ASSERT_TENSOR_METADATA = auto()
+    ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
     UNPACK_FUNCTION_OBJ = auto()
     UNPACK_ATTR = auto()
@@ -271,7 +272,7 @@ def assert_tensor_metadata_impl(
     dtype = _thunder_to_torch_dtype_map[dtype]
 
     if (
-        type(t) is torch.Tensor
+        type(t) in (torch.Tensor, torch.nn.Parameter)
         and tuple(t.shape) == shape
         and str(t.device) == str(device)
         and t.dtype == dtype
@@ -280,7 +281,7 @@ def assert_tensor_metadata_impl(
         return
 
     raise AssertionError(
-        f"Object had unexpected metadata. Expected type {type}, shape {shape}, device {str(device)}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
+        f"Object had unexpected metadata. Expected type Tensor/nn.Parameter (without subclass), shape {shape}, device {str(device)}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
     )
 
 
@@ -295,6 +296,34 @@ assert_tensor_metadata = make_prim(
     "assert_tensor_metadata",
     meta=assert_tensor_metadata_meta,
     python_impl=assert_tensor_metadata_impl,
+    _print_as_impl=True,
+)
+
+
+# TODO: Or maybe assert op to include comparisons?
+def assert_compare_impl(v: Any, /, op: str, other: Any) -> None:
+    cmp_impls = {
+        "<": lambda x, y: x < y,
+        "<=": lambda x, y: x <= y,
+        "==": lambda x, y: x == y,
+        "!=": lambda x, y: x != y,
+        ">": lambda x, y: x > y,
+        ">=": lambda x, y: x >= y,
+    }
+    if cmp_impls[op](v, other):
+        return
+    raise AssertionError(f"Comparison constraint violated: {v} {op} {other}")
+
+
+def assert_compare_meta(v: Any, /, op: str, other: Any) -> None:
+    return
+
+
+assert_compare = make_prim(
+    PrimIDs.ASSERT_COMPARE,
+    "assert_compare",
+    meta=assert_compare_meta,
+    python_impl=assert_compare_impl,
     _print_as_impl=True,
 )
 

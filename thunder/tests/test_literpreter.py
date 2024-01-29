@@ -208,6 +208,77 @@ def test_cache_always_trace():
     assert thunder.cache_hits(jfoo) == 0
 
 
+def test_cache_equality_contraint():
+    x, y = torch.randn(2, 2)
+
+    def fn(b):
+        if b:
+            return x
+        else:
+            return y
+
+    jfn = litjit(fn)
+
+    assert_close(fn(True), jfn(True))
+    assert_close(fn(False), jfn(False))
+
+    assert thunder.cache_misses(jfn) == 2
+    assert thunder.cache_hits(jfn) == 0
+
+    assert_close(fn(True), jfn(True))
+    assert_close(fn(False), jfn(False))
+
+    assert thunder.cache_misses(jfn) == 2
+    assert thunder.cache_hits(jfn) == 2
+
+
+def test_nn_parameter():
+    a = torch.nn.Parameter(torch.randn(2, 3))
+    b = torch.tensor(2)
+
+    def fn(a):
+        return b * a
+
+    jfn = litjit(fn)
+
+    expected = fn(a)
+    actual = jfn(a)
+    assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1982", raises=BaseException)
+def test_nn_module():
+    m = torch.nn.Linear(3, 4)
+    m2 = torch.nn.Sequential(
+        torch.nn.Linear(3, 4),
+        torch.nn.Linear(4, 3),
+    )
+
+    a = torch.randn(2, 3)
+
+    def fn(a):
+        return m(a)
+
+    def fn2(a):
+        return m2(a)
+
+    jfn = litjit(fn)
+    expected = fn(a)
+    actual = jfn(a)
+    assert_close(expected, actual)
+
+    jfn = litjit(fn2)
+    expected = fn2(a)
+    actual = jfn(a)
+    assert_close(expected, actual)
+
+    jm = litjit(m.__call__)
+
+    expected = m(a)
+    actual = jm(a)
+    assert_close(expected, actual)
+
+
 def test_add_numbers():
     def foo(a, b):
         return torch.add(a, b)
@@ -282,3 +353,23 @@ def test_nonlocal_outside_interpreter_fails():
 
     with pytest.raises(NotImplementedError):
         foo()
+
+
+def test_lookaside_bool():
+    def foo(a, b, i):
+        if bool(i):
+            return a + b
+        return a - b
+
+    jfoo = litjit(foo)
+
+    a = torch.randn((2, 2), device="cpu")
+    b = torch.randn((2, 2), device="cpu")
+
+    expected = foo(a, b, 0)
+    actual = jfoo(a, b, 0)
+    assert_close(expected, actual)
+
+    expected = foo(a, b, 1)
+    actual = jfoo(a, b, 1)
+    assert_close(expected, actual)

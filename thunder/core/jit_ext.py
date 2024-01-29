@@ -13,13 +13,23 @@ from io import StringIO
 import time
 
 import torch
-from thunder.core.proxies import proxy, Proxy, StringProxy, TensorProxy, make_proxy_name, variableify, unvariableify
+from thunder.core.proxies import (
+    proxy,
+    Proxy,
+    NumberProxy,
+    StringProxy,
+    TensorProxy,
+    make_proxy_name,
+    variableify,
+    unvariableify,
+)
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
 from thunder.core.jit import (
     jit,
     _jit,
     default_callbacks,
     JIT_CALLBACKS,
+    JIT_SIGNALS,
     default_opcode_interpreter,
     _default_lookaside_map,
     default_lookaside,
@@ -195,9 +205,7 @@ _lit_lookaside_map.update(_torch_to_thunder_function_map)
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside).
 def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
-    getattr_lookaside = default_lookaside(getattr)
-    if getattr_lookaside is None:
-        getattr_lookaside = getattr
+    getattr_lookaside = default_lookaside(getattr) or getattr
     res = getattr_lookaside(obj, name, *maybe_default)
     if not isinstance(res, Proxy):
         ctx: LitCtx = get_litctx()
@@ -206,6 +214,35 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
 
 _lit_lookaside_map[getattr] = _lit_getattr_lookaside
+
+
+# We want to record a constraint when we go from proxy -> value here.
+# At the same time Python expects to (but we might think to loosen the requirement
+# to return a bool for the JIT, return a proxy with origin informaiton and postpone
+# recording the constraint to conditional jumps and such.
+def _lit_bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
+    if isinstance(x, NumberProxy) and (x.value is True or x.value is False):
+        # TODO: what if x is from the computational trace?
+        lit_ctx = get_litctx()
+        prologue_trc = lit_ctx.prologue_trace
+        with tracectx(prologue_trc):
+            prims.assert_compare(x, "==", x.value)
+        return x.value
+
+    if isinstance(x, NumberProxy):
+        lit_ctx = get_litctx()
+        prologue_trc = lit_ctx.prologue_trace
+        res = x.value != 0
+        with tracectx(prologue_trc):
+            prims.assert_compare(x, "!=" if res else "==", 0)
+        return res
+    bool_lookaside = default_lookaside(bool)
+
+    bool_lookaside = default_lookaside(bool) or bool
+    return bool_lookaside(x)
+
+
+_lit_lookaside_map[bool] = _lit_bool_lookaside
 
 
 # TODO Document this function (with steps)
@@ -346,7 +383,8 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 prologue_trc.bound_symbols.append(bsym)
 
             def from_getattr(name: str, obj: Any):
-                raise NotImplementedError("unpacking from getattr")
+                bsym = prims.unpack_attr.bind(obj, name, output=p)
+                prologue_trc.bound_symbols.append(bsym)
 
             d = {
                 UNPACK_ACTION.FROM_SIGNATURE: from_signature,
