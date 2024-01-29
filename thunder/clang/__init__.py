@@ -880,6 +880,10 @@ def squeeze(a, dims):
 @clang_ctx
 def transpose(a, permutation):
     permutation = utils.canonicalize_dims(a.ndim, permutation)
+    # Short-circuit when transpose is a no-op.
+    # Useful for producing simpler traces.
+    if tuple(permutation) == tuple(range(a.ndim)):
+        return a
     return prims.transpose(a, tuple(permutation))
 
 

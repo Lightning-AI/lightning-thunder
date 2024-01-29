@@ -3756,13 +3756,13 @@ def permute_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # shape, perm
     cases = (
-        ((2, 3, 4), (0, 1, 2)),
+        ((2, 3, 4), (0, 1, 2)),  # no-op
         ((2, 3, 4), (1, 2, 0)),
         ((2, 3, 4), (2, 1, 0)),
         ((2, 3, 4), (0, 2, 1)),
         ((2, 3, 4), (0, -1, 1)),
         ((4, 7), (1, 0)),
-        ((3,), (0,)),
+        ((3,), (0,)),  # no-op
     )
 
     # NOTE These cases are tuple-only because *() becomes no arguments to varargs
