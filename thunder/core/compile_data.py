@@ -8,7 +8,7 @@ _compile_data = ContextVar("compile_data", default=(None, None))
 def get_compile_option(option: str, description: str, /) -> None | Any:
     cd, cs = _compile_data.get()
 
-    if cs or cs is None:
+    if cd is None or cs is None:
         return None
 
     # See NOTE Different categories of compile options in thunder/__init__.py

@@ -690,7 +690,7 @@ instantiated) this heuristic actually leads to worse code.
 """
             enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
             assert isinstance(enable_bookend, (NoneType, bool))
-            enable_bookend = True if enable_bookend is None else enable_bookend
+            enable_bookend = False if enable_bookend is None else enable_bookend
             if enable_bookend:
                 bookend_result = group_bookend_meta_ops(producers, consumers, region)
             else:

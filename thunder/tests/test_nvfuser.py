@@ -569,7 +569,8 @@ def test_bookend_meta_optimization(executor, device, _):
     a = torch.ones(2, 3, 5, device=device, dtype=torch.float32)
 
     def subtest(fn, n):
-        cfn = thunder.compile(fn)
+        # Enable bookending so it gets tested.
+        cfn = thunder.compile(fn, nv_enable_bookend=True)
 
         _ = cfn(a)
         traces = thunder.last_traces(cfn)
