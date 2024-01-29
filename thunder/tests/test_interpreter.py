@@ -202,12 +202,15 @@ def test_and_or():
 
 
 def test_dunder_bool():
+    jitting = False
+
     class mycls:
         def __init__(self, value):
             self.value = value
 
         # True if self.value is even
         def __bool__(self):
+            assert is_jitting() == jitting
             return (self.value % 2) == 0
 
     def foo(a):
@@ -223,54 +226,90 @@ def test_dunder_bool():
     )
 
     for case in cases:
-        assert jfoo(*case) == foo(*case)
+        jitting = False
+        r = foo(*case)
+        jitting = True
+        jr = jfoo(*case)
+        assert r == jr
 
 
 def test_dunder_bool_instance():
+    jitting = False
+
     class X:
         def __bool__(self):
+            assert is_jitting() == jitting
             return False
 
     x = X()
-    assert bool(x) == jit(bool)(x) == False
+    jitting = False
+    bx = bool(x)
+    jitting = True
+    jbx = jit(bool)(x)
+    assert bx == jbx == False
 
     x.__bool__ = lambda: True  # dunder methods use class attribute, not instance attribute.
-    assert bool(x) == jit(bool)(x) == False
+    jitting = False
+    bx = bool(x)
+    jitting = True
+    jbx = jit(bool)(x)
+    assert bx == jbx == False
 
 
 def test_function_call():
+    jitting = False
+
     def fn(fn):
+        assert is_jitting() == jitting
         return fn
 
-    assert fn(fn) == jit(fn)(fn)
-    assert fn(fn=fn) == jit(fn)(fn=fn)
+    jitting = False
+    r = fn(fn)
+    jitting = True
+    jr = jit(fn)(fn)
+    assert r == jr
+
+    jitting = False
+    r = fn(fn=fn)
+    jitting = True
+    jr = jit(fn)(fn=fn)
+    assert r == jr
 
 
-def test_function_call():
+def test_nested_function_call():
+    jitting = False
+
     def bar(a, b):
+        assert is_jitting() == jitting
         return a + b
 
     def foo(a, b):
+        assert is_jitting() == jitting
         return bar(a + 1, b)
 
     jfoo = jit(foo)
-
     args = (4, 3)
 
-    thunder_result = jfoo(*args)
     python_result = foo(*args)
+    jitting = True
+    thunder_result = jfoo(*args)
 
     assert_close(thunder_result, python_result)
 
 
 def test_call_function_ex():
+    jitting = False
+
     def foo(a, b):
+        assert is_jitting() == jitting
         return a + b
 
     def argsplat(*args):
+        assert is_jitting() == jitting
         return foo(*args)
 
     def kwargsplat(**kwargs):
+        assert is_jitting() == jitting
         return foo(**kwargs)
 
     assert any(i.opname == "CALL_FUNCTION_EX" and not i.arg & 1 for i in dis.get_instructions(argsplat))
@@ -278,8 +317,11 @@ def test_call_function_ex():
 
     kwargs = {"a": 1, "b": 2}
 
+    jitting = False
     res1 = argsplat(*kwargs.values())
     res2 = kwargsplat(**kwargs)
+
+    jitting = True
     jres1 = jit(argsplat)(*kwargs.values())
     jres2 = jit(kwargsplat)(**kwargs)
 
@@ -294,6 +336,9 @@ def test_build_const_key_map():
     # test order for collisions
     def fn2(a, b):
         return {"a": a, "a": b}
+
+    assert any(i.opname == "BUILD_CONST_KEY_MAP" for i in dis.get_instructions(fn1))
+    assert any(i.opname == "BUILD_CONST_KEY_MAP" for i in dis.get_instructions(fn2))
 
     jfn1 = jit(fn1)
     jfn2 = jit(fn2)
@@ -327,16 +372,25 @@ def test_build_map_dict_merge():
 
 
 def test_dict_update():
-    addall = lambda *args, **kwargs: sum(args) + sum(kwargs.values())
-    foo = lambda *args, **kwargs: addall(*args, **{**kwargs, "x": 1})
+    jitting = False
+
+    def addall(*args, **kwargs):
+        assert is_jitting() == jitting
+        return sum(args) + sum(kwargs.values())
+
+    def foo(*args, **kwargs):
+        assert is_jitting() == jitting
+        return addall(*args, **{**kwargs, "x": 1})
 
     assert any(i.opname == "DICT_UPDATE" for i in dis.get_instructions(foo))
 
     args = (4, 3)
     kwargs = {"a": 1, "b": 2}
 
-    thunder_result = jit(foo)(*args, **kwargs)
+    jitting = False
     python_result = foo(*args, **kwargs)
+    jitting = True
+    thunder_result = jit(foo)(*args, **kwargs)
 
     assert_close(thunder_result, python_result)
 
@@ -470,22 +524,28 @@ def test_exception_traceback():
 
 
 def test_finally():
+    jitting = False
     l = []
 
     def foo():
         try:
+            assert is_jitting() == jitting
             l.append(1)
             raise ValueError("test")
             l.append(2)
         except KeyError:
+            assert is_jitting() == jitting
             l.append(3)
         except ValueError:
+            assert is_jitting() == jitting
             l.append(4)
             raise
         finally:
+            assert is_jitting() == jitting
             l.append(5)
 
     with pytest.raises(ValueError):
+        jitting = False
         foo()
 
     l_orig = l
@@ -493,6 +553,7 @@ def test_finally():
     l = []
 
     with pytest.raises(ValueError):
+        jitting = True
         jit(foo)()
 
     assert l_orig == l
@@ -500,13 +561,24 @@ def test_finally():
 
 def test_raise():
     msg = "lorem ipsum"
+    jitting = False
+
+    class ExampleException(ValueError):
+        def __init__(self):
+            assert is_jitting() == jitting
+            super().__init__(msg)
 
     def foo():
-        raise ValueError(msg)
+        raise ExampleException  # Constructed implicitly
 
     jfoo = jit(foo)
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ExampleException) as excinfo:
+        jitting = False
+        foo()
+
+    with pytest.raises(ExampleException) as excinfo:
+        jitting = True
         jfoo()
 
     assert msg in str(excinfo.value)
@@ -514,13 +586,18 @@ def test_raise():
 
 def test_bare_except():
     msg = "lorem ipsum"
+    jitting = False
 
     def bare_except():
         try:
+            assert is_jitting() == jitting
             raise ValueError(msg)
         except:
+            assert is_jitting() == jitting
             return True
 
+    assert bare_except() == True
+    jitting = True
     assert jit(bare_except)() == True
 
 
@@ -617,8 +694,6 @@ def test_raise_from_external():
 
     e = excinfo.value
     assert type(e) == ValueError
-    # TODO: If we drop the UserException here, update
-    # assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
     assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
 
 
@@ -651,18 +726,28 @@ def test_inner_nested_try_except():
 
 
 def test_cross_function_exceptions():
+    jitting = False
+
     def foo():
+        assert is_jitting() == jitting
+
         def bar():
+            assert is_jitting() == jitting
             raise ValueError
 
         bar()
 
     def cross_function_exceptions():
         try:
+            assert is_jitting() == jitting
             foo()
         except ValueError:
+            assert is_jitting() == jitting
             return True
 
+    jitting = False
+    assert cross_function_exceptions() == True
+    jitting = True
     assert jit(cross_function_exceptions)() == True
 
 
@@ -706,7 +791,6 @@ def test_map_add_set_add():
     assert jfn() == fn()
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1543
 def test_kwargs():
     def foo(a, b, *, c=2):
         return a + b + c
@@ -795,44 +879,56 @@ def test_reduce():
 
 
 def test_calling_methods():
+    jitting = False
+
     class mycls:
         def __init__(self, v: int):
+            assert is_jitting() == jitting
             self.v = v
 
         def my_add(self, b):
+            assert is_jitting() == jitting
             return self.v + b
 
         @classmethod
         def my_add_class(cls, b):
+            assert is_jitting() == jitting
             o = cls(2)
             return o.v + b
 
         @staticmethod
         def my_add_static(b):
+            assert is_jitting() == jitting
             return 3 + b
 
     x = mycls(5)
 
     # these use LOAD_METHOD / CALL_METHOD
     def foo(x, a):
+        assert is_jitting() == jitting
         return x.my_add(a)
 
     def foo_class(x, a):
+        assert is_jitting() == jitting
         return x.my_add_class(a)
 
     def foo_static(x, a):
+        assert is_jitting() == jitting
         return x.my_add_static(a)
 
     # these use LOAD_ATTR / CALL_FUNCTION
     def bar(x, a):
+        assert is_jitting() == jitting
         meth = x.my_add(a)
         return meth
 
     def bar_class(x, a):
+        assert is_jitting() == jitting
         meth = x.my_add_class(a)
         return meth
 
     def bar_static(x, a):
+        assert is_jitting() == jitting
         meth = x.my_add_static(a)
         return meth
 
@@ -843,27 +939,46 @@ def test_calling_methods():
     jbar_class = jit(bar_class)
     jbar_static = jit(bar_static)
 
-    assert jfoo(x, 7) == foo(x, 7)
-    assert jfoo_class(x, 7) == foo_class(x, 7)
-    assert jfoo_static(x, 7) == foo_static(x, 7)
-    assert jbar(x, 7) == bar(x, 7)
-    assert jbar_class(x, 7) == bar_class(x, 7)
-    assert jbar_static(x, 7) == bar_static(x, 7)
+    jitting = False
+    fres = foo(x, 7)
+    fres_class = foo_class(x, 7)
+    fres_static = foo_static(x, 7)
+    bres = bar(x, 7)
+    bres_class = bar_class(x, 7)
+    bres_static = bar_static(x, 7)
+
+    jitting = True
+    assert jfoo(x, 7) == fres
+    assert jfoo_class(x, 7) == fres_class
+    assert jfoo_static(x, 7) == fres_static
+    assert jbar(x, 7) == bres
+    assert jbar_class(x, 7) == bres_class
+    assert jbar_static(x, 7) == bres_static
 
 
 def test_wrapped_functions():
+    jitting = False
+
     def wrap(fn):
+        assert is_jitting() == jitting
+
         @wraps(fn)
-        def foo(*args, **kwargs):
+        def inner(*args, **kwargs):
+            assert is_jitting() == jitting
             return fn(*args, **kwargs)
 
-        return foo
+        return inner
 
     @wrap
     def foo(a, b):
+        assert is_jitting() == jitting
         return a + b
 
-    assert jit(foo)(3, 4) == foo(3, 4)
+    jitting = False
+    res = foo(3, 4)
+    jitting = True
+    jres = jit(foo)(3, 4)
+    assert res == jres
 
 
 def test_callable_classes():
@@ -882,6 +997,36 @@ def test_callable_classes():
     jfoo = jit(foo)
 
     assert jfoo(x, 7) == foo(x, 7)
+
+
+@pytest.mark.xfail(reason="Lookaside not triggered, requires further investigation. Delete the test above when fixed.")
+def test_callable_classes_jitting():
+    jitting = False
+
+    def foo(x, a):
+        class mycls:
+            assert is_jitting() == jitting
+
+            def __init__(self, v: int):
+                assert is_jitting() == jitting
+                self.v = v
+
+            def __call__(self, b):
+                assert is_jitting() == jitting
+                return self.v + b
+
+        x = mycls(5)
+
+        return x(a)
+
+    jitting = False
+    res = foo(x, 7)
+
+    jitting = True
+    jfoo = jit(foo)
+    jres = jfoo(x, 7)
+
+    assert res == jres
 
 
 def test_build_slice():
@@ -919,6 +1064,68 @@ def test_format_value():
 
     x = mycls()
     assert jfoo(x, "goodbye") == foo(x, "goodbye")
+
+    # Tests FVC_STR
+    def foo(a):
+        return f"{a!s}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(x) == foo(x)
+
+    # Tests FVC_REPR
+    def foo(a):
+        return f"{a!r}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(x) == foo(x)
+
+    # Tests FVC_ASCII
+    def foo(a):
+        return f"{a!a}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(x) == foo(x)
+
+
+@pytest.mark.xfail(
+    reason="Need to implement builtin format, repr, and ascii lookasides. See help('FORMATTING'). When fixed, delete the test above."
+)
+def test_format_value_jitting():
+    jitting = False
+
+    # Tests FVS_HAVE_SPEC and FVC_NONE
+    def foo(a, b):
+        return f"{a:3.2f}, {b:2.1f}"
+
+    jfoo = jit(foo)
+
+    assert jfoo(2.34, 123234.79289) == foo(2.34, 123234.79289)
+
+    class mycls:
+        def __repr__(self):
+            assert is_jitting() == jitting
+            return "repr"
+
+        def __str__(self):
+            assert is_jitting() == jitting
+            return "str"
+
+    # Tests FVC_NONE
+    def foo(a, b):
+        return f"{a}, {b}"
+
+    x = mycls()
+
+    jitting = False
+    res = foo(x, "goodbye")
+    jitting = True
+    jfoo = jit(foo)
+    jres = jfoo(x, "goodbye")
+
+    assert res == jres
 
     # Tests FVC_STR
     def foo(a):
@@ -1158,11 +1365,14 @@ def test_unhashable_lookaside():
 
 
 def test_len_lookaside():
+    jitting = False
+
     class mycls:
         def __init__(self, v=5):
             self.v = v
 
         def __len__(self):
+            assert is_jitting() == jitting
             return self.v
 
     def foo(a):
@@ -1171,18 +1381,28 @@ def test_len_lookaside():
     jfoo = jit(foo)
 
     o = mycls()
-    assert jfoo(o) == foo(o)
-    assert jfoo([1, 2, 3]) == foo([1, 2, 3])
-    assert jfoo("mystr") == foo("mystr")
+
+    jitting = False
+    res1 = foo(o)
+    res2 = foo([1, 2, 3])
+    res3 = foo("mystr")
+
+    jitting = True
+    jres1 = jfoo(o)
+    jres2 = jfoo([1, 2, 3])
+    jres3 = jfoo("mystr")
+    assert res1 == jres1
+    assert res2 == jres2
+    assert res3 == jres3
 
     o = mycls(-1)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError, match="__len__\(\) should return >= 0"):
         jfoo(o)
 
     o = mycls(0.42)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TypeError, match="'float' object cannot be interpreted as an integer"):
         jfoo(o)
 
     class myclswithoutlen:
@@ -1191,11 +1411,22 @@ def test_len_lookaside():
 
     o = myclswithoutlen()
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError, match="object of type 'myclswithoutlen' has no len()"):
+        jfoo(o)
+
+    class myclsnegfloat:
+        def __len__(self):
+            assert is_jitting() == jitting
+            return -0.6
+
+    o = myclsnegfloat()
+    with pytest.raises(TypeError, match="'float' object cannot be interpreted as an integer"):
         jfoo(o)
 
 
 def test_any_lookaside():
+    jitting = False
+
     def foo(a):
         return any(a)
 
@@ -1211,35 +1442,55 @@ def test_any_lookaside():
             self.list = [val] * 3
 
         def __iter__(self):
+            assert is_jitting() == jitting
             return self.list.__iter__()
 
     o = myitercontainer(True)
-    assert jfoo(o) == foo(o)
+    jitting = False
+    res = foo(o)
+    jitting = True
+    jres = jfoo(o)
+    assert res == jres
 
     o = myitercontainer(False)
-    assert jfoo(o) == foo(o)
+    jitting = False
+    res = foo(o)
+    jitting = True
+    jres = jfoo(o)
+    assert res == jres
 
 
 def test_generator():
+    jitting = False
+
     def my_generator_1():
+        assert is_jitting() == jitting
         yield from range(5)
+        assert is_jitting() == jitting
 
     def my_generator_2():
+        assert is_jitting() == jitting
         yield 1
+        assert is_jitting() == jitting
         val = 1
         while True:
+            assert is_jitting() == jitting
             val = yield 2 * val
 
     jgen_1 = jit(my_generator_1)
     jgen_2 = jit(my_generator_2)
 
+    jitting = True
     actual = list(jgen_1())
+    jitting = False
     expected = list(my_generator_1())
     assert actual == expected
 
-    run_gen = my_generator_2()
+    jitting = True
     j_run_gen = jgen_2()
     actual = [j_run_gen.send(x) for x in [None, 1, 2, 3]]
+    jitting = False
+    run_gen = my_generator_2()
     expected = [run_gen.send(x) for x in [None, 1, 2, 3]]
     assert actual == expected
 
@@ -1390,6 +1641,73 @@ def test_iter_lookaside_types():
     assert type(calliter()) is type(jit(calliter)())
 
 
+@pytest.mark.xfail(reason="Lookaside not triggered, requires further investigation. Delete the test above when fixed.")
+def test_iter_lookaside_types_jitting():
+    jitting = False
+
+    class IterableExample(Iterable):
+        def __iter__(self):
+            assert is_jitting() == jitting
+            return iter([1, 2, 3])
+
+    class NonIterableExample:
+        def __iter__(self):
+            assert is_jitting() == jitting
+            return iter([1, 2, 3])
+
+    class SequenceExample(Sequence):
+        def __len__(self):
+            assert is_jitting() == jitting
+            return 3
+
+        def __getitem__(self, idx):
+            assert is_jitting() == jitting
+            if idx >= len(self):
+                raise IndexError
+            return idx + 1
+
+    class NonSequenceExample:
+        def __len__(self):
+            assert is_jitting() == jitting
+            return 3
+
+        def __getitem__(self, idx):
+            assert is_jitting() == jitting
+            if idx >= len(self):
+                raise IndexError
+            return idx + 1
+
+    def foo():
+        example_classes = (IterableExample, NonIterableExample, SequenceExample, NonSequenceExample)
+        for C in example_classes:
+            it = iter(C())
+            li = list(it)
+            assert li == [1, 2, 3]
+
+    jitting = False
+    foo()
+    jitting = True
+    jit(foo)()
+
+    def seqiter():
+        return iter(NonSequenceExample())
+
+    def calliter():
+        sentinel = object()
+        return iter(lambda: sentinel, sentinel)
+
+    jitting = False
+    sres = type(seqiter())
+    cres = type(calliter())
+
+    jitting = True
+    jsres = type(jit(seqiter)())
+    jcres = type(jit(calliter)())
+
+    assert sres is jsres
+    assert cres is jcres
+
+
 def test_unary_not():
     def foo(a):
         return not a
@@ -1401,11 +1719,14 @@ def test_unary_not():
     assert jfoo(3.14) == foo(3.14)
     assert jfoo(1j) == foo(1j)
 
+    jitting = False
+
     class mycls(int):
         def __init__(self, v):
             self.v = v
 
         def __bool__(self) -> bool:
+            assert is_jitting() == jitting
             return self.v % 2 == 0
 
     cases = (
@@ -1414,7 +1735,11 @@ def test_unary_not():
     )
 
     for o, case in cases:
-        assert jfoo(o) == foo(case % 2 == 0)
+        jitting = False
+        res = foo(case % 2 == 0)
+        jitting = True
+        jres = jfoo(o)
+        assert res == jres
 
     assert jfoo([]) == foo([])
     assert jfoo([1, 2]) == foo([2, 3])
@@ -1493,20 +1818,17 @@ def test_annotations():
     jitting = False
 
     def annotation(fn: Callable[[], int]) -> Callable[[], Callable[[], int]]:
-        if jitting:
-            assert is_jitting()
+        assert is_jitting() == jitting
         nonlocal annotation_executed
         annotation_executed = True
         return lambda: fn
 
     def foo():
-        if jitting:
-            assert is_jitting()
+        assert is_jitting() == jitting
 
         @annotation
         def inner() -> int:
-            if jitting:
-                assert is_jitting()
+            assert is_jitting() == jitting
 
             nonlocal inner_executed
             inner_executed = True
@@ -1527,6 +1849,7 @@ def test_use_of_deleted_raises_correctly():
     def foo(a):
         b = a
         del b
+        assert a == 5
         c = b + a
         return a
 
@@ -1540,6 +1863,7 @@ def test_delete_fast():
     def foo(a):
         b = a
         del b
+        assert a == 5
         c = b + a
         return a
 
@@ -1554,7 +1878,9 @@ def test_delete_global():
 
     def foo(a):
         global x
+        y = x
         del x
+        assert y == 5
         return a + x
 
     jfoo = jit(foo)
@@ -1570,6 +1896,7 @@ def test_store_global():
     def foo(a):
         global x
         x = a
+        assert x == a
 
     jfoo = jit(foo)
 
@@ -1597,31 +1924,48 @@ def test_bool_conversion():
     assert jfoo(x) == foo(x)
     assert jfoo(mycls) == foo(mycls)
 
+    jitting = False
+
     # Checks dunder bool handling (by default classes are true)
     class mycls:
         def __bool__(self):
+            assert is_jitting() == jitting
             return False
 
     x = mycls()
 
-    assert jfoo(x) == foo(x)
+    jitting = False
+    res = foo(x)
+    jitting = True
+    jres = jfoo(x)
+    assert res == jres
 
     # Classes that define dunder len and not dunder bool use dunder len for their bool() conversion
     class mycls:
         def __len__(self):
+            assert is_jitting() == jitting
             return 0
 
     x = mycls()
 
-    assert jfoo(x) == foo(x)
+    jitting = False
+    res = foo(x)
+    jitting = True
+    jres = jfoo(x)
+    assert res == jres
 
     class mycls:
         def __len__(self):
+            assert is_jitting() == jitting
             return 1
 
     x = mycls()
 
-    assert jfoo(x) == foo(x)
+    jitting = False
+    res = foo(x)
+    jitting = True
+    jres = jfoo(x)
+    assert res == jres
 
 
 def test_store_attr():
@@ -1650,6 +1994,48 @@ def test_store_attr():
             # NOTE This can't call __setattr__ again (not even indirectly, like through self.bar = value)
             #   because that would cause infinite recursion
             # This avoids the infinite recursion by calling objec'ts dunder setattr, which isn't hooked
+            super().__setattr__("bar", value)
+
+    x = mycls()
+
+    jfoo(x, 5)
+    assert x.bar == 5
+
+
+@pytest.mark.xfail(
+    reason="Lookaside not triggered, need to implement setattr lookaside (Objects/object.c:1029). "
+    "Also implement and test delattr (PyObject_SetAttr(obj, NULL)). Delete the test above when fixed."
+)
+def test_store_attr_jit():
+    def foo(a, v):
+        a.foo = v
+
+    def bar(a):
+        del a.foo
+
+    jfoo = jit(foo)
+    jbar = jit(bar)
+
+    class mycls:
+        pass
+
+    x = mycls()
+
+    jfoo(x, 5)
+    assert x.foo == 5
+    jbar(x)
+    assert not hasattr(x, "foo")
+
+    jitting = True
+
+    # Checks that dunder setattr is called
+    class mycls:
+        def __setattr__(self, name, value):
+            # NOTE This can't call __setattr__ again (not even indirectly, like through self.bar = value)
+            #   because that would cause infinite recursion
+            # This avoids the infinite recursion by calling object's dunder setattr, which isn't hooked
+
+            assert is_jitting() == jitting
             super().__setattr__("bar", value)
 
     x = mycls()
@@ -2112,52 +2498,69 @@ def test_load_build_class():
 
 
 def test_with():
+    jitting = False
+
     class CtxMgr:
         def __init__(self, l):
+            assert is_jitting() == jitting
             self.l = l
 
         def __enter__(self):
+            assert is_jitting() == jitting
             self.l.append("enter")
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
+            assert is_jitting() == jitting
             self.l.append((str(exc_type), str(exc_val)))
 
     def fn(should_raise: bool = False):
         l = []
         with CtxMgr(l) as ctx:
+            assert is_jitting() == jitting
             ctx.l.append("within")
             if should_raise:
                 raise RuntimeError("test", l)
             return l
 
+    jitting = False
+    res = fn()
+    jitting = True
     jfn = jit(fn)
-
-    assert fn() == jfn()
+    jres = jfn()
+    assert res == jres
 
     with pytest.raises(RuntimeError) as exc_expected:
+        jitting = False
         fn(should_raise=True)
     with pytest.raises(RuntimeError) as exc_actual:
+        jitting = True
         jfn(should_raise=True)
 
     assert exc_expected.value.args[1] == exc_actual.value.args[1]
 
 
 def test_async_with():
+    jitting = False
+
     class ACtxMgr:
         def __init__(self, l):
+            assert is_jitting() == jitting
             self.l = l
 
         async def __aenter__(self):
+            assert is_jitting() == jitting
             self.l.append("enter")
             return self
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
+            assert is_jitting() == jitting
             self.l.append((str(exc_type), str(exc_val)))
 
     async def fn(should_raise: bool = False):
         l = []
         async with ACtxMgr(l) as ctx:
+            assert is_jitting() == jitting
             ctx.l.append("within")
             if should_raise:
                 raise RuntimeError("test", l)
@@ -2167,53 +2570,79 @@ def test_async_with():
 
     import asyncio
 
-    assert asyncio.run(fn()) == asyncio.run(jfn())
+    jitting = False
+    res = asyncio.run(fn())
+    jitting = True
+    jres = asyncio.run(jfn())
+    assert res == jres
 
     with pytest.raises(RuntimeError) as exc_expected:
+        jitting = False
         asyncio.run(fn(should_raise=True))
     with pytest.raises(RuntimeError) as exc_actual:
+        jitting = True
         asyncio.run(jfn(should_raise=True))
 
     assert exc_expected.value.args[1] == exc_actual.value.args[1]
 
 
 def test_async_for():
+    jitting = False
+
     async def async_gen():
+        assert is_jitting() == jitting
         for i in range(5):
+            assert is_jitting() == jitting
             yield i
 
     async def fn():
-        l = [i * 2 async for i in async_gen()]
+        def it2(i):
+            assert is_jitting() == jitting
+            return i * 2
+
+        assert is_jitting() == jitting
+        l = [it2(i) async for i in async_gen()]
         async for i in async_gen():
+            assert is_jitting() == jitting
             l.append(i * 3)
         return l
 
-    jfn = jit(fn)
-
     import asyncio
 
-    assert asyncio.run(fn()) == asyncio.run(jfn())
+    jitting = False
+    res = asyncio.run(fn())
+    jitting = True
+    jfn = jit(fn)
+    jres = asyncio.run(jfn())
+    assert res == jres
 
 
 def test_super():
+    jitting = False
+
     class A:
         def foo(self):
+            assert is_jitting() == jitting
             return f"Hello {type(self)} {__class__}"
 
         @classmethod
         def bar(self):
+            assert is_jitting() == jitting
             return f"Hello {type(self)} {__class__}"
 
     class B(A):
         def foo(self):
+            assert is_jitting() == jitting
             return super().foo()
 
         @classmethod
         def bar(self):
+            assert is_jitting() == jitting
             return super().bar()
 
     class C(A):
         def foo(self):
+            assert is_jitting() == jitting
             return super().foo()
 
     def foo():
@@ -2221,7 +2650,11 @@ def test_super():
         c = C()
         return (b.foo(), c.foo())
 
-    assert jit(foo)() == foo()
+    jitting = False
+    res = foo()
+    jitting = True
+    jres = jit(foo)()
+    assert res == jres
 
     def bar():
         b = B()
@@ -2229,8 +2662,10 @@ def test_super():
         super(b, C)
 
     with pytest.raises(TypeError) as exc_expected:
+        jitting = False
         bar()
     with pytest.raises(TypeError) as exc_actual:
+        jitting = True
         jit(bar)()
     # Python 3.11 improved the grammar, so do we
     assert str(exc_expected.value).replace("be type", "be a type") == str(exc_actual.value)
@@ -2239,7 +2674,11 @@ def test_super():
         b = B()
         return b.bar()
 
-    assert jit(baz)() == baz()
+    jitting = False
+    res = baz()
+    jitting = True
+    jres = jit(baz)()
+    assert res == jres
 
 
 def test_is_jitting():

@@ -671,13 +671,13 @@ def _is_jitting_lookaside():
 
 # https://docs.python.org/3/library/functions.html?highlight=any#any
 def _any_lookaside(obj: Iterable):
-    if not isinstance(obj, Iterable):
-        return do_raise(TypeError(f"object must be iterable, got '{type(obj).__name__}' instead"))
+    def impl():
+        for element in obj:
+            if element:
+                return True
+        return False
 
-    for element in obj:
-        if element:
-            return True
-    return False
+    return _jit(impl)
 
 
 # Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
@@ -858,6 +858,21 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return result
 
 
+# TODO: Implement setattr() and delattr() lookasides.
+# def _setattr_lookaside(obj: Any, name: str, value: Any) -> None:
+#     def impl(o, n, v):
+#         o.n = v
+#
+#     return _jit(impl, obj, name, value)
+
+
+# def _delattr_lookaside(obj: Any, name: str) -> None:
+#     def impl(o, n):
+#         del o.n
+#
+#     return _jit(impl, obj, name)
+
+
 def _globals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
@@ -866,17 +881,27 @@ def _globals_lookaside() -> dict[str, Any]:
 
 # https://docs.python.org/3/library/functions.html?highlight=len#len
 # Calls https://docs.python.org/3/reference/datamodel.html?highlight=__len__#object.__len__
-def _len_lookaside(obj: Any):
-    if not hasattr(obj, "__len__"):
-        return do_raise(NotImplementedError(f"len(): __len__ not implemented for {type(obj).__name__}"))
+def _len_lookaside(obj: Any) -> int | JIT_SIGNALS:
+    def impl():
+        if not hasattr(obj, "__len__"):
+            raise TypeError(f"object of type '{type(obj).__name__}' has no len()")
 
-    result = getattr(obj, "__len__")()
+        lenattr = getattr(obj, "__len__")
+        result = lenattr()
 
-    if not isinstance(result, int) or result < 0:
-        return do_raise(
-            RuntimeError(f"len(): len should return an integer >= 0 but found {type(result).__name__}:{result}")
-        )
+        if not isinstance(result, int):
+            raise TypeError(f"'{type(result).__name__}' object cannot be interpreted as an integer")
 
+        if result < 0:
+            raise ValueError("__len__() should return >= 0")
+
+        return result
+
+    result = _jit(impl)
+    if result is JIT_SIGNALS.EXCEPTION_RAISED:
+        return result
+
+    assert isinstance(result, int)
     return result
 
 
