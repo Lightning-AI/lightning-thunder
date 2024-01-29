@@ -1,3 +1,5 @@
+import enum
+import sys
 from typing import Any
 from collections.abc import Callable
 from collections.abc import Hashable
@@ -116,10 +118,35 @@ class Executor:
         return impl.grad_transform
 
 
+class FUEL_LEVEL(enum.Enum):
+    UNLIMITED = enum.auto()
+
+
 # To implement a FusionExecutor, create a subclass of it that implements the fusion_pass method
 class FusionExecutor(Executor):
     def __init__(self, name: Hashable, *, version: None | Any = None):
         super().__init__(name, version=version)
+
+    # Optimization fuel is a concept introduced by David B.
+    # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
+    # compiler bugs.
+    #
+    # A FusionExecutor keeps track of its own optimization fuel as the number
+    # of remaining optimizations it can do. Each fusion pass can call
+    # `get_fuel` to acquire a certain amount of optimization fuel, and, only if
+    # it returns true, perform the actual optimization. `set_fuel` is used by
+    # the test or the user to fuel the executor to a certain level.
+    #
+    # I used this to isolate
+    # https://github.com/NVIDIA/Fuser/issues/1667 from a numbers-mismatch error
+    # happened in test_grad.py. I binary-searched for the smallest optimization
+    # fuel that reproduced the error, and the last fusion generated in that run
+    # was the culprit. See test_nvfuser.py::test_optimization_fuel for an example.
+    def get_fuel(self, amount: int = 1, /) -> bool:
+        raise NotImplementedError
+
+    def set_fuel(self, value: int | FUEL_LEVEL):
+        raise NotImplementedError
 
     def fusion_pass(trace: TraceCtx) -> TraceCtx:
         raise NotImplementedError

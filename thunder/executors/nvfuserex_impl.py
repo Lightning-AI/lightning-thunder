@@ -32,7 +32,7 @@ from thunder.core.compile_data import get_compile_option
 
 from thunder.executors.utils import Region
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
@@ -485,12 +485,36 @@ def create_fusion_definition_wrapper(
 
 
 class nvFuserExecutor(FusionExecutor):
+    # Max number of times that this nvFuserExecutor instance can fuse.
+    _optimization_fuel: int | FUEL_LEVEL
+
     def __init__(self):
         super().__init__("nvfuser", version=nvfuser.version())
 
         # TODO: Replace this with a query to current CompileData after
         # https://github.com/Lightning-AI/lightning-thunder/pull/1517 is merged
         self._use_rematerialization = True
+
+        self.set_fuel(FUEL_LEVEL.UNLIMITED)
+
+    def get_fuel(self, amount: int = 1, /) -> bool:
+        if self._optimization_fuel is FUEL_LEVEL.UNLIMITED:
+            return True
+
+        if self._optimization_fuel < amount:
+            return False
+
+        self._optimization_fuel -= amount
+        return True
+
+    def set_fuel(self, value: int | FUEL_LEVEL):
+        if isinstance(value, FUEL_LEVEL):
+            self._optimization_fuel = value
+        else:
+            assert isinstance(value, int)
+            if value < 0:
+                raise ValueError(f"optimization_fuel must be non-negative: {value}")
+            self._optimization_fuel = value
 
     def flatten(self, bsym: BoundSymbol) -> list[BoundSymbol]:
         flattened: list[BoundSymbol] = []
@@ -689,8 +713,11 @@ the metadata operation is awkward enough to force the output tensor to be
 instantiated) this heuristic actually leads to worse code.
 """
             enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
-            assert isinstance(enable_bookend, (NoneType, bool))
-            enable_bookend = False if enable_bookend is None else enable_bookend
+            # Set default value.
+            if enable_bookend is None:
+                enable_bookend = False
+            assert isinstance(enable_bookend, bool)
+
             if enable_bookend:
                 bookend_result = group_bookend_meta_ops(producers, consumers, region)
             else:
@@ -716,30 +743,13 @@ instantiated) this heuristic actually leads to worse code.
 
             fused_bsyms.extend(prologue)
             if fusion is not None:
-                fusion_bsym: BoundSymbol = self.fuse(fusion, fusion_counter)
-                fusion_counter += 1
-                fused_bsyms.append(fusion_bsym)
+                if self.get_fuel():
+                    fusion_bsym: BoundSymbol = self.fuse(fusion, fusion_counter)
+                    fused_bsyms.append(fusion_bsym)
+                    fusion_counter += 1
+                else:
+                    fused_bsyms.extend(fusion.bound_symbols)
             fused_bsyms.extend(epilogue)
-
-        # fusion_counter: int = 0
-        # fused_bsyms: list[BoundSymbol] = []
-        # for bsym in trace.bound_symbols:
-        #     # Leaves the bound symbol unchanged if it can't (or shouldn't) be fused
-        #     if (
-        #         not self.can_fuse(bsym)
-        #         or not self.has_cuda_input_or_output(bsym)
-        #         or has_tags(bsym, {prims.OpTags.SHAPE_OP})
-        #     ):
-        #         fused_bsyms.append(bsym)
-        #         continue
-
-        #     # NOTE self.can_fuse(bsym) and self.has_cuda_input(bsym)
-        #     r = Region(producers, consumers, [bsym])
-
-        #     fusion_bsym: BoundSymbol = self.fuse(r, fusion_counter)
-        #     fusion_counter += 1
-
-        #     fused_bsyms.append(fusion_bsym)
 
         fusedtrace.bound_symbols = fused_bsyms
 

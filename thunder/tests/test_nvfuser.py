@@ -6,6 +6,7 @@ import torch
 import thunder
 import thunder.examine as examine
 from thunder.examine import get_fusions
+from thunder.executors.nvfuserex import nvfuserex
 import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -78,13 +79,6 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
-
-    #
-
-
-# Tests related to optimizing passes
-#
-# TODO Maybe move to test_passes.py? test_nvfuser.py?
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -770,3 +764,31 @@ def test_bookend_meta_optimization(executor, device, _):
         return t4, t6, t7, t8, t10, t13
 
     subtest(func_12, 1)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_optimization_fuel(executor, device, _):
+    def fn(x):
+        return x.tanh()
+
+    def get_num_fusions(cfn):
+        traces = thunder.last_traces(cfn)
+        fusions = examine.get_fusions(traces[-1])
+        return len(fusions)
+
+    nvfuserex.set_fuel(1)
+
+    # Only the first compilation is fueled.
+    x = torch.ones(2, 3, device=device, dtype=torch.float32)
+    cfn_with_fusion = thunder.compile(fn)
+    cfn_with_fusion(x)
+    assert get_num_fusions(cfn_with_fusion) == 1
+
+    cfn_without_fusion = thunder.compile(fn)
+    cfn_without_fusion(x)
+    assert get_num_fusions(cfn_without_fusion) == 0
+
+    nvfuserex.set_fuel(thunder.extend.FUEL_LEVEL.UNLIMITED)
