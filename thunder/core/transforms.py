@@ -31,6 +31,7 @@ from thunder.core.proxies import (
     FutureTensorProxy,
 )
 from thunder.core.baseutils import default_dataclass_params
+from thunder.core.compile_data import get_compile_data
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -60,6 +61,7 @@ from thunder.clang import (
     clang_ctx,
 )
 from thunder.core.transform_common import dce
+from thunder.extend import Executor
 import thunder.torch as ltorch
 
 import torch
@@ -2473,6 +2475,7 @@ class RuleInfo:
     rule: Callable
     fw_fallback: Callable
     bw_fallback: Callable
+    executor: Executor
 
 
 def register_augmented_forward(op):
@@ -2492,17 +2495,18 @@ def register_augmented_forward(op):
     return decorator
 
 
-def register_augmented_forward_with_checker(op, checker, rule):
+def register_augmented_forward_with_checker(executor, op, checker, rule):
     """Decorator to register an augmented forward implementation for a symbol.
 
     Args:
+        executor (Executor): Executor to which the rule applies.
         op (Ops): Symbol for which to register the augmented forward implementation.
         checker (Callable): Function that checks if the rule should be applied.
         rule (Callable): Function that applies the rule.
     """
     fw_fallback = augmented_forward_impls.get(op, None)
     bw_fallback = backward_impls.get(op, None)
-    augmented_forward_impls[op] = RuleInfo(checker, rule, fw_fallback, bw_fallback)
+    augmented_forward_impls[executor, op] = RuleInfo(checker, rule, fw_fallback, bw_fallback, executor)
 
 
 def deregister_augmented_forward_and_backward(op):
@@ -3710,6 +3714,31 @@ def uniform_backward(primal, minval, maxval, g):
 nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
 
 
+def get_executor_specific_aug_fwd_rule(symbol) -> RuleInfo | None:
+    """Get executor specific augmented forward rule.
+
+    Args:
+        symbol (prims.Symbol): Symbol to get the rule for.
+
+    Returns:
+        RuleInfo: Rule info for the symbol.
+    """
+    cd = get_compile_data()
+    if cd is None:
+        return None
+
+    # Search for the executor specific rules. When there are multiple rules
+    # for the same symbol, we use the left-most executor in the list (i.e.
+    # the one with the highest priority) and we fallback to the next one if
+    # the checker returns False.
+    for executor in cd.executors_list:
+        candidate = augmented_forward_impls.get((executor, symbol.sym.id))
+        if isinstance(candidate, RuleInfo) and candidate.checker(*symbol.args, **symbol.kwargs):
+            return candidate
+
+    return None
+
+
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     """Symbol mapper for the VJP transform.
 
@@ -3735,6 +3764,8 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
+
+    vjp_impl = get_executor_specific_aug_fwd_rule(symbol) or vjp_impl
 
     if isinstance(vjp_impl, RuleInfo):
         # We should use this rule only if checker returns True for the current
@@ -3906,9 +3937,10 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
+        aug_forward = get_executor_specific_aug_fwd_rule(symbol) or aug_forward
 
         if isinstance(aug_forward, RuleInfo):
-            backward = aug_forward.bw_fallback if not aug_forward.checker(*symbol.args, **symbol.kwargs) else backward
+            backward = backward_impls[aug_forward.executor, symbol.sym.id]
 
         if backward is None:
             if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):

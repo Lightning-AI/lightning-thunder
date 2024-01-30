@@ -742,32 +742,15 @@ def scaled_dot_product_attention_aug_fw(
         return primal, residuals
 
 
-def scaled_dot_product_efficient_attention_aug_fw_rule_check(
-    query: TensorProxy,
-    key: TensorProxy,
-    value: TensorProxy,
-    attn_mask: None | TensorProxy,
-    dropout_p: float,
-    is_causal: bool,
-    *,
-    scale: None | float,
-) -> bool:
-    from thunder.core.compile_data import get_compile_data
-
-    cd = get_compile_data()
-    if sdpa_ex in cd.executors_list:
-        return _scaled_dot_product_attention_checker(query, key, value, attn_mask, dropout_p, is_causal, scale=scale)
-    return False
-
-
 register_augmented_forward_with_checker(
+    sdpa_ex,
     "torch.nn.functional.scaled_dot_product_attention",
-    scaled_dot_product_efficient_attention_aug_fw_rule_check,
+    _scaled_dot_product_attention_checker,
     scaled_dot_product_attention_aug_fw,
 )
 
 
-@register_backward("torch.nn.functional.scaled_dot_product_attention")
+@register_backward((sdpa_ex, "torch.nn.functional.scaled_dot_product_attention"))
 def scaled_dot_product_attention_backward(
     query: Proxy,
     key: Proxy,

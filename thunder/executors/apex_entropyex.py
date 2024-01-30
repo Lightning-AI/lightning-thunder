@@ -224,37 +224,10 @@ def apex_cross_entropy_forward_rule(
     return primal, saved_for_backward
 
 
-def cross_entropy_forward_rule_checker(
-    a: TensorProxy,
-    /,
-    target: TensorProxy,
-    weight: None | TensorProxy = None,
-    size_average: None | Any = None,
-    ignore_index: int = -100,
-    reduce: None | Any = None,
-    reduction: str = "mean",
-    label_smoothing: float = 0.0,
-) -> bool:
-    from thunder.core.compile_data import get_compile_data
-
-    cd = get_compile_data()
-    if apex_ex in cd.executors_list:
-        return _cross_entropy_checker(
-            a,
-            target=target,
-            weight=weight,
-            size_average=size_average,
-            ignore_index=ignore_index,
-            reduce=reduce,
-            reduction=reduction,
-            label_smoothing=label_smoothing,
-        )
-    return False
-
-
 register_augmented_forward_with_checker(
+    apex_ex,
     ltorch.cross_entropy.id,
-    cross_entropy_forward_rule_checker,
+    _cross_entropy_checker,
     apex_cross_entropy_forward_rule,
 )
 
@@ -266,7 +239,7 @@ register_augmented_forward_with_checker(
 # the forward pass has 1 such input, so the backward output is a single Tensor.
 # This function is registered as the backward rule for
 # torch.nn.functional.cross_entropy
-@register_backward(ltorch.cross_entropy.id)
+@register_backward((apex_ex, ltorch.cross_entropy.id))
 def apex_cross_entropy_backward_rule(
     logits,
     labels,
