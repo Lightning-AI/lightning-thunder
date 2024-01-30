@@ -16,35 +16,26 @@ __all__ = [
 # TODO Handle buffers
 # TODO Improve initial broadcast logic
 # Syncs a module's parameters across multiple processes
-#   world, if specified, is a list of (rank, device) tuples
 #   broadcast_from, if specified, is the rank to broadcast tensors from
-#   At least one of world or broadcast_from must be specified so that we can
-#       coordinate the broadcasting of parameters
 def ddp(
     model: torch.nn.Module,
-    rank: int,
     *,
-    world: Any | None = None,
     broadcast_from: int | None = None,
-    process_group: tdist.ProcessGroup | None = None,
     bucket_size_in_mb: float = 25.0,
 ) -> torch.nn.Module:
     """Thunder's Distributed Data Parallel.
 
     This function does two things. One is to broadcast the parameters hosted on the rank specified
-    by ``broadcast_from`` to all the other ranks belonging to ``process_group``. The other is to
+    by ``broadcast_from`` to all the other ranks belonging to default process_group. The other is to
     updates the behavior of backward trace generation and optimization of it so that each gradient
     gets pre-averaged, i.e., divided by world size, and asynchronously allreduced.
 
     Args:
         model: A model before :func:`thunder.compile`d
-        rank:
 
     Keyword Args:
-        world:
         broadcast_from: The rank of the device hosting the parameters to broadcast. The lowest rank
             will be used if none specified.
-        process_group: PyTorch's process group. Use the default process group if none specified.
         bucket_size_in_mb: Size of a gradient bucket.
 
     Return:
@@ -135,13 +126,9 @@ def ddp(
         tdist.is_available(),
         lambda: "ddp requires torch distributed to be available (but it's not)",
     )
-    utils.check(
-        world is not None or broadcast_from is not None,
-        lambda: "At least one of world or broadcast_from must be specified",
-    )
 
-    pg = tdist.distributed_c10d._get_default_group() if process_group is None else process_group
-    utils.check(pg is not None, lambda: "Both process group and default process group are None")
+    pg = tdist.distributed_c10d._get_default_group()
+    utils.check(pg is not None, lambda: "The default process group is None")
     model.use_ddp = True
     model.process_group_for_ddp = pg
     model.bucket_size_in_mb = bucket_size_in_mb
@@ -171,30 +158,8 @@ def ddp(
             ),
         )
 
-    # Validates world information, if available
-    lowest_device_index = deviceindex
-    if world is not None:
-        found_broadcast_process = False
-        for rank_, dev in world:
-            utils.check(dev.type == devicetype, lambda: "Found a world with multiple device types")
-            if rank_ == rank:
-                utils.check(
-                    dev == device,
-                    lambda: f"World entry ({rank_}, {dev}) disagrees with inferred device {device} of rank {rank}",
-                )
-            lowest_device_index = min(lowest_device_index, dev.index)
-            if rank_ == broadcast_from:
-                found_broadcast_process = True
-
-        utils.check(
-            not broadcast_from or found_broadcast_process,
-            lambda: (
-                f"Trying to broadcast from rank={broadcast_from}, " "but didn't find that rank in the world description"
-            ),
-        )
-
     # Identifies which process to broadcast from
-    broadcast_from = broadcast_from if broadcast_from is not None else lowest_device_index
+    broadcast_from = broadcast_from if broadcast_from is not None else 0
 
     # Starts broadcasts
     # TODO Make these broadcast asyncs
@@ -223,18 +188,13 @@ class FSDPType(Enum):
 
 def fsdp(
     model: torch.nn.Module,
-    rank: int,
     *,
-    world: Any | None = None,
     broadcast_from: int | None = None,
-    process_group: tdist.ProcessGroup | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
 ) -> torch.nn.Module:
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     # We are going to use DDP to broadcast the parameters
-    distributed_params_module = ddp(
-        model, rank, world=world, broadcast_from=broadcast_from, process_group=process_group
-    )
+    distributed_params_module = ddp(model, broadcast_from=broadcast_from)
     distributed_params_module.use_ddp = False
     distributed_params_module.use_fsdp = True
     distributed_params_module.sharding_strategy = sharding_strategy

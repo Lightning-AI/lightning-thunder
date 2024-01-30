@@ -12,7 +12,6 @@ You can wrap a model in *thunder*'s ddp like this::
     model,
     rank=rank,
     broadcast_from=0,
-    process_group=pg,
   )
 
   cmodel = thunder.compile(ddp_model)

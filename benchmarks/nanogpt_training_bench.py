@@ -119,9 +119,7 @@ if use_ddp:
 
                 model = ddp(
                     model,
-                    rank=local_rank,
                     broadcast_from=0,
-                    process_group=pg,
                     bucket_size_in_mb=bucket_size_in_mb,
                 )
             case "fsdp":
@@ -129,7 +127,9 @@ if use_ddp:
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[shard_mode]
                 model = fsdp(
-                    model, rank=local_rank, broadcast_from=0, process_group=pg, sharding_strategy=sharding_strategy
+                    model,
+                    broadcast_from=0,
+                    sharding_strategy=sharding_strategy,
                 )
             case _:
                 raise ValueError(f"Unknown ddp_mode: {ddp_mode}")

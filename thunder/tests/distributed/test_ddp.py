@@ -427,7 +427,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
         cm = thunder.compile(
-            ddp(m, self.rank, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
+            ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
             executors_list=executors_map[executor].executors_list(),
         )
         x = torch.ones((2, 10)).to(device)
@@ -775,9 +775,7 @@ def _test_native_ddp_helper(input_data):
     model = SmallModel(device, torch_dtype)
     ddp_model = ddp(
         model,
-        rank=rank,
         broadcast_from=0,
-        process_group=pg,
     )
     cmodel = thunder.compile(
         ddp_model,
@@ -883,9 +881,7 @@ def _test_native_fsdp_helper(input_data):
 
     fsdp_model = fsdp(
         model,
-        rank=rank,
         broadcast_from=0,
-        process_group=pg,
     )
 
     # Check that the model is sharded
