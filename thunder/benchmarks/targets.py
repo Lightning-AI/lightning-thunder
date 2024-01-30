@@ -356,24 +356,12 @@ fwd_executor_ids = (
 grad_executors = (
     torch_fwd_bwd,
     torchcompile_fwd_bwd,
-    thunder_grad,
-    thunder_gradv1,
     thunder_fwd_bwd,
-    thunder_value_and_grad,
-    thunder_torchcompile_grad,
-    thunder_torchcompile_gradv1,
-    thunder_torchcompile_value_and_grad,
 )
 grad_executors_ids = (
     "torch",
     "torch.compile",
-    "thunder-grad",
-    "thunder-gradv1",
-    "thunder-fwd-bwd",
-    "thunder-value-and-grad",
-    "thunder+torchcompile-grad",
-    "thunder+torchcompile-gradv1",
-    "thunder+torchcompile-value-and-grad",
+    "thunder",
 )
 
 apex_grad_executors = (thunder_apex_grad, thunder_apex_nvfuser_grad)
