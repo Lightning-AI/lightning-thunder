@@ -1555,6 +1555,13 @@ def test_binary_operations():
         assert_close(actual, expected)
 
 
+def test_binary_op_on_types():
+    def fn():
+        return int | None
+
+    assert jit(fn)() == fn()
+
+
 def test_get_and_for_iter():
     def foo(a):
         for x in (1, 2, 3):

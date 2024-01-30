@@ -373,3 +373,37 @@ def test_lookaside_bool():
     expected = foo(a, b, 1)
     actual = jfoo(a, b, 1)
     assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2004", raises=BaseException)
+def test_litgpt():
+    from thunder.benchmarks import LitGPTBenchmark
+    from thunder.tests.lit_gpt_model import Config
+
+    cfg: Config = Config.from_name("gpt-neox-like")
+    bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = litjit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2004", raises=BaseException)
+def test_nanogpt_block():
+    from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTBlockBenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+
+    jfn = litjit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))

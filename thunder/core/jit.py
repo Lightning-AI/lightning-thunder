@@ -1271,8 +1271,8 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
     if idx >= BINARY_OP.IADD.value:
 
         def inplace_impl():
-            if hasattr(a, inplace_method):
-                return getattr(a, inplace_method)(b)
+            if hasattr(type(a), inplace_method):
+                return getattr(type(a), inplace_method)(a, b)
             return NotImplemented
 
         res = _jit(inplace_impl)
@@ -1282,8 +1282,12 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
     if idx < BINARY_OP.IADD.value or (res is NotImplemented):
 
         def outofplace_impl(a, b, left_method, right_method, binop_name):
-            if (not hasattr(a, left_method)) or ((result := getattr(a, left_method)(b)) is NotImplemented):
-                if (not hasattr(b, right_method)) or ((result := getattr(b, right_method)(a)) is NotImplemented):
+            if (not hasattr(type(a), left_method)) or (
+                (result := getattr(type(a), left_method)(a, b)) is NotImplemented
+            ):
+                if (not hasattr(type(b), right_method)) or (
+                    (result := getattr(type(b), right_method)(b, a)) is NotImplemented
+                ):
                     err: TypeError = TypeError(
                         f"unsupported operand type(s) for {binop_name}: '{type(a)}' and '{type(b)}'"
                     )
@@ -3849,7 +3853,7 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             #       using the qualname is not good here because Python qualnames come with no
             #       guarantees (e.g. random._random.Random.seed and random.Random.seed are distinct
             #       but have the same qualname (Random.seed).
-            #       Binding (using <unmound_method>.__get__) is what super does to get a bound method-
+            #       Binding (using <unbound_method>.__get__) is what super does to get a bound method-
             #       While it will be a new object every time __get__ is called (so no `is`), equality
             #       works.
             #       The next trouble is that types that are not subclassable might not implement __get__

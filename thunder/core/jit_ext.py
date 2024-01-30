@@ -236,7 +236,6 @@ def _lit_bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
         with tracectx(prologue_trc):
             prims.assert_compare(x, "!=" if res else "==", 0)
         return res
-    bool_lookaside = default_lookaside(bool)
 
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(x)
