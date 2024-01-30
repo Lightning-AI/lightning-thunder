@@ -1,5 +1,7 @@
-from typing import Optional, Any
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from enum import auto, Enum
+from typing import Optional, Any
 
 import torch
 import torch.distributed as tdist
@@ -10,6 +12,49 @@ import thunder.core.utils as utils
 __all__ = [
     "ddp",
 ]
+
+
+_skip_data_parallel_grad_sync = ContextVar("skip_data_parallel_grad_sync", default=False)
+
+
+def set_skip_data_parallel_grad_sync(value: bool) -> Token:
+    """Set whether to skip data parallel grad sync.
+
+    Args:
+        value: Whether to skip data parallel grad sync.
+
+    Returns:
+        A token that can be used to restore the previous value.
+    """
+    return _skip_data_parallel_grad_sync.set(value)
+
+
+def reset_skip_data_parallel_grad_sync(token: Token) -> None:
+    """Reset whether to skip data parallel grad sync.
+
+    Args:
+        token: The token returned by :func:`set_skip_data_parallel_grad_sync`.
+    """
+    _skip_data_parallel_grad_sync.reset(token)
+
+
+def get_skip_data_parallel_grad_sync() -> bool:
+    """Get whether to skip data parallel grad sync.
+
+    Returns:
+        Whether to skip data parallel grad sync.
+    """
+    return _skip_data_parallel_grad_sync.get()
+
+
+@contextmanager
+def skip_data_parallel_grad_sync() -> None:
+    """A context manager to skip data parallel grad sync."""
+    token = set_skip_data_parallel_grad_sync(True)
+    try:
+        yield
+    finally:
+        reset_skip_data_parallel_grad_sync(token)
 
 
 # TODO Verify parameters are not partially initialized

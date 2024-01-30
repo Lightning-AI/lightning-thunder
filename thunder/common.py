@@ -2,6 +2,7 @@ from typing import Any, Optional
 from collections.abc import Callable
 from enum import Enum, auto
 from collections import deque, defaultdict
+from contextlib import contextmanager
 import time
 from collections.abc import Hashable, Sequence
 from functools import wraps
@@ -373,6 +374,46 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
                 self._additional_param_values[idx] = v
         return res
 
+    @contextmanager
+    def no_sync(self):
+        """Context manager to disable gradient synchronization in data parallel mode.
+
+        This context manager is intended to be used in conjunction with
+        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
+        synchronization in the backward pass. It will not have any effect when
+        used with other modules.
+
+        .. note::
+
+            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
+            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
+            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
+            In contrast, this synchronizes accumulated gradients when exiting, leading to
+            :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+        """
+        from torch.distributed import distributed_c10d as c10d
+
+        from thunder.distributed import set_skip_data_parallel_grad_sync
+        from thunder.distributed import reset_skip_data_parallel_grad_sync
+
+        token = set_skip_data_parallel_grad_sync(True)
+        try:
+            yield
+        finally:
+            reset_skip_data_parallel_grad_sync(token)
+
+            params_with_grad = list(filter(lambda p: p.grad is not None, self.parameters()))
+            grads = [p.grad for p in params_with_grad]
+            process_group = self._lc_cd.process_group_for_ddp
+            torch._foreach_div_(grads, process_group.size())
+            with c10d._coalescing_manager(
+                group=process_group,
+                async_ops=True,
+            ) as cm:
+                for p in params_with_grad:
+                    c10d.all_reduce(p.grad)
+            cm.wait()
+
 
 #
 # Caching objects and functions
@@ -418,7 +459,12 @@ class _key_value_separator:
 
 
 # Returns a hashable key or None if the given args and kwargs are not hashable
-def _make_cache_key(args, kwargs, autocast_key=None) -> None | tuple:
+def _make_cache_key(
+    args,
+    kwargs,
+    autocast_key=None,
+    distributed_key=None,
+) -> None | tuple:
     key = [None] * (len(args) + len(kwargs))
 
     # Constructs arg portion of key
@@ -446,6 +492,8 @@ def _make_cache_key(args, kwargs, autocast_key=None) -> None | tuple:
 
     if autocast_key is not None:
         key += autocast_key
+    if distributed_key is not None:
+        key += distributed_key
 
     return tuple(key)
 
@@ -457,9 +505,23 @@ def _make_autocast_cache_key(
     return [is_autocast_enabled, is_autocast_cpu_enabled, autocast_gpu_dtype, autocast_cpu_dtype]
 
 
+def _make_distributed_cache_key(
+    no_grad_sync: bool,
+) -> list[bool]:
+    return [no_grad_sync]
+
+
 # Returns True if successfully cached, false otherwise
-def cache_put(cache: dict, fn, traces: Sequence[TraceCtx], args, kwargs, autocast_key=None) -> bool:
-    key = _make_cache_key(args, kwargs, autocast_key)
+def cache_put(
+    cache: dict,
+    fn,
+    traces: Sequence[TraceCtx],
+    args,
+    kwargs,
+    autocast_key=None,
+    distributed_key=None,
+) -> bool:
+    key = _make_cache_key(args, kwargs, autocast_key, distributed_key)
 
     if key is None:
         return False
@@ -468,8 +530,14 @@ def cache_put(cache: dict, fn, traces: Sequence[TraceCtx], args, kwargs, autocas
     return True
 
 
-def cache_get(cache: dict, args, kwargs, autocast_key=None) -> tuple[None | Callable, None | Sequence[TraceCtx]]:
-    key = _make_cache_key(args, kwargs, autocast_key)
+def cache_get(
+    cache: dict,
+    args,
+    kwargs,
+    autocast_key=None,
+    distributed_key=None,
+) -> tuple[None | Callable, None | Sequence[TraceCtx]]:
+    key = _make_cache_key(args, kwargs, autocast_key, distributed_key)
     return cache.get(key, (None, None))
 
 
@@ -524,17 +592,23 @@ def trace(
             trace.args, trace.kwargs = proxyargs, proxykwargs
 
             if insert_ddp_syncs:
+                from thunder.core import utils
+                from thunder.distributed import get_skip_data_parallel_grad_sync
+
+                no_sync = get_skip_data_parallel_grad_sync()
+                utils.check(
+                    not (no_sync and getattr(compile_data, "use_fsdp", False)),
+                    lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
+                )
 
                 def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
-                    if isinstance(arg, TensorProxy) and arg.ddp_type in (
-                        DDPType.REPLICATED,
-                        DDPType.FULLY_SHARDED,
-                    ):
+                    if isinstance(arg, TensorProxy) and arg.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
                         return dist.prims.synchronize(arg, compile_data.process_group_for_ddp)
                     else:
                         return arg
 
-                proxyargs, proxykwargs = tree_map(ddp_sync, (proxyargs, proxykwargs))
+                if not no_sync:
+                    proxyargs, proxykwargs = tree_map(ddp_sync, (proxyargs, proxykwargs))
 
             result = fn(*proxyargs, **proxykwargs)
 
@@ -689,6 +763,15 @@ def _create_callable(
             )
             autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
 
+        # TODO(crcrpar): support FSDP as well
+        is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
+        no_grad_sync = False
+        if is_ddp_enabled:
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
+            no_grad_sync = get_skip_data_parallel_grad_sync()
+        distributed_key = _make_distributed_cache_key(no_grad_sync)
+
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
         cs.last_trace_cache_start = time.time_ns()
@@ -705,7 +788,7 @@ def _create_callable(
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
         if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-            c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key)
+            c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key, distributed_key)
             if c is not None:
                 # Updates statistics before early termination
                 cs.cache_hits += 1
@@ -758,7 +841,15 @@ def _create_callable(
                     cs.last_trace_host_execution_stop = time.time_ns()
                     cs.last_executed = c
                     if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-                        cache_put(cs.cache, c, None, args[cd.num_constant_args :], kwargs)
+                        cache_put(
+                            cs.cache,
+                            c,
+                            None,
+                            args[cd.num_constant_args :],
+                            kwargs,
+                            autocast_key=None,
+                            distributed_key=distributed_key,
+                        )
                     cs.last_trace_host_stop = time.time_ns()
                     return result
 
@@ -817,7 +908,15 @@ def _create_callable(
 
             # (Possibly) Updates the cache
             if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
-                cache_put(cs.cache, c, traces, args[cd.num_constant_args :], kwargs)
+                cache_put(
+                    cs.cache,
+                    c,
+                    traces,
+                    args[cd.num_constant_args :],
+                    kwargs,
+                    autocast_key=None,
+                    distributed_key=distributed_key,
+                )
 
             cs.last_trace_host_stop = time.time_ns()
             return result

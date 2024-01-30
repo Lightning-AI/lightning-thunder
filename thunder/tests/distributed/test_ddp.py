@@ -551,6 +551,128 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             test_rematerialize_all_gather_N(15, output_to_consumer_idx)
             test_rematerialize_all_gather_N(100, output_to_consumer_idx)
 
+    @common_utils.parametrize(
+        "executor,bucket_size_in_mb,dataset_size",
+        product(tuple(executors_map.keys()), (0, 25), (1, 2)),
+    )
+    def test_ddp_with_no_sync_grad_accumulation(self, executor: str, bucket_size_in_mb: float, dataset_size: int):
+        # This case tries to guarantee the parity between `thunder.distributed.ddp` with and without `no_sync`
+        # from the perspectives of trace and numeric.
+        # At trace level, in `no_sync`, the backward trace should NOT have AllReduce while outside of `no_sync`,
+        # the trace should have.
+        # For numerical parity, we compare the accumulated gradients with and without `no_sync` and even against gradients without accumulation.
+        # If they are different, it'd be impossible to keep replicas identical.
+        from collections import defaultdict
+        from contextlib import nullcontext
+        from thunder.common import CACHE_MODES
+        from thunder.distributed import ddp
+        from thunder.distributed import get_skip_data_parallel_grad_sync
+
+        # TODO(crcrpar): Use `last_traces` to check if allreduce was called, instead of `torch.profiler.profile`
+        # See: https://github.com/Lightning-AI/lightning-thunder/pull/1881#issuecomment-1910455732
+        def run_fwd_bwd(iter_count, model, x, y, num_grad_accum_steps: int | None = None):
+            with torch.profiler.profile() as prof:
+                pred = model(x)
+                loss = torch.nn.functional.mse_loss(pred, y)
+                if num_grad_accum_steps is not None:
+                    loss /= num_grad_accum_steps
+                loss.backward()
+
+            keys = tuple([e.key for e in prof.key_averages()])
+            has_allreduce = any(("allreduce_" in k or "all_reduce" in k) for k in keys)
+            msg = f"{keys=}"
+            if get_skip_data_parallel_grad_sync():
+                self.assertFalse(has_allreduce, msg=msg)
+            else:
+                self.assertTrue(has_allreduce, msg=msg)
+
+            return loss
+
+        def get_model_and_optimizer(device):
+            m = ToyModel().to(device)
+            ddp_m = ddp(m, self.rank, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb)
+            compiled_ddp_m = thunder.compile(
+                ddp_m,
+                cache_mode=CACHE_MODES.DYNAMIC_STRIDES,
+                executors_list=executors_map[executor].executors_list(),
+            )
+            optimizer = torch.optim.SGD(compiled_ddp_m.parameters(), lr=1e-3)
+            return compiled_ddp_m, optimizer
+
+        def get_ground_truth_loss_grads(device, dataloader):
+            compiled_ddp_m, optimizer = get_model_and_optimizer(device)
+            initial_state_dict = compiled_ddp_m.state_dict()
+
+            losses, grads = [], []
+
+            for iter_count, (x, y) in enumerate(dataloader):
+                optimizer.zero_grad()
+                losses.append(run_fwd_bwd(iter_count, compiled_ddp_m, x, y, num_grad_accum_steps=None))
+                grads.append([p.grad for p in compiled_ddp_m.parameters() if p.grad is not None])
+                optimizer.step()
+
+            return initial_state_dict, losses, grads
+
+        device = torch.device("cuda", self.rank)
+
+        batch_size = 128
+        num_micro_batch = 4
+        micro_batch_size = batch_size // num_micro_batch
+        with torch.no_grad():
+            dataloader = [
+                (torch.randn(batch_size, 10, device=device), torch.randn(batch_size, 5, device=device))
+                for _ in range(dataset_size)
+            ]
+
+        initial_state_dict, ground_truth_losses, ground_truth_grads = get_ground_truth_loss_grads(device, dataloader)
+
+        gradients = defaultdict(list)
+        for use_no_sync in (True, False):
+            compiled_ddp_m, optimizer = get_model_and_optimizer(device)
+            compiled_ddp_m.load_state_dict(initial_state_dict)
+
+            for iter_count, (x, y) in enumerate(dataloader):
+                loss = torch.zeros((), device=device)
+                with compiled_ddp_m.no_sync() if use_no_sync else nullcontext():
+                    for i in range(num_micro_batch - 1):
+                        cur_loss = run_fwd_bwd(
+                            iter_count,
+                            compiled_ddp_m,
+                            x[i * micro_batch_size : (i + 1) * micro_batch_size, :],
+                            y[i * micro_batch_size : (i + 1) * micro_batch_size, :],
+                            num_micro_batch,
+                        )
+                        with torch.no_grad():
+                            loss += cur_loss
+                cur_loss = run_fwd_bwd(
+                    iter_count, compiled_ddp_m, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
+                )
+                with torch.no_grad():
+                    loss += cur_loss
+                optimizer.step()
+                gradients[use_no_sync].append([p.grad for p in compiled_ddp_m.parameters() if p.grad is not None])
+                optimizer.zero_grad(set_to_none=True)
+
+                num_expected_caches: int
+                if use_no_sync:
+                    num_expected_caches = 2
+                else:
+                    num_expected_caches = 1
+                self.assertEqual(len(compiled_ddp_m._lc_cs.cache), num_expected_caches)
+
+                torch.testing.assert_close(loss, ground_truth_losses[iter_count], atol=1e-4, rtol=1e-4)
+                torch.testing.assert_close(
+                    actual=gradients[use_no_sync][iter_count],
+                    expected=ground_truth_grads[iter_count],
+                    atol=5e-5,
+                    rtol=5e-3,
+                )
+                if not use_no_sync:
+                    torch.testing.assert_close(
+                        actual=gradients[True][iter_count],
+                        expected=gradients[False][iter_count],
+                    )
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 

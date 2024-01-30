@@ -315,9 +315,13 @@ if torch.distributed.is_available():
         from thunder.core import prims
         from thunder.core.transforms import visitor_transform
         from thunder.core.transforms import VISIT_TYPE
+        from thunder.distributed import get_skip_data_parallel_grad_sync
         from thunder.distributed.bucketing import GradBuckets
 
-        if (bucket_size_in_mb := getattr(compile_data.fn, "bucket_size_in_mb", 25)) <= 0:
+        if (
+            get_skip_data_parallel_grad_sync()
+            or (bucket_size_in_mb := getattr(compile_data.fn, "bucket_size_in_mb", 25)) <= 0
+        ):
             return backward_trace
 
         @dataclass
