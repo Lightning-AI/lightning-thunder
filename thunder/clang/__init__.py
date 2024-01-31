@@ -699,7 +699,13 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         flattened_idx = flattened_idx + wrapped * accum
         accum *= l
 
-    return take(flattened, flattened_idx, dim=dim)
+    res = take(flattened, flattened_idx, dim=dim)
+
+    # take always keeps the indexed dim.
+    # If all keys are 0-dim, this dim has to be squeezed.
+    if all(k.ndim == 0 for k in modified_key if isinstance(k, TensorLike)):
+        res = squeeze(res, (dim,))
+    return res
 
 
 # NOTE Advanced indexing is triggered whenever:
