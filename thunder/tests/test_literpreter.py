@@ -300,6 +300,32 @@ def test_add_numbers():
         assert_close(actual, expected)
 
 
+def test_binary_add_tensor_number():
+    # Tests using torch.add
+    def foo(a):
+        return torch.add(a, 3)
+
+    jfoo = litjit(foo)
+
+    a = torch.randn((2, 2), device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+    # Tests using addition operator
+    def foo(a):
+        return a + 3
+
+    jfoo = litjit(foo)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1989")
 def test_binary_add_numbers():
     def foo(a, b):

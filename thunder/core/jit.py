@@ -36,7 +36,7 @@ from types import (
     TracebackType,
 )
 
-from thunder.core.baseutils import Singleton
+from thunder.core.baseutils import Singleton, extract_callable_name
 
 #
 # jit.py implements a Python interpreter in Python.
@@ -77,6 +77,30 @@ from thunder.core.baseutils import Singleton
 __all__ = [
     "jit",
 ]
+
+#
+# Types, collections and functions related to understanding objects constructed by the interpreter (like literal numbers)
+#
+
+
+class WrappedValue:
+    def __init__(self, value, /):
+        self.value = value
+
+    def unwrap(self):
+        return self.value
+
+
+def wrap(value: Any, /) -> WrappedValue:
+    return WrappedValue(value)
+
+
+def unwrap(value: Any, /) -> Any:
+    if isinstance(value, WrappedValue):
+        return value.unwrap()
+
+    return value
+
 
 #
 # Jit context
@@ -344,22 +368,6 @@ def extract_code(fn) -> CodeType:
     code: CodeType = fn.__code__
 
     return code
-
-
-def extract_callable_name(fn: Callable | CodeType) -> str:
-    if isinstance(fn, CodeType):
-        return fn.co_qualname if hasattr(fn, "co_qualname") else fn.co_name
-    elif hasattr(fn, "__qualname__"):
-        return fn.__qualname__
-    elif hasattr(fn, "__name__"):
-        return fn.__name__
-    elif hasattr(fn, "__class__"):
-        return fn.__class__.__name__
-    elif isinstance(fn, functools.partial):
-        return f"<partial with inner type {extract_callable_name(fn.func)}>"
-    else:
-        assert isinstance(fn, Callable), (fn, type(fn))
-        return f"<callable of type {type(fn).__name__}>"
 
 
 # TODO There may be a better way to determine if an object is a PyCapsule, like
@@ -1080,30 +1088,39 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 # To register a callback, map from this enum to a callable. The args and kwargs for each
 #   event may be different, as documented below.
 class JIT_CALLBACKS(enum.Enum):
-    # Called when a locals (in localsplus) is created
-    #   (name: str, value: Any, /) -> Any
+    # Called when a constant (in a CodeType's co_consts) is loaded
+    #   (value: Any, /) -> Any
     #   The returned value is used in place of the original value
-    LOCAL_CALLBACK = enum.auto()
+    # TODO Consider passing the code object and index into co_consts to the callback
+    CONST_CALLBACK = enum.auto()
 
     # Called when a freevar is created
     #   (name: str, value: Any, /, * fn: Callable, idx: int) -> Any
     #   The returned value is used in place of the original value
     FREEVAR_CALLBACK = enum.auto()
 
+    # Called when a global is loaded
+    #   (globals_dict: dict, name: str) -> Any
+    #   The returned value is loaded instead of the original value
+    GLOBAL_CALLBACK = enum.auto()
+
+    # Called when a locals (in localsplus) is created
+    #   (name: str, value: Any, /) -> Any
+    #   The returned value is used in place of the original value
+    LOCAL_CALLBACK = enum.auto()
+
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
 
-def local_callback(name: str, value: Any, /) -> Any:
-    assert isinstance(name, str)
-
+def const_callback(value: Any, /) -> Any:
     ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOCAL_CALLBACK)
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.CONST_CALLBACK)
 
     if cb is None:
         return value
 
-    return cb(name, value)
+    return cb(value)
 
 
 def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) -> CellType:
@@ -1118,6 +1135,31 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
 
     contents: Any = cb(name, cell.cell_contents, fn=fn, idx=idx)
     return CellType(contents)
+
+
+def global_callback(globals_dict: dict, name: str) -> Any:
+    assert isinstance(globals_dict, dict)
+    assert isinstance(name, str)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.GLOBAL_CALLBACK)
+
+    if cb is None:
+        return globals_dict[name]
+
+    return cb(globals_dict, name)
+
+
+def local_callback(name: str, value: Any, /) -> Any:
+    assert isinstance(name, str)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOCAL_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(name, value)
 
 
 def check_and_append(stack, val):
@@ -1627,8 +1669,12 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack,
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
 @register_opcode_handler("CALL_FUNCTION_KW", max_ver=(3, 10))
 def _call_function_kw_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
-    kw_names: tuple[str, ...] = stack.pop()
-    kwarg_length: int = len(kw_names)
+    kw_names: tuple[str, ...] = unwrap(stack.pop())
+
+    kwarg_length: JIT_SIGNALS | int = _jit(len, kw_names)
+    if kwarg_length is JIT_SIGNALS.EXCEPTION_RAISED:
+        return kwarg_length
+
     kwargs_flat: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(kwarg_length))))
     fn_kwargs: dict[str, Any] = {k: v for k, v in zip(kw_names, kwargs_flat)}
     assert type(inst.arg) is int
@@ -1718,8 +1764,10 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
     a = stack.pop()
     assert type(inst.arg) is int
     assert inst.arg < len(dis.cmp_op), f"{inst}, {dis.cmp_op}"
-    result: Any = cmp_impls[dis.cmp_op[inst.arg]](a, b)
-    stack.append(result)
+
+    op = cmp_impls[dis.cmp_op[inst.arg]]
+    res: bool = op(unwrap(a), unwrap(b))
+    stack.append(res)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-COPY
@@ -2430,7 +2478,10 @@ def _load_closure_handler(
 @register_opcode_handler("LOAD_CONST")
 def _load_const_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs) -> None:
     assert type(inst.arg) is int
-    stack.append(co.co_consts[inst.arg])
+
+    constant = co.co_consts[inst.arg]
+    constant = const_callback(constant)
+    stack.append(constant)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_DEREF
@@ -2497,7 +2548,7 @@ def _load_global_handler(
 
     obj: Any
     try:
-        obj = globals_dict[co_name]
+        obj = global_callback(globals_dict, co_name)
     except KeyError:
         try:
             obj = builtins_dict[co_name]
@@ -2595,32 +2646,32 @@ def _make_function_handler(
     else:
         name = ""
 
-    fn_co: CodeType = stack.pop()
+    fn_co: CodeType = unwrap(stack.pop())
     name = fn_co.co_name
 
     if inst.arg & 0x08:
         # Python will have built at tuple of cell vars
         # (via STORE_DEREF, LOAD_CLOSURE)
-        closure = tuple(stack.pop())
+        closure = tuple(unwrap(stack.pop()))
         assert all(isinstance(v, CellType) for v in closure)
     else:
         closure = None
 
     if inst.arg & 0x04:
-        annotations = stack.pop()
+        annotations = unwrap(stack.pop())
         assert type(annotations) is tuple and len(annotations) % 2 == 0
         annotations = dict(zip(annotations[::2], annotations[1::2]))
     else:
         annotations = None
 
     if inst.arg & 0x02:
-        kwdefaults = stack.pop()
+        kwdefaults = unwrap(stack.pop())
         assert type(kwdefaults) == dict
     else:
         kwdefaults = None
 
     if inst.arg & 0x01:
-        argdefs = stack.pop()
+        argdefs = unwrap(stack.pop())
         assert type(argdefs) == tuple
     else:
         argdefs = None

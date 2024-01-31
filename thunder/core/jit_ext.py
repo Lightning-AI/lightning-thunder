@@ -1,6 +1,5 @@
 from typing import Any
 from collections.abc import ValuesView, Iterable, Iterator
-from types import CellType, ModuleType, CodeType, BuiltinFunctionType, FunctionType, MethodType
 from collections.abc import Callable, Sequence
 import weakref
 import random
@@ -11,6 +10,31 @@ import warnings
 from enum import Enum, auto
 from io import StringIO
 import time
+
+from types import (
+    CellType,
+    ClassMethodDescriptorType,
+    CodeType,
+    CoroutineType,
+    FrameType,
+    FunctionType,
+    MethodType,
+    MethodDescriptorType,
+    ModuleType,
+    NoneType,
+    BuiltinFunctionType,
+    BuiltinMethodType,
+    MethodDescriptorType,
+    MethodWrapperType,
+    WrapperDescriptorType,
+    TracebackType,
+    CellType,
+    ModuleType,
+    CodeType,
+    BuiltinFunctionType,
+    FunctionType,
+    MethodType,
+)
 
 import torch
 from thunder.core.proxies import (
@@ -39,8 +63,13 @@ from thunder.core.jit import (
     JitCompileCtx,
     is_opaque,
     Py_NULL,
+    member_descriptor,
+    WrappedValue,
+    unwrap,
+    wrap,
 )
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
+from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
 from thunder.common import transform_for_execution, CACHE_MODES
@@ -52,6 +81,7 @@ from thunder.core.trace import TraceCtx
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.proxies import proxy, Variable
+from thunder.core.pytree import tree_map
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -148,6 +178,10 @@ class LitCtx:
         if val is Py_NULL():
             return val
 
+        # Short-circuits if the val is a WrappedValue (in which case it's a constant that doesn't need to be proxied)
+        if isinstance(val, WrappedValue):
+            return val
+
         # Short-circuits if val is already a proxy
         # TODO Check for distinct provenances for types that care about that (mutable collections)
         if isinstance(val, Proxy):
@@ -216,6 +250,15 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 _lit_lookaside_map[getattr] = _lit_getattr_lookaside
 
 
+# TODO Expand on this
+def _lit_hasattr_lookaside(obj: Any, name: str):
+    hasattr_lookaside = default_lookaside(hasattr) or hasattr
+    return hasattr_lookaside(obj, name)
+
+
+_lit_lookaside_map[hasattr] = _lit_hasattr_lookaside
+
+
 # We want to record a constraint when we go from proxy -> value here.
 # At the same time Python expects to (but we might think to loosen the requirement
 # to return a bool for the JIT, return a proxy with origin informaiton and postpone
@@ -243,24 +286,63 @@ def _lit_bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
 
 _lit_lookaside_map[bool] = _lit_bool_lookaside
 
+# Adds proxy methods
+# NOTE These methods map to themselves, which prevents the interpreter from looking into them
+#   This is OK because these methods are written in a tracing-safe manner, and trying to
+#   interpreter their internals is unnecessary and would just add complexity at this time
+_lit_lookaside_map.update(
+    {
+        NumberProxy.__add__: NumberProxy.__add__,
+        NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
+        NumberProxy.__sub__: NumberProxy.__sub__,
+        TensorProxy.__add__: TensorProxy.__add__,
+        TensorProxy.__mul__: TensorProxy.__mul__,
+        TensorProxy.__sub__: TensorProxy.__sub__,
+    }
+)
+
+# TODO Implement safety --- UNSAFE, PERMISSIVE, SAFE
+_safe_functions: set = {
+    dict.get,  # TODO Review safety of this
+    FunctionType.__new__,
+    isinstance,
+    member_descriptor.__get__,  # TODO Review the safety of this
+    MethodDescriptorType.__get__,  # TODO Review the safety of this
+    type,
+    tuple.__len__,
+}
+
 
 # TODO Document this function (with steps)
-# TODO Implement safety --- UNSAFE, PERMISSIVE, SAFE
 def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
-    # Step 0 -- Performs symbol lookasides
-
-    # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
-    # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+    # Identifies the lookaside
+    lookaside: None | Callable
     if isinstance(fn, Symbol) or fn in _clang_fn_set:
-        return fn
+        # Performs symbol lookasides
+        # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
+        # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+        lookaside = fn
+    elif (lit_lookaside := _lit_lookaside_map.get(fn, None)) is not None:
+        lookaside = lit_lookaside
+    else:
+        # Falls through to the interpreter's default lookaside
+        lookaside = default_lookaside(fn, *args, **kwargs)
 
-    lit_lookaside: None | Callable = _lit_lookaside_map.get(fn, None)
+    if lookaside is None:
+        if is_opaque(fn) and fn not in _safe_functions:
+            raise NotImplementedError(
+                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
+            )
+        return None
 
-    if lit_lookaside is not None:
-        return lit_lookaside
+    # NOTE lookaside is not None
+    # Wraps the lookaside to unwrap WrappedValues
+    @wraps(lookaside)
+    def unwrapper(*args, **kwargs):
+        args, kwargs = tree_map(unwrap, (args, kwargs))
+        return lookaside(*args, **kwargs)
 
-    # Step X -- Falls through to the interpreter's default lookaside
-    return default_lookaside(fn, *args, **kwargs)
+    return unwrapper
 
 
 #
@@ -274,9 +356,8 @@ class UNPACK_ACTION(Enum):
     FROM_GETATTR = auto()
 
 
-def _lit_local_callback(name: str, value: Any, /) -> Any:
-    ctx: LitCtx = get_litctx()
-    return ctx.proxify(value, name=name, history=(UNPACK_ACTION.FROM_SIGNATURE, name))
+def _lit_const_callback(value: Any) -> WrappedValue:
+    return wrap(value)
 
 
 def _lit_freevar_callback(name: str, value: Any, /, *, fn: Callable, idx: int) -> Any:
@@ -286,9 +367,26 @@ def _lit_freevar_callback(name: str, value: Any, /, *, fn: Callable, idx: int) -
     return value
 
 
+# TODO Support additional global loads
+def _lit_global_callback(globals_dict: dict, name: str) -> Any:
+    # Allows loading the torch module
+    value = globals_dict[name]
+    if value is torch:
+        return value
+
+    raise NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported")
+
+
+def _lit_local_callback(name: str, value: Any, /) -> Any:
+    ctx: LitCtx = get_litctx()
+    return ctx.proxify(value, name=name, history=(UNPACK_ACTION.FROM_SIGNATURE, name))
+
+
 lit_callbacks: dict[JIT_CALLBACKS, Callable] = {
-    JIT_CALLBACKS.LOCAL_CALLBACK: _lit_local_callback,
+    JIT_CALLBACKS.CONST_CALLBACK: _lit_const_callback,
     JIT_CALLBACKS.FREEVAR_CALLBACK: _lit_freevar_callback,
+    JIT_CALLBACKS.GLOBAL_CALLBACK: _lit_global_callback,
+    JIT_CALLBACKS.LOCAL_CALLBACK: _lit_local_callback,
 }
 lit_callbacks = default_callbacks | lit_callbacks
 
@@ -324,6 +422,11 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             cs.last_trace_tracing_start = time.time_ns()
             jfn = jit(cd.fn, fn_lookaside=lit_lookaside, callbacks=lit_callbacks, debug_log=cd.debug_log)
             result = jfn(*args, **kwargs)
+
+            # Translates wrapped values to actual values
+            # TODO Review this with collections
+            result = tree_map(unwrap, result)
+
             prims.python_return(result)
             cs.last_trace_tracing_stop = time.time_ns()
         finally:
