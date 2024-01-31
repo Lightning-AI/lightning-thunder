@@ -20,7 +20,9 @@ class PrimIDs(Enum):
     WAIT = auto()
     PACK = auto()
     UNPACK = auto()
+    UNPACK_FOR_FSDP = auto()
     UPDATE_BUCKET_VIEW = auto()
+    PACK_FOR_FSDP = auto()
 
 
 # This enum describes what all_reduce (below) will actually do
@@ -45,7 +47,12 @@ def check_if_distributed_available() -> None:
     )
 
 
-def all_gather_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup, do_async: Number) -> TensorProxy:
+def all_gather_meta(
+    a: TensorProxy,
+    /,
+    group: torch.distributed.ProcessGroup,
+    do_async: Number,
+) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
@@ -97,7 +104,11 @@ def broadcast_meta(
 
 
 def reduce_scatter(
-    a: TensorProxy, /, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+    a: TensorProxy,
+    /,
+    op: DistributedReduceOps,
+    group: torch.distributed.ProcessGroup,
+    do_async: Number,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
@@ -142,7 +153,10 @@ def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -
             utils.check(False, lambda: f"Unexpected {a.ddp_type=}")
 
 
-def pack_meta(tensors: list[TensorProxy], bucket_key: str) -> TensorProxy:
+def pack_meta(
+    tensors: list[TensorProxy],
+    bucket_key: str,
+) -> TensorProxy:
     utils.check(len(tensors) > 0, lambda: "Empty list is not expected")
     utils.check(
         all(isinstance(t, TensorProxy) for t in tensors),
@@ -169,6 +183,58 @@ def unpack_meta(buffer: TensorProxy, tensors: list[TensorProxy], bucket_key: str
     return [TensorProxy(like=t) for t in tensors]
 
 
+def pack_for_fsdp_meta(
+    tensors: list[TensorProxy],
+    world_size: int,
+    mode: str,
+) -> TensorProxy:
+    _supported = ("gather", "scatter")
+    utils.check(mode in _supported, lambda: f"{mode=} is not supported: {_supported}")
+    if world_size is not None:
+        utils.check(
+            isinstance(world_size, int) and world_size > 0,
+            lambda: f"{world_size=} is supposed to be either {None=} or int",
+        )
+    return pack_meta(tensors, "")
+
+
+def unpack_for_fsdp_meta(
+    buffer: TensorProxy,
+    tensors: list[TensorProxy],
+    world_size: int,
+    mode: str,
+) -> list[TensorProxy]:
+    utils.check(len(tensors) > 0, lambda: "Empty list is not expected")
+    utils.check(
+        all(isinstance(t, TensorProxy) for t in tensors),
+        lambda: f"Every element of `tensors` must be TensorProxy but {[type(a) for a in tensors]}",
+    )
+    utils.check_same_dtype(buffer, *tensors)
+    utils.check_same_device(buffer, *tensors)
+
+    # TODO(crcrpar): Make `mode` Enum
+    match mode:
+        case "gather":
+            utils.check(
+                buffer.numel == sum(t.numel for t in tensors) * world_size,
+                lambda: f"{buffer.numel=}, but {sum(t.numel for t in tensors) * world_size = }",
+            )
+        case "scatter":
+            utils.check(
+                buffer.numel == sum(t.numel for t in tensors) // world_size,
+                lambda: f"{buffer.numel=}, but {sum(t.numel for t in tensors) // world_size = }",
+            )
+        case _:
+            utils.check(False, lambda: f"Invalid {mode=}, `gather` and `scatter` are supported")
+
+    result = []
+    for sharded_param in tensors:
+        shape = list(sharded_param.shape)
+        shape[0] = int(shape[0] * world_size if mode == "gather" else shape[0] / world_size)
+        result.append(TensorProxy(like=sharded_param, shape=tuple(shape)))
+    return result
+
+
 def update_bucket_view_meta(tensor: TensorProxy, index_of_dst_view: int, bucket_key: str) -> TensorProxy:
     return TensorProxy(like=tensor)
 
@@ -180,7 +246,9 @@ reduce_scatter = make_prim(PrimIDs.REDUCE_SCATTER, "reduce_scatter", meta=reduce
 synchronize = make_prim(PrimIDs.SYNCHRONIZE, "synchronize", meta=synchronize_meta)
 wait = make_prim(PrimIDs.WAIT, "wait", meta=wait_meta)
 pack = make_prim(PrimIDs.PACK, "pack", meta=pack_meta)
+pack_for_fsdp = make_prim(PrimIDs.PACK_FOR_FSDP, "pack_for_fsdp", meta=pack_for_fsdp_meta)
 unpack = make_prim(PrimIDs.UNPACK, "unpack", meta=unpack_meta)
+unpack_for_fsdp = make_prim(PrimIDs.UNPACK_FOR_FSDP, "unpack_for_fsdp", meta=unpack_for_fsdp_meta)
 update_bucket_view = make_prim(PrimIDs.UPDATE_BUCKET_VIEW, "update_bucket_view", meta=update_bucket_view_meta)
 
 

@@ -1467,7 +1467,10 @@ _register_implementation(prims.multinomial, checker=_always_executable, executio
 if torch.distributed.is_available():
 
     def _all_gather_prim_impl(
-        a: torch.Tensor, /, group: torch.distributed.ProcessGroup, do_async: Number
+        a: torch.Tensor,
+        /,
+        group: torch.distributed.ProcessGroup,
+        do_async: Number,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
         out: torch.Tensor = torch.empty((group.size() * a.shape[0],) + a.shape[1:], dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
@@ -1512,7 +1515,11 @@ if torch.distributed.is_available():
         return out
 
     def _reduce_scatter_prim_impl(
-        a: torch.Tensor, /, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+        a: torch.Tensor,
+        /,
+        op: DistributedReduceOps,
+        group: torch.distributed.ProcessGroup,
+        do_async: Number,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
         out = torch.empty((a.shape[0] // group.size(),) + a.shape[1:], dtype=a.dtype, device=a.device)
         op: torch.distributed.ReduceOp = ltorch.to_torch_distributed_reduce_op(op)
@@ -1541,7 +1548,10 @@ if torch.distributed.is_available():
 
     _key_to_bucket_and_views: dict[str, tuple[torch.Tensor, list[torch.Tensor]]] = {}
 
-    def _pack_prim_impl(tensors: list[torch.Tensor], bucket_key: str) -> torch.Tensor:
+    def _pack_prim_impl(
+        tensors: list[torch.Tensor],
+        bucket_key: str,
+    ) -> torch.Tensor:
         if bucket_key not in _key_to_bucket_and_views:
             buffer = torch.cat([torch.flatten(t) for t in tensors])
             offset = 0
@@ -1549,11 +1559,10 @@ if torch.distributed.is_available():
             for t in tensors:
                 n = t.numel()
                 v = buffer[offset : offset + n].view_as(t)
-                v.copy_(t)
                 views.append(v)
                 offset += n
             _key_to_bucket_and_views[bucket_key] = (buffer, views)
-        buffer = _key_to_bucket_and_views[bucket_key][0]
+        buffer, _ = _key_to_bucket_and_views[bucket_key]
         return buffer
 
     def _unpack_prim_impl(
@@ -1569,6 +1578,100 @@ if torch.distributed.is_available():
             offset += n
         return results
 
+    # TODO(crcrpar): Make this compatible with the coming torch_compile executor as it's doing really well for cat and reshape.
+    # NOTE(crcrpar): why no caching/resue of buffer?
+    # This prim is only used by fsdp backward for now.
+    # Bucketing of reduce-scatter, i.e., creating a buffer for
+    # multiple unsharded gradients is a bit tricky because it requires
+    # indices for copies from unsharded ones to their bucket.
+    # To be specific, let's say our environment has 2 cuda devices and we have two unsharded gradeints whose shapes are (32, 4) and (4,).
+    # Obviously a bucket for these two would have the shape of (32 * 4 + 4 = 160,),
+    # and its shape after reduce_scatter will be (160 // 2 = 80,).
+    # Sharded gradients on rank-0 should be tensors of (32 // 2, 4) and (4 // 2,).
+    # If we do the same packing as bucketing for ddp, the first 32 * 4 elements will be
+    # that (32, 4) tensor and the rest, the other (4,) tensor.
+    # In this case, sharded bucket on rank 0, will be the first 80 elements out of the bucket, i.e., 80 elements of (32, 4) tensor, which is wrong.
+    # So what we need to do here is interleave the tensors of one bucket.
+    # In this example, the first 80 elements of this bucket and the rest need to have
+    # the same number of values from the two unsharded gradients, i.e.,
+    # the first chunk of a bucket needs to consists of the first chunks of the two unsharded gradients.
+    # To support individual copies from gradient to its bucket requires a mask or an arrayy of indices to achieve correct behavior.
+    # In PyTorch, the op for this is [`Tensor.index_copy_`](https://pytorch.org/docs/stable/generated/torch.Tensor.index_copy_.html) where even the index tensor needs to be on the same device as ``self`` and ``tensor``.
+    # So caching of the bucketing for fsdp backward would bloat up the memory consumption, which is the main reason this doesn't do any caching.
+    # See https://github.com/Lightning-AI/lightning-thunder/pull/1669/commits/a942b87e88738ce94f874c21d4adc38749ff10d7#diff-c2fd275781ba0c4aa7eec811bebb7bf0b6ca52a236b510ce7dfbb831d4d9bb40R197-R233 for the potential implementation's clumisiness.
+    #
+    # example of two unsharded gradients of [4, 2] and [4], world size of 4:
+    # --------  ------
+    # | 0, 1 |  | 8  |
+    # | 2, 3 |  | 9  |
+    # | 4, 5 |  | 10 |
+    # | 6, 7 |  | 11 |
+    # --------  ------
+    #
+    # If we naively pack these two into a bucket, it will look like:
+    # ----------------------------------------
+    # | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 |
+    # ----------------------------------------
+    #
+    # Each rank would receive 3 elements from ReduceScatter of this bucket:
+    #    rank0        rank1        rank2        rank3
+    # -----------  -----------  -----------  -------------
+    # | 0, 1, 2 |, | 3, 4, 5 |, | 6, 7, 8 |, | 9, 10, 11 |
+    # -----------  -----------  -----------  -------------
+    # then each rank splits their chunk into two tensors as sharded gradients:
+    # So rank0 will consider [[0, 1]] as sharded grad for first parameter and [2], the other
+    # but they should be [[0, 1]] and [8]. To make this happen the bucket needs to be
+    # ----------------------------------------
+    # | 0, 1, 8, 2, 3, 9, 4, 5, 10, 6, 7, 11 |
+    # ----------------------------------------
+    def _pack_for_fsdp_prim_impl(
+        tensors: list[torch.Tensor],
+        world_size: int,
+        mode: str,
+    ) -> torch.Tensor:
+        match mode:
+            case "scatter":
+                from itertools import chain
+
+                return torch.cat(
+                    list(chain.from_iterable(zip(*[torch.chunk(t.view(-1), world_size) for t in tensors])))
+                )
+            case "gather":
+                return torch.cat([torch.flatten(t) for t in tensors])
+            case _:
+                utils.check(False, lambda: f"Invalid {mode=}. Supported are (gather, scatter)")
+
+    def _unpack_for_fsdp_prim_impl(
+        buffer: TensorProxy,
+        tensors: list[TensorProxy],
+        world_size: int,
+        mode: str,
+    ) -> list[torch.Tensor]:
+        if mode == "gather":
+            buffer_2d = buffer.view(world_size, -1)
+            offset = 0
+            result = []
+            for t in tensors:
+                n = t.numel()
+                chunk = buffer_2d[:, offset : offset + n]
+                shape = list(t.shape)
+                shape[0] *= world_size
+                result.append(chunk.reshape(shape))
+                offset += n
+            return result
+        else:
+            import math
+
+            offset = 0
+            result = []
+            for t in tensors:
+                shape = list(t.shape)
+                shape[0] //= world_size
+                n = math.prod(shape)
+                result.append(buffer[offset : offset + n].view(shape))
+                offset += n
+            return result
+
     def _update_bucket_view_prim_impl(
         tensor: torch.Tensor,
         index_of_dst_view: int,
@@ -1576,7 +1679,7 @@ if torch.distributed.is_available():
     ) -> torch.Tensor:
         if bucket_key not in _key_to_bucket_and_views:
             return tensor
-        views = _key_to_bucket_and_views[bucket_key][-1]
+        _, views = _key_to_bucket_and_views[bucket_key]
         views[index_of_dst_view].copy_(tensor)
         return tensor
 
@@ -1602,6 +1705,10 @@ if torch.distributed.is_available():
     _register_implementation(dist_prims.pack, pack_prim_impl, checker=_always_executable)
     unpack_prim_impl = ex.register_operator("torch_unpack_prim_impl", meta=dist_prims.unpack.meta, fn=_unpack_prim_impl)
     _register_implementation(dist_prims.unpack, unpack_prim_impl, checker=_always_executable)
+    unpack_for_fsdp_prim_impl = ex.register_operator(
+        "torch_unpack_for_fsdp_prim_impl", meta=dist_prims.unpack_for_fsdp.meta, fn=_unpack_for_fsdp_prim_impl
+    )
+    _register_implementation(dist_prims.unpack_for_fsdp, unpack_for_fsdp_prim_impl, checker=_always_executable)
     update_bucket_view_prim_impl = ex.register_operator(
         "torch_update_bucket_view_prim_impl",
         meta=dist_prims.update_bucket_view.meta,
@@ -1609,6 +1716,16 @@ if torch.distributed.is_available():
     )
     _register_implementation(dist_prims.update_bucket_view, update_bucket_view_prim_impl, checker=_always_executable)
 
+    pack_for_fsdp_prim_impl = ex.register_operator(
+        "torch_pack_for_fsdp_prim_impl",
+        meta=dist_prims.pack_for_fsdp.meta,
+        fn=_pack_for_fsdp_prim_impl,
+    )
+    _register_implementation(
+        dist_prims.pack_for_fsdp,
+        pack_for_fsdp_prim_impl,
+        checker=_always_executable,
+    )
 
 # Memory access operations
 item = _register_torch_operation("item", module=torch.Tensor)

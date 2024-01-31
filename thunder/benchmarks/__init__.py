@@ -597,7 +597,7 @@ def run_multiprocess_benchmark(
     warmup_iters: int = 10,
     benchmark_iters: int = 20,
     extended_printout: bool = True,
-):
+) -> tuple[int, Sequence[BenchmarkRunStatistics], Sequence[BenchmarkRunStatistics]]:
     print(f"Running distributed benchmark {benchmark.name} with {world_size=}")
     _print_benchmark_arguments(benchmark)
 
@@ -657,7 +657,7 @@ def run_multiprocess_benchmark(
         avg_cct: int = total_cct // world_size
 
         _prettyprint_stats(
-            benchmark_name=f"{benchmark.name}-ddp",
+            benchmark_name=f"{benchmark.name}",
             callable_construction_time=avg_cct,
             warmup_stats=all_warmup_stats,
             benchmark_stats=all_benchmark_stats,
@@ -665,6 +665,8 @@ def run_multiprocess_benchmark(
         )
     finally:
         pool.shutdown()
+
+    return total_cct, all_warmup_stats, all_benchmark_stats
 
 
 #
@@ -754,6 +756,34 @@ def default_torch_ddp_executor(_) -> Callable:
     return func
 
 
+@dataclass(frozen=True)
+class get_default_torch_fsdp_executor:
+    from torch.distributed.fsdp import ShardingStrategy
+
+    sharding_strategy: ShardingStrategy
+    apply_torch_compile: bool
+    auto_wrap_policy: Any | None
+
+    def __call__(self, _) -> Callable:
+        def func(fn: Callable) -> Callable:
+            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+            torch.backends.cuda.matmul.allow_tf32 = True
+            if not self.apply_torch_compile:
+                return FSDP(fn, sharding_strategy=self.sharding_strategy, auto_wrap_policy=self.auto_wrap_policy)
+            else:
+                return torch.compile(
+                    FSDP(
+                        fn,
+                        sharding_strategy=self.sharding_strategy,
+                        use_orig_params=True,
+                        auto_wrap_policy=self.auto_wrap_policy,
+                    )
+                )
+
+        return func
+
+
 def default_torch_compile_ddp_executor(_) -> Callable:
     def func(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -794,6 +824,32 @@ class get_default_thunder_ddp_dynamic_strides_executor:
             torch.backends.cuda.matmul.allow_tf32 = True
             return thunder.compile(
                 ddp(fn, rank, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
+                cache_mode="dynamic strides",
+            )
+
+        return func
+
+
+@dataclass(frozen=True)
+class get_default_thunder_fsdp_dynamic_strides_executor:
+    from thunder.distributed import FSDPBucketingStrategy
+    from thunder.distributed import FSDPType
+
+    bucketing_strategy: FSDPBucketingStrategy
+    sharding_strategy: FSDPType
+
+    def __call__(self, rank) -> Callable:
+        from thunder.distributed import fsdp
+
+        def func(fn: Callable) -> Callable:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            return thunder.compile(
+                fsdp(
+                    fn,
+                    broadcast_from=0,
+                    bucketing_strategy=self.bucketing_strategy,
+                    sharding_strategy=self.sharding_strategy,
+                ),
                 cache_mode="dynamic strides",
             )
 
@@ -2072,6 +2128,8 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
+
+        self.name = f"litgpt ({self.config.name})"
 
     def make_batch(self) -> tuple[list, dict]:
         make = partial(make_tensor, low=0, high=255, device=self.device, dtype=self.indices_tdtype, requires_grad=False)

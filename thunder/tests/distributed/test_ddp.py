@@ -1,9 +1,7 @@
 import math
-import os
 import sys
 import unittest
 import weakref
-from typing import Optional
 from itertools import product
 
 import pytest
@@ -18,6 +16,7 @@ import thunder
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 import thunder.torch as ltorch
 from thunder.distributed import prims
+from thunder.distributed import FSDPBucketingStrategy
 
 try:
     import expecttest  # noqa: F401
@@ -45,8 +44,8 @@ def new_gelu(x):
 class ToyModel(nn.Module):
     def __init__(self):
         super().__init__()
-        self.net1 = nn.Linear(10, 10)
-        self.net2 = nn.Linear(10, 5)
+        self.net1 = nn.Linear(12, 12)
+        self.net2 = nn.Linear(12, 8)
 
     def forward(self, x):
         return self.net2(new_gelu(self.net1(x)))
@@ -130,7 +129,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
 
-        x, labels = torch.randn(20, 10).to(self.rank), torch.randn(20, 5).to(self.rank)
+        x, labels = torch.randn(20, 12).to(self.rank), torch.randn(20, 8).to(self.rank)
 
         init_loss, last_loss = None, None
         for i in range(3):
@@ -430,7 +429,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
             executors_list=executors_map[executor].executors_list(),
         )
-        x = torch.ones((2, 10)).to(device)
+        x = torch.ones((2, 12)).to(device)
         cm(x).mean().backward()
 
         bwd_extrace = thunder.last_traces(cm)[1][-1]
@@ -590,7 +589,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
-            ddp_m = ddp(m, self.rank, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb)
+            ddp_m = ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb)
             compiled_ddp_m = thunder.compile(
                 ddp_m,
                 cache_mode=CACHE_MODES.DYNAMIC_STRIDES,
@@ -620,7 +619,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         micro_batch_size = batch_size // num_micro_batch
         with torch.no_grad():
             dataloader = [
-                (torch.randn(batch_size, 10, device=device), torch.randn(batch_size, 5, device=device))
+                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device))
                 for _ in range(dataset_size)
             ]
 
@@ -672,6 +671,60 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
                         actual=gradients[True][iter_count],
                         expected=gradients[False][iter_count],
                     )
+
+    @common_utils.parametrize("executor", tuple(executors_map.keys()))
+    def test_ddp_grad_parity_with_without_bucketing(self, executor):
+        from thunder.distributed import ddp
+
+        device = torch.device("cuda", self.rank)
+        initial_model_state = ToyModel().to(device).state_dict()
+
+        for bucket_size_in_mb in (0, 100):
+            m = ToyModel().to(device)
+            m.load_state_dict(initial_model_state)
+            cm = thunder.compile(
+                ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
+                executors_list=executors_map[executor].executors_list(),
+            )
+            x = torch.ones((2, 12)).to(device)
+            cm(x).mean().backward()
+
+            if bucket_size_in_mb == 0:
+                gradients = tuple(p.grad for p in cm.parameters() if p.grad is not None)
+            else:
+                self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
+
+    # TODO(crcrpar): Add torch compile to executors_list once it's available.
+    @common_utils.parametrize(
+        "executor,bucketing_strategy",
+        product(tuple(executors_map.keys()), (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK)),
+        name_fn=lambda executor, bucketing_strategy: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}"
+        ),
+    )
+    def test_fsdp_grad_parity_with_without_bucketing(self, executor, bucketing_strategy: FSDPBucketingStrategy):
+        from thunder.distributed import fsdp
+
+        device = torch.device("cuda", self.rank)
+        initial_model_state = ToyModel().to(device).state_dict()
+
+        for strategy in (FSDPBucketingStrategy.NONE, bucketing_strategy):
+            m = ToyModel().to(device)
+            m.load_state_dict(initial_model_state)
+            cm = thunder.compile(
+                fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy),
+                executors_list=executors_map[executor].executors_list(),
+            )
+            x = torch.ones((2, 12)).to(device)
+            loss = cm(x).mean()
+            loss.backward()
+
+            if strategy == FSDPBucketingStrategy.NONE:
+                gradients = tuple(p.grad for p in cm.parameters() if p.grad is not None)
+                orig_loss = loss.detach()
+            else:
+                self.assertEqual(loss, orig_loss)
+                self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
@@ -967,7 +1020,7 @@ def _test_native_ddp_helper(input_data):
 
 
 def _test_native_fsdp_helper(input_data):
-    init_method, world_size, rank, executor, device, dtype, _ = input_data
+    init_method, world_size, rank, executor, device, dtype, bucketing_strategy = input_data
 
     num_samples = 2
     tensor_shape = (2, 2)
@@ -1004,6 +1057,7 @@ def _test_native_fsdp_helper(input_data):
     fsdp_model = fsdp(
         model,
         broadcast_from=0,
+        bucketing_strategy=bucketing_strategy,
     )
 
     # Check that the model is sharded
@@ -1070,9 +1124,19 @@ def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
     dtypes=(thunder.float32,),
     num_devices=2,
     devicetypes=(devices.DeviceType.CUDA,),
+    decorators=(
+        pytest.mark.parametrize(
+            "bucket_size_in_mb",
+            (
+                FSDPBucketingStrategy.NONE,
+                FSDPBucketingStrategy.LAYER,
+                FSDPBucketingStrategy.BLOCK,
+            ),
+        ),
+    ),
 )
 @ddp_wrapper("test_native_fsdp", _test_native_fsdp_helper)
-def test_native_fsdp(executor, devices, dtype):
+def test_native_fsdp(executor, devices, dtype, bucket_size_in_mb):
     pass
 
 

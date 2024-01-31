@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import auto, Enum
-from typing import Optional, Any
+from typing import Any
 
 import torch
 import torch.distributed as tdist
@@ -11,6 +11,8 @@ import thunder.core.utils as utils
 
 __all__ = [
     "ddp",
+    "fsdp",
+    "FSDPBucketingStrategy",
 ]
 
 
@@ -231,18 +233,85 @@ class FSDPType(Enum):
     ZERO3 = auto()
 
 
+class FSDPBucketingStrategy(Enum):
+    """Enum class to specify how we group parameters into a bucket for collective communication in fsdp."""
+
+    NONE = auto()
+    """Disables Bucketing."""
+    LAYER = auto()
+    """Creates buckets per layer such as :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`."""
+    BLOCK = auto()
+    """Creates buckets per block such as Transformer block."""
+
+
+def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy):
+    from thunder.core.proxies import TensorProxy
+
+    # TODO(crcrpar): Consider having bucket_name include dtype (and device) in it
+    # as it's possible (especially `FSDPBucketingStrategy.BLOCK`) that parameters of a block
+    # have different dtypes such as BF16 and FP8.
+    def f(tensor: TensorProxy) -> str:
+        bucket_name: str = "fsdp_fwd_"
+        match granularity:
+            case FSDPBucketingStrategy.LAYER:
+                bucket_name += "_".join(tensor.name.split("_")[:-1])
+            case FSDPBucketingStrategy.BLOCK:
+                t_name_split = tensor.name.split("_")
+                i = (
+                    ([x.isdigit() for x in t_name_split].index(True) + 1)
+                    if any(x.isdigit() for x in t_name_split)
+                    else len(t_name_split)
+                )
+                bucket_name += "_".join(t_name_split[:i])
+            case _:
+                utils.check(False, lambda: f"Invalid {granularity=} is passed.")
+        return bucket_name
+
+    return f
+
+
 def fsdp(
     model: torch.nn.Module,
     *,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
+    bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
 ) -> torch.nn.Module:
+    """Convert ``model`` into Fully Sharded Data Parallel.
+
+    This splits ``model``'s parameters in their first dimension into ``world_size`` chunks
+    then has rank-``i`` host ``i``-th chunks of them.
+    This means the implementation is different from :class:`torch.distributed.fsdp.FullyShardedDataParallel`
+    which creates what's called :class:`torch.distributed.fsdp._flat_param.FlatParameter` as of
+    https://github.com/pytorch/pytorch/blob/647f14e70baffa383515c28c2ac219b7084c41c2. PyTorch however
+    seems to be interested in per-parameter sharding as per https://github.com/pytorch/pytorch/issues/114299.
+
+    To apply bucketing of collective communications, specify either
+    :obj:`~thunder.distributed.FSDPBucketingStrategy.LAYER` or :obj:`BucketingStrategy.BLOCK` as
+    ``bucketing_strategy``.
+    The latter uses one collective communication, be it AllGather to unshard parameters or
+    ReduceScatter to shard gradients, for one Transformer block. The former users one per layer such as
+    :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
+
+     Args:
+        model:
+
+    Keyword Args:
+        broadcast_from:
+        sharding_strategy:
+        bucketing_strategy:
+
+     Returns:
+        :class:`torch.nn.Module`
+    """
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
+
     # We are going to use DDP to broadcast the parameters
     distributed_params_module = ddp(model, broadcast_from=broadcast_from)
     distributed_params_module.use_ddp = False
     distributed_params_module.use_fsdp = True
     distributed_params_module.sharding_strategy = sharding_strategy
+    distributed_params_module.bucketing_strategy = bucketing_strategy
     process_group = distributed_params_module.process_group_for_ddp
 
     current_rank = tdist.get_rank(group=process_group)

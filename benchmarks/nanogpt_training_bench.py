@@ -33,6 +33,7 @@ import thunder
 import torch
 import torch.distributed as torch_dist
 from thunder.tests.nanogpt_model import Block, GPT, GPTConfig
+from thunder.distributed import FSDPBucketingStrategy
 
 _configs = {
     "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
@@ -40,6 +41,7 @@ _configs = {
     "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
     "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
 }
+bucketing_strategies = {str(e).split(".")[1].lower(): e for e in FSDPBucketingStrategy}
 
 parser = argparse.ArgumentParser(
     description="Use `torchrun` to enable `ddp`",
@@ -54,6 +56,13 @@ parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.key
 parser.add_argument("--ddp-mode", default="ddp", choices=("ddp", "fsdp"))
 parser.add_argument("--shard-mode", default="zero2", choices=("zero2", "zero3"))
 parser.add_argument("--bucket-size-in-mb", type=float, default=25.0)
+parser.add_argument(
+    "--bucketing-strategy",
+    type=str,
+    default="block",
+    choices=bucketing_strategies,
+    help=f"Available bucketing strategies: {tuple(bucketing_strategies.keys())}",
+)
 parser.add_argument("--seq-len", type=int, default=128)
 parser.add_argument("--dump-extrace", action="store_true")
 parser.add_argument("--skip-torch-compile", action="store_true")
@@ -70,7 +79,7 @@ device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
 dtype = args.dtype  # 'float32' or 'bfloat16' or 'float16'
 compile_mode = args.compile_mode
 print_loss = args.print_loss
-use_ddp = False
+is_distributed = False
 ddp_mode = args.ddp_mode
 shard_mode = args.shard_mode
 bucket_size_in_mb: float = args.bucket_size_in_mb
@@ -85,12 +94,12 @@ if "WORLD_SIZE" in os.environ and "LOCAL_RANK" in os.environ:
     local_rank = int(os.environ["LOCAL_RANK"])
     pg = torch_dist.distributed_c10d._get_default_group()
     device = torch.device("cuda", local_rank)
-    use_ddp = True
+    is_distributed = True
     if local_rank == 0:
         print("Distributed NanoGPT bench")
 
 if args.skip_torch_compile:
-    assert use_ddp
+    assert is_distributed
 
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
@@ -111,7 +120,7 @@ model = GPT(gptconf)
 ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
 model.to(device=device).to(dtype=ptdtype)
 optimizer_ctor = model.configure_optimizers
-if use_ddp:
+if is_distributed:
     if compile_mode == "thunder":
         match ddp_mode:
             case "ddp":
@@ -126,10 +135,13 @@ if use_ddp:
                 from thunder.distributed import fsdp, FSDPType
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[shard_mode]
+                bucketing_strategy = bucketing_strategies[args.bucketing_strategy]
+
                 model = fsdp(
                     model,
                     broadcast_from=0,
                     sharding_strategy=sharding_strategy,
+                    bucketing_strategy=bucketing_strategy,
                 )
             case _:
                 raise ValueError(f"Unknown ddp_mode: {ddp_mode}")
@@ -173,20 +185,22 @@ elif compile_mode == "thunder":
     print("Compiling model using thunder.compile...")
     import thunder.executors.sdpaex
 
-    model = thunder.compile(model, executors_list=[thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex])
+    model = thunder.compile(
+        model, executors_list=[thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex], nv_enable_bookend=True
+    )
 else:
     raise ValueError(f"Unknown compile_mode: {compile_mode}")
 
 save_files = not (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0)
-dir_for_outputs = (
-    (
-        f"./thunder_traces/{config}_{args.dtype}_seq-{args.seq_len}"
-        f"{'_ddp_bucket_size-' + str(bucket_size_in_mb) if use_ddp else ''}"
-        f"{'_delayed_allreduce' if use_ddp and args.delay_allreduce else ''}"
-    )
-    if save_files
-    else None
-)
+dir_for_outputs = f"./thunder_traces/{config}_{args.dtype}_seq-{args.seq_len}" if save_files else None
+if dir_for_outputs is not None and is_distributed:
+    if args.ddp_mode == "ddp":
+        dir_for_outputs += f"{'_ddp_bucket_size-' + str(bucket_size_in_mb) if is_distributed else ''}{'_delayed_allreduce' if is_distributed and args.delay_allreduce else ''}"
+    elif args.ddp_mode == "fsdp":
+        dir_for_outputs += f"{'_fsdp_bucketing_strategy_' + str(args.bucketing_strategy)}"
+    else:
+        raise ValueError("Invalid {args.ddp_mode = }")
+
 if save_files and not os.path.exists(dir_for_outputs):
     os.makedirs(dir_for_outputs)
 
@@ -271,7 +285,7 @@ if args.nsys_profile:
     torch.cuda.profiler.stop()
 if losses:
     for i, loss in enumerate(losses):
-        if use_ddp:
+        if is_distributed:
             with torch.inference_mode():
                 torch_dist.all_reduce(loss, op=torch_dist.distributed_c10d.ReduceOp.AVG)
         if local_rank in (None, 0):
@@ -284,7 +298,9 @@ if args.profile:
             print(f"# No. of occurrences {e.count} {e}")
         print(context.key_averages().table(sort_by="cuda_time_total"))
 if args.dump_extrace and save_files:
-    preamble = f"### {config=}, {dtype=}, {seq_len=}, {use_ddp=}, {bucket_size_in_mb=}, {args.delay_allreduce=}\n"
+    preamble = (
+        f"### {config=}, {dtype=}, {seq_len=}, {is_distributed=}, {bucket_size_in_mb=}, {args.delay_allreduce=}\n"
+    )
     fwd_traces, bwd_traces = thunder.last_traces(model)
 
     with open(os.path.join(dir_for_outputs, "fwd_trace.py"), "w") as f:

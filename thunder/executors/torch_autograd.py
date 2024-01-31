@@ -26,6 +26,7 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.core.transforms import forward_and_backward_from_trace
         from thunder.cudagraphs import CUDAGraphExecutor
         from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
+        from thunder.distributed.transforms import FSDPCommBucketing
 
         def make_trace(func):
             return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=True), func)
@@ -68,6 +69,12 @@ class ThunderFunction(torch.autograd.Function):
             # autograd.Function.backward expects a flat tuple of gradients
             bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
 
+            _fsdp_comm_bucketing: FSDPCommBucketing | None = None
+            if compile_data is not None and getattr(compile_data.fn, "use_fsdp", False):
+                _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+                fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
+                _fsdp_comm_bucketing.update_name_set(bw_trace)
+
             # Now we can run the optimization passes on the forward trace
             # TODO Restore request for no rematerialization
             fw_extrace = transform_for_execution(
@@ -101,11 +108,11 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
-            _should_apply_batch_allreduce_of_grads = compile_data is not None and getattr(
-                compile_data.fn, "use_ddp", False
-            )
-            if _should_apply_batch_allreduce_of_grads:
-                bw_trace = batch_allreduce_of_grads(bw_trace, compile_data)
+            if compile_data is not None:
+                if getattr(compile_data.fn, "use_ddp", False):
+                    bw_trace = batch_allreduce_of_grads(bw_trace, compile_data)
+                if getattr(compile_data.fn, "use_fsdp", False):
+                    bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
             # Now we can run the optimization passes on the backward trace
             # TODO Restore request for no rematerialization
@@ -279,8 +286,6 @@ def thunder_backward(*, compile_data=None, compile_stats=None, **compile_config)
 
 
 if torch.distributed.is_available():
-    from torch.distributed.distributed_c10d import ProcessGroup
-
     if TYPE_CHECKING:
         from thunder import CompileData
 
