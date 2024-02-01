@@ -421,7 +421,12 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
         from thunder.distributed import ddp
-        from thunder.executors.torchex import pack_prim_impl, unpack_prim_impl, update_bucket_view_prim_impl
+        from thunder.executors.torchex import (
+            pack_prim_impl,
+            unpack_prim_impl,
+            update_bucket_view_prim_impl,
+            all_reduce_prim_impl,
+        )
 
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
@@ -441,6 +446,11 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             self.assertEqual(len(pack_syms), 0)
             self.assertEqual(len(unpack_syms), 0)
             self.assertEqual(len(update_bucket_view_syms), 0)
+            for bsym in bwd_extrace.bound_symbols:
+                if bsym.sym.id == all_reduce_prim_impl.id:
+                    # oh, everything is put into `bsym.args`?
+                    msg = f"{bsym.args=}, {bsym.kwargs=}"
+                    self.assertTrue(bsym.args[-1], msg=msg)
         else:
             self.assertEqual(len(pack_syms), 1, msg=f"{pack_syms}")
             self.assertEqual(len(unpack_syms), 1, msg=f"{unpack_syms}")

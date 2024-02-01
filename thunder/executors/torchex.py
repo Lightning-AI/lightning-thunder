@@ -1485,9 +1485,14 @@ if torch.distributed.is_available():
         return out
 
     def _all_reduce_prim_impl(
-        a: torch.Tensor, /, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+        a: torch.Tensor,
+        /,
+        op: DistributedReduceOps,
+        group: torch.distributed.ProcessGroup,
+        do_async: Number,
+        skip_clone: bool = False,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
-        c: torch.Tensor = a.clone()
+        c: torch.Tensor = a.clone() if not skip_clone else a
         op: torch.distributed.ReduceOp = ltorch.to_torch_distributed_reduce_op(op)
         do_async: bool = bool(do_async)
 

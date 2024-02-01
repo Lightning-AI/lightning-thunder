@@ -74,7 +74,12 @@ def all_gather_meta(
 # TODO Support additional reduction operations
 # TODO Consider our own distributed calls that don't just wrap PyTorch's
 def all_reduce_meta(
-    a: TensorProxy, /, op: DistributedReduceOps, group: torch.distributed.ProcessGroup, do_async: Number
+    a: TensorProxy,
+    /,
+    op: DistributedReduceOps,
+    group: torch.distributed.ProcessGroup,
+    do_async: Number,
+    skip_clone: bool = False,
 ) -> TensorProxy | FutureTensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)

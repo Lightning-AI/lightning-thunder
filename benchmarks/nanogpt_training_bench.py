@@ -54,7 +54,6 @@ parser.add_argument("--profile", action="store_true")
 parser.add_argument("--nsys-profile", action="store_true")
 parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.keys()))
 parser.add_argument("--ddp-mode", default="ddp", choices=("ddp", "fsdp"))
-parser.add_argument("--shard-mode", default="zero2", choices=("zero2", "zero3"))
 parser.add_argument("--bucket-size-in-mb", type=float, default=25.0)
 parser.add_argument(
     "--bucketing-strategy",
@@ -62,6 +61,12 @@ parser.add_argument(
     default="block",
     choices=bucketing_strategies,
     help=f"Available bucketing strategies: {tuple(bucketing_strategies.keys())}",
+)
+parser.add_argument(
+    "--shard-mode",
+    default="zero2",
+    choices=("zero2", "zero3"),
+    help="zero2 or zero3, used only when ``--ddp-mode`` is fsdp",
 )
 parser.add_argument("--seq-len", type=int, default=128)
 parser.add_argument("--dump-extrace", action="store_true")

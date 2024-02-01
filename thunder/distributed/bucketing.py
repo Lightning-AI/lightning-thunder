@@ -142,6 +142,7 @@ class GradBuckets:
                 dist_prims.DistributedReduceOps.SUM,
                 group=group,
                 do_async=True,
+                skip_clone=False,
             )
 
     def tell(self, grad: TensorProxy, group: ProcessGroup) -> None:

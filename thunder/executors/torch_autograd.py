@@ -110,7 +110,7 @@ class ThunderFunction(torch.autograd.Function):
             bw_trace.bound_symbols = new_bsyms
             if compile_data is not None:
                 if getattr(compile_data.fn, "use_ddp", False):
-                    bw_trace = batch_allreduce_of_grads(bw_trace, compile_data)
+                    bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
                 if getattr(compile_data.fn, "use_fsdp", False):
                     bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
@@ -289,7 +289,7 @@ if torch.distributed.is_available():
     if TYPE_CHECKING:
         from thunder import CompileData
 
-    def batch_allreduce_of_grads(
+    def optimize_allreduce_in_ddp_backward(
         backward_trace: TraceCtx,
         compile_data: "CompileData",
     ) -> TraceCtx:
@@ -304,6 +304,8 @@ if torch.distributed.is_available():
         ``dist_prims.unpack`` writes out allreduce'd gradients to original gradient tensors.
         ``dist_prims.update_bucket_view`` copies pre-averaged gradient tensors to the corresponding
         view of bucket.
+
+        If ``bucket_size_in_mb`` is 0, then this function replaces the existing allreduce's with in-place allreduce's.
 
         Args:
             backward_trace:
@@ -323,10 +325,7 @@ if torch.distributed.is_available():
         from thunder.distributed import get_skip_data_parallel_grad_sync
         from thunder.distributed.bucketing import GradBuckets
 
-        if (
-            get_skip_data_parallel_grad_sync()
-            or (bucket_size_in_mb := getattr(compile_data.fn, "bucket_size_in_mb", 25)) <= 0
-        ):
+        if get_skip_data_parallel_grad_sync():
             return backward_trace
 
         @dataclass
@@ -383,6 +382,60 @@ if torch.distributed.is_available():
                 preaveraged_grad_tensor_proxy: TensorProxy = bsym_of_allreduce.flat_proxy_args[0]
                 preaveraged_to_index[preaveraged_grad_tensor_proxy] = i
                 preaveraged_grads.append(preaveraged_grad_tensor_proxy)
+
+        if (bucket_size_in_mb := getattr(compile_data.fn, "bucket_size_in_mb", 25)) <= 0:
+
+            def get_bsym_of_wait(tensor: TensorProxy, producers: utils.ProxyDict) -> BoundSymbol:
+                prod_bsym = producers[tensor]
+                if prod_bsym.sym.id == dist_prims.PrimIDs.WAIT:
+                    return prod_bsym
+                t = prod_bsym.flat_proxy_args[0]
+                utils.check_type(t, (TensorProxy, FutureTensorProxy))
+                return get_bsym_of_wait(t, producers)
+
+            allreduce_inputs = utils.ProxyDict()
+            allreduce_bsyms = {}
+            for synced_grad in filter(
+                lambda t: isinstance(t, TensorProxy), backward_trace.bound_symbols[-1].flat_proxy_args
+            ):
+                wait_bsym = get_bsym_of_wait(synced_grad, producers)
+                future_tensor_proxy = wait_bsym.flat_proxy_args[0]
+                utils.check_type(future_tensor_proxy, FutureTensorProxy)
+                allreduce_bsym = get_bsym_of_allreduce_of_grad(future_tensor_proxy, producers)
+                utils.check(allreduce_bsym not in allreduce_bsyms, lambda: f"{allreduce_bsym} is used")
+                allreduce_bsyms[allreduce_bsym] = future_tensor_proxy
+
+                orig_grad = allreduce_bsym.flat_proxy_args[0]
+                utils.check(
+                    orig_grad not in allreduce_inputs,
+                    lambda: f"{orig_grad} is consumed by {allreduce_inputs[orig_grad]}",
+                )
+                allreduce_inputs[orig_grad] = allreduce_bsym
+
+            @dataclass
+            class MakeAllReduceInplace:
+                allreduce_bsyms: dict[BoundSymbol, FutureTensorProxy]
+                # note: This would be error prone, so it might make sense to turn all_reduce's
+                # op, group, do_async, and skip_clone into keyword-only args
+
+                def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
+                    from dataclasses import replace
+                    from thunder.core.trace import get_tracectx
+
+                    if bsym in self.allreduce_bsyms:
+                        new_args = bsym.args[:-1] + (True,)
+                        new_bsym = replace(bsym, args=new_args)
+                        trace = get_tracectx()
+                        trace.scopes[-1].append(new_bsym)
+                        return VISIT_TYPE.REPLACE
+                    return VISIT_TYPE.NO_OP
+
+            orig_trace_output, orig_trace_output_spec = tree_flatten(backward_trace.output)
+            visitor = MakeAllReduceInplace(allreduce_bsyms)
+            bwd_trace_with_inplace_allreduce = visitor_transform(
+                backward_trace, visitor, provenance="Making AllReduce in-place"
+            )
+            return bwd_trace_with_inplace_allreduce
 
         gradients_of_same_dtype_and_device: dict[tuple[dtypes.dtype, devices.Device], list[TensorProxy]] = defaultdict(
             list
