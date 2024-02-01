@@ -124,17 +124,15 @@ def train_vocab(vocab_size):
     print("Done.")
 
 
-def process_shard(args, vocab_size):
+def process_shard(args, vocab_size, tokenizer):
     shard_id, shard = args
-    tokenizer_model = get_tokenizer_model_path(vocab_size)
-    enc = Tokenizer(tokenizer_model)
     with open(shard, "r") as f:
         data = json.load(f)
     all_tokens = []
     for example in tqdm(data, position=shard_id):
         text = example["story"]
         text = text.strip()  # get rid of leading/trailing whitespace
-        tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
+        tokens = tokenizer.encode(text, bos=True, eos=False)  # encode the text, use BOS
         all_tokens.extend(tokens)
     # convert to uint16 nparray
     all_tokens = np.array(all_tokens, dtype=np.uint16)
@@ -158,15 +156,19 @@ def process_shard(args, vocab_size):
 
 def pretokenize(vocab_size):
     # iterate the shards and tokenize all of them one by one
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    jsons_path = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data", "*.json")
+    shard_filenames = sorted(glob.glob(jsons_path))
+    if not shard_filenames:
+        raise ValueError(f"No json files found in {jsons_path!r}. Did you run `python tinystories.py download`?")
     if vocab_size > 0:
         # .bin files will be saved into tok{N} directory, create it once here
         bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
         os.makedirs(bin_dir, exist_ok=True)
 
     # process all the shards in a process pool
-    fun = partial(process_shard, vocab_size=vocab_size)
+    tokenizer_model = get_tokenizer_model_path(vocab_size)
+    tokenizer = Tokenizer(tokenizer_model)
+    fun = partial(process_shard, vocab_size=vocab_size, tokenizer=tokenizer)
     with ProcessPoolExecutor() as executor:
         executor.map(fun, enumerate(shard_filenames))
     print("Done.")
