@@ -93,7 +93,7 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
     @override
     def setup_module(self, module: Module) -> Module:
         module = module.to(self.root_device)
-        module = fsdp(module, rank=self.local_rank, broadcast_from=0, sharding_strategy=self.sharding_strategy)
+        module = fsdp(module, broadcast_from=0, sharding_strategy=self.sharding_strategy)
 
         # NOTE @IvanYaschuck says that `fsdp(compile(model))` could be supported in the future so that the user owns the `compile` call.
         # we would still `compile(fsdp(undo_compile(compile(model))))` internally
