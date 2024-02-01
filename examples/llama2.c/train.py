@@ -193,26 +193,34 @@ if init_from == "resume" and "optimizer" in checkpoint:
 checkpoint = None  # free up memory
 
 raw_model = eval_model = train_model = model
+
+# wrap model into DDP container
+if ddp:
+    if compile == "thunder":
+        from thunder.distributed import ddp
+
+        train_model = ddp(train_model, broadcast_from=0)
+    else:
+        # Ignore the `freqs_cis` buffer so that DDP does not broadcast it at
+        # construction time since NCCL does not support `ComplexFloat`
+        train_model._ddp_params_and_buffers_to_ignore = {"freqs_cis"}
+        train_model = DDP(train_model, device_ids=[ddp_local_rank])
+
 # compile the model
 if compile == "thunder":
-    print("compiling the model... (takes a ~minute)")
+    print("compiling the model with thunder... (takes a ~minute)")
 
     import thunder
     from thunder.executors.sdpaex import sdpa_ex
     executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
 
-    eval_model = thunder.compile(model.eval(), disable_torch_autograd_support=True, executors_list=executors)
-    train_model = thunder.compile(model.train(), executors_list=executors)
+    # nv_enable_bookend because of https://github.com/Lightning-AI/lightning-thunder/issues/2025
+    eval_model = thunder.compile(eval_model.eval(), disable_torch_autograd_support=True, executors_list=executors, nv_enable_bookend=True)
+    train_model = thunder.compile(train_model.train(), executors_list=executors, nv_enable_bookend=False)
 elif compile == "torch":
-    eval_model = train_model = torch.compile(model)
-
-# wrap model into DDP container
-if ddp:
-    # Ignore the `freqs_cis` buffer so that DDP does not broadcast it at
-    # construction time since NCCL does not support `ComplexFloat`
-    prefix = "_orig_mod." if compile else ""
-    train_model._ddp_params_and_buffers_to_ignore = {prefix + "freqs_cis"}
-    train_model = DDP(train_model, device_ids=[ddp_local_rank])
+    print("compiling the model with torch... (takes a ~minute)")
+    eval_model = torch.compile(eval_model)
+    train_model = torch.compile(train_model)
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
