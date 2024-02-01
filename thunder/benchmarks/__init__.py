@@ -817,13 +817,13 @@ thunder_executor = default_thunder_dynamic_strides_executor
 class get_default_thunder_ddp_dynamic_strides_executor:
     bucket_size_in_mb: float = 25
 
-    def __call__(self, rank) -> Callable:
+    def __call__(self, _) -> Callable:
         from thunder.distributed import ddp
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
             return thunder.compile(
-                ddp(fn, rank, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
+                ddp(fn, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
                 cache_mode="dynamic strides",
             )
 
@@ -838,7 +838,7 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
     bucketing_strategy: FSDPBucketingStrategy
     sharding_strategy: FSDPType
 
-    def __call__(self, rank) -> Callable:
+    def __call__(self, _) -> Callable:
         from thunder.distributed import fsdp
 
         def func(fn: Callable) -> Callable:
