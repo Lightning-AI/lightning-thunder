@@ -1,17 +1,12 @@
 import dataclasses
-import functools
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Sequence
-from enum import auto, Enum
 import time
 from functools import partial
 import textwrap
 from numbers import Number
-import operator
-import math
 import sys
-import argparse
 from dataclasses import dataclass
 import tempfile
 
@@ -25,13 +20,11 @@ import torch.multiprocessing as mp
 
 import thunder
 import thunder.torch as ltorch
-from thunder.cudagraphs import CUDAGraphExecutor
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
 from thunder.core.transforms import grad, clear_grads, populate_grads
 import thunder.executors as executors
-from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_llama_model, lit_gpt_model
-from thunder.tests.lit_gpt_model import GPT
+from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_gpt_model
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.lit_gpt_model import Config as LitGPTConfig
 
@@ -1875,17 +1868,15 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str = "Llama-2-7b-hf",
+        config: str | LitGPTConfig = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
-        from thunder.tests.lit_gpt_model import Config
-
         super().__init__()
 
-        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
         self.batchdims = batchdims
         self.device = device
         self.dtype = dtype
@@ -1912,7 +1903,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return module
 
 
-class LlamaCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
@@ -1948,17 +1939,15 @@ class LlamaCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmark
 
     def __init__(
         self,
-        config="Llama-2-7b-hf",
+        config: str | LitGPTConfig = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
-        from thunder.tests.lit_gpt_model import Config
-
         super().__init__()
 
-        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
         self.batchdims = batchdims
         self.device = device
         self.dtype = dtype
@@ -2058,7 +2047,7 @@ class LlamaRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         module = (
-            lit_llama_model.RMSNorm(self.size, self.dim, self.eps)
+            lit_gpt_model.RMSNorm(self.size, self.dim, self.eps)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2139,7 +2128,11 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x,), {}
 
     def fn(self) -> Callable:
-        gpt = GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(self.requires_grad)
+        gpt = (
+            lit_gpt_model.GPT(self.config)
+            .to(device=self.device, dtype=self.model_tdtype)
+            .requires_grad_(self.requires_grad)
+        )
         return gpt
 
     def postprocess_for_backward(self, output: torch.Tensor) -> torch.Tensor | None:
@@ -2156,8 +2149,6 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 # "scaled_dot_product_attention" call.
 class QKVSplitRope(nn.Module):
     def __init__(self, config, use_apex) -> None:
-        from thunder.tests.lit_gpt_model import apply_rope
-
         self.fused_apply_rotary_pos_emb_cached = None
         if use_apex:
             try:
@@ -2169,7 +2160,7 @@ class QKVSplitRope(nn.Module):
 
         super().__init__()
         self.config = config
-        self.apply_rope = apply_rope
+        self.apply_rope = lit_gpt_model.apply_rope
         self.use_apex = use_apex
 
     def forward(
@@ -2260,18 +2251,16 @@ class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config="Llama-2-7b-hf",
+        config: str | LitGPTConfig = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
         use_apex: bool = False,
     ) -> None:
-        from thunder.tests.lit_gpt_model import Config
-
         super().__init__()
 
-        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
         self.batchdims = batchdims
         self.device = device
         self.dtype = dtype
@@ -2666,15 +2655,13 @@ class HuggingFaceSelfAttnBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         return bart_model
 
 
-class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
-    _config_map = {
-        "7B": lit_llama_model.LLaMAConfig.from_name("7B"),
-    }
-
+# TODO this benchmark doesn't seem to be called by any target and is almost the same
+# as benchmarks/nvfuser_benchmarks.py::GPTBlockBenchmark
+class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The configuration (str) to use. Options are '7B'. Default is '7B'.",
+            description="The configuration (str) to use. Default is 'open_llama_7b'.",
         ),
         BenchmarkArg(
             name="sequences",
@@ -2701,12 +2688,12 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     @classmethod
     @property
     def name(cls) -> str:
-        return "llama-block"
+        return "gpt-block"
 
     @classmethod
     @property
     def description(cls) -> str:
-        return "Lit-llama's block module"
+        return "Lit-GPT's block module"
 
     @classmethod
     @property
@@ -2715,7 +2702,7 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str = "7B",
+        config: str = "open_llama_7b",
         sequences: int = 8,
         seq_length: int = 1024,
         device: str = "cuda",
@@ -2724,7 +2711,7 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     ) -> None:
         super().__init__()
 
-        self.config = self._config_map[config]
+        self.config = LitGPTConfig.from_name(config)
         self.sequences = sequences
         self.seq_length = seq_length
         self.device = device
@@ -2737,16 +2724,20 @@ class LLaMABlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
+        self.cos, self.sin = lit_gpt_model.build_rope_cache(
+            seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
+        )
+
     def make_batch(self) -> tuple[list, dict]:
         make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
 
         a = make((self.sequences, self.seq_length, self.config.n_embd))
 
-        return (a,), {}
+        return (a, self.cos, self.sin), {}
 
     def fn(self) -> Callable:
         model = (
-            lit_llama_model.Block(self.config)
+            lit_gpt_model.Block(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )

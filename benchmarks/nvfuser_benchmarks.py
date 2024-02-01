@@ -9,7 +9,7 @@ import os
 import pathlib
 import textwrap
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from collections.abc import Callable
 import types
 
@@ -23,10 +23,8 @@ from torch.testing import make_tensor
 
 import thunder
 import thunder.torch as ltorch
-from thunder.tests import nanogpt_model
-import thunder.core.proxies as proxies
 from thunder.cudagraphs import CUDAGraphExecutor
-from thunder.tests import nanogpt_model, lit_llama_model, hf_bart_self_attn
+from thunder.tests import nanogpt_model, lit_gpt_model, hf_bart_self_attn
 
 from lightning_utilities.core.imports import package_available
 
@@ -1399,23 +1397,24 @@ class HuggingFaceSelfAttnBenchmark(Benchmark):
         ), {}
 
 
-class LLaMABlockBenchmark(Benchmark):
-    _configs = {"7B": "7B"}
-
-    def __init__(self, *, config, device, dtype, sequences, seq_length, **_) -> None:
-        cls = self.__class__
+class GPTBlockBenchmark(Benchmark):
+    def __init__(self, *, config, device, dtype, sequences, seq_length, backward=False) -> None:
         self.device = device
         self.dtype = dtype
         self.sequences = sequences
         self.seq_length = seq_length
-        self.config = lit_llama_model.LLaMAConfig.from_name(config)
+        self.backward = backward
+        self.config = lit_gpt_model.Config.from_name(config)
 
         self.tdtype = ltorch.to_torch_dtype(dtype)
-        model = lit_llama_model.Block(self.config).to(device=self.device, dtype=self.tdtype)
+        model = lit_gpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype)
+        self.cos, self.sin = lit_gpt_model.build_rope_cache(
+            seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
+        )
 
         super().__init__(
-            name=f"llama-{config}-block",
-            shortname=f"llama-{config}-block",
+            name=f"{config}-block",
+            shortname=f"{config}-block",
             fn=model,
         )
 
@@ -1425,8 +1424,8 @@ class LLaMABlockBenchmark(Benchmark):
         return (
             BenchmarkArg(
                 name="config",
-                description="The llama configuration to use. Default is 7B.",
-                default="7B",
+                description="The configuration to use. Default is 'open_llama_7b'.",
+                default="open_llama_7b",
             ),
             BenchmarkArg(
                 name="sequences",
@@ -1451,17 +1450,8 @@ class LLaMABlockBenchmark(Benchmark):
         )
 
     def make_batch(self) -> tuple[list, dict]:
-        return (
-            make_tensor(
-                (
-                    self.sequences,
-                    self.seq_length,
-                    self.config.n_embd,
-                ),
-                device=self.device,
-                dtype=self.tdtype,
-            ),
-        ), {}
+        x = make_tensor((self.sequences, self.seq_length, self.config.n_embd), device=self.device, dtype=self.tdtype)
+        return (x, self.cos, self.sin), {}
 
 
 # NOTE: new benchmark style, in development
@@ -1584,7 +1574,7 @@ benchmarks = {
     "nanogpt-sdpa": (NanoGPTScaledDotProductAttentionBenchmark, "nanogpt scaled dot product attention"),
     "nanogpt-gelu": (NanoGPTGeLUBenchmark, "nanogpt gelu function forward"),
     "hf-bart-self-attn": (HuggingFaceSelfAttnBenchmark, "hf bart self-attn module forward"),
-    "llama-block": (LLaMABlockBenchmark, "lit llama block forward"),
+    "gpt-block": (GPTBlockBenchmark, "GPT block forward"),
 }
 
 

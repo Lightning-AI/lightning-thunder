@@ -21,6 +21,8 @@ from thunder.benchmarks import (
     NanoGPTBlockBenchmark,
     NanoGPTBenchmark,
     LitGPTBenchmark,
+    LitGPTCausalSelfAttentionBenchmark,
+    LlamaMLPBenchmark,
     torch_executor,
     torch_compile_executor,
     thunder_executor,
@@ -755,8 +757,6 @@ def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
     ids=grad_executors_ids,
 )
 def test_llama2_mlp_7b_grad(benchmark, executor: Callable):
-    from thunder.benchmarks import LlamaMLPBenchmark
-
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
     )
@@ -774,9 +774,7 @@ def test_llama2_mlp_7b_grad(benchmark, executor: Callable):
     ids=grad_executors_ids,
 )
 def test_llama2_causal_self_attention_7b_grad(benchmark, executor: Callable):
-    from thunder.benchmarks import LlamaCausalSelfAttentionBenchmark
-
-    bench: Benchmark = LlamaCausalSelfAttentionBenchmark(
+    bench: Benchmark = LitGPTCausalSelfAttentionBenchmark(
         config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
     )
 

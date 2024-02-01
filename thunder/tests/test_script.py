@@ -21,7 +21,7 @@ from thunder.core.script.noinline import noinline, invoke_noinline
 from thunder.core.symbol import Symbol
 from thunder.core.utils import enable_debug_asserts
 from thunder.executors.sdpaex import sdpa_ex
-from thunder.tests import nanogpt_model, lit_llama_model, lit_gpt_model
+from thunder.tests import nanogpt_model, lit_gpt_model
 from thunder.tests.framework import instantiate, requiresCUDA, requiresNVFuser, IN_CI
 
 from thunder import pytorch_executor, nvfuser_executor
@@ -357,21 +357,23 @@ def test_litgpt_variants_kvcache(name, device):
 
 @skipif_not_python_3_10
 def test_llama_block_compile():
-    m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
-    m2 = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
+    config = lit_gpt_model.Config.from_name("open_llama_7b")
+    m = lit_gpt_model.Block(config)
+    m2 = lit_gpt_model.Block(config)
+    cos, sin = lit_gpt_model.build_rope_cache(seq_len=8, n_elem=config.rope_n_elem)
+
     m2.load_state_dict(m.state_dict())
     tom = thunder.compile(m2, executors_list=torchex, disable_torch_autograd_support=True)
-    inp = torch.randn(1, 8, 4096)
-    expected_result = m(inp)
 
-    thunder_result = tom(inp)
+    inp = torch.randn(1, 8, 4096)
+    expected_result = m(inp, cos, sin)
+    thunder_result = tom(inp, cos, sin)
     assert_close(expected_result, thunder_result)
-    assert_close(m.attn.rope_cache, m2.attn.rope_cache)
 
     # TODO: enable:
     # inp = torch.randn(1, 8, 4096, requires_grad=True)
-    expected_result = m(inp)
-    thunder_result = tom(inp)
+    expected_result = m(inp, cos, sin)
+    thunder_result = tom(inp, cos, sin)
     assert_close(expected_result, thunder_result)
 
     # go = torch.ones(expected_result.shape, dtype=expected_result.dtype, device=expected_result.device)
@@ -383,7 +385,8 @@ def test_llama_block_compile():
 
 @skipif_not_python_3_10
 def test_llama_block_inlining():
-    m = lit_llama_model.Block(lit_llama_model.LLaMAConfig.from_name("7B"))
+    config = lit_gpt_model.Config.from_name("open_llama_7b")
+    m = lit_gpt_model.Block(config)
 
     gr = thunder.core.script.frontend.acquire_method(m.forward)
     thunder.core.script.passes.unroll_for_loops_and_inline_modules(gr)
@@ -395,31 +398,30 @@ def test_llama_block_inlining():
     # has everything been inlined/unrolled?
     funcs = _helper_get_func_calls(gr)
     allowed_funcs = {
+        NotImplementedError,
+        math.sqrt,
         ## PyTorch functions
-        torch.arange,
-        torch.cos,
+        torch.cat,
         torch.mean,
-        torch.outer,
         torch.rsqrt,
-        torch.sin,
-        torch.stack,
         torch.nn.functional.silu,
         torch.nn.functional.scaled_dot_product_attention,
         torch.nn.functional.linear,
         ## these should be Tensor methods
-        "contiguous",
-        "flatten",
-        "float",
         "size",
         "split",
         "transpose",
         "view",
         "type_as",
-        "half",
+        "reshape",
+        "kv_cache",
+        "expand",
+        "permute",
     }
     disallowed = funcs - allowed_funcs
+    assert not disallowed
     unseen = allowed_funcs - funcs
-    assert (not disallowed) and (not unseen)
+    assert not unseen
 
 
 @skipif_not_python_3_10
