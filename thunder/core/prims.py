@@ -1,6 +1,6 @@
 from enum import auto, Enum
 from numbers import Number
-from functools import reduce
+from functools import reduce, wraps
 import operator
 import builtins
 import math
@@ -32,7 +32,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
-from thunder.core.langctx import langctx
+from thunder.core.langctx import langctx, lang
 
 #
 # Primitives and helpers for defining them
@@ -191,9 +191,25 @@ class OpTags(Enum):
 
 # NOTE The primitive context is actually the lack of a context for interpreting operations
 # TODO Maybe we should represent it as an actual ctx?
+
+
+class _primctx:
+    pass
+
+
+primctx = _primctx
+
+
 def prim_ctx(fn):
-    _fn = langctx(None)(fn)
-    return _fn
+    @wraps(fn)
+    def fn_(*args, **kwargs):
+        trc = get_tracectx()
+        # TODO Remove the check for using_interpreter once development has progressed enough
+        ctx = None if (trc is None or not trc.using_interpreter) else primctx
+        with lang(ctx):
+            return fn(*args, **kwargs)
+
+    return fn_
 
 
 # TODO Document this function and describe the parts of a primitive
@@ -1102,7 +1118,7 @@ def _elementwise_unary_meta_factory(
             if val is None or number_fn is None:
                 return numberproxy(output_type, None)
 
-            value = number_fn(a)
+            value = number_fn(val)
             result = numberproxy(type(value), value)
             utils.check(
                 type(value) is output_type,
@@ -2869,3 +2885,11 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
+
+#
+# Populates the prim ctx
+#
+# NOTE These are the primitive operations that operations on numbers will be mapped to
+
+primctx.neg = neg
+primctx.add = add

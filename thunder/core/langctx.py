@@ -1,6 +1,7 @@
 from contextvars import ContextVar
 from typing import Optional, Any
 from functools import wraps
+from contextlib import contextmanager
 
 
 # TODO Create a langctx interface
@@ -81,7 +82,7 @@ def get_numberctx() -> Any:
 # Decorator for setting the language context local to a function
 #   Ex. @langctx(torchlangctx)
 class langctx:
-    def __init__(self, _langctx):
+    def __init__(self, _langctx, /):
         self.langctx = _langctx
 
     def __call__(self, fn):
@@ -95,3 +96,12 @@ class langctx:
                 reset_langctx(tok)
 
         return _fn
+
+
+@contextmanager
+def lang(ctx: Any) -> None:
+    tok = set_langctx(ctx)
+    try:
+        yield
+    finally:
+        reset_langctx(tok)

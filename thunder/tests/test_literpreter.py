@@ -326,7 +326,6 @@ def test_binary_add_tensor_number():
     assert_close(actual, expected)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1989")
 def test_binary_add_numbers():
     def foo(a, b):
         return a + b

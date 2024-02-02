@@ -43,8 +43,9 @@ class TraceProvenance:
 #   ... but maybe we still need the naming context?
 # TODO Allow the function signature to be modified by transforms
 class TraceCtx:
-    def __init__(self, fn: None | Callable = None):
+    def __init__(self, fn: None | Callable = None, *, using_interpreter: bool = False):
         self.fn: None | Callable = fn
+        self._using_interpreter: bool = using_interpreter  # Whether this trace is being produced by the interpreter
 
         self.args = None
         self.kwargs = None
@@ -99,6 +100,10 @@ class TraceCtx:
     #
     # Methods for getting and setting trace metadata (like the provenance)
     #
+
+    @property
+    def using_interpreter(self) -> bool:
+        return self._using_interpreter
 
     def get_provenance(self) -> None | TraceProvenance:
         return self._provenance
@@ -421,7 +426,7 @@ class TraceCtx:
 # NOTE Bound symbols and provenance are not copied
 # NOTE Unpacking state is not copied
 def from_trace(trace: TraceCtx) -> TraceCtx:
-    t = TraceCtx(trace.fn)
+    t = TraceCtx(trace.fn, using_interpreter=trace.using_interpreter)
     t.args = trace.args
     t.kwargs = trace.kwargs
 

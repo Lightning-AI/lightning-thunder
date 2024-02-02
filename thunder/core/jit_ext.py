@@ -157,11 +157,11 @@ class LitCtx:
 
         self.fn = fn
 
-        self._prologue_trc: TraceCtx = TraceCtx(fn)
+        self._prologue_trc: TraceCtx = TraceCtx(fn, using_interpreter=True)
         self._prologue_trc.args = args
         self._prologue_trc.kwargs = kwargs
 
-        self._computation_trc: TraceCtx = TraceCtx()
+        self._computation_trc: TraceCtx = TraceCtx(using_interpreter=True)
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -294,6 +294,7 @@ _lit_lookaside_map.update(
     {
         NumberProxy.__add__: NumberProxy.__add__,
         NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
+        NumberProxy.__neg__: NumberProxy.__neg__,
         NumberProxy.__sub__: NumberProxy.__sub__,
         TensorProxy.__add__: TensorProxy.__add__,
         TensorProxy.__mul__: TensorProxy.__mul__,

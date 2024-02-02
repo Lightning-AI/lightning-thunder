@@ -218,6 +218,17 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn):
+        trace = get_tracectx()
+        using_interpreter: bool = trace.using_interpreter if trace is not None else False
+
+        # TODO Remove the check for using_interpreter once development has progressed enough
+        if using_interpreter:
+            langctx = get_langctx()
+
+            fn = getattr(langctx, name)
+            return fn(a)
+
+        # NOTE not using_interpreter on this path
         vala = pyval(a)
         baseutils.check(
             vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
@@ -270,8 +281,19 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     @staticmethod
     def _elementwise_binary_helper(a, b, name, fn):
-        baseutils.check_type(b, (TensorProxy, Number))
+        baseutils.check_type(b, (Number, TensorProxy))
 
+        trace = get_tracectx()
+        using_interpreter: bool = trace.using_interpreter if trace is not None else False
+
+        # TODO Remove the check for using_interpreter once development has progressed enough
+        if using_interpreter:
+            langctx = get_langctx()
+
+            fn = getattr(langctx, name)
+            return fn(a, b)
+
+        # NOTE not using_interpreter on this path
         vala = pyval(a)
         baseutils.check(
             vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
