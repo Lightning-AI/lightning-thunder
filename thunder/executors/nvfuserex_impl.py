@@ -4,6 +4,7 @@ from numbers import Number
 from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
 from types import NoneType
 from collections.abc import Callable, Mapping, Hashable, Sequence
+import os
 import time
 from copy import copy
 from itertools import chain, filterfalse
@@ -495,7 +496,11 @@ class nvFuserExecutor(FusionExecutor):
         # https://github.com/Lightning-AI/lightning-thunder/pull/1517 is merged
         self._use_rematerialization = True
 
-        self.set_fuel(FUEL_LEVEL.UNLIMITED)
+        fuel_str = os.getenv("NVFUSER_OPTIMIZATION_FUEL")
+        if fuel_str:
+            self.set_fuel(int(fuel_str))
+        else:
+            self.set_fuel(FUEL_LEVEL.UNLIMITED)
 
     def get_fuel(self, amount: int = 1, /) -> bool:
         if self._optimization_fuel is FUEL_LEVEL.UNLIMITED:
