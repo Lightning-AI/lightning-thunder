@@ -597,15 +597,24 @@ class JITFrame:
 
     def get_or_make_python_frame(self) -> FrameType:
         def fn():
-            raise ValueError()
+            pass
 
         lineno = self.positions.lineno
         if lineno is None:
             lineno = self.code.co_firstlineno
-        replacements = dict(co_filename=self.code.co_filename, co_firstlineno=lineno - 1, co_name=self.code.co_name)
+
+        rel_lineno = lineno - self.code.co_firstlineno + 1
+
+        # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right
+        code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", self.code.co_filename, "exec")
+
+        replacements = dict(
+            co_filename=self.code.co_filename, co_firstlineno=self.code.co_firstlineno, co_name=self.code.co_name
+        )
+
         if hasattr(fn.__code__, "co_qualname"):
             replacements["co_qualname"] = self.qualname
-        fn.__code__ = fn.__code__.replace(**replacements)
+        fn.__code__ = code.replace(**replacements)
 
         try:
             fn()
@@ -4077,7 +4086,13 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         if code.co_flags & inspect.CO_ASYNC_GENERATOR:
             return make_async_generator(frame, compilectx, runtimectx)
 
-    res, status = _jit_run(frame, compilectx, runtimectx)
+    try:
+        res, status = _jit_run(frame, compilectx, runtimectx)
+    except Exception as e:
+        # We need to cheat a bit to get a Python frame here...
+        python_frame = frame.get_or_make_python_frame()
+        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        raise e.with_traceback(tb)
     return res
 
 
@@ -4210,7 +4225,7 @@ def _jit_run(
                     # We need to cheat a bit to get a Python frame here...
                     python_frame = frame.get_or_make_python_frame()
                     tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-                    e.__traceback__ = tb
+                    e = e.with_traceback(tb)
                     runtimectx.curexc = e
                     return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
 
