@@ -3149,6 +3149,9 @@ def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # shape, padding_config
     cases = (
+        # 1-numel cases
+        ((1, 1), ((0, 2, 0), (0, 2, 0))),
+        # Other generic cases
         ((1, 3), ((0, 0, 0), (0, 0, 0))),
         ((3, 7, 5), ((-2, 1, 0), (1, 3, 0), (-1, 2, 0))),
         ((2, 2), ((1, 1, 1), (-1, 2, 0))),
@@ -3185,6 +3188,17 @@ pad_opinfo = OpInfo(
             pytest.mark.xfail,
             executors=("torch",),
             dtypes=(datatypes.complexfloating,),
+        ),
+        # See issue https://github.com/Lightning-AI/lightning-thunder/issues/2053
+        DecorateInfo(
+            pytest.mark.xfail,
+            executors=("nvfuser",),
+        ),
+        # See issue https://github.com/Lightning-AI/lightning-thunder/issues/2053
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("nvfuser",),
         ),
     ),
 )
