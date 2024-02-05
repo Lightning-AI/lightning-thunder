@@ -2058,7 +2058,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.block_size,). Default is (16,).",
         ),
         BenchmarkArg(
             name="indices_dtype",
@@ -2219,7 +2219,7 @@ class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         ),
         BenchmarkArg(
             name="batchdims",
-            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len, config.n_embd). Default is (16,).",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.block_size, config.n_embd). Default is (16,).",
         ),
         BenchmarkArg(
             name="device",
