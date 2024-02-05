@@ -99,7 +99,12 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         # we would still `compile(fsdp(undo_compile(compile(model))))` internally
         from thunder.executors.sdpaex import sdpa_ex
 
-        return thunder.compile(module, executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor])
+        return thunder.compile(
+            module,
+            executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+            # nv_enable_bookend because of https://github.com/Lightning-AI/lightning-thunder/issues/2025
+            nv_enable_bookend=True,
+        )
 
     @override
     def module_to_device(self, module: Module) -> None:

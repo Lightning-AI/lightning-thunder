@@ -830,6 +830,7 @@ def _create_callable(
                         "cache_mode": cd.cache_mode,
                         "use_rematerialization": cd.use_rematerialization,
                         "use_cudagraphs": cd.use_cudagraphs,
+                        **cd.compile_options,
                     }
 
                     # thunder_backward may recursively call compile and wraps the result in a
