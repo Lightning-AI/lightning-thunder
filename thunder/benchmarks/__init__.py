@@ -2552,6 +2552,36 @@ class NanoGPTSDPABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return nanoGPTScaledDotProductAttention()
 
 
+class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "llama2-sdpa"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Lit-GPT's Scaled Dot Product Attention call."
+
+    def __init__(
+        self,
+        config: str = "Llama-2-7b-hf",
+        batchdims: Sequence[int] = (16,),
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.bfloat16,
+        requires_grad: bool = True,
+    ) -> None:
+        from thunder.tests.lit_gpt_model import Config
+
+        litgptconfig = Config.from_name(config) if not isinstance(config, Config) else config
+        nanogptconfig = NanoGPTConfig(
+            n_head=litgptconfig.n_head,
+            seq_len=litgptconfig.block_size,
+            n_embd=litgptconfig.n_embd,
+        )
+        super().__init__(nanogptconfig, batchdims, device, dtype, requires_grad)
+
+
 # Taken from HuggingFace Bart-Large model config:
 # https://huggingface.co/facebook/bart-large/blob/main/config.json
 class HuggingFaceSelfAttnBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):

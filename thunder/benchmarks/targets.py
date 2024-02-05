@@ -16,6 +16,7 @@ from thunder.benchmarks import (
     NanoGPTCrossEntropyBenchmark,
     NanoGPTLayerNormBenchmark,
     NanoGPTSDPABenchmark,
+    LitGPTSDPABenchmark,
     NanoGPTMLPBenchmark,
     NanoGPTCSABenchmark,
     NanoGPTBlockBenchmark,
@@ -356,11 +357,13 @@ fwd_executor_ids = (
 )
 
 grad_executors = (
+    *((partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_executor),) if thunder_cudnn_executor is not None else ()),
     torch_fwd_bwd,
     torchcompile_fwd_bwd,
     thunder_fwd_bwd,
 )
 grad_executors_ids = (
+    *(("thunder+cudnn",) if thunder_cudnn_executor is not None else ()),
     "torch",
     "torch.compile",
     "thunder",
@@ -517,6 +520,23 @@ def test_nanogpt_sdpa_grad(benchmark, executor: Callable):
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
+def test_llama2_7b_sdpa_grad(benchmark, executor: Callable):
+    bench: Benchmark = LitGPTSDPABenchmark(
+        config="Llama-2-7b-hf", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+    )
+
+    setup = make_setup(bench)
+    fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
 @pytest.mark.parametrize(

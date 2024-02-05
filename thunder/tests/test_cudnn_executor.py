@@ -1,18 +1,90 @@
+import random
+from functools import partial
 from typing import Any
 
 import pytest
 import torch
+from looseversion import LooseVersion
 from torch.testing import assert_close
 
 import thunder
-from thunder import dtypes
-from thunder.tests.framework import instantiate, requiresCUDA, ops, run_snippet, NOTHING, TorchExecutor
-from thunder.tests.opinfos import OpInfo, get_opinfo
 import thunder.core.devices as devices
+from thunder import dtypes
+from thunder.core.transforms import vjp
+from thunder.core.utils import flatten_func
+from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
-from thunder.executors.cudnnex import cudnn_ex
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
+from thunder.executors.cudnnex import cudnn_ex
+
+
+# These reference inputs are currently used by cudnnex
+def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
+    """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
+    from thunder.executors.sdpaex import SpdaBackend
+    from thunder.tests.opinfos import SampleInput
+
+    # TODO: cudnnex seems to produce large mismatches against reference when tensor initialized from the wider default range of [-9,9]
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1871
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-0.5, high=0.5)
+
+    n_head = 2
+    N = 8
+
+    # TODO: multiple of 8 seems to produce NaNs
+    L = random.randint(1, 10) * 64
+
+    alignment_factor = 8
+    S = random.randint(1, 10) * alignment_factor
+    E = random.randint(8, 16) * alignment_factor
+    Ev = random.randint(8, 16) * alignment_factor
+
+    # 4-dim (multiheaded) causal cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := True)
+
+    # TODO: cudnnex seems to have a few mismatches. Will be enabled in a later PR.
+    # Non-contiguous input tensor case
+    nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
+    nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
+    nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
+    yield SampleInput(nq, nk, nv, attn_mask := None, dropout_p := 0.0, is_causal := False)
+
+    # Test the scale factor which was added in torch 2.1
+    if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
+        q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.123)
+
+    # TODO: cudnnex only support of grad_attn_mask with batch dim 1 and both sequence lenghts divisible by 64. Release 9.0.1 will relax this constraint.
+    # Additive attn_mask
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype).tril()
+    yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+
+    # Boolean attn_mask
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    bool_attn_mask = make((1, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
+    yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+
+
+grad_sdpa_cudnn_opinfo = OpInfo(
+    thunder.torch.scaled_dot_product_attention,
+    name="grad_forward_scaled_dot_product_attention",
+    sample_input_generator=None,
+    reference_input_generator=grad_scaled_dot_product_attention_reference_generator,
+    torch_reference=torch.nn.functional.scaled_dot_product_attention,
+    # RuntimeError: Only fp32, half & bf16 supported at the moment
+    dtypes=(
+        thunder.dtypes.float32,
+        thunder.dtypes.float16,
+        thunder.dtypes.bfloat16,
+    ),
+    devicetypes=(devices.DeviceType.CUDA,),
+)
 
 
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
@@ -52,7 +124,7 @@ def test_cudnn_sdpa():
         actual = ctest(query, key, value, is_causal=is_causal, attn_mask=attn_mask)
         torch.testing.assert_close(actual, expected, atol=2e-2, rtol=1e-2)
         last_trace = thunder.last_traces(ctest)[-1]
-        assert any(bsym.sym.name == "cudnn_sdpa" for bsym in last_trace.bound_symbols)
+        assert any(bsym.sym.name == "cudnn_sdpa_fwd" for bsym in last_trace.bound_symbols)
 
 
 # NOTE These wrappers are necessary because preprocessing cannot compile the function directly
@@ -67,6 +139,7 @@ def spda_wrapper(*args, **kwargs):
 op_name_to_fn = {
     "layer_norm": layer_norm_wrapper,
     "scaled_dot_product_attention": spda_wrapper,
+    "grad_forward_scaled_dot_product_attention": spda_wrapper,
 }
 
 
@@ -86,6 +159,7 @@ def snippet_torch_consistency(op, torch_op, sample):
     (
         get_opinfo("layer_norm"),
         get_opinfo("scaled_dot_product_attention"),
+        grad_sdpa_cudnn_opinfo,
     ),
     supported_devicetypes=(devices.DeviceType.CUDA,),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
@@ -116,3 +190,55 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
         )
         if result is not None:
             return result
+
+
+# NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
+# RuntimeError: Only fp32, half & bf16 supported at the moment
+@ops(
+    (grad_sdpa_cudnn_opinfo,),
+    supported_dtypes=(dtypes.float16, dtypes.bfloat16),
+    supported_devicetypes=(devices.DeviceType.CUDA,),
+)
+def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
+    ran_atleast_one = False
+    for sample in op.reference_inputs(device, dtype, requires_grad=True):
+        from thunder.executors.cudnnex import cudnn_ex
+
+        # Enforce tensor arguments are contiguous for torch reference
+        contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
+
+        # query, key, value
+        grad_inputs = list(contiguous_args[:3])
+        if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
+            grad_inputs.append(attn_mask)
+
+        # Compute vjp result using PyTorch
+        expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
+        v = make_tensor_like(expect_out)
+        expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+
+        cfoo = thunder.compile(
+            vjp(filtered_op),
+            disable_torch_autograd_support=True,
+            disable_preprocessing=True,
+            executors_list=executor.executors_list() + [cudnn_ex],
+        )
+
+        try:
+            actual_out, actual_grad = cfoo(filtered_args, (v,))
+        except Exception as e:
+            continue
+
+        comp(actual_out, expect_out, atol=1e-2, rtol=1e-2)
+
+        # compare gradients of query, key, value, and attn_mask
+        for eg, ag in zip(expected_grad, actual_grad):
+            comp(eg, ag, atol=2e-1, rtol=2e-2)
+
+        ran_atleast_one = True
+
+    assert ran_atleast_one == True
