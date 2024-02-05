@@ -57,7 +57,15 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor(
+        (
+            2,
+            3,
+        ),
+        device=device,
+        dtype=torch.float64,
+        requires_grad=True,
+    )
     trace = trace(inline_trace=False)(func, a, b, c=c)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 

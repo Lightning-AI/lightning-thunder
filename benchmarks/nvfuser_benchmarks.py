@@ -140,6 +140,7 @@ class Benchmark:
             assert extension in (
                 "cudnn",
                 "nvfuser",
+                "inductor",
                 "triton",
                 "apex",
                 "cudagraphs",
@@ -192,10 +193,12 @@ class Benchmark:
 
         assert base_executor == "thunder", f"Unknown executor base {base_executor}"
         import thunder.executors.sdpaex
+        from thunder.executors.torch_compile import torch_compile_executor
 
         # Constructs the executors list
         _executor_extension_map: dict[str, list] = {
             "nvfuser": [thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex],
+            "inductor": [torch_compile_executor],
             "apex": [apex_ex],
             "cudnn": [cudnn_ex],
             "triton": [triton_ex],

@@ -88,6 +88,9 @@ class Executor:
     def can_fuse(self, bsym: BoundSymbol) -> bool:
         sym = bsym.sym
 
+        if sym.is_fusion:
+            return False
+
         if self.can_execute(bsym):
             return True
 

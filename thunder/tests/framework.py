@@ -194,8 +194,23 @@ class TorchTestExecutor(TestExecutor):
         return torch.__version__
 
 
+class TorchCompileTestExecutor(TestExecutor):
+    name = "torchcompile"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def executors_list(self) -> list[extend.Executor]:
+        from thunder.executors.torch_compile import torch_compile_executor
+
+        return [torch_compile_executor]
+
+    def version(self):
+        return torch.__version__
+
+
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
+TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:
@@ -297,7 +312,9 @@ class ops:
         self.opinfos = opinfos
 
         self.supported_executors = (
-            set(supported_executors) if supported_executors is not None else set(_all_test_executors())
+            set(supported_executors)
+            if supported_executors is not None
+            else set(_all_test_executors() + [TorchCompileExecutor])
         )
         for ex in self.supported_executors:
             assert isinstance(ex, TestExecutor)
@@ -335,6 +352,11 @@ class ops:
                 sorted(self.supported_executors, key=lambda x: repr(x)), sorted(devicetypes, key=lambda x: repr(x))
             ):
                 if not executor.supports_devicetype(devicetype):
+                    continue
+
+                if executor == TorchCompileExecutor and (
+                    not opinfo.test_torch_compile_executor or sys.platform == "win32"
+                ):
                     continue
 
                 device = devices.Device(devicetype, None)

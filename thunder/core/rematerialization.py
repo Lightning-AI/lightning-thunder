@@ -16,6 +16,7 @@ from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.transform_common import dce
 from thunder.executors.passes import update_fusion_call_ctx
 
 
@@ -221,6 +222,9 @@ def find_filtered_producer_consumer_pairs(
 find_nvfuser_producer_consumer_pairs = partial(
     find_filtered_producer_consumer_pairs, filter_func=lambda x: x.sym.name.startswith("nvFusion")
 )
+find_fusion_producer_consumer_pairs = partial(
+    find_filtered_producer_consumer_pairs, filter_func=lambda x: x.sym.is_fusion
+)
 
 
 def find_cut(
@@ -262,6 +266,20 @@ def find_cut(
     required_producer_vars += tuple(
         chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
+
+    # We can apply rematerialization for any pair of symbols with is_fusion=True
+    # property. Currently this could be an nvFuser or a TorchCompile fusion.
+    # These executors might have a different coverage of supported operators. So
+    # we need to mark unsupported by consumer operators variables as required
+    # producer variables. So that we don't move them to the consumer.
+    if producer.sym.executor != consumer.sym.executor:
+        required_producer_vars += tuple(
+            chain.from_iterable(
+                (y for y in x.flat_outs)
+                for x in producer.subsymbols
+                if not has_tags(x, tags) and not consumer.sym.executor.can_fuse(x)
+            )
+        )
 
     # Required consumer variables. These are the variables that are required to
     # be connected to the "sink" node.
@@ -463,7 +481,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     static_consumer_info = utils.consumers(trace)
 
     # Find all the producers and consumers
-    pairs = find_nvfuser_producer_consumer_pairs(trace, proxy_to_consumers=static_consumer_info)
+    pairs = find_fusion_producer_consumer_pairs(trace, proxy_to_consumers=static_consumer_info)
 
     # Pairs of producer and consumer are not unique. Each update to the producer
     # or consumer may affect the other. We need to update the producer and
@@ -550,9 +568,6 @@ def rematerialize_forward_and_backward(
     if rematerialize_params_in_backward:
         joint_extrace = rematerialize_all_gather(joint_extrace, len(fw_trace.bound_symbols) - 1)
 
-    # Update the call context
-    joint_extrace = update_fusion_call_ctx(joint_extrace)
-
     # We need to update "save_for_backward" sequence
     new_bw_bsyms = joint_extrace.bound_symbols[len(fw_trace.bound_symbols) :]
     new_bw_bsyms = list(
@@ -596,4 +611,13 @@ def rematerialize_forward_and_backward(
     )
     new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
+
+    # prims.python_return was updated and now DCE can remove the unused
+    # variables and symbols
+    new_fw_trace = dce(new_fw_trace)
+    new_bw_trace = dce(new_bw_trace)
+
+    # Update the call context
+    new_fw_trace = update_fusion_call_ctx(new_fw_trace)
+    new_bw_trace = update_fusion_call_ctx(new_bw_trace)
     return new_fw_trace, new_bw_trace

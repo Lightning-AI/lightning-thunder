@@ -741,6 +741,16 @@ def thunder_sdpa_executor(fn: Callable) -> Callable:
     return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex])
 
 
+from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
+
+
+def thunder_sdpa_torch_compile_nvfuser_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return thunder.compile(
+        fn, cache_mode="dynamic strides", executors_list=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor]
+    )
+
+
 def default_torch_ddp_executor(_) -> Callable:
     def func(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -812,12 +822,19 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import ddp
+        from thunder.executors.torch_compile import torch_compile_executor
+        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
             return thunder.compile(
                 ddp(fn, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
                 cache_mode="dynamic strides",
+                executors_list=[
+                    sdpa_ex,
+                    torch_compile_executor,
+                    thunder.nvfuser_executor,
+                ],
             )
 
         return func
@@ -833,6 +850,8 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import fsdp
+        from thunder.executors.torch_compile import torch_compile_executor
+        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -844,6 +863,11 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
                     sharding_strategy=self.sharding_strategy,
                 ),
                 cache_mode="dynamic strides",
+                executors_list=[
+                    sdpa_ex,
+                    torch_compile_executor,
+                    thunder.nvfuser_executor,
+                ],
             )
 
         return func

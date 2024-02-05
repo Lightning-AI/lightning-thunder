@@ -310,7 +310,8 @@ def expand(a: TensorLike, *shape: int) -> TensorLike:
     # At this point shape must be valid
     # utils.check_valid_shape(shape_)
 
-    return prims.broadcast_in_dim(a, shape_, tuple(range(offset, len(a.shape) + offset)))
+    # NOTE: Converting shape_ to tuple makes it possible to apply CSE
+    return prims.broadcast_in_dim(a, tuple(shape_), tuple(range(offset, len(a.shape) + offset)))
 
 
 # TODO Should flatten be a prim?

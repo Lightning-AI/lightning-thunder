@@ -36,6 +36,7 @@ from thunder.benchmarks import (
     thunder_cudnn_layer_norm_executor,
     thunder_cudnn_layer_norm_nvfuser_executor,
     thunder_sdpa_executor,
+    thunder_sdpa_torch_compile_nvfuser_executor,
 )
 
 from thunder.tests.lit_gpt_model import Config as LitGPTConfig
@@ -356,17 +357,23 @@ fwd_executor_ids = (
     "thunder",
 )
 
+thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
+    thunder_fwd_bwd, compile_fn=thunder_sdpa_torch_compile_nvfuser_executor
+)
+
 grad_executors = (
     *((partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_executor),) if thunder_cudnn_executor is not None else ()),
     torch_fwd_bwd,
     torchcompile_fwd_bwd,
     thunder_fwd_bwd,
+    thunder_fwd_bwd_sdpa_torch_compile_nvfuser,
 )
 grad_executors_ids = (
     *(("thunder+cudnn",) if thunder_cudnn_executor is not None else ()),
     "torch",
     "torch.compile",
     "thunder",
+    "thunder+nvfuser+torch.compile",
 )
 
 apex_grad_executors = (thunder_apex_grad, thunder_apex_nvfuser_grad)
@@ -828,6 +835,7 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
         (torch_fwd_bwd, False),
         (torchcompile_fwd_bwd, False),
         (thunder_fwd_bwd, False),
+        (thunder_fwd_bwd_sdpa_torch_compile_nvfuser, False),
         (torch_fwd_bwd, True),
         (torchcompile_fwd_bwd, True),
     ),
@@ -835,6 +843,7 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
         "torch",
         "torch.compile",
         "thunder-fwd-bwd",
+        "thunder+nvfuser+torch.compile-fwd-bwd",
         "torch+apex",
         "torch.compile+apex",
     ),

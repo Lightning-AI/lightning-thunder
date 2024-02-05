@@ -189,9 +189,15 @@ if compile_mode == "torch":
 elif compile_mode == "thunder":
     print("Compiling model using thunder.compile...")
     import thunder.executors.sdpaex
+    from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
 
     model = thunder.compile(
-        model, executors_list=[thunder.nvfuser_executor, thunder.executors.sdpaex.sdpa_ex], nv_enable_bookend=True
+        model,
+        executors_list=[
+            thunder.executors.sdpaex.sdpa_ex,
+            torch_compile_ex,
+            thunder.nvfuser_executor,
+        ],
     )
 else:
     raise ValueError(f"Unknown compile_mode: {compile_mode}")

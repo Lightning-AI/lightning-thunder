@@ -333,6 +333,7 @@ class OpInfo:
         test_directives=(),
         domain=(None, None),
         singularity_fn=None,
+        test_torch_compile_executor=False,
     ):
         self.op = op
 
@@ -367,6 +368,7 @@ class OpInfo:
         self.test_directives = test_directives
         self.domain = Domain(*domain)
         self.singularity_fn = singularity_fn
+        self.test_torch_compile_executor = test_torch_compile_executor
 
     def __call__(self, *args, **kwargs):
         """Calls the function variant of the operator."""
@@ -2755,6 +2757,22 @@ cat_opinfo = OpInfo(
     sample_input_generator=cat_sample_generator,
     error_input_generator=cat_error_generator,
     torch_reference=torch.cat,
+    test_torch_compile_executor=True,
+    test_directives=(
+        # There's a bug in torch.compile + torch.cat for empty tensors in 2.1.0
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_core_vs_torch_consistency",
+            active_if=(LooseVersion(torch.__version__) < "2.2.0"),
+            executors=("torchcompile",),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            "test_vjp_correctness",
+            active_if=(LooseVersion(torch.__version__) < "2.2.0"),
+            executors=("torchcompile",),
+        ),
+    ),
 )
 shape_ops.append(cat_opinfo)
 
