@@ -556,6 +556,70 @@ def uniform_philox(
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
 
+@torchsymbol(torch.randn)
+def randn(
+    *shape,
+    generator: None | torch.Generator = None,
+    dtype: None | dtypeLike = None,
+    device: None | DeviceLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    out: TensorLike = None,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    if device is None:
+        device = "cpu"
+    device = to_thunder_device(device)
+
+    # For now we default to `float32`,
+    # however, we should add a default dtype or
+    # rely on `torch.get_default_dtype`.
+    if dtype is None:
+        dtype = torch.float
+    dtype = to_thunder_dtype(dtype)
+    shape = utils.extract_shape_from_varargs(shape)
+    return prims.randn(shape, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.randn_like)
+def randn_like(
+    a,
+    /,
+    *,
+    dtype: None | dtypeLike = None,
+    device: None | DeviceLike = None,
+    layout: None | torch.layout = None,
+    requires_grad: bool = False,
+    memory_format: torch.memory_format = torch.preserve_format,
+):
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not supported within thunder.compile", NotImplementedError
+    )
+    utils.check(
+        layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
+    )
+    utils.check(
+        memory_format == torch.preserve_format,
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.compile",
+        NotImplementedError,
+    )
+
+    if dtype is None:
+        dtype = a.dtype
+
+    if device is None:
+        device = a.device
+    return randn(a.shape, dtype=dtype, device=device)
+
+
 # NOTE zeros, like ones, and unlike full, can accept an integer shape
 @torchsymbol(torch.zeros)
 def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:

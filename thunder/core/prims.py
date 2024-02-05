@@ -71,6 +71,7 @@ class PrimIDs(Enum):
     IOTA = auto()
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
+    RANDN = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     # Reshaping and permuting prims
@@ -1959,6 +1960,22 @@ uniform_philox = make_prim(
     "uniform_philox",
     meta=_uniform_philox_meta,
 )
+
+
+def _randn_meta(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+):
+    utils.check_type(device, devices.Device)
+    utils.check_type(dtype, dtypes.dtype)
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
 
 
 def _multinomial_meta(

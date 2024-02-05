@@ -157,6 +157,7 @@ ones_like = _register_torch_operation("ones_like")
 tensor = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
+randn = _register_torch_operation("randn")
 einsum = _register_torch_operation("einsum")
 
 
@@ -400,12 +401,24 @@ def _zeros_like_transform(
     return zeros_like(a, device=torch_device, dtype=torch_dtype)
 
 
+def _randn_prims_transform(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = ltorch.to_torch_device(device)
+    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    return randn(shape, device=torch_device, dtype=torch_dtype)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
+_register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 
 _register_implementation(ltorch.arange, checker=_always_executable, execution_transform=_arange_transform)
 _register_implementation(ltorch.full, checker=_always_executable, execution_transform=_full_transform)

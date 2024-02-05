@@ -4722,6 +4722,51 @@ zeros_like_opinfo = OpInfo(
 tensor_creation_ops.append(zeros_like_opinfo)
 
 
+# Helper function for `randn` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_randn_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.randn(*args, **kwargs), 0)
+
+
+def randn_error_generator(op, device, **kwargs):
+    err_msg = "requires_grad=True is not yet supported"
+    yield (SampleInput(1, 2, requires_grad=True), NotImplementedError, err_msg)
+    err_msg = "generator is not None which"
+    yield (SampleInput(1, 2, generator=torch.Generator()), NotImplementedError, err_msg)
+
+
+# NOTE: This OpInfo ends up checking only `shape`, `device` and `dtype` consistency
+# To test with OpInfo, we need operation to have deterministic output (for consistency tests).
+# Since, randn returns random values, we call `full_like` on it to create output with fixed value.
+# It is ok, as we just want to test `dtype`, `device` and `shape` for the output of `randn`
+randn_opinfo = OpInfo(
+    name="randn",
+    op=torch_randn_and_zero,
+    sample_input_generator=varargs_tensor_creation_op_sample_generator,
+    error_input_generator=randn_error_generator,
+    torch_reference=lambda *args, **kwargs: torch.randn(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(randn_opinfo)
+
+
+# Helper function for `randn_like` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_randn_like_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.randn_like(*args, **kwargs), 0)
+
+
+# NOTE: This OpInfo ends up checking only `shape`, `device` and `dtype` consistency
+# See the note on `randn` OpInfo for more details.
+randn_like_opinfo = OpInfo(
+    torch_randn_like_and_zero,
+    sample_input_generator=fixed_value_like_tensor_creation_op_sample_generator,
+    torch_reference=lambda *args, **kwargs: torch.randn_like(*args, **kwargs).fill_(0),
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+)
+tensor_creation_ops.append(randn_like_opinfo)
+
+
 opinfos.extend(tensor_creation_ops)
 
 #
