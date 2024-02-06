@@ -783,6 +783,28 @@ def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
     grad_executors,
     ids=grad_executors_ids,
 )
+def test_llama_2_7b_grad(benchmark, executor: Callable):
+    cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
+    b = LitGPTBenchmark(
+        cfg,
+        batchdims=(2,),
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+
+    setup = make_setup(b)
+    fn = executor(b)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    grad_executors,
+    ids=grad_executors_ids,
+)
 def test_llama2_mlp_7b_grad(benchmark, executor: Callable):
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
