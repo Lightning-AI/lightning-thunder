@@ -978,6 +978,14 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
     elif isinstance(dim, int):
         dims = (dim,)
 
+    # a.shape is being indexed below.
+    # We want to make sure that dims is valid.
+    dims = utils.canonicalize_dims(a.ndim, dims)
+
+    # Make sure that squeezing a non-1 dim is a no-op
+    # and it does not error as {prim/clang}.squeeze would.
+    dims = tuple(d for d in dims if a.shape[d] == 1)
+
     return clang.squeeze(a, dims)
 
 
