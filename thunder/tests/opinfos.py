@@ -4386,13 +4386,6 @@ def var_sample_generator(op, device, dtype, requires_grad):
         dim = sample.args[1] if len(sample.args) > 1 else None
         keepdim = sample.args[2] if len(sample.args) > 2 else False
 
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/2059
-        if isinstance(dim, int) and a.shape[dim] == 1:
-            continue
-        # See https://github.com/NVIDIA/Fuser/issues/1721
-        if isinstance(dim, Sequence) and any(a.shape[d] == 1 for d in dim):
-            continue
-
         if c is not None:
             yield SampleInput(a, dim, keepdim=keepdim, correction=c)
         else:
