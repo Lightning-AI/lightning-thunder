@@ -16,7 +16,7 @@ import thunder
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 import thunder.torch as ltorch
 from thunder.distributed import prims
-from thunder.distributed import FSDPBucketingStrategy
+from thunder.distributed import FSDPBucketingStrategy, FSDPType
 
 try:
     import expecttest  # noqa: F401
@@ -706,13 +706,22 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
     # TODO(crcrpar): Add torch compile to executors_list once it's available.
     @common_utils.parametrize(
-        "executor,bucketing_strategy",
-        product(tuple(executors_map.keys()), (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK)),
-        name_fn=lambda executor, bucketing_strategy: (
-            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}"
+        "executor,bucketing_strategy,fsdptype",
+        product(
+            tuple(executors_map.keys()),
+            (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
+            (FSDPType.ZERO2, FSDPType.ZERO3),
+        ),
+        name_fn=lambda executor, bucketing_strategy, fsdptype: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
         ),
     )
-    def test_fsdp_grad_parity_with_without_bucketing(self, executor, bucketing_strategy: FSDPBucketingStrategy):
+    def test_fsdp_grad_parity_with_without_bucketing(
+        self,
+        executor,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
         from thunder.distributed import fsdp
 
         device = torch.device("cuda", self.rank)
@@ -722,7 +731,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             m = ToyModel().to(device)
             m.load_state_dict(initial_model_state)
             cm = thunder.compile(
-                fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy),
+                fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12)).to(device)
