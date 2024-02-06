@@ -14,11 +14,16 @@ from thunder.benchmarks import (
     LitGPTBenchmark,
     LitGPTConfig,
 )
+from thunder.tests.lit_gpt_model import name_to_config
 from thunder.distributed import FSDPBucketingStrategy
 from thunder.distributed import FSDPType
 
 
-_llama_configs: tuple[str, ...] = ("open_llama_7b", "Llama-2-7b-hf")
+_nanogpt_model_names: tuple[str, ...] = tuple(_nanogpt_configs.keys())
+_llama_model_names: tuple[str, ...] = tuple(name_to_config.keys())
+_llama2_configs: tuple[str, ...] = ("open_llama_7b", "Llama-2-7b-hf")
+fsdp_bucketing_strategies = {str(e).split(".")[1].lower(): e for e in FSDPBucketingStrategy}
+fsdp_sharding_strategies = {str(e).split(".")[1].lower(): e for e in FSDPType}
 
 
 @dataclass
@@ -32,6 +37,7 @@ class ResultFormatter:
     warmup_stats: list[BenchmarkRunStatistics]
     benchmark_stats: list[BenchmarkRunStatistics]
     typehint: bool
+    rank_mem_info: dict[int, tuple[int, int]]
 
     def __post_init__(self) -> None:
         avg_tcct = self.total_callable_construction_time // self.world_size
@@ -70,9 +76,24 @@ class ResultFormatter:
         self.avg_tcct = avg_tcct
         self.initialization_estimate_ns = initialization_estimate_ns
 
+    def _convert_rank_mem_info(self) -> dict[str, float]:
+        a = {}
+        r = {}
+        for rank in sorted(self.rank_mem_info):
+            allocated, reserved = self.rank_mem_info[rank]
+            if self.typehint:
+                a[f"d_peak_mem_allocated_rank{rank}"] = allocated / 1024 / 1024
+                r[f"d_peak_mem_reserved_rank{rank}"] = reserved / 1024 / 1024
+            else:
+                a[f"peak_mem_allocated_rank{rank}"] = allocated / 1024 / 1024
+                r[f"peak_mem_reserved_rank{rank}"] = reserved / 1024 / 1024
+        a.update(r)
+        return a
+
     def to_json(self) -> dict[str, float | str | int]:
+        d = {}
         if self.typehint:
-            return {
+            d = {
                 "s_torch_version": str(torch.__version__),
                 "d_num_runs": len(self.benchmark_stats) // self.world_size,
                 "s_model_name": self.model_name,
@@ -89,7 +110,7 @@ class ResultFormatter:
                 "d_host_time_percentage": self.host_time_percentage,
             }
         else:
-            return {
+            d = {
                 "torch_version": str(torch.__version__),
                 "num_runs": len(self.benchmark_stats) // self.world_size,
                 "model_name": self.model_name,
@@ -105,13 +126,11 @@ class ResultFormatter:
                 "warmup_average": self.initialization_estimate_ns / 1000.0,
                 "host_time_percentage": self.host_time_percentage,
             }
+        d.update(self._convert_rank_mem_info())
+        return d
 
 
-# TODO Port these benchmarks to pytest (and targets.py)
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1404
-if __name__ == "__main__":
-    fsdp_bucketing_strategies = {str(e).split(".")[1].lower(): e for e in FSDPBucketingStrategy}
-    fsdp_sharding_strategies = {str(e).split(".")[1].lower(): e for e in FSDPType}
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Distributed Benchmark for nanogpt or llama2 models with Thunder's ddp or fsdp",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -120,11 +139,14 @@ if __name__ == "__main__":
         "--model",
         type=str,
         default="gpt2-xl",
-        choices=tuple(_nanogpt_configs.keys()) + _llama_configs,
-        help=f"parameter to specify model config. Available options are {tuple(_nanogpt_configs.keys()) + _llama_configs}.",
+        choices=_nanogpt_model_names + _llama_model_names,
+        help=f"parameter to specify model config. Available options are {_nanogpt_model_names + _llama_model_names}.",
     )
     parser.add_argument(
-        "--seq-len", type=int, default=128, help="sequence length for nanogpt benchmark. 128 or 512 are commonly used"
+        "--seq-len",
+        type=int,
+        default=128,
+        help=f"sequence length for nanogpt benchmark. 128 or 512 are commonly used. This option is only used when one of {_nanogpt_model_names}",
     )
     parser.add_argument("--skip-torch", action="store_true", help="set this to skip PyTorch things")
     parser.add_argument("--skip-torch-compile", action="store_true", help="set this to skip torch compile")
@@ -141,7 +163,7 @@ if __name__ == "__main__":
         nargs="+",
         type=float,
         default=[0, 25],
-        help="parameters of `bucket_size_in_mb` for thunder.distributed.ddp",
+        help="parameters of `bucket_size_in_mb` for thunder.distributed.ddp. This is a hyperparameter of distributed data parallel.",
     )
     parser.add_argument(
         "--bucketing-strategies",
@@ -149,7 +171,7 @@ if __name__ == "__main__":
         type=str,
         default=("none", "block"),
         choices=tuple(fsdp_bucketing_strategies.keys()),
-        help="Bucketing strategies to run",
+        help="Bucketing strategies to run. This is a hyperparameter of (fully) sharded data parallel.",
     )
     parser.add_argument(
         "--sharding-strategies",
@@ -169,7 +191,7 @@ if __name__ == "__main__":
         "--batchdims",
         type=int,
         default=None,
-        help="Batch size. For nanogpt, default is 16, for llama2 models, 2",
+        help="Batch size. For nanogpt, default is 16, for llama models, 1",
     )
     parser.add_argument(
         "--typehint",
@@ -181,6 +203,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.skip_torch and args.skip_torch_compile:
         raise ValueError("Specifying both `--skip-torch` and `--skip-torch-compile` doesn't make sense")
+    if args.model in _llama2_configs and args.dataparallel_strategy == "ddp":
+        raise ValueError(
+            "Llama2 models are memory hungry so that DDP would not capable of running them even on 80GB devices"
+        )
+    return args
+
+
+# TODO Port these benchmarks to pytest (and targets.py)
+#   See https://github.com/Lightning-AI/lightning-thunder/issues/1404
+if __name__ == "__main__":
+    args = parse_args()
 
     torch_dtype: torch.dtype = getattr(torch, args.dtype)
     config, b = None, None
@@ -215,8 +248,11 @@ if __name__ == "__main__":
                 from thunder.benchmarks import default_torch_ddp_executor
 
                 print("torch - DistributedDataParallel")
-                total_cct, all_warmup_stats, all_benchmark_stats = run_multiprocess_benchmark(
-                    b, default_torch_ddp_executor, world_size=world_size
+                total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info = run_multiprocess_benchmark(
+                    b,
+                    default_torch_ddp_executor,
+                    world_size=world_size,
+                    extended_printout=False,
                 )
                 results.append(
                     ResultFormatter(
@@ -229,6 +265,7 @@ if __name__ == "__main__":
                         warmup_stats=all_warmup_stats,
                         benchmark_stats=all_benchmark_stats,
                         typehint=args.typehint,
+                        rank_mem_info=rank_mem_info,
                     ).to_json()
                 )
 
@@ -236,8 +273,11 @@ if __name__ == "__main__":
                     from thunder.benchmarks import default_torch_compile_ddp_executor
 
                     print("torch.compile - DistributedDataParallel")
-                    total_cct, all_warmup_stats, all_benchmark_stats = run_multiprocess_benchmark(
-                        b, default_torch_compile_ddp_executor, world_size=world_size
+                    total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info = run_multiprocess_benchmark(
+                        b,
+                        default_torch_compile_ddp_executor,
+                        world_size=world_size,
+                        extended_printout=False,
                     )
                     results.append(
                         ResultFormatter(
@@ -250,6 +290,7 @@ if __name__ == "__main__":
                             warmup_stats=all_warmup_stats,
                             benchmark_stats=all_benchmark_stats,
                             typehint=args.typehint,
+                            rank_mem_info=rank_mem_info,
                         ).to_json()
                     )
             else:
@@ -267,7 +308,7 @@ if __name__ == "__main__":
                 )
                 for auto_wrap_policy in auto_wrap_policies:
                     print(f"torch - FullyShardedDataParallel - {sharding_strategy=} - {auto_wrap_policy=}")
-                    total_cct, all_warmup_stats, all_benchmark_stats = run_multiprocess_benchmark(
+                    total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info = run_multiprocess_benchmark(
                         b,
                         get_default_torch_fsdp_executor(
                             sharding_strategy=sharding_strategy,
@@ -275,6 +316,7 @@ if __name__ == "__main__":
                             apply_torch_compile=False,
                         ),
                         world_size=world_size,
+                        extended_printout=False,
                     )
                     results.append(
                         ResultFormatter(
@@ -289,13 +331,14 @@ if __name__ == "__main__":
                             warmup_stats=all_warmup_stats,
                             benchmark_stats=all_benchmark_stats,
                             typehint=args.typehint,
+                            rank_mem_info=rank_mem_info,
                         ).to_json()
                     )
 
                 if not args.skip_torch_compile:
                     for auto_wrap_policy in auto_wrap_policies:
                         print(f"torch.compile - FullyShardedDataParallel - {sharding_strategy=} - {auto_wrap_policy=}")
-                        total_cct, all_warmup_stats, all_benchmark_stats = run_multiprocess_benchmark(
+                        total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info = run_multiprocess_benchmark(
                             b,
                             get_default_torch_fsdp_executor(
                                 sharding_strategy=sharding_strategy,
@@ -303,6 +346,7 @@ if __name__ == "__main__":
                                 apply_torch_compile=True,
                             ),
                             world_size=world_size,
+                            extended_printout=False,
                         )
                         results.append(
                             ResultFormatter(
@@ -317,6 +361,7 @@ if __name__ == "__main__":
                                 warmup_stats=all_warmup_stats,
                                 benchmark_stats=all_benchmark_stats,
                                 typehint=args.typehint,
+                                rank_mem_info=rank_mem_info,
                             ).to_json()
                         )
 
@@ -326,10 +371,11 @@ if __name__ == "__main__":
             print(f"# bucket sizes: {args.bucket_sizes=}")
             for bucket_size_in_mb in args.bucket_sizes:
                 print(f"thunder - ddp - {bucket_size_in_mb=}")
-                total_cct, all_warmup_stats, all_benchmark_stats = run_multiprocess_benchmark(
+                total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info = run_multiprocess_benchmark(
                     b,
                     get_default_thunder_ddp_dynamic_strides_executor(bucket_size_in_mb),
                     world_size=world_size,
+                    extended_printout=False,
                 )
                 results.append(
                     ResultFormatter(
@@ -342,6 +388,7 @@ if __name__ == "__main__":
                         warmup_stats=all_warmup_stats,
                         benchmark_stats=all_benchmark_stats,
                         typehint=args.typehint,
+                        rank_mem_info=rank_mem_info,
                     ).to_json()
                 )
         else:
@@ -352,10 +399,11 @@ if __name__ == "__main__":
             sharding_strategies = [fsdp_sharding_strategies[s] for s in args.sharding_strategies]
             for bucketing_strategy, sharding_strategy in product(bucketing_strategies, sharding_strategies):
                 print(f"thunder - fsdp - {bucketing_strategy=} - {sharding_strategy=}")
-                total_cct, all_warmup_stats, all_benchmark_stats = run_multiprocess_benchmark(
+                total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info = run_multiprocess_benchmark(
                     b,
                     get_default_thunder_fsdp_dynamic_strides_executor(bucketing_strategy, sharding_strategy),
                     world_size=world_size,
+                    extended_printout=False,
                 )
                 results.append(
                     ResultFormatter(
@@ -368,6 +416,7 @@ if __name__ == "__main__":
                         warmup_stats=all_warmup_stats,
                         benchmark_stats=all_benchmark_stats,
                         typehint=args.typehint,
+                        rank_mem_info=rank_mem_info,
                     ).to_json()
                 )
 

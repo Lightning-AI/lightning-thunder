@@ -320,6 +320,7 @@ def _prettyprint_stats(
     warmup_stats: list[BenchmarkRunStatistics],
     benchmark_stats: list[BenchmarkRunStatistics],
     extended_printout: bool = True,
+    rank_mem_info: dict[int, tuple[int, int]] = {},
 ) -> None:
     assert len(warmup_stats) > 0, "Expected at least one warmup run"
     assert len(benchmark_stats) > 0, "Expected at least one benchmark run"
@@ -382,6 +383,11 @@ def _prettyprint_stats(
         {benchmark_name} benchmark results:
             The median time of {len(benchmark_stats)} benchmark iterations is {median_benchmark_time_us}.
         """
+        if rank_mem_info:
+            short_printout += "\n    " + "*" * 20 + " Memory Usage " + "*" * 20
+            for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
+                short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+            short_printout += "\n"
 
         print(short_printout)
         return
@@ -397,6 +403,11 @@ def _prettyprint_stats(
         The total time to run all the iterations (warmup and benchmark) was is {total_time_us}.
         The benchmark called backward() {total_backward_calls} times.
     """
+    if rank_mem_info:
+        short_printout += "\n    " + "*" * 20 + " Memory Usage " + "*" * 20
+        for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
+            short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+        short_printout += "\n"
     if median_benchmark_stat.has_extended_stats:
         # NOTE At this point in the program extended statistics are available
         trace_time_ns = median_benchmark_stat.last_trace_host_stop - median_benchmark_stat.last_trace_host_start
@@ -463,7 +474,7 @@ def _run_benchmark(
     benchmark_iters: int = 20,
     use_grad_transform: bool = False,
     compile_backward: bool = False,
-) -> tuple[int, list, list]:
+) -> tuple[int, list, list, int, int]:
     # Determines the "wait for computation function," to be run after calls to make_batch() and the benchmark
     #   function to ensure that computation has finished
     devices: list[str] = benchmark.devices
@@ -522,9 +533,14 @@ def _run_benchmark(
     warmup_stats: list[BenchmarkRunStatistics] = my_benchmark(warmup_iters)
 
     # Benchmarks
+    cur_dev = torch.cuda.current_device()
+    torch.cuda.reset_peak_memory_stats(cur_dev)
     benchmark_stats: list[BenchmarkRunStatistics] = my_benchmark(benchmark_iters)
+    memory_stats = torch.cuda.memory_stats(cur_dev)
+    memory_allocated = memory_stats["allocated_bytes.all.peak"]
+    memory_reserved = memory_stats["reserved_bytes.all.peak"]
 
-    return callable_construction_time, warmup_stats, benchmark_stats
+    return callable_construction_time, warmup_stats, benchmark_stats, memory_allocated, memory_reserved
 
 
 # TODO Support for grad transforming the benchmarks is currently a prototype
@@ -546,7 +562,7 @@ def run_benchmark(
     if len(devices) == 0:
         raise RuntimeError("Found a benchmark with no specified devices")
 
-    callable_construction_time, warmup_stats, benchmark_stats = _run_benchmark(
+    callable_construction_time, warmup_stats, benchmark_stats, _ = _run_benchmark(
         benchmark,
         constructor,
         warmup_iters=warmup_iters,
@@ -590,7 +606,7 @@ def run_multiprocess_benchmark(
     warmup_iters: int = 10,
     benchmark_iters: int = 20,
     extended_printout: bool = True,
-) -> tuple[int, Sequence[BenchmarkRunStatistics], Sequence[BenchmarkRunStatistics]]:
+) -> tuple[int, Sequence[BenchmarkRunStatistics], Sequence[BenchmarkRunStatistics], dict[int, tuple[int, int]]]:
     print(f"Running distributed benchmark {benchmark.name} with {world_size=}")
     _print_benchmark_arguments(benchmark)
 
@@ -642,10 +658,18 @@ def run_multiprocess_benchmark(
         total_cct: int = 0
         all_warmup_stats = []
         all_benchmark_stats = []
-        for rank, (callable_construction_time, warmup_stats, benchmark_stats) in results:
+        rank_mem_info = {}
+        for rank, (
+            callable_construction_time,
+            warmup_stats,
+            benchmark_stats,
+            memory_allocated,
+            memory_reserved,
+        ) in results:
             total_cct += callable_construction_time
             all_warmup_stats.extend(warmup_stats)
             all_benchmark_stats.extend(benchmark_stats)
+            rank_mem_info[rank] = (memory_allocated, memory_reserved)
 
         avg_cct: int = total_cct // world_size
 
@@ -655,11 +679,12 @@ def run_multiprocess_benchmark(
             warmup_stats=all_warmup_stats,
             benchmark_stats=all_benchmark_stats,
             extended_printout=extended_printout,
+            rank_mem_info=rank_mem_info,
         )
     finally:
         pool.shutdown()
 
-    return total_cct, all_warmup_stats, all_benchmark_stats
+    return total_cct, all_warmup_stats, all_benchmark_stats, rank_mem_info
 
 
 #
