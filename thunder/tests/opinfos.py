@@ -5934,6 +5934,167 @@ layer_norm_opinfo = OpInfo(
 nn_ops.append(layer_norm_opinfo)
 
 
+def batch_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
+    yield from layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs)
+
+    make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # batch, seq, embedding
+    cases = (
+        (16, 128, 768),
+        (16, 128, 1024),
+        (16, 128, 1280),
+        (16, 128, 1600),
+        (16, 512, 768),
+        (16, 512, 1024),
+        (16, 512, 1280),
+        (16, 512, 1600),
+    )
+
+    for batch, seq_len, embedding in cases:
+        a = make_arg(batch, seq_len, embedding)
+        normalized_shape = (batch,)
+
+        weight = make_arg(normalized_shape)
+        bias = make_arg(normalized_shape)
+        running_mean = make_arg(normalized_shape)
+        running_var = make_arg(normalized_shape)
+
+        yield SampleInput(a, running_mean, running_var, weight, bias, 1e-03)
+
+
+def batch_norm_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    yield (
+        SampleInput(
+            make(
+                0,
+            ),
+            (),
+            (),
+            (),
+            (),
+        ),
+        RuntimeError,
+        "Expected input_shape=(.*?) to have length >= 2",
+    )
+    yield (
+        SampleInput(
+            make(
+                2,
+            ),
+            (),
+            (),
+            make(
+                2,
+            ),
+            make(
+                2,
+            ),
+        ),
+        RuntimeError,
+        "Expected input_shape=(.*?) to have length >= 2",
+    )
+    yield (
+        SampleInput(
+            make(
+                2,
+                2,
+            ),
+            (),
+            (),
+            make(2, 2),
+            make(
+                2,
+            ),
+        ),
+        RuntimeError,
+        "Expected weight.shape=(.*?) to be (.*?)!",
+    )
+    yield (
+        SampleInput(
+            make(
+                2,
+                2,
+            ),
+            (),
+            (),
+            make(
+                2,
+            ),
+            make(
+                2,
+                2,
+            ),
+        ),
+        RuntimeError,
+        "Expected bias.shape=(.*?) to be (.*?)!",
+    )
+
+
+def batch_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # input_shape, kwargs
+    # TODO: implement running_mean and running_var
+    cases = (
+        ((3, 4), {"training": True, "momentum": 0.2, "eps": 0.5}),
+        ((3, 4), {"training": False, "momentum": 0.2, "eps": 0.5}),
+        ((3, 3, 3), {"training": True, "momentum": 0.2}),
+        ((3, 3, 3), {"training": False, "momentum": 0.2}),
+        ((3, 3, 3), {"training": True, "momentum": -1.2}),
+        ((3, 3, 3), {"training": False, "momentum": -1.2}),
+        ((3, 3, 5, 6), {"training": True, "momentum": 0.0}),
+        ((3, 3, 5, 6), {"training": False, "momentum": 0.0}),
+        ((3, 2, 3, 4), {"training": True, "momentum": -1.0, "eps": 0.5}),
+        ((3, 2, 3, 4), {"training": False, "momentum": -1.0, "eps": 0.5}),
+        ((3, 2, 3, 4, 12), {"training": True, "momentum": -1.0, "eps": 0.5}),
+        ((3, 2, 3, 4, 12), {"training": False, "momentum": -1.0, "eps": 0.5}),
+    )
+
+    make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    for input_shape, kwargs in cases:
+        # Shape of weight and bias should be the same as normalized_shape
+        a = make_arg(input_shape)
+        if len(input_shape) >= 2:
+            normalized_shape = (input_shape[1],)
+        else:
+            normalized_shape = (0,)
+        weight = make_arg(normalized_shape)
+        bias = make_arg(normalized_shape)
+        running_mean = make_arg(normalized_shape)
+        running_var = make_arg(normalized_shape)
+        yield SampleInput(a, running_mean, running_var, weight, bias, **kwargs)
+
+
+batch_norm_opinfo = OpInfo(
+    ltorch.batch_norm,
+    sample_input_generator=batch_norm_sample_generator,
+    error_input_generator=batch_norm_error_generator,
+    reference_input_generator=batch_norm_reference_generator,
+    torch_reference=torch.nn.functional.batch_norm,
+    # Complex var is not supported yet
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support float16 on CPU
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Fails with numerical mismatches
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(batch_norm_opinfo)
+
+
 def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 

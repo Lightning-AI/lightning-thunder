@@ -1152,8 +1152,10 @@ _register_implementation(ltorch.outer, outer, checker=_always_executable)
 #
 
 layer_norm = _register_torch_operation("layer_norm", module=torch.nn.functional)
+batch_norm = _register_torch_operation("batch_norm", module=torch.nn.functional)
 
 _register_implementation(ltorch.layer_norm, layer_norm, checker=_always_executable)
+_register_implementation(ltorch.batch_norm, batch_norm, checker=_always_executable)
 
 #
 # NN operations

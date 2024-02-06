@@ -34,6 +34,8 @@ __all__ = [
 import torch
 import torch.distributed as tdist
 
+import warnings
+
 # Type annotation helpers
 TensorLike = TensorProxy
 FutureTensorLike = FutureTensorProxy
@@ -2547,6 +2549,95 @@ def layer_norm(
         normalized_ndim = len(bias.shape)
         normalized_shape = a.shape[-normalized_ndim:]
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
+
+
+# we need variance for batch_norm
+def _normalize_mean_var(a: TensorProxy, /, norm_dims, eps: Number) -> tuple[TensorLike, TensorLike, TensorLike]:
+    """Computes mean and var of a tensor along norm_dims. Used as a helper function for normalization layers.
+
+    Args:
+        a (Tensor): input tensor
+        norm_dims (DimsType): dimensions to normalize over
+        eps (float): epsilon for numerical stability
+
+    Returns:
+        out (Tensor): normalized tensor.
+        mean (Tensor): mean of the tensor along norm_dims.
+        var (Tensor): var of the tensor along norm_dims.
+    """
+    norm_dims = utils.canonicalize_dims(a.ndim, norm_dims)
+    computation_dtype = utils.get_computation_dtype(a.dtype)
+    a_acc = to(a, computation_dtype)
+    biased_var, mean = var_mean(a_acc, dim=norm_dims, correction=0, keepdim=True)
+    rstd = rsqrt(biased_var + eps)
+    out = (a - mean) * rstd
+    return out, mean, biased_var
+
+
+# TODO: likely want to refactor these normalizations
+def _native_batch_norm(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy,
+    eps: Number,
+) -> tuple[TensorLike, TensorLike, TensorLike]:
+    # Validates inputs
+    input_shape = tuple(a.shape)
+    utils.check(len(input_shape) >= 2, lambda: f"Expected input_shape={input_shape} to have length >= 2!")
+
+    # NOTE Containers are canonicalized in the following checks since
+    #   (1, 2, 3) != [1, 2, 3]
+    utils.check(
+        weight is None or weight.shape == (input_shape[1],) or weight.shape == (),
+        lambda: f"Expected weight.shape={weight.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        bias is None or bias.shape == (input_shape[1],) or bias.shape == (),
+        lambda: f"Expected bias.shape={bias.shape} to be {(input_shape[1],)}!",
+    )
+
+    params_shape = (1, -1) + (1,) * (a.ndim - 2)
+    reduction_dims = (0,) + tuple(range(2, a.ndim))
+    out, mean, var = _normalize_mean_var(a, reduction_dims, eps)
+
+    # Handles weight and bias
+    if weight is not None:
+        weight = reshape(weight, params_shape)
+        out = out * weight
+    if bias is not None:
+        bias = reshape(bias, params_shape)
+        out = out + bias
+
+    out = to(out, a.dtype)
+    # TODO Is the following conversion or conversions CPU only?
+    # if input.device.type == "cpu":
+    mean = to(mean, a.dtype)
+    var = to(var, a.dtype)
+
+    return out, mean, var
+
+
+# TODO Move this to nn.functional
+@torchsymbol(torch.nn.functional.batch_norm, is_prim=True)
+def batch_norm(
+    a: TensorLike,
+    running_mean: None | TensorLike = None,
+    running_var: None | TensorLike = None,
+    weight: None | TensorLike = None,
+    bias: None | TensorLike = None,
+    training: bool = False,
+    momentum: None | Number = 0.1,
+    eps: Number = 1e-5,
+) -> TensorLike:
+    from thunder.core.trace import detached_trace
+
+    with detached_trace():
+        out, mean, var = _native_batch_norm(a, weight, bias, eps)
+        if training and momentum is not None and running_mean is not None and running_var is not None:
+            running_mean = (1 - momentum) * running_mean + momentum * mean
+            running_var = (1 - momentum) * running_var + momentum * var
+    return out
 
 
 #
