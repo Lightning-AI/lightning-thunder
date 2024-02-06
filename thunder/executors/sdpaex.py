@@ -8,6 +8,7 @@ import thunder.core.dtypes as dtypes
 from thunder.core.proxies import Proxy, TensorProxy
 import thunder.core.utils as utils
 import thunder.core.devices as devices
+from thunder.core.compile_data import get_compile_option
 
 import thunder.torch as ltorch
 from thunder.torch import TensorLike
@@ -663,10 +664,17 @@ def _fused_sdp_choice(
 
         sdp_params = SDPAParams(fake_query, fake_key, fake_value, fake_attn_mask, dropout_p, is_causal)
 
-        # The debug boolean flag will print warning messages when a specific sdpa kernel is unavailable.
-        if flash_sdp_enabled() and can_use_flash_attention(sdp_params, True):
+        enable_debug: None | bool = get_compile_option(
+            "sdpa_debug", "Enables sdpa backend warning messages when a specific kernel is unavailable."
+        )
+        # Set default value.
+        if enable_debug is None:
+            enable_debug = False
+        assert isinstance(enable_debug, bool)
+
+        if flash_sdp_enabled() and can_use_flash_attention(sdp_params, enable_debug):
             return SpdaBackend.FLASH_ATTENTION
-        elif mem_efficient_sdp_enabled() and can_use_efficient_attention(sdp_params, True):
+        elif mem_efficient_sdp_enabled() and can_use_efficient_attention(sdp_params, enable_debug):
             return SpdaBackend.MEMORY_EFFICIENT
         elif math_sdp_enabled():
             return SpdaBackend.MATH
