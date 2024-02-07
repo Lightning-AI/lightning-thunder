@@ -285,13 +285,7 @@ def test_litgpt_variants(name, device):
     actual_logits = tom(x)
     assert_close(actual_logits, expected_logits)
 
-    if device.type == "cuda" in config._mlp_class == "GptNeoxMLP":
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1187
-        with pytest.raises(RuntimeError, match=r"out->getValType\(\) == ValType::TensorView"):
-            actual_logits.sum().backward()
-        return
-    else:
-        actual_logits.sum().backward()
+    actual_logits.sum().backward()
 
     for param1, param2 in zip(reference.parameters(), tom.parameters()):
         assert param1 is not param2
