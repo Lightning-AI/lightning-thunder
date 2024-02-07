@@ -20,13 +20,13 @@ import thunder.core.dtypes as dtypes
 import thunder.core.symbol as symbol
 import thunder.core.devices as devices
 from thunder.common import (
-    CACHE_MODES,
+    CACHE_OPTIONS,
     CompileData,
     CompileStats,
     _create_callable,
     trace,
     preprocess,
-    _string_to_cache_mode,
+    _string_to_cache_option,
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -166,26 +166,26 @@ def _str_to_lang_ctx(s: str, /) -> Any:
 # ERROR means that when a sharp edge is identified an error is thrown.
 
 
-class SHARP_EDGES(Enum):
+class SHARP_EDGES_OPTIONS(Enum):
     ALLOW = auto()
     WARN = auto()
     ERROR = auto()
 
 
-_str_to_sharp_edges_map: dict[str, SHARP_EDGES] = {
-    "allow": SHARP_EDGES.ALLOW,
-    "warn": SHARP_EDGES.WARN,
-    "error": SHARP_EDGES.ERROR,
+_str_to_sharp_edges_options_map: dict[str, SHARP_EDGES_OPTIONS] = {
+    "allow": SHARP_EDGES_OPTIONS.ALLOW,
+    "warn": SHARP_EDGES_OPTIONS.WARN,
+    "error": SHARP_EDGES_OPTIONS.ERROR,
 }
 
 
-def _str_to_sharp_edges(s: str, /) -> SHARP_EDGES:
-    sharp_edges_mode: None | SHARP_EDGES = _str_to_sharp_edges_map.get(s.lower(), None)
+def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
+    sharp_edges_option: None | SHARP_EDGES_OPTIONS = _str_to_sharp_edges_options_map.get(s.lower(), None)
 
-    if sharp_edges_mode is None:
-        raise ValueError(f"Unknown sharp edges mode {s}. Allowed modes are 'allow', 'warn', and 'error'.")
+    if sharp_edges_option is None:
+        raise ValueError(f"Unknown sharp edges option {s}. Allowed modes are 'allow', 'warn', and 'error'.")
 
-    return sharp_edges_mode
+    return sharp_edges_option
 
 
 #
@@ -197,40 +197,41 @@ def _str_to_sharp_edges(s: str, /) -> SHARP_EDGES:
 # EVERYTHING means that the interpreter translates the entire function a thunder program
 
 
-class INTERPRETATION_MODE(Enum):
+class INTERPRETATION_OPTIONS(Enum):
     NONE = auto()
-    FUNCTIONS = auto()
-    EVERYTHING = auto()
+    TRANSLATE_FUNCTIONS = auto()
+    TRANSLATE_EVERYTHING = auto()
 
 
-_str_to_interpretation_mode_map: dict[str, INTERPRETATION_MODE] = {
-    "none": INTERPRETATION_MODE.NONE,
-    "functions": INTERPRETATION_MODE.FUNCTIONS,
-    "everything": INTERPRETATION_MODE.EVERYTHING,
+_str_to_interpretation_option_map: dict[str, INTERPRETATION_OPTIONS] = {
+    "none": INTERPRETATION_OPTIONS.NONE,
+    "translate functions": INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS,
+    "translate everything": INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING,
 }
 
 
-def _str_to_interpretation_mode(s: str, /) -> INTERPRETATION_MODE:
-    interpretation_mode: None | INTERPRETATION_MODE = _str_to_interpretation_mode_map.get(s.lower(), None)
+def _str_to_interpretation_option(s: str, /) -> INTERPRETATION_OPTIONS:
+    interpretation_option: None | INTERPRETATION_OPTIONS = _str_to_interpretation_option_map.get(s.lower(), None)
 
-    if interpretation_mode is None:
-        raise ValueError(f"Unknown interpretation mode {s}. Allowed modes are 'none', 'functions', and 'everything'.")
+    if interpretation_option is None:
+        raise ValueError(
+            f"Unknown interpretation option {s}. Allowed modes are 'none', 'translate functions', and 'translate everything'."
+        )
 
-    return interpretation_mode
+    return interpretation_option
 
 
 # This function will replace compile() (below) before gtc
-# TODO GTC Be consistent with enum naming CACHE_MODES vs INTERPRETATION_MODE (singular vs plural)
 # TODO GTC Consider adding a debug_log parameter to control debug printing
-def gtc_compile(
+def jit(
     fn: Callable,
     /,
     *,
     langctx: None | str | Any = None,
     executors: None | Sequence[Executor] = None,
-    sharp_edges: None | SHARP_EDGES | str = None,
-    interpretation: None | INTERPRETATION_MODE | str = None,
-    cache: None | CACHE_MODES | str = None,
+    sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
+    interpretation: None | INTERPRETATION_OPTIONS | str = None,
+    cache: None | CACHE_OPTIONS | str = None,
     **compile_options,
 ) -> Callable:
     # Resolves langctx
@@ -259,54 +260,54 @@ def gtc_compile(
         if executors[-len(always_executors)] != always_executors:
             executors = executors + always_executors
 
-    # Resolves sharp edges mode
+    # Resolves sharp edges option
     if sharp_edges is None:
         # TODO GTC Change the default to WARN
-        sharp_edges = SHARP_EDGES.ALLOW
+        sharp_edges = SHARP_EDGES_OPTIONS.ALLOW
     if isinstance(sharp_edges, str):
-        sharp_edges = _str_to_sharp_edges(sharp_edges)
-    if not isinstance(sharp_edges, SHARP_EDGES):
-        raise ValueError(f"Unknown sharp edges mode {sharp_edges}. Allowed modes are 'allow', 'warn', or 'error'.")
+        sharp_edges = _str_to_sharp_edges_option(sharp_edges)
+    if not isinstance(sharp_edges, SHARP_EDGES_OPTIONS):
+        raise ValueError(f"Unknown sharp edges option {sharp_edges}. Allowed options are 'allow', 'warn', and 'error'.")
 
-    # TODO GTC Implememt these modes
-    if sharp_edges in (SHARP_EDGES.WARN, SHARP_EDGES.ERROR):
-        raise NotImplementedError(f"Only the 'allow' mode of sharp edges is currently implemented.")
+    # TODO GTC Implememt these options
+    if sharp_edges in (SHARP_EDGES_OPTIONS.WARN, SHARP_EDGES_OPTIONS.ERROR):
+        raise NotImplementedError(f"Only the 'allow' option of sharp edges is currently implemented.")
 
-    # Resolves interpretation mode
+    # Resolves interpretation option
     if interpretation is None:
         # TODO GTC Change the default to FUNCTIONS
-        interpretation = INTERPRETATION_MODE.NONE
+        interpretation = INTERPRETATION_OPTIONS.NONE
     if isinstance(interpretation, str):
-        interpretation = _str_to_interpretation_mode(interpretation)
-    if not isinstance(interpretation, INTERPRETATION_MODE):
+        interpretation = _str_to_interpretation_option_map(interpretation)
+    if not isinstance(interpretation, INTERPRETATION_OPTIONS):
         raise ValueError(
-            f"Unknown interpretation mode {interpretation}. Allowed modes are 'none', 'functions', or 'everything'."
+            f"Unknown interpretation option {interpretation}. Allowed options are 'none', 'translate functions', and 'translate everything'."
         )
 
     # TODO GTC Implement these modes
-    if interpretation in (INTERPRETATION_MODE.FUNCTIONS, INTERPRETATION_MODE.EVERYTHING):
-        raise NotImplementedError(f"Only the 'none' interpretation mode is currently implemented.")
+    if interpretation in (INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS, INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING):
+        raise NotImplementedError(f"Only the 'none' interpretation option is currently implemented.")
 
-    # Resolves cache mode
-    # TODO GTC Update teh cache mode names -- "fixed" is not particularly clear, "dynamic strides" could maybe use a name
-    #   update
+    # Resolves cache option
     if cache is None:
         # TODO GTC Change the default to DYNAMIC_STRIDES
-        cache = CACHE_MODES.ALWAYS_TRACE
+        cache = CACHE_OPTIONS.NO_CACHING
     if isinstance(cache, str):
-        cache = _string_to_cache_mode(cache)
-    if not isinstance(cache, CACHE_MODES):
-        raise ValueError(f"Unknown cache mode {cache}. Allowed modes are 'always trace', 'fixed' or 'dynamic strides'.")
+        cache = _string_to_cache_option(cache)
+    if not isinstance(cache, CACHE_OPTIONS):
+        raise ValueError(
+            f"Unknown cache option {cache}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
+        )
 
-    if cache in (CACHE_MODES.FIXED, CACHE_MODES.DYNAMIC_STRIDES):
-        raise NotImplementedError(f"Only the 'always trace' cache mode is currently supported.")
+    if cache in (CACHE_OPTIONS.ASSUME_SAME_INPUTS, CACHE_OPTIONS.DYNAMIC_STRIDES):
+        raise NotImplementedError(f"Only the 'no caching' cache mode is currently supported.")
 
     # TODO GTC Refine the compile data option to remove unused options
     cd = CompileData(
         fn=fn,
         langctx=langctx,
         executors_list=executors,
-        cache_mode=cache,
+        cache_option=cache,
         use_cudagraphs=False,
         use_torch_compile=False,
         disable_torch_autograd_support=True,
@@ -326,7 +327,7 @@ def compile(
     *,
     langctx: Any | None = None,
     executors_list: None | Sequence[Executor] = None,
-    cache_mode: None | str | CACHE_MODES = None,
+    cache_mode: None | str | CACHE_OPTIONS = None,
     use_cudagraphs: bool = False,
     use_torch_compile: bool = False,
     disable_torch_autograd_support: bool = False,
@@ -339,7 +340,7 @@ def compile(
         fn=fn,
         langctx=langctx,
         executors_list=executors_list,
-        cache_mode=cache_mode,
+        cache_option=cache_mode,
         use_cudagraphs=use_cudagraphs,
         use_torch_compile=use_torch_compile,
         disable_torch_autograd_support=disable_torch_autograd_support,
@@ -383,11 +384,11 @@ def last_prologue(fn) -> TraceCtx:
     return cs.last_prologue
 
 
-def cache_mode(fn) -> CACHE_MODES:
+def cache_option(fn) -> CACHE_OPTIONS:
     cd = compile_data(fn)
     if cd is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    return cd.cache_mode
+    return cd.cache_option
 
 
 def cache_hits(fn) -> int:

@@ -193,7 +193,7 @@ def test_cache_always_trace():
     def foo(a, b):
         return a + b
 
-    jfoo = litjit(foo, cache_mode="always trace")
+    jfoo = litjit(foo, cache_option="no caching")
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")

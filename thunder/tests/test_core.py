@@ -10,7 +10,7 @@ from torch.testing import assert_close, make_tensor
 from types import FunctionType
 
 import thunder
-from thunder import last_traces, cache_mode, cache_hits, cache_misses
+from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
@@ -662,7 +662,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
         cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, cache_mode="dynamic strides")
 
-        assert cache_mode(cfoo) == thunder.CACHE_MODES.DYNAMIC_STRIDES
+        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.DYNAMIC_STRIDES
 
         # Tensor x tensor
         result = cfoo(a, b)

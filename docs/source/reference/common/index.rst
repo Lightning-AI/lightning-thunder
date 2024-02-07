@@ -8,5 +8,5 @@ Common functions and classes for Thunder.
 .. autosummary::
     :toctree: generated/
 
-    CACHE_MODES
+    CACHE_OPTIONS
     preprocess

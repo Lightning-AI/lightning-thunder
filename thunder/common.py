@@ -40,26 +40,28 @@ import numpy as np
 #
 
 
-class CACHE_MODES(Enum):
-    ALWAYS_TRACE = auto()
-    FIXED = auto()
+class CACHE_OPTIONS(Enum):
+    NO_CACHING = auto()
+    ASSUME_SAME_INPUTS = auto()
     DYNAMIC_STRIDES = auto()
 
 
-_string_to_cache_mode_map = {
-    "always trace": CACHE_MODES.ALWAYS_TRACE,
-    "fixed": CACHE_MODES.FIXED,
-    "dynamic strides": CACHE_MODES.DYNAMIC_STRIDES,
+_string_to_cache_option_map = {
+    "no caching": CACHE_OPTIONS.NO_CACHING,
+    "assume same inputs": CACHE_OPTIONS.ASSUME_SAME_INPUTS,
+    "dynamic strides": CACHE_OPTIONS.DYNAMIC_STRIDES,
 }
 
 
-def _string_to_cache_mode(s: str, /) -> CACHE_MODES:
-    check(
-        s in _string_to_cache_mode_map,
-        lambda: f"Unknown cache mode {s}, supported strings are {_string_to_cache_mode_map.keys()}",
-    )
+def _string_to_cache_option(s: str, /) -> CACHE_OPTIONS:
+    cache_option: None | CACHE_OPTIONS = _string_to_cache_option_map.get(s.lower(), None)
 
-    return _string_to_cache_mode_map[s]
+    if cache_option is None:
+        raise ValueError(
+            f"Unknown cache option {s}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
+        )
+
+    return cache_option
 
 
 #
@@ -147,7 +149,7 @@ class CompileData:
         fn: Callable,
         langctx: None | Any = None,
         executors_list: None | tuple[Executor, ...] = None,
-        cache_mode: None | str | CACHE_MODES = None,
+        cache_option: None | str | CACHE_OPTIONS = None,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
@@ -158,17 +160,19 @@ class CompileData:
         compile_options: dict[str, Any] = {},
     ):
         #
-        # Determines the cache mode
+        # Resolves cache option
         #
 
-        if cache_mode is None:
-            cache_mode = "dynamic strides"
+        if cache_option is None:
+            cache_option = CACHE_OPTIONS.DYNAMIC_STRIDES
+        if isinstance(cache_option, str):
+            cache_option = _string_to_cache_option(cache_option)
+        if not isinstance(cache_option, CACHE_OPTIONS):
+            raise ValueError(
+                f"Unknown cache option {cache_option}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
+            )
 
-        if isinstance(cache_mode, str):
-            cache_mode = _string_to_cache_mode(cache_mode)
-
-        check(isinstance(cache_mode, CACHE_MODES), lambda: f"Unknown {cache_mode=}")
-        self.cache_mode = cache_mode
+        self.cache_option: CACHE_OPTIONS = cache_option
 
         #
         # Gathers additional metadata
@@ -776,7 +780,7 @@ def _create_callable(
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_mode is CACHE_MODES.FIXED and cs.last_executed is not None:
+        if cd.cache_option is CACHE_OPTIONS.ASSUME_SAME_INPUTS and cs.last_executed is not None:
             # TODO Update _last_traces?
             # Updates statistics before early termination
             cs.cache_hits += 1
@@ -788,7 +792,7 @@ def _create_callable(
             cs.last_trace_host_execution_stop = time.time_ns()
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
-        if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
+        if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
             c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key, distributed_key)
             if c is not None:
                 # Updates statistics before early termination
@@ -828,7 +832,7 @@ def _create_callable(
                         "langctx": cd.langctx,
                         "executors_list": cd.executors_list,
                         "only_execute_prims": cd.only_execute_prims,
-                        "cache_mode": cd.cache_mode,
+                        "cache_option": cd.cache_option,
                         "use_rematerialization": cd.use_rematerialization,
                         "use_cudagraphs": cd.use_cudagraphs,
                         **cd.compile_options,
@@ -842,7 +846,7 @@ def _create_callable(
                     result = c(*args, **kwargs)
                     cs.last_trace_host_execution_stop = time.time_ns()
                     cs.last_executed = c
-                    if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
+                    if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
                         cache_put(
                             cs.cache,
                             c,
@@ -909,7 +913,7 @@ def _create_callable(
             cs.last_executed = c
 
             # (Possibly) Updates the cache
-            if cd.cache_mode is CACHE_MODES.DYNAMIC_STRIDES:
+            if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
                 cache_put(
                     cs.cache,
                     c,

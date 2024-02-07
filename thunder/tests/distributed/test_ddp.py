@@ -573,7 +573,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         # If they are different, it'd be impossible to keep replicas identical.
         from collections import defaultdict
         from contextlib import nullcontext
-        from thunder.common import CACHE_MODES
+        from thunder.common import CACHE_OPTIONS
         from thunder.distributed import ddp
         from thunder.distributed import get_skip_data_parallel_grad_sync
 
@@ -602,7 +602,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             ddp_m = ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb)
             compiled_ddp_m = thunder.compile(
                 ddp_m,
-                cache_mode=CACHE_MODES.DYNAMIC_STRIDES,
+                cache_mode=CACHE_OPTIONS.DYNAMIC_STRIDES,
                 executors_list=executors_map[executor].executors_list(),
             )
             optimizer = torch.optim.SGD(compiled_ddp_m.parameters(), lr=1e-3)

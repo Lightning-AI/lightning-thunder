@@ -11,7 +11,7 @@ thunder
     compile_stats
     last_traces
     last_prologue
-    cache_mode
+    cache_option
     cache_hits
     cache_misses
     list_transforms

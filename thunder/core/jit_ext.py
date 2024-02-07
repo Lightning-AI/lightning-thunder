@@ -72,7 +72,7 @@ from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution, CACHE_MODES
+from thunder.common import transform_for_execution, CACHE_OPTIONS
 from thunder.core.symbol import Symbol, BoundSymbol
 
 from thunder.extend import Executor
@@ -402,7 +402,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         cs.calls += 1
 
         # TODO Implement distinct cache modes
-        if cd.cache_mode is not CACHE_MODES.ALWAYS_TRACE:
+        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
             for prologue, computation in cs.interpreter_cache:
                 try:
                     inps = prologue(*args, **kwargs)
@@ -556,7 +556,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         cs.last_trace_host_execution_stop = time.time_ns()
 
         # Updates the cache
-        if cd.cache_mode is not CACHE_MODES.ALWAYS_TRACE:
+        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
             cs.interpreter_cache.append((pro, c))
 
         # Updates metadata
@@ -582,13 +582,13 @@ def litjit(
     /,
     executors_list: None | Sequence[Executor] = None,
     debug_log: None | StringIO = None,
-    cache_mode: str | CACHE_MODES = None,
+    cache_option: None | str | CACHE_OPTIONS = None,
 ) -> Callable:
     cd = CompileData(
         fn=fn,
         langctx=None,
         executors_list=executors_list,
-        cache_mode=cache_mode,
+        cache_option=cache_option,
         use_cudagraphs=False,
         use_torch_compile=False,
         disable_torch_autograd_support=True,
