@@ -121,14 +121,15 @@ def bsym_list_to_dag(
     leaves: list[Node] = []
     return_node: None | Node = None
 
-    producers = producers if producers is not None else utils.producers(bsyms)
-    consumers = consumers if consumers is not None else utils.consumers(bsyms)
+    # Note, we use "line number" as ids for consumers/producers
+    producers = producers if producers is not None else utils.producers(bsyms, _map_to_numbers=True)
+    consumers = consumers if consumers is not None else utils.consumers(bsyms, _map_to_numbers=True)
 
-    # Constructs a node per bsym, and a bsym -> node mapping
-    bsym_to_node_map: dict[BoundSymbolInterface, Node] = {}
-    for bsym in bsyms:
+    # Constructs a node per bsym, and a bsym id -> node mapping
+    bsym_id_to_node_map: dict[int, Node] = {}
+    for bsym_id, bsym in enumerate(bsyms):
         node = Node(bsym)
-        bsym_to_node_map[bsym] = node
+        bsym_id_to_node_map[bsym_id] = node
 
         if bsym.sym.id is prims.PrimIDs.RETURN:
             utils.check(
@@ -138,16 +139,17 @@ def bsym_list_to_dag(
             return_node = node
 
     # Adds edges between nodes
-    for bsym, node in bsym_to_node_map.items():
+    for bsym_id, node in bsym_id_to_node_map.items():
         has_parents: bool = False
-        for inp in bsym.flat_proxy_args:
+        for inp in node.bsym.flat_proxy_args:
             producer = producers[inp]
-            parent = bsym_to_node_map[producer]
+            producer_node = bsym_id_to_node_map[producer]
+            parent = bsym_id_to_node_map[producer]
 
             # Checks if the node was already parent to avoid multiple edges between two nodes
             already_has_parent: bool = False
             for pnode in node.parents:
-                if producer is pnode.bsym:
+                if producer_node.bsym is pnode.bsym:
                     already_has_parent = True
                     break
 
@@ -160,8 +162,8 @@ def bsym_list_to_dag(
             roots.append(node)
 
         has_children: bool = False
-        vargs = bsym.flat_variableified_proxy_args
-        for out in bsym.flat_proxy_outs:
+        vargs = node.bsym.flat_variableified_proxy_args
+        for out in node.bsym.flat_proxy_outs:
             # Checks that the output is actually produced by this function, and not an input to it
             vout = variableify(out)
             if vout in vargs:
@@ -170,12 +172,12 @@ def bsym_list_to_dag(
             children = consumers.get(out, [])
             for child in children:
                 has_children = True
-                child_node = bsym_to_node_map[child]
+                child_node = bsym_id_to_node_map[child]
 
                 # Checks if the node was already a child to avoid multiple edges between two nodes
                 already_has_child: bool = False
                 for cnode in node.children:
-                    if child is cnode.bsym:
+                    if child_node.bsym is cnode.bsym:
                         already_has_child = True
                         break
 

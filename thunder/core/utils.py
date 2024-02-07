@@ -983,7 +983,7 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
     return producers
 
 
-def consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDict:
+def consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_numbers: bool = False) -> ProxyDict:
     consumers = ProxyDict()
 
     # Skips symbols that never consume anything
@@ -996,14 +996,17 @@ def consumers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface]) -> ProxyDic
     }
 
     bsyms = trace_or_bsyms if isinstance(trace_or_bsyms, list) else trace_or_bsyms.bound_symbols
-    for bsym in bsyms:
+    for idx, bsym in enumerate(bsyms):
         if bsym.sym.id in skip:
             continue
 
         flatargs = bsym.flat_proxy_args
 
         for x in flatargs:
-            consumers.append(x, bsym)
+            if _map_to_numbers:
+                consumers.append(x, idx)
+            else:
+                consumers.append(x, bsym)
 
     return consumers
 
