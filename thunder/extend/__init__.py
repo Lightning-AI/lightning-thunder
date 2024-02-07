@@ -287,16 +287,16 @@ def register_executor(
     return ex_
 
 
-def get_all_executors() -> list[Executor]:
-    return list(_executor_map.values())
+def get_all_executors() -> tuple[Executor]:
+    return tuple(_executor_map.values())
 
 
-def get_default_executors() -> list[Executor]:
-    return _default_executors
+def get_default_executors() -> tuple[Executor]:
+    return tuple(_default_executors)
 
 
-def get_always_executors() -> list[Executor]:
-    return _always_executors
+def get_always_executors() -> tuple[Executor]:
+    return tuple(_always_executors)
 
 
 def get_executor(name: Any) -> None | Executor:

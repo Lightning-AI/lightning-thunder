@@ -3,9 +3,16 @@ from typing import Optional, Any
 from functools import wraps
 from contextlib import contextmanager
 
+#
+# Context variables, context managers, and helpers related to setting the language context.
+#   The language context is a context variable that determines how methods on tensors are resolved.
+#   For example, in NumPy, ndarray.size returns the number of elements in the array. In PyTorch,
+#   torch.Tensor.size(dim=None) returns the tenor's shape when dim is None, and the length of the
+#   specified dimension when dim specifies a dimension (using an integer offset).
+#
+# TODO GTC Update the language context to an interface and test the NumPy language context
 
-# TODO Create a langctx interface
-# TODO make the default language context configurable
+
 def get_default_langctx() -> Any:
     import thunder.torch as torchlangctx
 

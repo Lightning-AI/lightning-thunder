@@ -4,6 +4,7 @@ from collections.abc import Callable
 from collections.abc import Sequence
 import os
 import dis
+from enum import Enum, auto
 
 from looseversion import LooseVersion
 
@@ -18,7 +19,15 @@ import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.symbol as symbol
 import thunder.core.devices as devices
-from thunder.common import CACHE_MODES, CompileData, CompileStats, _create_callable, trace, preprocess
+from thunder.common import (
+    CACHE_MODES,
+    CompileData,
+    CompileStats,
+    _create_callable,
+    trace,
+    preprocess,
+    _string_to_cache_mode,
+)
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
 
@@ -26,13 +35,16 @@ from thunder.extend import Executor, add_default_executor
 from thunder.executors import pythonex, torchex, nvfuserex, sdpaex
 
 import thunder.torch as ltorch
+import thunder.numpy as lnumpy
 
 torchlangctx = ltorch
+numpylangctx = lnumpy
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
 _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
+# TODO GTC Review exposed names
 __all__ = [
     # dtype aliases
     "bool8",
@@ -54,8 +66,6 @@ __all__ = [
     "prims"
     # interface functions
     # TODO Extend this
-    "trace",
-    "preprocess",
     # TODO Add device aliases
     # TODO Add executor aliases
     "sdpa_executor",
@@ -124,6 +134,191 @@ if sdpa_executor:
 from thunder.core.trace import _set_execution_file
 
 set_execution_callback_file = _set_execution_file
+
+#
+# Language context options
+#
+# The language context controls how methods on tensors are interpreted.
+# TODO Allow a language context object to be specified directly
+
+_str_to_lang_ctx_map: dict[str, Any] = {
+    "torch": torchlangctx,
+    "numpy": numpylangctx,
+}
+
+
+def _str_to_lang_ctx(s: str, /) -> Any:
+    lang_ctx: None | Any = _str_to_lang_ctx_map.get(s.lower(), None)
+
+    if lang_ctx is None:
+        raise ValueError(f"Unknown language ctx {s}. Allowed modes are 'torch' or 'numpy'.")
+
+    return lang_ctx
+
+
+#
+# Sharp edges modes
+#
+# A "sharp edge" is part of the original program which may not be captured
+#   in the generated thunder program.
+# ALLOW means that sharp edges are unchecked. (Sharp edges are allowed.)
+# WARN means that when a sharp edge is identified a warning is thrown.
+# ERROR means that when a sharp edge is identified an error is thrown.
+
+
+class SHARP_EDGES(Enum):
+    ALLOW = auto()
+    WARN = auto()
+    ERROR = auto()
+
+
+_str_to_sharp_edges_map: dict[str, SHARP_EDGES] = {
+    "allow": SHARP_EDGES.ALLOW,
+    "warn": SHARP_EDGES.WARN,
+    "error": SHARP_EDGES.ERROR,
+}
+
+
+def _str_to_sharp_edges(s: str, /) -> SHARP_EDGES:
+    sharp_edges_mode: None | SHARP_EDGES = _str_to_sharp_edges_map.get(s.lower(), None)
+
+    if sharp_edges_mode is None:
+        raise ValueError(f"Unknown sharp edges mode {s}. Allowed modes are 'allow', 'warn', and 'error'.")
+
+    return sharp_edges_mode
+
+
+#
+# Interpretation modes
+#
+# These modes control how the function will be interpreted
+# NONE means that no interpretation is performed -- the function is just traced.
+# FUNCTIONS means that the interpreter only translates PyTorch and NumPy operations to thunder operations
+# EVERYTHING means that the interpreter translates the entire function a thunder program
+
+
+class INTERPRETATION_MODE(Enum):
+    NONE = auto()
+    FUNCTIONS = auto()
+    EVERYTHING = auto()
+
+
+_str_to_interpretation_mode_map: dict[str, INTERPRETATION_MODE] = {
+    "none": INTERPRETATION_MODE.NONE,
+    "functions": INTERPRETATION_MODE.FUNCTIONS,
+    "everything": INTERPRETATION_MODE.EVERYTHING,
+}
+
+
+def _str_to_interpretation_mode(s: str, /) -> INTERPRETATION_MODE:
+    interpretation_mode: None | INTERPRETATION_MODE = _str_to_interpretation_mode_map.get(s.lower(), None)
+
+    if interpretation_mode is None:
+        raise ValueError(f"Unknown interpretation mode {s}. Allowed modes are 'none', 'functions', and 'everything'.")
+
+    return interpretation_mode
+
+
+# This function will replace compile() (below) before gtc
+# TODO GTC Be consistent with enum naming CACHE_MODES vs INTERPRETATION_MODE (singular vs plural)
+# TODO GTC Consider adding a debug_log parameter to control debug printing
+def gtc_compile(
+    fn: Callable,
+    /,
+    *,
+    langctx: None | str | Any = None,
+    executors: None | Sequence[Executor] = None,
+    sharp_edges: None | SHARP_EDGES | str = None,
+    interpretation: None | INTERPRETATION_MODE | str = None,
+    cache: None | CACHE_MODES | str = None,
+    **compile_options,
+) -> Callable:
+    # Resolves langctx
+    # TODO GTC Allow directly passing a LanguageContext class
+    if langctx is None:
+        langctx = torchlangctx
+    if isinstance(langctx, str):
+        langctx = _str_to_lang_ctx(langctx)
+    if langctx is not torchlangctx and langctx is not numpylangctx:
+        raise NotImplementedError(f"Only 'torch' and 'numpy' are currently implemented as language contexts.")
+
+    # Resolves executors
+    # TODO GTC Review exposed executor names
+    if executors is None:
+        executors = tuple(get_default_executors() + get_always_executors())
+    else:
+        executors = tuple(executors)
+
+        for ex in executors:
+            if not isinstance(ex, Executor):
+                raise ValueError(f"Value {ex} passed in 'executors' was not an executor")
+
+        # Extends with always executors (ensuring they are always present and in the correct order)
+        #   if not already present and in the correct order
+        always_executors: tuple[Executor] = get_always_executors()
+        if executors[-len(always_executors)] != always_executors:
+            executors = executors + always_executors
+
+    # Resolves sharp edges mode
+    if sharp_edges is None:
+        # TODO GTC Change the default to WARN
+        sharp_edges = SHARP_EDGES.ALLOW
+    if isinstance(sharp_edges, str):
+        sharp_edges = _str_to_sharp_edges(sharp_edges)
+    if not isinstance(sharp_edges, SHARP_EDGES):
+        raise ValueError(f"Unknown sharp edges mode {sharp_edges}. Allowed modes are 'allow', 'warn', or 'error'.")
+
+    # TODO GTC Implememt these modes
+    if sharp_edges in (SHARP_EDGES.WARN, SHARP_EDGES.ERROR):
+        raise NotImplementedError(f"Only the 'allow' mode of sharp edges is currently implemented.")
+
+    # Resolves interpretation mode
+    if interpretation is None:
+        # TODO GTC Change the default to FUNCTIONS
+        interpretation = INTERPRETATION_MODE.NONE
+    if isinstance(interpretation, str):
+        interpretation = _str_to_interpretation_mode(interpretation)
+    if not isinstance(interpretation, INTERPRETATION_MODE):
+        raise ValueError(
+            f"Unknown interpretation mode {interpretation}. Allowed modes are 'none', 'functions', or 'everything'."
+        )
+
+    # TODO GTC Implement these modes
+    if interpretation in (INTERPRETATION_MODE.FUNCTIONS, INTERPRETATION_MODE.EVERYTHING):
+        raise NotImplementedError(f"Only the 'none' interpretation mode is currently implemented.")
+
+    # Resolves cache mode
+    # TODO GTC Update teh cache mode names -- "fixed" is not particularly clear, "dynamic strides" could maybe use a name
+    #   update
+    if cache is None:
+        # TODO GTC Change the default to DYNAMIC_STRIDES
+        cache = CACHE_MODES.ALWAYS_TRACE
+    if isinstance(cache, str):
+        cache = _string_to_cache_mode(cache)
+    if not isinstance(cache, CACHE_MODES):
+        raise ValueError(f"Unknown cache mode {cache}. Allowed modes are 'always trace', 'fixed' or 'dynamic strides'.")
+
+    if cache in (CACHE_MODES.FIXED, CACHE_MODES.DYNAMIC_STRIDES):
+        raise NotImplementedError(f"Only the 'always trace' cache mode is currently supported.")
+
+    # TODO GTC Refine the compile data option to remove unused options
+    cd = CompileData(
+        fn=fn,
+        langctx=langctx,
+        executors_list=executors,
+        cache_mode=cache,
+        use_cudagraphs=False,
+        use_torch_compile=False,
+        disable_torch_autograd_support=True,
+        use_rematerialization=False,
+        only_execute_prims=False,
+        disable_preprocessing=True,
+        compile_options=compile_options,
+    )
+
+    cs = CompileStats()
+    _fn = _create_callable(cd, cs)
+    return _fn
 
 
 def compile(

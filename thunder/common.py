@@ -53,7 +53,7 @@ _string_to_cache_mode_map = {
 }
 
 
-def string_to_cache_mode(s: str):
+def _string_to_cache_mode(s: str, /) -> CACHE_MODES:
     check(
         s in _string_to_cache_mode_map,
         lambda: f"Unknown cache mode {s}, supported strings are {_string_to_cache_mode_map.keys()}",
@@ -165,7 +165,7 @@ class CompileData:
             cache_mode = "dynamic strides"
 
         if isinstance(cache_mode, str):
-            cache_mode = string_to_cache_mode(cache_mode)
+            cache_mode = _string_to_cache_mode(cache_mode)
 
         check(isinstance(cache_mode, CACHE_MODES), lambda: f"Unknown {cache_mode=}")
         self.cache_mode = cache_mode
