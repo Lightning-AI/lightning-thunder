@@ -390,6 +390,7 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
             Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
             In contrast, this synchronizes accumulated gradients when exiting, leading to
             :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+
         """
         from torch.distributed import distributed_c10d as c10d
 

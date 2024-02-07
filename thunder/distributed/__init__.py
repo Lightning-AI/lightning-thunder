@@ -78,19 +78,13 @@ def ddp(
     gets pre-averaged, i.e., divided by world size, and asynchronously allreduced.
 
     Args:
-        model: A model before :func:`thunder.compile`d
+        model: A model before ``thunder.compile`` applied
 
     Keyword Args:
         broadcast_from: The rank of the device hosting the parameters to broadcast. The lowest rank
             will be used if none specified.
         bucket_size_in_mb: Size of a gradient bucket.
 
-    Return:
-        :class:`torch.nn.Module` with the parameters synchronized among all the ranks involved.
-
-
-    .. note::
-        Currently this does not support gradient bucketing.
 
     .. code-block:: python
         :linenos:
@@ -303,6 +297,7 @@ def fsdp(
 
      Returns:
         :class:`torch.nn.Module`
+
     """
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
 

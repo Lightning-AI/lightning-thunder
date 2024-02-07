@@ -123,6 +123,23 @@ JAX is a deep learning compiler designed to work with XLA. There are two princip
    notebooks/adding-custom-operator-backward
    notebooks/adding-operator-executor
 
+API reference
+=============
+
+.. toctree::
+   :maxdepth: 1
+   :name: API reference
+   :caption: API reference
+
+   reference/thunder
+   reference/common/index
+   reference/core/index
+   reference/clang/index
+   reference/examine/index
+   reference/distributed/index
+   reference/executors/index
+   reference/torch/index
+
 
 Indices and tables
 ==================

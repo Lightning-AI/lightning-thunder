@@ -898,8 +898,7 @@ def transpose(a, permutation):
 #   lib.stride_tricks
 @clang_ctx
 def stride_order(a: TensorLike, order: None | Sequence[int] = None) -> TensorLike:
-    """
-    Creates a dense, non-overlapping and strided tensor with the same data and metadata as a.
+    """Creates a dense, non-overlapping and strided tensor with the same data and metadata as a.
 
     A dense, non-overlapping and strided tensor has three properties:
         - Dense. Its data is stored contiguously in memory in an array
@@ -913,9 +912,11 @@ def stride_order(a: TensorLike, order: None | Sequence[int] = None) -> TensorLik
     If a permutation is provided the strides will be ordered (least to greatest) like the permutation.
     If no permutation is provided the strides will be ordered from outermost to innermost (..., 2, 1, 0).
     For example, if a is a 4D tensor with dimensions labeled NCHW, then strided(a, (3, 0, 2, 1)) produces a
-        dense, non-overlapping and strided tensor where the C dimension has a corresponding stride of one.
+    dense, non-overlapping and strided tensor where the C dimension has a corresponding stride of one.
 
-    NOTE No other lightning.compile operations specify how their outputs are represented in memory, and lightning.compile
+    .. note::
+
+        No other lightning.compile operations specify how their outputs are represented in memory, and lightning.compile
         does not model strides. This operation is an explicit directive to construct a dense, non-overlapping and
         strided tensor, but operations on that tensor do not have to preserve those properties.
     """
