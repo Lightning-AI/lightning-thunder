@@ -1,7 +1,7 @@
 """Taken from https://github.com/Lightning-AI/lit-gpt/blob/main/lit_gpt/model.py"""
 import math
-from dataclasses import dataclass
-from typing import Any, Optional, Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -17,8 +17,8 @@ def find_multiple(n: int, k: int) -> int:
 
 @dataclass
 class Config:
-    org: str = "Lightning-AI"
-    name: str = "lit-GPT"
+    name: str = ""
+    hf_config: dict = field(default_factory=dict)
     block_size: int = 4096
     vocab_size: int = 50254
     padding_multiple: int = 512
@@ -39,8 +39,13 @@ class Config:
     intermediate_size: int | None = None
     rope_condense_ratio: int = 1
     rope_base: int = 10000
+    n_expert: int = 0
+    n_expert_per_token: int = 0
 
     def __post_init__(self):
+        if not self.name:
+            self.name = self.hf_config.get("name", self.name)
+
         assert self.n_embd % self.n_head == 0
         self.head_size = self.n_embd // self.n_head
 
@@ -67,7 +72,16 @@ class Config:
 
     @classmethod
     def from_name(cls, name: str, **kwargs: Any) -> Self:
-        conf_dict = name_to_config[name].copy()
+        if name not in name_to_config:
+            # search through all `config['hf_config']['name']`
+            try:
+                conf_dict = next(config for config in configs if name == config["hf_config"]["name"])
+            except StopIteration:
+                raise ValueError(f"{name!r} is not a supported config name")
+        else:
+            conf_dict = name_to_config[name]
+
+        conf_dict = conf_dict.copy()
         if "condense_ratio" in kwargs:  # legacy name
             kwargs["rope_condense_ratio"] = kwargs.pop("condense_ratio")
         conf_dict.update(kwargs)
@@ -110,7 +124,8 @@ class RMSNorm(torch.nn.Module):
 
 
 configs = [
-    # diverse sample of configs that cover all major checkpoints variants
+    # diverse sample of configs FOR TESTING that cover all major checkpoints variants architecturally but with reduced
+    # size
     dict(name="gpt-neox-like", block_size=128, n_layer=2, n_embd=64, n_head=4, padding_multiple=8),
     dict(
         name="llama1-like",
@@ -198,9 +213,30 @@ configs = [
         intermediate_size=1376,
         rope_base=1000000,
     ),
-    # real configs
+    dict(
+        name="mixtral-like",
+        block_size=512,
+        padded_vocab_size=500,
+        n_layer=2,
+        n_head=64,
+        n_embd=256,
+        rotary_percentage=1.0,
+        n_query_groups=8,
+        parallel_residual=False,
+        bias=False,
+        _norm_class="RMSNorm",
+        norm_eps=1e-05,
+        _mlp_class="LLaMAMoE",
+        intermediate_size=224,
+        rope_base=1000000,
+        n_expert=8,
+        n_expert_per_token=2,
+    ),
+    # real configs. you can find more at
+    # https://github.com/Lightning-AI/lit-gpt/blob/c77408ef/lit_gpt/config.py#L147-L1389
     dict(
         name="open_llama_3b",
+        hf_config=dict(org="openlm-research", name="open_llama_3b"),
         block_size=2048,
         vocab_size=32000,
         padding_multiple=64,
@@ -215,8 +251,8 @@ configs = [
         intermediate_size=8640,
     ),
     dict(
-        org="openlm-research",
         name="open_llama_7b",
+        hf_config=dict(org="openlm-research", name="open_llama_7b"),
         block_size=2048,
         vocab_size=32000,
         padding_multiple=64,
@@ -230,8 +266,8 @@ configs = [
         intermediate_size=11008,
     ),
     dict(
-        org="meta-llama",
         name="Llama-2-7b-hf",
+        hf_config=dict(org="meta-llama", name="Llama-2-7b{}-hf"),
         vocab_size=32000,
         padding_multiple=64,
         n_layer=32,
@@ -282,15 +318,15 @@ class GPT(nn.Module):
             cos, sin = self.rope_cache()
             self.register_buffer("cos", cos, persistent=False)
             self.register_buffer("sin", sin, persistent=False)
+        # override
         elif value != self.cos.size(0):
-            # override
             self.cos, self.sin = self.rope_cache(device=self.cos.device)
         # the mask and kv cache size will get updated on `set_kv_cache`. we cannot update it here because we don't know
         # if the kv cache is expected
 
     def reset_parameters(self) -> None:
         # Trigger resetting the rope-cache
-        self.max_seq_length = self.config.block_size
+        self.cos, self.sin = self.rope_cache()
 
     def _init_weights(self, module: nn.Module) -> None:
         """Meant to be used with `gpt.apply(gpt._init_weights)`."""
@@ -307,7 +343,6 @@ class GPT(nn.Module):
             raise ValueError(f"Cannot forward sequence of length {T}, max seq length is only {self.max_seq_length}.")
 
         if input_pos is not None:  # use the kv cache
-            # https://github.com/Lightning-AI/lightning-thunder/issues/1082
             cos = torch.index_select(self.cos, 0, input_pos)
             sin = torch.index_select(self.sin, 0, input_pos)
             if self.mask_cache is None:
@@ -355,11 +390,9 @@ class GPT(nn.Module):
             )
 
         if self.mask_cache is None or self.mask_cache.size(3) != max_seq_length:
-            # passing `attn_mask` to SDPA downgrades it to use the inefficient implementation. since we only need the mask
+            # passing `attn_mask` to SDPA disables the flash implementation. since we only need the mask
             # for the kv-cache support (only during inference), we only create it in that situation
-            # this will be resolved by https://github.com/pytorch/pytorch/issues/96099
-            ones = torch.ones((max_seq_length, max_seq_length), device=device, dtype=torch.bool)
-            self.mask_cache = torch.tril(ones).unsqueeze(0).unsqueeze(0)
+            self.mask_cache = build_mask_cache(max_seq_length, device)
 
     def clear_kv_cache(self) -> None:
         self.mask_cache = None
@@ -452,14 +485,14 @@ class CausalSelfAttention(nn.Module):
         k = torch.cat((k_roped, k[..., self.config.rope_n_elem :]), dim=-1)
 
         if input_pos is not None:
-            # FIXME: assertion triggers could not eliminate self
+            # THUNDER bug: assertion triggers could not eliminate self
             # if not isinstance(self.kv_cache, KVCache):
             #    raise TypeError("You need to call `gpt.set_kv_cache()`")
             k, v = self.kv_cache(input_pos, k, v)
 
         y = self.scaled_dot_product_attention(q, k, v, mask)
 
-        y = y.reshape(B, T, C)  # re-assemble all head outputs side by side
+        y = y.reshape(B, T, self.config.n_embd)  # re-assemble all head outputs side by side
 
         # output projection
         return self.proj(y)
@@ -525,6 +558,35 @@ class LLaMAMLP(nn.Module):
         return self.proj(x)
 
 
+class LLaMAMoE(nn.Module):
+    def __init__(self, config: Config) -> None:
+        super().__init__()
+        self.gate = nn.Linear(config.n_embd, config.n_expert, bias=False)
+        self.experts = nn.ModuleList(LLaMAMLP(config) for _ in range(config.n_expert))
+
+        self.config = config
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Derived from: https://github.com/mistralai/mistral-src/blob/b46d6/moe_one_file_ref.py#L203-L219
+        See also figure 1 in https://arxiv.org/abs/2211.15841
+        """
+        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
+        x = x.view(-1, C)  # (B*T, C)
+        router = self.gate(x)  # (B*T, n_expert)
+        # THUNDER unsupported: https://github.com/Lightning-AI/lightning-thunder/issues/2080
+        probs, indices = torch.topk(router, self.config.n_expert_per_token)  # (B*T, n_expert_per_token)
+        probs = probs.softmax(dim=1, dtype=torch.float).to(dtype=x.dtype)
+        masks = indices.unsqueeze(-1) == torch.arange(self.config.n_expert, device=x.device)
+        masks = masks.permute(2, 0, 1)  # (n_expert, B*T, n_expert_per_token)
+        y = torch.zeros_like(x)  # (B*T, C)
+        # THUNDER bug: https://github.com/Lightning-AI/lightning-thunder/issues/2080
+        for mask, expert in zip(masks, self.experts):
+            token_idx, expert_idx = torch.where(mask)
+            y[token_idx] += probs[token_idx, expert_idx, None] * expert(x[token_idx])
+        return y.view(B, T, C)
+
+
 def build_rope_cache(
     seq_len: int, n_elem: int, device: torch.device | None = None, base: int = 10000, condense_ratio: int = 1
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -552,7 +614,7 @@ def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.T
     x2 = x[..., head_size // 2 :]  # (B, nh, T, hs/2)
     rotated = torch.cat((-x2, x1), dim=-1)  # (B, nh, T, hs)
     roped = (x * cos) + (rotated * sin)
-    return roped.type_as(x)
+    return roped.to(dtype=x.dtype)
 
 
 class KVCache(nn.Module):
@@ -569,7 +631,7 @@ class KVCache(nn.Module):
 
     def forward(self, input_pos: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # move the buffer to the activation dtype for when AMP is used
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1144
+        # THUNDER bug: https://github.com/Lightning-AI/lightning-thunder/issues/1144
         self.k = torch.Tensor.to(self.k, k.dtype)
         self.v = torch.Tensor.to(self.v, v.dtype)
         # update the cache
@@ -578,13 +640,17 @@ class KVCache(nn.Module):
             k = self.k.index_copy_(2, input_pos, k)
             v = self.v.index_copy_(2, input_pos, v)
             return k, v
-        # thunder doesn't support `index_copy`
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1145
+        # THUNDER unsupported: https://github.com/Lightning-AI/lightning-thunder/issues/1145
         k = self.k = torch.index_add(self.k, 2, input_pos, k)
         v = self.v = torch.index_add(self.v, 2, input_pos, v)
-        # cannot return self.k, self.v here (???)
+        # THUNDER bug: cannot return self.k, self.v here (may be cuda graphs related - no minimum repro)
         return k, v
 
     def reset_parameters(self) -> None:
         torch.nn.init.zeros_(self.k)
         torch.nn.init.zeros_(self.v)
+
+
+def build_mask_cache(max_seq_length: int, device: torch.device | None = None) -> torch.Tensor:
+    ones = torch.ones((max_seq_length, max_seq_length), device=device, dtype=torch.bool)
+    return torch.tril(ones).unsqueeze(0).unsqueeze(0)

@@ -258,6 +258,9 @@ def test_inline_submodule():
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
+        pytest.param(
+            "mixtral-like", marks=pytest.mark.xfail(raises=RuntimeError, reason="could not eliminte self", strict=True)
+        ),
     ),
 )
 @pytest.mark.parametrize(
@@ -306,6 +309,9 @@ def test_litgpt_variants(name, device):
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
+        pytest.param(
+            "mixtral-like", marks=pytest.mark.xfail(raises=RuntimeError, reason="could not eliminte self", strict=True)
+        ),
     ),
 )
 @pytest.mark.parametrize(
@@ -406,7 +412,7 @@ def test_llama_block_inlining():
         "split",
         "transpose",
         "view",
-        "type_as",
+        "to",
         "reshape",
         "kv_cache",
         "expand",
