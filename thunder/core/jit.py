@@ -1062,6 +1062,29 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     return super(cls, obj)  # type: ignore
 
 
+def _functools_reduce_lookaside(
+    fn: Callable, iterable: Iterable, initializer: Py_NULL | Any = Py_NULL(), /
+) -> Any | JIT_SIGNALS:
+    def impl():
+        it = iter(iterable)
+
+        # No, default is not None, it is absence of value.
+        if isinstance(initializer, Py_NULL):
+            try:
+                res = next(it)
+            except StopIteration:
+                raise TypeError("reduce() of empty iterable with no initial value")
+        else:
+            res = initializer
+
+        for e in it:
+            res = fn(res, e)
+
+        return res
+
+    return _jit(impl)
+
+
 _default_lookaside_map: dict[Callable, Callable] = {
     # Jit lookasides
     is_jitting: _is_jitting_lookaside,
@@ -1077,6 +1100,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     locals: _locals_lookaside,
     next: _next_lookaside,
     super: _super_lookaside,
+    functools.reduce: _functools_reduce_lookaside,
 }
 
 

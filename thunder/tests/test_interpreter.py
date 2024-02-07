@@ -869,13 +869,139 @@ def test_reduce():
     import functools
     import operator
 
-    def foo(a, b):
-        return functools.reduce(operator.add, (a, b))
+    # Trivial reduce over native types {
+    def foo(a):
+        return functools.reduce(operator.add, a, 0)
 
     jfoo = jit(foo)
 
-    assert jfoo(3, 5) == foo(3, 5)
-    assert jfoo(-2, 0) == foo(-2, 0)
+    assert jfoo((1, 2, 3)) == foo((1, 2, 3)) == 6
+    # }
+
+    # Reduce over Tensor.shape {
+    def foo(a):
+        return functools.reduce(operator.add, a.shape, 0)
+
+    jfoo = jit(foo)
+
+    assert jfoo(torch.rand(1, 2, 3)) == foo(torch.rand(1, 2, 3)) == 6
+    # }
+
+    # Custom Iterable over Tensor.shape {
+    class mycls(object):
+        def __init__(self, t):
+            self.t = t
+
+        def __iter__(self):
+            assert is_jitting() == jitting
+            self.it = iter(self.t.shape)
+            return self
+
+        def __next__(self):
+            assert is_jitting() == jitting
+            return next(self.it)
+
+        @property
+        def shape(self):
+            assert is_jitting() == jitting
+            return self.t.shape
+
+    def foo(a):
+        return functools.reduce(operator.add, a, 0)
+
+    jitting = False
+    assert foo(mycls(torch.rand(1, 2, 3))) == 6
+
+    jitting = True
+    jfoo = jit(foo)
+    assert jfoo(mycls(torch.rand(1, 2, 3))) == 6
+    # }
+
+    # Test reduce function is being jitted {
+    jitting = True
+
+    def add(x, y):
+        assert is_jitting() == jitting
+        return x + y
+
+    def foo(a, fn):
+        return functools.reduce(fn, a.shape, 0)
+
+    jfoo = jit(foo)
+
+    assert jfoo(torch.rand(1, 2, 3), add) == 6
+    assert jfoo(mycls(torch.rand(1, 2, 3)), add) == 6
+    # }
+
+    # Check we error when init value is not provided with empty Iterable {
+    jitting = True
+
+    def foo(a):
+        return functools.reduce(operator.add, a)
+
+    jfoo = jit(foo)
+
+    with pytest.raises(TypeError, match=r"reduce\(\) of empty iterable with no initial value"):
+        jfoo(mycls(torch.rand(1).squeeze()))
+    # }
+
+    # Test provided init values vs not provided {
+    def foo_no_init(a):
+        return functools.reduce(operator.add, a)
+
+    def foo_with_init(a):
+        return functools.reduce(operator.add, a, 0)
+
+    jfoo_no_init = jit(foo_no_init)
+    jfoo_with_init = jit(foo_with_init)
+
+    assert jfoo_no_init((1, 2, 3)) == jfoo_with_init((1, 2, 3)) == 6
+    # }
+
+    # Test providing init as None that should trigger type mismatch {
+    def foo(a):
+        return functools.reduce(operator.add, a, None)
+
+    jfoo = jit(foo)
+
+    with pytest.raises(TypeError, match=r"unsupported operand type\(s\) for \+: 'NoneType' and 'int'"):
+        foo((1, 2, 3))
+
+    with pytest.raises(TypeError, match=r"unsupported operand type\(s\) for \+: 'NoneType' and 'int'"):
+        jfoo((1, 2, 3))
+    # }
+
+    # Check no kwargs are allowed {
+    def foo(x):
+        return functools.reduce(function=operator.add, iterable=x)
+
+    jfoo = jit(foo)
+
+    with pytest.raises(Exception, match=r"reduce\(\) takes no keyword arguments"):
+        foo((1, 2, 3))
+
+    with pytest.raises(Exception, match=r"got some positional-only arguments passed as keyword arguments"):
+        jfoo((1, 2, 3))
+    # }
+
+
+# See https://github.com/Lightning-AI/lightning-thunder/issues/2078
+def test_reduce_jitted_reduce_fn():
+    import functools
+
+    def foo(a, fn):
+        return functools.reduce(fn, a, 0)
+
+    def add(x, y):
+        assert is_jitting() == jitting
+        return x + y
+
+    jitting = True
+    jfoo = jit(foo)
+    jadd = jit(add)
+
+    with pytest.raises(JITError, match="missing a required argument: 'default' while tracing"):
+        assert jfoo((1, 2, 3), jadd) == 6
 
 
 def test_calling_methods():
