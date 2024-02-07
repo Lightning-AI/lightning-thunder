@@ -18,13 +18,18 @@ from thunder.core.jit import is_jitting, jit, JITError
 #
 
 
+def pytest_generate_tests(metafunc):
+    if "jit" in metafunc.fixturenames:
+        metafunc.parametrize("jit", [jit])
+
+
 def skipif_python_3_11_plus(f):
     if sys.version_info >= (3, 11):
         return pytest.mark.skip(f, reason=f"not yet implemented for Python 3.11+, got {sys.version_info=}")
     return f
 
 
-def test_no_return():
+def test_no_return(jit):
     def foo():
         pass
 
@@ -32,7 +37,7 @@ def test_no_return():
     assert jfoo() == foo()
 
 
-def test_constant_return():
+def test_constant_return(jit):
     def foo():
         return 5
 
@@ -40,7 +45,7 @@ def test_constant_return():
     assert jfoo() == foo()
 
 
-def test_constant_addition():
+def test_constant_addition(jit):
     def foo():
         return 3 + 5
 
@@ -48,7 +53,7 @@ def test_constant_addition():
     assert jfoo() == foo()
 
 
-def test_input_number_addition():
+def test_input_number_addition(jit):
     def foo(a, b):
         return a + 2 + b
 
@@ -59,7 +64,7 @@ def test_input_number_addition():
     assert jfoo(*args) == foo(*args)
 
 
-def test_input_tensor_addition():
+def test_input_tensor_addition(jit):
     def foo(a, b):
         return a + 2 + b
 
@@ -73,7 +78,7 @@ def test_input_tensor_addition():
     assert_close(thunder_result, python_result)
 
 
-def test_dup_top_two():
+def test_dup_top_two(jit):
     def foo(a):
         a[-1] += a.pop()
         return a
@@ -83,7 +88,7 @@ def test_dup_top_two():
     assert jit(foo)([1, 2, 3]) == foo([1, 2, 3])
 
 
-def test_constant_if():
+def test_constant_if(jit):
     def foo(a, b):
         if 3 < 5:
             return a + b
@@ -100,7 +105,7 @@ def test_constant_if():
     assert_close(thunder_result, python_result)
 
 
-def test_if():
+def test_if(jit):
     def foo(a, b):
         if a < b:
             return a
@@ -121,7 +126,7 @@ def test_if():
         assert jfoo(*case) == foo(*case)
 
 
-def test_while():
+def test_while(jit):
     # produces POP_JUMP_BACKWARD_IF_TRUE/FALSE in 3.11
     def foo(l):
         i = 0
@@ -177,7 +182,7 @@ def test_while():
     assert tom(l) == jit(tom)(l)
 
 
-def test_and_or():
+def test_and_or(jit):
     # JUMP_IF_TRUE/FALSE_OR_POP
     def foo(a, b):
         return a and b
@@ -201,7 +206,7 @@ def test_and_or():
         assert jbar(*case) == bar(*case)
 
 
-def test_dunder_bool():
+def test_dunder_bool(jit):
     jitting = False
 
     class mycls:
@@ -233,7 +238,7 @@ def test_dunder_bool():
         assert r == jr
 
 
-def test_dunder_bool_instance():
+def test_dunder_bool_instance(jit):
     jitting = False
 
     class X:
@@ -256,7 +261,7 @@ def test_dunder_bool_instance():
     assert bx == jbx == False
 
 
-def test_function_call():
+def test_function_call(jit):
     jitting = False
 
     def fn(fn):
@@ -276,7 +281,7 @@ def test_function_call():
     assert r == jr
 
 
-def test_nested_function_call():
+def test_nested_function_call(jit):
     jitting = False
 
     def bar(a, b):
@@ -297,7 +302,7 @@ def test_nested_function_call():
     assert_close(thunder_result, python_result)
 
 
-def test_call_function_ex():
+def test_call_function_ex(jit):
     jitting = False
 
     def foo(a, b):
@@ -329,7 +334,7 @@ def test_call_function_ex():
     assert_close(res2, jres2)
 
 
-def test_build_const_key_map():
+def test_build_const_key_map(jit):
     def fn1(a, b):
         return {"a": a, "b": b}
 
@@ -347,7 +352,7 @@ def test_build_const_key_map():
     assert jfn2(1, 2) == fn2(1, 2)
 
 
-def test_build_map_dict_merge():
+def test_build_map_dict_merge(jit):
     addall = lambda *args, **kwargs: sum(args) + sum(kwargs.values())
     foo = lambda *args, **kwargs: addall(*args, **kwargs)
 
@@ -371,7 +376,7 @@ def test_build_map_dict_merge():
     assert_close(thunder_result, python_result)
 
 
-def test_dict_update():
+def test_dict_update(jit):
     jitting = False
 
     def addall(*args, **kwargs):
@@ -395,7 +400,7 @@ def test_dict_update():
     assert_close(thunder_result, python_result)
 
 
-def test_inner_function_definition():
+def test_inner_function_definition(jit):
     def foo(a, b):
         def bar(a, b):
             return a + b
@@ -428,7 +433,7 @@ def test_inner_function_definition():
     assert_close(foo(*args), jit(foo)(*args))
 
 
-def test_inner_closure():
+def test_inner_closure(jit):
     # NOTE The addition of closing over value also tests
     #   the STORE_DEREF opcode
     def foo(a, b):
@@ -449,7 +454,7 @@ def test_inner_closure():
     assert_close(thunder_result, python_result)
 
 
-def test_delete_deref():
+def test_delete_deref(jit):
     def foo(a, b):
         value = 5
 
@@ -470,7 +475,7 @@ def test_delete_deref():
         thunder_result = jfoo(*args)
 
 
-def test_locals_globals():
+def test_locals_globals(jit):
     def fn():
         funny_name_nowhere_else = True
         return locals() | globals()
@@ -479,7 +484,7 @@ def test_locals_globals():
     assert "funny_name_nowhere_else" in jit(fn)()
 
 
-def test_unpack_sequence():
+def test_unpack_sequence(jit):
     def foo(tup):
         a, b = tup
         return a + b
@@ -504,7 +509,7 @@ def test_unpack_sequence():
     assert_close(thunder_result, python_result)
 
 
-def test_exception_traceback():
+def test_exception_traceback(jit):
     def bar(a):
         raise ValueError(f"I don't like {a}")
 
@@ -523,7 +528,7 @@ def test_exception_traceback():
     assert "in bar\n" in tb_string
 
 
-def test_finally():
+def test_finally(jit):
     jitting = False
     l = []
 
@@ -559,7 +564,7 @@ def test_finally():
     assert l_orig == l
 
 
-def test_raise():
+def test_raise(jit):
     msg = "lorem ipsum"
     jitting = False
 
@@ -584,7 +589,7 @@ def test_raise():
     assert msg in str(excinfo.value)
 
 
-def test_bare_except():
+def test_bare_except(jit):
     msg = "lorem ipsum"
     jitting = False
 
@@ -601,7 +606,7 @@ def test_bare_except():
     assert jit(bare_except)() == True
 
 
-def test_trivial_try_finally():
+def test_trivial_try_finally(jit):
     def trivial_try_finally():
         try:
             pass
@@ -611,7 +616,7 @@ def test_trivial_try_finally():
     assert jit(trivial_try_finally)() == True
 
 
-def test_try_finally():
+def test_try_finally(jit):
     def try_finally():
         try:
             var = False
@@ -624,7 +629,7 @@ def test_try_finally():
     assert jit(try_finally)() == True
 
 
-def test_match_exception():
+def test_match_exception(jit):
     def match_exception():
         error_set = (ValueError, IndexError)
         try:
@@ -635,7 +640,7 @@ def test_match_exception():
     assert jit(match_exception)() == True
 
 
-def test_match_as():
+def test_match_as(jit):
     msg = "lorem ipsum"
 
     def match_as():
@@ -647,7 +652,7 @@ def test_match_as():
     assert msg in jit(match_as)()
 
 
-def test_list():
+def test_list(jit):
     def foo():
         l = [1, 2, 3]
         l[3:] = l[:2]
@@ -658,7 +663,7 @@ def test_list():
     assert foo() == jit(foo)()
 
 
-def test_raise_external():
+def test_raise_external(jit):
     msg = "lorem ipsum"
 
     def raise_external():
@@ -670,7 +675,7 @@ def test_raise_external():
     assert msg in str(excinfo.value)
 
 
-def test_raise_from():
+def test_raise_from(jit):
     msg = "lorem ipsum"
 
     def raise_from():
@@ -683,7 +688,7 @@ def test_raise_from():
     assert msg in res[0] and msg in res[1]
 
 
-def test_raise_from_external():
+def test_raise_from_external(jit):
     msg = "lorem ipsum"
 
     def raise_from_external():
@@ -697,7 +702,7 @@ def test_raise_from_external():
     assert type(e.__cause__) == IndexError and msg in str(e.__cause__), excinfo.value
 
 
-def test_nested_try_except():
+def test_nested_try_except(jit):
     def nested_try_except():
         try:
             raise ValueError
@@ -711,7 +716,7 @@ def test_nested_try_except():
     assert jit(nested_try_except)() == True
 
 
-def test_inner_nested_try_except():
+def test_inner_nested_try_except(jit):
     def inner_nested_try_except():
         try:
             try:
@@ -725,7 +730,7 @@ def test_inner_nested_try_except():
     assert jit(inner_nested_try_except)() == True
 
 
-def test_cross_function_exceptions():
+def test_cross_function_exceptions(jit):
     jitting = False
 
     def foo():
@@ -751,7 +756,7 @@ def test_cross_function_exceptions():
     assert jit(cross_function_exceptions)() == True
 
 
-def test_walrus_operator():
+def test_walrus_operator(jit):
     def foo(a, b):
         c = (a := b)
         return c
@@ -763,7 +768,7 @@ def test_walrus_operator():
     assert jfoo(3, 8) == foo(3, 8)
 
 
-def test_build_map():
+def test_build_map(jit):
     def foo(a, b):
         return {0: a, 1: b, 2: 3, "a": 4, a: 5}
 
@@ -781,7 +786,7 @@ def test_build_map():
         assert jfoo(a, b) == foo(a, b)
 
 
-def test_map_add_set_add():
+def test_map_add_set_add(jit):
     def fn():
         d = {i: i * 2 for i in range(10)}
         s = {i * 2 for i in range(10)}
@@ -791,7 +796,7 @@ def test_map_add_set_add():
     assert jfn() == fn()
 
 
-def test_kwargs():
+def test_kwargs(jit):
     def foo(a, b, *, c=2):
         return a + b + c
 
@@ -810,7 +815,7 @@ def test_kwargs():
     assert jfoo(a=2, b=7, c=3) == foo(a=2, b=7, c=3)
 
 
-def test_args_kwargs():
+def test_args_kwargs(jit):
     def bar(a, b):
         return a + b
 
@@ -822,7 +827,7 @@ def test_args_kwargs():
     assert jfoo(a=2, b=3) == foo(a=2, b=3)
 
 
-def test_partials():
+def test_partials(jit):
     def foo(a, b, c):
         return a - b * c
 
@@ -854,7 +859,7 @@ def test_partials():
     assert jppfoo(-3) == ppfoo(-3)
 
 
-def test_using_imported_modules():
+def test_using_imported_modules(jit):
     import operator
 
     def foo(a, b):
@@ -865,7 +870,7 @@ def test_using_imported_modules():
     assert jfoo(3, 5) == foo(3, 5)
 
 
-def test_reduce():
+def test_reduce(jit):
     import functools
     import operator
 
@@ -986,7 +991,7 @@ def test_reduce():
 
 
 # See https://github.com/Lightning-AI/lightning-thunder/issues/2078
-def test_reduce_jitted_reduce_fn():
+def test_reduce_jitted_reduce_fn(jit):
     import functools
 
     def foo(a, fn):
@@ -1004,7 +1009,7 @@ def test_reduce_jitted_reduce_fn():
         assert jfoo((1, 2, 3), jadd) == 6
 
 
-def test_calling_methods():
+def test_calling_methods(jit):
     jitting = False
 
     class mycls:
@@ -1082,7 +1087,7 @@ def test_calling_methods():
     assert jbar_static(x, 7) == bres_static
 
 
-def test_wrapped_functions():
+def test_wrapped_functions(jit):
     jitting = False
 
     def wrap(fn):
@@ -1107,7 +1112,7 @@ def test_wrapped_functions():
     assert res == jres
 
 
-def test_callable_classes():
+def test_callable_classes(jit):
     class mycls:
         def __init__(self, v: int):
             self.v = v
@@ -1126,7 +1131,7 @@ def test_callable_classes():
 
 
 @pytest.mark.xfail(reason="Lookaside not triggered, requires further investigation. Delete the test above when fixed.")
-def test_callable_classes_jitting():
+def test_callable_classes_jitting(jit):
     jitting = False
 
     def foo(x, a):
@@ -1155,7 +1160,7 @@ def test_callable_classes_jitting():
     assert res == jres
 
 
-def test_build_slice():
+def test_build_slice(jit):
     def foo(a, b):
         l = [0, 1, 2, 3, 4, 5, 6]
         return l[a:b], l[a:], l[:b], l[1:2:2], l[0:a:b]
@@ -1166,7 +1171,7 @@ def test_build_slice():
     assert jfoo(0, -1) == foo(0, -1)
 
 
-def test_format_value():
+def test_format_value(jit):
     # Tests FVS_HAVE_SPEC and FVC_NONE
     def foo(a, b):
         return f"{a:3.2f}, {b:2.1f}"
@@ -1219,7 +1224,7 @@ def test_format_value():
 @pytest.mark.xfail(
     reason="Need to implement builtin format, repr, and ascii lookasides. See help('FORMATTING'). When fixed, delete the test above."
 )
-def test_format_value_jitting():
+def test_format_value_jitting(jit):
     jitting = False
 
     # Tests FVS_HAVE_SPEC and FVC_NONE
@@ -1278,7 +1283,7 @@ def test_format_value_jitting():
     assert jfoo(x) == foo(x)
 
 
-def test_import():
+def test_import(jit):
     def foo(a, b):
         import operator
 
@@ -1326,7 +1331,7 @@ def test_import():
     assert jit(foo)() is foo()
 
 
-def test_locals_lookaside():
+def test_locals_lookaside(jit):
     def foo():
         try:
             # Locals starts empty
@@ -1359,7 +1364,7 @@ def test_locals_lookaside():
     jit(foo)()
 
 
-def test_match_statement():
+def test_match_statement(jit):
     def foo():
         dct = {"a": 1, "b": 2, "z": 3}
         match dct:
@@ -1395,7 +1400,7 @@ def test_match_statement():
     assert any(i.opname == "UNPACK_EX" for i in jbar._last_interpreted_instructions)
 
 
-def test_class_match_statement():
+def test_class_match_statement(jit):
     class Cls:
         __match_args__ = ("a", "b")
 
@@ -1419,7 +1424,7 @@ def test_class_match_statement():
     assert any(i.opname == "MATCH_CLASS" for i in jfoo._last_interpreted_instructions)
 
 
-def test_match_fallthrough():
+def test_match_fallthrough(jit):
     def foo():
         dct = {"a": 1, "b": 2}
         match dct:
@@ -1451,7 +1456,7 @@ def test_match_fallthrough():
 
 
 @pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1824")
-def test_exec_import_star():
+def test_exec_import_star(jit):
     # Assert that we can actually generate the instruction
     to_exec = "from itertools import *"
     compiled = compile(to_exec, "<string>", "exec")
@@ -1467,7 +1472,7 @@ def test_exec_import_star():
     jfoo()
 
 
-def test_import_star_module():
+def test_import_star_module(jit):
     def foo():
         c = compile("from thunder.tests.module_example import *", "<string>", "exec")
         exec(c, globals())
@@ -1479,7 +1484,7 @@ def test_import_star_module():
     assert foo() == jit(foo)()
 
 
-def test_unhashable_lookaside():
+def test_unhashable_lookaside(jit):
     def fn():
         import weakref
 
@@ -1490,7 +1495,7 @@ def test_unhashable_lookaside():
     jit(fn)()
 
 
-def test_len_lookaside():
+def test_len_lookaside(jit):
     jitting = False
 
     class mycls:
@@ -1550,7 +1555,7 @@ def test_len_lookaside():
         jfoo(o)
 
 
-def test_any_lookaside():
+def test_any_lookaside(jit):
     jitting = False
 
     def foo(a):
@@ -1586,7 +1591,7 @@ def test_any_lookaside():
     assert res == jres
 
 
-def test_generator():
+def test_generator(jit):
     jitting = False
 
     def my_generator_1():
@@ -1621,7 +1626,7 @@ def test_generator():
     assert actual == expected
 
 
-def test_binary_operations():
+def test_binary_operations(jit):
     ops = ["+", "&", "//", "<<", "@", "*", "%", "|", "**", ">>", "-", "/", "^"]
 
     # NOTE Not all of the number ops support floats (for example lshift)
@@ -1681,14 +1686,14 @@ def test_binary_operations():
         assert_close(actual, expected)
 
 
-def test_binary_op_on_types():
+def test_binary_op_on_types(jit):
     def fn():
         return int | None
 
     assert jit(fn)() == fn()
 
 
-def test_get_and_for_iter():
+def test_get_and_for_iter(jit):
     def foo(a):
         for x in (1, 2, 3):
             a = a + x
@@ -1710,7 +1715,7 @@ def test_get_and_for_iter():
     assert jfoo(d) == foo(d)
 
 
-def test_iter_lookaside_and_sentinel():
+def test_iter_lookaside_and_sentinel(jit):
     def foo():
         gen = iter([1, 2, 3, None, "Unreachable"])
         for x in iter(lambda: next(gen), None):
@@ -1726,7 +1731,7 @@ def test_iter_lookaside_and_sentinel():
     jit(foo)()
 
 
-def test_iter_lookaside_types():
+def test_iter_lookaside_types(jit):
     class IterableExample(Iterable):
         def __iter__(self):
             return iter([1, 2, 3])
@@ -1775,7 +1780,7 @@ def test_iter_lookaside_types():
 
 
 @pytest.mark.xfail(reason="Lookaside not triggered, requires further investigation. Delete the test above when fixed.")
-def test_iter_lookaside_types_jitting():
+def test_iter_lookaside_types_jitting(jit):
     jitting = False
 
     class IterableExample(Iterable):
@@ -1841,7 +1846,7 @@ def test_iter_lookaside_types_jitting():
     assert cres is jcres
 
 
-def test_unary_not():
+def test_unary_not(jit):
     def foo(a):
         return not a
 
@@ -1878,7 +1883,7 @@ def test_unary_not():
     assert jfoo([1, 2]) == foo([2, 3])
 
 
-def test_unary_neg_invert():
+def test_unary_neg_invert(jit):
     def invert(x):
         return ~x
 
@@ -1902,7 +1907,7 @@ def test_unary_neg_invert():
         assert str(exc_expected.value) == str(exc_actual.value)
 
 
-def test_unpack_ex():
+def test_unpack_ex(jit):
     alphabet = "abcdefghijklmnopqrstuvwxyz"
 
     def foo(a):
@@ -1938,7 +1943,7 @@ def test_unpack_ex():
     assert jfoo(alphabet) == foo(alphabet)
 
 
-def test_list_to_tuple():
+def test_list_to_tuple(jit):
     def ltt():
         return (*[1, 2, 3],)
 
@@ -1946,7 +1951,7 @@ def test_list_to_tuple():
     assert jit(ltt)() == ltt()
 
 
-def test_annotations():
+def test_annotations(jit):
     annotation_executed = inner_executed = False
     jitting = False
 
@@ -1978,7 +1983,7 @@ def test_annotations():
     assert annotation_executed and inner_executed, (annotation_executed, inner_executed)
 
 
-def test_use_of_deleted_raises_correctly():
+def test_use_of_deleted_raises_correctly(jit):
     def foo(a):
         b = a
         del b
@@ -1992,7 +1997,7 @@ def test_use_of_deleted_raises_correctly():
         jfoo(5)
 
 
-def test_delete_fast():
+def test_delete_fast(jit):
     def foo(a):
         b = a
         del b
@@ -2005,7 +2010,7 @@ def test_delete_fast():
         jfoo(5)
 
 
-def test_delete_global():
+def test_delete_global(jit):
     global x
     x = 5
 
@@ -2025,7 +2030,7 @@ def test_delete_global():
 x = 7
 
 
-def test_store_global():
+def test_store_global(jit):
     def foo(a):
         global x
         x = a
@@ -2037,7 +2042,7 @@ def test_store_global():
     assert x == 6
 
 
-def test_bool_conversion():
+def test_bool_conversion(jit):
     def foo(a):
         return bool(a)
 
@@ -2101,7 +2106,7 @@ def test_bool_conversion():
     assert res == jres
 
 
-def test_store_attr():
+def test_store_attr(jit):
     def foo(a, v):
         a.foo = v
 
@@ -2139,7 +2144,7 @@ def test_store_attr():
     reason="Lookaside not triggered, need to implement setattr lookaside (Objects/object.c:1029). "
     "Also implement and test delattr (PyObject_SetAttr(obj, NULL)). Delete the test above when fixed."
 )
-def test_store_attr_jit():
+def test_store_attr_jit(jit):
     def foo(a, v):
         a.foo = v
 
@@ -2177,12 +2182,12 @@ def test_store_attr_jit():
     assert x.bar == 5
 
 
-def test_builtin_getattr():
+def test_builtin_getattr(jit):
     x = 5
     assert x.__add__ == jit(getattr)(x, "__add__")
 
 
-def test_builtin_getattr_str_subclass():
+def test_builtin_getattr_str_subclass(jit):
     x = 5
 
     class S(str):
@@ -2194,7 +2199,7 @@ def test_builtin_getattr_str_subclass():
     assert add1 == add2
 
 
-def test_simple_attribute():
+def test_simple_attribute(jit):
     class SimpleNamespace:
         x: int
         y: int
@@ -2210,7 +2215,7 @@ def test_simple_attribute():
     assert foo() == jfoo()
 
 
-def test_dunder_getattr():
+def test_dunder_getattr(jit):
     history = []
 
     class X:
@@ -2226,7 +2231,7 @@ def test_dunder_getattr():
 
 
 @pytest.mark.skip(reason="__getattribute__ support is not yet implemented.")
-def test_dunder_getattribute():
+def test_dunder_getattribute(jit):
     history = []
 
     class MyClass:
@@ -2243,7 +2248,7 @@ def test_dunder_getattribute():
     assert tuple(history) == ("__getattr__ False", "__getattr__ True")
 
 
-def test_property():
+def test_property(jit):
     history = []
 
     class MyClass:
@@ -2275,7 +2280,7 @@ def test_property():
     history.clear()
 
 
-def test_property_with_setter():
+def test_property_with_setter(jit):
     history = []
 
     class MyClass:
@@ -2300,7 +2305,7 @@ def test_property_with_setter():
 
 
 @pytest.mark.skip(reason=".setter support is not yet implemented.")
-def test_property_with_instrumented_setter():
+def test_property_with_instrumented_setter(jit):
     history = []
 
     class MyClass:
@@ -2326,7 +2331,7 @@ def test_property_with_instrumented_setter():
     assert tuple(history) == ("x False", "x.setter False", "x True", "x.setter True")
 
 
-def test_compare():
+def test_compare(jit):
     # uses ROT_THREE in Python 3.10
     def fn(a):
         return 2 <= a <= 4
@@ -2336,7 +2341,7 @@ def test_compare():
         assert fn(a) == jfn(a)
 
 
-def test_comprehension():
+def test_comprehension(jit):
     def foo():
         return tuple([i for i in range(10)])
 
@@ -2344,7 +2349,7 @@ def test_comprehension():
     assert foo() == jfoo()
 
 
-def test_nested_comprehension():
+def test_nested_comprehension(jit):
     def foo():
         return tuple([[j for j in enumerate(range(i))] for i in range(10)])
 
@@ -2352,7 +2357,7 @@ def test_nested_comprehension():
     assert foo() == jfoo()
 
 
-def test_comprehension_nonlocal():
+def test_comprehension_nonlocal(jit):
     def foo():
         counter = 0
 
@@ -2367,7 +2372,7 @@ def test_comprehension_nonlocal():
     assert foo() == jfoo()
 
 
-def test_comprehension_nonlocal_inplace():
+def test_comprehension_nonlocal_inplace(jit):
     def foo():
         counter = 0
 
@@ -2382,7 +2387,7 @@ def test_comprehension_nonlocal_inplace():
     assert foo() == jfoo()
 
 
-def test_unimpl_inplace():
+def test_unimpl_inplace(jit):
     class C:
         def __init__(self, value):
             self.value = value
@@ -2403,7 +2408,7 @@ def test_unimpl_inplace():
     jit(foo)()
 
 
-def test_unsupported_operator():
+def test_unsupported_operator(jit):
     def foo():
         return 2 @ 3  # type: ignore
 
@@ -2413,7 +2418,7 @@ def test_unsupported_operator():
         jit(foo)()
 
 
-def test_set_creation():
+def test_set_creation(jit):
     def foo():
         return {1, *[2, 3]}
 
@@ -2421,7 +2426,7 @@ def test_set_creation():
     assert foo() == jfoo()
 
 
-def test_contains():
+def test_contains(jit):
     def foo(a, seq):
         return a in seq
 
@@ -2452,7 +2457,7 @@ def test_contains():
     assert jnfoo("f", {"a", "b", "c"}) == nfoo("f", {"a", "b", "c"})
 
 
-def test_contains_custom_containers():
+def test_contains_custom_containers(jit):
     def foo(a, seq):
         return a in seq
 
@@ -2512,7 +2517,7 @@ def test_contains_custom_containers():
     assert jnfoo(5, o) == nfoo(5, o)
 
 
-def test_name_opcodes_and_print_expr():
+def test_name_opcodes_and_print_expr(jit):
     from types import FunctionType
     from contextlib import redirect_stdout
     import io
@@ -2569,7 +2574,7 @@ def test_name_opcodes_and_print_expr():
         jfn()
 
 
-def test_displayhook():
+def test_displayhook(jit):
     from contextlib import redirect_stdout
     import io
     import code
@@ -2611,7 +2616,7 @@ def foo():
     assert py_out == "redirected 5\nredirected 6\nredirected 7\nReset.\n", py_out
 
 
-def test_load_build_class():
+def test_load_build_class(jit):
     def foo():
         class C:
             def __init__(self):
@@ -2630,7 +2635,7 @@ def test_load_build_class():
     assert any(i.opname == "LOAD_BUILD_CLASS" for i in jfoo._last_interpreted_instructions)
 
 
-def test_with():
+def test_with(jit):
     jitting = False
 
     class CtxMgr:
@@ -2673,7 +2678,7 @@ def test_with():
     assert exc_expected.value.args[1] == exc_actual.value.args[1]
 
 
-def test_async_with():
+def test_async_with(jit):
     jitting = False
 
     class ACtxMgr:
@@ -2719,7 +2724,7 @@ def test_async_with():
     assert exc_expected.value.args[1] == exc_actual.value.args[1]
 
 
-def test_async_for():
+def test_async_for(jit):
     jitting = False
 
     async def async_gen():
@@ -2750,7 +2755,7 @@ def test_async_for():
     assert res == jres
 
 
-def test_super():
+def test_super(jit):
     jitting = False
 
     class A:
@@ -2814,7 +2819,7 @@ def test_super():
     assert res == jres
 
 
-def test_is_jitting():
+def test_is_jitting(jit):
     def foo():
         return is_jitting()
 
@@ -2822,7 +2827,7 @@ def test_is_jitting():
     assert jit(foo)()
 
 
-def test_autograd_function():
+def test_autograd_function(jit):
     class DoubleFn(torch.autograd.Function):
         @staticmethod
         def forward(ctx, a):
@@ -2841,7 +2846,7 @@ def test_autograd_function():
     assert_close(fn(), jit(fn)())
 
 
-def test_torch_autocast_nograd():
+def test_torch_autocast_nograd(jit):
     def fn(a, b):
         with torch.autocast("cpu"):
             return a @ b
@@ -2865,7 +2870,7 @@ def test_torch_autocast_nograd():
     assert_close(actual, expected)  # also check dtype (should be bf16)
 
 
-def test_module_hooks():
+def test_module_hooks(jit):
     def cook_hook(l, name):
         def fn(*args):
             l.append((name, thunder.core.jit.is_jitting()))
@@ -2914,7 +2919,7 @@ def test_module_hooks():
             h.remove()
 
 
-def test_eval_exec_exception():
+def test_eval_exec_exception(jit):
     def fn_eval():
         return eval("1/0")
 
@@ -2927,7 +2932,7 @@ def test_eval_exec_exception():
         jit(fn_exec)()
 
 
-def test_is_jitting_opaque():
+def test_is_jitting_opaque(jit):
     def foo():
         return tuple(map(lambda _: is_jitting(), range(3)))
 
@@ -2941,7 +2946,7 @@ def test_is_jitting_opaque():
 #
 
 
-def test_nanogpt_mlp():
+def test_nanogpt_mlp(jit):
     from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
@@ -2957,7 +2962,7 @@ def test_nanogpt_mlp():
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_nanogpt_csa():
+def test_nanogpt_csa(jit):
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
@@ -2973,7 +2978,7 @@ def test_nanogpt_csa():
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_nanogpt_block():
+def test_nanogpt_block(jit):
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
@@ -2989,7 +2994,7 @@ def test_nanogpt_block():
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_nanogpt():
+def test_nanogpt(jit):
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
 
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
@@ -3005,7 +3010,7 @@ def test_nanogpt():
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_litgpt():
+def test_litgpt(jit):
     from thunder.benchmarks import LitGPTBenchmark
     from thunder.tests.lit_gpt_model import Config
 
