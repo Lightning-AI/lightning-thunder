@@ -543,8 +543,6 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             executors_list=cd.executors_list,
         )
 
-        # TODO Apply post-optimization transforms
-
         extrace = extraces[-1]
 
         pro = prologue_trc.python_callable()

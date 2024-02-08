@@ -1,10 +1,12 @@
 from functools import wraps, partial
 from typing import Dict, Set, Optional, Any, List, Tuple, Type
+from collections import defaultdict
 from collections.abc import Callable
 from collections.abc import Sequence
 import os
 import dis
 from enum import Enum, auto
+import time
 
 from looseversion import LooseVersion
 
@@ -13,6 +15,7 @@ from thunder.core.trace import (
     from_trace,
     set_tracectx,
     reset_tracectx,
+    tracectx,
 )
 
 import thunder.core.prims as prims
@@ -27,13 +30,20 @@ from thunder.common import (
     trace,
     preprocess,
     _string_to_cache_option,
+    transform_for_execution,
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
+from thunder.core.compile_data import compile_data_and_stats
+from thunder.core.langctx import set_langctx, reset_langctx, lang
+from thunder.core.codeutils import get_siginfo, SigInfo
+from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy
 
 # The following executors are always available, and so are unconditionally imported
 from thunder.executors import pythonex, torchex, nvfuserex, sdpaex
 
+# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
+import torch as pytorch
 import thunder.torch as ltorch
 import thunder.numpy as lnumpy
 
@@ -221,8 +231,82 @@ def _str_to_interpretation_option(s: str, /) -> INTERPRETATION_OPTIONS:
     return interpretation_option
 
 
+# Translates the Python function a thunder program using the Python interpreter
+#   An interpreter must do two things:
+#       1) Create a prologue function with the same signature as the original function that
+#           acquires all supported inputs and validates them according to the caching option
+#       2) Creates a computation function that accepts the output of the prologue function and
+#           returns what the original function did
+def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
+    # TODO GTC Update using_interpreter to using_prologue until it's removed when all traces have prologues
+    # TODO GTC Consider refactoring the eager unpacking to support the TRANSLATE_FUNCTIONS interpretation option, too
+    prologue_trc: TraceCtx = TraceCtx(fn)
+    computation_trc: TraceCtx = TraceCtx()
+
+    # Unpacks the inputs
+
+    if len(kwargs) > 0:
+        raise NotImplementedError(f"kwargs are not yet supported")
+
+    # TODO GTC Support numbers
+    # TODO GTC Support NumPy arrays
+    # TODO GTC Support strings
+    # TODO GTC Support PyTorch and NumPy dtypes
+    # TODO GTC Support sequences of numbers, tensors, arrays, and strings
+    # TODO GTC Support mappings from strings and numbers to numbers, tensors, arrays, strings
+    # TODO GTC Consider supporting nested sequences of mappings that have these properties
+    # TODO GTC Consider supporting arbitrary literal inputs
+    # TODO GTC Consider supporiting arbitrary object inputs
+    for arg in args:
+        if not isinstance(arg, pytorch.Tensor):
+            raise NotImplementedError(
+                f"Only tensor inputs are currently supported, but found argument with type {type(arg)}"
+            )
+
+    si: SigInfo = get_siginfo(fn, args, kwargs)
+
+    if si.varargs is not None:
+        raise NotImplementedError("varargs are not yet supported")
+
+    # Constructs the prologue trace (which just trivially unpacks the tensor arguments for now)
+    # TODO GTC Remove the no_grad and no_autocast context managers from this trace
+    # TODO GTC Provide a mechanism to add context managers to the prologue and computation functions
+    # TODO GTC Don't always import torch in traces (particularly the prologue trace)
+    with tracectx(prologue_trc):
+        proxyargs = []
+        for name, x in si.args:
+            p = proxy(x, name=name)
+            proxyargs.append(p)
+
+        p: Proxy
+        for p in proxyargs:
+            prims.unpack_trivial(p)
+
+        prims.python_return(proxyargs)
+
+    prologue_trc.args = proxyargs
+
+    with tracectx(computation_trc):
+        # TODO GTC Only unpack what's used in the computation
+        p: Proxy
+        for p in proxyargs:
+            prims.unpack_trivial(p)
+
+        result = fn(*proxyargs)
+        prims.python_return(result)
+
+    # Constructs the computation trace's signature
+    si = SigInfo("computation")
+    si.args = list((p.name, None) for p in proxyargs)
+    computation_trc._siginfo = si
+    computation_trc.args = proxyargs
+
+    return prologue_trc, computation_trc
+
+
 # This function will replace compile() (below) before gtc
 # TODO GTC Consider adding a debug_log parameter to control debug printing
+# TODO GTC Consider renaming compile_options to additional_compile_options
 def jit(
     fn: Callable,
     /,
@@ -284,10 +368,6 @@ def jit(
             f"Unknown interpretation option {interpretation}. Allowed options are 'none', 'translate functions', and 'translate everything'."
         )
 
-    # TODO GTC Implement these modes
-    if interpretation in (INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS, INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING):
-        raise NotImplementedError(f"Only the 'none' interpretation option is currently implemented.")
-
     # Resolves cache option
     if cache is None:
         # TODO GTC Change the default to DYNAMIC_STRIDES
@@ -298,9 +378,6 @@ def jit(
         raise ValueError(
             f"Unknown cache option {cache}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
         )
-
-    if cache in (CACHE_OPTIONS.ASSUME_SAME_INPUTS, CACHE_OPTIONS.DYNAMIC_STRIDES):
-        raise NotImplementedError(f"Only the 'no caching' cache mode is currently supported.")
 
     # TODO GTC Refine the compile data option to remove unused options
     cd = CompileData(
@@ -316,10 +393,89 @@ def jit(
         disable_preprocessing=True,
         compile_options=compile_options,
     )
-
     cs = CompileStats()
-    _fn = _create_callable(cd, cs)
-    return _fn
+
+    @wraps(fn)
+    def fn_(*args, **kwargs) -> Any:
+        # TODO GTC Support being called from another jitted function by just calling fn with
+        #   distinct compile data (test this)
+
+        # Updats call statistics
+        cs.last_trace_host_start = time.time_ns()
+        cs.calls += 1
+
+        # TODO GTC Add autocast checks to prologue (make it a compile option)
+        # TODO GTC Add caching (with prologues)
+        # TODO GTC Add DYNAMIC_SHAPES caching option
+
+        # Checks cache
+        cs.last_trace_cache_start = time.time_ns()
+        if cd.cache_option in (CACHE_OPTIONS.ASSUME_SAME_INPUTS, CACHE_OPTIONS.DYNAMIC_STRIDES):
+            raise NotImplementedError(f"Only the 'no caching' cache mode is currently supported.")
+
+        cs.cache_misses += 1
+        cs.last_trace_cache_stop = time.time_ns()
+
+        # Resets use of compile flags
+        cs.last_compile_reasons = defaultdict(list)
+
+        # TODO GTC Acquires the interpreter
+        # TODO GTC Implement all INTERPRETATION_OPTIONS
+        # TODO GTC Acquire the interpretation option from the compile data
+        interpreter: Callable
+        if interpretation is INTERPRETATION_OPTIONS.NONE:
+            interpreter = _python_interpreter
+        if interpretation in (INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS, INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING):
+            raise NotImplementedError(f"Only the 'none' interpretation option is currently implemented.")
+
+        with compile_data_and_stats(cd, cs):
+            # Acquires the trace OR inlines the trace into an existing trace and
+            #   returns the (proxied) result of the operation
+            cs.last_trace_tracing_start = time.time_ns()
+
+            with lang(cd.langctx):
+                # TODO GTC Call the interpreter here (which may be Python)
+                prologue_trc: TraceCtx
+                computation_trc: TraceCtx
+                prologue_trc, computation_trc = interpreter(fn, args, kwargs)
+
+            cs.last_trace_tracing_stop = time.time_ns()
+
+            # TODO GTC Apply transforms
+
+            # TODO GTC Update this transform's parameters to take 'executors' instead of 'executors_list'
+            extraces = transform_for_execution(
+                computation_trc,
+                executors_list=cd.executors_list,
+            )
+
+            extrace = extraces[-1]
+
+            pro = prologue_trc.python_callable()
+            comp = extrace.python_callable()
+
+            # Executes the traced program
+            cs.last_trace_host_execution_start = time.time_ns()
+            computation_result = comp(*pro(*args, **kwargs))
+            cs.last_trace_host_execution_stop = time.time_ns()
+
+            # TODO GTC Update the cache
+            # Updates metadata
+            # TODO GTC Populate last_traces properly
+            cs.last_traces = extraces
+            # TODO GTC Populate last executed properly (prologue + computation + consider backward)
+            cs.last_executed = comp
+            cs.last_prologue = prologue_trc
+
+            cs.last_trace_host_stop = time.time_ns()
+
+        return computation_result
+
+    # Sets compile options and statistics attributes
+    fn_._lc_cd = cd
+    fn_._lc_cs = cs
+
+    return fn_
 
 
 def compile(

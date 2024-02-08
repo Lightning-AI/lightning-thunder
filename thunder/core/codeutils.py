@@ -405,7 +405,8 @@ class SigInfo:
 #   and the kwargs and varkwargs into kwarg_values
 
 
-# TODO Review errors and improve message quality (ex. too many arguments error)
+# TODO GTC Review errors and improve message quality (ex. too many arguments error)
+# TODO GTC Have this always return a SigInfo or another type (maybe by wrapping in another function)
 def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False) -> SigInfo | Any:
     # Unwraps partials and records their arguments
     partials = []

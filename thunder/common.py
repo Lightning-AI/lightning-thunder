@@ -142,6 +142,7 @@ def preprocess(fn, is_module):
 # A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
 #   like additional_param_names
+# TODO GTC Rename this to CompileOptions
 class CompileData:
     def __init__(
         self,
@@ -715,9 +716,11 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
+    # TODO GTC Remove this option (by modeling torch.compile as another executor)
     if compile_data.use_torch_compile:
         c = torch.compile(c)
 
+    # TODO GTC Mark this option as experimental
     if compile_data.use_cudagraphs:
         c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 

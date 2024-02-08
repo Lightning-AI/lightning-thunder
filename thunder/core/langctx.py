@@ -105,6 +105,8 @@ class langctx:
         return _fn
 
 
+# TODO GTC Make this name consistent with other context managers and see about allowing the context manager
+#   to also be the function decorator
 @contextmanager
 def lang(ctx: Any) -> None:
     tok = set_langctx(ctx)
