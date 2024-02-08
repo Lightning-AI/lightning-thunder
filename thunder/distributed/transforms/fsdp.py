@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx
     from thunder.core.symbol import BoundSymbol
     from thunder.core.symbol import BoundSymbolRHS
+    from thunder.distributed.bucketing import Bucket
 
 
 __all__ = [
