@@ -91,20 +91,28 @@ Dynamic shapes (45 iters)
 # setup
 python download.py --repo_id openlm-research/open_llama_3b --tokenizer_only true
 # run
-python train_fsdp.py --devices 2 --compile thunder --stage 2
+python train_fsdp.py --devices 2 --compile thunder --stage 2 --bucketing_strategy block
 ```
 
 Static shapes (45 iters)
 
-| Stage | Method    | Time ↓ | Memory ↓ |
-|-------|-----------|--------|----------|
-| 2     | Inductor  | 23.2 s | 24.3 GB  |
-| 2     | Thunder   | 23.5 s | 27.0 GB  |
-| 2     | Eager     | 27.7 s | 27.6 GB  |
-|       |           |        |          |
-| 3     | Inductor  | 24.8 s | 17.5 GB  |
-| 3     | Thunder   | 25.8 s | 20.2 GB  |
-| 3     | Eager     | 28.5 s | 20.7 GB  |
+| Stage | Bucketing | Method    | Time ↓  | Memory ↓ |
+|-------|-----------|-----------|---------|----------|
+| 2     | No        | Inductor  | 23.43 s | 24.36 GB |
+| 2     | No        | Thunder   | 23.34 s | 26.98 GB |
+| 2     | No        | Eager     | 27.89 s | 27.61 GB |
+|       |           |           |         |          |
+| 2     | Block     | Inductor  | 23.47 s | 24.31 GB |
+| 2     | Block     | Thunder   | 24.18 s | 26.83 GB |
+| 2     | Block     | Eager     | 26.15 s | 27.67 GB |
+|       |           |           |         |          |
+| 3     | No        | Inductor  | 24.97 s | 17.49 GB |
+| 3     | No        | Thunder   | 25.38 s | 20.24 GB |
+| 3     | No        | Eager     | 28.53 s | 20.75 GB |
+|       |           |           |         |          |
+| 3     | Block     | Inductor  | 21.84 s | 17.86 GB |
+| 3     | Block     | Thunder   | 24.77 s | 26.90 GB |
+| 3     | Block     | Eager     | 26.39 s | 21.23 GB |
 
 ## Setup
 

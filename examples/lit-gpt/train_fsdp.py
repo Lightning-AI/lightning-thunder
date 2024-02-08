@@ -33,16 +33,11 @@ from torch.utils.data import DataLoader, IterableDataset
 from typing_extensions import override
 
 import thunder
-from thunder.distributed import FSDPType, fsdp
-from thunder.tests.lit_gpt_model import GPT, Config
+from thunder.distributed import FSDPBucketingStrategy, FSDPType, fsdp
+from thunder.tests.lit_gpt_model import GPT, Block, Config
 
 _FSDP_TYPE = Union[FSDPType, Literal["ZERO2", "ZERO3"]]
-
-
-model_name = "open_llama_3b"
-learning_rate = 6e-4
-micro_batch_size = 2
-max_iters = 50
+_BUCKETING_STRATEGY = Union[FSDPBucketingStrategy, Literal["NONE", "LAYER", "BLOCK"]]
 
 
 class FSDPThunderStrategy(ParallelStrategy, _Sharded):
@@ -54,11 +49,19 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         checkpoint_io: Optional[CheckpointIO] = None,
         precision: Optional[Precision] = None,
         sharding_strategy: "_FSDP_TYPE" = "FULL_SHARD",
+        bucketing_strategy: "_BUCKETING_STRATEGY" = "NONE",
     ):
         super().__init__(accelerator=accelerator, checkpoint_io=checkpoint_io, precision=precision)
         self.parallel_devices = parallel_devices
         self.cluster_environment: Optional[ClusterEnvironment] = cluster_environment
-        self.sharding_strategy = FSDPType[sharding_strategy.upper()] if isinstance(sharding_strategy, str) else sharding_strategy
+        self.sharding_strategy = (
+            FSDPType[sharding_strategy.upper()] if isinstance(sharding_strategy, str) else sharding_strategy
+        )
+        self.bucketing_strategy = (
+            FSDPBucketingStrategy[bucketing_strategy.upper()]
+            if isinstance(bucketing_strategy, str)
+            else bucketing_strategy
+        )
 
     @property
     @override
@@ -93,7 +96,12 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
     @override
     def setup_module(self, module: Module) -> Module:
         module = module.to(self.root_device)
-        module = fsdp(module, broadcast_from=0, sharding_strategy=self.sharding_strategy)
+        module = fsdp(
+            module,
+            broadcast_from=0,
+            sharding_strategy=self.sharding_strategy,
+            bucketing_strategy=self.bucketing_strategy,
+        )
 
         # NOTE @IvanYaschuck says that `fsdp(compile(model))` could be supported in the future so that the user owns the `compile` call.
         # we would still `compile(fsdp(undo_compile(compile(model))))` internally
@@ -192,13 +200,22 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         rank_zero_only.rank = utils_rank_zero_only.rank = self.global_rank
 
 
-def main(compile: str = "eager", devices: int = 2, stage: str = "2") -> None:
+model_name = "open_llama_3b"
+learning_rate = 6e-4
+micro_batch_size = 2
+max_iters = 50
+
+
+def main(
+    compile: str = "eager", devices: int = 2, stage: str = "2", bucketing_strategy: Literal["none", "block"] = "none"
+) -> None:
     fsdp_type = {"2": "ZERO2", "3": "ZERO3"}[stage]
     sharding_strategy = {"2": "SHARD_GRAD_OP", "3": "FULL_SHARD"}[stage]
+    auto_wrap_policy = always_wrap_policy if bucketing_strategy.lower() == "none" else {Block}
     strategy = (
-        FSDPThunderStrategy(sharding_strategy=fsdp_type)
+        FSDPThunderStrategy(sharding_strategy=fsdp_type, bucketing_strategy=bucketing_strategy)
         if compile == "thunder"
-        else FSDPStrategy(auto_wrap_policy=always_wrap_policy, sharding_strategy=sharding_strategy)
+        else FSDPStrategy(auto_wrap_policy=auto_wrap_policy, sharding_strategy=sharding_strategy)
     )
 
     fabric = L.Fabric(devices=devices, strategy=strategy, precision="bf16-true")
