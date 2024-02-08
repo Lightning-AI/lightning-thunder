@@ -31,6 +31,8 @@ from thunder.common import (
     preprocess,
     _string_to_cache_option,
     transform_for_execution,
+    SHARP_EDGES_OPTIONS,
+    _str_to_sharp_edges_option,
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -168,38 +170,6 @@ def _str_to_lang_ctx(s: str, /) -> Any:
 
 
 #
-# Sharp edges modes
-#
-# A "sharp edge" is part of the original program which may not be captured
-#   in the generated thunder program.
-# ALLOW means that sharp edges are unchecked. (Sharp edges are allowed.)
-# WARN means that when a sharp edge is identified a warning is thrown.
-# ERROR means that when a sharp edge is identified an error is thrown.
-
-
-class SHARP_EDGES_OPTIONS(Enum):
-    ALLOW = auto()
-    WARN = auto()
-    ERROR = auto()
-
-
-_str_to_sharp_edges_options_map: dict[str, SHARP_EDGES_OPTIONS] = {
-    "allow": SHARP_EDGES_OPTIONS.ALLOW,
-    "warn": SHARP_EDGES_OPTIONS.WARN,
-    "error": SHARP_EDGES_OPTIONS.ERROR,
-}
-
-
-def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
-    sharp_edges_option: None | SHARP_EDGES_OPTIONS = _str_to_sharp_edges_options_map.get(s.lower(), None)
-
-    if sharp_edges_option is None:
-        raise ValueError(f"Unknown sharp edges option {s}. Allowed modes are 'allow', 'warn', and 'error'.")
-
-    return sharp_edges_option
-
-
-#
 # Interpretation modes
 #
 # These modes control how the function will be interpreted
@@ -309,7 +279,14 @@ def _eager_unpacking_interpreter(interpreter: Callable, fn: Callable, args, kwar
 
 
 # Translates the Python function a thunder program using the Python interpreter
-def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
+def _python_interpreter(
+    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
+) -> tuple[TraceCtx, TraceCtx]:
+    if sharp_edges is not SHARP_EDGES_OPTIONS.ALLOW:
+        raise ValueError(
+            f"Detecting sharp edges is not supported when using the Python interpreter. To detect sharp edges use another interpretation option."
+        )
+
     def _interpreter(fn_):
         return fn_
 
@@ -317,8 +294,11 @@ def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceC
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _translate_functions_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
-    return _eager_unpacking_interpreter(minimal_thunder_jit, fn, args, kwargs)
+def _translate_functions_interpreter(
+    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
+) -> tuple[TraceCtx, TraceCtx]:
+    pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges)
+    return _eager_unpacking_interpreter(pjit, fn, args, kwargs)
 
 
 # This function will replace compile() (below) before gtc
@@ -369,10 +349,6 @@ def jit(
         sharp_edges = _str_to_sharp_edges_option(sharp_edges)
     if not isinstance(sharp_edges, SHARP_EDGES_OPTIONS):
         raise ValueError(f"Unknown sharp edges option {sharp_edges}. Allowed options are 'allow', 'warn', and 'error'.")
-
-    # TODO GTC Implememt these options
-    if sharp_edges in (SHARP_EDGES_OPTIONS.WARN, SHARP_EDGES_OPTIONS.ERROR):
-        raise NotImplementedError(f"Only the 'allow' option of sharp edges is currently implemented.")
 
     # Resolves interpretation option
     if interpretation is None:
@@ -456,7 +432,8 @@ def jit(
                 # TODO GTC Call the interpreter here (which may be Python)
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                prologue_trc, computation_trc = interpreter(fn, args, kwargs)
+                # TODO GTC Review if sharp_edges should come from a CompileOptions object
+                prologue_trc, computation_trc = interpreter(fn, args, kwargs, sharp_edges=sharp_edges)
 
             cs.last_trace_tracing_stop = time.time_ns()
 

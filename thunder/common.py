@@ -36,8 +36,41 @@ import torch as torch
 import numpy as np
 
 #
-# Datastructures for caching
+# Compilation options
 #
+
+# Sharp edges options
+# A "sharp edge" is part of the original program which may not be captured
+#   in the generated thunder program.
+# ALLOW means that sharp edges are unchecked. (Sharp edges are allowed.)
+# WARN means that when a sharp edge is identified a warning is thrown.
+# ERROR means that when a sharp edge is identified an error is thrown.
+
+
+class SHARP_EDGES_OPTIONS(Enum):
+    ALLOW = auto()
+    WARN = auto()
+    ERROR = auto()
+
+
+_str_to_sharp_edges_options_map: dict[str, SHARP_EDGES_OPTIONS] = {
+    "allow": SHARP_EDGES_OPTIONS.ALLOW,
+    "warn": SHARP_EDGES_OPTIONS.WARN,
+    "error": SHARP_EDGES_OPTIONS.ERROR,
+}
+
+
+def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
+    sharp_edges_option: None | SHARP_EDGES_OPTIONS = _str_to_sharp_edges_options_map.get(s.lower(), None)
+
+    if sharp_edges_option is None:
+        raise ValueError(f"Unknown sharp edges option {s}. Allowed modes are 'allow', 'warn', and 'error'.")
+
+    return sharp_edges_option
+
+
+# Cache options
+# TODO GTC Document the options (like above)
 
 
 class CACHE_OPTIONS(Enum):

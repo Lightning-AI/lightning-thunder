@@ -72,7 +72,7 @@ from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution, CACHE_OPTIONS
+from thunder.common import transform_for_execution, CACHE_OPTIONS, SHARP_EDGES_OPTIONS
 from thunder.core.symbol import Symbol, BoundSymbol
 
 from thunder.extend import Executor
@@ -151,8 +151,46 @@ def is_uncopyable(val: Any, /) -> bool:
 #
 # This extension remaps operations to thunder operations and prevents the interpreter from tracing
 #   into symbols
+# This extension supports detecting and warning or erroring on "sharp edges" -- behavior in the
+#   original Python program that cannot be translated to the thunder program
+
 # TODO GTC Add all symbols + methods
 # TODO GTC Reuse minimal objects in other executors
+# TODO GTC Detect additional sharp edges
+#   - inputs that are not function arguments (or their derivatives)
+#   - modifying an input
+#   - calling a function with a side effect (e.g. randn, print)
+# TODO GTC What kind of error should a sharp edge raise?
+# TODO GTC Improve sharp edges warnings and errors to show the source line
+#   https://github.com/Lightning-AI/lightning-thunder/issues/2099
+
+
+# Context for the minimal interpreter
+class MinimalCtx:
+    def __init__(self, *, sharp_edges: SHARP_EDGES_OPTIONS):
+        self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
+
+    @property
+    def sharp_edges(self) -> SHARP_EDGES_OPTIONS:
+        return self._sharp_edges
+
+
+_minimal_ctx = contextvars.ContextVar("minimalctx")
+
+
+def set_minimal_ctx(ctx: MinimalCtx) -> Any:
+    return _minimal_ctx.set(ctx)
+
+
+def get_minimal_ctx() -> MinimalCtx:
+    return _minimal_ctx.get()
+
+
+def reset_minimal_ctx(token) -> None:
+    _minimal_ctx.reset(token)
+
+
+# Minimal lookasides
 
 _minimal_lookaside_map = {}
 _minimal_lookaside_map.update(_torch_to_thunder_function_map)
@@ -191,11 +229,46 @@ def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
     return lookaside
 
 
+# Minimal callbacks (necessary for sharp edges)
+
+
+def _sharp_edge(desc: str, /) -> None:
+    sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
+
+    s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING."
+
+    if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
+        raise AssertionError(s)
+
+    if sharp_edges is SHARP_EDGES_OPTIONS.WARN:
+        warnings.warn(s)
+
+
+def _minimal_global_callback(globals_dict: dict, name: str) -> Any:
+    _sharp_edge("Loading a global")
+
+    return globals_dict[name]
+
+
+_minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {
+    JIT_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
+}
+_minimal_callbacks = default_callbacks | _minimal_callbacks
+
+
 # TODO GTC Add debug_log
-def minimal_thunder_jit(
-    fn: Callable,
-) -> Callable:
-    return jit(fn, fn_lookaside=_minimal_lookaside)
+def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
+    ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
+    jfn = jit(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
+
+    def fn_(*args, **kwargs):
+        try:
+            tok = set_minimal_ctx(ctx)
+            return jfn(*args, **kwargs)
+        finally:
+            reset_minimal_ctx(tok)
+
+    return fn_
 
 
 #
@@ -252,17 +325,14 @@ class LitCtx:
 _litctx = contextvars.ContextVar("litctx")
 
 
-# Sets the phantom ctx
 def set_litctx(ctx: LitCtx) -> Any:
     return _litctx.set(ctx)
 
 
-# Returns the current phantom ctx
 def get_litctx() -> LitCtx:
     return _litctx.get()
 
 
-# Resets the phantom ctx
 def reset_litctx(token) -> None:
     _litctx.reset(token)
 

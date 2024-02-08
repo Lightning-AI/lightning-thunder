@@ -11,6 +11,7 @@ import torch
 from torch.testing import assert_close
 
 import thunder
+from thunder.core.jit import JITError
 from thunder.core.jit_ext import minimal_thunder_jit
 
 
@@ -50,3 +51,18 @@ def test_torch_addition(jit):
     expected = foo(a, b)
 
     assert_close(actual, expected)
+
+
+_test_load_global_sharp_edge_global = 3
+
+
+def test_load_global_sharp_edge():
+    def foo(a):
+        return torch.add(a, _test_load_global_sharp_edge_global)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    a = torch.randn((2, 2))
+
+    with pytest.raises(JITError):
+        jfoo(a)
