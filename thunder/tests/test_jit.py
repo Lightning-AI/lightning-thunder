@@ -53,6 +53,22 @@ def test_torch_addition(jit):
     assert_close(actual, expected)
 
 
+def test_sharp_edges_pass():
+    def foo(a, b):
+        return torch.add(a, b)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
 _test_load_global_sharp_edge_global = 3
 
 

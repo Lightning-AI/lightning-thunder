@@ -73,7 +73,7 @@ from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
 from thunder.common import transform_for_execution, CACHE_OPTIONS, SHARP_EDGES_OPTIONS
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
@@ -193,29 +193,15 @@ def reset_minimal_ctx(token) -> None:
 # Minimal lookasides
 
 _minimal_lookaside_map = {}
-_minimal_lookaside_map.update(_torch_to_thunder_function_map)
 
-# Adds proxy methods
-# NOTE These methods map to themselves, which prevents the interpreter from looking into them
-#   This is OK because these methods are written in a tracing-safe manner, and trying to
-#   interpreter their internals is unnecessary and would just add complexity at this time
-_minimal_lookaside_map.update(
-    {
-        NumberProxy.__add__: NumberProxy.__add__,
-        NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
-        NumberProxy.__neg__: NumberProxy.__neg__,
-        NumberProxy.__sub__: NumberProxy.__sub__,
-        TensorProxy.__add__: TensorProxy.__add__,
-        TensorProxy.__mul__: TensorProxy.__mul__,
-        TensorProxy.__sub__: TensorProxy.__sub__,
-    }
-)
+# Translates actual torch functions to their corresponding thunder functions
+_minimal_lookaside_map.update(_torch_to_thunder_function_map)
 
 
 def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
-    if isinstance(fn, Symbol) or fn in _clang_fn_set:
+    if is_traceable(fn):
         # Performs symbol lookasides
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
@@ -245,9 +231,19 @@ def _sharp_edge(desc: str, /) -> None:
 
 
 def _minimal_global_callback(globals_dict: dict, name: str) -> Any:
-    _sharp_edge("Loading a global")
+    value: Any = globals_dict[name]
 
-    return globals_dict[name]
+    # Allows loading global modules.
+    #   Some global loads, like these, are so essential that they have to be part of any Python program
+    #   translation scheme.
+    # TODO GTC Review this check. There may be other types we want to allow. This essentially assumes that
+    #   the module is captured at interpretation time, or that global module names will not change for
+    #   the lifetime of the program.
+    #   We could consider adding a check that the name refers to the same module as it did previously.
+    if not isinstance(value, ModuleType):
+        _sharp_edge("Loading a global that is not a module")
+
+    return value
 
 
 _minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {

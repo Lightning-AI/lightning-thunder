@@ -31,6 +31,19 @@ from thunder.core.trace import (
     wrap_in_trace_variable,
 )
 
+#
+# Support for querying "traceable" functions
+#   A "traceable" function is one that doesn't require interpretation for thunder to translate
+#   to a thunder program. Put another way, these functions have no "sharp edges." Every Symbol
+#   must be a traceable function.
+# TODO GTC Consider if we need to provide a mechanism to register operations as traceable
+#   (like clang operations and methods on proxies)
+
+
+def is_traceable(fn: Callable) -> bool:
+    return isinstance(fn, Symbol)
+
+
 if TYPE_CHECKING:
     from thunder.core.prims import OpTags
 
