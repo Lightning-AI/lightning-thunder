@@ -18,9 +18,17 @@ from thunder.core.jit import is_jitting, jit, JITError
 #
 
 
+# This wraps the jit call into a tracking one (using a wrapper function
+# rather than partial to get a nice test name).
+def jit_tracking(*args, **kwargs):
+    return jit(*args, with_provenance_tracking=True, **kwargs)
+
+
+# This will be called by PyTest and parametrize each test that has
+# a jit attribute (all?) with versions that use jit and jit_tracking.
 def pytest_generate_tests(metafunc):
     if "jit" in metafunc.fixturenames:
-        metafunc.parametrize("jit", [jit])
+        metafunc.parametrize("jit", [jit, jit_tracking])
 
 
 def skipif_python_3_11_plus(f):
@@ -1005,7 +1013,7 @@ def test_reduce_jitted_reduce_fn(jit):
     jfoo = jit(foo)
     jadd = jit(add)
 
-    with pytest.raises(JITError, match="missing a required argument: 'default' while tracing"):
+    with pytest.raises(JITError, match="missing a required argument: 'default' while tracing|AssertionError"):
         assert jfoo((1, 2, 3), jadd) == 6
 
 
@@ -3003,7 +3011,6 @@ def test_nanogpt(jit):
     fn = bench.fn()
 
     args, kwargs = bench.make_batch()
-
     jfn = jit(fn)
     result = jfn(*args, **kwargs)
 

@@ -13,6 +13,8 @@ import inspect
 import re
 import sys
 import traceback
+import weakref
+import torch
 from typing import Any, Literal, NamedTuple
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
 from io import StringIO
@@ -83,16 +85,151 @@ __all__ = [
 #
 
 
+class WRAPPED_VALUE_TYPE(enum.Enum):
+    INPUT = enum.auto()
+    INTERMEDIATE = enum.auto()
+    CONSTANT = enum.auto()
+    FREEVAR = enum.auto()
+
+
+# WrappedValues
+
+# In provenance tracking mode (set in the compile ctx), the JIT wraps the
+# values it handles in this wrapper.
+# For now, lookasides will get unwrapped inputs by default and their
+# result will be wrapped as originating from the lookaside.
+# If a lookaside has an attribute .__jit_needs_wrap = False, the lookaside
+# will see the wrapped values and is expected to wrap its returns.
+# (The goal is to eventually make this the default.)
+
+# The core difference to proxies is that the code running in the JIT will
+# *not* see the wrapper but will only ever see the original values
+# while proxies are intended to be run inside the JIT.
+# Thus we expect wrappers and proxies to complement each other and not
+# one to replace the other.
+
+# The .value member should always be a plain Python object without wrappers
+# inside, those need to be tracked in item_wrappers and attr_wrappers
+
+# The introduction strategy for WrappedValues is a bit incremental in
+# that we have the following regions where everything is wrapped
+# - all things in localsplus are wrapped
+# - all things on the stack are wrapped
+# - all things in _jit_unwrapped are wrapped
+# In contrast for opcode handlers, wrapping is "opt-in" (by popping
+# values with .pop(no_unwrap=True) and wrapping what they push on the stack.
+# For lookasides, it currently is also opt-in, see above.
+
+
 class WrappedValue:
-    def __init__(self, value, /):
+    def __init__(self, value, /, typ: WRAPPED_VALUE_TYPE, provenance: ProvenanceRecord):
+        assert isinstance(provenance, ProvenanceRecord)
+
+        ctx: JitCompileCtx = get_jitcompilectx()
+        cb: None | Callable = ctx.callback(JIT_CALLBACKS.WRAP_CALLBACK)
+
+        if cb is not None:
+            value = cb(value, typ)
+
         self.value = value
+        self.typ = typ
+
+        # TODO: updating this
+        if isinstance(value, Sequence):
+            self.item_wrappers = [None for _ in value]
+        else:
+            self.item_wrappers: dict | list = {}  # TODO: wrappers for things via getitem/setiem
+            self.key_wrappers = {}
+
+        self.attr_wrappers = {}  # TODO: wrappers for things via getattr/setattr
+
+        self.provenance = provenance
+        if self.provenance.inst == "CONSTANT":
+            self.provenance.value = value
+
+        if not isinstance(value, (torch.Tensor, int, float, str)):
+            ctx._known_wrappers[id(value)] = (weakref.ref(self),)
 
     def unwrap(self):
         return self.value
 
 
-def wrap(value: Any, /) -> WrappedValue:
-    return WrappedValue(value)
+# Note: Use these with care!
+#       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
+#       these functions are intended to do the appropriate wrapping for them.
+def wrap_args_from_list(l):  # returns a new list!
+    res = [_jit_no_unwrap(lambda l, i: l[i], l, wrap_const(i)) for i in range(len(unwrap(l)))]
+    return res
+
+
+def wrap_kwargs_from_dict(d):  # returns a new dict
+    return {k: _jit_no_unwrap(lambda d, k: d[k], d, wrap_const(k)) for k in unwrap(d)}
+
+
+def wrap_args(tup):
+    assert isinstance(tup, tuple)  # allow other sequences?
+    assert all(isinstance(v, WrappedValue) for v in tup)
+
+    pr = ProvenanceRecord("BUILD_TUPLE", inputs=[v.provenance for v in tup][::-1])  # other inst?
+    out = wrap(tuple(v.value for v in tup), typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+    for i, v in enumerate(tup):
+        out.item_wrappers[i] = v
+    return out
+
+
+def wrap_kwargs(d):
+    assert isinstance(d, dict)
+    # todo: relax k condition?
+    assert all(isinstance(k, str) and isinstance(v, WrappedValue) for k, v in d.items())
+
+    inputs = []
+    uout = {}
+    wrap_key_dict = {}
+    wrap_value_dict = {}
+    for k, v in d.items():
+        wk = wrap_const(k)
+        inputs.append(wk.provenance)
+        inputs.append(v.provenance)
+        uout[wk.value] = v.value
+        wrap_value_dict[wk.value] = v
+        wrap_key_dict[wk.value] = wk
+
+    pr = ProvenanceRecord("BUILD_DICT", inputs=inputs)
+    out = wrap(uout, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+    out.item_wrappers = wrap_value_dict
+    out.key_wrappers = wrap_key_dict
+    return out
+
+
+def wrap(value: Any, /, typ: WRAPPED_VALUE_TYPE, *, provenance: ProvenanceRecord) -> WrappedValue:
+    if isinstance(value, WrappedValue):
+        return value
+    ctx: JitCompileCtx = get_jitcompilectx()
+
+    if ctx._with_provenance_tracking:
+        cached = ctx._known_wrappers.get(id(value))
+        if cached is not None:
+            potential_wrap = cached[0]()
+            if potential_wrap is not None:
+                return potential_wrap
+            else:
+                del ctx._known_wrappers[id(value)]
+        return WrappedValue(value, typ, provenance)
+    return value
+
+
+def wrap_const(value: Any, /, *, provenance: ProvenanceRecord | None = None) -> WrappedValue:
+    if provenance is None:
+        provenance = ProvenanceRecord(inst="CONSTANT", inputs=[], output_idx=0, output_key=None)
+    return wrap(value, typ=WRAPPED_VALUE_TYPE.CONSTANT, provenance=provenance)
+
+
+def wrap_consts(*values):
+    return tuple(wrap_const(v) for v in values)
+
+
+def wrapped_isinstance(v, c):
+    return isinstance(unwrap(v), c)
 
 
 def unwrap(value: Any, /) -> Any:
@@ -118,11 +255,18 @@ member_descriptor = type(inspect.getattr_static(ModuleType, "__dict__"))
 # See the comment for jit() for how these functions work
 class JitCompileCtx:
     def __init__(
-        self, *, opcode_interpreter: Callable, fn_lookaside: Callable, callbacks: dict[JIT_CALLBACKS, Callable]
+        self,
+        *,
+        opcode_interpreter: Callable,
+        fn_lookaside: Callable,
+        callbacks: dict[JIT_CALLBACKS, Callable],
+        with_provenance_tracking: bool = False,
     ):
         self._opcode_interpreter: Callable = opcode_interpreter
         self._fn_lookaside: Callable = fn_lookaside
         self._callbacks: dict[JIT_CALLBACKS, Callable] = callbacks
+        self._with_provenance_tracking = with_provenance_tracking
+        self._known_wrappers = {}
 
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
@@ -487,9 +631,89 @@ def get_python_tb(tb: list | TracebackType | None) -> list:
     return res
 
 
+@dataclasses.dataclass
+class ProvenanceRecord:
+    inst: dis.Instruction  # or save opname, argval?
+    inputs: list  # should we record this relative to the original stack top?
+    output_idx: int = 0
+    output_key: int | slice | None = None
+    value: Any | None = None
+
+
 class InterpreterStack:
     def __init__(self):
         self._stack = []
+        self.provenance_inst = None
+        self.provenance_inputs = None
+
+    @contextlib.contextmanager
+    def set_cur_instruction(self, inst: dis.Instruction):
+        assert self.provenance_inst is None and self.provenance_inputs is None
+        self.provenance_inst = inst
+        self.provenance_inputs = []
+        self.output_idx = 0
+        try:
+            yield
+        finally:
+            self.provenance_inst = None
+            self.provenance_inputs = None
+
+    def get_provenance_record(self, value, key: int | slice | None = None):
+        if not isinstance(key, (int, NoneType)):
+            raise NotImplementedError("sorry, todo")
+        # key=None means append, other key means setitem
+        pr = ProvenanceRecord(
+            inst=self.provenance_inst,
+            inputs=self.provenance_inputs,
+            output_idx=self.output_idx,
+            output_key=key,
+        )
+        value = wrap(value, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+        self.output_idx += 1
+        return value
+
+    def unpack_provenance_record(self, wrapped_value, key: int | slice | None = None):
+        ctx: JitCompileCtx = get_jitcompilectx()
+        if not ctx._with_provenance_tracking:
+            return wrapped_value
+        # key=None is pop
+        if isinstance(key, slice):
+            l = len(self._stack)
+            if key.start is not None:
+                start = key.start
+            else:
+                start = -l
+            assert start < 0
+            if key.step is not None:
+                step = key.step
+            else:
+                step = 1
+            assert step > 0
+            if key.stop is not None:
+                stop = key.stop
+                assert stop < 0
+            else:
+                stop = 0
+            idxes = list(range(start, stop, step))
+            assert len(idxes) == len(wrapped_value)
+            return [self.unpack_provenance_record(wv_i, key=i) for i, wv_i in zip(idxes, wrapped_value)]
+        if not isinstance(key, (int, NoneType)):
+            raise NotImplementedError("sorry, todo")
+
+        assert key is None or key < 0
+        self.provenance_inputs.append(wrapped_value.provenance)
+        return unwrap(wrapped_value)
+
+    def delete_provenance_record(self, wrapped_value, key: int | slice):
+        # TODO
+        # if isinstance(key, slice):
+        #    l = len(self._stack)
+        #    print("#############", key)
+        #
+        # if not isinstance(key, int):
+        #    raise NotImplementedError(f"sorry, todo {key}")
+        # unallocate
+        pass
 
     # NOTE push is an alias for append
     def push(self, val: Any, /) -> None:
@@ -497,25 +721,30 @@ class InterpreterStack:
 
     # NOTE Append is a helper for dunder setitem
     def append(self, val: Any, /) -> None:
-        self._stack.append(val)
+        self._stack.append(self.get_provenance_record(val))
 
     def extend(self, vals: Iterable[Any], /) -> None:
         for v in vals:
             self.append(v)
 
-    def pop(self) -> Any:
-        return self._stack.pop()
+    def pop(self, *, no_unwrap=False) -> Any:
+        wrapped_value = self._stack.pop()
+        if no_unwrap:
+            return wrapped_value
+        res = self.unpack_provenance_record(wrapped_value)
+        return res
 
     def __len__(self) -> int:
         return len(self._stack)
 
     def __getitem__(self, key: int | slice, /) -> Any:
-        return self._stack[key]
+        return self.unpack_provenance_record(self._stack[key], key=key)
 
     def __setitem__(self, key: int, val: Any, /) -> None:
-        self._stack[key] = val
+        self._stack[key] = self.get_provenance_record(val, key=key)
 
     def __delitem__(self, key: int | slice, /) -> None:
+        self.delete_provenance_record(self._stack[key], key)
         del self._stack[key]
 
 
@@ -605,7 +834,9 @@ class JITFrame:
 
         rel_lineno = lineno - self.code.co_firstlineno + 1
 
-        # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right
+        # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
+        # which the following does by inserting so many empty lines that relative to the start line
+        # the exception is raised at the right line
         code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", self.code.co_filename, "exec")
 
         replacements = dict(
@@ -637,7 +868,8 @@ def default_opcode_interpreter(inst: dis.Instruction, /, **interpreter_state) ->
     if handler is None:
         return JIT_SIGNALS.UNHANDLED_OPCODE
 
-    return handler(inst, **interpreter_state)
+    with interpreter_state["stack"].set_cur_instruction(inst):
+        return handler(inst, **interpreter_state)
 
 
 class register_opcode_handler:
@@ -662,11 +894,10 @@ class register_opcode_handler:
 # Lookaside logic
 #
 
+
 #
 # Jit lookasides
 #
-
-
 def is_jitting():
     """Allow code to behave differently under `@jit`. (For testing.)"""
 
@@ -713,7 +944,8 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
         # NOTE By default, objects evaluate to True
         return True
 
-    return x if x is True or x is False else _jit(impl)
+    ux = unwrap(x)  # make the shortcut also work for WrappedValue True or False
+    return x if ux is True or ux is False else _jit(impl)
 
 
 def eval_lookaside(
@@ -779,8 +1011,13 @@ def _object_getattribute_lookaside(obj: Any, name: str):
 
     https://docs.python.org/3/howto/descriptor.html#invocation-from-an-instance
     """
-    objtype = type(obj)
+    # Some of the handling below does not deal with WrappedValues,
+    # so we have an unwrapped copy.
+    uobj = unwrap(obj)
+    objtype = type(uobj)
     null = cls_var = descr_get = object()
+
+    name = unwrap(name)
 
     if not isinstance(name, str):
         return do_raise(TypeError("getattr(): attribute name must be string"))
@@ -788,16 +1025,20 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     # TODO: classes and super have a slightly different resolution behavior
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
-    if isinstance(obj, (type, super)):
-        return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
+    if isinstance(uobj, (type, super)):
+        result = getattr(uobj, name, null)
+        if result is null:
+            return do_raise(AttributeError(name))
+        else:
+            return result
 
     # This is too coarse grained, but there is a lot of nuance in the dunder methods
     # for fundamental types, so for now we just bail out. Specifically:
     #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
-    if DUNDER_PATTERN.match(name) or isinstance(obj, (type, super)):
-        return do_raise(AttributeError(name)) if (result := getattr(obj, name, null)) is null else result
+    if DUNDER_PATTERN.match(name) or isinstance(uobj, (type, super)):
+        return do_raise(AttributeError(name)) if (result := getattr(uobj, name, null)) is null else result
 
     def lookup_descriptor_field(field_name):
         # Bypass the C portions of `property` so we don't break the `_jit` chain
@@ -833,6 +1074,8 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
     #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
     if (obj_dict := _jit(getattr, obj, "__dict__", null)) is not null:
+        # TODO: error return from _jit?
+        obj_dict = unwrap(obj_dict)
         assert isinstance(obj_dict, dict), obj_dict  # This should be enforced by `PyObject`
 
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
@@ -855,16 +1098,25 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     """Emulate slot_tp_getattr_hook()."""
 
     result = _object_getattribute_lookaside(obj, name)
+
     ctx: JitRuntimeCtx = get_jitruntimectx()
+    compilectx: JitCompileCtx = get_jitcompilectx()
+
+    if result is not JIT_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
+        if compilectx._with_provenance_tracking:
+            pr = ProvenanceRecord("LOAD_ATTR", inputs=[obj.provenance, name.provenance])
+            return wrap(result, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+        else:
+            return result
 
     # `__getattr__` is only triggered if `__getattribute__` fails.
-    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError):
-        # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
-        null = object()
-        obj_getattr = getattr(obj, "__getattr__", null)
-        if obj_getattr is not null:
-            assert callable(obj_getattr)
-            result = _jit(obj_getattr, name)
+    # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
+    null = object()
+    obj_getattr = getattr(unwrap(obj), "__getattr__", null)
+    if obj_getattr is not null:
+        ctx.curexc = None
+        assert callable(obj_getattr)
+        result = _jit_no_unwrap(obj_getattr, name)
 
     # And finally if all else fails apply the default. (If provided.)
     if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
@@ -873,6 +1125,9 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
         return default
 
     return result
+
+
+_getattr_lookaside.__jit_needs_wrap = False
 
 
 # TODO: Implement setattr() and delattr() lookasides.
@@ -1047,11 +1302,11 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
                 # we cannot break because it might be put in a cell in Python 3.10
             if frame.get_localsplus_name(i) == "__class__":
                 class_idx = i
-        if class_idx is None or not isinstance(frame.localsplus[class_idx], CellType):
+        if class_idx is None or not wrapped_isinstance(frame.localsplus[class_idx], CellType):
             return do_raise(RuntimeError("super(): __class__ cell not found"))
         assert self_idx is not None
-        cls = frame.localsplus[class_idx].cell_contents
-        obj = frame.localsplus[self_idx]
+        cls = unwrap(frame.localsplus[class_idx]).cell_contents
+        obj = unwrap(frame.localsplus[self_idx])
         if isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
             obj = obj.cell_contents
 
@@ -1060,6 +1315,18 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
         return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
 
     return super(cls, obj)  # type: ignore
+
+
+def _type_lookaside(obj):
+    return type(unwrap(obj))
+
+
+def _isinstance_lookaside(obj, cls):
+    obj = unwrap(obj)
+    cls = unwrap(cls)
+    if isinstance(cls, tuple):
+        cls = tuple(unwrap(c) for c in cls)
+    return isinstance(obj, cls)
 
 
 def _functools_reduce_lookaside(
@@ -1100,6 +1367,8 @@ _default_lookaside_map: dict[Callable, Callable] = {
     locals: _locals_lookaside,
     next: _next_lookaside,
     super: _super_lookaside,
+    type.__call__: _type_lookaside,
+    isinstance: _isinstance_lookaside,
     functools.reduce: _functools_reduce_lookaside,
 }
 
@@ -1142,6 +1411,8 @@ class JIT_CALLBACKS(enum.Enum):
     #   The returned value is used in place of the original value
     LOCAL_CALLBACK = enum.auto()
 
+    WRAP_CALLBACK = enum.auto()
+
 
 default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
@@ -1158,7 +1429,7 @@ def const_callback(value: Any, /) -> Any:
 
 def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) -> CellType:
     assert isinstance(name, str)
-    assert isinstance(cell, CellType)
+    assert wrapped_isinstance(cell, CellType)
 
     ctx: JitCompileCtx = get_jitcompilectx()
     cb: None | Callable = ctx.callback(JIT_CALLBACKS.FREEVAR_CALLBACK)
@@ -1166,8 +1437,9 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     if cb is None:
         return cell
 
-    contents: Any = cb(name, cell.cell_contents, fn=fn, idx=idx)
-    return CellType(contents)
+    # nb. this callback will get a (optionally wrapped) cell
+    cell: Any = cb(name, cell, fn=fn, idx=idx)
+    return cell
 
 
 def global_callback(globals_dict: dict, name: str) -> Any:
@@ -1196,8 +1468,9 @@ def local_callback(name: str, value: Any, /) -> Any:
 
 
 def check_and_append(stack, val):
-    if val is JIT_SIGNALS.EXCEPTION_RAISED:
-        return val
+    uval = unwrap(val)
+    if uval is JIT_SIGNALS.EXCEPTION_RAISED:
+        return uval
     stack.append(val)
 
 
@@ -1342,6 +1615,8 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
     _, left_method, right_method = ops[idx % BINARY_OP.IADD.value]
     _, inplace_method = ops[idx % BINARY_OP.IADD.value + BINARY_OP.IADD.value]
 
+    left_method, right_method, inplace_method = wrap_consts(left_method, right_method, inplace_method)
+
     # If the operator is an inplace operator, try to call the inplace method
     if idx >= BINARY_OP.IADD.value:
 
@@ -1379,8 +1654,8 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
 
 
 def _binary_op_helper(stack: InterpreterStack, op: BINARY_OP):
-    b = stack.pop()
-    a = stack.pop()
+    b = stack.pop(no_unwrap=True)
+    a = stack.pop(no_unwrap=True)
     return _binary_op(stack, op, a, b)
 
 
@@ -1650,9 +1925,9 @@ def _kw_names_handler(
 def _call_handler(inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
-    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
-    func_or_self = stack.pop()
-    func_or_null = stack.pop()
+    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop(no_unwrap=True) for _ in range(argc))))
+    func_or_self = stack.pop(no_unwrap=True)
+    func_or_null = stack.pop(no_unwrap=True)
     if frame.call_shape_kwnames is not None:
         kwnames = frame.call_shape_kwnames
         assert len(args) >= len(kwnames)
@@ -1661,13 +1936,18 @@ def _call_handler(inst: dis.Instruction, /, stack: InterpreterStack, frame: JITF
         frame.call_shape_kwnames = None
     else:
         kwargs = {}
-    if func_or_null is not Py_NULL():
+    if unwrap(func_or_null) is not Py_NULL():
         func = func_or_null
         args = (func_or_self, *args)
     else:
         func = func_or_self
 
-    return check_and_append(stack, _jit(func, *args, **kwargs))
+    res = _jit_no_unwrap(func, *args, **kwargs)
+    ctx: JitCompileCtx = get_jitcompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(res, (WrappedValue, JIT_SIGNALS)), f"{res} unexpected"
+
+    return check_and_append(stack, res)
 
 
 # NOTE This only accepts positional args
@@ -1676,27 +1956,31 @@ def _call_handler(inst: dis.Instruction, /, stack: InterpreterStack, frame: JITF
 def _call_function_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
-    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(argc))))
-    func: Callable = stack.pop()
-    return check_and_append(stack, _jit(func, *args))
+    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop(no_unwrap=True) for _ in range(argc))))
+    func: Callable = stack.pop(no_unwrap=True)
+    return check_and_append(stack, _jit_no_unwrap(func, *args))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
 @register_opcode_handler("CALL_FUNCTION_EX")
 def _call_function_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
-    kwargs = stack.pop() if inst.arg & 0x01 else {}
-    args = stack.pop()
-    func = stack.pop()
-    assert isinstance(kwargs, Mapping)
-    assert isinstance(args, Iterable)
-    assert isinstance(func, Callable)
+    kwargs = stack.pop(no_unwrap=True) if inst.arg & 0x01 else {}
+    args = stack.pop(no_unwrap=True)
+    func = stack.pop(no_unwrap=True)
+    assert wrapped_isinstance(kwargs, Mapping)
+    assert wrapped_isinstance(args, Iterable)
+    assert wrapped_isinstance(func, Callable)
 
     if (3, 11) <= sys.version_info:
         null = stack.pop()
         assert isinstance(null, Py_NULL)
 
-    return check_and_append(stack, _jit(func, *args, **kwargs))
+    ctx: JitCompileCtx = get_jitcompilectx()
+    if ctx._with_provenance_tracking:
+        args = wrap_args_from_list(args)
+        kwargs = wrap_kwargs_from_dict(kwargs)
+    return check_and_append(stack, _jit_no_unwrap(func, *args, **kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
@@ -1722,16 +2006,20 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: InterpreterStack,
 @register_opcode_handler("CALL_METHOD", max_ver=(3, 10))
 def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
-    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(inst.arg))))
-    second_lm = stack.pop()
-    first_lm = stack.pop()
-    if first_lm is not Py_NULL():
+    args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop(no_unwrap=True) for _ in range(inst.arg))))
+    second_lm = stack.pop(no_unwrap=True)
+    first_lm = stack.pop(no_unwrap=True)
+    if unwrap(first_lm) is not Py_NULL():
         meth = first_lm
         args = (second_lm, *args)
     else:
         meth = second_lm
 
-    return check_and_append(stack, _jit(meth, *args))
+    res = _jit_no_unwrap(meth, *args)
+    ctx: JitCompileCtx = get_jitcompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(res, (WrappedValue, JIT_SIGNALS)), f"{res} unexpected"
+    return check_and_append(stack, res)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CONTAINS_OP
@@ -1878,7 +2166,13 @@ def _delete_deref_handler(
         i += co.co_nlocals
 
     assert i >= 0 and i < len(frame.localsplus)
-    del frame.localsplus[i].cell_contents
+
+    def impl(cell):
+        del cell.cell_contents
+
+    res = _jit_no_unwrap(impl, frame.localsplus[i])
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
 
 
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
@@ -2062,8 +2356,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 
     case: int = flags & FVC_MASK
 
-    def impl():
-        nonlocal value
+    def impl(value, fmt_spec):
         # NOTE `match` was only introduced in Python 3.10, but we support Python 3.9
         if case == FVC_NONE:
             pass
@@ -2078,7 +2371,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
         return formatted
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _jit(impl, value, fmt_spec))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FOR_ITER
@@ -2469,10 +2762,10 @@ def _load_assertion_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _load_attr_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
 
-    a = stack.pop()
-    name: str = co.co_names[inst.arg]
+    a = stack.pop(no_unwrap=True)
+    name: str = wrap_const(co.co_names[inst.arg])
 
-    return check_and_append(stack, _jit(getattr, a, name))
+    return check_and_append(stack, _jit_no_unwrap(getattr, a, name))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
@@ -2513,6 +2806,7 @@ def _load_const_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: C
     assert type(inst.arg) is int
 
     constant = co.co_consts[inst.arg]
+    constant = wrap_const(constant)
     constant = const_callback(constant)
     stack.append(constant)
 
@@ -2534,11 +2828,15 @@ def _load_deref_handler(
 
     # it seems that the only way to check for an empty cell (short of
     # try... except) is comparison to another empty cell
-    if cell == CellType():
+    if unwrap(cell) == CellType():
         return do_raise(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
-    val = cell.cell_contents
+
+    val = _jit_no_unwrap(lambda c: c.cell_contents, cell)
+    ctx: JitCompileCtx = get_jitcompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(val, WrappedValue), f"{val}"
 
     stack.append(val)
 
@@ -2558,6 +2856,10 @@ def _load_fast_handler(
     # empty local variable slots are initialized to Py_NULL()
     if isinstance(val, Py_NULL):
         return do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(val, WrappedValue), f"unexpected value of type {type(val)}, {val}, {inst}"
 
     stack.append(val)
 
@@ -2602,19 +2904,20 @@ def _load_method_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
 ) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
-    name = co.co_names[inst.arg]
-    obj = stack.pop()
+    name = wrap_const(co.co_names[inst.arg])
+    obj = stack.pop(no_unwrap=True)
 
-    meth = _jit(getattr, obj, name)
+    meth = _jit_no_unwrap(getattr, obj, name)
     if meth is JIT_SIGNALS.EXCEPTION_RAISED:
         return meth
 
-    if inspect.ismethod(meth):
-        func_attr = _jit(getattr, meth, "__func__")
+    umeth = unwrap(meth)
+    if inspect.ismethod(umeth):
+        func_attr = _jit_no_unwrap(getattr, meth, wrap_const("__func__"))
         if func_attr is JIT_SIGNALS.EXCEPTION_RAISED:
             return func_attr
         # meth.__self__ is obj for regular methods but cls for class methods
-        self_attr = _jit(getattr, meth, "__self__")
+        self_attr = _jit_no_unwrap(getattr, meth, wrap_const("__self__"))
         if self_attr is JIT_SIGNALS.EXCEPTION_RAISED:
             return self_attr
 
@@ -2658,10 +2961,12 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> N
 
     if isinstance(val, Py_NULL):
         # empty local variable slots (Py_NULL()) produce an empty cell
-        c = CellType()
+        c = _jit_no_unwrap(CellType)
+        assert c is not JIT_SIGNALS.EXCEPTION_RAISED
     else:
         # wrap the current val into a cell
-        c = CellType(val)
+        c = _jit_no_unwrap(CellType, val)
+        assert c is not JIT_SIGNALS.EXCEPTION_RAISED
 
     frame.localsplus[i] = c
 
@@ -2685,8 +2990,11 @@ def _make_function_handler(
     if inst.arg & 0x08:
         # Python will have built at tuple of cell vars
         # (via STORE_DEREF, LOAD_CLOSURE)
-        closure = tuple(unwrap(stack.pop()))
-        assert all(isinstance(v, CellType) for v in closure)
+        closure = tuple(stack.pop())
+        for v in closure:
+            assert isinstance(v, CellType)
+            # TODO: investigate: the store_deref and load_closure does this to us, apparently
+            v.cell_contents = unwrap(v.cell_contents)
     else:
         closure = None
 
@@ -2885,7 +3193,7 @@ def _pop_block_handler(inst: dis.Instruction, /, try_stack: list[PyTryBlock], **
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-POP_EXCEPT
-# Note that Python <= 3.10 always has type/value/tracebackk on the stack as three items
+# Note that Python <= 3.10 always has type/value/traceback on the stack as three items
 #           Python >= 3.11 only has one (but has the split in other places)
 @register_opcode_handler("POP_EXCEPT", max_ver=(3, 10))
 def _pop_except_handler_3_10(
@@ -2988,13 +3296,13 @@ def _pop_jump_forward_if_false_handler(
 ) -> int | None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
 
-    tos = stack.pop()
+    tos = stack.pop(no_unwrap=True)
 
-    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
+    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
-    if not cnd:
+    if not unwrap(cnd):
         return inst_ptr + inst.arg + 1
 
     return None
@@ -3002,18 +3310,18 @@ def _pop_jump_forward_if_false_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_TRUE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11))
-def _pop_jump_forward_if_true_handler_3_10(
+def _pop_jump_forward_if_true_handler_3_11(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
 
-    tos = stack.pop()
+    tos = stack.pop(no_unwrap=True)
 
     cnd: bool | JIT_SIGNALS = _jit(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
-    if cnd:
+    if unwrap(cnd):
         return inst_ptr + inst.arg + 1
 
     return None
@@ -3051,22 +3359,14 @@ def _pop_jump_forward_if_none_handler(
 def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
 
-    tos = stack.pop()
+    tos = stack.pop(no_unwrap=True)
 
-    def impl():
-        return bool(tos)
-
-    # Acquires the condition, only calling bool() if tos requires conversion
-    # NOTE Unconditionally calling bool() would cause an infinite recursion with the bool lookaside
-    cnd: bool
-    if tos is False or tos is True:
-        cnd = tos
-    else:
-        res = _jit(impl)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
-            return res
-        assert res is False or res is True
-        cnd = res
+    res = _jit_no_unwrap(bool, tos)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+    ures = unwrap(res)
+    assert ures is False or ures is True
+    cnd: bool = ures
 
     if not cnd:
         return inst.arg
@@ -3125,7 +3425,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
 
     if isinstance(exc, type) and issubclass(exc, BaseException):
         typ = exc
-        value = _jit(exc)
+        value = unwrap(_jit(exc))  # TODO: handle elsewhere?
         if value is JIT_SIGNALS.EXCEPTION_RAISED:
             return value
         if not isinstance(value, BaseException):  # TODO: maybe drop: this is from CPython, but can it happen in Python?
@@ -3458,8 +3758,20 @@ def _store_deref_handler(
 
     assert i >= 0 and i < len(frame.localsplus)
 
-    tos = stack.pop()
-    frame.localsplus[i].cell_contents = tos
+    tos = stack.pop(no_unwrap=True)
+
+    # TODO: we would like to do this, but litjit currently blocks all of setattr
+
+    # def impl(cell, v):
+    #    cell.cell_contents = v
+    # res = _jit_no_unwrap(impl, frame.localsplus[i], tos)
+    # assert res is not JIT_SIGNALS.EXCEPTION_RAISED
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    if ctx._with_provenance_tracking:
+        frame.localsplus[i].value.cell_contents = tos
+    else:
+        frame.localsplus[i].cell_contents = tos
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_GLOBAL
@@ -3480,7 +3792,7 @@ def _store_global_handler(
 def _store_fast_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
 ) -> None:
-    tos = stack.pop()
+    tos = stack.pop(no_unwrap=True)
     assert type(inst.arg) is int
     var_num: int = inst.arg
 
@@ -3777,6 +4089,7 @@ def make_generator(
     compilectx: JitCompileCtx,
     runtimectx: JitRuntimeCtx,
 ):
+    # TODO: detect whether the send is from the JIT? if so, how? Currently the tracking will miss the connection between send and here. :(
     def thunder_jit_generator():
         send_value: Any = None  # the value gotten from from <generator>.send
         while True:  # or maybe have return?
@@ -3790,14 +4103,14 @@ def make_generator(
                     e = runtimectx.curexc
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
-                        return e.value
+                        return unwrap(e.value)
                     raise e
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == JIT_SIGNALS.YIELD_VALUE
-            send_value = yield res
+            send_value = yield unwrap(res)
 
-    return thunder_jit_generator()
+    return wrap_const(thunder_jit_generator())
 
 
 # factory to create an async generator for a given JIT frame, see comment for make_generator
@@ -3824,9 +4137,9 @@ def make_async_generator(
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == JIT_SIGNALS.YIELD_VALUE
-            send_value = yield res
+            send_value = yield unwrap(res)
 
-    return thunder_jit_async_generator()
+    return wrap_const(thunder_jit_async_generator())  # TODO: better than wrap_const
 
 
 # factory to create a coroutine for a given JIT frame, see comment for make_generator
@@ -3848,14 +4161,14 @@ def make_coroutine(
                     e = runtimectx.curexc
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
-                        return e.value
+                        return unwrap(e.value)
                     raise e
             if status == JIT_SIGNALS.RETURN_VALUE:
-                return res
+                return unwrap(res)
             assert status == JIT_SIGNALS.YIELD_VALUE
             raise UnimplementedError("not implemented")
 
-    return thunder_jit_coroutine()
+    return wrap_const(thunder_jit_coroutine())
 
 
 # Interprets the callable with the given args and kwargs
@@ -3876,12 +4189,34 @@ def make_coroutine(
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
 def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
+    args = wrap_consts(*args)
+    kwargs = {k: wrap_const(v) for k, v in kwargs.items()}
+    return unwrap(_jit_no_unwrap(fn, *args, **kwargs))
+
+
+def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
+    if isinstance(fn, WrappedValue):
+        wrapped_fn = fn
+    else:
+        # TODO: think about whether this is a good choice in all circumstances
+        wrapped_fn = wrap_const(fn)
+    fn = unwrap(fn)
+
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+    if compilectx._with_provenance_tracking:
+        assert all(isinstance(a, WrappedValue) for a in args)
+        assert all(isinstance(a, WrappedValue) for a in kwargs.values())
+
     # (0) Methods are unwrapped
     # (0a) The callable is a bound method, in which case it's unwrapped
     if inspect.ismethod(fn):
-        return _jit(fn.__func__, fn.__self__, *args, **kwargs)  # type: ignore
+
+        def impl(fn, *args, **kwargs):
+            return fn.__func__(fn.__self__, *args, **kwargs)
+
+        return _jit_no_unwrap(impl, wrapped_fn, *args, **kwargs)  # type: ignore
 
     # (0b) The callable is a builtin method, in which case it's canonicalized
     #   A builtin is canonicalized when it's a call on a type or a module (or their equivalent)
@@ -3972,44 +4307,70 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             #       approach seems limited (as long as people test their lookasides).
             if unbound_fn is not None:
                 assert not isinstance(unbound_fn, BuiltinFunctionType)
-                return _jit(unbound_fn, slf, *args, **kwargs)
+                slf = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__self__"))
+                unbound_fn = wrap_const(unbound_fn)  # TODO!
+                return _jit_no_unwrap(unbound_fn, slf, *args, **kwargs)
 
     # (1) Handles lookasides
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
         # we expect lookasides to use do_raise rather than raising exceptions
-        return lookaside_fn(*args, **kwargs)
+        needs_wrap = getattr(lookaside_fn, "__jit_needs_wrap", compilectx._with_provenance_tracking)
+        if needs_wrap:
+            args_ = [unwrap(a) for a in args]
+            kwargs_ = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+        else:
+            args_ = args
+            kwargs_ = kwargs
+        res = lookaside_fn(*args_, **kwargs_)
+        if needs_wrap and res is not JIT_SIGNALS.EXCEPTION_RAISED:
+            pr = ProvenanceRecord(
+                inst="LOOKASIDE",
+                inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
+            )
+            res = wrap(res, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+        return res
 
-    # (2) Handles partial objects
-    if isinstance(fn, functools.partial):
-        # TODO: add traceback entry if exceptions are raised?
-        p: functools.partial = fn
-        return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
+    # TODO: disabled as partial is just like any other class
+    ## (2) Handles partial objects
+    # if isinstance(fn, functools.partial):
+    #    # TODO: add traceback entry if exceptions are raised?
+    #    p: functools.partial = fn
+    #    return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
 
-    if isinstance(fn, functools.partialmethod):
-        raise NotImplementedError(
-            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
-        )
+    # if isinstance(fn, functools.partialmethod):
+    #    raise NotImplementedError(
+    #        "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
+    #    )
 
     # (3) Handles opaque functions
     if is_opaque(fn):
         runtimectx.record_opaque_call(fn)
+        args_ = [unwrap(a) for a in args]
+        kwargs_ = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
         try:
-            opaque_result: Any = fn(*args, **kwargs)
+            opaque_result: Any = fn(*args_, **kwargs_)
         except Exception as e:
             runtimectx.curexc = e
             return JIT_SIGNALS.EXCEPTION_RAISED
+
+        if compilectx._with_provenance_tracking:
+            pr = ProvenanceRecord(
+                inst="OPAQUE",
+                inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
+            )
+            opaque_result = wrap(opaque_result, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
         return opaque_result
 
     # (4) Handle types
     if isinstance(fn, type):
         if not hasattr(fn, "__new__"):
             raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
-        obj = _jit(fn.__new__, fn, *args, **kwargs)
+        obj = _jit_no_unwrap(fn.__new__, wrapped_fn, *args, **kwargs)
         if obj is JIT_SIGNALS.EXCEPTION_RAISED:
             return obj
-        res = _jit(obj.__init__, *args, **kwargs)
+        res = _jit_no_unwrap(unwrap(obj).__init__, *args, **kwargs)
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
             return res
         return obj
@@ -4020,7 +4381,11 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             raise NotImplementedError(
                 f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
             )
-        return _jit(fn.__call__, *args, **kwargs)
+
+        def impl():
+            return fn.__call__(*args, **kwargs)
+
+        return _jit_no_unwrap(impl)
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
@@ -4028,9 +4393,28 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)
+    params = []
+    for p in sig.parameters.values():
+        if p.default is not inspect._empty:
+            p = p.replace(default=wrap_const(p.default))
+        params.append(p)
+    sig = sig.replace(parameters=params)
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
+
     locals_dict: dict[str, Any] = dict(bound.arguments)
+
+    if compilectx._with_provenance_tracking:
+        variable_args = [n for n, p in sig.parameters.items() if p.kind == p.VAR_POSITIONAL or p.kind == p.VAR_KEYWORD]
+        for name in variable_args:
+            val = locals_dict[name]
+            if isinstance(val, tuple):
+                val = wrap_args(val)
+            else:
+                assert isinstance(val, dict)
+                val = wrap_kwargs(val)
+            locals_dict[name] = val
+
     code: CodeType = extract_code(fn)
 
     # Comprehensions:
@@ -4047,6 +4431,18 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     # in Thunder, we adopt the Python 3.11 way of allocating a single array for all localplus vars,
     #             but for 3.10 we do need to do the 3.10-style setting-up-at-entry here.
     localsplus: list[Any] = []
+    if code.co_freevars:
+        assert fn.__closure__
+        assert len(code.co_freevars) == len(fn.__closure__)
+        closure = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__closure__"))
+        # we need to use __getiem__ directly to avoid infinite recursion
+        closure = [
+            _jit_no_unwrap(lambda x, i: x.__getitem__(i), closure, wrap_const(i)) for i in range(len(fn.__closure__))
+        ]
+    else:
+        closure = []
+        assert not fn.__closure__
+
     if (3, 10) <= sys.version_info < (3, 11):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
@@ -4059,18 +4455,15 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             locals_dict[n] = local
         for n in code.co_cellvars:
             if n in locals_dict:
-                localsplus.append(CellType(locals_dict[n]))
+                c = _jit_no_unwrap(CellType, locals_dict[n])
+                assert c is not JIT_SIGNALS.EXCEPTION_RAISED
+                localsplus.append(c)
                 localsplus[code.co_varnames.index(n)] = Py_NULL()
             else:
-                localsplus.append(CellType())
-        if code.co_freevars:
-            assert fn.__closure__
-            assert len(code.co_freevars) == len(fn.__closure__)
-            for i, (name, value) in enumerate(zip(code.co_freevars, fn.__closure__)):
-                local = freevar_callback(name, value, fn=fn, idx=i)
-                localsplus.append(local)
-        else:
-            assert not fn.__closure__
+                localsplus.append(wrap_const(CellType()))
+        for i, (name, value) in enumerate(zip(code.co_freevars, closure)):
+            local = freevar_callback(name, value, fn=wrapped_fn, idx=i)
+            localsplus.append(local)
     elif (3, 11) <= sys.version_info < (3, 12):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
@@ -4082,14 +4475,9 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             # see MAKE_CELL called for them for the conversion
             if n not in locals_dict:
                 localsplus.append(Py_NULL())
-        if code.co_freevars:
-            assert fn.__closure__
-            assert len(code.co_freevars) == len(fn.__closure__)
-            for i, (name, value) in enumerate(zip(code.co_freevars, fn.__closure__)):
-                local = freevar_callback(name, value, fn=fn, idx=i)
-                localsplus.append(local)
-        else:
-            assert not fn.__closure__
+        for i, (name, value) in enumerate(zip(code.co_freevars, closure)):
+            local = freevar_callback(name, value, fn=wrapped_fn, idx=i)
+            localsplus.append(local)
     else:
         raise NotImplementedError(
             f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."
@@ -4131,7 +4519,8 @@ def _jit_run(
     with runtimectx.push_frame_stack(frame):
         stack: InterpreterStack = frame.interpreter_stack
         if send_value != Py_NULL():
-            stack.append(send_value)
+            with stack.set_cur_instruction("SEND"):
+                stack.append(send_value)
 
         insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
         inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
@@ -4197,10 +4586,11 @@ def _jit_run(
                         try_block = frame.try_stack.pop()
                         if try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE:
                             assert len(frame.interpreter_stack) >= try_block.level + 3
-                            del frame.interpreter_stack[try_block.level + 3 :]
-                            exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
-                            exc_value = frame.interpreter_stack.pop()
-                            exc_traceback = frame.interpreter_stack.pop()
+                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                                del frame.interpreter_stack[try_block.level + 3 :]
+                                exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
+                                exc_value = frame.interpreter_stack.pop()
+                                exc_traceback = frame.interpreter_stack.pop()
                             if exc_value != None:
                                 exc_value.__traceback__ = exc_traceback
                             assert runtimectx.exception_stack
@@ -4214,7 +4604,8 @@ def _jit_run(
 
                             # Python 3.10 UNWIND_BLOCK
                             assert len(frame.interpreter_stack) >= try_block.level
-                            del frame.interpreter_stack[try_block.level :]
+                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                                del frame.interpreter_stack[try_block.level :]
 
                             # Python 3.10 handling of SETUP_FINALLY blocks
                             frame.try_stack.append(
@@ -4224,22 +4615,24 @@ def _jit_run(
                             # CPython sreads exc_info->exc_type/value/traceback
                             # see RuntimeCtx inititalization of exception_stack for more info
                             exc = runtimectx.exception_stack[-1]
-                            frame.interpreter_stack.append(exc.__traceback__ if exc is not None else None)
-                            frame.interpreter_stack.append(exc)
-                            frame.interpreter_stack.append(
-                                type(exc)
-                            )  # Python distinguishes explicit exc_type present or NULL/None
+                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                                frame.interpreter_stack.append(exc.__traceback__ if exc is not None else None)
+                                frame.interpreter_stack.append(exc)
+                                # Python distinguishes explicit exc_type present or NULL/None
+                                frame.interpreter_stack.append(type(exc))
                             current_exception = e
                             # NormalizeException ?
 
                             # CPython sets exc_info->exc_type/value/traceback here
                             # see RuntimeCtx inititalization of exception_stack for more info
                             runtimectx.exception_stack[-1] = current_exception
-                            frame.interpreter_stack.append(current_exception.__traceback__ if exc is not None else None)
-                            frame.interpreter_stack.append(current_exception)
-                            frame.interpreter_stack.append(
-                                type(current_exception)
-                            )  # Python distinguishes explicit exc_type present or NULL/None
+                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                                frame.interpreter_stack.append(
+                                    current_exception.__traceback__ if exc is not None else None
+                                )
+                                frame.interpreter_stack.append(current_exception)
+                                # Python distinguishes explicit exc_type present or NULL/None
+                                frame.interpreter_stack.append(type(current_exception))
                             current_exception = None
                             interpretation_result = try_block.handler
                             # f->f_state = FRAME_EXECUTING;  /* Resume normal execution */
@@ -4261,7 +4654,9 @@ def _jit_run(
                 # advance the inst_ptr, needed in particular for YIELD
                 frame.inst_ptr += 1
                 # get the result from the current stack
-                result = frame.interpreter_stack.pop()
+
+                with frame.interpreter_stack.set_cur_instruction("RESULT"):
+                    result = frame.interpreter_stack.pop(no_unwrap=True)
                 # Restores the previous stack, the caller needs to put the value on it
                 return result, interpretation_result
             elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
@@ -4369,11 +4764,13 @@ def jit(
     fn_lookaside: Callable = default_lookaside,
     callbacks: dict[JIT_CALLBACKS, Callable] = default_callbacks,
     debug_log: None | StringIO = None,
+    with_provenance_tracking: bool = False,
 ) -> Callable:
     compilectx: JitCompileCtx = JitCompileCtx(
         opcode_interpreter=opcode_interpreter,
         fn_lookaside=fn_lookaside,
         callbacks=callbacks,
+        with_provenance_tracking=with_provenance_tracking,
     )
 
     @functools.wraps(fn)
@@ -4382,7 +4779,36 @@ def jit(
 
         with jitctx(compilectx, runtimectx):
             try:
-                jit_result: Any = _jit(fn, *args, **kwargs)
+                # we normalize the outmost function to be jitted to take
+                # args and kwargs as arguments (not *args and **kwargs).
+                # We thus have three special INPUTs for the entry function:
+                # args at "position" 0, kwargs at "position" 1, and the compiled function itself (so we can get the __closure__) at position -1
+                args = wrap(
+                    args,
+                    WRAPPED_VALUE_TYPE.INPUT,
+                    provenance=ProvenanceRecord(inst="INPUT", inputs=[], output_idx=0, output_key=None),
+                )
+
+                kwargs = wrap(
+                    kwargs,
+                    WRAPPED_VALUE_TYPE.INPUT,
+                    provenance=ProvenanceRecord(inst="INPUT", inputs=[], output_idx=1, output_key=None),
+                )
+
+                def getfn():
+                    fn_3 = wrap(
+                        fn,
+                        WRAPPED_VALUE_TYPE.INPUT,
+                        provenance=ProvenanceRecord(inst="INPUT", inputs=[], output_idx=-1, output_key=None),
+                    )
+
+                    def fn_2(args, kwargs):
+                        return fn_3(*args, **kwargs)
+
+                    return fn_2
+
+                jit_result: Any = _jit_no_unwrap(getfn(), args, kwargs)
+                jit_result = unwrap(jit_result)
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction

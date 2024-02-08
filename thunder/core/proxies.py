@@ -474,6 +474,50 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __rmatmul__(self, other):
         raise NotImplementedError
 
+    # Inplace ops return NotImplemented instructing Python to use the out of place to do *= etc.
+
+    def __iadd__(self, other):
+        return NotImplemented
+
+    def __iand__(self, other):
+        return NotImplemented
+
+    def __iconcat__(self, other):
+        return NotImplemented
+
+    def __ifloordiv__(self, other):
+        return NotImplemented
+
+    def __ilshift__(self, other):
+        return NotImplemented
+
+    def __imatmul__(self, other):
+        return NotImplemented
+
+    def __imod__(self, other):
+        return NotImplemented
+
+    def __imul__(self, other):
+        return NotImplemented
+
+    def __ior__(self, other):
+        return NotImplemented
+
+    def __ipow__(self, other):
+        return NotImplemented
+
+    def __irshift__(self, other):
+        return NotImplemented
+
+    def __isub__(self, other):
+        return NotImplemented
+
+    def __itruediv__(self, other):
+        return NotImplemented
+
+    def __ixor__(self, other):
+        return NotImplemented
+
 
 def pyval(x: NumberProxy | Number) -> Number:
     baseutils.check_type(x, (NumberProxy, Number))

@@ -2102,12 +2102,21 @@ def test_inplace(executor, device, _):
         cfn = thunder.compile(t)
         with pytest.raises(RuntimeError, match="not supported"):
             cfn(t1, t2)
-        with pytest.raises(RuntimeError, match="not supported"):
-            cfn(5, 6)
-        with pytest.raises(RuntimeError, match="not supported"):
-            cfn(1.2, 2.4)
-        with pytest.raises(RuntimeError, match="not supported"):
-            cfn(1.2j, 2.4j)
+        # Note: Python maps inplace operations on (immutuables) to
+        #       out of place operations, NumberProxy does this, too.
+
+        if t not in {
+            test_concat,
+            test_lshift,
+            test_matmul,
+            test_rshift,
+        }:
+            assert cfn(5, 6) == t(5, 6)
+
+        if t not in {test_and, test_concat, test_lshift, test_matmul, test_or, test_rshift, test_xor}:
+            assert cfn(1.2, 2.4) == t(1.2, 2.4)
+            if t not in {test_floordiv, test_mod}:
+                assert cfn(1.2j, 2.4j) == t(1.2j, 2.4j)
 
 
 @instantiate(dtypes=NOTHING)

@@ -1,3 +1,4 @@
+import thunder
 from typing import Any
 from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
@@ -6,6 +7,7 @@ import random
 from functools import partial, wraps
 import copy
 import contextvars
+import dis
 import warnings
 from enum import Enum, auto
 from io import StringIO
@@ -51,6 +53,8 @@ from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
 from thunder.core.jit import (
     jit,
     _jit,
+    _jit_no_unwrap,
+    CapsuleType,
     default_callbacks,
     JIT_CALLBACKS,
     JIT_SIGNALS,
@@ -65,8 +69,11 @@ from thunder.core.jit import (
     Py_NULL,
     member_descriptor,
     WrappedValue,
+    WRAPPED_VALUE_TYPE,
     unwrap,
     wrap,
+    wrap_const,
+    ProvenanceRecord,
 )
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
 from thunder.core.baseutils import extract_callable_name
@@ -276,11 +283,16 @@ class LitCtx:
     def __init__(self, fn: Callable, *args, **kwargs):
         super().__init__()
 
+        def fn_(*args, **kwargs):
+            self.fn(*args, **kwargs)
+
         self.fn = fn
 
         self._prologue_trc: TraceCtx = TraceCtx(fn, using_interpreter=True)
+        self._prologue_trc._siginfo = get_siginfo(fn_, args, kwargs)
         self._prologue_trc.args = args
         self._prologue_trc.kwargs = kwargs
+        self._constraints = []
 
         self._computation_trc: TraceCtx = TraceCtx(using_interpreter=True)
 
@@ -292,6 +304,13 @@ class LitCtx:
     def computation_trace(self) -> TraceCtx:
         return self._computation_trc
 
+    def add_comparison_constraint(self, lhs, typ, rhs):
+        self._constraints.append((typ, lhs, rhs))
+
+    @property
+    def comparison_constraints(self) -> list:
+        return self._constraints
+
     # NOTE All proxies are constructed in the context of the computation trace, and their
     #   names must be added to the prologue trace (this is done when constructing the prologue trace)
     def proxify(self, val: Any, /, *, name: None | str = None, history: tuple, **kwargs) -> Any:
@@ -300,7 +319,7 @@ class LitCtx:
             return val
 
         # Short-circuits if the val is a WrappedValue (in which case it's a constant that doesn't need to be proxied)
-        if isinstance(val, WrappedValue):
+        if isinstance(val, WrappedValue) and val.typ == WRAPPED_VALUE_TYPE.CONSTANT:
             return val
 
         # Short-circuits if val is already a proxy
@@ -357,14 +376,23 @@ _lit_lookaside_map.update(_torch_to_thunder_function_map)
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside).
 def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
-    getattr_lookaside = default_lookaside(getattr) or getattr
+    getattr_lookaside = default_lookaside(getattr)
+    assert getattr_lookaside is not None
+
     res = getattr_lookaside(obj, name, *maybe_default)
-    if not isinstance(res, Proxy):
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    assert isinstance(res, WrappedValue)
+
+    if not isinstance(res.value, Proxy):
         ctx: LitCtx = get_litctx()
-        return ctx.proxify(res, name=name, history=(UNPACK_ACTION.FROM_GETATTR, name, obj))
+        return ctx.proxify(res, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, res.provenance))
+
     return res
 
 
+_lit_getattr_lookaside.__jit_needs_wrap = False
 _lit_lookaside_map[getattr] = _lit_getattr_lookaside
 
 
@@ -381,27 +409,26 @@ _lit_lookaside_map[hasattr] = _lit_hasattr_lookaside
 # At the same time Python expects to (but we might think to loosen the requirement
 # to return a bool for the JIT, return a proxy with origin informaiton and postpone
 # recording the constraint to conditional jumps and such.
-def _lit_bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
+def _lit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
+    assert isinstance(wrapped_x, WrappedValue)
+    x = unwrap(wrapped_x)
     if isinstance(x, NumberProxy) and (x.value is True or x.value is False):
         # TODO: what if x is from the computational trace?
         lit_ctx = get_litctx()
-        prologue_trc = lit_ctx.prologue_trace
-        with tracectx(prologue_trc):
-            prims.assert_compare(x, "==", x.value)
-        return x.value
+        lit_ctx.add_comparison_constraint(x, "==", x.value)
+        return wrap_const(x.value)
 
     if isinstance(x, NumberProxy):
         lit_ctx = get_litctx()
-        prologue_trc = lit_ctx.prologue_trace
         res = x.value != 0
-        with tracectx(prologue_trc):
-            prims.assert_compare(x, "!=" if res else "==", 0)
-        return res
+        lit_ctx.add_comparison_constraint(x, "!=" if res else "==", 0)
+        return wrap_const(res)
 
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(x)
 
 
+_lit_bool_lookaside.__jit_needs_wrap = False
 _lit_lookaside_map[bool] = _lit_bool_lookaside
 
 # Adds proxy methods
@@ -414,6 +441,9 @@ _lit_lookaside_map.update(
         NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
         NumberProxy.__neg__: NumberProxy.__neg__,
         NumberProxy.__sub__: NumberProxy.__sub__,
+        NumberProxy.__floordiv__: NumberProxy.__floordiv__,
+        NumberProxy.__le__: NumberProxy.__ge__,
+        NumberProxy.__ge__: NumberProxy.__le__,
         TensorProxy.__add__: TensorProxy.__add__,
         TensorProxy.__mul__: TensorProxy.__mul__,
         TensorProxy.__sub__: TensorProxy.__sub__,
@@ -429,6 +459,22 @@ _safe_functions: set = {
     MethodDescriptorType.__get__,  # TODO Review the safety of this
     type,
     tuple.__len__,
+    tuple.__getitem__,
+    FunctionType.__get__,  # TODO: review safety
+    torch._C._get_tracing_state,  # TODO: review safety
+    object.__new__,
+    object.__init__,
+    callable,
+    NoneType.__bool__,
+    dict.__len__,
+    dict.__contains__,
+    dict.__getitem__,
+    contextvars.ContextVar.get,
+    type.__or__,
+    list.__new__,
+    list.__init__,
+    CellType.__new__,
+    "getset_descriptor.__get__",  # todo: find the proper way to access it
 }
 
 
@@ -448,7 +494,7 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
         lookaside = default_lookaside(fn, *args, **kwargs)
 
     if lookaside is None:
-        if is_opaque(fn) and fn not in _safe_functions:
+        if is_opaque(fn) and fn not in _safe_functions and (extract_callable_name(fn) not in _safe_functions):
             raise NotImplementedError(
                 f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
             )
@@ -458,7 +504,9 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Wraps the lookaside to unwrap WrappedValues
     @wraps(lookaside)
     def unwrapper(*args, **kwargs):
-        args, kwargs = tree_map(unwrap, (args, kwargs))
+        needs_wrap = getattr(lookaside, "__jit_needs_wrap", True)
+        if needs_wrap:
+            args, kwargs = tree_map(unwrap, (args, kwargs))
         return lookaside(*args, **kwargs)
 
     return unwrapper
@@ -469,28 +517,54 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
 #
 
 
+# TODO: remove this field from history and just use provenance records?
 class UNPACK_ACTION(Enum):
-    FROM_SIGNATURE = auto()
-    FROM_CLOSURE = auto()
-    FROM_GETATTR = auto()
+    FROM_PROVENANCE = auto()
 
 
 def _lit_const_callback(value: Any) -> WrappedValue:
-    return wrap(value)
-
-
-def _lit_freevar_callback(name: str, value: Any, /, *, fn: Callable, idx: int) -> Any:
-    if not isinstance(value, Proxy):
-        ctx: LitCtx = get_litctx()
-        return ctx.proxify(value, name=name, history=(UNPACK_ACTION.FROM_CLOSURE, name, fn, idx))
     return value
+
+
+def _lit_freevar_callback(name: str, wrapped_cell: Any, /, *, fn: Callable, idx: int) -> Any:
+    assert isinstance(wrapped_cell, WrappedValue)
+    cell = wrapped_cell.value
+
+    if cell == CellType():
+        return wrapped_cell
+
+    contents = cell.cell_contents
+    if isinstance(contents, Proxy):
+        return wrapped_cell
+
+    ctx: LitCtx = get_litctx()
+
+    provenance = ProvenanceRecord("LOAD_ATTR", inputs=[wrapped_cell.provenance, wrap_const("cell_contents").provenance])
+    proxy = ctx.proxify(contents, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, provenance))
+
+    if proxy is not contents:
+        # TODO replacing cells is EVIL!, but we do not want to leak proxy, so we would need a cell proxy that diverts the write.
+        wrapped_cell.value = CellType(wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance))
+        # this would leak proxies:
+        # cell.cell_contents = wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance)
+
+    return wrapped_cell
 
 
 # TODO Support additional global loads
 def _lit_global_callback(globals_dict: dict, name: str) -> Any:
     # Allows loading the torch module
     value = globals_dict[name]
-    if value is torch:
+    if (
+        value is torch
+        or (value is torch.nn.modules.module._global_backward_pre_hooks)
+        or (value is torch.nn.modules.module._global_backward_hooks)
+        or (value is torch.nn.modules.module._global_forward_hooks)
+        or (value is torch.nn.modules.module._global_forward_pre_hooks)
+        or (value is torch.nn.functional)
+        or (value is thunder.core.proxies.get_langctx)
+        or (value is thunder.core.langctx._langctx)
+    ):
         return value
 
     raise NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported")
@@ -498,7 +572,20 @@ def _lit_global_callback(globals_dict: dict, name: str) -> Any:
 
 def _lit_local_callback(name: str, value: Any, /) -> Any:
     ctx: LitCtx = get_litctx()
-    return ctx.proxify(value, name=name, history=(UNPACK_ACTION.FROM_SIGNATURE, name))
+    if isinstance(value, WrappedValue) and value.typ == WRAPPED_VALUE_TYPE.CONSTANT:
+        return value
+
+    if not isinstance(value, WrappedValue):
+        # TODO: consider making the an error once we wrap everything
+        value = wrap_const(value)
+
+    assert isinstance(value, WrappedValue)
+    provenance = value.provenance
+    return wrap(
+        ctx.proxify(value.value, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, provenance)),
+        provenance=provenance,
+        typ=value.typ,
+    )
 
 
 lit_callbacks: dict[JIT_CALLBACKS, Callable] = {
@@ -539,7 +626,13 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             lang_tok = set_langctx(lang)
             trace_tok = set_tracectx(lit_ctx.computation_trace)
             cs.last_trace_tracing_start = time.time_ns()
-            jfn = jit(cd.fn, fn_lookaside=lit_lookaside, callbacks=lit_callbacks, debug_log=cd.debug_log)
+            jfn = jit(
+                cd.fn,
+                fn_lookaside=lit_lookaside,
+                callbacks=lit_callbacks,
+                debug_log=cd.debug_log,
+                with_provenance_tracking=True,
+            )
             result = jfn(*args, **kwargs)
 
             # Translates wrapped values to actual values
@@ -564,7 +657,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         # TODO Validate the inputs in the prologue, currently it just unpacks
         prologue_trc = lit_ctx.prologue_trace
         computation_trc = lit_ctx.computation_trace
-        already_unpacked: set[int] = set()
+        already_unpacked: dict[int, Proxy] = {}
         inps: set[Variable] = set()
 
         # Identifies inputs to computation trace (by looking for proxies with history)
@@ -577,45 +670,112 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 
         # Unpacks the inputs in the prologue trace
         # TODO Generate unpacking constraints
-        def unpack(v: Variable) -> Proxy:
-            p: Proxy = v.proxy
-            assert p.history is not None
+        def unpack(v: Variable | Proxy) -> Proxy:
+            p: Proxy
+            if isinstance(v, Proxy):
+                p = v
+            else:
+                p = v.proxy
 
-            if v in already_unpacked:
+            assert p.history is not None
+            if id(p) in already_unpacked:
                 return p
 
             # Adds the name to the prologue trace
             if not prologue_trc.has_name(p.name):
                 prologue_trc.add_name(p.name)
 
-            def from_signature(name: str):
-                bsym = prims.unpack_trivial.bind(p, output=p)
-                prologue_trc.bound_symbols.append(bsym)
+            def from_input(provenance, *, new_output=False):
+                if new_output:
+                    if provenance.output_idx == 0:
+                        name = "args"
+                    elif provenance.output_idx == -1:
+                        name = "fn"
+                    else:
+                        name = f"inp{provenance.output_idx}"
 
-            def from_closure(name: str, fn: Callable, idx: int):
-                # if fn is the function being compiled, we need to acquire it,
-                # else it will come from our scope and be available
-                if fn == cd.fn:
-                    bsym_fn = prims.unpack_function_obj.bind(fn, output=fn)
-                    prologue_trc.bound_symbols.append(bsym_fn)
-                bsym_closure = prims.unpack_attr.bind(fn, "__closure__", output=fn.__closure__)
-                prologue_trc.bound_symbols.append(bsym_closure)
-                bsym = prims.unpack_attr.bind(fn.__closure__[idx], "cell_contents", output=p)
+                    output = Proxy(name=name)
+                    provenance.proxy = output
+                else:
+                    output = p
+                    provenance.proxy = output
+                if provenance.output_idx == -1:
+                    bsym = prims.unpack_function_obj.bind(output, output=output)
+                else:
+                    bsym = prims.unpack_trivial.bind(output, output=output)
                 prologue_trc.bound_symbols.append(bsym)
+                return output
 
-            def from_getattr(name: str, obj: Any):
-                bsym = prims.unpack_attr.bind(obj, name, output=p)
+            def from_load_attr(provenance, *, new_output=False):
+                inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
+                if new_output:
+                    output = Proxy("obj")
+                else:
+                    output = p
+                bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
                 prologue_trc.bound_symbols.append(bsym)
+                return output
 
-            d = {
-                UNPACK_ACTION.FROM_SIGNATURE: from_signature,
-                UNPACK_ACTION.FROM_CLOSURE: from_closure,
-                UNPACK_ACTION.FROM_GETATTR: from_getattr,
-            }
+            def from_constant(provenance, *, new_output=False):
+                if isinstance(provenance.value, (int, str)):
+                    return provenance.value
+                else:
+                    raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
+
+            def from_binary_subscr(provenance, *, new_output=False):
+                inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
+                idx, obj = inputs
+                if new_output:
+                    output = Proxy("subscr")  # name? collectify?
+                else:
+                    output = p
+                if isinstance(idx, int):
+                    idx = int(idx)
+                    bsym = prims.unpack_getitem.bind(obj, idx, output=output)
+                    prologue_trc.bound_symbols.append(bsym)
+                else:
+                    raise NotImplementedError(
+                        f"Unpacking from BINARY_SUBSCR with elaborate inputs {inputs=} {provenance}"
+                    )
+                return output
+
+            def from_opaque(provenance, *, new_output=False):
+                fn = provenance.inputs[0]
+                args = provenance.inputs[1]
+                if fn.inst != "CONSTANT":
+                    raise NotImplementedError(f"unpacking from nonconstant opaque function")
+                if fn.value.__name__ == "__getitem__":
+                    idx, obj = args.inputs
+                    return from_binary_subscr(ProvenanceRecord("BINARY_SUBSCR_punted", inputs=[idx, obj]))
+
+                raise NotImplementedError(f"unpacking from {fn.value}")
+
+            def from_provenance(provenance, *, new_output=False):
+                if hasattr(provenance, "proxy"):
+                    return provenance.proxy  # bind?
+
+                inst = provenance.inst
+                if isinstance(inst, dis.Instruction):
+                    inst = inst.opname
+
+                d = {
+                    "INPUT": from_input,
+                    "LOAD_ATTR": from_load_attr,
+                    "CONSTANT": from_constant,
+                    "BINARY_SUBSCR": from_binary_subscr,
+                    "OPAQUE": from_opaque,
+                }
+
+                unpack_fn = d.get(inst)
+                if unpack_fn is None:
+                    raise NotImplementedError(f"Unpacking from {inst} {provenance}")
+                return unpack_fn(provenance, new_output=new_output)
 
             action, *args = p.history
-            d[action](*args)
-            already_unpacked.add(v)
+            assert action is UNPACK_ACTION.FROM_PROVENANCE
+            with tracectx(prologue_trc):
+                from_provenance(*args)
+            already_unpacked[id(p)] = p
 
             # Adds cache constraints
             # TODO Consider refactoring these contraints
@@ -629,6 +789,10 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         v: Variable
         for v in inps:
             unpack(v)
+        for typ, lhs, rhs in lit_ctx.comparison_constraints:
+            unpack(lhs)
+            with tracectx(prologue_trc):
+                prims.assert_compare(lhs, typ, rhs)
 
         # Returns the inputs from the prologue trace
         prologue_rvals: tuple[Proxy]

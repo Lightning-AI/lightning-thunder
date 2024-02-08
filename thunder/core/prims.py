@@ -46,6 +46,7 @@ class PrimIDs(Enum):
     PYTHON_VARS = auto()
     UNPACK_FUNCTION_OBJ = auto()
     UNPACK_ATTR = auto()
+    UNPACK_GETITEM = auto()
     UNPACK_EMPTY_DICT = auto()
     UNPACK_ITER = auto()
     UNPACK_NEXT = auto()
@@ -598,6 +599,47 @@ unpack_attr = make_prim(
     meta=unpack_attr_meta,
     python_printer=unpack_attr_printer,
     python_impl=unpack_attr_impl,
+)
+
+
+# NOTE UNPACK_GETITEM is intended only to be bound to directly, and not called
+def unpack_getitem_meta(o: Any, key: Any) -> Any:
+    raise NotImplementedError
+
+
+def unpack_getitem_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_getitem but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_getitem but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}[{keystr}]"
+
+
+def unpack_getitem_impl(o: Any, key: Any) -> Any:
+    return o[key]
+
+
+unpack_getitem = make_prim(
+    PrimIDs.UNPACK_GETITEM,
+    "unpack_getitem",
+    meta=unpack_getitem_meta,
+    python_printer=unpack_getitem_printer,
+    python_impl=unpack_getitem_impl,
 )
 
 
@@ -2910,3 +2952,9 @@ embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward",
 
 primctx.neg = neg
 primctx.add = add
+primctx.sub = sub
+primctx.mul = mul
+primctx.floor_divide = div  # (!) see above
+primctx.eq = eq
+primctx.ge = ge
+primctx.le = le

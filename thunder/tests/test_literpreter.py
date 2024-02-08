@@ -316,7 +316,7 @@ def test_binary_add_tensor_number():
 
     # Tests using addition operator
     def foo(a):
-        return a + 3
+        return a + 4
 
     jfoo = litjit(foo)
 
@@ -407,7 +407,11 @@ def test_litgpt():
 
     cfg: Config = Config.from_name("gpt-neox-like")
     bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
-    fn = bench.fn()
+    module = bench.fn()
+
+    # work around the litjit not yet understanding modules
+    def fn(*args, **kwargs):
+        return module(*args, **kwargs)
 
     args, kwargs = bench.make_batch()
 
@@ -424,7 +428,11 @@ def test_nanogpt_block():
     config: NanoGPTConfig = NanoGPTConfig(dropout=0)
     config.update(**_nanogpt_configs["gpt2"])
     bench = NanoGPTBlockBenchmark(config=config, device="cpu")
-    fn = bench.fn()
+    module = bench.fn()
+
+    # work around the litjit not yet understanding modules
+    def fn(*args, **kwargs):
+        return module(*args, **kwargs)
 
     args, kwargs = bench.make_batch()
 
