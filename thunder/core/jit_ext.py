@@ -147,6 +147,58 @@ def is_uncopyable(val: Any, /) -> bool:
 
 
 #
+# Minimal thunder extension
+#
+# This extension remaps operations to thunder operations and prevents the interpreter from tracing
+#   into symbols
+# TODO GTC Add all symbols + methods
+# TODO GTC Reuse minimal objects in other executors
+
+_minimal_lookaside_map = {}
+_minimal_lookaside_map.update(_torch_to_thunder_function_map)
+
+# Adds proxy methods
+# NOTE These methods map to themselves, which prevents the interpreter from looking into them
+#   This is OK because these methods are written in a tracing-safe manner, and trying to
+#   interpreter their internals is unnecessary and would just add complexity at this time
+_minimal_lookaside_map.update(
+    {
+        NumberProxy.__add__: NumberProxy.__add__,
+        NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
+        NumberProxy.__neg__: NumberProxy.__neg__,
+        NumberProxy.__sub__: NumberProxy.__sub__,
+        TensorProxy.__add__: TensorProxy.__add__,
+        TensorProxy.__mul__: TensorProxy.__mul__,
+        TensorProxy.__sub__: TensorProxy.__sub__,
+    }
+)
+
+
+def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
+    # Identifies the lookaside
+    lookaside: None | Callable
+    if isinstance(fn, Symbol) or fn in _clang_fn_set:
+        # Performs symbol lookasides
+        # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
+        # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+        lookaside = fn
+    elif (minimal_lookaside := _minimal_lookaside_map.get(fn, None)) is not None:
+        lookaside = minimal_lookaside
+    else:
+        # Falls through to the interpreter's default lookaside
+        lookaside = default_lookaside(fn, *args, **kwargs)
+
+    return lookaside
+
+
+# TODO GTC Add debug_log
+def minimal_thunder_jit(
+    fn: Callable,
+) -> Callable:
+    return jit(fn, fn_lookaside=_minimal_lookaside)
+
+
+#
 # Objects and functions related to the literpreter context
 #
 

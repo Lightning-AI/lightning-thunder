@@ -38,6 +38,7 @@ from thunder.core.compile_data import compile_data_and_stats
 from thunder.core.langctx import set_langctx, reset_langctx, lang
 from thunder.core.codeutils import get_siginfo, SigInfo
 from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy
+from thunder.core.jit_ext import minimal_thunder_jit
 
 # The following executors are always available, and so are unconditionally imported
 from thunder.executors import pythonex, torchex, nvfuserex, sdpaex
@@ -202,44 +203,47 @@ def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
 # Interpretation modes
 #
 # These modes control how the function will be interpreted
-# NONE means that no interpretation is performed -- the function is just traced.
-# FUNCTIONS means that the interpreter only translates PyTorch and NumPy operations to thunder operations
-# EVERYTHING means that the interpreter translates the entire function a thunder program
+# PYTHON_INTERPRETER means that the Python interpreter is used
+# TRANSLATE_FUNCTIONS means that the thunder interpreter is used, and it translates PyTorch and NumPy operations to thunder operations
+# TRANSLATE_EVERYTHING means that the thunder interpreter is used, and it translates the entire function a thunder program
 
 
 class INTERPRETATION_OPTIONS(Enum):
-    NONE = auto()
+    PYTHON_INTERPRETER = auto()
     TRANSLATE_FUNCTIONS = auto()
     TRANSLATE_EVERYTHING = auto()
 
 
 _str_to_interpretation_option_map: dict[str, INTERPRETATION_OPTIONS] = {
-    "none": INTERPRETATION_OPTIONS.NONE,
+    "python interpreter": INTERPRETATION_OPTIONS.PYTHON_INTERPRETER,
     "translate functions": INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS,
     "translate everything": INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING,
 }
+
+
+def _unknown_interpretation_option(x: Any) -> None:
+    raise ValueError(
+        f"Unknown interpretation option {x}. Allowed modes are 'python interpreter', 'translate functions', and 'translate everything'."
+    )
 
 
 def _str_to_interpretation_option(s: str, /) -> INTERPRETATION_OPTIONS:
     interpretation_option: None | INTERPRETATION_OPTIONS = _str_to_interpretation_option_map.get(s.lower(), None)
 
     if interpretation_option is None:
-        raise ValueError(
-            f"Unknown interpretation option {s}. Allowed modes are 'none', 'translate functions', and 'translate everything'."
-        )
+        _unknown_interpretation_option(s)
 
     return interpretation_option
 
 
-# Translates the Python function a thunder program using the Python interpreter
-#   An interpreter must do two things:
-#       1) Create a prologue function with the same signature as the original function that
-#           acquires all supported inputs and validates them according to the caching option
-#       2) Creates a computation function that accepts the output of the prologue function and
-#           returns what the original function did
-def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
+# A helper for "eager unpacking" interpreters that eagerly unpack their arguments as inputs
+# An interpreter must do two things:
+#   1) Create a prologue function with the same signature as the original function that
+#       acquires all supported inputs and validates them according to the caching option
+#   2) Creates a computation function that accepts the output of the prologue function and
+#       returns what the original function did
+def _eager_unpacking_interpreter(interpreter: Callable, fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
     # TODO GTC Update using_interpreter to using_prologue until it's removed when all traces have prologues
-    # TODO GTC Consider refactoring the eager unpacking to support the TRANSLATE_FUNCTIONS interpretation option, too
     prologue_trc: TraceCtx = TraceCtx(fn)
     computation_trc: TraceCtx = TraceCtx()
 
@@ -292,7 +296,7 @@ def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceC
         for p in proxyargs:
             prims.unpack_trivial(p)
 
-        result = fn(*proxyargs)
+        result = interpreter(fn)(*proxyargs)
         prims.python_return(result)
 
     # Constructs the computation trace's signature
@@ -302,6 +306,19 @@ def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceC
     computation_trc.args = proxyargs
 
     return prologue_trc, computation_trc
+
+
+# Translates the Python function a thunder program using the Python interpreter
+def _python_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
+    def _interpreter(fn_):
+        return fn_
+
+    return _eager_unpacking_interpreter(_interpreter, fn, args, kwargs)
+
+
+# Translates the Python function to a thunder program using the thunder interpreter
+def _translate_functions_interpreter(fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
+    return _eager_unpacking_interpreter(minimal_thunder_jit, fn, args, kwargs)
 
 
 # This function will replace compile() (below) before gtc
@@ -359,14 +376,12 @@ def jit(
 
     # Resolves interpretation option
     if interpretation is None:
-        # TODO GTC Change the default to FUNCTIONS
-        interpretation = INTERPRETATION_OPTIONS.NONE
+        # TODO GTC Change the default to TRANSLATE_FUNCTIONS
+        interpretation = INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS
     if isinstance(interpretation, str):
         interpretation = _str_to_interpretation_option_map(interpretation)
     if not isinstance(interpretation, INTERPRETATION_OPTIONS):
-        raise ValueError(
-            f"Unknown interpretation option {interpretation}. Allowed options are 'none', 'translate functions', and 'translate everything'."
-        )
+        _unknown_interpretation_option(interpretation)
 
     # Resolves cache option
     if cache is None:
@@ -423,10 +438,14 @@ def jit(
         # TODO GTC Implement all INTERPRETATION_OPTIONS
         # TODO GTC Acquire the interpretation option from the compile data
         interpreter: Callable
-        if interpretation is INTERPRETATION_OPTIONS.NONE:
+        if interpretation is INTERPRETATION_OPTIONS.PYTHON_INTERPRETER:
             interpreter = _python_interpreter
-        if interpretation in (INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS, INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING):
-            raise NotImplementedError(f"Only the 'none' interpretation option is currently implemented.")
+        elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS:
+            interpreter = _translate_functions_interpreter
+        else:
+            raise NotImplementedError(
+                f"Only the 'python interpreter' and 'translate functions' interpretation options are currently implemented."
+            )
 
         with compile_data_and_stats(cd, cs):
             # Acquires the trace OR inlines the trace into an existing trace and

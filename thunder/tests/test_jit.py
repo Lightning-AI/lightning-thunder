@@ -11,15 +11,36 @@ import torch
 from torch.testing import assert_close
 
 import thunder
+from thunder.core.jit_ext import minimal_thunder_jit
+
 
 #
 # Test suite for the thunder.jit entrypoint
 #
 
 
-def test_simple_addition():
+# TODO Refactor this parameterization so it's easy to apply
+@pytest.mark.parametrize(
+    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
+)
+def test_simple_addition(jit):
     def foo(a, b):
         return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_torch_addition(jit):
+    def foo(a, b):
+        return torch.add(a, b)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
