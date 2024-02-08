@@ -709,6 +709,8 @@ def test_multiple_output_vjp(executor, device, _):
     assert trace.output[0] == trace.bound_symbols[4].output
 
 
+# TODO: Fix flaky test https://github.com/Lightning-AI/lightning-thunder/issues/1919
+@pytest.mark.xfail(strict=False, reason="This test is flaky")
 @requiresCUDA
 def test_torch_autograd_saved_tensors_memory_release():
     # This test checks that the saved tensors are released during compiled
