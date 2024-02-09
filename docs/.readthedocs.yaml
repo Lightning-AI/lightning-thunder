@@ -1,0 +1,21 @@
+# .readthedocs.yml
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+# Required
+version: 2
+
+# Build documentation in the docs/ directory with Sphinx
+# reference: https://docs.readthedocs.io/en/stable/config-file/v2.html#sphinx
+sphinx:
+  fail_on_warning: true
+
+build:
+  os: "ubuntu-22.04"
+  tools:
+    python: "3.10"
+  commands:
+    - printenv
+    - pwd ; pip install -q py-tree ; py-tree .
+    - make docs
+    - mkdir -p _readthedocs ; mv docs/build _readthedocs/html

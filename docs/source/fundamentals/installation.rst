@@ -60,7 +60,7 @@ Install cuDNN
 
 You're all set, now follow `Install thunder`_.
 
-Install thunder package
+Install Thunder package
 =======================
 
 *thunder* is not yet public, and it must be installed from source.

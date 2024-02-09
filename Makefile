@@ -4,20 +4,18 @@
 export SPHINX_MOCK_REQUIREMENTS=0
 
 test: clean
-	pip install -q -r requirements.txt
-	pip install -q -r requirements/test.txt
+	pip install -q -r requirements.txt -r requirements/test.txt
 
 	# use this to run tests
-	python -m coverage run --source thunder -m pytest thunder tests -v --flake8
+	python -m coverage run --source thunder -m pytest thunder tests -v
 	python -m coverage report
 
 docs: clean
-	pip install --quiet -r requirements/docs.txt
-	python -m sphinx -b html -W --keep-going docs/source docs/build
+	pip install -e . --quiet -r requirements/docs.txt -f https://download.pytorch.org/whl/cpu/torch_stable.html
+	cd docs ; python -m sphinx -b html -W --keep-going source build
 
 clean:
 	# clean all temp runs
-	rm -rf $(shell find . -name "mlruns")
 	rm -rf .mypy_cache
 	rm -rf .pytest_cache
 	rm -rf ./docs/build
