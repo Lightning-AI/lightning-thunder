@@ -24,7 +24,7 @@ jobs:
   deploy-docs:
   # https://github.com/marketplace/actions/deploy-to-github-pages
     needs: build-docs
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout 🛎️
