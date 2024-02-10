@@ -185,7 +185,6 @@ def optimize_allreduce_in_ddp_backward(
         gradients_of_same_dtype_and_device=gradients_of_same_dtype_and_device,
         gradient_to_index=preaveraged_to_index,
         bucket_cap_in_mb=bucket_size_in_mb,
-        delay_allreduce=getattr(compile_data.fn, "delay_allreduce", False),
     )
 
     flat_backward_trace_output, backward_trace_output_spec = tree_flatten(backward_trace.output)

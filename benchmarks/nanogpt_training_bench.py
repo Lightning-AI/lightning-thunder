@@ -206,7 +206,7 @@ save_files = not (torch.distributed.is_initialized() and torch.distributed.get_r
 dir_for_outputs = f"./thunder_traces/{config}_{args.dtype}_seq-{args.seq_len}" if save_files else None
 if dir_for_outputs is not None and is_distributed:
     if args.ddp_mode == "ddp":
-        dir_for_outputs += f"{'_ddp_bucket_size-' + str(bucket_size_in_mb) if is_distributed else ''}{'_delayed_allreduce' if is_distributed and args.delay_allreduce else ''}"
+        dir_for_outputs += f"{'_ddp_bucket_size-' + str(bucket_size_in_mb) if is_distributed else ''}"
     elif args.ddp_mode == "fsdp":
         dir_for_outputs += f"{'_fsdp_bucketing_strategy_' + str(args.bucketing_strategy)}"
     else:
@@ -309,9 +309,7 @@ if args.profile:
             print(f"# No. of occurrences {e.count} {e}")
         print(context.key_averages().table(sort_by="cuda_time_total"))
 if args.dump_extrace and save_files:
-    preamble = (
-        f"### {config=}, {dtype=}, {seq_len=}, {is_distributed=}, {bucket_size_in_mb=}, {args.delay_allreduce=}\n"
-    )
+    preamble = f"### {config=}, {dtype=}, {seq_len=}, {is_distributed=}, {bucket_size_in_mb=}\n"
     fwd_traces, bwd_traces = thunder.last_traces(model)
 
     with open(os.path.join(dir_for_outputs, "fwd_trace.py"), "w") as f:

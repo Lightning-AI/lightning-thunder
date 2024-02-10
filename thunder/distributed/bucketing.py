@@ -128,11 +128,9 @@ class GradBuckets:
         self,
         grad_to_bucket: utils.ProxyDict,
         bucket_list: list[Bucket] = [],
-        delay_allreduce: bool = False,
     ) -> None:
         self.grad_to_bucket = grad_to_bucket
         self.bucket_list = bucket_list
-        self.delay_allreduce = delay_allreduce
         self.bucket_to_future: dict[Bucket, FutureTensorProxy] = {}
 
     def _maybe_allreduce(self, bucket: Bucket, group: ProcessGroup) -> None:
@@ -149,13 +147,9 @@ class GradBuckets:
         bucket = self.grad_to_bucket[grad]
         bucket.tell(grad)
 
-        if not self.delay_allreduce:
-            self._maybe_allreduce(bucket, group)
+        self._maybe_allreduce(bucket, group)
 
     def retrieve_allreduced_grads(self, group: ProcessGroup):
-        if self.delay_allreduce:
-            for bucket in self.bucket_list:
-                self._maybe_allreduce(bucket, group)
         for bucket in filter(lambda b: b not in self.bucket_to_future, self.bucket_list):
             self._maybe_allreduce(bucket, group)
         allreduced_grads = {}
@@ -172,7 +166,6 @@ class GradBuckets:
         gradients_of_same_dtype_and_device: dict[tuple[dtypes.dtype, devices.Device], list[TensorProxy]],
         gradient_to_index: utils.ProxyDict,
         bucket_cap_in_mb: float,
-        delay_allreduce: bool,
     ) -> GradBuckets:
         bucket_cap_bytes = bucket_cap_in_mb * 1024 * 1024
 
@@ -201,4 +194,4 @@ class GradBuckets:
                 cur_bucket_grads.clear()
                 n_buckets += 1
                 bucket_list.append(bucket)
-        return GradBuckets(grad_to_bucket=grad_to_bucket, bucket_list=bucket_list, delay_allreduce=delay_allreduce)
+        return GradBuckets(grad_to_bucket=grad_to_bucket, bucket_list=bucket_list)
