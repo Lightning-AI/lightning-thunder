@@ -2,8 +2,8 @@
 
 # These owners will be the default owners for everything in the repo. Unless a later match takes precedence,
 # @global-owner1, @global-owner2, and @global-owner3 will be requested for review when someone opens a pull request.
-* @mruberry @lantiga @robieta
+* @mruberry @lantiga @robieta @t-vi
 
 # CI/CD and configs
-/.github/       @mruberry @lantiga
-*.yml           @mruberry @lantiga
+/.github/       @mruberry @lantiga @t-vi
+*.yml           @mruberry @lantiga @t-vi
