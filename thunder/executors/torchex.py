@@ -1662,8 +1662,8 @@ if torch.distributed.is_available():
                 utils.check(False, lambda: f"Invalid {mode=}. Supported are (gather, scatter)")
 
     def _unpack_for_fsdp_prim_impl(
-        buffer: TensorProxy,
-        tensors: list[TensorProxy],
+        buffer: torch.Tensor,
+        tensors: list[torch.Tensor],
         world_size: int,
         mode: str,
     ) -> list[torch.Tensor]:
