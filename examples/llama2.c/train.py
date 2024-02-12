@@ -214,9 +214,8 @@ if compile == "thunder":
     from thunder.executors.sdpaex import sdpa_ex
     executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
 
-    # nv_enable_bookend because of https://github.com/Lightning-AI/lightning-thunder/issues/2025
-    eval_model = thunder.compile(eval_model.eval(), disable_torch_autograd_support=True, executors_list=executors, nv_enable_bookend=True)
-    train_model = thunder.compile(train_model.train(), executors_list=executors, nv_enable_bookend=False)
+    eval_model = thunder.compile(eval_model.eval(), disable_torch_autograd_support=True, executors_list=executors)
+    train_model = thunder.compile(train_model.train(), executors_list=executors)
 elif compile == "torch":
     print("compiling the model with torch... (takes a ~minute)")
     eval_model = torch.compile(eval_model)

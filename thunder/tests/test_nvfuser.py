@@ -312,6 +312,56 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
 
 
+@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
+def test_cse_rematerialization(executor, device, _):
+    # Unit test for https://github.com/Lightning-AI/lightning-thunder/issues/2046
+    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.core.pytree import tree_flatten
+
+    batch_size = 2
+    max_seq_len = 32
+    vocab_size = 32
+    model_args = dict(
+        dim=32,
+        n_layers=2,
+        n_heads=2,
+        n_kv_heads=2,
+        vocab_size=vocab_size,
+        multiple_of=32,
+        max_seq_len=max_seq_len,
+        dropout=0.0,
+    )
+    gptconf = ModelArgs(**model_args)
+    model = Transformer(gptconf)
+    model.to(device)
+
+    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+    compiled_func = thunder.compile(
+        model.eval(),
+        disable_torch_autograd_support=True,
+        executors_list=executor.executors_list(),
+        nv_enable_bookend=False,
+    )
+    compiled_func(x, y)
+
+    # Rematerialization can replace saved intermediates between fusions with extra computation.
+    # In any downstream fusions, an input argument is replaced with duplicate computation.
+    # This test case can only occur if rematerialization is active.
+    assert nvfuserex._use_rematerialization
+
+    fw_trace = thunder.last_traces(compiled_func)[-1]
+    fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
+    assert len(fusion_bsyms) == 13
+    # fusion groups 1 and 7 correspond with the apply_rotary_emb function
+    # Nvfuser with recomputation should use precomputed cos and sin values.
+    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[7].args)
+    assert fusion_bsyms[1].args[0].name == "freqs_cos"
+    assert fusion_bsyms[1].args[1].name == "freqs_sin"
+    assert fusion_bsyms[7].args[0].name == "freqs_cos"
+    assert fusion_bsyms[7].args[1].name == "freqs_sin"
+
+
 # Tests that two separated nvFuser regions can be merged when they don't depend
 #   on an intermediate PyTorch region
 # TODO Create a testing operator that can only be executed by PyTorch so that

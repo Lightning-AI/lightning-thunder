@@ -627,10 +627,23 @@ class nvFuserExecutor(FusionExecutor):
             # The fusion_rhs_to_bsym_map is used only for CSE inside a nvFusion region.
             fusion_rhs_to_bsym_map: dict[BoundSymbolRHS, BoundSymbolInterface] = {}
 
+            # Rematerialization can replace saved intermediates with extra
+            # computation. In this case, replacing a redundant operation would
+            # reference an argument that is removed from the fusion's arguments.
+            # If the original variable does not exist in this fusion bsym's
+            # arguments, then skip this redundant mapping.
+            vargs = [variableify(x) for x in bsym.args]
+            this_fusion_redundant_map = {k: v for k, v in redundant_map.items() if k in vargs}
+
             # Apply cse transformation to subsymbols.
-            cse_subsymbols = map(partial(cse_single_bsym, redundant_map, fusion_rhs_to_bsym_map), bsym.subsymbols)
+            cse_subsymbols = map(
+                partial(cse_single_bsym, this_fusion_redundant_map, fusion_rhs_to_bsym_map), bsym.subsymbols
+            )
             remove_none_subsymbols = tuple(filterfalse(lambda a: a is None, cse_subsymbols))
-            new_subsymbols = replace_redundant_inputs(redundant_map, remove_none_subsymbols)
+            new_subsymbols = replace_redundant_inputs(this_fusion_redundant_map, remove_none_subsymbols)
+
+            # Add any new redundant mappings for this fusion to the main dictionary.
+            redundant_map.update(this_fusion_redundant_map)
 
             # Map redundant args and outputs that have a common subexpression to the same value.
             # Remove identical values from the bsym's arguments and outputs.
