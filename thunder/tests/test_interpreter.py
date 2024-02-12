@@ -21,7 +21,7 @@ from thunder.core.jit import is_jitting, jit, JITError
 # This wraps the jit call into a tracking one (using a wrapper function
 # rather than partial to get a nice test name).
 def jit_tracking(*args, **kwargs):
-    return jit(*args, with_provenance_tracking=True, **kwargs)
+    return jit(*args, with_provenance_tracking=True, uncacheable_classes=(torch.Tensor, int, float, str), **kwargs)
 
 
 # This will be called by PyTest and parametrize each test that has
@@ -1005,16 +1005,16 @@ def test_reduce_jitted_reduce_fn(jit):
     def foo(a, fn):
         return functools.reduce(fn, a, 0)
 
+    jitting = True
+
     def add(x, y):
         assert is_jitting() == jitting
         return x + y
 
-    jitting = True
     jfoo = jit(foo)
     jadd = jit(add)
 
-    with pytest.raises(JITError, match="missing a required argument: 'default' while tracing|AssertionError"):
-        assert jfoo((1, 2, 3), jadd) == 6
+    assert jfoo((1, 2, 3), jadd) == 6
 
 
 def test_calling_methods(jit):

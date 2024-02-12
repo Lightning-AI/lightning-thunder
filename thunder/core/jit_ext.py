@@ -36,6 +36,7 @@ from types import (
     BuiltinFunctionType,
     FunctionType,
     MethodType,
+    GetSetDescriptorType,
 )
 
 import torch
@@ -73,6 +74,7 @@ from thunder.core.jit import (
     unwrap,
     wrap,
     wrap_const,
+    PseudoInst,
     ProvenanceRecord,
 )
 from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
@@ -474,7 +476,7 @@ _safe_functions: set = {
     list.__new__,
     list.__init__,
     CellType.__new__,
-    "getset_descriptor.__get__",  # todo: find the proper way to access it
+    GetSetDescriptorType.__get__,
 }
 
 
@@ -494,7 +496,7 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
         lookaside = default_lookaside(fn, *args, **kwargs)
 
     if lookaside is None:
-        if is_opaque(fn) and fn not in _safe_functions and (extract_callable_name(fn) not in _safe_functions):
+        if is_opaque(fn) and fn not in _safe_functions:
             raise NotImplementedError(
                 f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
             )
@@ -539,7 +541,9 @@ def _lit_freevar_callback(name: str, wrapped_cell: Any, /, *, fn: Callable, idx:
 
     ctx: LitCtx = get_litctx()
 
-    provenance = ProvenanceRecord("LOAD_ATTR", inputs=[wrapped_cell.provenance, wrap_const("cell_contents").provenance])
+    provenance = ProvenanceRecord(
+        PseudoInst.LOAD_ATTR, inputs=[wrapped_cell.provenance, wrap_const("cell_contents").provenance]
+    )
     proxy = ctx.proxify(contents, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, provenance))
 
     if proxy is not contents:
@@ -632,6 +636,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 callbacks=lit_callbacks,
                 debug_log=cd.debug_log,
                 with_provenance_tracking=True,
+                uncacheable_classes=(torch.Tensor, int, float, str),
             )
             result = jfn(*args, **kwargs)
 
@@ -742,13 +747,29 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
             def from_opaque(provenance, *, new_output=False):
                 fn = provenance.inputs[0]
                 args = provenance.inputs[1]
-                if fn.inst != "CONSTANT":
+                if fn.inst != PseudoInst.CONSTANT:
                     raise NotImplementedError(f"unpacking from nonconstant opaque function")
                 if fn.value.__name__ == "__getitem__":
                     idx, obj = args.inputs
-                    return from_binary_subscr(ProvenanceRecord("BINARY_SUBSCR_punted", inputs=[idx, obj]))
-
-                raise NotImplementedError(f"unpacking from {fn.value}")
+                    return from_provenance(ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[idx, obj]))
+                elif fn.value == GetSetDescriptorType.__get__:
+                    # todo: find a more elegant way?
+                    # Arg 1 is the object we want to get the attribute from
+                    # Arg 2 is the GetSetDescriptor, which contains the arrgument name as .__name__
+                    assert len(args.inputs) == 3
+                    assert args.inputs[2].inst == PseudoInst.CONSTANT and isinstance(
+                        args.inputs[2].value, GetSetDescriptorType
+                    )
+                    return from_provenance(
+                        ProvenanceRecord(
+                            PseudoInst.LOAD_ATTR,
+                            inputs=[
+                                args.inputs[1],
+                                ProvenanceRecord(PseudoInst.CONSTANT, inputs=[], value=args.inputs[2].value.__name__),
+                            ],
+                        )
+                    )
+                raise NotImplementedError(f"unpacking from OPAQUE {fn.value}")
 
             def from_provenance(provenance, *, new_output=False):
                 if hasattr(provenance, "proxy"):
@@ -757,7 +778,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 inst = provenance.inst
                 if isinstance(inst, dis.Instruction):
                     inst = inst.opname
-
+                print(inst)
                 d = {
                     "INPUT": from_input,
                     "LOAD_ATTR": from_load_attr,
@@ -769,7 +790,9 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 unpack_fn = d.get(inst)
                 if unpack_fn is None:
                     raise NotImplementedError(f"Unpacking from {inst} {provenance}")
-                return unpack_fn(provenance, new_output=new_output)
+                res = unpack_fn(provenance, new_output=new_output)
+                provenance.proxy = res
+                return res
 
             action, *args = p.history
             assert action is UNPACK_ACTION.FROM_PROVENANCE

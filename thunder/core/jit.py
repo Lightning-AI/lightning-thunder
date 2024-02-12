@@ -14,7 +14,6 @@ import re
 import sys
 import traceback
 import weakref
-import torch
 from typing import Any, Literal, NamedTuple
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
 from io import StringIO
@@ -25,6 +24,7 @@ from types import (
     CodeType,
     CoroutineType,
     FrameType,
+    GetSetDescriptorType,
     FunctionType,
     MethodType,
     MethodDescriptorType,
@@ -144,11 +144,10 @@ class WrappedValue:
         self.attr_wrappers = {}  # TODO: wrappers for things via getattr/setattr
 
         self.provenance = provenance
-        if self.provenance.inst == "CONSTANT":
+        if self.provenance.inst == PseudoInst.CONSTANT:
             self.provenance.value = value
 
-        if not isinstance(value, (torch.Tensor, int, float, str)):
-            ctx._known_wrappers[id(value)] = (weakref.ref(self),)
+        ctx.cache_wrapper(self)
 
     def unwrap(self):
         return self.value
@@ -170,7 +169,7 @@ def wrap_args(tup):
     assert isinstance(tup, tuple)  # allow other sequences?
     assert all(isinstance(v, WrappedValue) for v in tup)
 
-    pr = ProvenanceRecord("BUILD_TUPLE", inputs=[v.provenance for v in tup][::-1])  # other inst?
+    pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in tup][::-1])  # other inst?
     out = wrap(tuple(v.value for v in tup), typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
     for i, v in enumerate(tup):
         out.item_wrappers[i] = v
@@ -194,14 +193,16 @@ def wrap_kwargs(d):
         wrap_value_dict[wk.value] = v
         wrap_key_dict[wk.value] = wk
 
-    pr = ProvenanceRecord("BUILD_DICT", inputs=inputs)
+    pr = ProvenanceRecord(PseudoInst.BUILD_DICT, inputs=inputs)
     out = wrap(uout, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
     out.item_wrappers = wrap_value_dict
     out.key_wrappers = wrap_key_dict
     return out
 
 
-def wrap(value: Any, /, typ: WRAPPED_VALUE_TYPE, *, provenance: ProvenanceRecord) -> WrappedValue:
+def wrap(
+    value: Any, /, typ: WRAPPED_VALUE_TYPE = WRAPPED_VALUE_TYPE.INTERMEDIATE, *, provenance: ProvenanceRecord
+) -> WrappedValue:
     if isinstance(value, WrappedValue):
         return value
     ctx: JitCompileCtx = get_jitcompilectx()
@@ -220,7 +221,7 @@ def wrap(value: Any, /, typ: WRAPPED_VALUE_TYPE, *, provenance: ProvenanceRecord
 
 def wrap_const(value: Any, /, *, provenance: ProvenanceRecord | None = None) -> WrappedValue:
     if provenance is None:
-        provenance = ProvenanceRecord(inst="CONSTANT", inputs=[], output_idx=0, output_key=None)
+        provenance = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], output_idx=0, output_key=None)
     return wrap(value, typ=WRAPPED_VALUE_TYPE.CONSTANT, provenance=provenance)
 
 
@@ -261,12 +262,20 @@ class JitCompileCtx:
         fn_lookaside: Callable,
         callbacks: dict[JIT_CALLBACKS, Callable],
         with_provenance_tracking: bool = False,
+        uncacheable_classes: list[type] | None = None,
     ):
         self._opcode_interpreter: Callable = opcode_interpreter
         self._fn_lookaside: Callable = fn_lookaside
         self._callbacks: dict[JIT_CALLBACKS, Callable] = callbacks
         self._with_provenance_tracking = with_provenance_tracking
         self._known_wrappers = {}
+        if with_provenance_tracking:
+            assert isinstance(uncacheable_classes, (list, tuple))
+        self._uncacheable_classes = uncacheable_classes
+
+    def cache_wrapper(self, wrapped_value: WrappedValue):
+        if not isinstance(wrapped_value.value, self._uncacheable_classes):
+            self._known_wrappers[id(wrapped_value.value)] = (weakref.ref(wrapped_value),)
 
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
@@ -631,13 +640,31 @@ def get_python_tb(tb: list | TracebackType | None) -> list:
     return res
 
 
+class PseudoInst(str, enum.Enum):
+    BINARY_SUBSCR = "BINARY_SUBSCR"
+    BUILD_DICT = "BUILD_DICT"
+    BUILD_TUPLE = "BUILD_TUPLE"
+    CONSTANT = "CONSTANT"
+    EXCEPTION_HANDLER = "EXCEPTION_HANDLER"
+    INPUT = "INPUT"
+    LOAD_ATTR = "LOAD_ATTR"
+    LOOKASIDE = "LOOKASIDE"
+    OPAQUE = "OPAQUE"
+    SEND = "SEND"
+
+
 @dataclasses.dataclass
 class ProvenanceRecord:
-    inst: dis.Instruction  # or save opname, argval?
+    inst: dis.Instruction | PseudoInst  # or save opname, argval?
     inputs: list  # should we record this relative to the original stack top?
     output_idx: int = 0
     output_key: int | slice | None = None
     value: Any | None = None
+
+    def __post_init__(self):
+        assert isinstance(self.inst, (dis.Instruction, PseudoInst)), f"{self.inst} is not Instruction or PseudoInst"
+        assert isinstance(self.inputs, list)
+        assert all(isinstance(i, ProvenanceRecord) for i in self.inputs)
 
 
 class InterpreterStack:
@@ -647,8 +674,9 @@ class InterpreterStack:
         self.provenance_inputs = None
 
     @contextlib.contextmanager
-    def set_cur_instruction(self, inst: dis.Instruction):
+    def set_cur_instruction(self, inst: dis.Instruction | PseudoInst):
         assert self.provenance_inst is None and self.provenance_inputs is None
+        assert isinstance(inst, (dis.Instruction, PseudoInst))
         self.provenance_inst = inst
         self.provenance_inputs = []
         self.output_idx = 0
@@ -706,13 +734,6 @@ class InterpreterStack:
 
     def delete_provenance_record(self, wrapped_value, key: int | slice):
         # TODO
-        # if isinstance(key, slice):
-        #    l = len(self._stack)
-        #    print("#############", key)
-        #
-        # if not isinstance(key, int):
-        #    raise NotImplementedError(f"sorry, todo {key}")
-        # unallocate
         pass
 
     # NOTE push is an alias for append
@@ -1067,7 +1088,15 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         assert cls_var is not null
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
-            return _jit(descr_get, cls_var, obj, objtype)
+            compilectx = get_jitcompilectx()
+            if compilectx._with_provenance_tracking:
+                # TODO: currently, unpacking does not play well with non-const descr_get
+                pr = ProvenanceRecord(PseudoInst.CONSTANT, inputs=[], value=descr_get)
+                wdescr_get = wrap(descr_get, provenance=pr)
+                wdescr_get.typ = WRAPPED_VALUE_TYPE.CONSTANT
+                wdescr_get.provenance = pr
+            result = _jit(descr_get, cls_var, obj, objtype)
+            return result
 
     # NOTE: `__dict__` is somewhat special, since we can't look inside `__dict__` when we call `obj.__dict__`.
     #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
@@ -1102,12 +1131,13 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     ctx: JitRuntimeCtx = get_jitruntimectx()
     compilectx: JitCompileCtx = get_jitcompilectx()
 
+    assert not isinstance(result, WrappedValue)
     if result is not JIT_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
-        if compilectx._with_provenance_tracking:
-            pr = ProvenanceRecord("LOAD_ATTR", inputs=[obj.provenance, name.provenance])
-            return wrap(result, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
-        else:
-            return result
+        if result is not JIT_SIGNALS.EXCEPTION_RAISED and compilectx._with_provenance_tracking:
+            result = wrap(
+                result, provenance=ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
+            )
+        return result
 
     # `__getattr__` is only triggered if `__getattribute__` fails.
     # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
@@ -4172,19 +4202,22 @@ def make_coroutine(
 
 
 # Interprets the callable with the given args and kwargs
-# NOTE There are (currently) 7 cases for interpretation:
+# NOTE There are (currently) 8 cases for interpretation:
 #
-#   (0) Methods are unwrapped
-#       (0a) The callable is a bound method, in which case it's canonicalized
-#       (0b) The callable is a builtin method, in which case we try to unbind it
-#   (1) The callable has a lookaside, in which case it's used to execute the operation
-#   (2) The callable is a partial object, in which case it's recursively unwrapped
+#   (0) For already jit()-ed functions, we use the original function
+#       to trace through rather than trying to have the jit trace through
+#       itself (which neither does not work nor would it be useful).
+#   (1) Bound methods are unbound
+#       (1a) The callable is a bound method (implemented in Python), in which case it's canonicalized
+#       (1b) The callable is a builtin method, in which case we try to unbind it
+#   (2) The callable has a lookaside, in which case it's used to execute the operation
+#   (3) The callable is a partial object, in which case it's recursively unwrapped
 #           Note that this case is after (1), which allows for lookasides on partial objects
-#   (3) The callable is opaque, in which case it's executed by the CPython interpreter and its
+#   (4) The callable is opaque, in which case it's executed by the CPython interpreter and its
 #           result returned
-#   (4) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
-#   (5) The callable is a callable object, in which case its __call__ attribute is called recursively
-#   (6) The callable is a FunctionType, in which case it's recursively interpretered by the jit
+#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the jit
 #
 # NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
 # TODO Consider refactoring this into one function for each case
@@ -4209,8 +4242,12 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         assert all(isinstance(a, WrappedValue) for a in args)
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
 
-    # (0) Methods are unwrapped
-    # (0a) The callable is a bound method, in which case it's unwrapped
+    # (1) Already (jit)
+    if hasattr(fn, "__thunder_jit_orig_fn"):
+        fn = fn.__thunder_jit_orig_fn
+        wrapped_fn = wrap_const(fn)
+    # (0) Bound methods are unbound
+    # (1a) The callable is a bound method (implemented in Python), in which case it's unwrapped
     if inspect.ismethod(fn):
 
         def impl(fn, *args, **kwargs):
@@ -4218,7 +4255,7 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
         return _jit_no_unwrap(impl, wrapped_fn, *args, **kwargs)  # type: ignore
 
-    # (0b) The callable is a builtin method, in which case it's canonicalized
+    # (1b) The callable is a builtin method, in which case it's canonicalized
     #   A builtin is canonicalized when it's a call on a type or a module (or their equivalent)
     #   Ex. The append method of a list
     #       l = [0, 1, 2]
@@ -4311,7 +4348,7 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
                 unbound_fn = wrap_const(unbound_fn)  # TODO!
                 return _jit_no_unwrap(unbound_fn, slf, *args, **kwargs)
 
-    # (1) Handles lookasides
+    # (2) Handles lookasides
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
@@ -4326,14 +4363,14 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
         res = lookaside_fn(*args_, **kwargs_)
         if needs_wrap and res is not JIT_SIGNALS.EXCEPTION_RAISED:
             pr = ProvenanceRecord(
-                inst="LOOKASIDE",
+                inst=PseudoInst.LOOKASIDE,
                 inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
             )
             res = wrap(res, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
         return res
 
     # TODO: disabled as partial is just like any other class
-    ## (2) Handles partial objects
+    ## (3) Handles partial objects
     # if isinstance(fn, functools.partial):
     #    # TODO: add traceback entry if exceptions are raised?
     #    p: functools.partial = fn
@@ -4344,7 +4381,7 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     #        "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
     #    )
 
-    # (3) Handles opaque functions
+    # (4) Handles opaque functions
     if is_opaque(fn):
         runtimectx.record_opaque_call(fn)
         args_ = [unwrap(a) for a in args]
@@ -4357,13 +4394,13 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
         if compilectx._with_provenance_tracking:
             pr = ProvenanceRecord(
-                inst="OPAQUE",
+                inst=PseudoInst.OPAQUE,
                 inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
             )
             opaque_result = wrap(opaque_result, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
         return opaque_result
 
-    # (4) Handle types
+    # (5) Handle types
     if isinstance(fn, type):
         if not hasattr(fn, "__new__"):
             raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
@@ -4375,7 +4412,7 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             return res
         return obj
 
-    # (5) Handles callable objects (with a dunder call method)
+    # (6) Handles callable objects (with a dunder call method)
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
             raise NotImplementedError(
@@ -4389,7 +4426,7 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
-    # (6) Jits into the function
+    # (7) Jits into the function
     # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)
@@ -4519,7 +4556,7 @@ def _jit_run(
     with runtimectx.push_frame_stack(frame):
         stack: InterpreterStack = frame.interpreter_stack
         if send_value != Py_NULL():
-            with stack.set_cur_instruction("SEND"):
+            with stack.set_cur_instruction(PseudoInst.SEND):
                 stack.append(send_value)
 
         insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
@@ -4574,8 +4611,10 @@ def _jit_run(
                         assert len(frame.interpreter_stack) >= et_level
                         del frame.interpreter_stack[et_level:]
                         if et_lasti:
-                            frame.interpreter_stack.append(frame.lasti)
-                        frame.interpreter_stack.append(current_exception)
+                            with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
+                                frame.interpreter_stack.append(frame.lasti)
+                        with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
+                            frame.interpreter_stack.append(current_exception)
                         current_exception = None
                         skip_stack_effect_check = True
                         interpretation_result = et_handler // 2
@@ -4586,7 +4625,7 @@ def _jit_run(
                         try_block = frame.try_stack.pop()
                         if try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE:
                             assert len(frame.interpreter_stack) >= try_block.level + 3
-                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                            with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 del frame.interpreter_stack[try_block.level + 3 :]
                                 exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
                                 exc_value = frame.interpreter_stack.pop()
@@ -4604,7 +4643,7 @@ def _jit_run(
 
                             # Python 3.10 UNWIND_BLOCK
                             assert len(frame.interpreter_stack) >= try_block.level
-                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                            with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 del frame.interpreter_stack[try_block.level :]
 
                             # Python 3.10 handling of SETUP_FINALLY blocks
@@ -4615,7 +4654,7 @@ def _jit_run(
                             # CPython sreads exc_info->exc_type/value/traceback
                             # see RuntimeCtx inititalization of exception_stack for more info
                             exc = runtimectx.exception_stack[-1]
-                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                            with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 frame.interpreter_stack.append(exc.__traceback__ if exc is not None else None)
                                 frame.interpreter_stack.append(exc)
                                 # Python distinguishes explicit exc_type present or NULL/None
@@ -4626,7 +4665,7 @@ def _jit_run(
                             # CPython sets exc_info->exc_type/value/traceback here
                             # see RuntimeCtx inititalization of exception_stack for more info
                             runtimectx.exception_stack[-1] = current_exception
-                            with frame.interpreter_stack.set_cur_instruction("EXCPT_HANDLER"):
+                            with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 frame.interpreter_stack.append(
                                     current_exception.__traceback__ if exc is not None else None
                                 )
@@ -4655,8 +4694,7 @@ def _jit_run(
                 frame.inst_ptr += 1
                 # get the result from the current stack
 
-                with frame.interpreter_stack.set_cur_instruction("RESULT"):
-                    result = frame.interpreter_stack.pop(no_unwrap=True)
+                result = frame.interpreter_stack.pop(no_unwrap=True)
                 # Restores the previous stack, the caller needs to put the value on it
                 return result, interpretation_result
             elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
@@ -4765,13 +4803,17 @@ def jit(
     callbacks: dict[JIT_CALLBACKS, Callable] = default_callbacks,
     debug_log: None | StringIO = None,
     with_provenance_tracking: bool = False,
+    uncacheable_classes: list[type] | None = None,
 ) -> Callable:
     compilectx: JitCompileCtx = JitCompileCtx(
         opcode_interpreter=opcode_interpreter,
         fn_lookaside=fn_lookaside,
         callbacks=callbacks,
         with_provenance_tracking=with_provenance_tracking,
+        uncacheable_classes=uncacheable_classes,
     )
+    if hasattr(fn, "__thunder_jit_orig_fn"):
+        fn = fn.__thunder_jit_orig_fn
 
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
@@ -4786,20 +4828,20 @@ def jit(
                 args = wrap(
                     args,
                     WRAPPED_VALUE_TYPE.INPUT,
-                    provenance=ProvenanceRecord(inst="INPUT", inputs=[], output_idx=0, output_key=None),
+                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT, inputs=[], output_idx=0, output_key=None),
                 )
 
                 kwargs = wrap(
                     kwargs,
                     WRAPPED_VALUE_TYPE.INPUT,
-                    provenance=ProvenanceRecord(inst="INPUT", inputs=[], output_idx=1, output_key=None),
+                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT, inputs=[], output_idx=1, output_key=None),
                 )
 
                 def getfn():
                     fn_3 = wrap(
                         fn,
                         WRAPPED_VALUE_TYPE.INPUT,
-                        provenance=ProvenanceRecord(inst="INPUT", inputs=[], output_idx=-1, output_key=None),
+                        provenance=ProvenanceRecord(inst=PseudoInst.INPUT, inputs=[], output_idx=-1, output_key=None),
                     )
 
                     def fn_2(args, kwargs):
@@ -4832,6 +4874,7 @@ def jit(
 
             return jit_result
 
+    fn_.__thunder_jit_orig_fn = fn
     return fn_
 
 
