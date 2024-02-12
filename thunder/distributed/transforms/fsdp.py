@@ -72,7 +72,7 @@ class FSDPFwdTraceVisitor:
             utils.ProxyDict
         )
         self.bucket_to_unsharded_param: dict[FSDPForwardBucket, TensorProxy] = {}
-        self.bsyms_to_check: set(BoundSymbolRHS) = set()
+        self.bsyms_to_check: set[BoundSymbolRHS] = set()
         self.future_to_bucket = utils.ProxyDict()
         self.bucket_to_unsharded_params: dict[FSDPForwardBucket, tuple[TensorProxy, ...]] = {}
         # The following two variables of ``original_to_updated`` and ``swap_map`` is for trace-to-trace transformation.
