@@ -1902,7 +1902,7 @@ def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Devi
     # Ensures the requested fill_value can be safely cast to the dtype
     fill_value_dtype = dtypes.to_dtype(fill_value)
     utils.check(
-        utils.can_safe_cast_number_to(fill_value, fill_value_dtype),
+        utils.can_safe_cast_number_to(fill_value, dtype),
         lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}",
     )
 

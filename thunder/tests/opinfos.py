@@ -4647,9 +4647,15 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(shape, fill_value, device=device, dtype=dtype)
 
 
+def full_error_generator(op, device, **kwargs):
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
+
+
 full_opinfo = OpInfo(
     ltorch.full,
     sample_input_generator=full_sample_generator,
+    error_input_generator=full_error_generator,
     torch_reference=torch.full,
 )
 tensor_creation_ops.append(full_opinfo)
