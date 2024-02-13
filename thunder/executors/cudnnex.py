@@ -2,6 +2,7 @@ from typing import Any, Optional
 
 import torch
 import numpy as np
+import random
 
 from lightning_utilities.core.imports import package_available
 
@@ -51,17 +52,6 @@ class CudnnTensorAttributes:
     size: tuple
     stride: tuple
     dtype: torch.dtype
-
-
-def make_cacheable_cudnn_graph_inputs(func):
-    def wrapper(*args, **kwargs):
-        cudnn_input_args = [
-            CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype) if isinstance(arg, torch.Tensor) else arg
-            for arg in args
-        ]
-        return func(*cudnn_input_args, **kwargs)
-
-    return wrapper
 
 
 from collections import OrderedDict
@@ -159,11 +149,6 @@ def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_c
         graph.check_support()
         graph.build_plans(cudnn.build_plan_policy.HEURISTICS_CHOICE)
 
-        workspace = torch.empty(graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
-
-        seed_device_tensor = torch.full((1, 1, 1, 1), 123456, dtype=torch.int32, device="cuda")
-        offset_device_tensor = torch.full((1, 1, 1, 1), 1, dtype=torch.int32, device="cuda")
-
         _cudnnex_cache[cache_key] = (
             Q,
             K,
@@ -171,12 +156,9 @@ def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_c
             Attn_scale,
             Bias,
             Seed,
-            seed_device_tensor,
             Offset,
-            offset_device_tensor,
             O,
             softmax_stats,
-            workspace,
             graph,
         )
     return _cudnnex_cache[cache_key]
@@ -280,19 +262,26 @@ def _cudnn_sdpa_fwd_impl(
         Attn_scale,
         Bias,
         Seed,
-        seed_tensor,
         Offset,
-        offset_tensor,
         O,
         softmax_stats,
-        workspace,
         graph,
     ) = _make_cudnn_sdpa_forward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
 
     b, h, s_q, d_q = query.size()
     _, _, _, d_v = value.size()
-    O_actual = torch.empty(b, h, s_q, d_v, dtype=value.dtype, device="cuda")
-    softmax_stats_actual = torch.empty(b, h, s_q, 1, dtype=torch.float32, device="cuda")
+    O_actual = torch.empty(b, h, s_q, d_v, dtype=value.dtype, device=query.device)
+    softmax_stats_actual = torch.empty(b, h, s_q, 1, dtype=torch.float32, device=query.device)
+    workspace = torch.empty(graph.get_workspace_size(), device=query.device, dtype=torch.uint8)
+
+    seed_tensor = (
+        torch.full((1, 1, 1, 1), random.randint(0, 123902390), dtype=torch.int32, device=query.device) if Seed else None
+    )
+    offset_tensor = (
+        torch.full((1, 1, 1, 1), random.randint(0, 123902390), dtype=torch.int32, device=query.device)
+        if Offset
+        else None
+    )
 
     # Default value of scale, if not provided, in all torch versions
     if scale is None:
@@ -468,7 +457,6 @@ def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_
         graph.check_support()
         graph.build_plans(cudnn.build_plan_policy.HEURISTICS_CHOICE)
 
-        workspace = torch.empty(graph.get_workspace_size(), device="cuda", dtype=torch.uint8)
         _cudnnex_cache[cache_key] = (
             Q,
             K,
@@ -484,7 +472,6 @@ def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_
             dK,
             dV,
             dBias,
-            workspace,
             graph,
         )
     return _cudnnex_cache[cache_key]
@@ -548,7 +535,6 @@ def cudnn_sdpa_bwd_impl(
         dK,
         dV,
         dBias,
-        workspace,
         graph,
     ) = _make_cudnn_sdpa_backward_graph(
         query_4d,
@@ -596,6 +582,8 @@ def cudnn_sdpa_bwd_impl(
 
         cudnn_to_torch_tensor[Bias] = attn_mask.detach()
         cudnn_to_torch_tensor[dBias] = grad_attn_mask
+
+    workspace = torch.empty(graph.get_workspace_size(), device=query.device, dtype=torch.uint8)
 
     graph.execute(cudnn_to_torch_tensor, workspace)
 

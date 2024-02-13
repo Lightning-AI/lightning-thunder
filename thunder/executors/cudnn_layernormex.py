@@ -29,8 +29,19 @@ from typing import Union, Dict
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import TensorProxy
 
-from thunder.executors.cudnnex import CudnnTensorAttributes
-from thunder.executors.cudnnex import make_cacheable_cudnn_graph_inputs, torch_to_cudnn_dtype
+from thunder.executors.cudnnex import CudnnTensorAttributes, torch_to_cudnn_dtype
+
+
+def make_cacheable_cudnn_graph_inputs(func):
+    def wrapper(*args, **kwargs):
+        cudnn_input_args = [
+            CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype) if isinstance(arg, torch.Tensor) else arg
+            for arg in args
+        ]
+        return func(*cudnn_input_args, **kwargs)
+
+    return wrapper
+
 
 from thunder.extend import OperatorExecutor, register_executor
 
