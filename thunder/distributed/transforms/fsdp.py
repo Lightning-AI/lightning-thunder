@@ -202,7 +202,7 @@ def create_map_from_unsharded_grad_to_bucket(
     sharded_grad_tensor_proxies: Sequence[TensorProxy],
     producers: utils.ProxyDict,
     group: ProcessGroup,
-) -> utils.ProxyDict():
+) -> utils.ProxyDict:
     clusters: dict[str, tuple[list[TensorProxy], list[int]]] = {}
     for index, sharded_grad_tensor_proxy in enumerate(sharded_grad_tensor_proxies):
         if not isinstance(sharded_grad_tensor_proxy, TensorProxy):
