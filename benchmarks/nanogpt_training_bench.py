@@ -49,7 +49,6 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--compile-mode", default="thunder", choices=("thunder", "torch"))
 parser.add_argument("--dtype", default="float32", choices=("float32", "float16", "bfloat16"))
-parser.add_argument("--print-loss", action="store_true", help="Set this `True` to print loss every step")
 parser.add_argument("--profile", action="store_true")
 parser.add_argument("--nsys-profile", action="store_true")
 parser.add_argument("--model", default="gpt2-medium", choices=tuple(_configs.keys()))
@@ -83,7 +82,6 @@ device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
 #'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
 dtype = args.dtype  # 'float32' or 'bfloat16' or 'float16'
 compile_mode = args.compile_mode
-print_loss = args.print_loss
 is_distributed = False
 ddp_mode = args.ddp_mode
 shard_mode = args.shard_mode
@@ -218,6 +216,7 @@ if save_files and not os.path.exists(dir_for_outputs):
 # simple benchmarking
 context = nullcontext()
 losses: list[torch.Tensor] = []
+list_step_time: list[int] = []
 put_nvtx_markers: bool = False
 for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
     if stage == 1:
@@ -234,10 +233,10 @@ for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
             put_nvtx_markers = True
             torch.cuda.profiler.start()
         torch.cuda.reset_peak_memory_stats(device)
-    torch.cuda.synchronize()
-    t0 = time.time()
     with context:
         for k in range(num_steps):
+            torch.cuda.synchronize()
+            t0 = time.time()
             if put_nvtx_markers:
                 torch.cuda.nvtx.range_push(f"iter_{k}")
 
@@ -267,40 +266,51 @@ for stage, num_steps in enumerate([10, 20]):  # burnin, then benchmark
             if put_nvtx_markers:
                 torch.cuda.nvtx.range_pop()
 
-            if print_loss:
-                lossf = loss.item()
-                print(f"{k}/{num_steps} loss: {lossf:.4f}")
-            elif stage == 1:
-                losses.append(loss.detach())
-
             if put_nvtx_markers:
                 torch.cuda.nvtx.range_pop()  # iter
-    torch.cuda.synchronize()
-    t1 = time.time()
-    dt = t1 - t0
+
+            torch.cuda.synchronize()
+            t1 = time.time()
+
+            if stage == 1:
+                list_step_time.append(torch.tensor(t1 - t0))
+                losses.append(loss.cpu())
     if stage == 1:
         memory_stats = torch.cuda.memory_stats(device)
         memory_allocated = memory_stats["allocated_bytes.all.peak"]
         memory_reserved = memory_stats["reserved_bytes.all.peak"]
-        if local_rank is None:
-            print(f"time per iteration: {dt/num_steps*1000:.4f}ms")
-            print(
-                f"peak allocated memory: {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
-            )
+        if is_distributed:
+            pg = torch_dist.new_group(backend="gloo")
+            input_tensor = torch.tensor([memory_allocated, memory_reserved], dtype=torch.float64).view(1, 2)
+            output_tensor = torch.zeros((world_size, 2), dtype=torch.float64)
+            torch_dist.all_gather_into_tensor(output_tensor, input_tensor, group=pg)
+            if local_rank == 0:
+                print("\n" + "-" * 80 + "\n")
+                for rank, t in enumerate(output_tensor):
+                    print(
+                        f"# [rank-{rank}] peak allocated memory: {t[0]/1024/1024:.2f}MB, peak reserved: {t[1]/1024/1024:.2f}MB"
+                    )
         else:
-            print(f"time per iteration at rank{local_rank}: {dt/num_steps*1000:.4f}ms")
+            print("\n" + "-" * 80 + "\n")
             print(
-                f"peak allocated memory at rank{local_rank}: {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
+                f"# peak allocated memory: {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
             )
 if args.nsys_profile:
     torch.cuda.profiler.stop()
-if losses:
+avg_iter_time = torch.tensor(list_step_time).mean()
+if is_distributed:
+    pg = torch_dist.new_group(backend="gloo")
+
+    avg_iter_time /= world_size
+    torch_dist.all_reduce(avg_iter_time, op=torch_dist.ReduceOp.SUM, group=pg)
     for i, loss in enumerate(losses):
-        if is_distributed:
-            with torch.inference_mode():
-                torch_dist.all_reduce(loss, op=torch_dist.distributed_c10d.ReduceOp.AVG)
-        if local_rank in (None, 0):
-            print(f"# iteration {i}, loss: {loss.item():.4f}")
+        loss /= world_size
+        torch_dist.all_reduce(loss, op=torch_dist.ReduceOp.SUM, group=pg)
+        losses[i] = loss
+if local_rank in (None, 0):
+    print(f"# Average iter time: {avg_iter_time.item() * 1000:.4f}ms")
+    for i, loss in enumerate(losses):
+        print(f"# iteration {i} -- loss {loss.item():.4f}")
 if args.profile:
     if local_rank == 0:
         key_averages = context.key_averages()
