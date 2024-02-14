@@ -10,11 +10,13 @@ import enum
 import functools
 import linecache
 import inspect
+import os
 import re
 import sys
 import traceback
 import weakref
-from typing import Any, Literal, NamedTuple
+import torch
+from typing import Any, Literal, NamedTuple, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
 from io import StringIO
 
@@ -38,7 +40,8 @@ from types import (
     TracebackType,
 )
 
-from thunder.core.baseutils import Singleton, extract_callable_name
+from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
+
 
 #
 # jit.py implements a Python interpreter in Python.
@@ -320,6 +323,47 @@ def jitcompilectx(_jitcompilectx: JitCompileCtx):
         reset_jitcompilectx(tok)
 
 
+class LineHistoryItem(TypedDict):
+    kind: Literal["Line"]
+    fn: Callable | CodeType
+    filename: str
+    position: Positions | None
+
+
+class OpaqueHistoryItem(TypedDict):
+    kind: Literal["Opaque"]
+    fn: Callable
+
+
+class LookasideHistoryItem(TypedDict):
+    kind: Literal["Lookaside"]
+    fn: Callable
+
+
+class CallHistoryItem(TypedDict):
+    kind: Literal["JitCall"]
+    fn: Callable
+    prev_frame: str
+
+
+class ReturnHistoryItem(TypedDict):
+    kind: Literal["JitReturn"]
+    fn: Callable
+    is_signal: bool
+    rval: type | JIT_SIGNALS
+
+
+JitHistoryItem = (
+    dis.Instruction
+    | str
+    | LineHistoryItem
+    | OpaqueHistoryItem
+    | LookasideHistoryItem
+    | CallHistoryItem
+    | ReturnHistoryItem
+)
+
+
 # How the JIT deals with exceptions:
 # Conceptually, there are two sources of exceptions that we want to distinguish:
 # - Things arising from user code ("User Exceptions").
@@ -349,7 +393,7 @@ class JitRuntimeCtx:
     def __init__(self, *, debug_log: None | StringIO = None):
         self.frame_stack: list[JITFrame] = []
         self._globals_dict: dict[str, Any] | None = None
-        self._history: list[dis.Instruction | str] = []
+        self._history: list[JitHistoryItem] = []
         self._interpreted_instructions: list[dis.Instruction] = []
         self._curexc: BaseException | None = None
         # The exception_stack mirrors the exc_info/exc_state from PyThreadState
@@ -362,11 +406,12 @@ class JitRuntimeCtx:
         # ts.curexc (in Python 3.10 as _type / _value / _traceback) is the exception currently being raised
 
         self.debug_log = debug_log
+        self._original_callsite: inspect.FrameInfo = inspect.stack()[2]  # [__init__, fn_, callsite, ...]
         self._prev_filename: None | str = None
-        self._prev_lineno: int = -1
+        self._prev_position: Positions | None = None
 
     @property
-    def curexc(self) -> Exception | None:
+    def curexc(self) -> BaseException | None:
         return self._curexc
 
     @curexc.setter
@@ -387,14 +432,14 @@ class JitRuntimeCtx:
 
     # The operations and opaque calls encountered while interpreting
     @property
-    def history(self) -> list[dis.Instruction | str]:
+    def history(self) -> list[JitHistoryItem]:
         return self._history
 
-    def record(self, val: Any, /) -> None:
+    def record(self, val: JitHistoryItem, /) -> None:
         self._history.append(val)
 
         if self.debug_log is not None:
-            self.debug_log.write(f"{str(val)}\n")
+            self.debug_log.write(f"Appended to history: {val}" + os.linesep)
 
     def peek_interpreter_stack(self) -> InterpreterStack:
         return self.frame_stack[-1].interpreter_stack
@@ -428,26 +473,59 @@ class JitRuntimeCtx:
         self.record(inst)
         return self
 
-    def record_opaque_call(self, fn: Callable, /) -> JitRuntimeCtx:
-        self.record(f"Opaque call to {fn} with name {getattr(fn, '__name__', 'None')}")
+    def record_jit_call(self, fn: Callable) -> JitRuntimeCtx:
+        frame: JITFrame | None = self.peek_frame_stack()
+
+        # If frame is None, that means that this is the first call to _jit, in _jit_run.
+        # In that case we should also print out what line we're starting on, since
+        # no line number changes have happened yet.
+        if frame is not None:
+            self.record({"kind": "JitCall", "fn": fn, "prev_frame": frame.qualname})
+        else:
+            if hasattr(self._original_callsite, "positions"):
+                pos = self._original_callsite.positions
+            else:
+                pos = Positions(self._original_callsite.lineno, self._original_callsite.lineno, 0, 999)
+            # self.record_position(fn, self._original_callsite.filename, pos)
+            self.record(
+                {
+                    "kind": "JitCall",
+                    "fn": fn,
+                    "prev_frame": self._original_callsite.function,
+                }
+            )
         return self
 
-    def record_lookaside(self, fn: Callable, /) -> JitRuntimeCtx:
-        self.record(f"Lookaside to {fn.__name__ if hasattr(fn, '__name__') else 'partial object'}")
+    def record_jit_return(self, fn: Callable, rval: Any | JIT_SIGNALS, /) -> JitRuntimeCtx:
+        is_signal: bool = isinstance(rval, JIT_SIGNALS)
+        rv: type | JIT_SIGNALS = rval if is_signal else type(rval)
+        self.record(ReturnHistoryItem(kind="JitReturn", fn=fn, is_signal=is_signal, rval=rv))
         return self
 
-    def record_position(self, filename: None | str, lineno: int, line: str, /) -> JitRuntimeCtx:
-        # Only records a change in the Python line
-        if filename == self._prev_filename and lineno == self._prev_lineno:
+    def record_opaque_call(self, fn: Callable) -> JitRuntimeCtx:
+        self.record(OpaqueHistoryItem(kind="Opaque", fn=fn))
+        return self
+
+    def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
+        self.record(LookasideHistoryItem(kind="Lookaside", fn=fn))
+        return self
+
+    def record_position(self, fn: Callable | CodeType, filename: str, position: Positions | None, /) -> JitRuntimeCtx:
+        # Only record a change in the Python line
+        if filename == self._prev_filename and _positions_equal(position, self._prev_position):
             return self
 
-        self._prev_lineno = lineno
+        if position is not None and position.lineno is None:
+            position = None
+
+        self._prev_position = position
         self._prev_filename = filename
-        self.record(f"Line {filename}:{lineno}")
+        line = LineHistoryItem(kind="Line", fn=fn, filename=filename, position=position)
+        self.record(line)
         return self
 
     def format_traceback(self):
-        return "\n".join(f.format_with_source() for f in self.frame_stack)
+        return os.linesep.join(f.format_with_source() for f in self.frame_stack)
 
 
 _jitruntimectx = contextvars.ContextVar("jitruntimectx")
@@ -526,7 +604,7 @@ def extract_code(fn) -> CodeType:
 # TODO There may be a better way to determine if an object is a PyCapsule, like
 #   importing a known PyCapsule and acquiring its type
 
-CapsuleType = type(datetime.datetime_CAPI)
+CapsuleType = type(datetime.datetime_CAPI)  # type: ignore (Undocumented)
 
 
 def is_pycapsule(x: Any) -> bool:
@@ -597,6 +675,17 @@ else:
     Positions = dis.Positions
 
 
+def _positions_equal(p1: Positions | None, p2: Positions | None):
+    if p1 is None or p2 is None:
+        return p1 is p2  # both are None
+    return (
+        p1.lineno == p2.lineno
+        and p1.col_offset == p2.col_offset
+        and p1.end_lineno == p2.end_lineno
+        and p1.end_col_offset == p2.end_col_offset
+    )
+
+
 DUNDER_PATTERN = re.compile(r"^__[a-z_]+__$")
 
 
@@ -623,7 +712,7 @@ class PythonFrameWrapper:
             if lineno is None:
                 lineno = self.code.co_firstlineno
             l.append("  " + ls[max(lineno - 1, 0)].rstrip())
-        return "\n".join(l)
+        return os.linesep.join(l)
 
     def get_or_make_python_frame(self) -> FrameType:
         return self.frame
@@ -807,16 +896,16 @@ class JITFrame:
             if inst.starts_line is not None:
                 self.positions = Positions(inst.starts_line, inst.starts_line, 0, 999)
         elif (3, 11) <= sys.version_info < (3, 12):
-            self.positions = inst.positions
+            if inst.positions is not None:
+                self.positions = inst.positions
         else:
             raise NotImplementedError(f"Python {sys.version_info} not supported")
 
         ctx: JitRuntimeCtx = get_jitruntimectx()
         file_name: None | str = self.code.co_filename
-        lineno: int = -1 if self.positions is None else self.positions.lineno
-        ctx.record_position(file_name, lineno, "")
+        ctx.record_position(self.code, file_name, self.positions)
 
-    def format_with_source(self):
+    def format_with_source(self) -> str:
         # todo: multiple lines in positions, underline, indent
         assert self.positions is not None, self
         l = []
@@ -830,7 +919,7 @@ class JITFrame:
                 l.append("  " + ls[max(lineno - 1, 0)].rstrip())
             else:
                 l.append("  <unavailable>")
-        return "\n".join(l)
+        return os.linesep.join(l)
 
     def get_localsplus_name(self, idx: int) -> str:
         if sys.version_info < (3, 11):
@@ -849,6 +938,7 @@ class JITFrame:
         def fn():
             pass
 
+        assert self.positions is not None
         lineno = self.positions.lineno
         if lineno is None:
             lineno = self.code.co_firstlineno
@@ -866,12 +956,15 @@ class JITFrame:
 
         if hasattr(fn.__code__, "co_qualname"):
             replacements["co_qualname"] = self.qualname
-        fn.__code__ = code.replace(**replacements)
+        fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
 
         try:
             fn()
-        except Exception as e:
+            assert False, "Unreachable."
+        except ValueError as e:
             tb = e.__traceback__
+
+        assert tb is not None
         while tb.tb_next is not None:
             tb = tb.tb_next
         return tb.tb_frame
@@ -1303,7 +1396,7 @@ def _next_lookaside(iterator, default=_nil):
 
     if default is not _nil and res is JIT_SIGNALS.EXCEPTION_RAISED:
         runtimectx: JitRuntimeCtx = get_jitruntimectx()
-        if isinstance(runtimectx.cur_exc, StopIteration):
+        if isinstance(runtimectx._curexc, StopIteration):
             res = default
     return res
 
@@ -2021,6 +2114,7 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: InterpreterStack,
     kwarg_length: JIT_SIGNALS | int = _jit(len, kw_names)
     if kwarg_length is JIT_SIGNALS.EXCEPTION_RAISED:
         return kwarg_length
+    assert type(kwarg_length) is int
 
     kwargs_flat: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(kwarg_length))))
     fn_kwargs: dict[str, Any] = {k: v for k, v in zip(kw_names, kwargs_flat)}
@@ -2294,7 +2388,7 @@ def _end_async_for_handler_3_10(
     frame: JITFrame,
     exception_stack: list,
     **kwargs,
-) -> None:
+) -> None | JIT_SIGNALS:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     assert inst.arg is None
 
@@ -2341,7 +2435,7 @@ def _end_async_for_handler_3_11(
     frame: JITFrame,
     exception_stack: list,
     **kwargs,
-) -> None:
+) -> None | JIT_SIGNALS:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     assert inst.arg is None
 
@@ -2384,18 +2478,18 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         fmt_spec = value
         value = stack.pop()
 
-    case: int = flags & FVC_MASK
+    _case: int = flags & FVC_MASK
 
     def impl(value, fmt_spec):
         # NOTE `match` was only introduced in Python 3.10, but we support Python 3.9
-        if case == FVC_NONE:
+        if _case == FVC_NONE:
             pass
-        elif case == FVC_STR:
+        elif _case == FVC_STR:
             value = str(value)
-        elif case == FVC_REPR:
+        elif _case == FVC_REPR:
             value = repr(value)
         else:
-            assert case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
+            assert _case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
             value = ascii(value)
 
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
@@ -2406,7 +2500,9 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FOR_ITER
 @register_opcode_handler("FOR_ITER")
-def _for_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs) -> int | None:
+def _for_iter_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
+) -> int | None | JIT_SIGNALS:
     assert type(inst.arg) is int
     delta: int = inst.arg
 
@@ -2602,6 +2698,7 @@ def _import_star_handler(
     _locals = _jit(locals)
     if _locals is JIT_SIGNALS.EXCEPTION_RAISED:
         return _locals
+    assert isinstance(_locals, dict)
 
     # For every name in __all__ if present in the module, or every name in __dict__ not
     # starting with _ if __all__ is not present, add the name to the current locals() dict,
@@ -4131,6 +4228,7 @@ def make_generator(
                     raise JITError(msg) from e
                 if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
+                    assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
@@ -4160,6 +4258,7 @@ def make_async_generator(
                     raise JITError(msg) from e
                 if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
+                    assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return
@@ -4189,6 +4288,7 @@ def make_coroutine(
                     raise JITError(msg) from e
                 if status is JIT_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
+                    assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
@@ -4196,7 +4296,7 @@ def make_coroutine(
             if status == JIT_SIGNALS.RETURN_VALUE:
                 return unwrap(res)
             assert status == JIT_SIGNALS.YIELD_VALUE
-            raise UnimplementedError("not implemented")
+            raise NotImplementedError("not implemented")
 
     return wrap_const(thunder_jit_coroutine())
 
@@ -4228,15 +4328,25 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
 
 def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
+    compilectx: JitCompileCtx = get_jitcompilectx()
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+    runtimectx.record_jit_call(fn)
+    rval = _jit_inner(compilectx, runtimectx, fn, *args, **kwargs)
+    runtimectx.record_jit_return(fn, rval)
+
+    return rval
+
+
+def _jit_inner(
+    compilectx: JitCompileCtx, runtimectx: JitRuntimeCtx, fn: Callable, /, *args, **kwargs
+) -> Any | JIT_SIGNALS:
     if isinstance(fn, WrappedValue):
         wrapped_fn = fn
     else:
         # TODO: think about whether this is a good choice in all circumstances
         wrapped_fn = wrap_const(fn)
     fn = unwrap(fn)
-
-    compilectx: JitCompileCtx = get_jitcompilectx()
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
     if compilectx._with_provenance_tracking:
         assert all(isinstance(a, WrappedValue) for a in args)
@@ -4250,10 +4360,10 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     # (1a) The callable is a bound method (implemented in Python), in which case it's unwrapped
     if inspect.ismethod(fn):
 
-        def impl(fn, *args, **kwargs):
+        def _impl(fn, *args, **kwargs):
             return fn.__func__(fn.__self__, *args, **kwargs)
 
-        return _jit_no_unwrap(impl, wrapped_fn, *args, **kwargs)  # type: ignore
+        return _jit_no_unwrap(_impl, wrapped_fn, *args, **kwargs)  # type: ignore
 
     # (1b) The callable is a builtin method, in which case it's canonicalized
     #   A builtin is canonicalized when it's a call on a type or a module (or their equivalent)
@@ -4573,10 +4683,11 @@ def _jit_run(
                 assert frame.inst_ptr <= max_inst_ptr
                 frame.inst_ptr += 1
             inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
-            runtimectx.record_interpreted_instruction(inst)
+
             # Updates the stack frame to the current position
             # TODO maybe also have inst_ptr?
             frame.nexti(inst)
+            runtimectx.record_interpreted_instruction(inst)
             skip_stack_effect_check: bool = False  # the exception handling will change the stack wildly
             stack_size_before_handler: int = len(stack)
 
@@ -4687,7 +4798,7 @@ def _jit_run(
 
             # TODO Improve this error message
             if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
-                raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.\n")
+                raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.")
 
             elif interpretation_result in (JIT_SIGNALS.RETURN_VALUE, JIT_SIGNALS.YIELD_VALUE):
                 # advance the inst_ptr, needed in particular for YIELD
@@ -4854,8 +4965,10 @@ def jit(
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
-                traceback_str = "\n".join(f.format_with_source() for f in runtimectx.frame_stack)
-                msg = f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:\n" f"{traceback_str}"
+                traceback_str = os.linesep.join(f.format_with_source() for f in runtimectx.frame_stack)
+                msg = (
+                    f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
+                )
                 raise JITError(msg) from e
             finally:
                 # NOTE: Wrapped functions are valid to assign new attributes to.
@@ -4882,5 +4995,122 @@ def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
     return getattr(fn, "_last_interpreted_instructions", None)
 
 
-def last_interpreted_history(fn: Callable) -> None | list[dis.Instruction | str]:
+def last_interpreted_history(fn: Callable) -> None | list[JitHistoryItem]:
     return getattr(fn, "_last_interpreted_history", None)
+
+
+def print_history(
+    history: list[JitHistoryItem],
+    /,
+    print_fn: Callable = print,
+    use_colors: bool = True,
+    indent: bool = True,
+    color_internals: bool = False,
+    print_source_code: bool = True,
+) -> None:
+    colors = init_colors(use_colors)
+    jitpath = os.path.join("thunder", "core", "jit.py")
+
+    c_indent = -1
+    inside_innner_jit = False
+    for item in history:
+        linecolor = ""
+        nl = ""
+        deindent = False
+        source_line = None
+
+        # Match each kind of history item. The history items are instructions, strings,
+        # or typed dicts, with "kind" describing what kind of entry it is.
+        match item:
+            case dis.Instruction():
+                if color_internals or not inside_innner_jit:
+                    linecolor = colors["MAGENTA"]
+                history_line = f"Instruction('{item.opname}', arg={item.arg}, argrepr={repr(item.argrepr)})"
+
+            case str():
+                # Print the string as-is, indented, without colors.
+                linecolor = colors["RESET"]
+                history_line = item
+
+            case {"kind": "Line", "fn": _fn, "filename": filename, "position": position}:
+                # LineHistoryItem
+                inside_innner_jit = jitpath in filename
+                if color_internals or not inside_innner_jit:
+                    linecolor = colors["YELLOW"]
+                nl = os.linesep
+                fnname = extract_callable_name(_fn)
+                if position:
+                    history_line = f"# Line {filename}:{position.lineno} in {fnname}()"
+                else:
+                    history_line = f"# {filename} in {fnname}()"
+
+                if not print_source_code or not position:
+                    continue
+
+                first_lineno = position.lineno
+                assert first_lineno
+                linestr = linecache.getline(filename, first_lineno)
+                if linestr.endswith(os.linesep):
+                    linestr = linestr[: -len(os.linesep)]
+                source_line = linestr
+
+            case {"kind": "JitCall", "fn": fn, "prev_frame": prev_frame}:
+                # CallHistoryItem
+                if color_internals or not inside_innner_jit:
+                    linecolor = colors["GREEN"]
+                c_indent += 1
+                history_line = f"Jitting call to {extract_callable_name(fn)}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+
+            case {"kind": "JitReturn", "fn": fn, "is_signal": is_signal, "rval": rval}:
+                # ReturnHistoryItem
+                if color_internals or not inside_innner_jit:
+                    linecolor = colors["RED"]
+                deindent = True
+                meaning = "signal" if is_signal else "value of type"
+                val = rval if is_signal else rval.__qualname__
+                history_line = f"Returning from call to {extract_callable_name(fn)}() with {meaning} {val}"
+
+            case {"kind": "Lookaside", "fn": fn}:
+                # LookasideHistoryItem
+                if color_internals or not inside_innner_jit:
+                    linecolor = colors["BLUE"]
+                history_line = f"Lookaside to {extract_callable_name(fn)}()"
+
+            case {"kind": "Opaque", "fn": fn}:
+                # OpaqueHistoryItem
+                if color_internals or not inside_innner_jit:
+                    linecolor = colors["CYAN"]
+                history_line = f"Opaque call to {fn} with name {extract_callable_name(fn)}"
+
+            case _:
+                raise NotImplementedError(f"Unexpected history item {item}")
+
+        print_fn(f"{nl}{' ' * c_indent if indent else ''}{linecolor}{history_line}{colors['RESET']}")
+
+        if source_line:
+            print_fn(f"{' ' * c_indent if indent else ''}{linecolor}{source_line}{colors['RESET']}")
+
+        if deindent:
+            c_indent -= 1
+
+
+def print_last_interpreted_history(
+    fn: Callable,
+    /,
+    print_fn: Callable = print,
+    use_colors: bool = True,
+    indent: bool = True,
+    color_internals: bool = False,
+    print_source_code: bool = True,
+) -> None:
+    if (history := last_interpreted_history(fn)) is None:
+        print("No history could be found.")
+        return
+    print_history(
+        history,
+        print_fn=print_fn,
+        use_colors=use_colors,
+        indent=indent,
+        color_internals=color_internals,
+        print_source_code=print_source_code,
+    )

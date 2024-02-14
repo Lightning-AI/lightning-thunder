@@ -1,7 +1,9 @@
 from collections.abc import Iterable, Iterator, Sequence
+from contextlib import redirect_stdout
 from functools import partial, wraps
 from itertools import product
 
+import io
 import sys
 import dis
 from collections.abc import Callable
@@ -11,7 +13,7 @@ import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.core.jit import is_jitting, jit, JITError
+from thunder.core.jit import is_jitting, jit, JITError, print_last_interpreted_history
 
 #
 # Test suite for core Python interpreter functionality
@@ -2527,8 +2529,6 @@ def test_contains_custom_containers(jit):
 
 def test_name_opcodes_and_print_expr(jit):
     from types import FunctionType
-    from contextlib import redirect_stdout
-    import io
 
     co = compile("x = 5; print(x); del x;", "<string>", "single")
     fn = FunctionType(co, globals())
@@ -2907,10 +2907,26 @@ def test_module_hooks(jit):
         y = jm(x)
         y.sum().backward()
 
-        assert (
-            "Opaque call to <method 'register_hook' of 'torch._C._FunctionBase' objects> with name register_hook"
-            in jm._last_interpreted_history
-        )
+        # Find the hook registration in the history the normal way
+        found = False
+        for item in jm._last_interpreted_history:
+            if (not isinstance(item, dict)) or (item["kind"] != "Opaque"):
+                continue
+            _fn = item["fn"]
+            if _fn == torch._C._FunctionBase.register_hook:  # type: ignore
+                found = True
+                break
+
+        assert found
+
+        # Redirect print_last_interpreted_history from stdout to a string, and assert that it's in there.
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            print_last_interpreted_history(jm, use_colors=False, indent=False)
+
+        match_against = "Opaque call to <method 'register_hook' of 'torch._C._FunctionBase' objects> with name _FunctionBase.register_hook"
+        assert match_against in buf.getvalue()
+        buf.close()
 
         jit_l = l[:]
         l.clear()
