@@ -4,6 +4,8 @@ from typing import Any
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from collections import deque
+from importlib.metadata import version
+from looseversion import LooseVersion
 import warnings
 
 import torch
@@ -29,6 +31,13 @@ __all__ = [
 
 TE_AVAILABLE: bool = package_available("transformer_engine")
 
+# We rely on internal details of TransformerEngine like `_Linear` autograd.Function.
+# As these details are not public, they can change
+# Ex. addition of a positional argument for cpu_offloading (not as the last argument)
+# between version 1.2 and 1.3.
+# Hence, we have these guards based on version.
+TE_VERSION_1_3_PLUS: bool = False
+
 te: None | Any = None
 if TE_AVAILABLE:
     try:
@@ -44,6 +53,7 @@ if TE_AVAILABLE:
         warnings.warn(f"transformer_engine failed to import with exception {ex}")
         TE_AVAILABLE = False
 
+    TE_VERSION_1_3_PLUS = LooseVersion(version("transformer_engine")) >= LooseVersion("1.3")
 
 # [NOTE] IMPLEMENTATION DETAILS
 #
@@ -107,7 +117,7 @@ class Context:
         self.saved_tensors = tensors
 
     def to_dict(self):
-        return {
+        ctx_dict = {
             "saved_tensors": self.saved_tensors,
             "activation_dtype": self.activation_dtype,
             "fp8": self.fp8,
@@ -126,6 +136,10 @@ class Context:
             "tp_size": self.tp_size,
             "requires_dgrad": self.requires_dgrad,
         }
+
+        if TE_VERSION_1_3_PLUS:
+            ctx_dict["cpu_offloading"] = self.cpu_offloading
+        return ctx_dict
 
     @staticmethod
     def from_dict(d):
@@ -147,6 +161,8 @@ class Context:
         ctx.ub_name = d["ub_name"]
         ctx.tp_size = d["tp_size"]
         ctx.requires_dgrad = d["requires_dgrad"]
+        if TE_VERSION_1_3_PLUS:
+            ctx.cpu_offloading = d["cpu_offloading"]
         return ctx
 
 
@@ -200,6 +216,10 @@ class TELinear(TransformerEngineBaseModule):
 
             ctx = Context() if is_grad_enabled else None
 
+            CPUOffloadEnabled: None | bool = None
+            if TE_VERSION_1_3_PLUS:
+                from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
+
             # Currently we support only non-distributed case.
             # We hard-code the arguments related to distributed for now.
             args = (
@@ -214,6 +234,7 @@ class TELinear(TransformerEngineBaseModule):
                 self.fp8,
                 self.fp8_calibration,
                 self.fp8_meta,
+                *((CPUOffloadEnabled,) if TE_VERSION_1_3_PLUS else ()),
                 False,  # fuse_wgrad_accumulation
                 None,  # tp_group
                 1,  # tp_size
