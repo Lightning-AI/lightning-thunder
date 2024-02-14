@@ -81,16 +81,15 @@ def default_alloc_memory(
     tensor_outs = [x for x in bsym.flat_proxy_outs if isinstance(x, (TensorProxy, FutureTensorProxy))]
     result = sum(t.numel * t.dtype.bytes for t in tensor_outs)
     for x in tensor_outs:
-        assert x not in tensor_to_memory_data
-        tensor_to_memory_data[x] = MemoryData(n=1, proxy=x)
+        # skip when the function returns its own input
+        if x not in tensor_to_memory_data:
+            tensor_to_memory_data[x] = MemoryData(n=1, proxy=x)
 
     name_to_alloc_memory[f"{bsym.sym.name} {', '.join(t.name for t in tensor_outs)}"] = result
     return result
 
 
-# Thunder always assigns different tensor names for the input and output of a bound symbol,
-# even if there are situations where some tensor names refer to the same memory.
-# the reference count and original proxy of the aliases are tracked in tensor_to_memory_data
+# The reference count and original proxy of the aliases are tracked in tensor_to_memory_data
 @register_memory_calculate_function(*thunder_alias_operator_list)
 def track_alias_op_memory(
     bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int]
@@ -144,12 +143,8 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
     for bsym in trc.bound_symbols:
         if bsym.sym.id in memory_calculate_skip_list:
             continue
-        impl = memory_calculate_impls.get(bsym.sym.id)
-        if impl is None:
-            res = default_alloc_memory(bsym, tensor_to_memory_data, name_to_alloc_memory)
-            allocated += res
-        else:
-            allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
+        impl = memory_calculate_impls.get(bsym.sym.id, default_alloc_memory)
+        allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
 
         max_allocated = max(max_allocated, allocated)
 
