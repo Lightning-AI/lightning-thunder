@@ -33,8 +33,7 @@ Install nvFuser
 
 thunder relies on nvFuser to fuse CUDA operations. To install nvFuser, first install PyTorch (see above) then run the following commands (for CUDA 12.1)::
 
-  pip install nvfuser-cu121
-  patch-nvfuser
+  pip install --pre nvfuser-cu121 --extra-index-url https://pypi.nvidia.com
 
 cu121 can be replaced with cu118 or cu117 depending on your CUDA version.
 
