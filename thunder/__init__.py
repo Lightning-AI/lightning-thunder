@@ -7,6 +7,7 @@ import os
 import dis
 from enum import Enum, auto
 import time
+from numbers import Number
 
 from looseversion import LooseVersion
 
@@ -198,8 +199,6 @@ def _eager_unpacking_interpreter(interpreter: Callable, fn: Callable, args, kwar
     if len(kwargs) > 0:
         raise NotImplementedError(f"kwargs are not yet supported")
 
-    # TODO GTC Support numbers
-    # TODO GTC Support NumPy arrays
     # TODO GTC Support strings
     # TODO GTC Support PyTorch and NumPy dtypes
     # TODO GTC Support sequences of numbers, tensors, arrays, and strings
@@ -208,9 +207,9 @@ def _eager_unpacking_interpreter(interpreter: Callable, fn: Callable, args, kwar
     # TODO GTC Consider supporting arbitrary literal inputs
     # TODO GTC Consider supporiting arbitrary object inputs
     for arg in args:
-        if not isinstance(arg, pytorch.Tensor):
+        if not isinstance(arg, (Number, pytorch.Tensor)):
             raise NotImplementedError(
-                f"Only tensor inputs are currently supported, but found argument with type {type(arg)}"
+                f"Only number and tensor inputs are currently supported, but found argument with type {type(arg)}"
             )
 
     si: SigInfo = get_siginfo(fn, args, kwargs)
@@ -401,7 +400,6 @@ def jit(
             cs.last_trace_tracing_start = time.time_ns()
 
             with langctxs.langctx(cd.langctx):
-                # TODO GTC Call the interpreter here (which may be Python)
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
                 # TODO GTC Review if sharp_edges should come from a CompileOptions object

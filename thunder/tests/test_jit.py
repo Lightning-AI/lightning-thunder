@@ -25,7 +25,7 @@ import thunder.core.prims as prims
 @pytest.mark.parametrize(
     "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
 )
-def test_simple_addition(jit):
+def test_binary_add_tensors(jit):
     def foo(a, b):
         return a + b
 
@@ -39,10 +39,40 @@ def test_simple_addition(jit):
     assert_close(actual, expected)
 
 
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_binary_add_numbers(jit):
+    def foo(a, b):
+        return a + b
+
+    a = 5
+    b = 3
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_binary_add_tensor_number(jit):
+    def foo(a, b):
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = 3
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
 @pytest.mark.parametrize(
     "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
 )
-def test_clang_addition(jit):
+def test_clang_add_tensors(jit):
     def foo(a, b):
         return clang.add(a, b)
 
@@ -59,7 +89,7 @@ def test_clang_addition(jit):
 @pytest.mark.parametrize(
     "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
 )
-def test_prim_addition(jit):
+def test_prim_add_tensors(jit):
     def foo(a, b):
         return prims.add(a, b)
 
@@ -76,7 +106,7 @@ def test_prim_addition(jit):
 @pytest.mark.parametrize(
     "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
 )
-def test_python_fn_addition(jit):
+def test_python_fn_binary_add_tensors(jit):
     def bar(a, b):
         return a + b
 
@@ -94,7 +124,7 @@ def test_python_fn_addition(jit):
 
 
 @pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_torch_addition(jit):
+def test_torch_add_tensors(jit):
     def foo(a, b):
         return torch.add(a, b)
 
