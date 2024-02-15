@@ -403,8 +403,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
         vala = pyval(a)
 
-        if trace is None or langctx is None:
-            # Outside of a trace or language context, operations on NumberProxies are executed by the
+        if trace is None:
+            # Outside of a trace context, operations on NumberProxies are executed by the
             #   Python interpreter
 
             baseutils.check(
@@ -416,9 +416,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
         method: Callable
 
-        # TODO GTC Remove the check for using_interpreter once development has progressed enough
-        using_interpreter: bool = trace.using_interpreter if trace is not None else False
-        if using_interpreter:
+        has_prologue: bool = trace.prologue is not None
+        if has_prologue:
             method: Callable = resolve_method(name, a)
             return method(a)
         else:
@@ -467,11 +466,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def _elementwise_binary_helper(a, b, name, fn):
         baseutils.check_type(b, (Number, TensorProxy))
 
-        trace = get_tracectx()
-        using_interpreter: bool = trace.using_interpreter if trace is not None else False
-
         trace: None | TraceCtx = get_tracectx()
-
         langctx: None | LanguageContext
         try:
             langctx = get_langctx()
@@ -480,14 +475,14 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
         vala = pyval(a)
         valb = pyval(b) if isinstance(b, NumberProxy) else b
-        if trace is None or langctx is None:
+        if trace is None:
             # Outside of a trace or language context, binary operations on NumberProxies are
             #   executed by the Python interpreter
 
             return fn(vala, valb)
 
-        # TODO Remove the check for using_interpreter once development has progressed enough
-        if using_interpreter:
+        has_prologue: bool = trace.prologue is not None
+        if has_prologue:
             fn: None | Callable = resolve_method(name, a, b)
 
             if fn is None:

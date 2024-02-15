@@ -290,13 +290,13 @@ class LitCtx:
 
         self.fn = fn
 
-        self._prologue_trc: TraceCtx = TraceCtx(fn, using_interpreter=True)
+        self._prologue_trc: TraceCtx = TraceCtx(fn)
         self._prologue_trc._siginfo = get_siginfo(fn_, args, kwargs)
         self._prologue_trc.args = args
         self._prologue_trc.kwargs = kwargs
         self._constraints = []
 
-        self._computation_trc: TraceCtx = TraceCtx(using_interpreter=True)
+        self._computation_trc: TraceCtx = TraceCtx(prologue=self._prologue_trc)
 
     @property
     def prologue_trace(self) -> TraceCtx:

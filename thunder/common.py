@@ -72,18 +72,22 @@ def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
 
 # Cache options
 # TODO GTC Document the options (like above)
+# TODO GTC Rename "dynamic strides" to "constant numbers"
+# TODO GTC Refactor cache option error
 
 
 class CACHE_OPTIONS(Enum):
     NO_CACHING = auto()
     ASSUME_SAME_INPUTS = auto()
     DYNAMIC_STRIDES = auto()
+    SYMBOLIC_NUMBERS = auto()
 
 
 _string_to_cache_option_map = {
     "no caching": CACHE_OPTIONS.NO_CACHING,
     "assume same inputs": CACHE_OPTIONS.ASSUME_SAME_INPUTS,
     "dynamic strides": CACHE_OPTIONS.DYNAMIC_STRIDES,
+    "symbolic numbers": CACHE_OPTIONS.SYMBOLIC_NUMBERS,
 }
 
 
@@ -92,7 +96,7 @@ def _string_to_cache_option(s: str, /) -> CACHE_OPTIONS:
 
     if cache_option is None:
         raise ValueError(
-            f"Unknown cache option {s}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
+            f"Unknown cache option {s}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides' and 'symbolic numbers'."
         )
 
     return cache_option

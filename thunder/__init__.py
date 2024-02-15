@@ -192,7 +192,6 @@ def _str_to_interpretation_option(s: str, /) -> INTERPRETATION_OPTIONS:
 def _eager_unpacking_interpreter(
     interpreter: Callable, fn: Callable, args, kwargs, /, *, interpreter_name: str
 ) -> tuple[TraceCtx, TraceCtx]:
-    # TODO GTC Update using_interpreter to using_prologue until it's removed when all traces have prologues
     prologue_trc: TraceCtx = TraceCtx(fn)
     computation_trc: TraceCtx = TraceCtx()
 
@@ -346,7 +345,7 @@ def jit(
         cache = _string_to_cache_option(cache)
     if not isinstance(cache, CACHE_OPTIONS):
         raise ValueError(
-            f"Unknown cache option {cache}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
+            f"Unknown cache option {cache}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides' and 'symbolic numbers'."
         )
 
     # TODO GTC Refine the compile data option to remove unused options
@@ -375,12 +374,15 @@ def jit(
         cs.calls += 1
 
         # TODO GTC Add autocast checks to prologue (make it a compile option)
-        # TODO GTC Add caching (with prologues)
-        # TODO GTC Add DYNAMIC_SHAPES caching option
+        # TODO GTC Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_option in (CACHE_OPTIONS.ASSUME_SAME_INPUTS, CACHE_OPTIONS.DYNAMIC_STRIDES):
+        if cd.cache_option in (
+            CACHE_OPTIONS.ASSUME_SAME_INPUTS,
+            CACHE_OPTIONS.DYNAMIC_STRIDES,
+            CACHE_OPTIONS.SYMBOLIC_NUMBERS,
+        ):
             raise NotImplementedError(f"Only the 'no caching' cache mode is currently supported.")
 
         cs.cache_misses += 1

@@ -231,6 +231,8 @@ class OpTags(Enum):
     RANDOM_OP = auto()
     # Ops that might cause a device sync
     DEVICE_SYNC_OP = auto()
+    # Labels operations that should not be removed by the dead code elimination (DCE) pass
+    DONT_DCE = auto()
 
 
 # TODO GTC Document this function and describe the parts of a primitive
@@ -870,6 +872,7 @@ python_print = make_prim(
     meta=_print_meta,
     python_printer=python_print_printer,
     python_impl=print,
+    tags=(OpTags.DONT_DCE,),
 )
 
 
@@ -974,6 +977,7 @@ python_return = make_prim(
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #
@@ -1595,6 +1599,7 @@ def _make_elementwise_binary_prim(
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
     method_name: None | str = None,
+    constraint_function: None | Callable = None,
 ):
     return make_prim(
         id,
