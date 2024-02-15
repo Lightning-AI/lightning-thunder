@@ -20,6 +20,10 @@ import thunder.core.prims as prims
 # Test suite for the thunder.jit entrypoint
 #
 
+#
+# Basic functionality tests
+#
+
 
 # TODO Refactor this parameterization so it's easy to apply
 @pytest.mark.parametrize(
@@ -136,6 +140,28 @@ def test_torch_add_tensors(jit):
     expected = foo(a, b)
 
     assert_close(actual, expected)
+
+
+#
+# String tests
+#
+
+
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_string_return(jit):
+    def foo(s):
+        return s
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo("hi")
+    expected = "hi"
+
+    assert actual == expected
+
+
+#
+# Sharp edges tests
+#
 
 
 def test_sharp_edges_pass():

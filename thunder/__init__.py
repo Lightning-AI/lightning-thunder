@@ -189,7 +189,9 @@ def _str_to_interpretation_option(s: str, /) -> INTERPRETATION_OPTIONS:
 #       acquires all supported inputs and validates them according to the caching option
 #   2) Creates a computation function that accepts the output of the prologue function and
 #       returns what the original function did
-def _eager_unpacking_interpreter(interpreter: Callable, fn: Callable, args, kwargs, /) -> tuple[TraceCtx, TraceCtx]:
+def _eager_unpacking_interpreter(
+    interpreter: Callable, fn: Callable, args, kwargs, /, *, interpreter_name: str
+) -> tuple[TraceCtx, TraceCtx]:
     # TODO GTC Update using_interpreter to using_prologue until it's removed when all traces have prologues
     prologue_trc: TraceCtx = TraceCtx(fn)
     computation_trc: TraceCtx = TraceCtx()
@@ -206,10 +208,16 @@ def _eager_unpacking_interpreter(interpreter: Callable, fn: Callable, args, kwar
     # TODO GTC Consider supporting nested sequences of mappings that have these properties
     # TODO GTC Consider supporting arbitrary literal inputs
     # TODO GTC Consider supporiting arbitrary object inputs
+    supported_input_types = (
+        Number,
+        pytorch.Tensor,
+        str,
+    )
+
     for arg in args:
-        if not isinstance(arg, (Number, pytorch.Tensor)):
+        if not isinstance(arg, supported_input_types):
             raise NotImplementedError(
-                f"Only number and tensor inputs are currently supported, but found argument with type {type(arg)}"
+                f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supports input types are {supported_input_types}"
             )
 
     si: SigInfo = get_siginfo(fn, args, kwargs)
@@ -265,7 +273,7 @@ def _python_interpreter(
     def _interpreter(fn_):
         return fn_
 
-    return _eager_unpacking_interpreter(_interpreter, fn, args, kwargs)
+    return _eager_unpacking_interpreter(_interpreter, fn, args, kwargs, interpreter_name="Python")
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
@@ -273,7 +281,7 @@ def _translate_functions_interpreter(
     fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> tuple[TraceCtx, TraceCtx]:
     pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges)
-    return _eager_unpacking_interpreter(pjit, fn, args, kwargs)
+    return _eager_unpacking_interpreter(pjit, fn, args, kwargs, interpreter_name="translate functions")
 
 
 # This function will replace compile() (below) before gtc

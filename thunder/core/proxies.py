@@ -108,51 +108,222 @@ class Proxy(VariableInterface, ProxyInterface):
     def type_string(self) -> str:
         return "Any"
 
+    # Disables dunder methods
+
     #
-    # Inplace Operations
+    # Unary dunders
+    #
+
+    def __abs__(self):
+        raise NotImplementedError(f"__abs__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__ceil__
+    def __ceil__(self):
+        raise NotImplementedError(f"__ceil__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__floor__
+    def __floor__(self):
+        raise NotImplementedError(f"__floor__ is not implemented for {type(self)}")
+
+    def __invert__(self):
+        raise NotImplementedError(f"__invert__ is not implemented for {type(self)}")
+
+    def __neg__(self):
+        raise NotImplementedError(f"__neg__ is not implemented for {type(self)}")
+
+    def __pos__(self):
+        raise NotImplementedError(f"__pos__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__round__
+    def __round__(self):
+        raise NotImplementedError(f"__round__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__trunc__
+    def __trunc__(self):
+        raise NotImplementedError(f"__trunc__ is not implemented for {type(self)}")
+
+    #
+    # Binary dunders
+    #
+
+    def __add__(self, other):
+        raise NotImplementedError(f"__add__ is not implemented for {type(self)}")
+
+    def __radd__(self, other):
+        raise NotImplementedError(f"__radd__ is not implemented for {type(self)}")
+
+    def __divmod__(self, other):
+        raise NotImplementedError(f"__divmod__ is not implemented for {type(self)}")
+
+    def __rdivmod__(self, other):
+        raise NotImplementedError(f"__rdivmod__ is not implemented for {type(self)}")
+
+    def __floordiv__(self, other):
+        raise NotImplementedError(f"__floordiv__ is not implemented for {type(self)}")
+
+    def __rfloordiv__(self, other):
+        raise NotImplementedError(f"__rfloordiv__ is not implemented for {type(self)}")
+
+    def __mod__(self, other):
+        raise NotImplementedError(f"__mod__ is not implemented for {type(self)}")
+
+    def __rmod__(self, other):
+        raise NotImplementedError(f"__rmod__ is not implemented for {type(self)}")
+
+    def __mul__(self, other):
+        raise NotImplementedError(f"__mul__ is not implemented for {type(self)}")
+
+    def __rmul__(self, other):
+        raise NotImplementedError(f"__rmul__ is not implemented for {type(self)}")
+
+    def __pow__(self, other):
+        raise NotImplementedError(f"__pow__ is not implemented for {type(self)}")
+
+    def __rpow__(self, other):
+        raise NotImplementedError(f"__rpow__ is not implemented for {type(self)}")
+
+    def __sub__(self, other):
+        raise NotImplementedError(f"__sub__ is not implemented for {type(self)}")
+
+    def __rsub__(self, other):
+        raise NotImplementedError(f"__rsub__ is not implemented for {type(self)}")
+
+    def __truediv__(self, other):
+        raise NotImplementedError(f"__truediv__ is not implemented for {type(self)}")
+
+    def __rtruediv__(self, other):
+        raise NotImplementedError(f"__rtruediv__ is not implemented for {type(self)}")
+
+    #
+    # Logical operations
+    #
+    def __and__(self, other):
+        raise NotImplementedError(f"__and__ is not implemented for {type(self)}")
+
+    def __rand__(self, other):
+        raise NotImplementedError(f"__rand__ is not implemented for {type(self)}")
+
+    def __eq__(self, other):
+        raise NotImplementedError(f"__eq__ is not implemented for {type(self)}")
+
+    def __ge__(self, other):
+        raise NotImplementedError(f"__ge__ is not implemented for {type(self)}")
+
+    def __gt__(self, other):
+        raise NotImplementedError(f"__gt__ is not implemented for {type(self)}")
+
+    def __le__(self, other):
+        raise NotImplementedError(f"__le__ is not implemented for {type(self)}")
+
+    def __lt__(self, other):
+        raise NotImplementedError(f"__lt__ is not implemented for {type(self)}")
+
+    def __ne__(self, other):
+        raise NotImplementedError(f"__ne__ is not implemented for {type(self)}")
+
+    # NOTE This is a bitwise or triggered by the | operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__or__
+    def __or__(self, other):
+        raise NotImplementedError(f"__or__ is not implemented for {type(self)}")
+
+    def __ror__(self, other):
+        raise NotImplementedError(f"__ror__ is not implemented for {type(self)}")
+
+    # The ^ operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__xor__
+    def __xor__(self, other):
+        raise NotImplementedError(f"__xor__ is not implemented for {type(self)}")
+
+    def __rxor__(self, other):
+        raise NotImplementedError(f"__rxor__ is not implemented for {type(self)}")
+
+    #
+    # Shift operations
+    #
+
+    def __lshift__(self, other):
+        raise NotImplementedError(f"__lshift__ is not implemented for {type(self)}")
+
+    def __rlshift__(self, other):
+        raise NotImplementedError(f"__rlshift__ is not implemented for {type(self)}")
+
+    def __rshift__(self, other):
+        raise NotImplementedError(f"__rshift__ is not implemented for {type(self)}")
+
+    def __rrshift__(self, other):
+        raise NotImplementedError(f"__rrshift__ is not implemented for {type(self)}")
+
+    #
+    # Casts to Python numbers
+    #
+
+    def __complex__(self):
+        raise NotImplementedError(f"__complex__ is not implemented for {type(self)}")
+
+    def __float__(self):
+        raise NotImplementedError(f"__float__ is not implemented for {type(self)}")
+
+    def __int__(self):
+        raise NotImplementedError(f"__int__ is not implemented for {type(self)}")
+
+    def __bool__(self):
+        raise NotImplementedError(f"__bool__ is not implemented for {type(self)}")
+
+    #
+    # Matmul operators (not implemented for numbers)
+    #
+
+    def __matmul__(self, other):
+        raise NotImplementedError(f"__matmul__ is not implemented for {type(self)}")
+
+    def __rmatmul__(self, other):
+        raise NotImplementedError(f"__rmatmul__ is not implemented for {type(self)}")
+
+    #
+    # Inplace dunders
     #
 
     def __iadd__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __iadd__ are not supported.")
 
     def __iand__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __iand__ are not supported.")
 
     def __iconcat__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __iconcat__ are not supported.")
 
     def __ifloordiv__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ifloordiv__ are not supported.")
 
     def __ilshift__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ilshift__ are not supported.")
 
     def __imatmul__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __imatmul__ are not supported.")
 
     def __imod__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __imod__ are not supported.")
 
     def __imul__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __imul__ are not supported.")
 
     def __ior__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ior__ are not supported.")
 
     def __ipow__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ipow__ are not supported.")
 
     def __irshift__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __irshift__ are not supported.")
 
     def __isub__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __isub__ are not supported.")
 
     def __itruediv__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __itruediv__ are not supported.")
 
     def __ixor__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ixor__ are not supported.")
 
 
 # This is a proxy for anything not covered by more type-specific proxies.
@@ -165,7 +336,7 @@ class AnyProxy(Proxy):
         self._o = o
 
 
-class StringProxy(str, Proxy):
+class StringProxy(Proxy, str):
     def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
         return str.__new__(cls, s)
 
@@ -175,6 +346,9 @@ class StringProxy(str, Proxy):
 
     def __str__(self) -> str:
         return self._s
+
+    def type_string(self) -> str:
+        return "str"
 
 
 class CollectionProxy(Proxy):
@@ -756,6 +930,10 @@ class FutureTensorProxy(Proxy):
         from thunder.distributed.prims import wait
 
         return wait(self)
+
+    # TODO GTC Update hasing on tensor types (this is just here because some distributed code directly hashes FutureTensorProxies)
+    def __hash__(self) -> int:
+        return hash(self.name)
 
 
 # TODO GTC Review dunders -- any remaining?
