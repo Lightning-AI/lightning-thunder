@@ -8,11 +8,6 @@ Compiling the Training Loop
 
 *thunder* currently supports compiling PyTorch modules - forward computation, loss calculation, backpropagation -, but in the future we plan to support compiling the entire training loop - forward computation, loss calculation, backpropagation, and the optimizer step - for maximum performance.
 
-Fully Shared Data Parallel (FSDP)
-=================================
-
-*thunder* currently supports distributed data parallel (DDP), and it has a great architecture for expressing more advanced distributed strategies like FSDP. We expect to extend our core architecture with a sharded tensor-like object, then use it to build a variety of advanced distributed strategies for practitioners, letting them easily access off-the-shelf strategies while giving developers access to powerful tools for creating new ones.
-
 Dynamic Caching
 ===============
 
