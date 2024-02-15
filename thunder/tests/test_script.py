@@ -844,16 +844,6 @@ def test_torch_noinline():
 
 
 @skipif_not_python_3_10
-def test_numpy_noinline():
-    def func(a, b):
-        return thunder.numpy.add(a, b)
-
-    pfn = thunder.preprocess(func, is_module=False)
-    assert "numpy" in pfn.__code__.co_names
-    assert "add" in pfn.__code__.co_names
-
-
-@skipif_not_python_3_10
 def test_prims_noinline():
     def func(a, b):
         return thunder.core.prims.add(a, b)

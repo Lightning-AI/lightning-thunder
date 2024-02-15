@@ -8,7 +8,8 @@ import thunder.core.script.instrumentation as script_instrumentation
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
-from thunder.torch import _torch_to_thunder_function_map, method_lookup
+from thunder.torch import _torch_to_thunder_function_map
+from thunder.core.langctxs import resolve_language, LanguageContext, Languages
 import torch
 from warnings import warn
 
@@ -90,7 +91,8 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
             # Remaps method names as appropriate
             method_name = _method_name_remap_map.get(attr, attr)
 
-            if method_lookup(method_name) is not None:
+            torchlang: LanguageContext = resolve_language(Languages.TORCH)
+            if torchlang.has_method(method_name):
                 supported_ops.add((name, op))
 
     unsupported_ops = set(collected_ops) - supported_ops
@@ -104,7 +106,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
         )
 
     # Step 2 Attempts to preprocess the function
-    preprocessing_exception: Optional[Exception] = None
+    preprocessing_exception: None | Exception = None
     with script_instrumentation.intercept_errors() as preprocessing_errors:
         try:
             thunder.preprocess(fn, is_module=isinstance(fn, torch.nn.Module))

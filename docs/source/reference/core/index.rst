@@ -10,7 +10,7 @@ thunder.core
     codeutils
     devices
     dtypes
-    langctx
+    langctxs
     prims
     proxies
     pytree

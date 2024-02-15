@@ -5,6 +5,7 @@ import torch
 from torch.testing import make_tensor, assert_close
 
 import thunder
+from thunder.core.langctxs import langctx
 from thunder.extend import OperatorExecutor, register_executor, get_default_executors, add_default_executor
 from thunder.core.proxies import TensorProxy
 from thunder.core.utils import check
@@ -24,6 +25,7 @@ def test_extend_core():
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return np.multiply(a, b), np.multiply(c, d)
 
+    @langctx("torch")
     def multimul_like(
         a: Number | TensorProxy,
         b: Number | TensorProxy,
@@ -62,6 +64,7 @@ def test_extend_core():
 
         return all(is_cpu(x) for x in (a, b))
 
+    @langctx("torch")
     def mymul_grad(a: TensorProxy, b: TensorProxy) -> TensorProxy:
         fwd = a * b
 

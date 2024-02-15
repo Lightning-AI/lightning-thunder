@@ -10,14 +10,6 @@ A PyTorch dialect in thunder.
 .. autosummary::
     :toctree: generated/
 
-    available_devices
-    is_available
-    to_dtype
-    to_thunder_dtype
-    to_torch_dtype
-    to_thunder_device
-    to_torch_device
-    tensorproxy
     torchsymbol
     size
     to_float

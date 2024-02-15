@@ -220,7 +220,7 @@ def create_fd(
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
-                nvdtype = lcdtype_to_nvdtype(ltorch.to_thunder_dtype(dtype))
+                nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
                 if nv_version >= LooseVersion("0.1.3"):
                     nv = fd.define_tensor(
                         shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order

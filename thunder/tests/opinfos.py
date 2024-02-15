@@ -21,6 +21,7 @@ from torch.testing import assert_close
 import thunder.clang as clang
 import thunder.core.devices as devices
 import thunder.core.dtypes as datatypes
+from thunder.core.dtypes import to_dtype, to_torch_dtype
 import thunder.core.prims as prims
 import thunder.executors as executors
 import thunder.torch as ltorch
@@ -240,7 +241,7 @@ class SampleInput:
     def thunder(self):
         def to_thunder(t):
             if isinstance(t, torch.dtype):
-                return ltorch.to_thunder_dtype(t)
+                return to_dtype(t)
             return t
 
         args, kwargs = tree_map(to_thunder, self.args), tree_map(to_thunder, self.kwargs)
@@ -380,14 +381,14 @@ class OpInfo:
     def sample_inputs(
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
-        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_dtype = to_torch_dtype(dtype)
         torch_device = str(device)
         return self.sample_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
     def reference_inputs(
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
-        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_dtype = to_torch_dtype(dtype)
         torch_device = str(device)
         return self.reference_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
@@ -398,7 +399,7 @@ class OpInfo:
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
-        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_dtype = to_torch_dtype(dtype)
         torch_device = str(device)
         return self.benchmark_generator(self, torch_device, dtype, requires_grad, **kwargs)
 
@@ -545,7 +546,7 @@ def _elementwise_unary_torch(op):
 @wraps(torch.abs)
 def _abs_torch(x: torch.Tensor | Number):
     if isinstance(x, torch.Tensor):
-        if datatypes.is_unsigned_dtype(ltorch.to_thunder_dtype(x.dtype)):
+        if datatypes.is_unsigned_dtype(to_dtype(x.dtype)):
             return x
         return torch.abs(x)
 

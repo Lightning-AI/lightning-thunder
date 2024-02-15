@@ -37,7 +37,8 @@ from thunder.common import (
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats
-from thunder.core.langctx import set_langctx, reset_langctx, lang
+from thunder.core.langctxs import LanguageContext, resolve_language, Languages
+import thunder.core.langctxs as langctxs
 from thunder.core.codeutils import get_siginfo, SigInfo
 from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy
 from thunder.core.jit_ext import minimal_thunder_jit
@@ -47,11 +48,7 @@ from thunder.executors import pythonex, torchex, nvfuserex, sdpaex
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
-import thunder.torch as ltorch
-import thunder.numpy as lnumpy
-
-torchlangctx = ltorch
-numpylangctx = lnumpy
+import thunder.torch
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -147,27 +144,6 @@ if sdpa_executor:
 from thunder.core.trace import _set_execution_file
 
 set_execution_callback_file = _set_execution_file
-
-#
-# Language context options
-#
-# The language context controls how methods on tensors are interpreted.
-# TODO Allow a language context object to be specified directly
-
-_str_to_lang_ctx_map: dict[str, Any] = {
-    "torch": torchlangctx,
-    "numpy": numpylangctx,
-}
-
-
-def _str_to_lang_ctx(s: str, /) -> Any:
-    lang_ctx: None | Any = _str_to_lang_ctx_map.get(s.lower(), None)
-
-    if lang_ctx is None:
-        raise ValueError(f"Unknown language ctx {s}. Allowed modes are 'torch' or 'numpy'.")
-
-    return lang_ctx
-
 
 #
 # Interpretation modes
@@ -308,7 +284,7 @@ def jit(
     fn: Callable,
     /,
     *,
-    langctx: None | str | Any = None,
+    langctx: None | str | Any | LanguageContext = None,
     executors: None | Sequence[Executor] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
@@ -316,13 +292,9 @@ def jit(
     **compile_options,
 ) -> Callable:
     # Resolves langctx
-    # TODO GTC Allow directly passing a LanguageContext class
     if langctx is None:
-        langctx = torchlangctx
-    if isinstance(langctx, str):
-        langctx = _str_to_lang_ctx(langctx)
-    if langctx is not torchlangctx and langctx is not numpylangctx:
-        raise NotImplementedError(f"Only 'torch' and 'numpy' are currently implemented as language contexts.")
+        langctx = Languages.TORCH
+    langctx: LanguageContext = resolve_language(langctx)
 
     # Resolves executors
     # TODO GTC Review exposed executor names
@@ -428,7 +400,7 @@ def jit(
             #   returns the (proxied) result of the operation
             cs.last_trace_tracing_start = time.time_ns()
 
-            with lang(cd.langctx):
+            with langctxs.langctx(cd.langctx):
                 # TODO GTC Call the interpreter here (which may be Python)
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
@@ -477,7 +449,7 @@ def jit(
 def compile(
     fn: Callable,
     *,
-    langctx: Any | None = None,
+    langctx: None | Any = None,
     executors_list: None | Sequence[Executor] = None,
     cache_mode: None | str | CACHE_OPTIONS = None,
     use_cudagraphs: bool = False,

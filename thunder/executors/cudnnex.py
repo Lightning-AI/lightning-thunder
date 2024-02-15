@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Union, Dict
 
+from thunder.core.langctxs import langctx
 import thunder.core.dtypes as dtypes
 from thunder.torch import TensorLike
 from thunder.core.proxies import Proxy, TensorProxy
@@ -311,6 +312,8 @@ def _cudnn_sdpa_fwd_impl(
     return O_actual, softmax_stats_actual, seed_tensor, offset_tensor
 
 
+# NOTE Uses the torch language context to resolve .size calls
+@langctx("torch")
 def _cudnn_sdpa_forward_checker(
     query: TensorLike,
     key: TensorLike,
@@ -341,6 +344,7 @@ def _cudnn_sdpa_forward_checker(
     return True
 
 
+@langctx("torch")
 def _cudnn_sdpa_backward_checker(
     query: TensorLike,
     key: TensorLike,
@@ -600,6 +604,7 @@ cudnn_sdpa_bwd = cudnn_ex.register_operator(
 )
 
 
+@langctx("torch")
 def cudnn_sdpa_aug_fw_rule_checker(
     query: TensorProxy,
     key: TensorProxy,
@@ -692,6 +697,7 @@ def cudnn_sdpa_backward_rule(
     )
 
 
+@langctx("torch")
 def _cudnn_sdpa_transform(
     query: TensorProxy,
     key: TensorProxy,
@@ -707,6 +713,7 @@ def _cudnn_sdpa_transform(
     return output
 
 
+@langctx("torch")
 def _cudnn_sdpa_grad(
     query: TensorProxy,
     key: TensorProxy,

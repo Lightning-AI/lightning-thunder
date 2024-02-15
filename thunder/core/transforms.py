@@ -20,7 +20,6 @@ import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 import thunder.core.devices as devices
 from thunder.core.devices import cpu, Device
-from thunder.core.langctx import get_langctx, set_langctx, reset_langctx, get_default_langctx
 from thunder.core.proxies import (
     NumberProxy,
     Proxy,
@@ -58,7 +57,6 @@ from thunder.clang import (
     slice_in_dim,
     reciprocal,
     convolution,
-    clang_ctx,
 )
 from thunder.core.transform_common import dce
 from thunder.extend import Executor
@@ -574,11 +572,12 @@ def clear_grads(module: torch.nn.Module) -> None:
 
 
 from thunder.core.script.noinline import noinline
-from thunder.core.langctx import langctx
+from thunder.core.langctxs import langctx, Languages
 
 
+# TODO GTC Replace with langctx
 def torchctx(fn):
-    _fn = langctx(ltorch)(fn)
+    _fn = langctx(Languages.TORCH)(fn)
     return noinline(_fn)
 
 
@@ -1261,6 +1260,7 @@ def grad(
     cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
 ) -> Callable:
     # Creates a custom transform callable that binds the additional arguments to the grad transform
+    @langctx(Languages.CLANG)
     def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
         start_time_ns = time.time_ns()
 

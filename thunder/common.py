@@ -14,7 +14,7 @@ from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.core.compile_data import compile_data_and_stats
-from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx, get_langctx
+from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
     TraceCtx,
@@ -31,6 +31,7 @@ from thunder.extend import Executor, get_default_executors, get_always_executors
 import thunder.executors as executors
 from thunder.executors.torch_autograd import thunder_backward
 from thunder.core.transforms import autocast
+from thunder.core.dtypes import to_dtype
 
 import torch as torch
 import numpy as np
@@ -181,7 +182,7 @@ class CompileData:
         self,
         *,
         fn: Callable,
-        langctx: None | Any = None,
+        langctx: None | LanguageContext = None,
         executors_list: None | tuple[Executor, ...] = None,
         cache_option: None | str | CACHE_OPTIONS = None,
         only_execute_prims: bool = False,
@@ -226,7 +227,12 @@ class CompileData:
             ), f"Expected all elements of the executors list to be executors, but found {ex}"
 
         self.fn = fn
-        self.langctx = langctx
+        self.langctx = langctx if langctx is not None else resolve_language(Languages.TORCH)
+        if not isinstance(self.langctx, LanguageContext):
+            raise ValueError(
+                f"Attempting to construct a CompileData object with an invalid language context type {type(self.langctx)}"
+            )
+
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
@@ -296,7 +302,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
                 return x
             return x.replace_name(name)
         if isinstance(x, torch.dtype):
-            return ltorch.to_thunder_dtype(x)
+            return to_dtype(x)
         if is_collection(x):
             return tree_map(translate, x)
 
@@ -594,7 +600,7 @@ def cache_get(
 # If include_return_statement is True then the trace will terminate with a RETURN operation
 # If include_return_statement is False then the trace will end without an explicit RETURN
 # TODO Consider modeling additional calls to trace()
-# TODO Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
+# TODO GTC Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
 
 
@@ -611,9 +617,11 @@ def trace(
         *args,
         **kwargs,
     ) -> Any | TraceCtx:
-        langctx_ = (
-            compile_data.langctx if compile_data is not None and compile_data.langctx is not None else get_langctx()
-        )
+        # Resolves language context
+        # TODO GTC Don't require the isinstance check here -- compile data should do this (and make langctx a property)
+        langctx_: LanguageContext = resolve_language(Languages.TORCH)
+        if compile_data is not None and isinstance(compile_data.langctx, LanguageContext):
+            langctx_ = compile_data.langctx
 
         try:
             langctx_tok = set_langctx(langctx_)
@@ -797,8 +805,8 @@ def _create_callable(
                     "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
                 )
             is_autocast_enabled = True
-            autocast_gpu_dtype = ltorch.to_thunder_dtype(torch.get_autocast_gpu_dtype())
-            autocast_cpu_dtype = ltorch.to_thunder_dtype(torch.get_autocast_cpu_dtype())
+            autocast_gpu_dtype = to_dtype(torch.get_autocast_gpu_dtype())
+            autocast_cpu_dtype = to_dtype(torch.get_autocast_cpu_dtype())
             autocast_key = _make_autocast_cache_key(
                 torch.is_autocast_enabled(), torch.is_autocast_cpu_enabled(), autocast_gpu_dtype, autocast_cpu_dtype
             )

@@ -9,7 +9,6 @@ Thunder Core Language
 .. autosummary::
     :toctree: generated/
 
-    clang_ctx
     maybe_convert_to_dtype
     device_put
     arange

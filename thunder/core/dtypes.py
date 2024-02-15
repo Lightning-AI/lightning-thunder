@@ -1,5 +1,9 @@
+from typing import Any
 from collections.abc import Iterable
 from numbers import Number
+
+import torch
+import numpy as np
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
@@ -267,9 +271,19 @@ def _numberclass_to_numbertype(cls):
     raise ValueError(f"Trying to convert unknown type {cls} to a numbertype!")
 
 
-def to_dtype(x, *, true_dtype: bool = False):
+def to_dtype(x: Any, /, *, true_dtype: bool = False) -> None | dtype:
     """Exctracts a dtype from an object or class."""
 
+    if x is None or isinstance(x, dtype):
+        return x
+    if isinstance(x, np.ndarray):
+        return _numpy_to_thunder_dtype_map[x.dtype]
+    if isinstance(x, np.dtype):
+        return _numpy_to_thunder_dtype_map[x.type]
+    if isinstance(x, torch.Tensor):
+        return _torch_to_thunder_dtype_map[x.dtype]
+    if isinstance(x, torch.dtype):
+        return _torch_to_thunder_dtype_map[x]
     if isinstance(x, TensorProxyInterface):
         if true_dtype:
             return x.true_dtype
@@ -282,8 +296,6 @@ def to_dtype(x, *, true_dtype: bool = False):
         return _numberclass_to_numbertype(type(x))
     if isinstance(x, type) and issubclass(x, Number):
         return _numberclass_to_numbertype(x)
-    if hasattr(x, "dtype"):
-        return x.dtype
 
     raise ValueError(f"Trying to extract a dtype from object {x} with unknown type {type(x)}!")
 
@@ -486,3 +498,99 @@ def are_same_dtypes(a, b, *, weak_and_strong_are_equivalent=True):
         a, b = to_strong_dtype(a), to_strong_dtype(b)
 
     return a is b
+
+
+# Converts PyTorch dtypes to and from thunder dtypes
+_thunder_to_torch_dtype_map = {
+    bool: torch.bool,
+    int: torch.int32,
+    float: torch.float32,
+    complex: torch.complex64,
+    bool8_: torch.bool,
+    bool8: torch.bool,
+    uint8_: torch.uint8,
+    uint8: torch.uint8,
+    int8_: torch.int8,
+    int8: torch.int8,
+    int16_: torch.int16,
+    int16: torch.int16,
+    int32_: torch.int32,
+    int32: torch.int32,
+    int64_: torch.int64,
+    int64: torch.int64,
+    bfloat16_: torch.bfloat16,
+    bfloat16: torch.bfloat16,
+    float16_: torch.float16,
+    float16: torch.float16,
+    float32_: torch.float32,
+    float32: torch.float32,
+    float64_: torch.float64,
+    float64: torch.float64,
+    complex32_: torch.complex32,
+    complex32: torch.complex32,
+    complex64_: torch.complex64,
+    complex64: torch.complex64,
+    complex128_: torch.complex128,
+    complex128: torch.complex128,
+}
+
+_torch_to_thunder_dtype_map = {
+    v: k
+    for k, v in _thunder_to_torch_dtype_map.items()
+    if not is_weak_dtype(k) and not (type(k) is type and issubclass(k, Number))
+}
+
+
+def to_torch_dtype(x: None | torch.dtype | dtype) -> None | torch.dtype:
+    if x is None or isinstance(x, torch.dtype):
+        return x
+
+    baseutils.check_type(x, dtype)
+    return _thunder_to_torch_dtype_map[x]
+
+
+# Converts NumPy dtypes to and from thunder dtypes
+
+# NOTE NumPy does not support the bfloat16 or complexhalf (complex32) datatypes
+_thunder_to_numpy_dtype_map = {
+    bool: np.bool_,
+    int: np.int_,
+    float: np.float_,
+    complex: np.cfloat,
+    bool8_: np.bool_,
+    bool8: np.bool_,
+    uint8_: np.uint8,
+    uint8: np.uint8,
+    int8_: np.int8,
+    int8: np.int8,
+    int16_: np.int16,
+    int16: np.int16,
+    int32_: np.int32,
+    int32: np.int32,
+    int64_: np.int64,
+    int64: np.int64,
+    float16_: np.float16,
+    float16: np.float16,
+    float32_: np.float32,
+    float32: np.float32,
+    float64_: np.float64,
+    float64: np.float64,
+    complex64_: np.complex64,
+    complex64: np.complex64,
+    complex128_: np.complex128,
+    complex128: np.complex128,
+}
+
+_numpy_to_thunder_dtype_map = {
+    v: k
+    for k, v in _thunder_to_numpy_dtype_map.items()
+    if not is_weak_dtype(k) and not (type(k) is type and issubclass(k, Number))
+}
+
+
+def to_numpy_dtype(x: None | np.dtype | dtype) -> None | np.dtype:
+    if x is None or isinstance(x, np.dtype):
+        return x
+
+    baseutils.check_type(x, dtype)
+    return _thunder_to_numpy_dtype_map[x]

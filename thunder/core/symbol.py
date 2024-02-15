@@ -17,7 +17,6 @@ import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -46,16 +45,6 @@ def is_traceable(fn: Callable) -> bool:
 
 if TYPE_CHECKING:
     from thunder.core.prims import OpTags
-
-# NOTE Context variables for eager execution
-#   Expected to be set only once
-_eagerctx = ContextVar("eagerctx")
-
-
-def set_eagerctx(ctx):
-    """Sets the current eager execution context."""
-
-    return _eagertctx.set(ctx)
 
 
 _bsym_header = ContextVar("bsym_header", default="")
@@ -242,30 +231,14 @@ class Symbol:
             self._bind_postprocess(b)
         return b
 
-    # TODO Restore eager dispatch by tracing and executing a trace
     def __call__(self, *args, **kwargs):
         trace = get_tracectx()
 
-        # NOTE This signals an eager invocation
-        # TODO Consider restoring eager support
         baseutils.check(
             trace is not None,
-            lambda: f"Attempting to execute eagerly, which is not supported",
+            lambda: f"Attempting to execute outside of a tracing context, which is not supported",
             exception_type=NotImplementedError,
         )
-        # if trace is None:
-        #     compile_eager, prims_eager = _eagerctx.get()
-        #     if self.is_prim:
-        #         peager = prims_eager.get_eager_implementation_for(self.id)
-        #         baseutils.check(
-        #             peager is not None,
-        #             lambda: f"Couldn't find an eager implementation for {self.name}",
-        #             exception_type=NotImplementedError,
-        #         )
-        #         return peager(*args, **kwargs)
-
-        #     ceager = compile_eager(self.meta)
-        #     return ceager(*args, **kwargs)
 
         baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
         result: Any

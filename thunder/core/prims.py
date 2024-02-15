@@ -7,11 +7,53 @@ import math
 from types import NoneType
 from typing import Union, Type, Any, List, Dict, Tuple, Optional
 from collections.abc import Callable
-from collections.abc import Hashable
-from collections.abc import Sequence
+from collections.abc import Callable, Hashable, Sequence
 
 import torch
-import numpy as np
+
+from thunder.core.langctxs import LanguageContext, register_langctx, Languages, langctx
+
+#
+# Creates and registers the torch language context
+#
+# NOTE That this is done separately from the definition of thunder.torch operations, because the
+#   language context must be available before those operations are defined
+
+_method_name_to_fn_map: dict[str, Callable] = {}
+
+
+# Creates and registers the primitive language context
+# TODO GTC Register additinoal methods and record operations on numbers
+class PrimCtx(LanguageContext):
+    def __init__(self):
+        super().__init__("primitive")
+
+    def has_method(self, id: str) -> bool:
+        return id in _method_name_to_fn_map
+
+    def get_method(self, id: Any, *args, **kwargs) -> Callable:
+        # Verifies that the method is not being called on any tensor proxies
+        inps, _ = tree_flatten((args, kwargs))
+        for x in inps:
+            if isinstance(x, TensorProxy):
+                raise ValueError(f"Attempting to call {id} from the primitive language context on a tensor proxy")
+
+        method: None | Callable = _method_name_to_fn_map.get(id, None)
+
+        if method is None:
+            raise ValueError(f"The {self.name} language context has no method {id}")
+
+        return method
+
+
+primctx = PrimCtx()
+register_langctx(Languages.PRIMS, primctx)
+
+
+# Registers a method with the torch language context
+def register_method(method_name: str, method: Callable, /) -> None:
+    _method_name_to_fn_map[method_name] = method
+
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
@@ -32,7 +74,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
-from thunder.core.langctx import langctx, lang
+from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
 
 #
 # Primitives and helpers for defining them
@@ -191,30 +233,7 @@ class OpTags(Enum):
     DEVICE_SYNC_OP = auto()
 
 
-# NOTE The primitive context is actually the lack of a context for interpreting operations
-# TODO Maybe we should represent it as an actual ctx?
-
-
-class _primctx:
-    pass
-
-
-primctx = _primctx
-
-
-def prim_ctx(fn):
-    @wraps(fn)
-    def fn_(*args, **kwargs):
-        trc = get_tracectx()
-        # TODO Remove the check for using_interpreter once development has progressed enough
-        ctx = None if (trc is None or not trc.using_interpreter) else primctx
-        with lang(ctx):
-            return fn(*args, **kwargs)
-
-    return fn_
-
-
-# TODO Document this function and describe the parts of a primitive
+# TODO GTC Document this function and describe the parts of a primitive
 def make_prim(
     id,
     name,
@@ -222,13 +241,14 @@ def make_prim(
     meta,
     python_printer=default_python_printer,
     python_impl: None | Callable = None,
-    _bind_postprocess: None | Callable = None,
     tags: None | Sequence[OpTags] = None,
+    method_name: None | str = None,
+    _bind_postprocess: None | Callable = None,
     _print_as_impl: bool = False,
 ):
     sym = Symbol(
         name=name,
-        meta=prim_ctx(meta),
+        meta=langctx(Languages.PRIMS)(meta),
         id=id,
         is_prim=True,
         tags=tags,
@@ -237,46 +257,16 @@ def make_prim(
         _bind_postprocess=_bind_postprocess,
         _print_as_impl=_print_as_impl,
     )
+
+    if method_name is not None:
+        register_method(method_name, sym)
+
     return sym
 
 
 #
 # Unpacking and input validation prims
 #
-
-# TODO Refactor this so it's not redundantly implemented in torch/__init__.py
-_thunder_to_torch_dtype_map = {
-    bool: torch.bool,
-    int: torch.int32,
-    float: torch.float32,
-    complex: torch.complex64,
-    dtypes.bool8_: torch.bool,
-    dtypes.bool8: torch.bool,
-    dtypes.uint8_: torch.uint8,
-    dtypes.uint8: torch.uint8,
-    dtypes.int8_: torch.int8,
-    dtypes.int8: torch.int8,
-    dtypes.int16_: torch.int16,
-    dtypes.int16: torch.int16,
-    dtypes.int32_: torch.int32,
-    dtypes.int32: torch.int32,
-    dtypes.int64_: torch.int64,
-    dtypes.int64: torch.int64,
-    dtypes.bfloat16_: torch.bfloat16,
-    dtypes.bfloat16: torch.bfloat16,
-    dtypes.float16_: torch.float16,
-    dtypes.float16: torch.float16,
-    dtypes.float32_: torch.float32,
-    dtypes.float32: torch.float32,
-    dtypes.float64_: torch.float64,
-    dtypes.float64: torch.float64,
-    dtypes.complex32_: torch.complex32,
-    dtypes.complex32: torch.complex32,
-    dtypes.complex64_: torch.complex64,
-    dtypes.complex64: torch.complex64,
-    dtypes.complex128_: torch.complex128,
-    dtypes.complex128: torch.complex128,
-}
 
 
 # TODO Add a tag for these assertions
@@ -287,7 +277,7 @@ _thunder_to_torch_dtype_map = {
 def assert_tensor_metadata_impl(
     t: torch.Tensor, /, shape: tuple[int], device: devices.Device, dtype: dtypes.dtype, requires_grad: bool
 ) -> None:
-    dtype = _thunder_to_torch_dtype_map[dtype]
+    dtype = dtypes.to_torch_dtype(dtype)
 
     if (
         type(t) in (torch.Tensor, torch.nn.Parameter)
@@ -1201,6 +1191,7 @@ def _make_elementwise_unary_prim(
     output_dtype_kind: ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND = ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     numbers_only: bool = False,
     number_type_map: dict[type, type] | None = None,
+    method_name: None | str = None,
 ):
     return make_prim(
         id,
@@ -1214,12 +1205,14 @@ def _make_elementwise_unary_prim(
             number_type_map=number_type_map,
         ),
         python_printer=python_printer,
+        method_name=method_name,
     )
 
 
 py_abs = _make_elementwise_unary_prim(
     PrimIDs.PY_ABS,
     "py_abs",
+    method_name="abs",
     number_fn=operator.abs,
     numbers_only=True,
     number_type_map={
@@ -1407,6 +1400,7 @@ neg = _make_elementwise_unary_prim(
     PrimIDs.NEG,
     "neg",
     number_fn=operator.neg,
+    method_name="neg",
 )
 
 reciprocal = _make_elementwise_unary_prim(
@@ -1600,6 +1594,7 @@ def _make_elementwise_binary_prim(
     python_printer=default_python_printer,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
+    method_name: None | str = None,
 ):
     return make_prim(
         id,
@@ -1611,6 +1606,7 @@ def _make_elementwise_binary_prim(
             supported_input_dtypes=supported_input_dtypes,
         ),
         python_printer=python_printer,
+        method_name=method_name,
     )
 
 
@@ -1619,6 +1615,7 @@ add = _make_elementwise_binary_prim(
     "add",
     number_fn=operator.add,
     supported_input_dtypes=math_dtypes,
+    method_name="add",
 )
 
 atan2 = _make_elementwise_binary_prim(
@@ -2944,17 +2941,3 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
-
-#
-# Populates the prim ctx
-#
-# NOTE These are the primitive operations that operations on numbers will be mapped to
-
-primctx.neg = neg
-primctx.add = add
-primctx.sub = sub
-primctx.mul = mul
-primctx.floor_divide = div  # (!) see above
-primctx.eq = eq
-primctx.ge = ge
-primctx.le = le

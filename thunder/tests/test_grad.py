@@ -16,11 +16,10 @@ import thunder.core.devices as devices
 import thunder.clang as clang
 
 from thunder import torch as ltorch
-from thunder.core.dtypes import is_exact_dtype
+from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
-from thunder.torch import to_thunder_dtype as thunder_dtype
 from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo

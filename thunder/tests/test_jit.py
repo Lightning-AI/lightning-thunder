@@ -13,7 +13,8 @@ from torch.testing import assert_close
 import thunder
 from thunder.core.jit import JITError
 from thunder.core.jit_ext import minimal_thunder_jit
-
+import thunder.clang as clang
+import thunder.core.prims as prims
 
 #
 # Test suite for the thunder.jit entrypoint
@@ -27,6 +28,60 @@ from thunder.core.jit_ext import minimal_thunder_jit
 def test_simple_addition(jit):
     def foo(a, b):
         return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
+)
+def test_clang_addition(jit):
+    def foo(a, b):
+        return clang.add(a, b)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = a + b
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
+)
+def test_prim_addition(jit):
+    def foo(a, b):
+        return prims.add(a, b)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = a + b
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
+)
+def test_python_fn_addition(jit):
+    def bar(a, b):
+        return a + b
+
+    def foo(a, b):
+        return bar(a, b)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))

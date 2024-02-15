@@ -12,14 +12,18 @@ from collections.abc import Callable
 
 import opt_einsum
 
+# Initialies the language context
+from thunder.torch.langctx import register_method
+
 import thunder.clang as clang
 import thunder.core.devices as devices
+from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
+from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
-from thunder.core.langctx import langctx
-from thunder.core.prims import prim_ctx
+from thunder.core.langctxs import langctx, Languages
 from thunder.core.proxies import TensorProxy, FutureTensorProxy
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
@@ -43,74 +47,7 @@ DeviceLike = str | devices.Device | torch.device
 dtypeLike = dtypes.dtype | torch.dtype
 
 
-#
-# default langctx interface: available devices
-#
-def available_devices() -> Sequence[devices.Device]:
-    available_devices = [devices.cpu]
-
-    # Short-circuits if there are no CUDA devices
-    if not torch.cuda.is_available:
-        return available_devices
-
-    # NOTE torch.cuda.is_available, extends with CUDA devices
-    cuda_devices = tuple(devices.Device(devices.DeviceType.CUDA, idx) for idx in range(torch.cuda.device_count()))
-    available_devices.extend(cuda_devices)
-
-    return available_devices
-
-
-#
-# langctx interface: is_available, to_dtype, tensor_cls, tensorproxy, lookup_method
-#
-
-
-# Trivial implementation of the langctx interface since torch is a requiremented
-def is_available():
-    return True
-
-
-# TODO language contexts like Torch could be
-#   expanded to allow datatypes that the original language didn't support
-_thunder_to_torch_dtype_map = {
-    bool: torch.bool,
-    int: torch.int32,
-    float: torch.float32,
-    complex: torch.complex64,
-    dtypes.bool8_: torch.bool,
-    dtypes.bool8: torch.bool,
-    dtypes.uint8_: torch.uint8,
-    dtypes.uint8: torch.uint8,
-    dtypes.int8_: torch.int8,
-    dtypes.int8: torch.int8,
-    dtypes.int16_: torch.int16,
-    dtypes.int16: torch.int16,
-    dtypes.int32_: torch.int32,
-    dtypes.int32: torch.int32,
-    dtypes.int64_: torch.int64,
-    dtypes.int64: torch.int64,
-    dtypes.bfloat16_: torch.bfloat16,
-    dtypes.bfloat16: torch.bfloat16,
-    dtypes.float16_: torch.float16,
-    dtypes.float16: torch.float16,
-    dtypes.float32_: torch.float32,
-    dtypes.float32: torch.float32,
-    dtypes.float64_: torch.float64,
-    dtypes.float64: torch.float64,
-    dtypes.complex32_: torch.complex32,
-    dtypes.complex32: torch.complex32,
-    dtypes.complex64_: torch.complex64,
-    dtypes.complex64: torch.complex64,
-    dtypes.complex128_: torch.complex128,
-    dtypes.complex128: torch.complex128,
-}
-
-_torch_to_thunder_dtype_map = {
-    v: k
-    for k, v in _thunder_to_torch_dtype_map.items()
-    if not utils.is_weak_dtype(k) and not (type(k) is type and issubclass(k, Number))
-}
-
+# TODO GTC Remove this map
 _torch_noinline_functions = {
     torch.nn.modules.utils._single,
     torch.nn.modules.utils._pair,
@@ -118,77 +55,9 @@ _torch_noinline_functions = {
     torch.nn.modules.utils._quadruple,
 }
 
+# Maps torch functions, like torch.foo, to their corresponding thunder.torch functions
 # NOTE This is defined here and populated as functions are defined below
-# It maps torch functions, like torch.foo, to their corresponding functions here
-_torch_to_thunder_function_map = {}
-
-
-def to_dtype(x: Any) -> dtypes.dtype:
-    if isinstance(x, torch.Tensor):
-        return to_thunder_dtype(x.dtype)
-    if isinstance(x, torch.dtype):
-        return to_thunder_dtype(x)
-
-    return dtypes.to_dtype(x)
-
-
-def to_thunder_dtype(dtype: None | dtypeLike) -> None | dtypes.dtype:
-    if isinstance(dtype, dtypes.dtype) or dtype is None:
-        return dtype
-    return _torch_to_thunder_dtype_map[dtype]
-
-
-def to_torch_dtype(dtype: None | dtypeLike) -> None | torch.dtype:
-    if isinstance(dtype, torch.dtype) or dtype is None:
-        return dtype
-    return _thunder_to_torch_dtype_map[dtype]
-
-
-tensor_cls = torch.Tensor
-
-
-# TODO Change the signature of this to be:
-#   (t, /, *, name, history)
-def tensorproxy(name: None | str, t: torch.Tensor, /, *, history: None | tuple = None) -> TensorProxy:
-    device = devices.device_from_string(str(t.device))
-    dtype = to_thunder_dtype(t.dtype)
-    # See Note [DistributedDataParallel and ddp_type]
-    ddp_type = getattr(t, "ddp_type", None)
-    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-    return TensorProxy(
-        name,
-        shape=tuple(t.shape),
-        device=device,
-        dtype=dtype,
-        requires_grad=t.requires_grad,
-        ddp_type=ddp_type,
-        history=history,
-    )
-
-
-# Convers from a torch device, or a string representing such a device, to a Thunder device
-def to_thunder_device(device: None | DeviceLike) -> None | devices.Device:
-    if isinstance(device, devices.Device) or device is None:
-        return device
-
-    devicestr = device if isinstance(device, str) else str(device)
-    return devices.device_from_string(devicestr)
-
-
-def to_torch_device(device: None | DeviceLike) -> None | torch.device:
-    if isinstance(device, torch.device) or device is None:
-        return device
-
-    return str(device)
-
-
-# Helpers for defining torch methods
-_torch_methods = {}
-
-
-def method_lookup(name: str) -> None | Symbol:
-    return _torch_methods.get(name, None)
-
+_torch_to_thunder_function_map: dict[Callable, Callable] = {}
 
 #
 # torch operation definitions
@@ -205,12 +74,14 @@ class torchsymbol:
         self,
         *torchfns,
         is_method: bool = False,
+        method_name: None | str = None,
         id: str | None = None,
         is_prim: bool = False,
         tags: None | list[Any] = None,
     ):
         self.torchfns = torchfns
-        self.is_method = is_method
+        self.is_method = is_method or (method_name is not None)
+        self.method_name: None | str = method_name
         self.id = id
         # When is_prim is True, the function is treated as a primitive, so that
         # executors must execute it directly without decomposition.
@@ -218,9 +89,7 @@ class torchsymbol:
         self.tags = tags
 
     def __call__(self, fn: Callable) -> Symbol:
-        module_name = torchsymbol.__module__
-        module = utils.get_module(module_name)
-        _fn = langctx(module)(fn)
+        _fn = langctx(Languages.TORCH)(fn)
 
         id: str
         if self.id is None:
@@ -245,14 +114,18 @@ class torchsymbol:
             id = self.id
 
         if self.is_prim:
-            sym = Symbol(name=fn.__name__, meta=prim_ctx(_fn), id=id, is_prim=self.is_prim, tags=self.tags)
+            sym = Symbol(
+                name=fn.__name__, meta=langctx(Languages.PRIMS)(_fn), id=id, is_prim=self.is_prim, tags=self.tags
+            )
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
         if self.is_method:
-            _torch_methods[sym.name] = sym
-            torch_method = getattr(torch.Tensor, fn.__name__)
-            _torch_to_thunder_function_map[torch_method] = sym
+            method_name: str = self.method_name if self.method_name is not None else fn.__name__
+            register_method(method_name, sym)
+            torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
+            if torch_method is not None:
+                _torch_to_thunder_function_map[torch_method] = sym
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
@@ -279,11 +152,15 @@ def compute_len(a: TensorLike, /) -> int:
     return a.shape[0]
 
 
+register_method("len", compute_len)
+
+
 @torchsymbol(torch.is_floating_point, is_method=True)
 def is_floating_point(a: TensorLike, /) -> bool:
     return dtypes.is_float_dtype(a.dtype)
 
 
+# Handles the size method
 def size(a):
     def fn_(idx: int | None = None):
         if idx is None:
@@ -291,6 +168,9 @@ def size(a):
         return a.shape[idx]
 
     return fn_
+
+
+register_method("size", size)
 
 
 #
@@ -303,6 +183,9 @@ def size(a):
 #   "float"
 def to_float(a: Number | TensorLike) -> Number | TensorLike:
     return clang.maybe_convert_to_dtype(a, dtypes.float32)
+
+
+register_method("float", to_float)
 
 
 # NOTE to's parsing is a little whacky
@@ -323,29 +206,29 @@ def _parse_to_device_and_dtype(
     # Case 3 and 5 -- device first
     if isinstance(tensor_dtype_or_device, (torch.device, devices.Device, str)):
         utils.check(device is None, lambda: f"to received both a positional and keyword device argument")
-        device = to_thunder_device(tensor_dtype_or_device)
+        device = to_device(tensor_dtype_or_device)
 
         if optional_positional_dtype is not None:
             utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
-            dtype = to_thunder_dtype(optional_positional_dtype)
+            dtype = to_dtype(optional_positional_dtype)
         else:
-            dtype = to_thunder_dtype(dtype)
+            dtype = to_dtype(dtype)
     # Case 2 -- dtype first
     elif isinstance(tensor_dtype_or_device, (torch.dtype, dtypes.dtype)):
         utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
-        device = to_thunder_device(device)
-        dtype = to_thunder_dtype(tensor_dtype_or_device)
+        device = to_device(device) if device is not None else None
+        dtype = to_dtype(tensor_dtype_or_device)
     # Case 4 -- None first
     elif tensor_dtype_or_device is None:
-        device = to_thunder_device(device)
-        dtype = to_thunder_dtype(dtype)
+        device = to_device(device) if device is not None else None
+        dtype = to_dtype(dtype)
     # Case 1 -- tensor first
     else:
         # See https://github.com/Lightning-AI/lightning-thunder/issues/317
         #   It'd be nice to write torch.Tensor here instead of TensorProxy
         utils.check_type(tensor_dtype_or_device, TensorProxy)
-        device_ = tensor_dtype_or_device.device if device is None else to_thunder_device(device)
-        dtype_ = tensor_dtype_or_device.true_dtype if dtype is None else to_thunder_dtype(dtype)
+        device_ = tensor_dtype_or_device.device if device is None else to_device(device)
+        dtype_ = tensor_dtype_or_device.true_dtype if dtype is None else to_dtype(dtype)
         device, dtype = device_, dtype_
 
     return device, dtype
@@ -369,10 +252,10 @@ def to(
 
     if copy:
         if device is not None:
-            device = to_thunder_device(device)
+            device = to_device(device)
             a = prims.device_put(a, device)
         if dtype is not None:
-            dtype = to_thunder_dtype(dtype)
+            dtype = to_dtype(dtype)
             a = prims.convert_element_type(a, dtype)
         return a
 
@@ -416,8 +299,8 @@ def arange(
     if device is None:
         device = "cpu"
 
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+    device = to_device(device)
+    dtype = to_dtype(dtype)
 
     if end is None:
         end = start
@@ -432,8 +315,8 @@ def full(
     if device is None:
         device = "cpu"
 
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+    device = to_device(device)
+    dtype = to_dtype(dtype)
 
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
@@ -442,8 +325,8 @@ def full(
 def full_like(
     a: TensorLike, /, fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+    device = to_device(device)
+    dtype = to_dtype(dtype)
     return clang.full_like(a, fill_value, device=device, dtype=dtype)
 
 
@@ -484,8 +367,8 @@ def uniform(
     device: DeviceLike,
     dtype: dtypeLike,
 ) -> TensorLike:
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+    device = to_device(device)
+    dtype = to_dtype(dtype)
 
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
 
@@ -500,8 +383,8 @@ def uniform_like(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
 ) -> TensorLike:
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+    device = to_device(device)
+    dtype = to_dtype(dtype)
 
     return clang.uniform_like(a, minval, maxval, device=device, dtype=dtype)
 
@@ -552,8 +435,8 @@ def uniform_philox(
     seed: int | TensorProxy,
     offset: int | TensorProxy,
 ) -> TensorLike:
-    device = to_thunder_device(device)
-    dtype = to_thunder_dtype(dtype)
+    device = to_device(device)
+    dtype = to_dtype(dtype)
 
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
@@ -579,14 +462,14 @@ def randn(
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
     if device is None:
         device = "cpu"
-    device = to_thunder_device(device)
+    device = to_device(device)
 
     # For now we default to `float32`,
     # however, we should add a default dtype or
     # rely on `torch.get_default_dtype`.
     if dtype is None:
         dtype = torch.float
-    dtype = to_thunder_dtype(dtype)
+    dtype = to_dtype(dtype)
     shape = utils.extract_shape_from_varargs(shape)
     return prims.randn(shape, device=device, dtype=dtype)
 
@@ -740,7 +623,7 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     return clang.flip(a, dims)
 
 
-@torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__")
+@torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
     return clang.getitem(a, key)
 
@@ -766,6 +649,9 @@ def matrix_transpose(a: TensorLike, /) -> TensorLike:
                 [3, 6]])
     """
     return clang.matrix_transpose(a)
+
+
+register_method("mT", matrix_transpose)
 
 
 @torchsymbol(torch.movedim, is_method=True)
@@ -1819,7 +1705,7 @@ def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> Tensor
     if dtype is None:
         return TensorProxy(like=a)
     else:
-        return TensorProxy(like=a, dtype=to_thunder_dtype(dtype))
+        return TensorProxy(like=a, dtype=to_dtype(dtype))
 
 
 @torchsymbol(torch.var, is_method=True)
@@ -3333,7 +3219,7 @@ def cross_entropy(
                 mask_sum = _reduction(
                     mask,
                     prims.sum,
-                    dtype=to_thunder_dtype(torch.float),
+                    dtype=to_dtype(torch.float),
                     output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
                 )
                 # NOTE: does the call numel here work with dynamic shape?!
@@ -3662,7 +3548,7 @@ def logsumexp(a: TensorLike, /, dim: int | Sequence[int], keepdim: bool = False)
 @torchsymbol(torch.log_softmax, torch.special.log_softmax, torch.nn.functional.log_softmax, is_method=True)
 def log_softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
     result_dtype: dtypeLike = dtype or a.dtype
-    result_dtype: dtypes.dtype = to_thunder_dtype(result_dtype)
+    result_dtype: dtypes.dtype = to_dtype(result_dtype)
 
     # If dtype parameter is specified, the input tensor is cast to dtype before the operation is performed.
     # We cast the input to the corresponding computation dtype and the output to the desired dtype.
@@ -3681,7 +3567,7 @@ def log_softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -
 # See https://github.com/Lightning-AI/lightning-thunder/issues/660
 @torchsymbol("log_softmax_backward", id="log_softmax_backward")
 def log_softmax_backward(g: TensorProxy, /, output: TensorProxy, dim: int, dtype: dtypeLike) -> TensorLike:
-    dtype: dtypes.dtype = to_thunder_dtype(dtype)
+    dtype: dtypes.dtype = to_dtype(dtype)
     g_input = g - exp(output) * sum(g, dim=dim, keepdim=True)
     return to(g_input, dtype)
 
@@ -3897,7 +3783,7 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 @torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
 def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
     result_dtype: dtypeLike = dtype or a.dtype
-    result_dtype: dtypes.dtype = to_thunder_dtype(result_dtype)
+    result_dtype: dtypes.dtype = to_dtype(result_dtype)
     computation_dtype = utils.get_computation_dtype(result_dtype)
     a_ = a.to(computation_dtype)
 
@@ -4067,89 +3953,3 @@ _torch_to_thunder_complete_map = {
     **_torch_to_thunder_function_map,
     **{fn: fn for fn in _torch_noinline_functions},
 }
-
-#
-# Prim implementations
-#
-# NOTE These operations are called when a primitive is invoked eagerly.
-#   They handle number, torch.Tensor, and np.ndarray inputs.
-# TODO Reconcile these definitions with the primitive operator mappings in the PyTorch executor
-# TODO Consider having NumPy arrays handled by the NumPy language definition -- but that would require a more
-#   complicated dispatch mechanism
-from thunder.core.prims import PrimIDs as pids
-import numpy as np
-import thunder.numpy as lnp
-
-_primid_to_impl_map = {}
-
-
-class eager_for:
-    def __init__(self, id):
-        self.id = id
-
-    def __call__(self, fn):
-        _primid_to_impl_map[self.id] = fn
-        return fn
-
-
-def get_eager_implementation_for(id: prims.PrimIDs) -> Callable | None:
-    return _primid_to_impl_map.get(id, None)
-
-
-@eager_for(pids.CONVERT_ELEMENT_TYPE)
-def _convert_element_type_eager(
-    a: torch.Tensor | np.ndarray | Number, dtype: dtypes.dtype | type
-) -> torch.Tensor | Number:
-    utils.check_type(a, (torch.Tensor, np.ndarray, Number))
-    utils.check_type(dtype, (dtypes.dtype, type))
-
-    if isinstance(a, Number):
-        utils.check(
-            dtype in dtypes.all_numbertypes, lambda: f"Expected {dtype} to be a numbertype in {dtypes.all_numbertypes}"
-        )
-        return dtype(a)
-
-    if isinstance(a, torch.Tensor):
-        torch_dtype = to_torch_dtype(dtype)
-        return a.to(torch_dtype)
-
-    if isinstance(a, np.ndarray):
-        np_dtype = lnp.to_numpy_dtype(dtype)
-        return a.astype(np_dtype)
-
-    utils.check(False, lambda: f"Unexpected case!", exception_type=AssertionError)
-
-
-@eager_for(pids.RESHAPE)
-def _reshape_eager(a: torch.Tensor, shape: Sequence[int]) -> torch.Tensor:
-    return a.reshape(shape)
-
-
-def _elementwise_binary_eager(
-    a: torch.Tensor | np.ndarray | Number,
-    b: torch.Tensor | np.ndarray | Number,
-    *,
-    name: str,
-    number_fn: Callable | None = None,
-    torch_fn: Callable | None = None,
-):
-    utils.check_type(name, str)
-    utils.check_type(a, (torch.Tensor, np.ndarray, Number))
-    utils.check_type(b, (torch.Tensor, np.ndarray, Number))
-
-    if isinstance(a, Number) and isinstance(b, Number):
-        utils.check(number_fn is not None, lambda: f"", exception_type=NotImplementedError)
-        return number_fn(a, b)
-
-    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
-        utils.check(False, lambda: f"{name} does not yet support NumPy arrays", exception_type=NotImplementedError)
-
-    # NOTE isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor)
-    utils.check(
-        torch_fn is not None, lambda: f"{name} does not yet support Torch tensors", exception_type=NotImplementedError
-    )
-    return torch_fn(a, b)
-
-
-add_eager = partial(_elementwise_binary_eager, name="add_eager", number_fn=operator.add, torch_fn=torch.add)
-eager_for(pids.ADD)(add_eager)

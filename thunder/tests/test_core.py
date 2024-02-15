@@ -1500,11 +1500,15 @@ def test_eval_trace(executor, device, _):
         new_kwargs = {k: v for k, v in foo_trace.kwargs.items()}
         # TODO: trace object doesn't respect the original tuple/non-tuple spec
         # for output, it's always a tuple
-        actual = eval_trace(foo_trace, *new_args, **new_kwargs)[0]
+        actual = eval_trace(foo_trace, *new_args, **new_kwargs)
+        # actual = result[0]
         assert isinstance(actual, TensorProxy)
-        assert actual.shape == foo_trace.output[0].shape
-        assert actual.dtype == foo_trace.output[0].dtype
-        assert actual.device == foo_trace.output[0].device
+        # assert actual.shape == foo_trace.output[0].shape
+        # assert actual.dtype == foo_trace.output[0].dtype
+        # assert actual.device == foo_trace.output[0].device
+        assert actual.shape == foo_trace.output.shape
+        assert actual.dtype == foo_trace.output.dtype
+        assert actual.device == foo_trace.output.device
     finally:
         reset_tracectx(trace_token)
 

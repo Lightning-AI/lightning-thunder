@@ -3,16 +3,17 @@ from __future__ import annotations
 from enum import auto, Enum
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
+from collections.abc import Callable
 from collections.abc import Sequence
 from functools import reduce, partial
 import operator
 import builtins
 import math
 
-from thunder.core.trace import VariableInterface, get_tracectx
+from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctx import langctx_for, get_langctx, get_numberctx
+from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -218,37 +219,46 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn):
-        trace = get_tracectx()
-        using_interpreter: bool = trace.using_interpreter if trace is not None else False
+        trace: None | TraceCtx = get_tracectx()
 
-        # TODO Remove the check for using_interpreter once development has progressed enough
-        if using_interpreter:
+        langctx: None | LanguageContext
+        try:
             langctx = get_langctx()
+        except LookupError as le:
+            langctx = None
 
-            fn = getattr(langctx, name)
-            return fn(a)
-
-        # NOTE not using_interpreter on this path
         vala = pyval(a)
-        baseutils.check(
-            vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
-        )
 
-        # TODO Make it so failing to find the operation is a failure
-        # Records the operation (on a number) if in a language context
-        langctx = get_langctx()
-        if langctx is not None:
-            numberctx = get_numberctx()
-            fn = getattr(numberctx, name, None)
-            if fn is not None:
-                return fn(a)
+        if trace is None or langctx is None:
+            # Outside of a trace or language context, operations on NumberProxies are executed by the
+            #   Python interpreter
 
-        # NOTE langctx is None
-        # In this case the operation is (conceptually) run eagerly
-        return fn(vala)
+            baseutils.check(
+                vala is not None,
+                lambda: f"Trying to {name} a number with an unknown value",
+                exception_type=AssertionError,
+            )
+            return fn(vala)
+
+        method: Callable
+
+        # TODO GTC Remove the check for using_interpreter once development has progressed enough
+        using_interpreter: bool = trace.using_interpreter if trace is not None else False
+        if using_interpreter:
+            method: Callable = resolve_method(name, a)
+            return method(a)
+        else:
+            # Outside the interpreter this tries to find a method, and if none exists the
+            #   operation silently fallsback to the Python interpreter
+            try:
+                method = resolve_method(name, a)
+            except Exception as e:
+                return fn(vala)
+
+            return method(a)
 
     def __abs__(self):
-        return self._elementwise_unary_helper(self, "py_abs", builtins.abs)
+        return self._elementwise_unary_helper(self, "abs", builtins.abs)
 
     # See https://docs.python.org/3/reference/datamodel.html#object.__ceil__
     def __ceil__(self):
@@ -286,42 +296,39 @@ class NumberProxy(Proxy, NumberProxyInterface):
         trace = get_tracectx()
         using_interpreter: bool = trace.using_interpreter if trace is not None else False
 
+        trace: None | TraceCtx = get_tracectx()
+
+        langctx: None | LanguageContext
+        try:
+            langctx = get_langctx()
+        except LookupError as le:
+            langctx = None
+
+        vala = pyval(a)
+        valb = pyval(b) if isinstance(b, NumberProxy) else b
+        if trace is None or langctx is None:
+            # Outside of a trace or language context, binary operations on NumberProxies are
+            #   executed by the Python interpreter
+
+            return fn(vala, valb)
+
         # TODO Remove the check for using_interpreter once development has progressed enough
         if using_interpreter:
-            langctx = get_langctx()
+            fn: None | Callable = resolve_method(name, a, b)
 
-            fn = getattr(langctx, name)
+            if fn is None:
+                langctx: LanguageContext = get_langctx()
+                raise ValueError(
+                    f"Could not find a binary operator called {name} on numbers in the {langctx.name} language context"
+                )
+
             return fn(a, b)
 
-        # NOTE not using_interpreter on this path
-        vala = pyval(a)
-        baseutils.check(
-            vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
-        )
-
-        langctx = get_langctx()
         if isinstance(b, TensorProxy):
-            baseutils.check(
-                langctx is not None,
-                lambda: f"Cannot use an operator to {name} a number and a tensor outside of a language context",
-            )
-            tensor_fn = getattr(langctx, name)
+            tensor_fn = resolve_method(name, a, b)
             return tensor_fn(a, b)
 
-        # NOTE isinstance(b, Number)
-        valb = pyval(b)
-        baseutils.check(
-            valb is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
-        )
-
-        # TODO Enable this
-        # Records the operation (on two numbers) if in a language context
-        # if langctx is not None:
-        #     fn = getattr(langctx, name)
-        #     return fn(a, b)
-
-        # NOTE langctx is None
-        # In this case the operation is (conceptually) run eagerly
+        # TODO GTC Record binary operations outside the using_interpreter mode
         return fn(vala, valb)
 
     def __add__(self, other):
@@ -539,6 +546,7 @@ def pytype(x: NumberProxy | Number) -> type:
     return type(x)
 
 
+# TODO GTC Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy, complex):
     def __new__(cls, *, name=None, value, history: None | tuple = None):
         if value is None:
@@ -740,9 +748,9 @@ class FutureTensorProxy(Proxy):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
     @property
-    def size(self):
-        langctx = get_langctx()
-        return langctx.size(self)
+    def size(self, /) -> Any:
+        fn = resolve_method("size", self)
+        return fn(self)
 
     def wait(self) -> TensorProxy:
         from thunder.distributed.prims import wait
@@ -750,7 +758,7 @@ class FutureTensorProxy(Proxy):
         return wait(self)
 
 
-# TODO Review dunders -- any remaining?
+# TODO GTC Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
@@ -778,6 +786,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._ddp_type,
         ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type)
 
+    # NOTE The following properties DO NOT depend on the language context or record
+    #   themselves into the trace, so they can be used when working with tensor proxies
+    #   outside of a trace or language context
     @property
     def shape(self):
         return self._shape
@@ -811,9 +822,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._ddp_type
 
     @property
-    def size(self):
-        langctx = get_langctx()
-        return langctx.size(self)
+    def size(self, /) -> Any:
+        fn = resolve_method("size", self)
+        return fn(self)
 
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
@@ -822,79 +833,74 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # > even of the object’s metaclass
     # Ref: https://docs.python.org/3/reference/datamodel.html#special-method-lookup
     def __len__(self):
-        langctx = get_langctx()
-        return langctx.compute_len(self)
+        fn = resolve_method("len", self)
+        return fn(self)
 
-    def replace_name(self, name):
+    # TODO GTC Review this with other changes
+    def replace_name(self, name: str):
         """Return a copy of this proxy with the given name."""
-        langctx = get_langctx()
-        return langctx.tensorproxy(name, self)
+        return tensorproxy(self, name=name)
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
-    def __getattr__(self, attr):
-        langctx = get_langctx()
-        method = langctx.method_lookup(attr)
+    def __getattr__(self, attr: str, /):
+        method: None | Callable = resolve_method(attr, self)
         baseutils.check(method is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
         return partial(method, self)
 
     #
     # Datatype conversion shorthands
     #
-    # NOTE This don't map the names directly because we want to avoid defining
-    #   functions named "float" that clobber the builtin "float" wherever possible
-    #   That's why these functions are defined directly (instead of automatically
-    #   being translated using the language context)
-    # TODO Implement additional shorthands
 
     def float(self):
-        langctx = get_langctx()
-        return langctx.to_float(self)
+        method = resolve_method("float", self)
+        return method(self)
 
     #
     # Indexing operators
     #
 
     def __getitem__(self, key):
-        ctx = get_langctx()
-        return ctx.getitem(self, key)
+        method = resolve_method("getitem", self, key)
+        return method(self, key)
 
     #
     # Elementwise unary operators
     #
 
     def __abs__(self):
-        langctx = get_langctx()
-        return langctx.abs(self)
+        method = resolve_method("abs", self)
+        return method(self)
 
     def __ceil__(self):
-        langctx = get_langctx()
-        return langctx.ceil(self)
+        method = resolve_method("ceil", self)
+        return method(self)
 
     def __floor__(self):
-        langctx = get_langctx()
-        return langctx.floor(self)
+        method = resolve_method("floor", self)
+        return method(self)
 
     def __invert__(self):
-        langctx = get_langctx()
-        return langctx.bitwise_not(self)
+        method = resolve_method("bitwise_not", self)
+        return method(self)
 
     def __neg__(self):
-        langctx = get_langctx()
-        return langctx.neg(self)
+        method = resolve_method("neg", self)
+        return method(self)
 
     def __pos__(self):
-        return self
+        method = resolve_method("pos", self)
+        return method(self)
 
     def __round__(self):
-        langctx = get_langctx()
-        return langctx.round(self)
+        method = resolve_method("round", self)
+        return method(self)
 
     def __trunc__(self):
-        langctx = get_langctx()
-        return langctx.trunc(self)
+        method = resolve_method("trunc", self)
+        return method(self)
 
     #
     # dtype conversion operators
@@ -917,72 +923,72 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
 
     def __add__(self, other):
-        langctx = get_langctx()
-        return langctx.add(self, other)
+        method = resolve_method("add", self, other)
+        return method(self, other)
 
     def __radd__(self, other):
-        langctx = get_langctx()
-        return langctx.add(other, self)
+        method = resolve_method("add", other, self)
+        return method(other, self)
 
     def __divmod__(self, other):
-        langctx = get_langctx()
-        return langctx.divmod(self, other)
+        method = resolve_method("divmod", self, other)
+        return method(self, other)
 
     def __rdivmod__(self, other):
-        langctx = get_langctx()
-        return langctx.divmod(other, self)
+        method = resolve_method("divmod", other, self)
+        return method(other, self)
 
     def __eq__(self, other):
-        langctx = get_langctx()
-        return langctx.eq(self, other)
+        method = resolve_method("eq", self, other)
+        return method(self, other)
 
     def __floordiv__(self, other):
-        langctx = get_langctx()
-        return langctx.floor_divide(self, other)
+        method = resolve_method("floor_divide", self, other)
+        return method(self, other)
 
     def __rfloordiv__(self, other):
-        langctx = get_langctx()
-        return langctx.floor_divide(other, self)
+        method = resolve_method("floor_divide", other, self)
+        return method(other, self)
 
     def __mod__(self, other):
-        langctx = get_langctx()
-        return langctx.mod(self, other)
+        method = resolve_method("mod", self, other)
+        return method(self, other)
 
     def __rmod__(self, other):
-        langctx = get_langctx()
-        return langctx.mod(other, self)
+        method = resolve_method("mod", other, self)
+        return method(other, self)
 
     def __mul__(self, other):
-        langctx = get_langctx()
-        return langctx.mul(self, other)
+        method = resolve_method("mul", self, other)
+        return method(self, other)
 
     def __rmul__(self, other):
-        langctx = get_langctx()
-        return langctx.mul(other, self)
+        method = resolve_method("mul", other, self)
+        return method(other, self)
 
     def __pow__(self, other):
-        langctx = get_langctx()
-        return langctx.pow(self, other)
+        method = resolve_method("pow", self, other)
+        return method(self, other)
 
     def __rpow__(self, other):
-        langctx = get_langctx()
-        return langctx.pow(other, self)
+        method = resolve_method("pow", other, self)
+        return method(other, self)
 
     def __sub__(self, other):
-        langctx = get_langctx()
-        return langctx.sub(self, other)
+        method = resolve_method("sub", self, other)
+        return method(self, other)
 
     def __rsub__(self, other):
-        langctx = get_langctx()
-        return langctx.sub(other, self)
+        method = resolve_method("sub", other, self)
+        return method(other, self)
 
     def __truediv__(self, other):
-        langctx = get_langctx()
-        return langctx.true_divide(self, other)
+        method = resolve_method("true_divide", self, other)
+        return method(self, other)
 
     def __rtruediv__(self, other):
-        langctx = get_langctx()
-        return langctx.true_divide(other, self)
+        method = resolve_method("true_divide", other, self)
+        return method(other, self)
 
     #
     # Logical operations
@@ -990,90 +996,90 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     # TODO Review logical vs bitwise dispatch
     def __and__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_and(self, other)
+        method = resolve_method("bitwise_and", self, other)
+        return method(self, other)
 
     def __rand__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_and(other, self)
+        method = resolve_method("bitwise_and", other, self)
+        return method(other, self)
 
     def __ge__(self, other):
-        langctx = get_langctx()
-        return langctx.ge(self, other)
+        method = resolve_method("ge", self, other)
+        return method(self, other)
 
     def __gt__(self, other):
-        langctx = get_langctx()
-        return langctx.gt(self, other)
+        method = resolve_method("gt", self, other)
+        return method(self, other)
 
     def __le__(self, other):
-        langctx = get_langctx()
-        return langctx.le(self, other)
+        method = resolve_method("le", self, other)
+        return method(self, other)
 
     def __lt__(self, other):
-        langctx = get_langctx()
-        return langctx.lt(self, other)
+        method = resolve_method("lt", self, other)
+        return method(self, other)
 
     def __ne__(self, other):
-        langctx = get_langctx()
-        return langctx.ne(self, other)
+        method = resolve_method("ne", self, other)
+        return method(self, other)
 
     # TODO Review logical vs bitwise dispatch
     def __or__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_or(self, other)
+        method = resolve_method("bitwise_or", self, other)
+        return method(self, other)
 
     def __ror__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_or(other, self)
+        method = resolve_method("bitwise_or", other, self)
+        return method(other, self)
 
     def __xor__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_xor(self, other)
+        method = resolve_method("bitwise_xor", self, other)
+        return method(self, other)
 
     def __rxor__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_xor(other, self)
+        method = resolve_method("bitwise_xor", other, self)
+        return method(other, self)
 
     #
     # Shift operations
     #
 
     def __lshift__(self, other):
-        langctx = get_langctx()
-        return langctx.lshift(self, other)
+        method = resolve_method("lshift", self, other)
+        return method(self, other)
 
     def __rlshift__(self, other):
-        langctx = get_langctx()
-        return langctx.lshift(other, self)
+        method = resolve_method("lshift", other, self)
+        return method(other, self)
 
     def __rshift__(self, other):
-        langctx = get_langctx()
-        return langctx.rshift(self, other)
+        method = resolve_method("rshift", self, other)
+        return method(self, other)
 
     def __rrshift__(self, other):
-        langctx = get_langctx()
-        return langctx.rshift(other, self)
+        method = resolve_method("rshift", other, self)
+        return method(other, self)
 
     #
     # Matmul
     #
 
     def __matmul__(self, other):
-        langctx = get_langctx()
-        return langctx.matmul(self, other)
+        method = resolve_method("matmul", self, other)
+        return method(self, other)
 
     def __rmatmul__(self, other):
-        langctx = get_langctx()
-        return langctx.matmul(other, self)
+        method = resolve_method("matmul", other, self)
+        return method(other, self)
 
     #
-    # Transpose
+    # Transposes
     #
 
     @property
     def mT(self):
-        langctx = get_langctx()
-        return langctx.matrix_transpose(self)
+        method = resolve_method("mT", self)
+        return method(self)
 
     #
     # Real
@@ -1081,8 +1087,8 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     @property
     def real(self):
-        langctx = get_langctx()
-        return langctx.real(self)
+        method = resolve_method("real", self)
+        return method(self)
 
 
 #
@@ -1096,36 +1102,42 @@ _cls_to_number_proxy_map = {
     complex: ComplexProxy,
 }
 
+import torch
+
+
+def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    device = devices.device_from_string(str(t.device))
+    dtype = dtypes.to_dtype(t.dtype)
+    # See Note [DistributedDataParallel and ddp_type]
+    ddp_type = getattr(t, "ddp_type", None)
+    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
+    return TensorProxy(
+        name,
+        shape=tuple(t.shape),
+        device=device,
+        dtype=dtype,
+        requires_grad=t.requires_grad,
+        ddp_type=ddp_type,
+        history=history,
+    )
+
 
 def numberproxy(cls: type, value: Number | None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
     return pcls(value=value)
 
 
-def is_proxyable(x: Any) -> bool:
-    if isinstance(x, Number) and not isinstance(x, NumberProxy):
-        return True
-
-    # NOTE The langctx may not have defined the tensor_cls attribute
-    #   (the core language context has no associated tensor_cls)
-    langctx = langctx_for(x)
-    try:
-        tensor_cls = langctx.tensor_cls
-        return isinstance(x, tensor_cls)
-    except AttributeError:
+# TODO GTC Remove this function
+def is_proxyable(x: Any, /) -> bool:
+    if isinstance(x, Proxy):
         return False
 
+    return isinstance(x, (Number, torch.Tensor))
 
-# TODO Improve type annotation to return type of X or Proxy
-# TODO defer to langctx for tensor type -- consider all possible langctxs
-# TODO maybe consider what happens when a proxy is passed to this
-# TODO handle complex number type
-def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any:
-    langctx = langctx_for(x)
 
-    tensor_cls = langctx.tensor_cls
-    if isinstance(x, tensor_cls):
-        return langctx.tensorproxy(name, x, history=history)
+def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any | Proxy:
+    if isinstance(x, torch.Tensor):
+        return tensorproxy(x, name=name, history=history)
 
     if isinstance(x, str):
         return StringProxy(x, name=name, history=history)

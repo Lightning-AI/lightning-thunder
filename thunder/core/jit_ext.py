@@ -77,7 +77,7 @@ from thunder.core.jit import (
     PseudoInst,
     ProvenanceRecord,
 )
-from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
+from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
 from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
@@ -625,7 +625,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
         jfn: Callable
         lit_ctx = LitCtx(cd.fn, *args, **kwargs)
         set_litctx(lit_ctx)
-        lang = get_default_langctx()
+        lang = resolve_language(Languages.TORCH)
         try:
             lang_tok = set_langctx(lang)
             trace_tok = set_tracectx(lit_ctx.computation_trace)
