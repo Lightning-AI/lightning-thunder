@@ -1104,7 +1104,7 @@ def jit_needs_wrap(fn):
     try:
         fn.__jit_needs_wrap = True
         return fn
-    except TypeError:
+    except (TypeError, AttributeError):
         # but sometimes setting the flag will fail (for objects that
         # do not allow arbitrary attributes), so we wrap it in a function,
         # which always allows this.
