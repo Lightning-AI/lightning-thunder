@@ -14,12 +14,21 @@ if CUDNN_AVAILABLE:
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
-    cudnn_handle = cudnn.create_handle()
+    # Mapping from device to cudnn handles
+    device_to_cudnn_handle = {}
 
 
 def cudnn_available() -> bool:
     return CUDNN_AVAILABLE
 
+def _get_cudnn_handle(query_device):
+    # print(f"Getting handle for device {query_device}")
+    handle = device_to_cudnn_handle.get(query_device, None)
+    if handle is None:
+        with torch.cuda.device(query_device):
+            handle = cudnn.create_handle()
+            device_to_cudnn_handle[query_device] = handle
+    return handle
 
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
@@ -82,7 +91,7 @@ _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
 
 def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal):
     graph = cudnn.pygraph(
-        intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT, handle=cudnn_handle
+        intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT, handle=_get_cudnn_handle(torch.cuda.current_device())
     )
 
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
@@ -306,7 +315,8 @@ def _cudnn_sdpa_fwd_impl(
     if attn_mask is not None:
         cudnn_to_torch_tensor[Bias] = attn_mask.detach()
 
-    graph.execute(cudnn_to_torch_tensor, workspace)
+    with torch.cuda.device(query.device):    
+        graph.execute(cudnn_to_torch_tensor, workspace, handle = _get_cudnn_handle(query.device))
 
     return O_actual, softmax_stats_actual, seed_tensor, offset_tensor
 
@@ -382,7 +392,7 @@ def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_
         io_data_type=torch_to_cudnn_dtype(query.dtype),
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
-        handle=cudnn_handle,
+        handle=_get_cudnn_handle(torch.cuda.current_device()),
     )
 
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
@@ -585,7 +595,8 @@ def cudnn_sdpa_bwd_impl(
 
     workspace = torch.empty(graph.get_workspace_size(), device=query.device, dtype=torch.uint8)
 
-    graph.execute(cudnn_to_torch_tensor, workspace)
+    # print(f"Executing bwd graph on device {query.device}")
+    graph.execute(cudnn_to_torch_tensor, workspace, handle = _get_cudnn_handle(query.device))
 
     if attn_mask is None:
         return grad_query, grad_key, grad_value
