@@ -178,6 +178,7 @@ class PrimIDs(Enum):
     BITWISE_XOR = auto()
     DIV = auto()
     EQ = auto()
+    PY_FLOORDIV = auto()
     FMOD = auto()
     GE = auto()
     GT = auto()
@@ -1527,6 +1528,7 @@ def _elementwise_binary_meta_factory(
     *,
     name,
     number_fn,
+    numbers_only: bool,
     output_dtype_kind,
     supported_input_dtypes,
 ):
@@ -1559,6 +1561,13 @@ def _elementwise_binary_meta_factory(
 
             value = number_fn(aval, bval)
             return numberproxy(type(value), value)
+
+        else:
+            # NOTE a or b is a TensorProxy
+            utils.check(
+                not numbers_only,
+                lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input",
+            )
 
         # Checks same shape
         # NOTE: this doesn't verify a common shape if one or more inputs is a number
@@ -1599,6 +1608,7 @@ def _make_elementwise_binary_prim(
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
     method_name: None | str = None,
+    numbers_only: bool = False,
     constraint_function: None | Callable = None,
 ):
     return make_prim(
@@ -1607,6 +1617,7 @@ def _make_elementwise_binary_prim(
         meta=_elementwise_binary_meta_factory(
             name=name,
             number_fn=number_fn,
+            numbers_only=numbers_only,
             output_dtype_kind=output_dtype_kind,
             supported_input_dtypes=supported_input_dtypes,
         ),
@@ -1674,9 +1685,20 @@ div = _make_elementwise_binary_prim(
     supported_input_dtypes=math_dtypes,
 )
 
+# We currently do not support floordiv on tensors.
+py_floordiv = _make_elementwise_binary_prim(
+    PrimIDs.PY_FLOORDIV,
+    "py_floordiv",
+    method_name="floor_divide",
+    number_fn=operator.floordiv,
+    numbers_only=True,
+    supported_input_dtypes={bool, int, float},
+)
+
 eq = _make_elementwise_binary_prim(
     PrimIDs.EQ,
     "eq",
+    method_name="eq",
     number_fn=operator.eq,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
@@ -1699,6 +1721,7 @@ fmod = _make_elementwise_binary_prim(
 ge = _make_elementwise_binary_prim(
     PrimIDs.GE,
     "ge",
+    method_name="ge",
     number_fn=operator.ge,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1707,6 +1730,7 @@ ge = _make_elementwise_binary_prim(
 gt = _make_elementwise_binary_prim(
     PrimIDs.GT,
     "gt",
+    method_name="gt",
     number_fn=operator.gt,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1715,6 +1739,7 @@ gt = _make_elementwise_binary_prim(
 le = _make_elementwise_binary_prim(
     PrimIDs.LE,
     "le",
+    method_name="le",
     number_fn=operator.le,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1723,6 +1748,7 @@ le = _make_elementwise_binary_prim(
 lt = _make_elementwise_binary_prim(
     PrimIDs.LT,
     "lt",
+    method_name="lt",
     number_fn=operator.lt,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1735,6 +1761,7 @@ minimum = _make_elementwise_binary_prim(PrimIDs.MINIMUM, "minimum", supported_in
 mul = _make_elementwise_binary_prim(
     PrimIDs.MUL,
     "mul",
+    method_name="mul",
     number_fn=operator.mul,
     supported_input_dtypes=math_dtypes,
 )
@@ -1742,6 +1769,7 @@ mul = _make_elementwise_binary_prim(
 ne = _make_elementwise_binary_prim(
     PrimIDs.NE,
     "ne",
+    method_name="ne",
     number_fn=operator.ne,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
@@ -1781,6 +1809,7 @@ pow = _make_elementwise_binary_prim(
 remainder = _make_elementwise_binary_prim(
     PrimIDs.REMAINDER,
     "remainder",
+    method_name="mod",
     number_fn=operator.mod,
     supported_input_dtypes=math_dtypes,
 )
@@ -1788,6 +1817,7 @@ remainder = _make_elementwise_binary_prim(
 sub = _make_elementwise_binary_prim(
     PrimIDs.SUB,
     "sub",
+    method_name="sub",
     number_fn=operator.sub,
     supported_input_dtypes=math_dtypes,
 )
