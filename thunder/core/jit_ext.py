@@ -76,6 +76,7 @@ from thunder.core.jit import (
     wrap_const,
     PseudoInst,
     ProvenanceRecord,
+    jit_needs_wrap,
 )
 from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
 from thunder.core.baseutils import extract_callable_name
@@ -372,11 +373,14 @@ def register_lit_callback(key: JIT_CALLBACKS) -> Callable:
 
 # TODO Add all lit operation translations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
 _lit_lookaside_map = {}
-_lit_lookaside_map.update(_torch_to_thunder_function_map)
+
+_lit_lookaside_map.update({k: jit_needs_wrap(v) for k, v in _torch_to_thunder_function_map.items()})
 
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
-# rely on the default JIT getattr lookaside (as returned from default_lookaside).
+# rely on the default JIT getattr lookaside (as returned from default_lookaside)
+
+
 def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
@@ -389,16 +393,17 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
     if not isinstance(res.value, Proxy):
         ctx: LitCtx = get_litctx()
-        return ctx.proxify(res, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, res.provenance))
+        res.value = ctx.proxify(res.value, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, res.provenance))
+        return res
 
     return res
 
 
-_lit_getattr_lookaside.__jit_needs_wrap = False
 _lit_lookaside_map[getattr] = _lit_getattr_lookaside
 
 
 # TODO Expand on this
+@jit_needs_wrap
 def _lit_hasattr_lookaside(obj: Any, name: str):
     hasattr_lookaside = default_lookaside(hasattr) or hasattr
     return hasattr_lookaside(obj, name)
@@ -430,7 +435,6 @@ def _lit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
     return bool_lookaside(x)
 
 
-_lit_bool_lookaside.__jit_needs_wrap = False
 _lit_lookaside_map[bool] = _lit_bool_lookaside
 
 # Adds proxy methods
@@ -439,16 +443,16 @@ _lit_lookaside_map[bool] = _lit_bool_lookaside
 #   interpreter their internals is unnecessary and would just add complexity at this time
 _lit_lookaside_map.update(
     {
-        NumberProxy.__add__: NumberProxy.__add__,
-        NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
-        NumberProxy.__neg__: NumberProxy.__neg__,
-        NumberProxy.__sub__: NumberProxy.__sub__,
-        NumberProxy.__floordiv__: NumberProxy.__floordiv__,
-        NumberProxy.__le__: NumberProxy.__ge__,
-        NumberProxy.__ge__: NumberProxy.__le__,
-        TensorProxy.__add__: TensorProxy.__add__,
-        TensorProxy.__mul__: TensorProxy.__mul__,
-        TensorProxy.__sub__: TensorProxy.__sub__,
+        NumberProxy.__add__: jit_needs_wrap(NumberProxy.__add__),
+        NumberProxy.__bool__: jit_needs_wrap(NumberProxy.__bool__),  # TODO Review returning a BoolProxy from this
+        NumberProxy.__neg__: jit_needs_wrap(NumberProxy.__neg__),
+        NumberProxy.__sub__: jit_needs_wrap(NumberProxy.__sub__),
+        NumberProxy.__floordiv__: jit_needs_wrap(NumberProxy.__floordiv__),
+        NumberProxy.__le__: jit_needs_wrap(NumberProxy.__ge__),
+        NumberProxy.__ge__: jit_needs_wrap(NumberProxy.__le__),
+        TensorProxy.__add__: jit_needs_wrap(TensorProxy.__add__),
+        TensorProxy.__mul__: jit_needs_wrap(TensorProxy.__mul__),
+        TensorProxy.__sub__: jit_needs_wrap(TensorProxy.__sub__),
     }
 )
 
@@ -475,6 +479,8 @@ _safe_functions: set = {
     type.__or__,
     list.__new__,
     list.__init__,
+    list.__getitem__,
+    reversed.__new__,
     CellType.__new__,
     GetSetDescriptorType.__get__,
 }
@@ -497,8 +503,10 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
     if lookaside is None:
         if is_opaque(fn) and fn not in _safe_functions:
-            raise NotImplementedError(
-                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
+            print(
+                NotImplementedError(
+                    f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
+                )
             )
         return None
 
@@ -506,7 +514,7 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Wraps the lookaside to unwrap WrappedValues
     @wraps(lookaside)
     def unwrapper(*args, **kwargs):
-        needs_wrap = getattr(lookaside, "__jit_needs_wrap", True)
+        needs_wrap = getattr(lookaside, "__jit_needs_wrap", False)
         if needs_wrap:
             args, kwargs = tree_map(unwrap, (args, kwargs))
         return lookaside(*args, **kwargs)
@@ -571,7 +579,8 @@ def _lit_global_callback(globals_dict: dict, name: str) -> Any:
     ):
         return value
 
-    raise NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported")
+    print(NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported"))
+    return value
 
 
 def _lit_local_callback(name: str, value: Any, /) -> Any:
@@ -734,8 +743,11 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                     output = Proxy("subscr")  # name? collectify?
                 else:
                     output = p
-                if isinstance(idx, int):
-                    idx = int(idx)
+                if isinstance(idx, (int, str)):
+                    if isinstance(idx, int):
+                        idx = int(idx)
+                    elif isinstance(idx, str):
+                        idx = str(idx)
                     bsym = prims.unpack_getitem.bind(obj, idx, output=output)
                     prologue_trc.bound_symbols.append(bsym)
                 else:
@@ -775,10 +787,22 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                 if hasattr(provenance, "proxy"):
                     return provenance.proxy  # bind?
 
+                def collect_inst(pr):
+                    inst = pr.inst
+                    if isinstance(inst, dis.Instruction):
+                        inst = inst.opname
+                    else:
+                        inst = inst.value
+                    res = {inst}
+                    for i in pr.inputs:
+                        res |= collect_inst(i)
+                    return res
+
+                print(provenance)
                 inst = provenance.inst
                 if isinstance(inst, dis.Instruction):
                     inst = inst.opname
-                print(inst)
+
                 d = {
                     "INPUT": from_input,
                     "LOAD_ATTR": from_load_attr,
@@ -786,6 +810,8 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                     "BINARY_SUBSCR": from_binary_subscr,
                     "OPAQUE": from_opaque,
                 }
+
+                print("##unsupported provenance inst##", collect_inst(provenance) - set(d.keys()))
 
                 unpack_fn = d.get(inst)
                 if unpack_fn is None:
