@@ -2160,6 +2160,10 @@ class MutMappingWrapperMethods:
     # def __sizeof__(self):
 
     def update(self, *other, **other_kw):
+        # This looks like it could nicely go into one big impl, but dicts
+        # are quite omnipresent and we need to avoid infinite recursions
+        # between iters (which have DICT_MERGE somewhere in the iter
+        # lookaside apparently) and dicts.
         self.proxify()
 
         if other:
@@ -2196,30 +2200,6 @@ class MutMappingWrapperMethods:
                 return res
 
         return wrap_const(None)
-
-        #        keys =
-        #        for uk in other.value.keys():
-        #            v = _jit_no_unwrap(getitem, other, wrap_const(uk))
-        #            k = other.key_wrappers[uk]
-        #            v = other.item_wrappers[uk]
-
-        #            res = _jit_no_unwrap(self[)
-
-        def impl(self, other, **other_kw):
-            if other:
-                if hasattr(other, "keys"):
-                    # using k and other[k] rather items matches the docstring
-                    if other:
-                        for k in other.keys():
-                            self[k] = other[k]
-                else:
-                    for k, v in other:
-                        self[k] = v
-            if other_kw:  # to avoid infinite recursion
-                for k, v in other_kw.items():
-                    self[k] = v
-
-        return _jit_no_unwrap(impl, self, other, **other_kw)
 
     def keys(self):
         self.proxify()
