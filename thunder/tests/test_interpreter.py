@@ -23,7 +23,9 @@ from thunder.core.jit import is_jitting, jit, JITError, print_last_interpreted_h
 # This wraps the jit call into a tracking one (using a wrapper function
 # rather than partial to get a nice test name).
 def jit_tracking(*args, **kwargs):
-    return jit(*args, with_provenance_tracking=True, uncacheable_classes=(torch.Tensor, int, float, str), **kwargs)
+    return jit(
+        *args, with_provenance_tracking=True, uncacheable_classes=(torch.Tensor, int, float, str, type(None)), **kwargs
+    )
 
 
 jit_no_tracking = jit

@@ -129,6 +129,7 @@ class WrappedValue:
         assert isinstance(provenance, ProvenanceRecord)
 
         ctx: JitCompileCtx = get_jitcompilectx()
+        runtimectx: JitCompileCtx = get_jitruntimectx()
         cb: None | Callable = ctx.callback(JIT_CALLBACKS.WRAP_CALLBACK)
 
         self.typ = typ
@@ -155,7 +156,7 @@ class WrappedValue:
         if self.provenance.inst == PseudoInst.CONSTANT:
             self.provenance.value = value
 
-        ctx.cache_wrapper(self)
+        runtimectx.cache_wrapper(self)
 
     def proxify(self):
         if self.has_proxified:
@@ -249,27 +250,29 @@ def wrap(
         return value
 
     ctx: JitCompileCtx = get_jitcompilectx()
+    runtimectx: JitCompileCtx = get_jitruntimectx()
 
     if ctx._with_provenance_tracking:
-        cached = ctx._known_wrappers.get(id(value))
+        cached = runtimectx._known_wrappers.get(id(value))
         if cached is not None:
             potential_wrap = cached[0]()
             if potential_wrap is not None:
+                # Note: we want to cache mutuable objects to not run into trouble
+                #       with multiple accesses to the same.
+                #       As the cache only holds a weakref to the WrappedValue instance
+                #       one must persist WrappedValues once things are starting to be modified.
                 if isinstance(value, list):
                     assert len(value) == len(potential_wrap.item_wrappers)
-                # TODO: get rid of the cache
-                # if potential_wrap.typ is not WRAPPED_VALUE_TYPE.CONSTANT and not callable(value) and potential_wrap.provenance != provenance:
-                #    print("####### cache hit for", type(value), potential_wrap.provenance)
                 return potential_wrap
             else:
-                del ctx._known_wrappers[id(value)]
+                del runtimectx._known_wrappers[id(value)]
         return WrappedValue(value, typ, provenance)
     return value
 
 
 def wrap_const(value: Any, /, *, provenance: ProvenanceRecord | None = None) -> WrappedValue:
     if provenance is None:
-        provenance = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], output_idx=0, output_key=None)
+        provenance = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value=value)
     return wrap(value, typ=WRAPPED_VALUE_TYPE.CONSTANT, provenance=provenance)
 
 
@@ -297,7 +300,9 @@ def populate_attribute_wrapper(wrapped_object, name, wrapped_attribute):
     assert isinstance(wrapped_object, WrappedValue)
     assert isinstance(wrapped_attribute, WrappedValue)
 
-    assert getattr(wrapped_object.value, name) is wrapped_attribute.value
+    assert (
+        getattr(wrapped_object.value, name) is wrapped_attribute.value
+    ), f"{getattr(wrapped_object.value, name)}, {wrapped_attribute.value}"
 
     wrapped_object.attribute_wrappers[name] = wrapped_attribute
 
@@ -364,16 +369,11 @@ class JitCompileCtx:
         self._fn_lookaside: Callable = fn_lookaside
         self._callbacks: dict[JIT_CALLBACKS, Callable] = callbacks
         self._with_provenance_tracking = with_provenance_tracking
-        self._known_wrappers = {}
         if with_provenance_tracking:
             assert isinstance(uncacheable_classes, (list, tuple))
             uncacheable_classes = tuple(set(uncacheable_classes) | {NoneType, int, str, float, bool})
 
         self._uncacheable_classes = uncacheable_classes
-
-    def cache_wrapper(self, wrapped_value: WrappedValue):
-        if not isinstance(wrapped_value.value, self._uncacheable_classes):
-            self._known_wrappers[id(wrapped_value.value)] = (weakref.ref(wrapped_value),)
 
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
@@ -504,6 +504,12 @@ class JitRuntimeCtx:
         self._original_callsite: inspect.FrameInfo = inspect.stack()[2]  # [__init__, fn_, callsite, ...]
         self._prev_filename: None | str = None
         self._prev_position: Positions | None = None
+        self._known_wrappers = {}
+
+    def cache_wrapper(self, wrapped_value: WrappedValue):
+        compilectx: JitCompileCtx = get_jitcompilectx()
+        if not isinstance(wrapped_value.value, compilectx._uncacheable_classes) and (wrapped_value.value is not ()):
+            self._known_wrappers[id(wrapped_value.value)] = (weakref.ref(wrapped_value),)
 
     @property
     def curexc(self) -> BaseException | None:
@@ -707,6 +713,10 @@ def is_pycapsule(x: Any) -> bool:
     return isinstance(typ, CapsuleType)
 
 
+def is_generalized_method(fn):
+    return inspect.ismethod(fn) or isinstance(fn, (BuiltinMethodType, MethodWrapperType))
+
+
 # Our own exception class for reporting compilation problems
 class JITError(RuntimeError):
     pass
@@ -830,7 +840,9 @@ class PseudoInst(str, enum.Enum):
     BUILD_TUPLE = "BUILD_TUPLE"
     CONSTANT = "CONSTANT"
     EXCEPTION_HANDLER = "EXCEPTION_HANDLER"
-    INPUT = "INPUT"
+    INPUT_ARGS = "INPUT_ARGS"
+    INPUT_KWARGS = "INPUT_KWARGS"
+    INPUT_FN = "INPUT_FN"
     LOAD_ATTR = "LOAD_ATTR"
     LOOKASIDE = "LOOKASIDE"
     OPAQUE = "OPAQUE"
@@ -841,6 +853,7 @@ class PseudoInst(str, enum.Enum):
     LIST_EXTEND = "LIST_EXTEND"
     GET_ITER = "GET_ITER"
     CONTAINS_OP = "CONTAINS_OP"
+    SUPER = "SUPER"
 
 
 @dataclasses.dataclass
@@ -856,6 +869,44 @@ class ProvenanceRecord:
         assert isinstance(self.inputs, list)
         assert all(isinstance(i, ProvenanceRecord) for i in self.inputs)
         self.inputs = self.inputs.copy()
+
+    def __hash__(self):
+        return hash((self.inst, *self.inputs))
+
+    def __str__(self):
+        counter = 0
+        out = ["ProvenanceRecord("]
+        known = {}
+
+        def recurse_str(self):
+            if self in known:
+                return known[self]
+            if self.inst == PseudoInst.CONSTANT:
+                if isinstance(self.value, (int, str, bool, NoneType)):
+                    return repr(self.value)
+                else:
+                    s = repr(self.value)
+                    if len(s) < 80 and "\n" not in s:
+                        return f"{self.inst}({s})"
+                    return f"{self.inst}(<{type(self.value).__name__} object>)"
+            nonlocal counter
+            inputs = [recurse_str(i) for i in self.inputs]
+            inputs_str = ", ".join(inputs)
+            i = counter
+            counter += 1
+            l = f"  i{counter} = {self.inst}({inputs_str})"
+            if self.output_idx != 0 or self.output_key is not None:
+                l += "# with output spec"
+            out.append(l)
+            res = f"i{counter}"
+            known[self] = res
+            return res
+
+        res = recurse_str(self)
+        if len(out) == 1:
+            return f"ProvenanceRecord({res})"
+        out.append(")")
+        return "\n".join(out)
 
 
 class InterpreterStack:
@@ -996,7 +1047,7 @@ class JITFrame:
 
     # This is not used for name lookup, it's the return value of locals(), as provided by the locals lookaside.
     # If you want to modify the current value of locals, modify localsplus instead.
-    _locals: dict[str, Any] = dataclasses.field(default_factory=lambda: _jit_no_unwrap(dict))
+    _locals: dict[str, Any] = dataclasses.field(default_factory=lambda: wrap_const({}))
 
     # advance to the given instruction
     def nexti(self, inst: dis.Instruction):
@@ -1175,7 +1226,8 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     def impl(x):
         # Handles objects that define __bool__
         null = object()
-        if (dunder_bool := getattr(type(x), "__bool__", null)) is not null:
+        dunder_bool = getattr(type(x), "__bool__", null)
+        if dunder_bool is not null:
             assert callable(dunder_bool)
             return dunder_bool(x)
 
@@ -1320,12 +1372,10 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
             compilectx = get_jitcompilectx()
-            if compilectx._with_provenance_tracking:
-                # TODO: currently, unpacking does not play well with non-const descr_get
-                pr = ProvenanceRecord(PseudoInst.CONSTANT, inputs=[], value=descr_get)
-                wdescr_get = wrap(descr_get, provenance=pr)
-                wdescr_get.typ = WRAPPED_VALUE_TYPE.CONSTANT
-                wdescr_get.provenance = pr
+
+            # if it is opaque, don't JIT here, to avoid a wrap/unwrap dance
+            if is_opaque(descr_get):
+                return descr_get(cls_var, uobj, objtype)
             result = _jit(descr_get, cls_var, obj, objtype)
             return result
 
@@ -1333,10 +1383,11 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
     #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
     #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
-    if (obj_dict := _jit(getattr, obj, "__dict__", null)) is not null:
+    obj_dict = _jit_no_unwrap(getattr, obj, wrap_const("__dict__"), wrap_const(null))
+    uobj_dict = unwrap(obj_dict)
+    if uobj_dict is not null:
         # TODO: error return from _jit?
-        obj_dict = unwrap(obj_dict)
-        assert isinstance(obj_dict, dict), obj_dict  # This should be enforced by `PyObject`
+        assert isinstance(uobj_dict, dict), uobj_dict  # This should be enforced by `PyObject`
 
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
@@ -1355,6 +1406,25 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     return do_raise(AttributeError(name))
 
 
+def check_self(obj, potential_method):
+    if is_generalized_method(potential_method.value) or wrapped_isinstance(potential_method, super):
+        uslf = getattr(potential_method.value, "__self__", None)
+        if uslf is obj.value:
+            populate_attribute_wrapper(potential_method, "__self__", obj)
+        if type(obj.value) is super:
+            superself = obj.attribute_wrappers.get("__self__")
+            # super might not have self (when used with classes) or things
+            # can happen with types:
+            # tng = torch.no_grad()
+            # s = super(torch.utils._contextlib._NoParamDecoratorContextManager, tng)
+            # s.__self__ is tng while s.__new__.__self__ is object
+            # This means that there the __self__ will appear to come out of
+            # thin air, but we suspect that for types it is not that
+            # terrible.
+            if superself is not None and potential_method.value.__self__ is superself.value:
+                populate_attribute_wrapper(potential_method, "__self__", superself)
+
+
 def wrap_attribute(plain_result, obj, name):
     compilectx: JitCompileCtx = get_jitcompilectx()
     if not compilectx._with_provenance_tracking:
@@ -1363,13 +1433,19 @@ def wrap_attribute(plain_result, obj, name):
     known_wrapper = obj.attribute_wrappers.get(name.value)
     # note: there are cases where "is" will always fail (e.g. BuiltinMethods
     #       are recreated every time)
-    if known_wrapper is not None and known_wrapper.value is plain_result:
+    if known_wrapper is not None:
+        assert (
+            known_wrapper.value is plain_result or known_wrapper.value == plain_result
+        ), f"attribute {name.value} out of sync: {known_wrapper.value} vs. {plain_result}"
         return known_wrapper
 
-    result = wrap(
-        plain_result, provenance=ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
-    )
+    pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
+    result = wrap(plain_result, provenance=pr)
+
     obj.attribute_wrappers[name.value] = result
+
+    check_self(obj, result)
+
     return result
 
 
@@ -1411,9 +1487,12 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
     null = object()
     obj_getattr = getattr(unwrap(obj), "__getattr__", null)
+
     if obj_getattr is not null:
         ctx.curexc = None
         assert callable(obj_getattr)
+        if compilectx._with_provenance_tracking:
+            obj_getattr = wrap_attribute(obj_getattr, obj, wrap_const("__getattr__"))
         result = _jit_no_unwrap(obj_getattr, name)
         # which provenances to cache here?
         # result = wrap_attribute(unwrap(result), obj, name)
@@ -1610,7 +1689,6 @@ def _reversed_lookaside(seq):
 # in the call to the func), but super() without arguments needs to inspect
 # frames, so we do this inspection here and then instantiate the builtin super
 # with parameters
-@jit_needs_wrap
 def _super_lookaside(cls=Py_NULL(), obj=None):
     # cls Py_NULL vs. obj None this is on purpose
 
@@ -1632,16 +1710,32 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
         if class_idx is None or not wrapped_isinstance(frame.localsplus[class_idx], CellType):
             return do_raise(RuntimeError("super(): __class__ cell not found"))
         assert self_idx is not None
-        cls = unwrap(frame.localsplus[class_idx]).cell_contents
-        obj = unwrap(frame.localsplus[self_idx])
-        if isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
-            obj = obj.cell_contents
+        cls = _jit_no_unwrap(lambda c: c.cell_contents, frame.localsplus[class_idx])
+        obj = frame.localsplus[self_idx]
+        if wrapped_isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
+            obj = _jit_no_unwrap(lambda c: c.cell_contents, obj)
 
     # now cls and obj are set
-    if not isinstance(cls, type):
-        return do_raise(TypeError(f"super() argument 1 must be a type, not {type(cls).__name__}"))
+    ucls = unwrap(cls)
+    if not isinstance(ucls, type):
+        return do_raise(TypeError(f"super() argument 1 must be a type, not {type(ucls).__name__}"))
 
-    return super(cls, obj)  # type: ignore
+    uobj = unwrap(obj)
+    if obj is None:
+        obj = wrap_const(obj)
+
+    usup = super(ucls, uobj)  # type: ignore
+
+    compilectx: JitCompileCtx = get_jitcompilectx()
+    if not compilectx._with_provenance_tracking:
+        return usup
+
+    pr = ProvenanceRecord(PseudoInst.SUPER, inputs=[cls.provenance, obj.provenance])
+    sup = wrap(usup, provenance=pr)
+
+    check_self(obj, sup)
+
+    return sup
 
 
 @jit_needs_wrap
@@ -1661,11 +1755,15 @@ def _isinstance_lookaside(obj, cls):
 def _functools_reduce_lookaside(
     fn: Callable, iterable: Iterable, initializer: Py_NULL | Any = Py_NULL(), /
 ) -> Any | JIT_SIGNALS:
-    def impl():
+    null = wrap_const(object())
+    if initializer is Py_NULL():
+        initializer = null
+
+    def impl(fn, iterable, initializer, null):
         it = iter(iterable)
 
         # No, default is not None, it is absence of value.
-        if isinstance(initializer, Py_NULL):
+        if initializer is null:
             try:
                 res = next(it)
             except StopIteration:
@@ -1678,7 +1776,7 @@ def _functools_reduce_lookaside(
 
         return res
 
-    return _jit_no_unwrap(impl)
+    return _jit_no_unwrap(impl, fn, iterable, initializer, null)
 
 
 # An iterator to be returned from Sequence.__iter__ lookasides below. This will be run in the JIT
@@ -1722,7 +1820,7 @@ class SequenceWrapperMethods:
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
             return res
         self.value = self.python_typ(l.value)
-        self.item_wrappers = l.item_wrappers
+        self.item_wrappers = l.item_wrappers[:]
         return wrap_const(None)
 
     def __getitem__(self, idx, /):
@@ -2858,6 +2956,9 @@ def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 
     res = _jit_no_unwrap(impl, tos1, tos)
 
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+
     return check_and_append(stack, res)
 
 
@@ -3025,19 +3126,20 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack,
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
 @register_opcode_handler("CALL_FUNCTION_KW", max_ver=(3, 10))
 def _call_function_kw_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
-    kw_names: tuple[str, ...] = unwrap(stack.pop())
+    kw_names: tuple[str, ...] = stack.pop_wrapped()
 
-    kwarg_length: JIT_SIGNALS | int = _jit(len, kw_names)
+    kwarg_length: JIT_SIGNALS | int = _jit_no_unwrap(len, kw_names)
     if kwarg_length is JIT_SIGNALS.EXCEPTION_RAISED:
         return kwarg_length
+    kwarg_length = unwrap(kwarg_length)
     assert type(kwarg_length) is int
 
-    kwargs_flat: tuple[Any, ...] = tuple(reversed(tuple(stack.pop() for _ in range(kwarg_length))))
-    fn_kwargs: dict[str, Any] = {k: v for k, v in zip(kw_names, kwargs_flat)}
+    kwargs_flat: tuple[Any, ...] = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(kwarg_length))))
+    fn_kwargs: dict[str, Any] = {k: v for k, v in zip(unwrap(kw_names), kwargs_flat)}
     assert type(inst.arg) is int
     arg_length: int = inst.arg - kwarg_length
-    args = tuple(reversed(tuple(stack.pop() for _ in range(arg_length))))
-    func: Callable = stack.pop()
+    args = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(arg_length))))
+    func: Callable = stack.pop_wrapped()
 
     return check_and_append(stack, _jit(func, *args, **fn_kwargs))
 
@@ -3726,14 +3828,14 @@ def _jump_if_true_or_pop_handler(
     assert type(inst.arg) is int
     target: int = inst.arg
 
-    tos = stack[-1]
+    tos = stack.getitem_wrapped(-1)
 
-    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
+    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
-    if not cnd:
-        stack.pop()
+    if not unwrap(cnd):
+        stack.pop_wrapped()
         return None
 
     if sys.version_info >= (3, 11):
@@ -3750,14 +3852,14 @@ def _jump_if_false_or_pop_handler(
     assert type(inst.arg) is int
     target: int = inst.arg
 
-    tos = stack[-1]
+    tos = stack.getitem_wrapped(-1)
 
-    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
+    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
     if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
-    if cnd:
-        stack.pop()
+    if unwrap(cnd):
+        stack.pop_wrapped()
         return None
 
     if sys.version_info >= (3, 11):
@@ -3903,7 +4005,7 @@ def _load_deref_handler(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
 
-    val = _jit_no_unwrap(lambda c: c.cell_contents, cell)
+    val = _jit_no_unwrap(getattr, cell, wrap_const("cell_contents"))
     ctx: JitCompileCtx = get_jitcompilectx()
     if ctx._with_provenance_tracking:
         assert isinstance(val, WrappedValue), f"{val}"
@@ -3964,7 +4066,7 @@ def _load_global_handler(
     if (3, 11) <= sys.version_info:
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
-            stack.append(Py_NULL())
+            stack.append(wrap_const(Py_NULL()))
 
     stack.append(obj)
 
@@ -4853,7 +4955,8 @@ def _store_deref_handler(
 
     ctx: JitCompileCtx = get_jitcompilectx()
     if ctx._with_provenance_tracking:
-        frame.localsplus[i].value.cell_contents = tos
+        frame.localsplus[i].value.cell_contents = tos.value
+        populate_attribute_wrapper(frame.localsplus[i], "cell_contents", tos)
     else:
         frame.localsplus[i].cell_contents = tos
 
@@ -4976,13 +5079,13 @@ def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     counts: int = inst.arg
-    before_list: int = counts & 0xFF
-    after_list: int = counts >> 8
+    before_list: int = wrap_const(counts & 0xFF)
+    after_list: int = wrap_const(counts >> 8)
 
     seq: Iterable = stack.pop_wrapped()
     assert wrapped_isinstance(seq, Iterable)
 
-    def impl():
+    def impl(seq, before_list, after_list):
         results: list = []
         it: Iterator = iter(seq)
 
@@ -5000,7 +5103,7 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
 
         return results
 
-    results = _jit_no_unwrap(impl)
+    results = _jit_no_unwrap(impl, seq, before_list, after_list)
     if results is JIT_SIGNALS.EXCEPTION_RAISED:
         return results
 
@@ -5520,7 +5623,10 @@ def _jit_inner(
         obj = _jit_no_unwrap(fn.__new__, wrapped_fn, *args, **kwargs)
         if obj is JIT_SIGNALS.EXCEPTION_RAISED:
             return obj
-        res = _jit_no_unwrap(unwrap(obj).__init__, *args, **kwargs)
+
+        wrapped_init = _jit_no_unwrap(getattr, obj, wrap_const("__init__"))
+        populate_attribute_wrapper(wrapped_init, "__self__", obj)
+        res = _jit_no_unwrap(wrapped_init, *args, **kwargs)
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
             return res
         return obj
@@ -5532,10 +5638,9 @@ def _jit_inner(
                 f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
             )
 
-        def impl(fn, *args, **kwargs):
-            return fn.__call__(*args, **kwargs)
-
-        return _jit_no_unwrap(impl, wrapped_fn, *args, **kwargs)
+        wrapped_call = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__call__"))
+        populate_attribute_wrapper(wrapped_call, "__self__", wrapped_fn)
+        return _jit_no_unwrap(wrapped_call, *args, **kwargs)
 
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
 
@@ -5937,33 +6042,46 @@ def jit(
             try:
                 # we normalize the outmost function to be jitted to take
                 # args and kwargs as arguments (not *args and **kwargs).
-                # We thus have three special INPUTs for the entry function:
-                # args at "position" 0, kwargs at "position" 1, and the compiled function itself (so we can get the __closure__) at position -1
+                # We thus have three special INPUTs for the entry function: INPUT_ARGS, INPUT_KWARGS, INPUT_FN
                 args = wrap(
                     args,
                     WRAPPED_VALUE_TYPE.INPUT,
-                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT, inputs=[], output_idx=0, output_key=None),
+                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT_ARGS, inputs=[]),
                 )
 
                 kwargs = wrap(
                     kwargs,
                     WRAPPED_VALUE_TYPE.INPUT,
-                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT, inputs=[], output_idx=1, output_key=None),
+                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT_KWARGS, inputs=[]),
+                )
+
+                fn_wrapped = wrap(
+                    fn,
+                    WRAPPED_VALUE_TYPE.INPUT,
+                    provenance=ProvenanceRecord(inst=PseudoInst.INPUT_FN, inputs=[]),
                 )
 
                 def getfn():
-                    fn_3 = wrap(
-                        fn,
-                        WRAPPED_VALUE_TYPE.INPUT,
-                        provenance=ProvenanceRecord(inst=PseudoInst.INPUT, inputs=[], output_idx=-1, output_key=None),
-                    )
-
                     def fn_2(args, kwargs):
-                        return fn_3(*args, **kwargs)
+                        return fn(*args, **kwargs)
 
                     return fn_2
 
-                jit_result: Any = _jit_no_unwrap(getfn(), args, kwargs)
+                wrapped_fn_2 = wrap_const(getfn())
+                if compilectx._with_provenance_tracking:
+                    wrapped_closure = wrap_attribute(
+                        wrapped_fn_2.value.__closure__, wrapped_fn_2, wrap_const("__closure__")
+                    )
+                    wrapped_cell = wrap(
+                        wrapped_closure.value[0],
+                        provenance=ProvenanceRecord(
+                            PseudoInst.BINARY_SUBSCR, inputs=[wrap_const(0).provenance, wrapped_closure.provenance]
+                        ),
+                    )
+                    wrapped_closure.item_wrappers[0] = wrapped_cell
+                    populate_attribute_wrapper(wrapped_cell, "cell_contents", fn_wrapped)
+
+                jit_result: Any = _jit_no_unwrap(wrapped_fn_2, args, kwargs)
                 jit_result = unwrap(jit_result)
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include

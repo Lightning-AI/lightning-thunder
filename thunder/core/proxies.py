@@ -350,6 +350,15 @@ class StringProxy(Proxy, str):
     def type_string(self) -> str:
         return "str"
 
+    def __hash__(self) -> str:
+        return hash(self._s)
+
+    def __eq__(self, other):
+        if not isinstance(other, str):
+            # important: *StringProxies* are isintance str
+            return False
+        return str(self) == str(other)
+
 
 class CollectionProxy(Proxy):
     def __init__(self, coll: Any, *, name: str | None = None):

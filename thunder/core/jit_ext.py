@@ -386,19 +386,26 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
 
-    res = getattr_lookaside(obj, name, *maybe_default)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
-        return res
+    value = getattr_lookaside(obj, name, *maybe_default)
+    if value is JIT_SIGNALS.EXCEPTION_RAISED:
+        return value
 
-    assert isinstance(res, WrappedValue)
+    assert isinstance(value, WrappedValue)
     assert isinstance(name, WrappedValue)
 
-    if not isinstance(res.value, Proxy):
+    if not isinstance(value.value, Proxy):
         ctx: LitCtx = get_litctx()
-        res.value = ctx.proxify(res.value, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, res.provenance))
-        return res
+        p = ctx.proxify(value.value, name=name.value, history=(UNPACK_ACTION.FROM_PROVENANCE, value.provenance))
+        if value.value is not p:
+            value.value = p
+            # this does not work yet:
+            # res = _jit_no_unwrap(setattr, obj, name, value)
+            # if isinstance(res, JIT_SIGNALS):
+            #    return res
 
-    return res
+        return value
+
+    return value
 
 
 _lit_lookaside_map[getattr] = _lit_getattr_lookaside
@@ -443,8 +450,30 @@ _lit_lookaside_map[bool] = _lit_bool_lookaside
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
 #   This is OK because these methods are written in a tracing-safe manner, and trying to
 #   interpreter their internals is unnecessary and would just add complexity at this time
+
+
+def get_methods_properties(typ):
+    for meth_name in dir(typ):
+        meth = getattr(typ, meth_name)
+        if isinstance(meth, (MethodType, BuiltinMethodType, MethodDescriptorType, WrapperDescriptorType)) and (
+            getattr(meth, "__objclass__", None) == typ or (getattr(meth, "__self__", None) == typ)
+        ):
+            yield meth
+        elif isinstance(meth, FunctionType):
+            yield meth  # __getattr__
+        elif isinstance(meth, property):
+            if meth.fget is not None:
+                yield meth.fget
+            if meth.fset is not None:
+                yield meth.fset
+            if meth.fdel is not None:
+                yield meth.fdel
+
+
 _lit_lookaside_map.update(
     {
+        **{fn: jit_needs_wrap(fn) for fn in get_methods_properties(NumberProxy)},
+        **{fn: jit_needs_wrap(fn) for fn in get_methods_properties(TensorProxy)},
         NumberProxy.__add__: jit_needs_wrap(NumberProxy.__add__),
         NumberProxy.__bool__: jit_needs_wrap(NumberProxy.__bool__),  # TODO Review returning a BoolProxy from this
         NumberProxy.__neg__: jit_needs_wrap(NumberProxy.__neg__),
@@ -557,7 +586,9 @@ def _lit_freevar_callback(name: str, wrapped_cell: Any, /, *, fn: Callable, idx:
 
     if proxy is not contents:
         # TODO replacing cells is EVIL!, but we do not want to leak proxy, so we would need a cell proxy that diverts the write.
-        wrapped_cell.value = CellType(wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance))
+        wrapped_proxy = wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance)
+        wrapped_cell.value = CellType(proxy)
+        wrapped_cell.attribute_wrappers["cell_contents"] = wrapped_proxy
         # this would leak proxies:
         # cell.cell_contents = wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance)
 
@@ -701,19 +732,19 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
 
             def from_input(provenance, *, new_output=False):
                 if new_output:
-                    if provenance.output_idx == 0:
+                    if provenance.inst == PseudoInst.INPUT_ARGS:
                         name = "args"
-                    elif provenance.output_idx == -1:
+                    elif provenance.inst == PseudoInst.INPUT_KWARGS:
+                        name = "kwargs"
+                    elif provenance.inst == PseudoInst.INPUT_FN:
                         name = "fn"
-                    else:
-                        name = f"inp{provenance.output_idx}"
 
                     output = Proxy(name=name)
                     provenance.proxy = output
                 else:
                     output = p
                     provenance.proxy = output
-                if provenance.output_idx == -1:
+                if provenance.inst == PseudoInst.INPUT_FN:
                     bsym = prims.unpack_function_obj.bind(output, output=output)
                 else:
                     bsym = prims.unpack_trivial.bind(output, output=output)
@@ -805,7 +836,9 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                     inst = inst.opname
 
                 d = {
-                    "INPUT": from_input,
+                    "INPUT_ARGS": from_input,
+                    "INPUT_KWARGS": from_input,
+                    "INPUT_FN": from_input,
                     "LOAD_ATTR": from_load_attr,
                     "CONSTANT": from_constant,
                     "BINARY_SUBSCR": from_binary_subscr,
