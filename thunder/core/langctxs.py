@@ -29,6 +29,11 @@ class LanguageContext:
     # Finds the appropriate method for the given arguments
     # Should raise an exception if the language doesn't have the method
     def get_method(self, id: str, *args, **kwargs) -> Callable:
+        # Note: concrete implmenetations should only raise AttributeError or
+        #       return None for "missing" methods as the proxies will
+        #       route __getattr__ to here and hasattr relies on __getattr__
+        #       throwing AttributeError (only) when the attribute does
+        #       not exist.
         raise NotImplementedError("Abstract base class")
 
 

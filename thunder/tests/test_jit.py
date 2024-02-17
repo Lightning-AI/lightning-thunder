@@ -186,6 +186,25 @@ def test_binary_add_tensor_number(jit):
     assert_close(actual, expected)
 
 
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_hasattr_on_proxies(jit):
+    def foo(a, b):
+        if hasattr(a, "__why_would_it__"):
+            raise Exception("Nobody expects the Spanish Inquisition")
+        if hasattr(b, "__why_would_it__"):
+            raise Exception("Oh well, never happens")
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = 3
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
 @pytest.mark.parametrize(
     "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
 )

@@ -32,6 +32,12 @@ class PrimCtx(LanguageContext):
         return id in _method_name_to_fn_map
 
     def get_method(self, id: Any, *args, **kwargs) -> Callable:
+        # Note: concrete implmenetations should only raise AttributeError or
+        #       return None for "missing" methods as the proxies will
+        #       route __getattr__ to here and hasattr relies on __getattr__
+        #       throwing AttributeError (only) when the attribute does
+        #       not exist.
+
         # Verifies that the method is not being called on any tensor proxies
         inps, _ = tree_flatten((args, kwargs))
         for x in inps:
