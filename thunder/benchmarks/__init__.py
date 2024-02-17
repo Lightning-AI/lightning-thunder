@@ -705,13 +705,13 @@ def torch_compile_executor(fn: Callable) -> Callable:
 
 def thunder_torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor])
+    return thunder.compile(fn, cache_mode="constant values", executors_list=[thunder.pytorch_executor])
 
 
 def thunder_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(
-        fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor], use_torch_compile=True
+        fn, cache_mode="constant values", executors_list=[thunder.pytorch_executor], use_torch_compile=True
     )
 
 
@@ -723,11 +723,11 @@ if apex_available():
 
     def thunder_apex_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[apex_ex])
+        return thunder.compile(fn, cache_mode="constant values", executors_list=[apex_ex])
 
     def thunder_apex_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[apex_ex, thunder.nvfuser_executor])
+        return thunder.compile(fn, cache_mode="constant values", executors_list=[apex_ex, thunder.nvfuser_executor])
 
 
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
@@ -741,20 +741,20 @@ if cudnn_available():
 
     def thunder_cudnn_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_ex])
+        return thunder.compile(fn, cache_mode="constant values", executors_list=[cudnn_ex])
 
     def thunder_cudnn_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_ex, thunder.nvfuser_executor])
+        return thunder.compile(fn, cache_mode="constant values", executors_list=[cudnn_ex, thunder.nvfuser_executor])
 
     def thunder_cudnn_layer_norm_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_layernorm_ex])
+        return thunder.compile(fn, cache_mode="constant values", executors_list=[cudnn_layernorm_ex])
 
     def thunder_cudnn_layer_norm_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.compile(
-            fn, cache_mode="dynamic strides", executors_list=[cudnn_layernorm_ex, thunder.nvfuser_executor]
+            fn, cache_mode="constant values", executors_list=[cudnn_layernorm_ex, thunder.nvfuser_executor]
         )
 
 
@@ -763,7 +763,7 @@ from thunder.executors.sdpaex import sdpa_ex
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex])
+    return thunder.compile(fn, cache_mode="constant values", executors_list=[sdpa_ex])
 
 
 from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
@@ -772,7 +772,7 @@ from thunder.executors.torch_compile import torch_compile_executor as torch_comp
 def thunder_sdpa_torch_compile_nvfuser_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.compile(
-        fn, cache_mode="dynamic strides", executors_list=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor]
+        fn, cache_mode="constant values", executors_list=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor]
     )
 
 
@@ -825,7 +825,7 @@ def default_thunder_torch_executor(fn: Callable) -> Callable:
     from thunder.executors import TORCH
 
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[TORCH])
+    return thunder.compile(fn, cache_mode="constant values", executors_list=[TORCH])
 
 
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
@@ -835,7 +835,7 @@ def default_thunder_always_trace_executor(fn: Callable) -> Callable:
 
 def default_thunder_dynamic_strides_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides")
+    return thunder.compile(fn, cache_mode="constant values")
 
 
 thunder_executor = default_thunder_dynamic_strides_executor
@@ -854,7 +854,7 @@ class get_default_thunder_ddp_dynamic_strides_executor:
             torch.backends.cuda.matmul.allow_tf32 = True
             return thunder.compile(
                 ddp(fn, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
-                cache_mode="dynamic strides",
+                cache_mode="constant values",
                 executors_list=[
                     sdpa_ex,
                     torch_compile_executor,
@@ -887,7 +887,7 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
                     bucketing_strategy=self.bucketing_strategy,
                     sharding_strategy=self.sharding_strategy,
                 ),
-                cache_mode="dynamic strides",
+                cache_mode="constant values",
                 executors_list=[
                     sdpa_ex,
                     torch_compile_executor,
@@ -905,7 +905,7 @@ def default_thunder_dynamic_strides_executor_no_grad(fn: Callable) -> Callable:
 
 def default_thunder_fixed_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="fixed")
+    return thunder.compile(fn, cache_mode="same input")
 
 
 # TODO Add grad support

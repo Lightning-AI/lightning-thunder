@@ -602,7 +602,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             ddp_m = ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb)
             compiled_ddp_m = thunder.compile(
                 ddp_m,
-                cache_mode=CACHE_OPTIONS.DYNAMIC_STRIDES,
+                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors_list=executors_map[executor].executors_list(),
             )
             optimizer = torch.optim.SGD(compiled_ddp_m.parameters(), lr=1e-3)

@@ -2,7 +2,16 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
+#
+# Setting and querying the "compile_data_and_stats" context variable, which contains
+#   a tuple of (CompileData, CompileStats) objects for the current trace.
+#
+
 _compile_data = ContextVar("compile_data", default=(None, None))
+
+#
+# Query helpers
+#
 
 
 def get_compile_option(option: str, description: str, /) -> None | Any:
@@ -16,6 +25,16 @@ def get_compile_option(option: str, description: str, /) -> None | Any:
     return cd.compile_options.get(option, None)
 
 
+def using_static_caching() -> bool:
+    cd, cs = get_compile_data()
+
+
+#
+# Setting, getting, and resetting the context variable
+#
+
+
+# TODO GTC Update this name to "get_compile_data_and_stats"
 def get_compile_data():
     """Returns the current compile data.
 

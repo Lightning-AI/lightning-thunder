@@ -930,7 +930,7 @@ def test_torch_autograd_module(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    for cache_mode in ("dynamic strides", "assume same inputs"):
+    for cache_mode in ("constant values", "same input"):
         lc = executor.make_callable(
             l,
             disable_preprocessing=False,

@@ -9,6 +9,8 @@ import operator
 from types import EllipsisType, NoneType
 import copy
 
+import torch
+
 from thunder.clang.langctx import register_method
 from thunder.core.langctxs import langctx, Languages
 
@@ -47,6 +49,14 @@ class clangop:
             register_method(self.method_name, _fn)
 
         return _fn
+
+
+#
+#
+#
+@clangop()
+def unpack_torch_tensor(t: torch.Tensor, /) -> tuple[TensorProxy, tuple[int]]:
+    pass
 
 
 #

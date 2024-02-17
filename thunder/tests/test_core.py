@@ -660,9 +660,9 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
         def foo(a, b):
             return a + b
 
-        cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, cache_mode="dynamic strides")
+        cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, cache_mode="constant values")
 
-        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.DYNAMIC_STRIDES
+        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
 
         # Tensor x tensor
         result = cfoo(a, b)
@@ -727,7 +727,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def bar(a, b):
         return a, b
 
-    cbar = thunder.compile(bar, cache_mode="dynamic strides")
+    cbar = thunder.compile(bar, cache_mode="constant values")
 
     astr = "a"
     bstr = "b"
@@ -760,7 +760,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     # Module tests
     m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
-    cm = thunder.compile(m, cache_mode="dynamic strides")
+    cm = thunder.compile(m, cache_mode="constant values")
 
     inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
 
@@ -811,7 +811,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
             accum += x
         return accum
 
-    ccaz = thunder.compile(caz, cache_mode="dynamic strides")
+    ccaz = thunder.compile(caz, cache_mode="constant values")
 
     inp0 = [5, 3, 7]
     thunder_result = ccaz(inp0)
@@ -858,7 +858,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def daz(*, a, b):
         return a + b
 
-    cdaz = thunder.compile(daz, cache_mode="dynamic strides")
+    cdaz = thunder.compile(daz, cache_mode="constant values")
 
     inp0 = {"a": a, "b": b}
     thunder_result = cdaz(**inp0)

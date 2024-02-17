@@ -82,7 +82,8 @@ from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve
 from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution, CACHE_OPTIONS, SHARP_EDGES_OPTIONS
+from thunder.common import transform_for_execution
+from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS
 from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor

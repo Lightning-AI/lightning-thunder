@@ -9,7 +9,7 @@ from functools import wraps
 import os
 from io import StringIO
 
-
+from thunder.core.options import CACHE_OPTIONS, resolve_cache_option
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
@@ -35,72 +35,6 @@ from thunder.core.dtypes import to_dtype
 
 import torch as torch
 import numpy as np
-
-#
-# Compilation options
-#
-
-# Sharp edges options
-# A "sharp edge" is part of the original program which may not be captured
-#   in the generated thunder program.
-# ALLOW means that sharp edges are unchecked. (Sharp edges are allowed.)
-# WARN means that when a sharp edge is identified a warning is thrown.
-# ERROR means that when a sharp edge is identified an error is thrown.
-
-
-class SHARP_EDGES_OPTIONS(Enum):
-    ALLOW = auto()
-    WARN = auto()
-    ERROR = auto()
-
-
-_str_to_sharp_edges_options_map: dict[str, SHARP_EDGES_OPTIONS] = {
-    "allow": SHARP_EDGES_OPTIONS.ALLOW,
-    "warn": SHARP_EDGES_OPTIONS.WARN,
-    "error": SHARP_EDGES_OPTIONS.ERROR,
-}
-
-
-def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
-    sharp_edges_option: None | SHARP_EDGES_OPTIONS = _str_to_sharp_edges_options_map.get(s.lower(), None)
-
-    if sharp_edges_option is None:
-        raise ValueError(f"Unknown sharp edges option {s}. Allowed modes are 'allow', 'warn', and 'error'.")
-
-    return sharp_edges_option
-
-
-# Cache options
-# TODO GTC Document the options (like above)
-# TODO GTC Rename "dynamic strides" to "constant numbers"
-# TODO GTC Refactor cache option error
-
-
-class CACHE_OPTIONS(Enum):
-    NO_CACHING = auto()
-    ASSUME_SAME_INPUTS = auto()
-    DYNAMIC_STRIDES = auto()
-    SYMBOLIC_NUMBERS = auto()
-
-
-_string_to_cache_option_map = {
-    "no caching": CACHE_OPTIONS.NO_CACHING,
-    "assume same inputs": CACHE_OPTIONS.ASSUME_SAME_INPUTS,
-    "dynamic strides": CACHE_OPTIONS.DYNAMIC_STRIDES,
-    "symbolic numbers": CACHE_OPTIONS.SYMBOLIC_NUMBERS,
-}
-
-
-def _string_to_cache_option(s: str, /) -> CACHE_OPTIONS:
-    cache_option: None | CACHE_OPTIONS = _string_to_cache_option_map.get(s.lower(), None)
-
-    if cache_option is None:
-        raise ValueError(
-            f"Unknown cache option {s}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides' and 'symbolic numbers'."
-        )
-
-    return cache_option
-
 
 #
 # Datastructures for compiled functions
@@ -198,20 +132,8 @@ class CompileData:
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
     ):
-        #
         # Resolves cache option
-        #
-
-        if cache_option is None:
-            cache_option = CACHE_OPTIONS.DYNAMIC_STRIDES
-        if isinstance(cache_option, str):
-            cache_option = _string_to_cache_option(cache_option)
-        if not isinstance(cache_option, CACHE_OPTIONS):
-            raise ValueError(
-                f"Unknown cache option {cache_option}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
-            )
-
-        self.cache_option: CACHE_OPTIONS = cache_option
+        self.cache_option = cache_option = resolve_cache_option(cache_option)
 
         #
         # Gathers additional metadata
@@ -828,7 +750,7 @@ def _create_callable(
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_option is CACHE_OPTIONS.ASSUME_SAME_INPUTS and cs.last_executed is not None:
+        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT and cs.last_executed is not None:
             # TODO Update _last_traces?
             # Updates statistics before early termination
             cs.cache_hits += 1
@@ -840,7 +762,7 @@ def _create_callable(
             cs.last_trace_host_execution_stop = time.time_ns()
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
-        if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
+        if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
             c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key, distributed_key)
             if c is not None:
                 # Updates statistics before early termination
@@ -894,7 +816,7 @@ def _create_callable(
                     result = c(*args, **kwargs)
                     cs.last_trace_host_execution_stop = time.time_ns()
                     cs.last_executed = c
-                    if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
+                    if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
                         cache_put(
                             cs.cache,
                             c,
@@ -961,7 +883,7 @@ def _create_callable(
             cs.last_executed = c
 
             # (Possibly) Updates the cache
-            if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
+            if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
                 cache_put(
                     cs.cache,
                     c,

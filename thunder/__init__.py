@@ -11,6 +11,14 @@ from numbers import Number
 
 from looseversion import LooseVersion
 
+from thunder.core.options import (
+    INTERPRETATION_OPTIONS,
+    resolve_interpretation_option,
+    CACHE_OPTIONS,
+    resolve_cache_option,
+    SHARP_EDGES_OPTIONS,
+    resolve_sharp_edges_option,
+)
 from thunder.core.trace import (
     TraceCtx,
     from_trace,
@@ -24,16 +32,12 @@ import thunder.core.dtypes as dtypes
 import thunder.core.symbol as symbol
 import thunder.core.devices as devices
 from thunder.common import (
-    CACHE_OPTIONS,
     CompileData,
     CompileStats,
     _create_callable,
     trace,
     preprocess,
-    _string_to_cache_option,
     transform_for_execution,
-    SHARP_EDGES_OPTIONS,
-    _str_to_sharp_edges_option,
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -145,42 +149,6 @@ if sdpa_executor:
 from thunder.core.trace import _set_execution_file
 
 set_execution_callback_file = _set_execution_file
-
-#
-# Interpretation modes
-#
-# These modes control how the function will be interpreted
-# PYTHON_INTERPRETER means that the Python interpreter is used
-# TRANSLATE_FUNCTIONS means that the thunder interpreter is used, and it translates PyTorch and NumPy operations to thunder operations
-# TRANSLATE_EVERYTHING means that the thunder interpreter is used, and it translates the entire function a thunder program
-
-
-class INTERPRETATION_OPTIONS(Enum):
-    PYTHON_INTERPRETER = auto()
-    TRANSLATE_FUNCTIONS = auto()
-    TRANSLATE_EVERYTHING = auto()
-
-
-_str_to_interpretation_option_map: dict[str, INTERPRETATION_OPTIONS] = {
-    "python interpreter": INTERPRETATION_OPTIONS.PYTHON_INTERPRETER,
-    "translate functions": INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS,
-    "translate everything": INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING,
-}
-
-
-def _unknown_interpretation_option(x: Any) -> None:
-    raise ValueError(
-        f"Unknown interpretation option {x}. Allowed modes are 'python interpreter', 'translate functions', and 'translate everything'."
-    )
-
-
-def _str_to_interpretation_option(s: str, /) -> INTERPRETATION_OPTIONS:
-    interpretation_option: None | INTERPRETATION_OPTIONS = _str_to_interpretation_option_map.get(s.lower(), None)
-
-    if interpretation_option is None:
-        _unknown_interpretation_option(s)
-
-    return interpretation_option
 
 
 # A helper for "eager unpacking" interpreters that eagerly unpack their arguments as inputs
@@ -294,7 +262,7 @@ def jit(
     executors: None | Sequence[Executor] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
-    cache: None | CACHE_OPTIONS | str = None,
+    cache: None | CACHE_OPTIONS | str = CACHE_OPTIONS.NO_CACHING,
     **compile_options,
 ) -> Callable:
     # Resolves langctx
@@ -319,34 +287,10 @@ def jit(
         if executors[-len(always_executors)] != always_executors:
             executors = executors + always_executors
 
-    # Resolves sharp edges option
-    if sharp_edges is None:
-        # TODO GTC Change the default to WARN
-        sharp_edges = SHARP_EDGES_OPTIONS.ALLOW
-    if isinstance(sharp_edges, str):
-        sharp_edges = _str_to_sharp_edges_option(sharp_edges)
-    if not isinstance(sharp_edges, SHARP_EDGES_OPTIONS):
-        raise ValueError(f"Unknown sharp edges option {sharp_edges}. Allowed options are 'allow', 'warn', and 'error'.")
-
-    # Resolves interpretation option
-    if interpretation is None:
-        # TODO GTC Change the default to TRANSLATE_FUNCTIONS
-        interpretation = INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS
-    if isinstance(interpretation, str):
-        interpretation = _str_to_interpretation_option_map(interpretation)
-    if not isinstance(interpretation, INTERPRETATION_OPTIONS):
-        _unknown_interpretation_option(interpretation)
-
-    # Resolves cache option
-    if cache is None:
-        # TODO GTC Change the default to DYNAMIC_STRIDES
-        cache = CACHE_OPTIONS.NO_CACHING
-    if isinstance(cache, str):
-        cache = _string_to_cache_option(cache)
-    if not isinstance(cache, CACHE_OPTIONS):
-        raise ValueError(
-            f"Unknown cache option {cache}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides' and 'symbolic numbers'."
-        )
+    # Resolves options
+    sharp_edges = resolve_sharp_edges_option(sharp_edges)
+    interpretation = resolve_interpretation_option(interpretation)
+    cache = resolve_cache_option(cache)
 
     # TODO GTC Refine the compile data option to remove unused options
     cd = CompileData(
@@ -378,11 +322,7 @@ def jit(
 
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_option in (
-            CACHE_OPTIONS.ASSUME_SAME_INPUTS,
-            CACHE_OPTIONS.DYNAMIC_STRIDES,
-            CACHE_OPTIONS.SYMBOLIC_NUMBERS,
-        ):
+        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
             raise NotImplementedError(f"Only the 'no caching' cache mode is currently supported.")
 
         cs.cache_misses += 1
