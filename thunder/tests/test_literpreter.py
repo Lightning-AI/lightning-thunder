@@ -429,6 +429,32 @@ def test_nanogpt_block():
     config.update(**_nanogpt_configs["gpt2"])
     bench = NanoGPTBlockBenchmark(config=config, device="cpu")
     module = bench.fn()
+    print(module)
+    module.mlp.gelu = torch.nn.ReLU()
+
+    # work around the litjit not yet understanding modules
+    def fn(*args, **kwargs):
+        return module(*args, **kwargs)
+
+    args, kwargs = bench.make_batch()
+
+    jfn = litjit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2004", raises=BaseException)
+def test_nanogpt_mlp():
+    from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0)
+    config.update(**_nanogpt_configs["gpt2"])
+    bench = NanoGPTBlockBenchmark(config=config, device="cpu")
+    module = bench.fn().mlp
+
+    # workaround for gelu
+    module.gelu = torch.nn.ReLU()
 
     # work around the litjit not yet understanding modules
     def fn(*args, **kwargs):

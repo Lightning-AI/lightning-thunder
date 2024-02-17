@@ -278,7 +278,9 @@ def wrap_consts(*values):
 
 
 def wrapped_isinstance(v, c):
-    return isinstance(unwrap(v), c)
+    if isinstance(v, WrappedValue):
+        return isinstance(v.value, c)
+    return isinstance(v, c)
 
 
 def unwrap(value: Any, /) -> Any:
@@ -307,17 +309,31 @@ def populate_item_wrappers(l):
 
     assert isinstance(l, WrappedValue)
     # to do: generalize
-    assert wrapped_isinstance(l, (list, tuple))
-    if l.item_wrappers is None:
-        l.item_wrappers = [None for _ in range(len(l.value))]
-    assert isinstance(l.item_wrappers, list)
-    assert len(l.value) == len(l.item_wrappers), f"{len(l.value)=} {len(l.item_wrappers)=}"
+    if wrapped_isinstance(l, (list, tuple)):
+        if l.item_wrappers is None:
+            l.item_wrappers = [None for _ in range(len(l.value))]
+        assert isinstance(l.item_wrappers, list)
+        assert len(l.value) == len(l.item_wrappers), f"{len(l.value)=} {len(l.item_wrappers)=}"
 
-    for i, v in enumerate(l.value):
-        if l.item_wrappers[i] is None:
-            pr = ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[wrap_const(i).provenance, l.provenance])
-            wv = wrap(v, provenance=pr)
-            l.item_wrappers[i] = wv
+        for i, v in enumerate(l.value):
+            if l.item_wrappers[i] is None:
+                pr = ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[wrap_const(i).provenance, l.provenance])
+                wv = wrap(v, provenance=pr)
+                l.item_wrappers[i] = wv
+        return
+
+    if wrapped_isinstance(l, dict):
+        assert isinstance(l.item_wrappers, dict)
+        for k, v in l.value.items():
+            if k not in l.item_wrappers:
+                wk = wrap_const(k)
+                pr = ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[wk.provenance, l.provenance])
+                wv = wrap(v, provenance=pr)
+                l.item_wrappers[k] = wv
+                l.key_wrappers[k] = wk  # or have those from an iteration of the input?
+        return
+
+    raise NotImplementedError(f"populate item wrapppers for {type(l.value)}")
 
 
 #
@@ -821,6 +837,10 @@ class PseudoInst(str, enum.Enum):
     SEND = "SEND"
     GET_LEN = "GET_LEN"
     BINARY_ADD = "BINARY_ADD"
+    LIST_APPEND = "LIST_APPEND"
+    LIST_EXTEND = "LIST_EXTEND"
+    GET_ITER = "GET_ITER"
+    CONTAINS_OP = "CONTAINS_OP"
 
 
 @dataclasses.dataclass
@@ -835,6 +855,7 @@ class ProvenanceRecord:
         assert isinstance(self.inst, (dis.Instruction, PseudoInst)), f"{self.inst} is not Instruction or PseudoInst"
         assert isinstance(self.inputs, list)
         assert all(isinstance(i, ProvenanceRecord) for i in self.inputs)
+        self.inputs = self.inputs.copy()
 
 
 class InterpreterStack:
@@ -975,7 +996,7 @@ class JITFrame:
 
     # This is not used for name lookup, it's the return value of locals(), as provided by the locals lookaside.
     # If you want to modify the current value of locals, modify localsplus instead.
-    _locals: dict[str, Any] = dataclasses.field(default_factory=dict)
+    _locals: dict[str, Any] = dataclasses.field(default_factory=lambda: _jit_no_unwrap(dict))
 
     # advance to the given instruction
     def nexti(self, inst: dis.Instruction):
@@ -1044,6 +1065,7 @@ class JITFrame:
 
         if hasattr(fn.__code__, "co_qualname"):
             replacements["co_qualname"] = self.qualname
+
         fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
 
         try:
@@ -1230,6 +1252,7 @@ def exec_lookaside(
 _PROPERTY_ALIASES = {"__get__": "fget", "__set__": "fset", "__delete__": "fdel"}
 
 
+# TODO: audit the error messages, in Python some(or all?) things print the class name
 # NOT to be put directly in lookasides(!)
 def _object_getattribute_lookaside(obj: Any, name: str):
     """Implements the `object.__getattribute__` portion of `getattr`.
@@ -1263,7 +1286,11 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
     if DUNDER_PATTERN.match(name) or isinstance(uobj, (type, super)):
-        return do_raise(AttributeError(name)) if (result := getattr(uobj, name, null)) is null else result
+        return (
+            do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{name}'"))
+            if (result := getattr(uobj, name, null)) is null
+            else result
+        )
 
     def lookup_descriptor_field(field_name):
         # Bypass the C portions of `property` so we don't break the `_jit` chain
@@ -1314,6 +1341,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
+        # TODO: we might avoid jitting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
         if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
             return instance_value
 
@@ -1351,13 +1379,18 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
     uvalue = unwrap(value)
 
     compilectx: JitCompileCtx = get_jitcompilectx()
-    if compilectx._with_provenance_tracking:
-        obj.attribute_wrappers[uname] = value
-
     try:
         setattr(uobj, uname, uvalue)
     except Exception as e:
         return do_raise(e)
+
+    if compilectx._with_provenance_tracking:
+        obj.attribute_wrappers[uname] = value
+
+        obj_dict = obj.attribute_wrappers.get("__dict__")
+        if obj_dict is not None:
+            obj_dict.item_wrappers[uname] = value
+
     return wrap_const(None)
 
 
@@ -1511,22 +1544,32 @@ def _iter_lookaside(obj, *sentinel) -> Iterator | JIT_SIGNALS:
     return ret
 
 
-@jit_needs_wrap
 def _locals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
     _locals = frame._locals
+    u_locals = unwrap(_locals)
     for i, v in enumerate(frame.localsplus):
         name = frame.get_localsplus_name(i)
         if v is Py_NULL():
             # Only delete identifiers to avoid breaking pytest, which
             # rewrites assertions using locals() for some reason.
-            if name.isidentifier() and name in _locals.keys():
-                del _locals[name]
+            if name.isidentifier() and name in u_locals.keys():
+
+                def delitem(d, k):
+                    del d[k]
+
+                res = _jit_no_unwrap(delitem, _locals, wrap_const(name))
+                assert not isinstance(res, JIT_SIGNALS)
             continue
         elif isinstance(v, CellType):  # sketchy, we should keep this info
             v = v.cell_contents
-        _locals[name] = v
+
+        def setitem(d, k, v):
+            d[k] = v
+
+        res = _jit_no_unwrap(setitem, _locals, wrap_const(name), v)
+
     return _locals
 
 
@@ -1545,6 +1588,20 @@ def _next_lookaside(iterator, default=_nil):
         if isinstance(runtimectx._curexc, StopIteration):
             res = default
     return res
+
+
+def _reversed_lookaside(seq):
+    def impl(seq):
+        reversed_meth = getattr(seq, "__reversed__", None)
+        if reversed_meth is not None:
+            return reversed_meth()
+
+        if not isinstance(seq, Sequence):
+            raise TypeError(f"'{type(seq)}' object is not reversible")
+
+        return SequenceIter(seq, is_reversed=True)
+
+    return _jit_no_unwrap(impl, seq)
 
 
 # we do like the built-in super (and in fact it is impossible to implement
@@ -1803,6 +1860,8 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def append(self, value, /):
         self.proxify()
+        pr = ProvenanceRecord(PseudoInst.LIST_APPEND, inputs=[self.provenance, value.provenance])
+        self.provenance = pr  # should have an update method
         self.value.append(value.value)
         self.item_wrappers.append(value)
         assert len(self.value) == len(self.item_wrappers)
@@ -1829,6 +1888,8 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
             return res
 
         populate_item_wrappers(iterable)
+        pr = ProvenanceRecord(PseudoInst.LIST_EXTEND, inputs=[self.provenance, iterable.provenance])
+        self.provenance = pr  # should have an update method
         assert len(iterable.value) == len(iterable.item_wrappers)
         # also includes l.value is iterable.value
         self.value.extend(iterable.value)
@@ -1895,6 +1956,354 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
 
+class MappingKeysIterator(Iterator):
+    # note: the __init__ will be executed by Python itself, and
+    #       the caller needs to set up the wrapped_attribute for _mapping
+    # The other methods are called through the JIT mechanism.
+    def __init__(self, mapping, underlying_key_iterator):
+        self._mapping = mapping
+        self._underlying_key_iterator = underlying_key_iterator
+
+    # This is called as a lookaside!
+    def __next__(self):
+        try:
+            uk = self.value._underlying_key_iterator.__next__()
+        except Exception as e:
+            return do_raise(e)
+        k = self.attribute_wrappers["_mapping"].key_wrappers[uk]
+        return k
+
+
+class MappingKeysView:
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    @property
+    def mapping(self):
+        return self._mapping  # a should be a MappingProxy...
+
+    def isdisjoint(self, other):
+        return all((k not in self.mapping) for k in other)
+
+    # This is called as a lookaside!
+    def __iter__(self):
+        raw_mapping_iter = self.value._mapping.__iter__()
+        pr = ProvenanceRecord(PseudoInst.GET_ITER, inputs=[self.attribute_wrappers["_mapping"].provenance])
+        u_mapping_iter = MappingKeysIterator(self.value._mapping, raw_mapping_iter)
+        mapping_iter = wrap(u_mapping_iter, provenance=pr)
+        populate_attribute_wrapper(mapping_iter, "_mapping", self.attribute_wrappers["_mapping"])
+        return mapping_iter
+
+    # This is called as a lookaside!
+    def __reversed__(self):
+        raw_mapping_iter = self.value._mapping.__reversed__()
+        pr = ProvenanceRecord(PseudoInst.GET_ITER, inputs=[self.attribute_wrappers["_mapping"].provenance])
+        u_mapping_iter = MappingKeysIterator(self.value._mapping, raw_mapping_iter)
+        mapping_iter = wrap(u_mapping_iter, provenance=pr)
+        populate_attribute_wrapper(mapping_iter, "_mapping", self.attribute_wrappers["_mapping"])
+        return mapping_iter
+
+
+class MappingValuesIterator:
+    def __init__(self, mapping, is_reversed=False):
+        self._mapping = mapping
+        if is_reversed:
+            self._key_iter = iter(mapping)
+        else:
+            self._key_iter = reversed(mapping)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self._mapping[next(self._key_iter)]
+
+
+class MappingValuesWrapper:
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def __iter__(self):
+        return MappingValuesIterator(self._mapping)
+
+
+class MappingItemsIterator:
+    def __init__(self, mapping, is_reversed=False):
+        self._mapping = mapping
+        if is_reversed:
+            self._key_iter = mapping.__iter__()
+        else:
+            self._key_iter = mapping.__reversed__()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        k = next(self._key_iter)
+        return k, self._mapping[k]
+
+
+class MappingItemsWrapper:
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def __iter__(self):
+        return MappingItemsIterator(self._mapping)
+
+
+class MutMappingWrapperMethods:
+    def __new__(cls, /, *args, **kwds):
+        uvalue = unwrap(cls)()
+        # todo: for subclasses, better record the call to the constructor
+        return wrap_const(uvalue)
+
+    def __init__(self, *other, **kwds):
+        MutMappingWrapperMethods.update(self, *other, **kwds)
+        return wrap_const(None)
+
+    def __setitem__(self, key, value):
+        self.proxify()
+        self.value[key.value] = value.value
+        self.key_wrappers[key.value] = key
+        self.item_wrappers[key.value] = value
+        return wrap_const(None)
+
+    def __delitem__(self, key):
+        self.proxify()
+        try:
+            del self.value[key.value]
+        except Exception as e:
+            return do_raise(e)
+
+        del self.key_wrappers[key.value]
+        del self.item_wrappers[key.value]
+        return wrap_const(None)
+
+    def __getitem__(self, key):
+        self.proxify()
+        try:
+            uv = self.value[key.value]
+        except Exception as e:
+            return do_raise(e)
+        v = self.item_wrappers[key.value]
+        assert uv is v.value, f"value for {key.value} out of sync {uv} {v.value}"
+        return v
+
+    def __iter__(self):
+        def impl(self):
+            return self.keys().__iter__()
+
+        return _jit_no_unwrap(impl, self)
+
+    def __reversed__(self):
+        def impl(self):
+            return self.keys().__reversed__()
+
+        return _jit_no_unwrap(impl, self)
+
+    def __len__(self):
+        self.proxify()
+        # TODO: record length check
+        pr = ProvenanceRecord(PseudoInst.GET_LEN, inputs=[self.provenance])
+        return wrap(len(self.value), provenance=pr)
+
+    def clear(self):
+        self.proxify()
+        self.value.clear()
+        self.key_wrappers.clear()
+        self.item_wrappers.clear()
+
+    # note: popitem with last is only for ordered dict
+    def popitem(self, last=Py_NULL()):
+        self.proxify()
+        if last is Py_NULL():
+            last_d = {}
+        else:
+            last_d = {"last": last.value}
+
+        try:
+            uk, uv = self.value.popitem(last=last)
+        except Exception as e:
+            return do_raise(e)
+
+        k = self.key_wrappers.pop(uk)
+        v = self.item_wrappers.pop(uk)
+        assert k.value is uk
+        assert v.value is uv
+        return k, v
+
+    def __contains__(self, key):
+        self.proxify()
+        # TODO: assert presence
+        pr = ProvenanceRecord(PseudoInst.CONTAINS_OP, inputs=[self.provenance, key.provenance])
+        return wrap(key.value in self.value, provenance=pr)
+
+    def get(self, key, default=None):
+        self.proxify()
+
+        res = _jit_no_unwrap(lambda d, k: d[k], self, key)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            runtimectx: JitRuntimeCtx = get_jitruntimectx()
+            if isinstance(runtimectx._curexc, KeyError):
+                runtimectx._curexc = None
+                if default is None:
+                    res = wrap_const(None)
+                else:
+                    res = default
+        return res
+
+    # move to end is odict specific, does not affect metadata but will raise
+    # unimplemented if we comment it out
+    # def move_to_end(self, key, last=True):
+
+    # TODO
+    # def __sizeof__(self):
+
+    def update(self, *other, **other_kw):
+        self.proxify()
+
+        if other:
+            (other,) = other
+            # testing bool(other.value) is a bit touchy, but
+            # we do this to avoid infinite recursions
+            if hasattr(other.value, "keys") and other.value:
+
+                def impl_other_keys(self, other):
+                    for k in other.keys():
+                        self[k] = other[k]
+
+                res = _jit_no_unwrap(impl_other_keys, self, other)
+                if res is JIT_SIGNALS.EXCEPTION_RAISED:
+                    return res
+            elif other.value:
+
+                def impl_other_nokeys(self, other):
+                    for k, v in other:
+                        self[k] = v
+
+                res = _jit_no_unwrap(impl_other_nokeys, self, other)
+                if res is JIT_SIGNALS.EXCEPTION_RAISED:
+                    return res
+
+        for uk, v in other_kw.items():
+            k = wrap_const(uk)
+
+            def setitem(self, k, v):
+                self[k] = v
+
+            res = _jit_no_unwrap(setitem, self, k, v)
+            if res is JIT_SIGNALS.EXCEPTION_RAISED:
+                return res
+
+        return wrap_const(None)
+
+        #        keys =
+        #        for uk in other.value.keys():
+        #            v = _jit_no_unwrap(getitem, other, wrap_const(uk))
+        #            k = other.key_wrappers[uk]
+        #            v = other.item_wrappers[uk]
+
+        #            res = _jit_no_unwrap(self[)
+
+        def impl(self, other, **other_kw):
+            if other:
+                if hasattr(other, "keys"):
+                    # using k and other[k] rather items matches the docstring
+                    if other:
+                        for k in other.keys():
+                            self[k] = other[k]
+                else:
+                    for k, v in other:
+                        self[k] = v
+            if other_kw:  # to avoid infinite recursion
+                for k, v in other_kw.items():
+                    self[k] = v
+
+        return _jit_no_unwrap(impl, self, other, **other_kw)
+
+    def keys(self):
+        self.proxify()
+        return _jit_no_unwrap(MappingKeysView, self)
+
+    def items(self):
+        self.proxify()
+        return _jit_no_unwrap(MappingItemsWrapper, self)
+
+    def values(self):
+        self.proxify()
+        return _jit_no_unwrap(MappingValuesWrapper, self)
+
+    # __ne__ = _collections_abc.MutableMapping.__ne__
+
+    # __marker = object()
+
+    def pop(self, key, default=Py_NULL()):
+        if default is Py_NULL():
+
+            def impl_no_default(self, key):
+                v = self[key]
+                del self[key]
+                return v
+
+            return _jit_no_unwrap(impl_no_default, self, key)
+
+        def impl(self, key, default):
+            if key in self:
+                v = self[key]
+                del self[key]
+                return v
+            return default
+
+        return _jit_no_unwrap(impl, self, key, default)
+
+    def setdefault(self, key, default=None):
+        def impl(self, key, default):
+            if key in self:
+                return self[key]
+            self[key] = default
+            return default
+
+        return _jit_no_unwrap(impl, self, key, default)
+
+    # def __repr__(self):
+    # def __reduce__(self):
+
+    def copy(self):
+        return _jit_no_unwrap(self.value.__class__, self)
+
+    # @classmethod
+    # def fromkeys(cls, iterable, value=None):
+
+    # def __eq__(self, other):
+
+    def __ior__(self, other):
+        def impl(self, other):
+            self.update(other)
+            return self
+
+        return _jit_no_unwrap(impl, self, other)
+
+    def __or__(self, other):
+        def impl(self, other):
+            if not isinstance(other, dict):
+                return NotImplemented
+            new = self.copy()
+            new.update(other)
+            return new
+
+        return _jit_no_unwrap(impl, self, other)
+
+    def __ror__(self, other):
+        def impl(self, other):
+            if not isinstance(other, dict):
+                return NotImplemented
+            new = self.__class__(other)
+            new.update(self)
+            return new
+
+        return _jit_no_unwrap(impl, self, other)
+
+
 _default_lookaside_map: dict[Callable, Callable] = {
     # Jit lookasides
     is_jitting: _is_jitting_lookaside,
@@ -1910,6 +2319,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     len: _len_lookaside,
     locals: _locals_lookaside,
     next: _next_lookaside,
+    reversed: _reversed_lookaside,
     super: _super_lookaside,
     type.__call__: _type_lookaside,
     isinstance: _isinstance_lookaside,
@@ -1962,6 +2372,9 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
 
 _default_provenance_tracking_lookaside_map = {
     tuple.__new__: _tuple_new_provenance_tracking_lookaside,
+    MappingKeysView.__iter__: MappingKeysView.__iter__,
+    MappingKeysView.__reversed__: MappingKeysView.__reversed__,
+    MappingKeysIterator.__next__: MappingKeysIterator.__next__,
 }
 
 
@@ -1977,15 +2390,19 @@ def _register_provenance_tracking_lookasides(typ, wrapper):
                 _default_provenance_tracking_lookaside_map[meth] = getattr(wrapper, meth_name)
             elif is_opaque(meth):
 
-                def unimplemented(*args, **kwargs):
-                    raise NotImplementedError(f"{typ}.{meth_name} is not yet supported, please file an issue.")
+                def get_unimplemented_fn(meth_name):
+                    def unimplemented(*args, **kwargs):
+                        raise NotImplementedError(f"{typ}.{meth_name} is not yet supported, please file an issue.")
 
-                _default_provenance_tracking_lookaside_map[meth] = unimplemented
+                    return unimplemented
+
+                _default_provenance_tracking_lookaside_map[meth] = get_unimplemented_fn(meth_name)
 
 
 # _register_provenance_tracking_lookasides(Sequence, SequenceWrapperMethods)
 _register_provenance_tracking_lookasides(tuple, SequenceWrapperMethods)
 _register_provenance_tracking_lookasides(list, MutSequenceWrapperMethods)
+_register_provenance_tracking_lookasides(dict, MutMappingWrapperMethods)
 
 
 # The default function lookaside -- currently it doesn't intercept anything
@@ -2097,9 +2514,8 @@ def local_callback(name: str, value: Any, /) -> Any:
 
 
 def check_and_append(stack, val):
-    uval = unwrap(val)
-    if uval is JIT_SIGNALS.EXCEPTION_RAISED:
-        return uval
+    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+        return val
     stack.append(val)
 
 
@@ -3035,7 +3451,7 @@ def _for_iter_handler(
     delta: int = inst.arg
 
     tos: Iterator = stack.getitem_wrapped(-1)
-    assert wrapped_isinstance(tos, Iterator)
+    assert wrapped_isinstance(tos, Iterator), f"got {type(unwrap(tos))} instead of Iterator"
 
     def _next_impl(tos):
         return next(tos)
@@ -3129,8 +3545,8 @@ def _iter_impl(obj):
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_ITER
 @register_opcode_handler("GET_ITER")
 def _get_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
-    tos = stack.pop()
-    return check_and_append(stack, _jit(iter, tos))
+    tos = stack.pop_wrapped()
+    return check_and_append(stack, _jit_no_unwrap(iter, tos))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
@@ -4193,7 +4609,7 @@ def _push_exc_info_handler(inst: dis.Instruction, /, stack: InterpreterStack, ex
 # https://docs.python.org/3.11/library/dis.html#opcode-PUSH_NULL
 @register_opcode_handler("PUSH_NULL", min_ver=(3, 11))
 def _push_null_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    stack.append(Py_NULL())
+    stack.append(wrap_const(Py_NULL()))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RAISE_VARARGS
@@ -4626,30 +5042,33 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, 
     seq: Iterable = stack.pop_wrapped()
 
     assert type(inst.arg) is int
-    count: int = wrap_const(inst.arg)
+    count: int = inst.arg
 
-    # n.b. Python does not materialze the list if it is too long.
-    def impl(seq, count):
-        l = list(reversed(list(seq)))
-        if len(l) < count:
-            raise ValueError(f"not enough values to unpack (expected {count}, got {len(l)})")
-        elif len(l) > count:
-            raise ValueError(f"too many values to unpack (expected {count})")
-        return l
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
-    unpacked = _jit_no_unwrap(impl, seq, count)
+    seq_iter = _jit_no_unwrap(iter, seq)
 
-    if unpacked is JIT_SIGNALS.EXCEPTION_RAISED:
-        return unpacked
+    values = []
+    for _ in range(count):
+        v = _jit_no_unwrap(next, seq_iter)
+        if v is JIT_SIGNALS.EXCEPTION_RAISED:
+            if isinstance(runtimectx._curexc, StopIteration):
+                return do_raise(ValueError(f"not enough values to unpack (expected {count}, got {len(values)})"))
+            else:
+                return v
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    if ctx._with_provenance_tracking:
-        populate_item_wrappers(unpacked)
-        unpacked = unpacked.item_wrappers[:]
+        values.append(v)
 
-    assert type(unpacked) is list
+    v = _jit_no_unwrap(next, seq_iter)
+    if v is JIT_SIGNALS.EXCEPTION_RAISED:
+        if isinstance(runtimectx._curexc, StopIteration):
+            runtimectx._curexc = None
+        else:
+            return v
+    else:
+        return do_raise(ValueError(f"too many values to unpack (expected {count})"))
 
-    for x in unpacked:
+    for x in values[::-1]:
         stack.append(x)
 
 
@@ -4930,6 +5349,8 @@ def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
 
     runtimectx.record_jit_call(fn)
     rval = _jit_inner(compilectx, runtimectx, fn, *args, **kwargs)
+    if compilectx._with_provenance_tracking:
+        assert isinstance(rval, (JIT_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
     runtimectx.record_jit_return(fn, rval)
 
     return rval

@@ -390,6 +390,7 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
         return res
 
     assert isinstance(res, WrappedValue)
+    assert isinstance(name, WrappedValue)
 
     if not isinstance(res.value, Proxy):
         ctx: LitCtx = get_litctx()
@@ -432,7 +433,7 @@ def _lit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
         return wrap_const(res)
 
     bool_lookaside = default_lookaside(bool) or bool
-    return bool_lookaside(x)
+    return bool_lookaside(wrapped_x)
 
 
 _lit_lookaside_map[bool] = _lit_bool_lookaside
@@ -503,11 +504,10 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
     if lookaside is None:
         if is_opaque(fn) and fn not in _safe_functions:
-            print(
-                NotImplementedError(
-                    f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
-                )
+            raise NotImplementedError(
+                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
             )
+
         return None
 
     # NOTE lookaside is not None
@@ -575,11 +575,10 @@ def _lit_global_callback(globals_dict: dict, name: str) -> Any:
         or (value is torch.nn.modules.module._global_forward_pre_hooks)
         or (value is torch.nn.functional)
         or (value is thunder.core.proxies.get_langctx)
-        or (value is thunder.core.langctx._langctx)
     ):
         return value
 
-    print(NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported"))
+    raise NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported")
     return value
 
 
@@ -763,7 +762,9 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                     raise NotImplementedError(f"unpacking from nonconstant opaque function")
                 if fn.value.__name__ == "__getitem__":
                     idx, obj = args.inputs
-                    return from_provenance(ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[idx, obj]))
+                    return from_provenance(
+                        ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[idx, obj]), new_output=new_output
+                    )
                 elif fn.value == GetSetDescriptorType.__get__:
                     # todo: find a more elegant way?
                     # Arg 1 is the object we want to get the attribute from
@@ -781,7 +782,7 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                             ],
                         )
                     )
-                raise NotImplementedError(f"unpacking from OPAQUE {fn.value}")
+                raise NotImplementedError(f"unpacking from OPAQUE {fn.value} {provenance}")
 
             def from_provenance(provenance, *, new_output=False):
                 if hasattr(provenance, "proxy"):
@@ -798,7 +799,6 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                         res |= collect_inst(i)
                     return res
 
-                print(provenance)
                 inst = provenance.inst
                 if isinstance(inst, dis.Instruction):
                     inst = inst.opname
@@ -810,8 +810,6 @@ def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
                     "BINARY_SUBSCR": from_binary_subscr,
                     "OPAQUE": from_opaque,
                 }
-
-                print("##unsupported provenance inst##", collect_inst(provenance) - set(d.keys()))
 
                 unpack_fn = d.get(inst)
                 if unpack_fn is None:
