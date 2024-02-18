@@ -397,13 +397,8 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     if not isinstance(value.value, Proxy):
         ctx: LitCtx = get_litctx()
         p = ctx.proxify(value.value, name=name.value, history=(UNPACK_ACTION.FROM_PROVENANCE, value.provenance))
-        if value.value is not p:
-            value.value = p
-            # this does not work yet:
-            # res = _jit_no_unwrap(setattr, obj, name, value)
-            # if isinstance(res, JIT_SIGNALS):
-            #    return res
-
+        if p is not value.value:
+            value.register_proxy(p)
         return value
 
     return value
@@ -453,28 +448,43 @@ _lit_lookaside_map[bool] = _lit_bool_lookaside
 #   interpreter their internals is unnecessary and would just add complexity at this time
 
 
+@jit_needs_wrap
+def prop_lookaside_helper(meth, /, *args, **kwargs):
+    res = meth(*args, **kwargs)
+    return res
+
+
+def prop_lookaside_wrap(meth_getter):
+    def fn(obj, /, *args, **kwargs):
+        meth = meth_getter(obj)
+
+        def fn_(*args, **kwargs):
+            return prop_lookaside_helper(meth, *args, **kwargs)
+
+        return fn_
+
+    return fn
+
+
 def get_methods_properties(typ):
     for meth_name in dir(typ):
         meth = getattr(typ, meth_name)
         if isinstance(meth, (MethodType, BuiltinMethodType, MethodDescriptorType, WrapperDescriptorType)) and (
             getattr(meth, "__objclass__", None) == typ or (getattr(meth, "__self__", None) == typ)
         ):
-            yield meth
+            yield meth, meth
         elif isinstance(meth, FunctionType):
-            yield meth  # __getattr__
+            yield meth, meth  # __getattr__
         elif isinstance(meth, property):
             if meth.fget is not None:
-                yield meth.fget
-            if meth.fset is not None:
-                yield meth.fset
-            if meth.fdel is not None:
-                yield meth.fdel
+                yield meth.fget, prop_lookaside_wrap(meth.fget)
 
 
 _lit_lookaside_map.update(
     {
-        **{fn: jit_needs_wrap(fn) for fn in get_methods_properties(NumberProxy)},
-        **{fn: jit_needs_wrap(fn) for fn in get_methods_properties(TensorProxy)},
+        **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
+        **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(TensorProxy)},
+        prop_lookaside_helper: prop_lookaside_helper,
         NumberProxy.__add__: jit_needs_wrap(NumberProxy.__add__),
         NumberProxy.__bool__: jit_needs_wrap(NumberProxy.__bool__),  # TODO Review returning a BoolProxy from this
         NumberProxy.__neg__: jit_needs_wrap(NumberProxy.__neg__),
@@ -515,6 +525,8 @@ _safe_functions: set = {
     reversed.__new__,
     CellType.__new__,
     GetSetDescriptorType.__get__,
+    Exception.__new__,
+    StopIteration.__init__,
 }
 
 
@@ -526,7 +538,7 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # Performs symbol lookasides
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
-        lookaside = fn
+        lookaside = jit_needs_wrap(fn)
     elif (lit_lookaside := _lit_lookaside_map.get(fn, None)) is not None:
         lookaside = lit_lookaside
     else:
@@ -572,28 +584,21 @@ def _lit_freevar_callback(name: str, wrapped_cell: Any, /, *, fn: Callable, idx:
     cell = wrapped_cell.value
 
     if cell == CellType():
-        return wrapped_cell
+        return Py_NULL()
 
     contents = cell.cell_contents
     if isinstance(contents, Proxy):
-        return wrapped_cell
+        return contents
 
     ctx: LitCtx = get_litctx()
 
+    # TODO: this should be pre-provided
     provenance = ProvenanceRecord(
         PseudoInst.LOAD_ATTR, inputs=[wrapped_cell.provenance, wrap_const("cell_contents").provenance]
     )
     proxy = ctx.proxify(contents, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, provenance))
 
-    if proxy is not contents:
-        # TODO replacing cells is EVIL!, but we do not want to leak proxy, so we would need a cell proxy that diverts the write.
-        wrapped_proxy = wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance)
-        wrapped_cell.value = CellType(proxy)
-        wrapped_cell.attribute_wrappers["cell_contents"] = wrapped_proxy
-        # this would leak proxies:
-        # cell.cell_contents = wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance)
-
-    return wrapped_cell
+    return proxy
 
 
 # TODO Support additional global loads
@@ -608,6 +613,7 @@ def _lit_global_callback(globals_dict: dict, name: str) -> Any:
         or (value is torch.nn.modules.module._global_forward_pre_hooks)
         or (value is torch.nn.functional)
         or (value is thunder.core.proxies.get_langctx)
+        or (value is prop_lookaside_helper)
     ):
         return value
 

@@ -352,7 +352,7 @@ class StringProxy(Proxy, str):
         return "str"
 
     def __hash__(self) -> str:
-        return hash(self._s)
+        return hash(self.value)
 
     def __eq__(self, other):
         if not isinstance(other, str):

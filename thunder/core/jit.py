@@ -134,8 +134,11 @@ class WrappedValue:
 
         self.typ = typ
         self.python_typ = type(value)
-        self.original_value = None
-        self.has_proxified = False
+
+        self.nothing = object()
+        self.original_value = self.nothing
+
+        self.has_item_tracking = False
 
         if cb is not None:
             value = cb(self, value)
@@ -158,8 +161,8 @@ class WrappedValue:
 
         runtimectx.cache_wrapper(self)
 
-    def proxify(self):
-        if self.has_proxified:
+    def track_items(self):
+        if self.has_item_tracking:
             return
 
         populate_item_wrappers(self)
@@ -170,13 +173,19 @@ class WrappedValue:
         if cb is not None:
             cb(self)
 
-        self.has_proxified = True
+        self.has_item_tracking = True
 
-    def register_mutating_proxy(self, proxy):
-        # Note: This should be done while .value is still the old one
-        # TODO: keep proxies around?
+    def register_proxy(self, proxy):
+        # note: the proxy is responsible for capturiing all the existing attributes/values
+        assert (
+            self.original_value is self.nothing
+        ), "cannot proxy multiple times, please file an issue to discuss your use-case"
         self.original_value = self.value
         self.value = proxy
+
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        # we need to keep a strong ref on things that have been proxied to recover the proxy via the cache or we could structure the cache to do this for us
+        runtimectx.register_proxied_value(self)
 
     def unwrap(self):
         return self.value
@@ -505,6 +514,10 @@ class JitRuntimeCtx:
         self._prev_filename: None | str = None
         self._prev_position: Positions | None = None
         self._known_wrappers = {}
+        self._proxied_values = set()
+
+    def register_proxied_value(self, v):
+        self._proxied_values.add(v)
 
     def cache_wrapper(self, wrapped_value: WrappedValue):
         compilectx: JitCompileCtx = get_jitcompilectx()
@@ -986,7 +999,7 @@ class InterpreterStack:
     def append(self, val: Any, /) -> None:
         if isinstance(val, WrappedValue):
             if isinstance(val.value, tuple):
-                val.proxify()
+                val.track_items()
                 for u, v in zip(val.value, val.item_wrappers):
                     assert u is v.value, f"{u}, {v.value} {unwrap(fn)} {[unwrap(a) for a in args]}"
         self._stack.append(self.get_provenance_record(val))
@@ -1435,7 +1448,10 @@ def wrap_attribute(plain_result, obj, name):
     #       are recreated every time)
     if known_wrapper is not None:
         assert (
-            known_wrapper.value is plain_result or known_wrapper.value == plain_result
+            known_wrapper.value is plain_result
+            or known_wrapper.original_value is plain_result
+            or known_wrapper.value == plain_result
+            or known_wrapper.original_value == plain_result
         ), f"attribute {name.value} out of sync: {known_wrapper.value} vs. {plain_result}"
         return known_wrapper
 
@@ -1824,7 +1840,7 @@ class SequenceWrapperMethods:
         return wrap_const(None)
 
     def __getitem__(self, idx, /):
-        self.proxify()
+        self.track_items()
 
         uidx = idx.value
         uself = self.value
@@ -1850,11 +1866,11 @@ class SequenceWrapperMethods:
         return do_raise(TypeError(f"{type(uself)} indices must be integers or slices, not {type(idx.value)}"))
 
     def __contains__(self, key, /):
-        self.proxify()
+        self.track_items()
         return _jit_no_unwrap(lambda s, k: any((i == k) for i in s), self, key)
 
     def __add__(self, value, /):
-        self.proxify()
+        self.track_items()
         populate_item_wrappers(value)
 
         try:
@@ -1868,21 +1884,21 @@ class SequenceWrapperMethods:
         return res
 
     def __mul__(self, n, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError()
 
     def __rmul__(self, n, /):
-        self.proxify()
+        self.track_items()
         return self.__mul__(n)
 
     def __len__(self):
-        self.proxify()
+        self.track_items()
         # TODO: record length check
         pr = ProvenanceRecord(PseudoInst.GET_LEN, inputs=[self.provenance])
         return wrap(len(self.value), provenance=pr)
 
     def index(self, value, start=0, stop=2**63 - 1, /):
-        self.proxify()
+        self.track_items()
 
         # this is the actual python signature for list.index
         if start == 0:
@@ -1901,15 +1917,15 @@ class SequenceWrapperMethods:
         return _jit_no_unwrap(impl, self, value, start, stop)
 
     def count(self, value, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError("Sequence.count, please file an issue")
 
     def __iter__(self):
-        self.proxify()
+        self.track_items()
         return _jit_no_unwrap(SequenceIter, self)
 
     def __reversed__(self):
-        self.proxify()
+        self.track_items()
         return _jit_no_unwrap(SequenceIter, self, wrap_const(True))
 
 
@@ -1923,7 +1939,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
     def __setitem__(self, key, value, /):
-        self.proxify()
+        self.track_items()
         uself = self.value
         ukey = key.value
 
@@ -1947,7 +1963,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
     def __delitem__(self, key, /):
-        self.proxify()
+        self.track_items()
         ukey = key.value
         try:
             del self.value[ukey]
@@ -1957,7 +1973,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
     def append(self, value, /):
-        self.proxify()
+        self.track_items()
         pr = ProvenanceRecord(PseudoInst.LIST_APPEND, inputs=[self.provenance, value.provenance])
         self.provenance = pr  # should have an update method
         self.value.append(value.value)
@@ -1966,15 +1982,15 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
     def clear(self, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError("Sequence.clear, please file an issue")
 
     def copy(self, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError("Sequence.copy, please file an issue")
 
     def extend(self, iterable, /):
-        self.proxify()
+        self.track_items()
         if not isinstance(iterable.value, (tuple, list)):
 
             def impl(l, iterable):
@@ -1996,20 +2012,20 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
     def __iadd__(self, iterable, /):
-        self.proxify()
+        self.track_items()
         res = _jit_no_unwrap(list.extend, self, iterable)
         return self
 
     def __imul__(self, n, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError("Sequence.__imul__, please file an issue")
 
     def insert(self, i, x, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError("Sequence.insert, please file an issue")
 
     def pop(self, index=-1, /):
-        self.proxify()
+        self.track_items()
 
         if index == -1:
             index = wrap_const(-1)
@@ -2044,11 +2060,11 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return res
 
     def remove(self, x, /):
-        self.proxify()
+        self.track_items()
         raise NotImplementedError("Sequence.remove, please file an issue")
 
     def reverse(self, /):
-        self.proxify()
+        self.track_items()
         self.value.reverse()
         self.item_wrappers.reverse()
         return wrap_const(None)
@@ -2160,14 +2176,14 @@ class MutMappingWrapperMethods:
         return wrap_const(None)
 
     def __setitem__(self, key, value):
-        self.proxify()
+        self.track_items()
         self.value[key.value] = value.value
         self.key_wrappers[key.value] = key
         self.item_wrappers[key.value] = value
         return wrap_const(None)
 
     def __delitem__(self, key):
-        self.proxify()
+        self.track_items()
         try:
             del self.value[key.value]
         except Exception as e:
@@ -2178,13 +2194,13 @@ class MutMappingWrapperMethods:
         return wrap_const(None)
 
     def __getitem__(self, key):
-        self.proxify()
+        self.track_items()
         try:
             uv = self.value[key.value]
         except Exception as e:
             return do_raise(e)
         v = self.item_wrappers[key.value]
-        assert uv is v.value, f"value for {key.value} out of sync {uv} {v.value}"
+        assert uv is v.value or uv is v.original_value, f"value for {key.value} out of sync {uv} {v.value}"
         return v
 
     def __iter__(self):
@@ -2200,20 +2216,20 @@ class MutMappingWrapperMethods:
         return _jit_no_unwrap(impl, self)
 
     def __len__(self):
-        self.proxify()
+        self.track_items()
         # TODO: record length check
         pr = ProvenanceRecord(PseudoInst.GET_LEN, inputs=[self.provenance])
         return wrap(len(self.value), provenance=pr)
 
     def clear(self):
-        self.proxify()
+        self.track_items()
         self.value.clear()
         self.key_wrappers.clear()
         self.item_wrappers.clear()
 
     # note: popitem with last is only for ordered dict
     def popitem(self, last=Py_NULL()):
-        self.proxify()
+        self.track_items()
         if last is Py_NULL():
             last_d = {}
         else:
@@ -2231,13 +2247,13 @@ class MutMappingWrapperMethods:
         return k, v
 
     def __contains__(self, key):
-        self.proxify()
+        self.track_items()
         # TODO: assert presence
         pr = ProvenanceRecord(PseudoInst.CONTAINS_OP, inputs=[self.provenance, key.provenance])
         return wrap(key.value in self.value, provenance=pr)
 
     def get(self, key, default=None):
-        self.proxify()
+        self.track_items()
 
         res = _jit_no_unwrap(lambda d, k: d[k], self, key)
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
@@ -2262,7 +2278,7 @@ class MutMappingWrapperMethods:
         # are quite omnipresent and we need to avoid infinite recursions
         # between iters (which have DICT_MERGE somewhere in the iter
         # lookaside apparently) and dicts.
-        self.proxify()
+        self.track_items()
 
         if other:
             (other,) = other
@@ -2300,15 +2316,15 @@ class MutMappingWrapperMethods:
         return wrap_const(None)
 
     def keys(self):
-        self.proxify()
+        self.track_items()
         return _jit_no_unwrap(MappingKeysView, self)
 
     def items(self):
-        self.proxify()
+        self.track_items()
         return _jit_no_unwrap(MappingItemsWrapper, self)
 
     def values(self):
-        self.proxify()
+        self.track_items()
         return _jit_no_unwrap(MappingValuesWrapper, self)
 
     # __ne__ = _collections_abc.MutableMapping.__ne__
@@ -2415,7 +2431,7 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
 
     if isinstance(iterable.value, (list, tuple)):
         # special case to avoid infinite recursion
-        iterable.proxify()
+        iterable.track_items()
         item_wrappers = []
         # TODO: investigate why just taking the wrappers will break test_interpreter.py::test_module_hooks
         for i in range(len(iterable.value)):
@@ -2551,6 +2567,34 @@ def const_callback(value: Any, /) -> Any:
     return cb(value)
 
 
+def get_cell_contents(c):
+    # n.b. this will not get the metainformation for wrapped values (should it?)
+    c = unwrap(c)
+    if c == CellType():
+        return Py_NULL()
+    else:
+        return c.cell_contents
+
+
+def register_cell_proxy(cell, new_contents):
+    ucell = unwrap(cell)
+    if ucell == CellType() or new_contents is Py_NULL():
+        # cells are a bit tricky to deal with when empty unfortunately, as empty
+        # cells raise ValueError when trying to access the contents
+        # we might solve it with a custom cell proxy class
+        raise NotImplementedError(
+            "cannot handle empty cells in proxying, please file an issue to discuss your use case"
+        )
+
+    wcontents = cell.attribute_wrappers.get("cell_contents")
+    if wcontents is None:
+        pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[cell.provenance, wrap_const("cell_contents").provenance])
+        wcontents = wrap(cell.value.cell_contents, provenance=pr)
+        cell.attribute_wrappers["cell_contents"] = wcontents
+
+    wcontents.register_proxy(new_contents)
+
+
 def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) -> CellType:
     assert isinstance(name, str)
     assert wrapped_isinstance(cell, CellType)
@@ -2561,8 +2605,19 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     if cb is None:
         return cell
 
-    # nb. this callback will get a (optionally wrapped) cell
-    cell: Any = cb(name, cell, fn=fn, idx=idx)
+    old_contents = get_cell_contents(cell)
+
+    # nb. this callback will get a (optionally wrapped) cell and returns a plain value
+    new_contents: Any = cb(name, cell, fn=fn, idx=idx)
+    if not ctx._with_provenance_tracking:
+        return new_contents
+
+    assert not isinstance(
+        new_contents, (WrappedValue, CellType)
+    ), "freevar_callback should return a plain value, not a WrappedValue or a CellType"
+
+    if new_contents is not old_contents:
+        register_cell_proxy(cell, new_contents)
     return cell
 
 
@@ -5586,16 +5641,18 @@ def _jit_inner(
         return res
 
     # TODO: disabled as partial is just like any other class
-    ## (3) Handles partial objects
-    # if isinstance(fn, functools.partial):
-    #    # TODO: add traceback entry if exceptions are raised?
-    #    p: functools.partial = fn
-    #    return _jit(p.func, *(p.args + args), **(p.keywords | kwargs))
+    # (3) Handles partial objects
+    if isinstance(fn, functools.partial):
 
-    # if isinstance(fn, functools.partialmethod):
-    #    raise NotImplementedError(
-    #        "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
-    #    )
+        def partial_call_impl(partial_function, /, *args, **kwargs):
+            return partial_function.func(*(partial_function.args + args), **(partial_function.keywords | kwargs))
+
+        return _jit_no_unwrap(partial_call_impl, wrapped_fn, *args, **kwargs)
+
+    if isinstance(fn, functools.partialmethod):
+        raise NotImplementedError(
+            "functools.partialmethod objects like {fn} are not currently supported, please file an issue requesting support"
+        )
 
     # (4) Handles opaque functions
     if is_opaque(fn):
