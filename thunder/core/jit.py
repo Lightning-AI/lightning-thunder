@@ -291,6 +291,15 @@ def unwrap(value: Any, /) -> Any:
     return value
 
 
+def populate_single_dict_item_wrapper(uvalue, obj, key):
+    if not isinstance(key, WrappedValue):
+        key = wrap_const(key)
+    if key.value not in obj.item_wrappers:
+        value = wrap_binary_subscr(uvalue, obj, key)
+        obj.item_wrappers[key.value] = value
+    obj.key_wrappers.setdefault(key.value, key)
+
+
 def populate_attribute_wrapper(wrapped_object, name, wrapped_attribute):
     ctx: JitCompileCtx = get_jitcompilectx()
     if not ctx._with_provenance_tracking:
@@ -2192,11 +2201,12 @@ class MutMappingWrapperMethods:
         return wrap_const(None)
 
     def __getitem__(self, key):
-        self.track_items()
         try:
             uv = self.value[key.value]
         except Exception as e:
             return do_raise(e)
+
+        populate_single_dict_item_wrapper(uv, self, key.value)
         v = self.item_wrappers[key.value]
         assert uv is v.value or uv is v.original_value, f"value for {key.value} out of sync {uv} {v.value}"
         return v
@@ -2251,8 +2261,6 @@ class MutMappingWrapperMethods:
         return wrap(key.value in self.value, provenance=pr)
 
     def get(self, key, default=None):
-        self.track_items()
-
         res = _jit_no_unwrap(lambda d, k: d[k], self, key)
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
             runtimectx: JitRuntimeCtx = get_jitruntimectx()

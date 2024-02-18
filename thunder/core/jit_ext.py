@@ -379,7 +379,6 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
     assert isinstance(value, WrappedValue)
     assert isinstance(name, WrappedValue)
-
     if not isinstance(value.value, Proxy):
         ctx: MesoCtx = get_meso_ctx()
         p = ctx.proxify(value.value, name=name.value, history=value.provenance)
@@ -427,12 +426,17 @@ def prop_lookaside_helper(meth, /, *args, **kwargs):
     return res
 
 
-def prop_lookaside_wrap(meth_getter):
+def prop_lookaside_wrap(attr_getter):
     def fn(obj, /, *args, **kwargs):
-        meth = meth_getter(obj)
+        attr = attr_getter(obj)
 
-        def fn_(*args, **kwargs):
-            return prop_lookaside_helper(meth, *args, **kwargs)
+        if callable(attr):
+
+            def fn_(*args, **kwargs):
+                return prop_lookaside_helper(attr, *args, **kwargs)
+
+        else:
+            return attr
 
         return fn_
 
@@ -587,7 +591,6 @@ def _lit_wrap_callback(value):
     ctx: MesoCtx = get_meso_ctx()
 
     uvalue = value.value
-
     if isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
         p = ctx.proxify(uvalue, history=value.provenance)

@@ -411,19 +411,14 @@ def test_litgpt():
     bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
     module = bench.fn()
 
-    # work around the litjit not yet understanding modules
-    def fn(*args, **kwargs):
-        return module(*args, **kwargs)
-
     args, kwargs = bench.make_batch()
 
-    jfn = litjit(fn)
+    jfn = litjit(module)
     result = jfn(*args, **kwargs)
 
-    assert_close(result, fn(*args, **kwargs))
+    assert_close(result, module(*args, **kwargs))
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2004", raises=BaseException)
 def test_nanogpt_block():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -432,22 +427,14 @@ def test_nanogpt_block():
     bench = NanoGPTBlockBenchmark(config=config, device="cpu")
     module = bench.fn()
 
-    # gelu needs strings...
-    module.mlp.gelu = torch.nn.ReLU()
-
-    # work around the litjit not yet understanding modules
-    def fn(*args, **kwargs):
-        return module(*args, **kwargs)
-
     args, kwargs = bench.make_batch()
 
-    jfn = litjit(fn)
+    jfn = litjit(module)
     result = jfn(*args, **kwargs)
 
-    assert_close(result, fn(*args, **kwargs))
+    assert_close(result, module(*args, **kwargs))
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2004", raises=BaseException)
 def test_nanogpt_attn():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -476,9 +463,6 @@ def test_nanogpt_mlp():
     config.update(**_nanogpt_configs["gpt2"])
     bench = NanoGPTBlockBenchmark(config=config, device="cpu")
     module = bench.fn().mlp
-
-    # workaround for gelu
-    module.gelu = torch.nn.ReLU()
 
     args, kwargs = bench.make_batch()
 
