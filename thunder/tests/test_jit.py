@@ -291,6 +291,123 @@ def test_string_return(jit):
     assert actual == expected
 
 
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_binary_add_strings(jit):
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo("he", "llo")
+    expected = "hello"
+
+    assert actual == expected
+
+
+#
+# No caching tests
+#
+# TODO GTC Simple test that the option works and programs run as expected
+
+#
+# Same input caching tests
+#
+# TODO GTC Verify works and fails as expected
+
+
+#
+# Constant values caching tests
+#
+@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
+def test_constant_values_caching(jit):
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    expected = foo(a, b)
+    actual = jfoo(a, b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(a, b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    c = torch.rand((2, 1))
+
+    expected = foo(a, c)
+    actual = jfoo(a, c)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    actual = jfoo(a, c)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+    expected = foo(b, c)
+    actual = jfoo(b, c)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 3
+
+    expected = foo(a, 1)
+    actual = jfoo(a, 1)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 3
+
+    actual = jfoo(a, 1)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 4
+
+    expected = foo(a, 2)
+    actual = jfoo(a, 2)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 4
+    assert thunder.cache_hits(jfoo) == 4
+
+    actual = jfoo(a, 2)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 4
+    assert thunder.cache_hits(jfoo) == 5
+
+    expected = foo("he", "llo")
+    actual = jfoo("he", "llo")
+    assert expected == actual
+
+    assert thunder.cache_misses(jfoo) == 5
+    assert thunder.cache_hits(jfoo) == 5
+
+    actual = jfoo("he", "llo")
+    assert expected == actual
+
+    assert thunder.cache_misses(jfoo) == 5
+    assert thunder.cache_hits(jfoo) == 6
+
+
+#
+# Symbolic values caching tests
+#
+# TODO GTC Add these tests
+
+
 #
 # Sharp edges tests
 #

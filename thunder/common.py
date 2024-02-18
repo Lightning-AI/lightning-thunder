@@ -42,14 +42,17 @@ import numpy as np
 
 
 # Holds statistics and caches for a compiled function
+# TODO GTC Update last_executed to last_computation
+# TODO GTC Review how autograd traces are presented
 class CompileStats:
     def __init__(self):
         # Callables and traces
         self.last_executed = None
         self.last_traces = None
+        self.last_prologue = None
+        self.last_prologue_traces = None
         self.last_interpreted_instructions = None
         self.last_interpreted_history = None
-        self.last_prologue = None
 
         # torch.autograd.Function specific data
         self.primal_trace = None
@@ -133,7 +136,7 @@ class CompileData:
         compile_options: dict[str, Any] = {},
     ):
         # Resolves cache option
-        self.cache_option = cache_option = resolve_cache_option(cache_option)
+        self.cache_option = resolve_cache_option(cache_option)
 
         #
         # Gathers additional metadata

@@ -10,7 +10,7 @@ thunder
     compile_data
     compile_stats
     last_traces
-    last_prologue
+    last_prologue_traces
     cache_option
     cache_hits
     cache_misses

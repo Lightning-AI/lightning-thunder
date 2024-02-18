@@ -2,6 +2,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
+from thunder.core.options import CACHE_OPTIONS
+
 #
 # Setting and querying the "compile_data_and_stats" context variable, which contains
 #   a tuple of (CompileData, CompileStats) objects for the current trace.
@@ -9,38 +11,17 @@ from typing import Any
 
 _compile_data = ContextVar("compile_data", default=(None, None))
 
-#
-# Query helpers
-#
-
-
-def get_compile_option(option: str, description: str, /) -> None | Any:
-    cd, cs = _compile_data.get()
-
-    if cd is None or cs is None:
-        return None
-
-    # See NOTE Different categories of compile options in thunder/__init__.py
-    cs.last_compile_reasons[option].append(description)
-    return cd.compile_options.get(option, None)
-
-
-def using_static_caching() -> bool:
-    cd, cs = get_compile_data()
-
 
 #
 # Setting, getting, and resetting the context variable
 #
 
 
-# TODO GTC Update this name to "get_compile_data_and_stats"
-def get_compile_data():
-    """Returns the current compile data.
-
-    Returns None if there is no compile data.
-    """
+# NOTE This just acquires the compile data part of the context var's tuple
+def get_compile_data() -> None | Any:
+    """Returns the current compile data."""
     cd, cs = _compile_data.get()
+
     return cd
 
 
@@ -66,3 +47,33 @@ def compile_data_and_stats(cd, cs, /):
         yield
     finally:
         reset_compile_data_and_stats(token)
+
+
+#
+# Query helpers
+#
+
+
+def get_compile_option(option: str, description: str, /) -> None | Any:
+    cd, cs = _compile_data.get()
+
+    if cd is None or cs is None:
+        return None
+
+    # See NOTE Different categories of compile options in thunder/__init__.py
+    cs.last_compile_reasons[option].append(description)
+    return cd.compile_options.get(option, None)
+
+
+# Whether or not the caching option uses symbolic values
+def get_cache_option() -> CACHE_OPTIONS:
+    cd = get_compile_data()
+    return cd.cache_option
+
+
+# TODO GTC Remove the try (hack for when operating outside of this contextvar being set)
+def using_symbolic_values() -> bool:
+    try:
+        return get_cache_option() is CACHE_OPTIONS.SYMBOLIC_VALUES
+    except:
+        return False

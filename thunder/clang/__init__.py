@@ -9,15 +9,14 @@ import operator
 from types import EllipsisType, NoneType
 import copy
 
-import torch
-
+from thunder.core.compile_data import using_symbolic_values
 from thunder.clang.langctx import register_method
 from thunder.core.langctxs import langctx, Languages
 
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, pyval, pytype
+from thunder.core.proxies import TensorProxy, pyval, pytype, proxy
 import thunder.core.devices as devices
 from thunder.core.script.noinline import noinline
 
@@ -52,11 +51,27 @@ class clangop:
 
 
 #
+# Unpacking operations
 #
-#
+
+
+# Checks a tensor's shape and metadata (for use with "constant value" caching)
 @clangop()
-def unpack_torch_tensor(t: torch.Tensor, /) -> tuple[TensorProxy, tuple[int]]:
-    pass
+def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
+    return prims.check_tensor_shape_and_metadata(
+        t, tuple(t.shape), str(t.device), dtypes.to_torch_dtype(t.dtype), t.requires_grad
+    )
+
+
+# Checks a number's value
+@clangop()
+def check_number_type_and_value(n: Number, value: Number, /) -> None:
+    return prims.check_number_type_and_value(n, value)
+
+
+@clangop()
+def check_string_value(s: str, value: str, /) -> None:
+    return prims.check_string_value(s, value)
 
 
 #

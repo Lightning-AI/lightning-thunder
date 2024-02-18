@@ -181,4 +181,4 @@ def to_torch_device(x: None | str | torch.device | Device, /) -> None | torch.de
         return x
 
     baseutils.check_type(x, (Device, str))
-    return str(x)
+    return torch.device(str(x))

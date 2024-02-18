@@ -10,6 +10,7 @@ import operator
 import builtins
 import math
 
+from thunder.core.compile_data import using_symbolic_values
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
@@ -342,10 +343,10 @@ class StringProxy(Proxy, str):
 
     def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None):
         Proxy.__init__(self, name=name, history=history)
-        self._s: str = s
+        self.value: str = s
 
     def __str__(self) -> str:
-        return self._s
+        return self.value
 
     def type_string(self) -> str:
         return "str"
@@ -704,24 +705,32 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return NotImplemented
 
 
-def pyval(x: NumberProxy | Number) -> Number:
-    baseutils.check_type(x, (NumberProxy, Number))
+def pyval(x: Number | str) -> Number | str:
+    baseutils.check_type(x, (Number, str))
 
     # NOTE This has to query NumberProxy, not Number, because NumberProxies are Numbers
     #   (but not all Numbers are NumberProxies)
-    if isinstance(x, NumberProxy):
+    if isinstance(x, (NumberProxy, StringProxy)):
         return x.value
 
     return x
 
 
-def pytype(x: NumberProxy | Number) -> type:
-    baseutils.check_type(x, (NumberProxy, Number))
+def pytype(x: Number | str) -> type:
+    baseutils.check_type(x, (Number, str))
 
-    if isinstance(x, NumberProxy):
-        return x.python_type
-
-    return type(x)
+    if isinstance(x, complex):
+        return complex
+    if isinstance(x, float):
+        return float
+    if isinstance(x, bool):
+        return bool
+    if isinstance(x, IntegerProxy) and x.python_type is bool:
+        return bool
+    if isinstance(x, int):
+        return int
+    if isinstance(x, str):
+        return str
 
 
 # TODO GTC Update Proxy number inits to be value, /, *, name, history
@@ -836,7 +845,12 @@ def _infer_tensor_properties(
     _ddp_type = ddp_type if ddp_type is not None else _ddp_type
 
     # Extracts actual values for shape
-    # TODO This will need to be revisited when we add support for dynamic constraints
+    # TODO GTC Enable this
+    if using_symbolic_values():
+        raise NotImplementedError(
+            f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
+        )
+
     _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties

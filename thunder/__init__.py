@@ -41,19 +41,24 @@ from thunder.common import (
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
-from thunder.core.compile_data import compile_data_and_stats
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values
 from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
 from thunder.core.codeutils import get_siginfo, SigInfo
-from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy
+from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy, pyval
 from thunder.core.jit_ext import minimal_thunder_jit
-
-# The following executors are always available, and so are unconditionally imported
-from thunder.executors import pythonex, torchex, nvfuserex, sdpaex
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
-import thunder.torch
+
+import thunder.clang as clang
+
+# Imports executors (to populate default executors and make them accessible)
+import thunder.executors.pythonex
+import thunder.executors.torchex
+import thunder.executors.nvfuserex
+
+pythonex = extend.get_executor("python")
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -177,9 +182,11 @@ def _eager_unpacking_interpreter(
     # TODO GTC Consider supporiting arbitrary object inputs
     supported_input_types = (
         Number,
-        pytorch.Tensor,
         str,
+        pytorch.Tensor,
     )
+
+    si: SigInfo = get_siginfo(fn, args, kwargs)
 
     for arg in args:
         if not isinstance(arg, supported_input_types):
@@ -187,42 +194,85 @@ def _eager_unpacking_interpreter(
                 f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supports input types are {supported_input_types}"
             )
 
-    si: SigInfo = get_siginfo(fn, args, kwargs)
-
+    if len(si.kwargs) > 0:
+        raise NotImplementedError("kwargs are not yet supported")
     if si.varargs is not None:
         raise NotImplementedError("varargs are not yet supported")
+    if si.varkwargs is not None:
+        raise NotImplementedError("varkwargs are not yet supported")
 
     # Constructs the prologue trace (which just trivially unpacks the tensor arguments for now)
     # TODO GTC Remove the no_grad and no_autocast context managers from this trace
     # TODO GTC Provide a mechanism to add context managers to the prologue and computation functions
     # TODO GTC Don't always import torch in traces (particularly the prologue trace)
+    csi = SigInfo("computation")
+    csi.args = []
+    proxyargs = []
+    callargs = []
+    rargs = []
+    co: CACHE_OPTIONS = get_cache_option()
     with tracectx(prologue_trc):
-        proxyargs = []
         for name, x in si.args:
             p = proxy(x, name=name)
+            prims.unpack_trivial(p)
             proxyargs.append(p)
 
-        p: Proxy
-        for p in proxyargs:
-            prims.unpack_trivial(p)
+            # TODO GTC Refactor
+            # TODO GTC Add support for None
+            # TODO GTC Add support for sequences and maps
+            # TODO GTC Add support for modules
+            if isinstance(p, TensorProxy):
+                callargs.append(p)
+                rargs.append(p)
+                csi.args.append((name, None))
+                if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                    clang.check_tensor_shape_and_metadata(p)
+                elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                    raise NotImplementedError(
+                        f"Trying to unpack a tensor with symbolic values, but this is not supported yet"
+                    )
+            elif isinstance(p, Number):
+                if using_symbolic_values():
+                    raise NotImplementedError(
+                        f"Trying to unpack a number with symbolic values, but this is not supported yet"
+                    )
+                else:
+                    val = pyval(p)
+                    callargs.append(val)
+                    if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                        clang.check_number_type_and_value(p, val)
+                    elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                        raise NotImplementedError(
+                            f"Trying to unpack a number with symbolic values, but this is not supported yet"
+                        )
 
-        prims.python_return(proxyargs)
+            elif isinstance(p, str):
+                val = pyval(p)
+                callargs.append(val)
+                if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                    clang.check_string_value(p, val)
+                elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                    raise NotImplementedError(
+                        f"Trying to unpack a number with symbolic values, but this is not supported yet"
+                    )
+            else:
+                raise AssertionError(f"Fell through unpacking")
+
+        prims.python_return(tuple(rargs))
 
     prologue_trc.args = proxyargs
 
     with tracectx(computation_trc):
         # TODO GTC Only unpack what's used in the computation
         p: Proxy
-        for p in proxyargs:
+        for p in rargs:
             prims.unpack_trivial(p)
 
-        result = interpreter(fn)(*proxyargs)
+        result = interpreter(fn)(*callargs)
         prims.python_return(result)
 
     # Constructs the computation trace's signature
-    si = SigInfo("computation")
-    si.args = list((p.name, None) for p in proxyargs)
-    computation_trc._siginfo = si
+    computation_trc._siginfo = csi
     computation_trc.args = proxyargs
 
     return prologue_trc, computation_trc
@@ -262,7 +312,7 @@ def jit(
     executors: None | Sequence[Executor] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
-    cache: None | CACHE_OPTIONS | str = CACHE_OPTIONS.NO_CACHING,
+    cache: None | CACHE_OPTIONS | str = None,
     **compile_options,
 ) -> Callable:
     # Resolves langctx
@@ -322,8 +372,42 @@ def jit(
 
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-            raise NotImplementedError(f"Only the 'no caching' cache mode is currently supported.")
+        if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
+            for pro, pro_traces, comp, comp_traces in cs.interpreter_cache:
+                try:
+                    inps = pro(*args, **kwargs)
+                except Exception as ex:
+                    continue
+
+                result = comp(*inps)
+                # Updates cache statistics
+                # TODO GTC Update all of these
+                cs.cache_hits += 1
+                cs.last_executed = comp
+                cs.last_traces = comp_traces
+                cs.last_interpreted_instructions = None
+                cs.last_interpreted_history = None
+                cs.last_prologue_traces = pro_traces
+                cs.last_prologue = pro
+                return result
+
+        if cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES:
+            raise NotImplementedError(f"Symbolic values caching is not yet supported")
+        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
+            if len(cs.interpreter_cache):
+                pro, pro_traces, comp, comp_traces = cs.interpreter_cache[0]
+                inps = pro(*args, **kwargs)
+                result = comp(*inps)
+                # Updates cache statistics
+                # TODO GTC Update all of these
+                cs.cache_hits += 1
+                cs.last_executed = comp
+                cs.last_traces = comp_traces
+                cs.last_interpreted_instructions = None
+                cs.last_interpreted_history = None
+                cs.last_prologue_traces = pro_traces
+                cs.last_prologue = pro
+                return result
 
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.time_ns()
@@ -357,6 +441,15 @@ def jit(
 
             cs.last_trace_tracing_stop = time.time_ns()
 
+            # Makes the prologue callable
+            protraces = transform_for_execution(
+                prologue_trc,
+                executors_list=(pythonex,),
+                use_del_last_used=False,
+            )
+            protrace = protraces[-1]
+            pro = protrace.python_callable()
+
             # TODO GTC Apply transforms
 
             # TODO GTC Update this transform's parameters to take 'executors' instead of 'executors_list'
@@ -364,10 +457,8 @@ def jit(
                 computation_trc,
                 executors_list=cd.executors_list,
             )
-
             extrace = extraces[-1]
 
-            pro = prologue_trc.python_callable()
             comp = extrace.python_callable()
 
             # Executes the traced program
@@ -376,12 +467,14 @@ def jit(
             cs.last_trace_host_execution_stop = time.time_ns()
 
             # TODO GTC Update the cache
-            # Updates metadata
-            # TODO GTC Populate last_traces properly
+            if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
+                cs.interpreter_cache.append((pro, protraces, comp, extraces))
+
+            # Updates statistics
             cs.last_traces = extraces
-            # TODO GTC Populate last executed properly (prologue + computation + consider backward)
             cs.last_executed = comp
-            cs.last_prologue = prologue_trc
+            cs.last_prologue_traces = protraces
+            cs.last_prologue = pro
 
             cs.last_trace_host_stop = time.time_ns()
 
@@ -447,13 +540,13 @@ def last_traces(fn) -> list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
     return cs.last_traces
 
 
-def last_prologue(fn) -> TraceCtx:
+def last_prologue_traces(fn) -> TraceCtx:
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.last_prologue is None:
+    if cs.last_prologue_traces is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_prologue
+    return cs.last_prologue_traces
 
 
 def cache_option(fn) -> CACHE_OPTIONS:

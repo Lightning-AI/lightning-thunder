@@ -10,12 +10,16 @@ import cmath
 from types import ModuleType
 import platform
 
+import torch
+
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
+import thunder.core.devices as devices
+import thunder.core.utils as utils
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
@@ -36,6 +40,43 @@ def _always_executable(*args, **kwargs) -> bool:
 
 def _never_executable(*args, **kwargs) -> bool:
     return False
+
+
+#
+# Unpacking primitives
+#
+def _check_tensor_shape_and_metadata_impl(
+    t: torch.Tensor, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+) -> None:
+    assert tuple(t.shape) == shape and str(t.device) == device and t.dtype == dtype and t.requires_grad == requires_grad
+
+
+check_tensor_shape_and_metadata = ex.register_operator(
+    "check_tensor_metadata", like=prims.check_tensor_shape_and_metadata, fn=_check_tensor_shape_and_metadata_impl
+)
+ex.register_implementation(
+    prims.check_tensor_shape_and_metadata, check_tensor_shape_and_metadata, checker=_always_executable
+)
+
+
+def _check_number_type_and_value_impl(n: Number, v: Number) -> None:
+    assert type(n) == type(v) and n == v
+
+
+check_number_type_and_value = ex.register_operator(
+    "check_number_type_and_value", like=prims.check_number_type_and_value, fn=_check_number_type_and_value_impl
+)
+ex.register_implementation(prims.check_number_type_and_value, check_number_type_and_value, checker=_always_executable)
+
+
+def _check_string_value_impl(s: str, value: str) -> None:
+    assert s == value
+
+
+check_string_value = ex.register_operator(
+    "check_string_value", like=prims.check_string_value, fn=_check_string_value_impl
+)
+ex.register_implementation(prims.check_string_value, check_string_value, checker=_always_executable)
 
 
 #

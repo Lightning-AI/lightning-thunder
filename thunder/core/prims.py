@@ -71,6 +71,7 @@ from thunder.core.proxies import (
     numberproxy,
     pytype,
     Proxy,
+    StringProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -90,6 +91,9 @@ from thunder.core.langctxs import langctx, LanguageContext, register_langctx, La
 class PrimIDs(Enum):
     # Unpacking and input validation prims
     ASSERT_TENSOR_METADATA = auto()
+    CHECK_TENSOR_SHAPE_AND_METADATA = auto()
+    CHECK_NUMBER_TYPE_AND_VALUE = auto()
+    CHECK_STRING_VALUE = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
     UNPACK_FUNCTION_OBJ = auto()
@@ -423,39 +427,62 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
     return x
 
 
+# TODO GTC Align with ASSERT_TENSOR_METADATA
+# NOTE The device is stored as a string for easier, more readable comparisons
+def _check_tensor_shape_and_metadata_meta(
+    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+) -> None:
+    # Validates types
+    baseutils.check_type(t, TensorProxy)
+    baseutils.check_valid_shape(shape)
+    baseutils.check_type(device, str)
+    baseutils.check_type(dtype, torch.dtype)
+    baseutils.check_type(requires_grad, bool)
+
+
+check_tensor_shape_and_metadata = make_prim(
+    PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
+    "check_tensor_metadata",
+    meta=_check_tensor_shape_and_metadata_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_number_type_and_value_meta(n: NumberProxy, value: Number) -> None:
+    # Validates types
+    baseutils.check_type(n, NumberProxy)
+    baseutils.check_type(value, Number)
+    baseutils.check(pytype(n) == pytype(value), lambda: f"Different types for {n} and {value}")
+
+
+check_number_type_and_value = make_prim(
+    PrimIDs.CHECK_NUMBER_TYPE_AND_VALUE,
+    "check_number_type_and_value",
+    meta=_check_number_type_and_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_string_value_meta(s: StringProxy, value: str) -> None:
+    # Validates types
+    baseutils.check_type(s, StringProxy)
+    baseutils.check_type(value, str)
+
+
+check_string_value = make_prim(
+    PrimIDs.CHECK_STRING_VALUE,
+    "check_string_value",
+    meta=_check_string_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
 def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
     return x
 
 
 def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
     return _collectify(x, name=name)
-
-
-def unpack_function_obj_impl(x: Any, /, *, name: str | None = None) -> Any:
-    return x
-
-
-def unpack_function_obj_meta(x: Any, /, *, name: str | None = None) -> Any:
-    return x
-
-
-def unpack_function_obj_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
-) -> str:
-    utils.check(
-        len(arg_printables) == 0,
-        lambda: f"Expected zero arguments for unpack_trivial but got {arg_printables}",
-        exception_type=AssertionError,
-    )
-    utils.check(
-        len(kwarg_printables) <= 1,
-        lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
-        exception_type=AssertionError,
-    )
-
-    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
-    s = f"{result_str} = globals()['__function_obj']"
-    return s
 
 
 def unpack_trivial_printer(
@@ -490,6 +517,33 @@ unpack_trivial = make_prim(
     python_impl=unpack_trivial_impl,
     _bind_postprocess=_unpack_trivial_bind_postprocess,
 )
+
+
+def unpack_function_obj_impl(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_function_obj_meta(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_function_obj_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 0,
+        lambda: f"Expected zero arguments for unpack_trivial but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) <= 1,
+        lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    s = f"{result_str} = globals()['__function_obj']"
+    return s
 
 
 unpack_function_obj = make_prim(

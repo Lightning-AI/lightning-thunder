@@ -52,7 +52,7 @@ def indent_string(indent):
 #   readable names
 # TODO Refine imports so that devices can print as Devices("cuda:0") instead of
 #   having to qualify as devices.Devices
-def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
+def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
     if x is None:
         return True, None
     if isinstance(x, ContextObject):
@@ -67,14 +67,17 @@ def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
         return True, None
     if isinstance(x, dtypes.dtype):
         return True, ("dtypes", dtypes)
+    if isinstance(x, torch.dtype):
+        return True, ("torch", torch)
     if isinstance(x, devices.Device):
         return True, ("devices", devices)
+    if isinstance(x, torch.device):
+        return True, None
     if x in (bool, int, float, complex):
         return True, None
     if isinstance(x, Number):
         return True, None
-    if isinstance(x, torch.dtype):
-        return True, ("torch", torch)
+
     if isinstance(x, slice):
         return True, None
     if x is Ellipsis:
@@ -302,6 +305,8 @@ def prettyprint(
         return m(f"dtypes.{str(x)}")
     if isinstance(x, devices.Device):
         return m(f'devices.Device("{str(x)}")')
+    if isinstance(x, torch.device):
+        return m(f'"{str(x)}"')
     if x is bool:
         return m("bool")
     if x is int:
