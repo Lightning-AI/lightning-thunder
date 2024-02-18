@@ -147,6 +147,7 @@ asinh = ex.register_operator("asinh", like=prims.asinh, module=math)
 atan = ex.register_operator("atan", like=prims.atan, module=math)
 atanh = ex.register_operator("atanh", like=prims.atanh, module=math)
 py_abs = ex.register_operator("abs", like=prims.py_abs, module=builtins)
+py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
 tensor_abs = ex.register_operator("tensor_abs", like=prims.abs, fn=_tensor_abs_prim_impl)
 neg = ex.register_operator("neg", like=prims.neg, module=operator)
 real = ex.register_operator("real", like=prims.real, fn=_real_prim_impl)
@@ -210,6 +211,7 @@ def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy
 add = ex.register_operator("add", like=prims.add, module=operator)
 
 ex.register_implementation(prims.add, add, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.py_floordiv, py_floordiv, checker=_elementwise_binary_checker)
 
 # TODO Restore the operations below (updating them to the new style)
 
