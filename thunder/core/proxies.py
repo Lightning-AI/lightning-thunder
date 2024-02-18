@@ -1340,9 +1340,9 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
 
     if isinstance(x, Number):
         if isinstance(x, complex):
-            return ComplexProxy(name=name, value=x)
+            return ComplexProxy(name=name, value=x, history=history)
         if isinstance(x, float):
-            return FloatProxy(name=name, value=x)
+            return FloatProxy(name=name, value=x, history=history)
         if isinstance(x, int):
             return IntegerProxy(name=name, value=x, history=history)
 

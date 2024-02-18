@@ -26,20 +26,20 @@ def _unknown_option(option_name: str, allowed: Sequence[str], default: str, unkn
 # PYTHON_INTERPRETER uses the actual Python interpreter to construct the thunder program.
 # TRANSLATE_FUNCTIONS is the default option. It uses the thunder interpreter to translate PyTorch operation
 #   to thunder operations. For example, torch.add becomes thunder.torch.add.
-# TRANSLATE_EVERYTHING is an experimental option. It lets the thunder interpreter translate
+# TRANSLATE_PYTHON is an experimental option. It lets the thunder interpreter translate
 #   the entire function a thunder program.
 
 
 class INTERPRETATION_OPTIONS(Enum):
     PYTHON_INTERPRETER = auto()
     TRANSLATE_FUNCTIONS = auto()
-    TRANSLATE_EVERYTHING = auto()
+    TRANSLATE_PYTHON = auto()
 
 
 _str_to_interpretation_option_map: dict[str, INTERPRETATION_OPTIONS] = {
     "python interpreter": INTERPRETATION_OPTIONS.PYTHON_INTERPRETER,
     "translate functions": INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS,
-    "translate everything": INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING,
+    "translate python": INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
 }
 
 
@@ -61,9 +61,9 @@ def resolve_interpretation_option(x: Any, /) -> INTERPRETATION_OPTIONS:
     if io is None:
         _unknown_option("interpretation", _str_to_interpretation_option_map.keys(), "translate functions", x)
 
-    if io is INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING:
+    if io is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         warnings.warn(
-            "The 'translate everything' cache option is experimental and still in development. It may not work as expected."
+            "The 'translate python' instepretation option is experimental and still in development. It may not work as expected."
         )
 
     return io

@@ -13,14 +13,16 @@ from torch.testing import assert_close
 import thunder
 from thunder.core.jit import is_jitting, jit, JITError
 
-from thunder.core.jit_ext import litjit
 import thunder.clang as clang
+from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
 import thunder.core.prims as prims
 
 #
 # Test suite for the litjit extension of the Python interpreter
 #
+
+litjit = partial(thunder.jit, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
 
 
 def skipif_python_3_11_plus(f):
@@ -193,7 +195,7 @@ def test_cache_always_trace():
     def foo(a, b):
         return a + b
 
-    jfoo = litjit(foo, cache_option="no caching")
+    jfoo = litjit(foo, cache=CACHE_OPTIONS.NO_CACHING)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -204,7 +206,7 @@ def test_cache_always_trace():
     actual = jfoo(a, b)
     actual = jfoo(a, b)
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 0
+    assert thunder.cache_misses(jfoo) == 4
     assert thunder.cache_hits(jfoo) == 0
 
 

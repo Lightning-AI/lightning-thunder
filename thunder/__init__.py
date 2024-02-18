@@ -46,7 +46,7 @@ from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
 from thunder.core.codeutils import get_siginfo, SigInfo
 from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy, pyval
-from thunder.core.jit_ext import minimal_thunder_jit
+from thunder.core.jit_ext import minimal_thunder_jit, meso_thunder_interpreter
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -301,6 +301,13 @@ def _translate_functions_interpreter(
     return _eager_unpacking_interpreter(pjit, fn, args, kwargs, interpreter_name="translate functions")
 
 
+# Translates the Python function to a thunder program using the thunder interpreter
+def _translate_python_interpreter(
+    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
+) -> tuple[TraceCtx, TraceCtx]:
+    return meso_thunder_interpreter(fn, args, kwargs, sharp_edges=sharp_edges)
+
+
 # This function will replace compile() (below) before gtc
 # TODO GTC Consider adding a debug_log parameter to control debug printing
 # TODO GTC Consider renaming compile_options to additional_compile_options
@@ -423,6 +430,8 @@ def jit(
             interpreter = _python_interpreter
         elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS:
             interpreter = _translate_functions_interpreter
+        elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
+            interpreter = _translate_python_interpreter
         else:
             raise NotImplementedError(
                 f"Only the 'python interpreter' and 'translate functions' interpretation options are currently implemented."

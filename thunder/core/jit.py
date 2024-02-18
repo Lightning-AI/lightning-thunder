@@ -88,13 +88,6 @@ __all__ = [
 #
 
 
-class WRAPPED_VALUE_TYPE(enum.Enum):
-    INPUT = enum.auto()
-    INTERMEDIATE = enum.auto()
-    CONSTANT = enum.auto()
-    FREEVAR = enum.auto()
-
-
 # WrappedValues
 
 # In provenance tracking mode (set in the compile ctx), the JIT wraps the
@@ -125,23 +118,18 @@ class WRAPPED_VALUE_TYPE(enum.Enum):
 
 
 class WrappedValue:
-    def __init__(self, value, /, typ: WRAPPED_VALUE_TYPE, provenance: ProvenanceRecord):
+    def __init__(self, value, /, *, provenance: ProvenanceRecord):
         assert isinstance(provenance, ProvenanceRecord)
 
         ctx: JitCompileCtx = get_jitcompilectx()
         runtimectx: JitCompileCtx = get_jitruntimectx()
-        cb: None | Callable = ctx.callback(JIT_CALLBACKS.WRAP_CALLBACK)
 
-        self.typ = typ
         self.python_typ = type(value)
 
         self.nothing = object()
         self.original_value = self.nothing
 
         self.has_item_tracking = False
-
-        if cb is not None:
-            value = cb(self, value)
 
         self.value = value
 
@@ -160,6 +148,10 @@ class WrappedValue:
             self.provenance.value = value
 
         runtimectx.cache_wrapper(self)
+
+        cb: None | Callable = ctx.callback(JIT_CALLBACKS.WRAP_CALLBACK)
+        if cb is not None:
+            cb(self)
 
     def track_items(self):
         if self.has_item_tracking:
@@ -207,7 +199,7 @@ def wrapped_build_tuple(l: list[WrappedValue]) -> WrappedValue:
     assert all(isinstance(v, WrappedValue) for v in l)
     if l:
         pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in l][::-1])  # other inst?
-        out = wrap(tuple(v.value for v in l), typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+        out = wrap(tuple(v.value for v in l), provenance=pr)
         out.item_wrappers = list(l)
     else:
         # Note: if we revisit returning const here instead of an empty tuple from BUILD_TUPLE, we need to add this to wrap_aergs
@@ -242,15 +234,13 @@ def wrap_kwargs(d):
         wrap_key_dict[wk.value] = wk
 
     pr = ProvenanceRecord(PseudoInst.BUILD_DICT, inputs=inputs)
-    out = wrap(uout, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+    out = wrap(uout, provenance=pr)
     out.item_wrappers = wrap_value_dict
     out.key_wrappers = wrap_key_dict
     return out
 
 
-def wrap(
-    value: Any, /, typ: WRAPPED_VALUE_TYPE = WRAPPED_VALUE_TYPE.INTERMEDIATE, *, provenance: ProvenanceRecord
-) -> WrappedValue:
+def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
     if isinstance(value, WrappedValue):
         if isinstance(value.value, list):
             assert len(value.value) == len(
@@ -275,14 +265,14 @@ def wrap(
                 return potential_wrap
             else:
                 del runtimectx._known_wrappers[id(value)]
-        return WrappedValue(value, typ, provenance)
+        return WrappedValue(value, provenance=provenance)
     return value
 
 
 def wrap_const(value: Any, /, *, provenance: ProvenanceRecord | None = None) -> WrappedValue:
     if provenance is None:
         provenance = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value=value)
-    return wrap(value, typ=WRAPPED_VALUE_TYPE.CONSTANT, provenance=provenance)
+    return wrap(value, provenance=provenance)
 
 
 def wrap_consts(*values):
@@ -316,6 +306,14 @@ def populate_attribute_wrapper(wrapped_object, name, wrapped_attribute):
     wrapped_object.attribute_wrappers[name] = wrapped_attribute
 
 
+def wrap_binary_subscr(uvalue, obj, key):
+    if not isinstance(key, WrappedValue):
+        key = wrap_const(key)
+    if obj.provenance.inst is PseudoInst.CONSTANT and key.provenance.inst is PseudoInst.CONSTANT:
+        return wrap_const(uvalue)
+    return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[obj.provenance, key.provenance]))
+
+
 def populate_item_wrappers(l):
     ctx: JitCompileCtx = get_jitcompilectx()
     if not ctx._with_provenance_tracking:
@@ -331,8 +329,7 @@ def populate_item_wrappers(l):
 
         for i, v in enumerate(l.value):
             if l.item_wrappers[i] is None:
-                pr = ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[wrap_const(i).provenance, l.provenance])
-                wv = wrap(v, provenance=pr)
+                wv = wrap_binary_subscr(v, l, i)
                 l.item_wrappers[i] = wv
         return
 
@@ -341,8 +338,7 @@ def populate_item_wrappers(l):
         for k, v in l.value.items():
             if k not in l.item_wrappers:
                 wk = wrap_const(k)
-                pr = ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[wk.provenance, l.provenance])
-                wv = wrap(v, provenance=pr)
+                wv = wrap_binary_subscr(v, l, wk)
                 l.item_wrappers[k] = wv
                 l.key_wrappers[k] = wk  # or have those from an iteration of the input?
         return
@@ -951,7 +947,7 @@ class InterpreterStack:
             output_idx=self.output_idx,
             output_key=key,
         )
-        value = wrap(value, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+        value = wrap(value, provenance=pr)
         self.output_idx += 1
         return value
 
@@ -1001,7 +997,7 @@ class InterpreterStack:
             if isinstance(val.value, tuple):
                 val.track_items()
                 for u, v in zip(val.value, val.item_wrappers):
-                    assert u is v.value, f"{u}, {v.value} {unwrap(fn)} {[unwrap(a) for a in args]}"
+                    assert u is v.value or u is v.original_value, f"{u}, {v.value}"
         self._stack.append(self.get_provenance_record(val))
 
     def extend(self, vals: Iterable[Any], /) -> None:
@@ -1853,13 +1849,15 @@ class SequenceWrapperMethods:
                 # TODO: callback to allow LitJit to assert length of list/tuple
                 #       either only for uidx < 0 or for any uid
                 uidx += len(uself)
-            assert self.item_wrappers[uidx].value is self.value[uidx]
+            assert (
+                self.item_wrappers[uidx].value is self.value[uidx]
+                or self.item_wrappers[uidx].original_value is self.value[uidx]
+            )
             return self.item_wrappers[uidx]
 
         if isinstance(uidx, slice):
             ures = uself[uidx]  # errors?
-            pr = ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[idx.provenance, self.provenance])
-            res = wrap(ures, provenance=pr)
+            res = wrap_binary_subscr(ures, self, idx)
             res.item_wrappers = self.item_wrappers[uidx]
             return res
 
@@ -5637,7 +5635,7 @@ def _jit_inner(
                 inst=PseudoInst.LOOKASIDE,
                 inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
             )
-            res = wrap(res, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+            res = wrap(res, provenance=pr)
         return res
 
     # TODO: disabled as partial is just like any other class
@@ -5670,7 +5668,7 @@ def _jit_inner(
                 inst=PseudoInst.OPAQUE,
                 inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
             )
-            opaque_result = wrap(opaque_result, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=pr)
+            opaque_result = wrap(opaque_result, provenance=pr)
         return opaque_result
 
     # (5) Handle types
@@ -6102,19 +6100,16 @@ def jit(
                 # We thus have three special INPUTs for the entry function: INPUT_ARGS, INPUT_KWARGS, INPUT_FN
                 args = wrap(
                     args,
-                    WRAPPED_VALUE_TYPE.INPUT,
                     provenance=ProvenanceRecord(inst=PseudoInst.INPUT_ARGS, inputs=[]),
                 )
 
                 kwargs = wrap(
                     kwargs,
-                    WRAPPED_VALUE_TYPE.INPUT,
                     provenance=ProvenanceRecord(inst=PseudoInst.INPUT_KWARGS, inputs=[]),
                 )
 
                 fn_wrapped = wrap(
                     fn,
-                    WRAPPED_VALUE_TYPE.INPUT,
                     provenance=ProvenanceRecord(inst=PseudoInst.INPUT_FN, inputs=[]),
                 )
 
@@ -6129,12 +6124,7 @@ def jit(
                     wrapped_closure = wrap_attribute(
                         wrapped_fn_2.value.__closure__, wrapped_fn_2, wrap_const("__closure__")
                     )
-                    wrapped_cell = wrap(
-                        wrapped_closure.value[0],
-                        provenance=ProvenanceRecord(
-                            PseudoInst.BINARY_SUBSCR, inputs=[wrap_const(0).provenance, wrapped_closure.provenance]
-                        ),
-                    )
+                    wrapped_cell = wrap_binary_subscr(wrapped_closure.value[0], wrapped_closure, 0)
                     wrapped_closure.item_wrappers[0] = wrapped_cell
                     populate_attribute_wrapper(wrapped_cell, "cell_contents", fn_wrapped)
 
