@@ -468,3 +468,18 @@ def test_nanogpt_mlp():
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))
+
+
+def test_nanogpt():
+    from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig, _nanogpt_configs
+
+    config: NanoGPTConfig = NanoGPTConfig(dropout=0, n_layer=2)
+    config.update(**_nanogpt_configs["test"])
+    bench = NanoGPTBenchmark(config=config, device="cpu")
+    fn = bench.fn()
+
+    args, kwargs = bench.make_batch()
+    jfn = tp_jit(fn)
+    result = jfn(*args, **kwargs)
+
+    assert_close(result, fn(*args, **kwargs))

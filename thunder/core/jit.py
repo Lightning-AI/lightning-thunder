@@ -18,6 +18,8 @@ import weakref
 import torch
 from typing import Any, Literal, NamedTuple, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
+import collections
+
 from io import StringIO
 
 from types import (
@@ -526,7 +528,11 @@ class JitRuntimeCtx:
 
     def cache_wrapper(self, wrapped_value: WrappedValue):
         compilectx: JitCompileCtx = get_jitcompilectx()
-        if not isinstance(wrapped_value.value, compilectx._uncacheable_classes) and (wrapped_value.value is not ()):
+        # we don't know what wrapped_value does for eq, so "is not ()" is correct here but python does not like "is ()"
+        _empty_tup = ()
+        if not isinstance(wrapped_value.value, compilectx._uncacheable_classes) and (
+            wrapped_value.value is not _empty_tup
+        ):
             self._known_wrappers[id(wrapped_value.value)] = (weakref.ref(wrapped_value),)
 
     @property
@@ -2129,9 +2135,9 @@ class MappingValuesIterator:
     def __init__(self, mapping, is_reversed=False):
         self._mapping = mapping
         if is_reversed:
-            self._key_iter = iter(mapping)
-        else:
             self._key_iter = reversed(mapping)
+        else:
+            self._key_iter = iter(mapping)
 
     def __iter__(self):
         return self
@@ -2152,9 +2158,9 @@ class MappingItemsIterator:
     def __init__(self, mapping, is_reversed=False):
         self._mapping = mapping
         if is_reversed:
-            self._key_iter = mapping.__iter__()
-        else:
             self._key_iter = mapping.__reversed__()
+        else:
+            self._key_iter = mapping.__iter__()
 
     def __iter__(self):
         return self
@@ -2503,6 +2509,7 @@ def _register_provenance_tracking_lookasides(typ, wrapper):
 _register_provenance_tracking_lookasides(tuple, SequenceWrapperMethods)
 _register_provenance_tracking_lookasides(list, MutSequenceWrapperMethods)
 _register_provenance_tracking_lookasides(dict, MutMappingWrapperMethods)
+_register_provenance_tracking_lookasides(collections.OrderedDict, MutMappingWrapperMethods)
 
 
 # The default function lookaside -- currently it doesn't intercept anything
