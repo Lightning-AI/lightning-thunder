@@ -258,7 +258,6 @@ class Symbol:
             result = self.meta(*args, **kwargs)
             trace.pop_scope()
 
-        # TODO Consider a way of expressing the name of the output here
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()
 

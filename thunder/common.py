@@ -126,6 +126,7 @@ class CompileData:
         langctx: None | LanguageContext = None,
         executors_list: None | tuple[Executor, ...] = None,
         cache_option: None | str | CACHE_OPTIONS = None,
+        using_jit: bool = False,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
@@ -135,6 +136,12 @@ class CompileData:
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
     ):
+        # Records whether we're using the thunder.jit() entrypoint or not
+        #   The thunder.jit() entrypoint introduces important architectural updates,
+        #   but some components are still designed to work with older architectures for
+        #   and are being temporarily maintained to facilitate their development.
+        self.using_jit = using_jit
+
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
 

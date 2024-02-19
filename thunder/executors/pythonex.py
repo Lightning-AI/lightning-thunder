@@ -59,6 +59,14 @@ ex.register_implementation(
 )
 
 
+def _check_number_type_impl(n: Number, typ: bool | int | float | complex) -> None:
+    assert type(n) == typ
+
+
+check_number_type = ex.register_operator("check_number_type", like=prims.check_number_type, fn=_check_number_type_impl)
+ex.register_implementation(prims.check_number_type, check_number_type, checker=_always_executable)
+
+
 def _check_number_type_and_value_impl(n: Number, v: Number) -> None:
     assert type(n) == type(v) and n == v
 
@@ -67,6 +75,16 @@ check_number_type_and_value = ex.register_operator(
     "check_number_type_and_value", like=prims.check_number_type_and_value, fn=_check_number_type_and_value_impl
 )
 ex.register_implementation(prims.check_number_type_and_value, check_number_type_and_value, checker=_always_executable)
+
+
+def _check_bool_conversion_impl(n: Number, b: bool, /) -> None:
+    assert bool(n) is b
+
+
+check_bool_conversion = ex.register_operator(
+    "check_bool_conversion", like=prims.check_bool_conversion, fn=_check_bool_conversion_impl
+)
+ex.register_implementation(prims.check_bool_conversion, check_bool_conversion, checker=_always_executable)
 
 
 def _check_string_value_impl(s: str, value: str) -> None:
@@ -147,7 +165,6 @@ asinh = ex.register_operator("asinh", like=prims.asinh, module=math)
 atan = ex.register_operator("atan", like=prims.atan, module=math)
 atanh = ex.register_operator("atanh", like=prims.atanh, module=math)
 py_abs = ex.register_operator("abs", like=prims.py_abs, module=builtins)
-py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
 tensor_abs = ex.register_operator("tensor_abs", like=prims.abs, fn=_tensor_abs_prim_impl)
 neg = ex.register_operator("neg", like=prims.neg, module=operator)
 real = ex.register_operator("real", like=prims.real, fn=_real_prim_impl)
@@ -166,7 +183,6 @@ ex.register_implementation(prims.neg, neg, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.real, real, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_checker)
 
-# TODO Restore the operations below
 
 # # bitwise_not = _elementwise_unary_factory("invert", operator)
 # # ceil = _elementwise_unary_factory("ceil", math)
@@ -209,9 +225,12 @@ def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)
+py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
+lt = ex.register_operator("lt", like=prims.lt, module=operator)
 
 ex.register_implementation(prims.add, add, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.py_floordiv, py_floordiv, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.lt, lt, checker=_elementwise_binary_checker)
 
 # TODO Restore the operations below (updating them to the new style)
 

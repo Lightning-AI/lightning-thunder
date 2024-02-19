@@ -22,7 +22,9 @@ import thunder.core.prims as prims
 # Test suite for the litjit extension of the Python interpreter
 #
 
-litjit = partial(thunder.jit, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
+# TODO GTC Merge this test file with test_jit.py
+
+tp_jit = partial(thunder.jit, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
 
 
 def skipif_python_3_11_plus(f):
@@ -35,7 +37,7 @@ def test_binary_add_tensors():
     def foo(a, b):
         return a + b
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -50,7 +52,7 @@ def test_torch_add_tensors():
     def foo(a, b):
         return torch.add(a, b)
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -70,7 +72,7 @@ def test_torch_add_tensors_closure():
 
         return bar()
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -91,12 +93,12 @@ def test_torch_add_tensors_closure_external():
     def foo():
         bar(b)
 
-    jbar = litjit(bar)
+    jbar = tp_jit(bar)
     actual = jbar(b)
     expected = bar(b)
     assert_close(actual, expected)
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
     actual = jfoo()
     expected = foo()
     assert_close(actual, expected)
@@ -111,7 +113,7 @@ def test_intermediate_torch_operations():
         g = [e, f]
         return torch.cat(g)
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -126,7 +128,7 @@ def test_cache_basic():
     def foo(a, b):
         return a + b
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -195,7 +197,7 @@ def test_cache_always_trace():
     def foo(a, b):
         return a + b
 
-    jfoo = litjit(foo, cache=CACHE_OPTIONS.NO_CACHING)
+    jfoo = tp_jit(foo, cache=CACHE_OPTIONS.NO_CACHING)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -219,7 +221,7 @@ def test_cache_equality_contraint():
         else:
             return y
 
-    jfn = litjit(fn)
+    jfn = tp_jit(fn)
 
     assert_close(fn(True), jfn(True))
     assert_close(fn(False), jfn(False))
@@ -241,7 +243,7 @@ def test_nn_parameter():
     def fn(a):
         return b * a
 
-    jfn = litjit(fn)
+    jfn = tp_jit(fn)
 
     expected = fn(a)
     actual = jfn(a)
@@ -264,17 +266,17 @@ def test_nn_module():
     def fn2(a):
         return m2(a)
 
-    jfn = litjit(fn)
+    jfn = tp_jit(fn)
     expected = fn(a)
     actual = jfn(a)
     assert_close(expected, actual)
 
-    jfn = litjit(fn2)
+    jfn = tp_jit(fn2)
     expected = fn2(a)
     actual = jfn(a)
     assert_close(expected, actual)
 
-    jm = litjit(m.__call__)
+    jm = tp_jit(m.__call__)
 
     expected = m(a)
     actual = jm(a)
@@ -285,7 +287,7 @@ def test_add_numbers():
     def foo(a, b):
         return torch.add(a, b)
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     # TODO Add test for bool
     # See https://github.com/Lightning-AI/lightning-thunder/issues/1990
@@ -307,7 +309,7 @@ def test_binary_add_tensor_number():
     def foo(a):
         return torch.add(a, 3)
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
 
@@ -320,7 +322,7 @@ def test_binary_add_tensor_number():
     def foo(a):
         return a + 4
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     actual = jfoo(a)
     expected = foo(a)
@@ -332,7 +334,7 @@ def test_binary_add_numbers():
     def foo(a, b):
         return a + b
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     # TODO Add test for bool
     # See https://github.com/Lightning-AI/lightning-thunder/issues/1990
@@ -357,7 +359,7 @@ def test_global_fails():
     def foo():
         return _test_add_global_global
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     with pytest.raises(NotImplementedError):
         jfoo()
@@ -372,7 +374,7 @@ def test_nonlocal_outside_interpreter_fails():
             nonlocal x
             x = 4
 
-        jbar = litjit(bar)
+        jbar = tp_jit(bar)
 
         jbar()
 
@@ -388,7 +390,7 @@ def test_lookaside_bool():
             return a + b
         return a - b
 
-    jfoo = litjit(foo)
+    jfoo = tp_jit(foo)
 
     a = torch.randn((2, 2), device="cpu")
     b = torch.randn((2, 2), device="cpu")
@@ -413,12 +415,13 @@ def test_litgpt():
 
     args, kwargs = bench.make_batch()
 
-    jfn = litjit(module)
+    jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))
 
 
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2171")
 def test_nanogpt_block():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -429,12 +432,13 @@ def test_nanogpt_block():
 
     args, kwargs = bench.make_batch()
 
-    jfn = litjit(module)
+    jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))
 
 
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2171")
 def test_nanogpt_attn():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -444,13 +448,13 @@ def test_nanogpt_attn():
     module = bench.fn()
     module = module.attn
 
-    # work around the litjit not yet understanding modules
+    # work around the tp_jit not yet understanding modules
     def fn(*args, **kwargs):
         return module(*args, **kwargs)
 
     args, kwargs = bench.make_batch()
 
-    jfn = litjit(fn)
+    jfn = tp_jit(fn)
     result = jfn(*args, **kwargs)
 
     assert_close(result, fn(*args, **kwargs))
@@ -466,7 +470,7 @@ def test_nanogpt_mlp():
 
     args, kwargs = bench.make_batch()
 
-    jfn = litjit(module)
+    jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
 
     assert_close(result, module(*args, **kwargs))

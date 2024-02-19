@@ -10,7 +10,7 @@ import operator
 import builtins
 import math
 
-from thunder.core.compile_data import using_symbolic_values
+from thunder.core.compile_data import using_symbolic_values, using_jit
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
@@ -348,6 +348,9 @@ class StringProxy(Proxy, str):
     def __str__(self) -> str:
         return self.value
 
+    def __repr__(self) -> str:
+        return f"<StringProxy '{self.value}'>"
+
     def type_string(self) -> str:
         return "str"
 
@@ -424,21 +427,20 @@ class NumberProxy(Proxy, NumberProxyInterface):
             )
             return fn(vala)
 
-        method: Callable
-
-        has_prologue: bool = trace.prologue is not None
-        if has_prologue:
+        if using_jit():
             method: Callable = resolve_method(name, a)
             return method(a)
-        else:
-            # Outside the interpreter this tries to find a method, and if none exists the
-            #   operation silently fallsback to the Python interpreter
-            try:
-                method = resolve_method(name, a)
-            except Exception as e:
-                return fn(vala)
 
-            return method(a)
+        # NOTE not using_jit
+        #   This is a legacy path to temporarily support developing older components, and will be removed
+        #   in the near future. It fallsback to executing the operation using the Python interpreter
+        #   if no method can be found.
+        try:
+            method = resolve_method(name, a)
+        except Exception as e:
+            return fn(vala)
+
+        return method(a)
 
     def __abs__(self):
         return self._elementwise_unary_helper(self, "abs", builtins.abs)
@@ -476,38 +478,26 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def _elementwise_binary_helper(a, b, name, fn):
         baseutils.check_type(b, (Number, TensorProxy))
 
-        trace: None | TraceCtx = get_tracectx()
-        langctx: None | LanguageContext
-        try:
-            langctx = get_langctx()
-        except LookupError as le:
-            langctx = None
-
         vala = pyval(a)
         valb = pyval(b) if isinstance(b, NumberProxy) else b
+
+        trace: None | TraceCtx = get_tracectx()
         if trace is None:
             # Outside of a trace or language context, binary operations on NumberProxies are
             #   executed by the Python interpreter
-
             return fn(vala, valb)
 
-        has_prologue: bool = trace.prologue is not None
-        if has_prologue:
-            fn: None | Callable = resolve_method(name, a, b)
-
-            if fn is None:
-                langctx: LanguageContext = get_langctx()
-                raise ValueError(
-                    f"Could not find a binary operator called {name} on numbers in the {langctx.name} language context"
-                )
-
+        if using_jit():
+            fn: Callable = resolve_method(name, a, b)
             return fn(a, b)
 
+        # NOTE not using_jit
+        #   This is a legacy path to temporarily support developing older components, and will be removed
+        #   in the near future
         if isinstance(b, TensorProxy):
             tensor_fn = resolve_method(name, a, b)
             return tensor_fn(a, b)
 
-        # TODO GTC Record binary operations outside the using_interpreter mode
         return fn(vala, valb)
 
     def __add__(self, other):
@@ -648,6 +638,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return int(self.value)
 
     def __bool__(self):
+        if using_jit():
+            method = resolve_method("check_bool_conversion", self)
+            method(self, bool(self.value))
         return bool(self.value)
 
     #

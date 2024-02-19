@@ -405,7 +405,14 @@ def test_constant_values_caching(jit):
 #
 # Symbolic values caching tests
 #
-# TODO GTC Add these tests
+
+
+def test_symbolic_value_warning():
+    def foo():
+        return
+
+    with pytest.warns(UserWarning):
+        thunder.jit(foo, cache="symbolic values")
 
 
 #

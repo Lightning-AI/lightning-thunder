@@ -29,7 +29,7 @@ from thunder.core.trace import (
 
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
-import thunder.core.symbol as symbol
+from thunder.core.symbol import BoundSymbol
 import thunder.core.devices as devices
 from thunder.common import (
     CompileData,
@@ -241,10 +241,6 @@ def _eager_unpacking_interpreter(
                     callargs.append(val)
                     if co is CACHE_OPTIONS.CONSTANT_VALUES:
                         clang.check_number_type_and_value(p, val)
-                    elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-                        raise NotImplementedError(
-                            f"Trying to unpack a number with symbolic values, but this is not supported yet"
-                        )
 
             elif isinstance(p, str):
                 val = pyval(p)
@@ -253,12 +249,10 @@ def _eager_unpacking_interpreter(
                     clang.check_string_value(p, val)
                 elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                     raise NotImplementedError(
-                        f"Trying to unpack a number with symbolic values, but this is not supported yet"
+                        f"Trying to unpack a string with symbolic values, but this is not supported yet"
                     )
             else:
                 raise AssertionError(f"Fell through unpacking")
-
-        prims.python_return(tuple(rargs))
 
     prologue_trc.args = proxyargs
 
@@ -270,6 +264,10 @@ def _eager_unpacking_interpreter(
 
         result = interpreter(fn)(*callargs)
         prims.python_return(result)
+
+    # Creates hand-off from prologue to computation
+    with tracectx(prologue_trc):
+        prims.python_return(tuple(rargs))
 
     # Constructs the computation trace's signature
     computation_trc._siginfo = csi
@@ -355,6 +353,7 @@ def jit(
         langctx=langctx,
         executors_list=executors,
         cache_option=cache,
+        using_jit=True,
         use_cudagraphs=False,
         use_torch_compile=False,
         disable_torch_autograd_support=True,
@@ -379,7 +378,7 @@ def jit(
 
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
+        if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for pro, pro_traces, comp, comp_traces in cs.interpreter_cache:
                 try:
                     inps = pro(*args, **kwargs)
@@ -398,8 +397,6 @@ def jit(
                 cs.last_prologue = pro
                 return result
 
-        if cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES:
-            raise NotImplementedError(f"Symbolic values caching is not yet supported")
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
                 pro, pro_traces, comp, comp_traces = cs.interpreter_cache[0]
@@ -480,9 +477,9 @@ def jit(
                 cs.interpreter_cache.append((pro, protraces, comp, extraces))
 
             # Updates statistics
-            cs.last_traces = extraces
+            cs.last_traces = [computation_trc] + extraces
             cs.last_executed = comp
-            cs.last_prologue_traces = protraces
+            cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
 
             cs.last_trace_host_stop = time.time_ns()

@@ -43,9 +43,11 @@ class TraceProvenance:
 #   ... but maybe we still need the naming context?
 # TODO Allow the function signature to be modified by transforms
 class TraceCtx:
-    def __init__(self, fn: None | Callable = None, *, prologue=None):
+    def __init__(self, fn: None | Callable = None, *, prologue=None, is_prologue: bool = False):
         self.fn: None | Callable = fn
+
         self._prologue = prologue
+        self._is_prologue: bool = is_prologue
 
         self.args = None
         self.kwargs = None
@@ -89,6 +91,10 @@ class TraceCtx:
     @property
     def prologue(self):
         return self._prologue
+
+    @property
+    def is_prologue(self):
+        return self._is_prologue
 
     #
     # Methods related to the trace's signature
@@ -512,6 +518,15 @@ def detached_trace():
     trace_token = set_tracectx(trace)
     yield
     reset_tracectx(trace_token)
+
+
+#
+# Helpers for querying properties of the trace
+#
+
+
+def get_prologue() -> None | TraceCtx:
+    return get_tracectx().prologue
 
 
 #

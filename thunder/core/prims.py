@@ -92,7 +92,9 @@ class PrimIDs(Enum):
     # Unpacking and input validation prims
     ASSERT_TENSOR_METADATA = auto()
     CHECK_TENSOR_SHAPE_AND_METADATA = auto()
+    CHECK_NUMBER_TYPE = auto()
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
+    CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
@@ -448,7 +450,22 @@ check_tensor_shape_and_metadata = make_prim(
 )
 
 
-def _check_number_type_and_value_meta(n: NumberProxy, value: Number) -> None:
+def _check_number_type_meta(n: NumberProxy, typ: bool | int | float | complex, /) -> None:
+    # Validates types
+    baseutils.check_type(n, NumberProxy)
+    baseutils.check(typ in (bool, int, float, complex), lambda: f"Expected a numbertype (bool, int, float, complex)")
+    baseutils.check(pytype(n) == typ, lambda: f"Different types for {pytype(n)} and {typ}")
+
+
+check_number_type = make_prim(
+    PrimIDs.CHECK_NUMBER_TYPE,
+    "check_number_type",
+    meta=_check_number_type_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_number_type_and_value_meta(n: NumberProxy, value: Number, /) -> None:
     # Validates types
     baseutils.check_type(n, NumberProxy)
     baseutils.check_type(value, Number)
@@ -459,6 +476,21 @@ check_number_type_and_value = make_prim(
     PrimIDs.CHECK_NUMBER_TYPE_AND_VALUE,
     "check_number_type_and_value",
     meta=_check_number_type_and_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_bool_conversion_meta(n: NumberProxy, b: bool, /) -> None:
+    # Validates types
+    baseutils.check_type(n, NumberProxy)
+    baseutils.check_type(b, bool)
+
+
+check_bool_conversion = make_prim(
+    PrimIDs.CHECK_BOOL_CONVERSION,
+    "check_bool_conversion",
+    method_name="check_bool_conversion",
+    meta=_check_bool_conversion_meta,
     tags=(OpTags.DONT_DCE,),
 )
 

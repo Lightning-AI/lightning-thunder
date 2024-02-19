@@ -63,6 +63,11 @@ def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     )
 
 
+@clangop()
+def check_number_type(n: Number, typ: bool | int | float | complex, /) -> None:
+    return prims.check_number_type(n, typ)
+
+
 # Checks a number's value
 @clangop()
 def check_number_type_and_value(n: Number, value: Number, /) -> None:

@@ -63,7 +63,7 @@ def resolve_interpretation_option(x: Any, /) -> INTERPRETATION_OPTIONS:
 
     if io is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         warnings.warn(
-            "The 'translate python' instepretation option is experimental and still in development. It may not work as expected."
+            "The 'translate python' interpretation option is experimental and still in development. It may not work as expected."
         )
 
     return io
@@ -85,8 +85,8 @@ def resolve_interpretation_option(x: Any, /) -> INTERPRETATION_OPTIONS:
 #   This option is very efficient if input values are mostly constant because some operations -- like
 #   checking that two tensors have the same shape, or adding numbers together -- can be computed at compile-time
 #   instead of run-time.
-# SYMBOLIC_VALUES is currently experimental. It treats values like numbers and strings as dynamic symbols whose
-#   values may vary across calls to the jitted callable.
+# SYMBOLIC_VALUES is currently experimental and for development only.
+#   It treats values like numbers and strings as dynamic symbols whose values may vary across calls to the jitted callable.
 #   This can reduce compile-time if the value inputs to the jitted callable vary over time, but it also increases
 #   the time it takes to evaluate the cache, as operations that could be performed at compile-time
 #   must now be performed at run-time.
@@ -125,9 +125,7 @@ def resolve_cache_option(x: Any, /) -> CACHE_OPTIONS:
         _unknown_option("cache", _string_to_cache_option_map.keys(), "constant values", x)
 
     if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-        warnings.warn(
-            "The 'symbolic values' cache option is experimental and still in development. It may not work as expected."
-        )
+        warnings.warn("The 'symbolic values' cache option is highly experimental and for development only.")
 
     return co
 

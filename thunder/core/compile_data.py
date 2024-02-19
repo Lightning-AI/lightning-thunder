@@ -77,3 +77,11 @@ def using_symbolic_values() -> bool:
         return get_cache_option() is CACHE_OPTIONS.SYMBOLIC_VALUES
     except:
         return False
+
+
+def using_jit() -> bool:
+    try:
+        cd, cs = _compile_data.get()
+        return cd.using_jit
+    except:
+        return False
