@@ -225,28 +225,43 @@ def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)
+atan2 = ex.register_operator("atan2", like=prims.atan2, module=operator)
+bitwise_and = ex.register_operator("bitwise_and", like=prims.bitwise_and, module=operator)
+bitwise_or = ex.register_operator("bitwise_or", like=prims.bitwise_or, module=operator)
+bitwise_xor = ex.register_operator("bitwise_xor", like=prims.bitwise_xor, module=operator)
+eq = ex.register_operator("eq", like=prims.eq, module=operator)
 py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
+fmod = ex.register_operator("fmod", like=prims.fmod, module=operator)
+ge = ex.register_operator("ge", like=prims.ge, module=operator)
+gt = ex.register_operator("gt", like=prims.gt, module=operator)
+le = ex.register_operator("le", like=prims.le, module=operator)
 lt = ex.register_operator("lt", like=prims.lt, module=operator)
+mul = ex.register_operator("mul", like=prims.mul, module=operator)
+ne = ex.register_operator("ne", like=prims.ne, module=operator)
+# NOTE pythonex_pow to avoid a name conflict with the builtin pow
+pythonex_pow = ex.register_operator("pow", like=prims.pow, module=operator)
+sub = ex.register_operator("sub", like=prims.sub, module=operator)
+
+# TODO: Restore truediv once we find it...
+# truediv = ex.register_operator("truediv", like=prims.truediv, module=operator)
 
 ex.register_implementation(prims.add, add, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.atan2, atan2, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.bitwise_and, bitwise_and, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.bitwise_or, bitwise_or, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.bitwise_xor, bitwise_xor, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.eq, eq, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.py_floordiv, py_floordiv, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.fmod, fmod, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.ge, ge, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.gt, gt, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.le, le, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.lt, lt, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.mul, mul, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
+# NOTE pythonex_pow to avoid a name conflict with the builtin pow
+ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
 
-# TODO Restore the operations below (updating them to the new style)
-
-# atan2 = _elementwise_binary_factory("atan2", math)
-# bitwise_and = _elementwise_binary_factory("and_", operator)
-# bitwise_or = _elementwise_binary_factory("or_", operator)
-# bitwise_xor = _elementwise_binary_factory("xor", operator)
-# eq = _elementwise_binary_factory("eq", operator)
-# fmod = _elementwise_binary_factory("fmod", math)
-# ge = _elementwise_binary_factory("ge", operator)
-# gt = _elementwise_binary_factory("gt", operator)
-# le = _elementwise_binary_factory("le", operator)
-# lt = _elementwise_binary_factory("lt", operator)
-# sub = _elementwise_binary_factory("sub", operator)
-# mul = _elementwise_binary_factory("mul", operator)
-# ne = _elementwise_binary_factory("ne", operator)
-# truediv = _elementwise_binary_factory("truediv", operator)
-# # NOTE pythonex_pow to avoid a name conflict with the builtin pow
-# pythonex_pow = _elementwise_binary_factory("pow", operator)
+# TODO: Restore truediv once we find it...
+# ex.register_implementation(prims.truediv, truediv, checker=_elementwise_binary_checker)
