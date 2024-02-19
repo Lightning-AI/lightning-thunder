@@ -115,9 +115,9 @@ class FSDPFwdTraceVisitor:
             orig_future = bsym.flat_proxy_args[0]
             future = self.original_to_updated[orig_future]
             bucket = self.future_to_bucket[future]
-            if future not in self.bucket_to_unsharded_param:
+            if bucket not in self.bucket_to_unsharded_param:
                 unsharded = dist_prims.wait(bucket.future)
-                self.bucket_to_unsharded_param[bucket.future] = unsharded
+                self.bucket_to_unsharded_param[bucket] = unsharded
 
                 unsharded_params = dist_prims.unpack_for_fsdp(
                     unsharded,
@@ -126,7 +126,7 @@ class FSDPFwdTraceVisitor:
                     "gather",
                 )
                 self.bucket_to_unsharded_params[bucket] = tuple(unsharded_params)
-            unsharded = self.bucket_to_unsharded_param[bucket.future]
+            unsharded = self.bucket_to_unsharded_param[bucket]
             unsharded_params = self.bucket_to_unsharded_params[bucket]
 
             orig_unsharded_param = bsym.flat_proxy_outs[0]

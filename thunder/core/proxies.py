@@ -942,10 +942,6 @@ class FutureTensorProxy(Proxy):
 
         return wait(self)
 
-    # TODO GTC Update hasing on tensor types (this is just here because some distributed code directly hashes FutureTensorProxies)
-    def __hash__(self) -> int:
-        return hash(self.name)
-
 
 # TODO GTC Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
