@@ -1,6 +1,7 @@
 from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
+import random
 
 import sys
 import dis
@@ -418,6 +419,7 @@ def test_symbolic_value_warning():
 #
 # Sharp edges tests
 #
+# See thunder/core/options.py for a longer description of sharp edges and the option.
 
 
 def test_sharp_edges_pass():
@@ -436,6 +438,10 @@ def test_sharp_edges_pass():
     assert_close(actual, expected)
 
 
+#
+# Sharp edges -- Unexpected inputs
+#
+
 _test_load_global_sharp_edge_global = 3
 
 
@@ -449,3 +455,327 @@ def test_load_global_sharp_edge():
 
     with pytest.raises(JITError):
         jfoo(a)
+
+
+_test_store_global_sharp_edge_global = 4
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2186")
+def test_store_global_sharp_edge():
+    def foo():
+        global _test_store_global_sharp_edge_global
+        _test_store_global_sharp_edge_global = 5
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2177")
+def test_calling_globals_sharp_edge():
+    def foo():
+        g = globals()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2180")
+def test_calling_vars_sharp_edge():
+    def foo():
+        g = vars()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2178")
+def test_calling_locals_sharp_edge():
+    def foo():
+        l = locals()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2188")
+def test_accessing_globals_through_function_sharp_edge():
+    def foo():
+        return foo.__globals__()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2179")
+def test_calling_input_sharp_edge():
+    def foo():
+        inp = input()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2184")
+def test_input_closure_sharp_edge():
+    x = 5
+
+    def foo():
+        return x
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+# NOTE This is NOT a sharp edge because we assume that loading modules and functions (globally or as closures) are
+#   not sharp edges
+def test_fn_closure_no_sharp_edge():
+    def bar(x):
+        return x
+
+    def foo():
+        return bar(5)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    actual = jfoo()
+    expected = foo()
+    assert_close(expected, actual)
+
+
+def _test_fn_global_no_sharp_edge_fn():
+    return 7
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2189")
+def test_fn_global_no_sharp_edge():
+    def foo(x):
+        return x + _test_fn_global_no_sharp_edge_fn()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    actual = jfoo(2)
+    expected = foo(2)
+    assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2187")
+def test_nonlocal_write_sharp_edge():
+    x = 5
+
+    def foo():
+        nonlocal x
+        x = 7
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+# NOTE This is NOT a sharp edge -- this test is to ensure this works as expected
+def test_intermediate_closure_not_sharp_edge():
+    def foo(x):
+        def bar():
+            return x
+
+        return bar()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    expected = foo(5)
+    actual = jfoo(5)
+
+    assert_close(expected, actual)
+
+
+def test_intermediate_nonlocal_not_sharp_edge():
+    def foo(x):
+        def bar():
+            nonlocal x
+            x = 9
+
+        return x
+
+        return bar()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    expected = foo(5)
+    actual = jfoo(5)
+
+    assert_close(expected, actual)
+
+
+#
+# Sharp edges -- Side effects
+#
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2181")
+def test_calling_open_sharp_edge():
+    def foo():
+        open("nonexistent file")
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2182")
+def test_calling_print_sharp_edge():
+    def foo(a):
+        print(a)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    a = torch.randn((2, 2))
+
+    with pytest.raises(JITError):
+        jfoo(a)
+
+
+#
+# Sharp edges -- Random module (surprising inputs and side effects)
+#
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_seed_sharp_edge():
+    def foo():
+        random.seed(1234)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    state = random.getstate()
+    try:
+        with pytest.raises(JITError):
+            jfoo()
+    finally:
+        random.setstate(state)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_setstate_sharp_edge():
+    def foo():
+        return random.getstate()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_setstate_sharp_edge():
+    def foo(state):
+        random.setstate(state)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    state = random.getstate()
+    with pytest.raises(JITError):
+        jfoo(state)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_randbytes_sharp_edge():
+    def foo():
+        return random.randbytes(20)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_randrange_sharp_edge():
+    def foo():
+        return random.randrange(10)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_randint_sharp_edge():
+    def foo():
+        return random.randint(0, 10)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_getrandbits_sharp_edge():
+    def foo():
+        return random.getrandbits(10)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
+def test_calling_random_choice_sharp_edge():
+    def foo():
+        l = [1, 3, 5]
+        return random.choice(l)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    with pytest.raises(JITError):
+        jfoo()
+
+
+# Additional random functions
+# random.choices
+# random.shuffle
+# random.sample
+# random.binomialvariate
+# random.random
+# random.uniform
+# random.triangular
+# random.betavariate
+# random.expovariate
+# random.gammavariate
+# random.gauss
+# random.lognormvariate
+# random.normalvariate
+# random.vonmisesvariate
+# random.paretovariate
+# random.weibullvariate
+# random.SystemRandom (class)
+
+
+# NOTE This use of randomness is OK (and we could add a Proxy for random.Random)
+def test_random_Random_class():
+    def foo():
+        return random.Random(1234).random()
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    expected = foo()
+    actual = jfoo()
+
+    assert_close(expected, actual)
