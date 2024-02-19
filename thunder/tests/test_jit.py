@@ -305,6 +305,96 @@ def test_binary_add_strings(jit):
 
 
 #
+# Return value tests
+#
+# Retrun values must be proxies or (simple) printable objects (or both)
+
+
+def test_return_number():
+    def foo():
+        return 5
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo()
+    actual = jfoo()
+
+    assert_close(expected, actual)
+
+
+def test_return_object():
+    def foo():
+        return object()
+
+    jfoo = thunder.jit(foo)
+
+    with pytest.raises(RuntimeError):
+        jfoo()
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+def test_return_tuple():
+    def foo(a, b):
+        return (a, b)
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo(5, 3)
+    actual = jfoo(5, 3)
+    assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+def test_return_list():
+    def foo(a, b):
+        return [a, b]
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo(5, 3)
+    actual = jfoo(5, 3)
+    assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+def test_return_list_with_intermediates():
+    def foo(a, b):
+        l = [a, b]
+        l.append(3)
+        return l
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo(5, 3)
+    actual = jfoo(5, 3)
+    assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+def test_return_set():
+    def foo(a, b):
+        return {a, b}
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo(5, 3)
+    actual = jfoo(5, 3)
+    assert_close(expected, actual)
+
+
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+def test_return_dict():
+    def foo(a, b):
+        return {1: a, 2: b}
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo(5, 3)
+    actual = jfoo(5, 3)
+    assert_close(expected, actual)
+
+
+#
 # No caching tests
 #
 # TODO GTC Simple test that the option works and programs run as expected

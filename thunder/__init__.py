@@ -44,9 +44,10 @@ from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values
 from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
-from thunder.core.codeutils import get_siginfo, SigInfo
+from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable
 from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy, pyval
 from thunder.core.jit_ext import minimal_thunder_jit, meso_thunder_interpreter
+from thunder.core.pytree import tree_flatten
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -263,6 +264,17 @@ def _eager_unpacking_interpreter(
             prims.unpack_trivial(p)
 
         result = interpreter(fn)(*callargs)
+
+        # Validates that the returned items are proxies or printable values
+        # TODO GTC This assumes pytrees are printable (fix this)
+        flat, _ = tree_flatten(result)
+        for f in flat:
+            if is_simple_printable(f) or isinstance(f, Proxy):
+                continue
+            raise RuntimeError(
+                f"Trying to return non-proxy non-printable type {type(f)}. Please file an issue requesting support for this."
+            )
+
         prims.python_return(result)
 
     # Creates hand-off from prologue to computation

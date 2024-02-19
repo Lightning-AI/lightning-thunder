@@ -29,7 +29,7 @@ class ContextObject:
         self.obj = obj
 
 
-Printable = Union[str, ContextObject, ProxyInterface]
+Printable = str | ContextObject | ProxyInterface
 
 _modules_to_shortnames_map = {
     "thunder.torch": "ltorch",
@@ -47,41 +47,62 @@ def indent_string(indent):
     return f"{tab * indent}"
 
 
-# TODO Consider adding a Printable interface or protocol
-# TODO Consider not printing devices, which are constructed each time, and instead giving them
-#   readable names
-# TODO Refine imports so that devices can print as Devices("cuda:0") instead of
-#   having to qualify as devices.Devices
-def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
-    if x is None:
-        return True, None
-    if isinstance(x, ContextObject):
-        return True, None
+# Whether the object or type can be printed without an import
+# TODO GTC Add collections
+def is_simple_printable(x: Any) -> bool:
+    # Short-circuits for proxies
     if isinstance(x, ProxyInterface):
+        return True
+
+    # Literals
+    if x is None:
+        return True
+    if x is Ellipsis:
+        return True
+
+    # Types
+    # TODO We should look at generically extending type printing
+    if x is bool:
+        return True
+    if x is int:
+        return True
+    if x is float:
+        return True
+    if x is complex:
+        return True
+
+    simple_printable_types = (
+        str,
+        torch.device,
+        Number,
+        slice,
+        type,
+    )
+
+    if isinstance(x, simple_printable_types):
+        return True
+
+    return False
+
+
+# TODO GTC Review collections printing
+# TODO GTC Review whether "simple printables" should require an import
+def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
+    if is_simple_printable(x):
+        return True, None
+
+    if isinstance(x, ContextObject):
         return True, None
     if is_collection(x):
         flat, _ = tree_flatten(x)
         return True, None
         # return all((is_printable(f) for f in flat)), None
-    if isinstance(x, str):
-        return True, None
     if isinstance(x, dtypes.dtype):
         return True, ("dtypes", dtypes)
     if isinstance(x, torch.dtype):
         return True, ("torch", torch)
     if isinstance(x, devices.Device):
         return True, ("devices", devices)
-    if isinstance(x, torch.device):
-        return True, None
-    if x in (bool, int, float, complex):
-        return True, None
-    if isinstance(x, Number):
-        return True, None
-
-    if isinstance(x, slice):
-        return True, None
-    if x is Ellipsis:
-        return True, None
 
     return False, None
 
