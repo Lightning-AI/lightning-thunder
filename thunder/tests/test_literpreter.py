@@ -421,7 +421,6 @@ def test_litgpt():
     assert_close(result, module(*args, **kwargs))
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2171")
 def test_nanogpt_block():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -438,7 +437,6 @@ def test_nanogpt_block():
     assert_close(result, module(*args, **kwargs))
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2171")
 def test_nanogpt_attn():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
 
@@ -448,16 +446,12 @@ def test_nanogpt_attn():
     module = bench.fn()
     module = module.attn
 
-    # work around the tp_jit not yet understanding modules
-    def fn(*args, **kwargs):
-        return module(*args, **kwargs)
-
     args, kwargs = bench.make_batch()
 
-    jfn = tp_jit(fn)
+    jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
 
-    assert_close(result, fn(*args, **kwargs))
+    assert_close(result, module(*args, **kwargs))
 
 
 def test_nanogpt_mlp():

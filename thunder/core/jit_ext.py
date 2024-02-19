@@ -379,12 +379,6 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
     assert isinstance(value, WrappedValue)
     assert isinstance(name, WrappedValue)
-    if not isinstance(value.value, Proxy):
-        ctx: MesoCtx = get_meso_ctx()
-        p = ctx.proxify(value.value, name=name.value, history=value.provenance)
-        if p is not value.value:
-            value.register_proxy(p)
-        return value
 
     return value
 
