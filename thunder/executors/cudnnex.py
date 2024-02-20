@@ -21,18 +21,19 @@ if CUDNN_AVAILABLE:
 def cudnn_available() -> bool:
     return CUDNN_AVAILABLE
 
+
 # This function creates a new handle for the device that cudnn should
 # run its kernels on. As the suggested approach by cudnn is to make a few handles
-# as possible, this function caches these per-device handles. 
+# as possible, this function caches these per-device handles.
 def _get_cudnn_handle(query_device):
     handle = device_to_cudnn_handle.get(query_device, None)
     if handle is None:
         with torch.cuda.device(query_device):
             handle = cudnn.create_handle()
             device_to_cudnn_handle[query_device] = handle
-    
+
     # Make sure the user stream is set on the handle
-    cudnn.set_stream(handle = handle, stream = torch.cuda.Stream().cuda_stream)
+    cudnn.set_stream(handle=handle, stream=torch.cuda.Stream().cuda_stream)
 
     return handle
 
