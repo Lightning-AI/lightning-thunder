@@ -2496,6 +2496,14 @@ clamp_opinfo = OpInfo(
     sample_input_generator=clamp_sample_generator,
     torch_reference=torch.clamp,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+    test_directives=(
+        # This test is flaky
+        #   See https://github.com/Lightning-AI/lightning-thunder/issues/1992
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
 )
 conditional_and_mask_ops.append(clamp_opinfo)
 
