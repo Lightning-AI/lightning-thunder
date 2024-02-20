@@ -250,7 +250,6 @@ def test_nn_parameter():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1982", raises=BaseException)
 def test_nn_module():
     m = torch.nn.Linear(3, 4)
     m2 = torch.nn.Sequential(
@@ -404,7 +403,6 @@ def test_lookaside_bool():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2004", raises=BaseException)
 def test_litgpt():
     from thunder.benchmarks import LitGPTBenchmark
     from thunder.tests.lit_gpt_model import Config
@@ -417,7 +415,10 @@ def test_litgpt():
 
     jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
+    assert_close(result, module(*args, **kwargs))
 
+    args, kwargs = bench.make_batch()
+    result = jfn(*args, **kwargs)
     assert_close(result, module(*args, **kwargs))
 
 

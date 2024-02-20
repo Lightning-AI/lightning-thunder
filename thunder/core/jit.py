@@ -887,12 +887,17 @@ class ProvenanceRecord:
     output_idx: int = 0
     output_key: int | slice | None = None
     value: Any | None = None
+    ext_flag: int = 0  # for use by extensions
 
     def __post_init__(self):
         assert isinstance(self.inst, (dis.Instruction, PseudoInst)), f"{self.inst} is not Instruction or PseudoInst"
         assert isinstance(self.inputs, list)
         assert all(isinstance(i, ProvenanceRecord) for i in self.inputs)
         self.inputs = self.inputs.copy()
+        if self.inputs:
+            self.ext_flag = functools.reduce(lambda a, b: a & b, (i.ext_flag for i in self.inputs))
+        else:
+            self.ext_flag = 0
 
     def __hash__(self):
         return hash((self.inst, *self.inputs))
@@ -1342,7 +1347,6 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     null = cls_var = descr_get = object()
 
     name = unwrap(name)
-
     if not isinstance(name, str):
         return do_raise(TypeError("getattr(): attribute name must be string"))
 
@@ -1417,7 +1421,11 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
         # TODO: we might avoid jitting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
-        if (instance_value := _jit(dict.get, obj_dict, name, null)) is not null:
+        if type(uobj_dict) == dict:
+            instance_value = uobj_dict.get(name, null)
+        else:
+            instance_value = _jit(dict.get, obj_dict, name, null)
+        if instance_value is not null:
             return instance_value
 
     if descr_get is not null:

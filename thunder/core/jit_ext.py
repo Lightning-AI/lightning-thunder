@@ -591,24 +591,38 @@ def _lit_wrap_callback(value):
         if p is not uvalue:
             value.register_proxy(p)
         # TODO: other caching modes
-        ctx.add_constraint((clang.check_tensor_shape_and_metadata, p))
+        co: CACHE_OPTIONS = get_cache_option()
+        if co is CACHE_OPTIONS.CONSTANT_VALUES:
+            ctx.add_constraint((clang.check_tensor_shape_and_metadata, p))
+        elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+            raise NotImplementedError(f"Unsupported cache option {co}")
     elif value.provenance.inst is PseudoInst.CONSTANT:
-        pass
+        value.provenance.jit_flat = 1
     elif callable(uvalue):
         pass  # we only care if it is called
     elif type(uvalue) in (tuple, list, dict, CellType, ModuleType, set):
         pass  # basic containers are OK, too, subclasses?
+    elif isinstance(uvalue, Proxy):
+        value.provenance.ext_flag = 1
     elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
-        if not (collect_provenance_inst(value.provenance) - safe_provenance_inst):
+        if value.provenance.ext_flag:  # we already have seen this
+            pass
+        elif not (collect_provenance_inst(value.provenance) - safe_provenance_inst):
+            value.provenance.ext_flag = 1
+
+            # we follow the caching mechanisms of the eager_unpack_interpreter
             p = ctx.proxify(uvalue, history=value.provenance)
             assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
-            if p is not uvalue:
-                value.register_proxy(p)
-            # TODO: other caching modes
-            if isinstance(uvalue, str):
-                ctx.add_constraint((clang.check_string_value, p, uvalue))
-            else:
-                ctx.add_constraint((clang.check_number_type_and_value, p, uvalue))
+
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                if isinstance(uvalue, str):
+                    ctx.add_constraint((clang.check_string_value, p, uvalue))
+                else:
+                    ctx.add_constraint((clang.check_number_type_and_value, p, uvalue))
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+
         else:
             _meso_sharp_edge(
                 f"We are using a (non-const) value of type {type(uvalue).__name__} with provenance {value.provenance}, which is not identified as an input."
