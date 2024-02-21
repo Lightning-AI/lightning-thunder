@@ -91,7 +91,7 @@ Dynamic shapes (45 iters)
 # setup
 python download.py --repo_id openlm-research/open_llama_3b --tokenizer_only true
 # run
-python train_fsdp.py --devices 2 --compile thunder --stage 2 --bucketing_strategy block
+python train_fsdp.py --devices 2 --compile thunder --stage 2 --bucketing_strategy BLOCK
 ```
 
 Static shapes (45 iters)
