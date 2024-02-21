@@ -22,15 +22,87 @@ import thunder.core.prims as prims
 #
 
 #
-# Basic functionality tests
+# Args, kwargs, varargs, varkwargs tests
 #
 
 
-# TODO Refactor this parameterization so it's easy to apply
-@pytest.mark.parametrize(
-    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
-)
-def test_binary_add_tensors(jit):
+def test_basic_kwargs():
+    def foo(a, b):
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a=a, b=b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
+def test_tuple_kwargs():
+    def foo(a, b):
+        return a + b[0]
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a=a, b=(a, b))
+    expected = foo(a, (a, b))
+
+    assert_close(actual, expected)
+
+
+def test_kwargs_inorder():
+    def foo(a, b):
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(b=b, a=a)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
+def test_kwonly_args():
+    def foo(*, a, b):
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a=a, b=b)
+    expected = foo(a=a, b=b)
+
+    assert_close(actual, expected)
+
+
+def test_posonly_and_kwonly_args():
+    def foo(a, /, b, *, c):
+        return a + b + c
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    c = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b=b, c=c)
+    expected = foo(a, b, c=c)
+
+    assert_close(actual, expected)
+
+
+#
+# Binary operation tests
+#
+
+
+def test_binary_add_tensors():
     def foo(a, b):
         return a + b
 
@@ -44,8 +116,7 @@ def test_binary_add_tensors(jit):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_ops_compare_numbers(jit):
+def test_binary_ops_compare_numbers():
     cmp_ops = ["!=", "==", "<=", "<", ">", ">="]
 
     inps = (
@@ -71,8 +142,7 @@ def test_binary_ops_compare_numbers(jit):
             assert jfoo(a, b) == foo(a, b)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_ops_int_numbers(jit):
+def test_binary_ops_int_numbers():
     # Issue https://github.com/Lightning-AI/lightning-thunder/issues/594 for more ops
     # "<<", ">>",
     int_ops = ["+", "&", "//", "*", "%", "|", "**", "-", "/", "^"]
@@ -97,8 +167,7 @@ def test_binary_ops_int_numbers(jit):
             assert jbar(a, b) == bar(a, b)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_ops_bool_numbers(jit):
+def test_binary_ops_bool_numbers():
     bool_ops = ["+", "&", "//", "*", "%", "|", "**", "-", "/", "^"]
 
     bool_inps = (
@@ -126,8 +195,7 @@ def test_binary_ops_bool_numbers(jit):
                         fn(a, b)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_ops_float_numbers(jit):
+def test_binary_ops_float_numbers():
     float_ops = ["+", "//", "*", "%", "**", "-", "/"]
 
     float_inps = (
@@ -149,8 +217,7 @@ def test_binary_ops_float_numbers(jit):
             assert jbar(a, b) == bar(a, b)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_ops_complex_numbers(jit):
+def test_binary_ops_complex_numbers():
     float_ops = ["+", "*", "**", "-", "/"]
 
     float_inps = (
@@ -172,8 +239,7 @@ def test_binary_ops_complex_numbers(jit):
             assert jbar(a, b) == bar(a, b)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_add_tensor_number(jit):
+def test_binary_add_tensor_number():
     def foo(a, b):
         return a + b
 
@@ -187,8 +253,7 @@ def test_binary_add_tensor_number(jit):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_hasattr_on_proxies(jit):
+def test_hasattr_on_proxies():
     def foo(a, b):
         if hasattr(a, "__why_would_it__"):
             raise Exception("Nobody expects the Spanish Inquisition")
@@ -206,10 +271,7 @@ def test_hasattr_on_proxies(jit):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
-)
-def test_clang_add_tensors(jit):
+def test_clang_add_tensors():
     def foo(a, b):
         return clang.add(a, b)
 
@@ -223,10 +285,7 @@ def test_clang_add_tensors(jit):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
-)
-def test_prim_add_tensors(jit):
+def test_prim_add_tensors():
     def foo(a, b):
         return prims.add(a, b)
 
@@ -240,10 +299,7 @@ def test_prim_add_tensors(jit):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "jit", (thunder.jit, minimal_thunder_jit), ids=("thunder.jit", "thunder.jit-translate_functions")
-)
-def test_python_fn_binary_add_tensors(jit):
+def test_python_fn_binary_add_tensors():
     def bar(a, b):
         return a + b
 
@@ -260,8 +316,7 @@ def test_python_fn_binary_add_tensors(jit):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_torch_add_tensors(jit):
+def test_torch_add_tensors():
     def foo(a, b):
         return torch.add(a, b)
 
@@ -280,8 +335,7 @@ def test_torch_add_tensors(jit):
 #
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_string_return(jit):
+def test_string_return():
     def foo(s):
         return s
 
@@ -292,8 +346,7 @@ def test_string_return(jit):
     assert actual == expected
 
 
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_binary_add_strings(jit):
+def test_binary_add_strings():
     def foo(a, b):
         return a + b
 
@@ -708,6 +761,35 @@ def test_constant_values_caching_with_tuples():
 
     assert thunder.cache_misses(jfoo) == 3
     assert thunder.cache_hits(jfoo) == 3
+
+
+def test_constant_values_caching_with_kwargs():
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    expected = foo(a, b)
+    actual = jfoo(a, b=b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(a, b=b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    actual = jfoo(b=b, a=a)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
 
 
 #

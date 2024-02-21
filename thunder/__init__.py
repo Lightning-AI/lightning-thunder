@@ -8,6 +8,7 @@ import dis
 from enum import Enum, auto
 import time
 from numbers import Number
+from itertools import chain
 
 from looseversion import LooseVersion
 
@@ -313,10 +314,6 @@ def _eager_unpacking_interpreter(
     computation_trc: TraceCtx = TraceCtx()
 
     # Unpacks the inputs
-
-    if len(kwargs) > 0:
-        raise NotImplementedError(f"kwargs are not yet supported")
-
     # TODO GTC Support PyTorch dtypes
     # TODO GTC Support sequences of numbers, tensors, arrays, and strings
     # TODO GTC Support mappings from strings and numbers to numbers, tensors, arrays, strings
@@ -333,8 +330,6 @@ def _eager_unpacking_interpreter(
                 f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supported input types are {supported_input_types}"
             )
 
-    if len(si.kwargs) > 0:
-        raise NotImplementedError("kwargs are not yet supported")
     if si.varargs is not None:
         raise NotImplementedError("varargs are not yet supported")
     if si.varkwargs is not None:
@@ -347,23 +342,33 @@ def _eager_unpacking_interpreter(
     csi = SigInfo("computation")
     csi.args = []
     prologue_args = []  # Arguments to the prologue
+    prologue_kwargs = {}  # Kwargs to the prologue
     computation_args = []  # Arguments to the computation
     interpretation_args = []  # Arguments to interpret with
+    interpretation_kwargs = {}  # Kwargs to interpret with
     co: CACHE_OPTIONS = get_cache_option()
     with tracectx(prologue_trc):
-        for name, x in si.args:
+        # Unpacks args and kwargs
+        for idx, (name, x) in enumerate(chain(si.args, si.kwargs.items())):
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
 
             prims.unpack_trivial(p)
-            prologue_args.append(p)
 
             cargs, iargs = _eager_validate(p, co=co)
 
             computation_args.extend(cargs)
-            interpretation_args.extend(iargs)
+
+            if idx < len(si.args):
+                prologue_args.append(p)
+                interpretation_args.extend(iargs)
+            else:
+                prologue_kwargs[name] = p
+                (iarg,) = iargs
+                interpretation_kwargs[name] = iarg
 
     prologue_trc.args = prologue_args
+    prologue_trc.kwargs = prologue_kwargs
 
     # Constructs the computation trace
     # TODO GTC Only unpack what's used in the computation
@@ -374,7 +379,7 @@ def _eager_unpacking_interpreter(
             csi.args.append((p.name, None))
             computation_trc.add_name(p.name)
 
-        result = interpreter(fn)(*interpretation_args)
+        result = interpreter(fn)(*interpretation_args, **interpretation_kwargs)
 
         # Validates that the returned items are proxies or printable values
         # TODO GTC This assumes pytrees are printable (fix this)

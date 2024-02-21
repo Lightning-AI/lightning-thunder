@@ -527,5 +527,4 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     si.args = tuple((x[2], x[0]) for x in si.args)
 
     si.defaultdict = default_dict
-
     return si
