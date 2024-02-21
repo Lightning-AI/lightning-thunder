@@ -244,8 +244,8 @@ def _sharp_edge(desc: str, /) -> None:
         warnings.warn(s)
 
 
-def _minimal_global_callback(globals_dict: dict, name: str) -> Any:
-    value: Any = globals_dict[name]
+def _minimal_global_callback(orig_value: Any, name: str) -> Any:
+    value: Any = orig_value
 
     # Allows loading global modules.
     #   Some global loads, like these, are so essential that they have to be part of any Python program
@@ -540,9 +540,9 @@ def _lit_const_callback(value: Any) -> WrappedValue:
 
 
 # TODO Do we need to warn here? It would find its way in the wrap callback
-def _lit_global_callback(globals_dict: dict, name: str) -> Any:
+def _lit_global_callback(orig_value: Any, name: str) -> Any:
     # Allows loading the torch module
-    value = globals_dict[name]
+    value = orig_value
     if (
         value is torch
         or (value is torch.nn.modules.module._global_backward_pre_hooks)

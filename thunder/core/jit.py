@@ -878,6 +878,7 @@ class PseudoInst(str, enum.Enum):
     GET_ITER = "GET_ITER"
     CONTAINS_OP = "CONTAINS_OP"
     SUPER = "SUPER"
+    BUILTINS = "BUILTINS"
 
 
 @dataclasses.dataclass
@@ -1055,8 +1056,8 @@ class InterpreterStack:
 class JITFrame:
     code: CodeType
     qualname: str
-    globals: dict[str, Any]
-    builtins: dict[str, Any]
+    globals: dict[str, Any] | WrappedValue
+    builtins: dict[str, Any] | WrappedValue
     # Name storage, for LOAD_NAME, STORE_NAME, and DELETE_NAME
     # TODO Is this the best way to model this?
     names: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -1292,7 +1293,9 @@ def eval_lookaside(
         source = compile(str(source), "<string>", "eval")
 
     rctx = get_jitruntimectx()
-    to_exec = FunctionType(code=source, globals=__globals, name="<eval>", argdefs=None, closure=__closure)
+    to_exec = FunctionType(
+        code=source, globals=unwrap(__globals), name="<eval>", argdefs=None, closure=unwrap(__closure)
+    )
 
     res: JIT_SIGNALS | Any = _jit(to_exec)
     return res
@@ -1320,7 +1323,9 @@ def exec_lookaside(
     # TODO: FunctionType doesn't do anything with the locals dict.
     # We need some way to say "Evaluate this in this context."
     rctx = get_jitruntimectx()
-    to_exec = FunctionType(code=source, globals=__globals, name="<exec>", argdefs=None, closure=__closure)
+    to_exec = FunctionType(
+        code=source, globals=unwrap(__globals), name="<exec>", argdefs=None, closure=unwrap(__closure)
+    )
 
     res: JIT_SIGNALS | Any = _jit(to_exec)
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
@@ -1556,7 +1561,6 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 #     return _jit(impl, obj, name)
 
 
-@jit_needs_wrap
 def _globals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
@@ -2554,7 +2558,7 @@ class JIT_CALLBACKS(enum.Enum):
     FREEVAR_CALLBACK = enum.auto()
 
     # Called when a global is loaded
-    #   (globals_dict: dict, name: str) -> Any
+    #   (orig_value: Any | WrappedValue, name: str) -> Any
     #   The returned value is loaded instead of the original value
     GLOBAL_CALLBACK = enum.auto()
 
@@ -2642,17 +2646,32 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     return cell
 
 
-def global_callback(globals_dict: dict, name: str) -> Any:
-    assert isinstance(globals_dict, dict)
+def chain_map_lookup(key: Any, *dicts: tuple[dict, ...]) -> Any | JIT_SIGNALS:
+    # TODO: extend to arbitrary non wrap_const'able types
+    assert wrapped_isinstance(key, str)
+    assert all(wrapped_isinstance(d, dict) for d in dicts)
+
+    for d in dicts:
+        if unwrap(key) in unwrap(d):
+            val = _jit_no_unwrap(
+                lambda curr_dict, k: curr_dict[k], d, key if isinstance(key, WrappedValue) else wrap_const(key)
+            )
+            assert val is not JIT_SIGNALS.EXCEPTION_RAISED
+            return val
+
+    return do_raise(KeyError(f"Dictionary {key=} is missing"))
+
+
+def global_callback(orig_val: Any | WrappedValue, name: str) -> Any | WrappedValue:
     assert isinstance(name, str)
 
     ctx: JitCompileCtx = get_jitcompilectx()
     cb: None | Callable = ctx.callback(JIT_CALLBACKS.GLOBAL_CALLBACK)
 
     if cb is None:
-        return globals_dict[name]
-
-    return cb(globals_dict, name)
+        return orig_val
+    else:
+        return cb(orig_val, name)
 
 
 def local_callback(name: str, value: Any, /) -> Any:
@@ -3411,7 +3430,13 @@ def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFra
     namei: int = inst.arg
     name: str = co.co_names[namei]
 
-    del frame.globals[name]
+    res = _jit_no_unwrap(
+        lambda frame_globals, name: frame_globals.__delitem__(name),
+        frame.globals,
+        wrap_const(name),
+    )
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-DELETE_NAME
@@ -3764,7 +3789,10 @@ def _import_name_handler(
     # but that isn't available if we use impl, so we resolve it here.
     if level > 0:  # relative import
         # cannot do this in impl easily, but error handling?
-        current_name = frame.globals["__name__"]
+        current_name = chain_map_lookup("__name__", frame.globals)
+        if current_name is JIT_SIGNALS.EXCEPTION_RAISED:
+            return current_name
+        current_name = unwrap(current_name)
         module_parts = current_name.split(".")[:-level]
         if module_name:  # from . import foo will have '' as module_name
             module_parts.append(module_name)
@@ -4021,14 +4049,8 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: Co
 def _load_build_class_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs
 ) -> None | JIT_SIGNALS:
-    if "__build_class__" in frame.builtins.keys():
-        build_class = frame.builtins["__build_class__"]
-        stack.append(build_class)
-    elif "__build_class__" in frame.globals.keys():
-        build_class = frame.globals["__build_class__"]
-        stack.append(build_class)
-    else:
-        return do_raise(KeyError(f"__build_class__ not found"))
+    build_class = chain_map_lookup("__build_class__", frame.builtins, frame.globals)
+    return check_and_append(stack, build_class)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
@@ -4131,14 +4153,14 @@ def _load_global_handler(
         idx = idx // 2
     co_name: str = co.co_names[idx]
 
-    obj: Any
-    try:
-        obj = global_callback(globals_dict, co_name)
-    except KeyError:
-        try:
-            obj = builtins_dict[co_name]
-        except KeyError as e:
+    obj: Any | WrappedValue = chain_map_lookup(co_name, globals_dict)
+    if obj is JIT_SIGNALS.EXCEPTION_RAISED:
+        obj = chain_map_lookup(co_name, builtins_dict)
+        if obj is JIT_SIGNALS.EXCEPTION_RAISED:
             return do_raise(NameError(f"name '{co_name}' is not defined"))
+    else:
+        obj = global_callback(obj, co_name)
+
     if (3, 11) <= sys.version_info:
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
@@ -4192,14 +4214,14 @@ def _load_name_handler(
     name: str = co.co_names[namei]
 
     value: Any
+    # TODO: wrap frame.names as well?
     if name in frame.names:
         value = frame.names[name]
-    elif name in frame.globals:
-        value = frame.globals[name]
     else:
-        if name not in frame.builtins:
-            return do_raise(NameError(f"named '{name}' is not defined"))
-        value = frame.builtins[name]
+        # Look up globals, then builtins.
+        value = chain_map_lookup(name, frame.globals, frame.builtins)
+        if value is JIT_SIGNALS.EXCEPTION_RAISED:
+            return do_raise(NameError(f"{name=} is not defined"))
 
     stack.append(value)
 
@@ -4277,7 +4299,7 @@ def _make_function_handler(
     else:
         argdefs = None
 
-    fn = FunctionType(fn_co, globals_dict, name, argdefs=argdefs, closure=unwrap(closure))
+    fn = FunctionType(fn_co, unwrap(globals_dict), name, argdefs=argdefs, closure=unwrap(closure))
 
     if kwdefaults is not None:
         fn.__kwdefaults__ = kwdefaults
@@ -5046,8 +5068,32 @@ def _store_global_handler(
     namei: int = inst.arg
 
     name: str = co.co_names[namei]
-    tos = stack.pop()
-    frame.globals[name] = tos
+    tos = stack.pop_wrapped()
+
+    # Our behavior is a bit different from CPython here.
+    # Namely, we error with KeyError when `name` is not present in the globals dict.
+    # CPython, on the other hand, when a callable is created with types.FunctionType
+    # ignores exceptions. This might create a callable which runs successfully even
+    # with the missing `name`. See the example courtesy of @t-vi below.
+    #
+    # def fn():
+    #   global t
+    #   t = "I am t"
+    #
+    # class D(dict):
+    #   def __setitem__(self, x, v):
+    #       raise RuntimeError("Nobody expects...")
+    #
+    # >>> import types
+    # >>> new_fn = types.FunctionType(fn.__code__, d)
+    # >>> new_fn()
+    # >>> t
+    # NameError: name 't' is not defined
+    res = _jit_no_unwrap(
+        lambda frame_globals, name, value: frame_globals.__setitem__(name, value), frame.globals, wrap_const(name), tos
+    )
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_FAST
@@ -5816,9 +5862,16 @@ def _jit_inner(
             f"Python version {sys.version_info.major}.{sys.version_info.minor} is not supported at this moment."
         )
 
+    if compilectx._with_provenance_tracking:
+        frame_globals = wrap_attribute(wrapped_fn.value.__globals__, wrapped_fn, wrap_const("__globals__"))
+        frame_builtins = wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
+    else:
+        frame_globals = fn.__globals__
+        frame_builtins = builtins_dict
+
     # Creates the current ready to run stack frame for the current function
     frame = JITFrame(
-        code=code, localsplus=localsplus, globals=fn.__globals__, builtins=builtins_dict, qualname=fn.__qualname__
+        code=code, localsplus=localsplus, globals=frame_globals, builtins=frame_builtins, qualname=fn.__qualname__
     )
 
     # Python 3.10 deals with creating the generator on call,
