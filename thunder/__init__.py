@@ -60,6 +60,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.jit_ext import minimal_thunder_jit, meso_thunder_interpreter
 from thunder.core.pytree import tree_flatten
+from thunder.executors.torch_autograd import thunder_backward
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -461,7 +462,7 @@ def jit(
         # Extends with always executors (ensuring they are always present and in the correct order)
         #   if not already present and in the correct order
         always_executors: tuple[Executor] = get_always_executors()
-        if executors[-len(always_executors)] != always_executors:
+        if executors[-len(always_executors) :] != always_executors:
             executors = executors + always_executors
 
     # Resolves options
@@ -478,7 +479,7 @@ def jit(
         using_jit=True,
         use_cudagraphs=False,
         use_torch_compile=False,
-        disable_torch_autograd_support=True,
+        disable_torch_autograd_support=False,
         use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
@@ -579,19 +580,35 @@ def jit(
             pro = protrace.python_callable()
 
             # TODO GTC Apply transforms
-            # TODO GTC Update this transform's parameters to take 'executors' instead of 'executors_list'
-            extraces = transform_for_execution(
-                computation_trc,
-                executors_list=cd.executors_list,
-            )
-            extrace = extraces[-1]
+            # note: prologue runtime is not in the measurement below
+            prologue_outputs = pro(*args, **kwargs)
 
-            comp = extrace.python_callable()
+            tensor_cls = (pytorch.Tensor, TensorProxy)
+            requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in prologue_outputs)
+            if not cd.disable_torch_autograd_support and requires_grad:
+                # thunder_backward may recursively call compile and wraps the result in a
+                # torch.autograd.Function to support embedding of Thunder-compiled
+                # functions in torch's Autograd
+                cs.last_trace_host_execution_start = time.time_ns()
+                comp = thunder_backward(compile_data=cd, compile_stats=cs)(computation_trc.python_callable())
+                computation_result = comp(*prologue_outputs)
+                cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_executed = comp
+                extraces = []  # todo
+            else:
+                # TODO GTC Update this transform's parameters to take 'executors' instead of 'executors_list'
+                extraces = transform_for_execution(
+                    computation_trc,
+                    executors_list=cd.executors_list,
+                )
+                extrace = extraces[-1]
 
-            # Executes the traced program
-            cs.last_trace_host_execution_start = time.time_ns()
-            computation_result = comp(*pro(*args, **kwargs))
-            cs.last_trace_host_execution_stop = time.time_ns()
+                comp = extrace.python_callable()
+
+                # Executes the traced program
+                cs.last_trace_host_execution_start = time.time_ns()
+                computation_result = comp(*prologue_outputs)
+                cs.last_trace_host_execution_stop = time.time_ns()
 
             # TODO GTC Update the cache
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:

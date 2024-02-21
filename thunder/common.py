@@ -808,21 +808,11 @@ def _create_callable(
                 tensor_cls = (torch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
                 if not cd.disable_torch_autograd_support and requires_grad:
-                    compile_config = {
-                        "langctx": cd.langctx,
-                        "executors_list": cd.executors_list,
-                        "only_execute_prims": cd.only_execute_prims,
-                        "cache_option": cd.cache_option,
-                        "use_rematerialization": cd.use_rematerialization,
-                        "use_cudagraphs": cd.use_cudagraphs,
-                        **cd.compile_options,
-                    }
-
                     # thunder_backward may recursively call compile and wraps the result in a
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
                     cs.last_trace_host_execution_start = time.time_ns()
-                    c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(processed_function)
+                    c = thunder_backward(compile_data=cd, compile_stats=cs)(processed_function)
                     result = c(*args, **kwargs)
                     cs.last_trace_host_execution_stop = time.time_ns()
                     cs.last_executed = c

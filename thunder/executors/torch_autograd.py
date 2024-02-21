@@ -14,11 +14,12 @@ from thunder.core.trace import TraceCtx
 from thunder.core.symbol import Symbol, BoundSymbol, BoundSymbolRHS
 import thunder.distributed.prims as dist_prims
 import thunder.torch as ltorch
+import thunder
 
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def get_forward_backward_splitter(func, compile_config, compile_data, compile_stats):
+    def get_forward_backward_splitter(func, compile_data, compile_stats):
         from thunder import trace
         from thunder.executors.passes import transform_for_execution
         from thunder.executors.passes import del_last_used
@@ -27,6 +28,8 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.cudagraphs import CUDAGraphExecutor
         from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
         from thunder.distributed.transforms import FSDPCommBucketing
+
+        assert compile_data is not None
 
         def make_trace(func):
             return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=True), func)
@@ -70,7 +73,7 @@ class ThunderFunction(torch.autograd.Function):
             bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
 
             _fsdp_comm_bucketing: FSDPCommBucketing | None = None
-            if compile_data is not None and getattr(compile_data.fn, "use_fsdp", False):
+            if getattr(compile_data.fn, "use_fsdp", False):
                 _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
                 fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
                 _fsdp_comm_bucketing.update_name_set(bw_trace)
@@ -79,7 +82,7 @@ class ThunderFunction(torch.autograd.Function):
             # TODO Restore request for no rematerialization
             fw_extrace = transform_for_execution(
                 fw_trace,
-                executors_list=compile_config.get("executors_list", None),
+                executors_list=compile_data.executors_list,
             )
             fw_traces.append(fw_extrace)
 
@@ -108,19 +111,19 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
-            if compile_data is not None:
-                if getattr(compile_data.fn, "use_ddp", False):
-                    from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
 
-                    bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
-                if getattr(compile_data.fn, "use_fsdp", False):
-                    bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
+            if getattr(compile_data.fn, "use_ddp", False):
+                from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
+
+                bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
+            if getattr(compile_data.fn, "use_fsdp", False):
+                bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
             # Now we can run the optimization passes on the backward trace
             # TODO Restore request for no rematerialization
             bw_extrace = transform_for_execution(
                 bw_trace,
-                executors_list=compile_config.get("executors_list", None),
+                executors_list=compile_data.executors_list,
             )
             bw_traces.append(bw_extrace)
 
@@ -128,8 +131,7 @@ class ThunderFunction(torch.autograd.Function):
 
             # only enable rematerialize_params_in_backward when using FSDP ZeRO3
             _rematerialize_params_in_backward = (
-                compile_data is not None
-                and getattr(compile_data.fn, "use_fsdp", False)
+                getattr(compile_data.fn, "use_fsdp", False)
                 and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
             )
             fw_extrace, bw_extrace = rematerialize_forward_and_backward(
@@ -140,20 +142,19 @@ class ThunderFunction(torch.autograd.Function):
 
             # We need to sort the waits in forward and backward trace to overlap
             # computation with communication
-            if compile_data is not None:
-                # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
-                # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
-                # backward trace and increases the peak allocated memory
-                if getattr(compile_data.fn, "use_fsdp", False):
-                    assert hasattr(compile_data.fn, "sharding_strategy")
-                    if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
-                        fw_extrace = sort_waits_for_zero3(fw_extrace)
-                        bw_extrace = sort_waits_for_zero3(bw_extrace)
-                    if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
-                        fw_extrace = sort_waits(fw_extrace)
-                        bw_extrace = sort_waits(bw_extrace)
-                if getattr(compile_data.fn, "use_ddp", False):
+            # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
+            # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
+            # backward trace and increases the peak allocated memory
+            if getattr(compile_data.fn, "use_fsdp", False):
+                assert hasattr(compile_data.fn, "sharding_strategy")
+                if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
+                    fw_extrace = sort_waits_for_zero3(fw_extrace)
+                    bw_extrace = sort_waits_for_zero3(bw_extrace)
+                if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
+                    fw_extrace = sort_waits(fw_extrace)
                     bw_extrace = sort_waits(bw_extrace)
+            if getattr(compile_data.fn, "use_ddp", False):
+                bw_extrace = sort_waits(bw_extrace)
 
             fw_extrace = del_last_used(fw_extrace)
             fw_traces.append(fw_extrace)
@@ -166,7 +167,7 @@ class ThunderFunction(torch.autograd.Function):
                 compile_stats.forward_last_traces = fw_traces
                 compile_stats.backward_last_traces = bw_traces
 
-                if compile_data.use_cudagraphs or compile_config.get("use_cudagraphs", False):
+                if compile_data.use_cudagraphs:
                     fw = CUDAGraphExecutor(
                         fw_extrace.python_callable(), num_constant_args=compile_data.num_constant_args
                     )
@@ -213,7 +214,7 @@ class ThunderFunction(torch.autograd.Function):
         return (None, None, None, None, *grads)
 
 
-def thunder_backward(*, compile_data=None, compile_stats=None, **compile_config):
+def thunder_backward(*, compile_data, compile_stats=None):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
 
     Args:
@@ -241,17 +242,25 @@ def thunder_backward(*, compile_data=None, compile_stats=None, **compile_config)
     >>> print(f"b.grad: {b.grad}")
     """
 
-    compile_config = compile_config | {"disable_preprocessing": True} | {"disable_torch_autograd_support": True}
-
     def decorator(thunder_func):
         from thunder import compile
 
         # Compile's caching only works for many calls to the same compiled function
         # It does not work if the same function is compiled many times, so we must
         # decorate the augmented forward pass once with compile once and reuse it
-        split_fw_bw = ThunderFunction.get_forward_backward_splitter(
-            thunder_func, compile_config, compile_data, compile_stats
-        )
+        split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_data, compile_stats)
+        compile_config = {
+            "langctx": compile_data.langctx,
+            "executors_list": compile_data.executors_list,
+            "only_execute_prims": compile_data.only_execute_prims,
+            "cache_option": compile_data.cache_option,
+            "use_rematerialization": compile_data.use_rematerialization,
+            "use_cudagraphs": compile_data.use_cudagraphs,
+            **compile_data.compile_options,
+            "disable_preprocessing": True,
+            "disable_torch_autograd_support": True,
+        }
+
         compiled_split_fw_bw = compile(
             split_fw_bw,
             **compile_config,

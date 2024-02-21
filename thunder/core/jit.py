@@ -1493,7 +1493,6 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
     uvalue = unwrap(value)
-
     compilectx: JitCompileCtx = get_jitcompilectx()
     try:
         setattr(uobj, uname, uvalue)

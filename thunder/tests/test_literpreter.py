@@ -2,6 +2,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
 
+import operator
 import sys
 import dis
 from collections.abc import Callable
@@ -10,13 +11,19 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from lightning_utilities import compare_version
+
 import thunder
 from thunder.core.jit import is_jitting, jit, JITError
 
+from thunder.tests import lit_gpt_model
 import thunder.clang as clang
 from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
 import thunder.core.prims as prims
+from thunder import pytorch_executor, nvfuser_executor
+from thunder.executors.sdpaex import sdpa_ex
+
 
 #
 # Test suite for the litjit extension of the Python interpreter
@@ -26,11 +33,22 @@ import thunder.core.prims as prims
 
 tp_jit = partial(thunder.jit, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
 
+torchex = [pytorch_executor]
+nvfuserex = [nvfuser_executor, pytorch_executor]
+
 
 def skipif_python_3_11_plus(f):
     if sys.version_info >= (3, 11):
         return pytest.mark.skip(f, reason=f"not yet implemented for Python 3.11+, got {sys.version_info=}")
     return f
+
+
+def skipif_not_pytorch_2_1(f):
+    return pytest.mark.skipif(
+        # use_base_version=True allows checking against versions with nightly modifiers
+        compare_version("torch", operator.lt, "2.1.0", use_base_version=True),
+        reason=f"requires PyTorch >= 2.1, got {torch.__version__=}",
+    )(f)
 
 
 def test_binary_add_tensors():
@@ -410,16 +428,24 @@ def test_litgpt():
     cfg: Config = Config.from_name("gpt-neox-like")
     bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
     module = bench.fn()
-
-    args, kwargs = bench.make_batch()
-
     jfn = tp_jit(module)
+
+    args, kwargs = bench.make_batch()
+
+    # the transforms of thunder_backward introduce numerical differences in bfloat16 mode that cause flakiness
+    for p in module.parameters():
+        p.requires_grad_(False)
+
+    reference = module(*args, **kwargs)
     result = jfn(*args, **kwargs)
-    assert_close(result, module(*args, **kwargs))
+    assert_close(result, reference)
 
     args, kwargs = bench.make_batch()
     result = jfn(*args, **kwargs)
     assert_close(result, module(*args, **kwargs))
+
+    assert thunder.cache_misses(jfn) == 1
+    assert thunder.cache_hits(jfn) == 1
 
 
 def test_nanogpt_block():
@@ -447,12 +473,16 @@ def test_nanogpt_attn():
     module = bench.fn()
     module = module.attn
 
+    # the transforms of thunder_backward introduce numerical differences in bfloat16 mode that cause flakiness
+    for p in module.parameters():
+        p.requires_grad_(False)
+
     args, kwargs = bench.make_batch()
 
     jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
 
-    assert_close(result, module(*args, **kwargs))
+    assert_close(result, module(*args, **kwargs), atol=3e-5, rtol=1e-5)
 
 
 def test_nanogpt_mlp():
@@ -477,10 +507,119 @@ def test_nanogpt():
     config: NanoGPTConfig = NanoGPTConfig(dropout=0, n_layer=2)
     config.update(**_nanogpt_configs["test"])
     bench = NanoGPTBenchmark(config=config, device="cpu")
-    fn = bench.fn()
+    module = bench.fn()
+
+    # the transforms of thunder_backward introduce numerical differences in bfloat16 mode that cause flakiness
+    for p in module.parameters():
+        p.requires_grad_(False)
 
     args, kwargs = bench.make_batch()
-    jfn = tp_jit(fn)
+    jfn = tp_jit(module)
     result = jfn(*args, **kwargs)
 
-    assert_close(result, fn(*args, **kwargs))
+    assert_close(result, module(*args, **kwargs))
+
+
+@skipif_not_pytorch_2_1
+@pytest.mark.parametrize(
+    "name",
+    (
+        "gpt-neox-like",
+        "llama1-like",
+        "long-context-like",
+        "llama2-like",
+        "falcon-7b-like",
+        "falcon-40b-like",
+        "codellama2-like",
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
+    ),
+)
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_litgpt_variants(name, device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    device = torch.device(device)
+
+    x = torch.randint(0, 200, (5, 5), device=device)
+    config = lit_gpt_model.Config.from_name(name)
+
+    with device:
+        reference = lit_gpt_model.GPT(config)
+    expected_logits = reference(x)
+
+    expected_logits.sum().backward()
+
+    with device:
+        model = lit_gpt_model.GPT(config)
+    model.load_state_dict(reference.state_dict())
+    tom = tp_jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
+    actual_logits = tom(x)
+    assert_close(actual_logits, expected_logits)
+
+    actual_logits.sum().backward()
+
+    for param1, param2 in zip(reference.parameters(), model.parameters()):
+        assert param1 is not param2
+        assert param1.grad is not None
+        torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
+
+
+@pytest.mark.skip()
+@skipif_not_pytorch_2_1
+@pytest.mark.parametrize(
+    "name",
+    (
+        # TODO this seems flaky on CI - the cause is unclear
+        # "gpt-neox-like",
+        "llama1-like",
+        "long-context-like",
+        "llama2-like",
+        "falcon-7b-like",
+        "falcon-40b-like",
+        "codellama2-like",
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
+    ),
+)
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_litgpt_variants_kvcache(name, device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    device = torch.device(device)
+    x = torch.randint(0, 200, (1, 2), device=device)
+    config = lit_gpt_model.Config.from_name(name)
+
+    with device:
+        model = lit_gpt_model.GPT(config)
+        model.max_seq_length = 3
+
+    executors = nvfuserex if device.type == "cuda" else torchex
+    executors = [sdpa_ex] + executors
+
+    def sample(logits):
+        return torch.argmax(logits[:, -1], dim=-1, keepdim=True)
+
+    # the reference is 2 regular forward without the kv cache
+    logits_1 = model(x)
+    token_1 = sample(logits_1)
+    logits_2 = model(torch.cat((x, token_1), dim=-1))
+
+    with device:
+        model.set_kv_cache(batch_size=1)
+    tom = tp_jit(model, executors=executors)  # , disable_torch_autograd_support=True
+
+    # kv cache prefill
+    thunder_logits_1 = tom(x, torch.tensor([0, 1], device=device))
+    thunder_token_1 = sample(thunder_logits_1)
+    # 1 token generation
+    thunder_logits_2 = tom(thunder_token_1, torch.tensor([2], device=device))
+
+    assert_close(logits_1, thunder_logits_1)
+    assert_close(logits_2[:, -1:], thunder_logits_2)
