@@ -330,8 +330,7 @@ def _eager_unpacking_interpreter(
                 f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supported input types are {supported_input_types}"
             )
 
-    if si.varargs is not None:
-        raise NotImplementedError("varargs are not yet supported")
+    # TODO GTC Support varkwargs
     if si.varkwargs is not None:
         raise NotImplementedError("varkwargs are not yet supported")
 
@@ -348,24 +347,43 @@ def _eager_unpacking_interpreter(
     interpretation_kwargs = {}  # Kwargs to interpret with
     co: CACHE_OPTIONS = get_cache_option()
     with tracectx(prologue_trc):
-        # Unpacks args and kwargs
-        for idx, (name, x) in enumerate(chain(si.args, si.kwargs.items())):
+        # Unpacks args
+        for name, x in si.args:
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-
             prims.unpack_trivial(p)
-
             cargs, iargs = _eager_validate(p, co=co)
-
             computation_args.extend(cargs)
 
-            if idx < len(si.args):
-                prologue_args.append(p)
-                interpretation_args.extend(iargs)
-            else:
-                prologue_kwargs[name] = p
-                (iarg,) = iargs
-                interpretation_kwargs[name] = iarg
+            prologue_args.append(p)
+            interpretation_args.extend(iargs)
+
+        # Unpacks varargs (if present)
+        # NOTE varargs must follow other positional args
+        if si.varargs is not None:
+            name, x = si.varargs
+
+            p: Proxy
+            p, _ = _eager_unpack(x, name, co=co)
+            prims.unpack_trivial(p)
+            cargs, iargs = _eager_validate(p, co=co)
+            computation_args.extend(cargs)
+
+            prologue_args.append(p)
+            (iarg,) = iargs
+            interpretation_args.extend(iarg)
+
+        # Unpacks kwargs
+        for name, x in si.kwargs.items():
+            p: Proxy
+            p, _ = _eager_unpack(x, name, co=co)
+            prims.unpack_trivial(p)
+            cargs, iargs = _eager_validate(p, co=co)
+            computation_args.extend(cargs)
+
+            prologue_kwargs[name] = p
+            (iarg,) = iargs
+            interpretation_kwargs[name] = iarg
 
     prologue_trc.args = prologue_args
     prologue_trc.kwargs = prologue_kwargs

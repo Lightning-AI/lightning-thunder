@@ -97,6 +97,64 @@ def test_posonly_and_kwonly_args():
     assert_close(actual, expected)
 
 
+def test_varargs():
+    def foo(*args):
+        a, b = args
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+
+def test_positional_args_and_varargs():
+    def foo(a, b, *args):
+        c = a + b
+        for x in args:
+            c = c + x
+        return x
+
+    args = []
+    for _ in range(5):
+        args.append(torch.randn((2, 2)))
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b, *args)
+    expected = foo(a, b, *args)
+
+    assert_close(actual, expected)
+
+
+def test_positional_args_varargs_and_kwargs():
+    def foo(a, b, *args, z):
+        c = a + b + z
+        for x in args:
+            c = c + x
+        return x
+
+    args = []
+    for _ in range(5):
+        args.append(torch.randn((2, 2)))
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    z = torch.randn((2, 2))
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(a, b, *args, z=z)
+    expected = foo(a, b, *args, z=z)
+
+    assert_close(actual, expected)
+
+
 #
 # Binary operation tests
 #
@@ -605,6 +663,17 @@ def test_return_dict():
 
     expected = foo(5, 3)
     actual = jfoo(5, 3)
+    assert_close(expected, actual)
+
+
+def test_return_varargs():
+    def foo(*args):
+        return args
+
+    jfoo = thunder.jit(foo)
+
+    expected = foo(5, 3, 9, 9)
+    actual = jfoo(5, 3, 9, 9)
     assert_close(expected, actual)
 
 
