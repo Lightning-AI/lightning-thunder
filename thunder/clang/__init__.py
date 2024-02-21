@@ -79,6 +79,16 @@ def check_string_value(s: str, value: str, /) -> None:
     return prims.check_string_value(s, value)
 
 
+@clangop()
+def unpack_tuple(tup: tuple, /) -> tuple:
+    return prims.unpack_tuple(tup)
+
+
+@clangop()
+def construct_tuple(tup: tuple, /) -> tuple:
+    return prims.construct_tuple(tup)
+
+
 #
 # Data movement and transformation operations
 #

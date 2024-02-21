@@ -45,7 +45,19 @@ from thunder.core.compile_data import compile_data_and_stats, get_cache_option, 
 from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
 from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable
-from thunder.core.proxies import is_proxyable, proxy, Proxy, TensorProxy, pyval
+from thunder.core.proxies import (
+    is_proxyable,
+    proxy,
+    Proxy,
+    TensorProxy,
+    pyval,
+    NumberProxy,
+    StringProxy,
+    IntegerProxy,
+    FloatProxy,
+    ComplexProxy,
+    TupleProxy,
+)
 from thunder.core.jit_ext import minimal_thunder_jit, meso_thunder_interpreter
 from thunder.core.pytree import tree_flatten
 
@@ -157,6 +169,136 @@ from thunder.core.trace import _set_execution_file
 set_execution_callback_file = _set_execution_file
 
 
+def _eager_validate_tensor(p: TensorProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+        raise NotImplementedError(f"Trying to unpack a number with symbolic values, but this is not supported yet")
+
+    if co is CACHE_OPTIONS.CONSTANT_VALUES:
+        clang.check_tensor_shape_and_metadata(p)
+
+    return ([p], [p])
+
+
+def _eager_unpack_tensor(
+    t: pytorch.Tensor, /, name: None | str, *, co: CACHE_OPTIONS
+) -> tuple[TensorProxy, TensorProxy]:
+    p = proxy(t, name=name)
+    return p, p
+
+
+def _eager_validate_number(p: NumberProxy, /, *, co: CACHE_OPTIONS):
+    if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+        raise NotImplementedError(f"Trying to unpack a number with symbolic values, but this is not supported yet")
+
+    # When not using symbolic values, numbers are compile-time constants, so an actual
+    #   Python number is used when interpreting the function, and no number is passed
+    #   from the prologue to the computation in the eventual thunder program
+    val = pyval(p)
+
+    if co is CACHE_OPTIONS.CONSTANT_VALUES:
+        clang.check_number_type_and_value(p, val)
+
+    return ([], [val])
+
+
+def _eager_unpack_number(num: Number, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[NumberProxy, Number]:
+    p = proxy(num, name=name)
+    return p, num
+
+
+def _eager_validate_string(p: StringProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+        raise NotImplementedError(f"Trying to unpack a string with symbolic values, but this is not supported yet")
+
+    # When not using symbolic values, strings are compile-time constants, so an actual
+    #   Python string is used when interpreting the function, and no string is passed
+    #   from the prologue to the computation in the eventual thunder program
+    val = pyval(p)
+
+    if co is CACHE_OPTIONS.CONSTANT_VALUES:
+        clang.check_string_value(p, val)
+
+    return ([], [val])
+
+
+def _eager_unpack_string(
+    s: str,
+    /,
+    name: None | str,
+    *,
+    co: CACHE_OPTIONS,
+) -> tuple[StringProxy, str]:
+    p = proxy(s, name=name)
+    return p, s
+
+
+# NOTE When unpacking a tuple...
+#   - the values in the TupleProxy are the interpreter values
+#   - the interpreter is given the tuple, the computation is given the tuple and a flat list of its proxied elements
+#   - non-tuple values within the tuple are temporarily assigned proxies by clang.unpack_tuple so they can be
+#       validated
+def _eager_validate_tuple(p: TupleProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    unpacked = clang.unpack_tuple(p)
+
+    computation_args = [p]
+
+    for x in unpacked:
+        cargs, iargs = _eager_validate(x, co=co)
+        computation_args.extend(cargs)
+
+    return (computation_args, [p])
+
+
+def _eager_unpack_tuple(tup: tuple, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[TupleProxy, TupleProxy]:
+    unpack = partial(_eager_unpack, name=None, co=co)
+
+    values = []
+    for x in tup:
+        p, a = unpack(x)
+        values.append(a)
+
+    p = proxy(tuple(values), name=name)
+    return p, p
+
+
+_type_to_unpack_map: dict[type, Callable] = {
+    pytorch.Tensor: _eager_unpack_tensor,
+    bool: _eager_unpack_number,
+    int: _eager_unpack_number,
+    float: _eager_unpack_number,
+    complex: _eager_unpack_number,
+    str: _eager_unpack_string,
+    tuple: _eager_unpack_tuple,
+}
+
+_type_to_validation_map: dict[type, Callable] = {
+    TensorProxy: _eager_validate_tensor,
+    IntegerProxy: _eager_validate_number,
+    FloatProxy: _eager_validate_number,
+    ComplexProxy: _eager_validate_number,
+    StringProxy: _eager_validate_string,
+    TupleProxy: _eager_validate_tuple,
+}
+
+
+def _eager_validate(x: Any, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    typ: type = type(x)
+    unpack_fn = _type_to_validation_map.get(typ, None)
+    if unpack_fn is None:
+        raise ValueError(f"Cannot unpack object of type {typ}. Please file an issue requesting support.")
+
+    return unpack_fn(x, co=co)
+
+
+def _eager_unpack(x: Any, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[Proxy, Any]:
+    typ: type = type(x)
+    unpack_fn = _type_to_unpack_map.get(typ, None)
+    if unpack_fn is None:
+        raise ValueError(f"Cannot unpack object of type {typ}. Please file an issue requesting support.")
+
+    return unpack_fn(x, name, co=co)
+
+
 # A helper for "eager unpacking" interpreters that eagerly unpack their arguments as inputs
 # An interpreter must do two things:
 #   1) Create a prologue function with the same signature as the original function that
@@ -174,25 +316,20 @@ def _eager_unpacking_interpreter(
     if len(kwargs) > 0:
         raise NotImplementedError(f"kwargs are not yet supported")
 
-    # TODO GTC Support strings
-    # TODO GTC Support PyTorch and NumPy dtypes
+    # TODO GTC Support PyTorch dtypes
     # TODO GTC Support sequences of numbers, tensors, arrays, and strings
     # TODO GTC Support mappings from strings and numbers to numbers, tensors, arrays, strings
     # TODO GTC Consider supporting nested sequences of mappings that have these properties
     # TODO GTC Consider supporting arbitrary literal inputs
     # TODO GTC Consider supporiting arbitrary object inputs
-    supported_input_types = (
-        Number,
-        str,
-        pytorch.Tensor,
-    )
+    supported_input_types = (Number, str, pytorch.Tensor, tuple)
 
     si: SigInfo = get_siginfo(fn, args, kwargs)
 
     for arg in args:
         if not isinstance(arg, supported_input_types):
             raise NotImplementedError(
-                f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supports input types are {supported_input_types}"
+                f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supported input types are {supported_input_types}"
             )
 
     if len(si.kwargs) > 0:
@@ -208,62 +345,35 @@ def _eager_unpacking_interpreter(
     # TODO GTC Don't always import torch in traces (particularly the prologue trace)
     csi = SigInfo("computation")
     csi.args = []
-    proxyargs = []
-    callargs = []
-    rargs = []
+    prologue_args = []  # Arguments to the prologue
+    computation_args = []  # Arguments to the computation
+    interpretation_args = []  # Arguments to interpret with
     co: CACHE_OPTIONS = get_cache_option()
     with tracectx(prologue_trc):
         for name, x in si.args:
-            p = proxy(x, name=name)
+            p: Proxy
+            p, _ = _eager_unpack(x, name, co=co)
+
             prims.unpack_trivial(p)
-            proxyargs.append(p)
+            prologue_args.append(p)
 
-            # TODO GTC Refactor
-            # TODO GTC Add support for None
-            # TODO GTC Add support for sequences and maps
-            # TODO GTC Add support for modules
-            if isinstance(p, TensorProxy):
-                callargs.append(p)
-                rargs.append(p)
-                csi.args.append((name, None))
-                if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                    clang.check_tensor_shape_and_metadata(p)
-                elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-                    raise NotImplementedError(
-                        f"Trying to unpack a tensor with symbolic values, but this is not supported yet"
-                    )
-            elif isinstance(p, Number):
-                if using_symbolic_values():
-                    raise NotImplementedError(
-                        f"Trying to unpack a number with symbolic values, but this is not supported yet"
-                    )
-                else:
-                    val = pyval(p)
-                    callargs.append(val)
-                    if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                        clang.check_number_type_and_value(p, val)
+            cargs, iargs = _eager_validate(p, co=co)
 
-            elif isinstance(p, str):
-                val = pyval(p)
-                callargs.append(val)
-                if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                    clang.check_string_value(p, val)
-                elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-                    raise NotImplementedError(
-                        f"Trying to unpack a string with symbolic values, but this is not supported yet"
-                    )
-            else:
-                raise AssertionError(f"Fell through unpacking")
+            computation_args.extend(cargs)
+            interpretation_args.extend(iargs)
 
-    prologue_trc.args = proxyargs
+    prologue_trc.args = prologue_args
 
+    # Constructs the computation trace
+    # TODO GTC Only unpack what's used in the computation
     with tracectx(computation_trc):
-        # TODO GTC Only unpack what's used in the computation
         p: Proxy
-        for p in rargs:
+        for p in computation_args:
             prims.unpack_trivial(p)
+            csi.args.append((p.name, None))
+            computation_trc.add_name(p.name)
 
-        result = interpreter(fn)(*callargs)
+        result = interpreter(fn)(*interpretation_args)
 
         # Validates that the returned items are proxies or printable values
         # TODO GTC This assumes pytrees are printable (fix this)
@@ -279,11 +389,11 @@ def _eager_unpacking_interpreter(
 
     # Creates hand-off from prologue to computation
     with tracectx(prologue_trc):
-        prims.python_return(tuple(rargs))
+        prims.python_return(tuple(computation_args))
 
     # Constructs the computation trace's signature
     computation_trc._siginfo = csi
-    computation_trc.args = proxyargs
+    computation_trc.args = computation_args
 
     return prologue_trc, computation_trc
 
@@ -469,7 +579,6 @@ def jit(
             pro = protrace.python_callable()
 
             # TODO GTC Apply transforms
-
             # TODO GTC Update this transform's parameters to take 'executors' instead of 'executors_list'
             extraces = transform_for_execution(
                 computation_trc,

@@ -305,9 +305,170 @@ def test_binary_add_strings(jit):
 
 
 #
+# Tuple tests
+#
+
+
+def test_tuple_len():
+    def foo(tup):
+        return len(tup) + 5
+
+    jfoo = thunder.jit(foo)
+
+    tup = (0, 1, 2, 3, 4)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert actual == expected
+
+
+def test_tuple_binary_subscr():
+    def foo(tup):
+        return tup[0], tup[1:3]
+
+    jfoo = thunder.jit(foo)
+
+    tup = (0, 1, 2, 3, 4)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert actual == expected
+
+
+def test_tuple_assignment():
+    def foo(tup):
+        tup[0] = 5
+
+    jfoo = thunder.jit(foo)
+
+    tup = (0, 1, 2, 3, 4)
+
+    with pytest.raises(JITError):
+        jfoo(tup)
+
+
+def test_tuple_unpack_repack():
+    def foo(tup):
+        a, b, *_ = tup
+        return a, (b, a)
+
+    jfoo = thunder.jit(foo)
+
+    tup = (0, 1, 2, 3, 4)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert actual == expected
+
+
+def test_tuple_list_conversion():
+    def foo(tup):
+        return list(tup)
+
+    jfoo = thunder.jit(foo)
+
+    tup = (0, 1, 2, 3, 4)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert actual == expected
+
+
+def test_tuple_enumerate():
+    def foo(tup):
+        accum = 0
+        for x in tup:
+            accum += x
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    tup = (0, 1, 2, 3, 4)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert actual == expected
+
+
+def test_tuple_addition():
+    def foo(tup0, tup1):
+        return tup0 + tup1
+
+    jfoo = thunder.jit(foo)
+
+    tup0 = (0, 1, 2, 3, 4)
+    tup1 = (5, 6, 7, 8, 9, 10)
+
+    actual = jfoo(tup0, tup1)
+    expected = foo(tup0, tup1)
+
+    assert actual == expected
+
+
+def test_tuple_list_addition():
+    def foo(tup0):
+        return tup0 + [5, 6, 7]
+
+    jfoo = thunder.jit(foo)
+
+    tup0 = (0, 1, 2, 3, 4)
+
+    with pytest.raises(TypeError):
+        jfoo(tup0)
+
+
+def test_nested_tuples():
+    def foo(tup):
+        tup0, tup1 = tup
+        tup2, tup3 = tup0
+        return tup1, tup3
+
+    jfoo = thunder.jit(foo)
+
+    tup3 = (3, 4)
+    tup2 = (1, 2)
+    tup1 = (-1, 0)
+    tup0 = (tup2, tup3)
+    tup = (tup0, tup1)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert actual == expected
+
+
+def test_nested_tuples_with_tensors():
+    def foo(tup):
+        tup0, tup1 = tup
+        tup2, tup3 = tup0
+        return tup1, tup3, tup2[0] + tup3[1]
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn(2, 2)
+    b = torch.randn(2, 2)
+
+    tup3 = (3, 4)
+    tup2 = (a, b)
+    tup1 = (-1, 0)
+    tup0 = (tup2, tup3)
+    tup = (tup0, tup1)
+
+    actual = jfoo(tup)
+    expected = foo(tup)
+
+    assert_close(actual, expected)
+
+
+#
 # Return value tests
 #
-# Retrun values must be proxies or (simple) printable objects (or both)
+# Return values must be proxies or (simple) printable objects (or both)
 
 
 def test_return_number():
@@ -408,8 +569,7 @@ def test_return_dict():
 #
 # Constant values caching tests
 #
-@pytest.mark.parametrize("jit", (minimal_thunder_jit,), ids=("thunder.jit-translate_functions",))
-def test_constant_values_caching(jit):
+def test_constant_values_caching():
     def foo(a, b):
         return a + b
 
@@ -491,6 +651,63 @@ def test_constant_values_caching(jit):
 
     assert thunder.cache_misses(jfoo) == 5
     assert thunder.cache_hits(jfoo) == 6
+
+
+def test_constant_values_caching_with_tuples():
+    def foo(tup0, tup1):
+        return tup0[0] + tup1[1]
+
+    jfoo = thunder.jit(foo)
+
+    tup0 = (0, 1)
+    tup1 = (2, 3)
+
+    actual = jfoo(tup0, tup1)
+    expected = foo(tup0, tup1)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    jfoo(tup0, tup1)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    tup2 = (0, 1)
+
+    jfoo(tup2, tup1)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
+
+    a = torch.randn((2, 2))
+    tup3 = (a, 1)
+
+    actual = jfoo(tup3, tup1)
+    expected = foo(tup3, tup1)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+    b = torch.randn((2, 2))
+    tup4 = (b, 1)
+
+    actual = jfoo(tup4, tup1)
+    expected = foo(tup4, tup1)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 3
+
+    c = torch.randn((2, 1))
+    tup5 = (c, 1)
+
+    actual = jfoo(tup5, tup1)
+    expected = foo(tup5, tup1)
+
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 3
 
 
 #

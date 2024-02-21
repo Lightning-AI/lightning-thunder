@@ -84,10 +84,14 @@ class Proxy(VariableInterface, ProxyInterface):
                     baseutils.check(False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}")
             elif isinstance(self, NumberProxy):
                 prefix = "n"
+            elif isinstance(self, StringProxy):
+                prefix = "s"
             elif isinstance(self, TensorProxy):
                 prefix = "t"
             elif isinstance(self, CollectionProxy):
                 prefix = "C"
+            elif isinstance(self, TupleProxy):
+                prefix = "tup"
             else:
                 prefix = "p"
 
@@ -364,6 +368,13 @@ class StringProxy(Proxy, str):
         return str(self) == str(other)
 
 
+#
+# Collection proxies
+#
+
+
+# The following class is DEPRECATED, and is only preserved her for experimental feature development
+#   that relies upon it.
 class CollectionProxy(Proxy):
     def __init__(self, coll: Any, *, name: str | None = None):
         Proxy.__init__(self, name=name)
@@ -374,6 +385,27 @@ class CollectionProxy(Proxy):
 
     def type_string(self) -> str:
         return "Collection"
+
+
+class TupleProxy(Proxy, tuple):
+    def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None):
+        return tuple.__new__(cls, tup)
+
+    def __init__(self, tup: tuple, *, name: None | str = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._value = tup
+
+    def type_string(self) -> str:
+        return "tuple"
+
+    def __add__(self, other):
+        if not isinstance(other, tuple):
+            raise TypeError(f"can only concatenate tuple (not '{type(other)}') to tuple")
+
+        return self._value + other
+
+    def __setitem__(self, key):
+        raise TypeError("'tuple' object does not support item assignment")
 
 
 # NOTE NumberProxies are NOT Numbers
@@ -1336,5 +1368,8 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
             return IntegerProxy(name=name, value=x, history=history)
 
         raise NotImplementedError
+
+    if isinstance(x, tuple):
+        return TupleProxy(x, name=name, history=history)
 
     return x

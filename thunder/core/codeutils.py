@@ -114,9 +114,6 @@ def is_literal(x: Any) -> bool:
     if is_collection(x):
         flat, _ = tree_flatten(x)
         for f in flat:
-            check(
-                not is_collection(f), lambda: f"Found a collection {f} after flattening", exception_type=AssertionError
-            )
             if is_literal(f):
                 return True
         return False
@@ -147,14 +144,15 @@ def to_printable(
     import_ctx: Optional[dict] = None,
     object_ctx: Optional[dict] = None,
 ) -> Any:
+    # Short-circuits if x is a Proxy
+    if isinstance(x, ProxyInterface):
+        return x
+
     if is_collection(x):
         flat, spec = tree_flatten(x)
 
         printables = []
         for f in flat:
-            check(
-                not is_collection(f), lambda: f"Found a collection {f} after flattening", exception_type=AssertionError
-            )
             printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
 
         printable = tree_unflatten(printables, spec)

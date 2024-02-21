@@ -72,6 +72,7 @@ from thunder.core.proxies import (
     pytype,
     Proxy,
     StringProxy,
+    TupleProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -107,6 +108,8 @@ class PrimIDs(Enum):
     UNPACK_KEY = auto()
     UNPACK_SEQUENCE = auto()
     UNPACK_TRIVIAL = auto()
+    UNPACK_TUPLE = auto()
+    CONSTRUCT_TUPLE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -423,6 +426,8 @@ python_vars = make_prim(
 
 
 def _collectify(x: Any, *, name: str | None = None) -> Any:
+    if isinstance(x, Proxy):
+        return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
 
@@ -644,6 +649,67 @@ unpack_sequence = make_prim(
     python_printer=unpack_sequence_printer,
     python_impl=unpack_sequence_impl,
 )
+
+
+# NOTE This actually returns a new tuple of the elements, which allows the elements of tup
+#   to appear in the symbol's output. If the original tuple is a proxy and it were just
+#   returned directly then the output would just be the tuple
+def _unpack_tuple_meta(tup: tuple, /) -> tuple:
+    utils.check_type(tup, tuple)
+
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    return tuple(_proxy(x) for x in tup)
+
+
+def _unpack_tuple_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_tuple but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_tuple but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check_type(bsym.output, Sequence)
+
+    (x,) = arg_printables
+    call_str = f"{codeutils.prettyprint(x)}"
+
+    # Short-circuits if there's nothing to unpack:
+    if len(bsym.output) == 0:
+        return f"# {call_str} (empty tuple)"
+
+    lines = []
+    for out in out_printables:
+        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
+        lines.append(line)
+
+    lines.append(f"= {call_str}")
+    return lines
+
+
+unpack_tuple = make_prim(
+    PrimIDs.UNPACK_TUPLE,
+    "unpack_tuple",
+    meta=_unpack_tuple_meta,
+    python_printer=_unpack_tuple_printer,
+)
+
+
+def _construct_tuple_meta(tup: tuple, /) -> tuple:
+    utils.check_type(tup, tuple)
+    return TupleProxy(tup)
+
+
+construct_tuple = make_prim(PrimIDs.CONSTRUCT_TUPLE, "construct_tuple", meta=_construct_tuple_meta)
 
 
 # NOTE UNPACK_ATTR is intended only to be bound to directly, and not called
