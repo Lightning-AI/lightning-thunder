@@ -362,14 +362,18 @@ thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
 )
 
 grad_executors = (
-    *((partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_executor),) if thunder_cudnn_executor is not None else ()),
+    *(
+        (partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_nvfuser_executor),)
+        if thunder_cudnn_nvfuser_executor is not None
+        else ()
+    ),
     torch_fwd_bwd,
     torchcompile_fwd_bwd,
     thunder_fwd_bwd,
     thunder_fwd_bwd_sdpa_torch_compile_nvfuser,
 )
 grad_executors_ids = (
-    *(("thunder+cudnn",) if thunder_cudnn_executor is not None else ()),
+    *(("thunder+cudnn",) if thunder_cudnn_nvfuser_executor is not None else ()),
     "torch",
     "torch.compile",
     "thunder",
