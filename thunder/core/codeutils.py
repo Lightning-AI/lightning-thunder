@@ -334,6 +334,10 @@ def prettyprint(
         return m("float")
     if x is complex:
         return m("complex")
+    if x is tuple:
+        return m("tuple")
+    if x is list:
+        return m("list")
     # TODO Handle complex infinities and nans
     if isinstance(x, Number):
         s: str

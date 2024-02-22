@@ -73,6 +73,7 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
             sample,
             lambda a, b: comp(a, b, equal_nan=True),
         )
+
         if result is not None:
             return result
 

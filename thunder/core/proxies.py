@@ -333,6 +333,7 @@ class Proxy(VariableInterface, ProxyInterface):
 
 # A generic "anything" proxy
 # Unlike many other proxies, this does not mimic the type of the object it wraps
+# TODO GTC Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
     def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
         super().__init__(name=name, history=history)
@@ -789,20 +790,19 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return NotImplemented
 
 
-def pyval(x: Number | str) -> Number | str:
-    baseutils.check_type(x, (Number, str))
+def pyval(x: Number | str | AnyProxy) -> Number | str | any:
+    baseutils.check_type(x, (Number, str, AnyProxy))
 
-    # NOTE This has to query NumberProxy, not Number, because NumberProxies are Numbers
-    #   (but not all Numbers are NumberProxies)
+    if isinstance(x, AnyProxy):
+        return x._o
+
     if isinstance(x, (NumberProxy, StringProxy)):
         return x.value
 
     return x
 
 
-def pytype(x: Number | str | AnyProxy) -> type:
-    baseutils.check_type(x, (Number, str, AnyProxy))
-
+def pytype(x: Proxy) -> type:
     if isinstance(x, AnyProxy):
         return type(x._o)
 
@@ -818,6 +818,10 @@ def pytype(x: Number | str | AnyProxy) -> type:
         return int
     if isinstance(x, str):
         return str
+    if isinstance(x, tuple):
+        return tuple
+    if isinstance(x, list):
+        return list
 
 
 # TODO GTC Update Proxy number inits to be value, /, *, name, history
@@ -1438,5 +1442,8 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return TupleProxy(x, name=name, history=history)
     if isinstance(x, list):
         return ListProxy(x, name=name, history=history)
+
+    if isinstance(x, torch.dtype):
+        return AnyProxy(x, name=name, history=history)
 
     return x

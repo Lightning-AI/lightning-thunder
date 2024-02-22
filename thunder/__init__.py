@@ -192,6 +192,23 @@ def _eager_unpack_tensor(
     return p, p
 
 
+def _eager_validate_literal_like(p: AnyProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+        raise NotImplementedError(
+            f"Trying to unpack a literal-like value of type {pytype(p)} with symbolic values, but this is not supported yet"
+        )
+
+    if co is CACHE_OPTIONS.CONSTANT_VALUES:
+        clang.check_literal_like(p, pyval(p))
+
+    return ([], [pyval(p)])
+
+
+def _eager_unpack_literal_like(x: Any, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[AnyProxy, None]:
+    p = proxy(x, name=name)
+    return p, None
+
+
 def _eager_validate_none(p: AnyProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
         raise NotImplementedError(f"Trying to unpack a None with symbolic values, but this is not supported yet")
@@ -264,6 +281,10 @@ def _eager_validate_tuple(p: TupleProxy, /, *, co: CACHE_OPTIONS) -> tuple[list,
 
     computation_args = [p]
 
+    clang.check_type(p, tuple)
+    if len(p) == 0:
+        clang.check_empty(p)
+
     for x in unpacked:
         cargs, iargs = _eager_validate(x, co=co)
         computation_args.extend(cargs)
@@ -288,6 +309,10 @@ def _eager_validate_list(p: ListProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, l
 
     computation_args = [p]
 
+    clang.check_type(p, list)
+    if len(p) == 0:
+        clang.check_empty(p)
+
     for x in unpacked:
         cargs, iargs = _eager_validate(x, co=co)
         computation_args.extend(cargs)
@@ -311,6 +336,8 @@ def _eager_validate_any(p: Proxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     typ: type = pytype(p)
     if typ is NoneType:
         return _eager_validate_none(p, co=co)
+    if typ is pytorch.dtype:
+        return _eager_validate_literal_like(p, co=co)
 
     raise NotImplementedError("Trying to validate an object with type {typ}, but this is not implemented")
 
@@ -325,6 +352,7 @@ _type_to_unpack_map: dict[type, Callable] = {
     tuple: _eager_unpack_tuple,
     list: _eager_unpack_list,
     NoneType: _eager_unpack_none,
+    pytorch.dtype: _eager_unpack_literal_like,
 }
 
 _type_to_validation_map: dict[type, Callable] = {
@@ -376,7 +404,7 @@ def _eager_unpacking_interpreter(
     # TODO GTC Consider supporting nested sequences of mappings that have these properties
     # TODO GTC Consider supporting arbitrary literal inputs
     # TODO GTC Consider supporiting arbitrary object inputs
-    supported_input_types = (Number, str, pytorch.Tensor, tuple, list, NoneType)
+    supported_input_types = tuple(_type_to_unpack_map.keys())
 
     si: SigInfo = get_siginfo(fn, args, kwargs)
 

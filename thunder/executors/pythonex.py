@@ -59,6 +59,16 @@ ex.register_implementation(
 )
 
 
+def _check_literal_like_impl(p: Any, v: Any, /) -> None:
+    assert p == v
+
+
+check_literal_like = ex.register_operator(
+    "check_literal_like", like=prims.check_literal_like, fn=_check_literal_like_impl
+)
+ex.register_implementation(prims.check_literal_like, check_literal_like, checker=_always_executable)
+
+
 def _check_none_impl(n: None, /) -> None:
     assert n is None
 
@@ -67,16 +77,16 @@ check_none = ex.register_operator("check_none", like=prims.check_none, fn=_check
 ex.register_implementation(prims.check_none, check_none, checker=_always_executable)
 
 
-def _check_number_type_impl(n: Number, typ: bool | int | float | complex) -> None:
-    assert type(n) == typ
+def _check_type_impl(x: Any, typ: type, /) -> None:
+    assert type(x) == typ
 
 
-check_number_type = ex.register_operator("check_number_type", like=prims.check_number_type, fn=_check_number_type_impl)
-ex.register_implementation(prims.check_number_type, check_number_type, checker=_always_executable)
+check_type = ex.register_operator("check_type", like=prims.check_type, fn=_check_type_impl)
+ex.register_implementation(prims.check_type, check_type, checker=_always_executable)
 
 
 def _check_number_type_and_value_impl(n: Number, v: Number) -> None:
-    assert type(n) == type(v) and n == v
+    assert type(n) == type(v) and (n == v or (n != n and v != v))
 
 
 check_number_type_and_value = ex.register_operator(
@@ -119,6 +129,14 @@ def _unpack_list_impl(lst: list, /) -> list:
 
 unpack_list = ex.register_operator("unpack_list", like=prims.unpack_list, fn=_unpack_list_impl)
 ex.register_implementation(prims.unpack_list, unpack_list, checker=_always_executable)
+
+
+def _check_empty_impl(seq: tuple | list, /) -> None:
+    assert not len(seq)
+
+
+check_empty = ex.register_operator("check_empty", like=prims.check_empty, fn=_check_empty_impl)
+ex.register_implementation(prims.check_empty, check_empty, checker=_always_executable)
 
 
 def _construct_tuple_impl(tup: tuple, /) -> None:

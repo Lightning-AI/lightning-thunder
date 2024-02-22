@@ -468,6 +468,25 @@ def test_filtering_nones():
 
 
 #
+# torch.dtype inputs
+#
+
+
+def test_torch_dtypes():
+    def foo(a, dtyp):
+        return a.to(dtyp)
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    dtyp = torch.float64
+
+    actual = jfoo(a, dtyp)
+    expected = foo(a, dtyp)
+    assert_close(actual, expected, check_dtype=True)
+
+
+#
 # Tuple tests
 #
 
@@ -1370,6 +1389,77 @@ def test_constant_values_caching_with_none():
     assert thunder.cache_hits(jfoo) == 1
 
     actual = jfoo(a, None)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+
+def test_constant_values_caching_with_torch_dtypes():
+    def foo(a, dtyp):
+        return a.to(dtyp)
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    dtyp0 = torch.bfloat16
+
+    expected = foo(a, dtyp0)
+    actual = jfoo(a, dtyp0)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(a, dtyp0)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    dtyp1 = torch.float64
+
+    expected = foo(a, dtyp1)
+    actual = jfoo(a, dtyp1)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+
+# NOTE This intentionally tests empty tuples and lists together to ensure
+#   () and [] generate distinct programs
+def test_constant_values_empty_tuples_and_lists_caching():
+    def foo(seq):
+        return seq
+
+    jfoo = thunder.jit(foo)
+
+    empty_tup = ()
+
+    expected = foo(empty_tup)
+    actual = jfoo(empty_tup)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(empty_tup)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    empty_list = []
+
+    expected = foo(empty_list)
+    actual = jfoo(empty_list)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    actual = jfoo(empty_list)
     assert_close(actual, expected)
 
     assert thunder.cache_misses(jfoo) == 2

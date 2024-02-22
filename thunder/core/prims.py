@@ -70,6 +70,7 @@ from thunder.core.proxies import (
     proxy,
     numberproxy,
     pytype,
+    pyval,
     Proxy,
     StringProxy,
     TupleProxy,
@@ -95,7 +96,9 @@ class PrimIDs(Enum):
     ASSERT_TENSOR_METADATA = auto()
     CHECK_TENSOR_SHAPE_AND_METADATA = auto()
     CHECK_NONE = auto()
-    CHECK_NUMBER_TYPE = auto()
+    CHECK_EMPTY = auto()
+    CHECK_LITERAL_LIKE = auto()
+    CHECK_TYPE = auto()
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
@@ -473,17 +476,44 @@ check_none = make_prim(
 )
 
 
-def _check_number_type_meta(n: NumberProxy, typ: bool | int | float | complex, /) -> None:
+def _check_empty_meta(seq: tuple | list, /) -> None:
     # Validates types
-    baseutils.check_type(n, NumberProxy)
-    baseutils.check(typ in (bool, int, float, complex), lambda: f"Expected a numbertype (bool, int, float, complex)")
-    baseutils.check(pytype(n) == typ, lambda: f"Different types for {pytype(n)} and {typ}")
+    baseutils.check_type(seq, (tuple, list))
+    baseutils.check(len(seq) == 0, lambda: f"Expected an empty sequence, but found {seq=}")
 
 
-check_number_type = make_prim(
-    PrimIDs.CHECK_NUMBER_TYPE,
-    "check_number_type",
-    meta=_check_number_type_meta,
+check_empty = make_prim(
+    PrimIDs.CHECK_EMPTY,
+    "check_none",
+    meta=_check_empty_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_literal_like_meta(p: AnyProxy, v: Any, /) -> None:
+    # Validates types
+    baseutils.check_type(p, AnyProxy)
+    baseutils.check(pyval(p) == v, lambda: f"Expected {p} to be equal to {v}")
+
+
+check_literal_like = make_prim(
+    PrimIDs.CHECK_LITERAL_LIKE,
+    "check_literal_like",
+    meta=_check_literal_like_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_type_meta(x: Any, typ: type, /) -> None:
+    # Validates types
+    baseutils.check(typ, type, lambda: f"Expected a type for check_type, but found {typ}")
+    baseutils.check(pytype(x) is typ, lambda: f"Different types for {pytype(x)} and {typ}")
+
+
+check_type = make_prim(
+    PrimIDs.CHECK_TYPE,
+    "check_type",
+    meta=_check_type_meta,
     tags=(OpTags.DONT_DCE,),
 )
 

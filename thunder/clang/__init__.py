@@ -69,8 +69,13 @@ def check_none(p: AnyProxy, /) -> None:
 
 
 @clangop()
-def check_number_type(n: Number, typ: bool | int | float | complex, /) -> None:
-    return prims.check_number_type(n, typ)
+def check_literal_like(p: AnyProxy, v: Any, /) -> None:
+    return prims.check_literal_like(p, v)
+
+
+@clangop()
+def check_type(x: Any, typ: type, /) -> None:
+    return prims.check_type(x, typ)
 
 
 # Checks a number's value
@@ -92,6 +97,11 @@ def unpack_tuple(tup: tuple, /) -> tuple:
 @clangop()
 def unpack_list(lst: list, /) -> list:
     return prims.unpack_list(lst)
+
+
+@clangop()
+def check_empty(seq: tuple | list, /) -> None:
+    return prims.check_empty(seq)
 
 
 @clangop()
