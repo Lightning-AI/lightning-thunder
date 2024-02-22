@@ -331,14 +331,18 @@ class Proxy(VariableInterface, ProxyInterface):
         raise RuntimeError("Inplace operators like __ixor__ are not supported.")
 
 
-# This is a proxy for anything not covered by more type-specific proxies.
-# We do need this within the litjit to track history but differs from the other
-# proxies in that we do not try as much to mimick the proxied object as
-# for the other proxies.
+# A generic "anything" proxy
+# Unlike many other proxies, this does not mimic the type of the object it wraps
 class AnyProxy(Proxy):
     def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
         super().__init__(name=name, history=history)
         self._o = o
+
+    def __repr__(self) -> str:
+        return f"<AnyProxy '{self._o}>'"
+
+    def type_string(self) -> str:
+        return str(type(self._o))
 
 
 class StringProxy(Proxy, str):
@@ -784,8 +788,11 @@ def pyval(x: Number | str) -> Number | str:
     return x
 
 
-def pytype(x: Number | str) -> type:
-    baseutils.check_type(x, (Number, str))
+def pytype(x: Number | str | AnyProxy) -> type:
+    baseutils.check_type(x, (Number, str, AnyProxy))
+
+    if isinstance(x, AnyProxy):
+        return type(x._o)
 
     if isinstance(x, complex):
         return complex
@@ -1396,6 +1403,9 @@ def is_proxyable(x: Any, /) -> bool:
 
 
 def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any | Proxy:
+    if x is None:
+        return AnyProxy(None, name=name, history=history)
+
     if isinstance(x, torch.Tensor):
         return tensorproxy(x, name=name, history=history)
 

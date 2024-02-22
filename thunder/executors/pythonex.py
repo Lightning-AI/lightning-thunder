@@ -59,6 +59,14 @@ ex.register_implementation(
 )
 
 
+def _check_none_impl(n: None, /) -> None:
+    assert n is None
+
+
+check_none = ex.register_operator("check_none", like=prims.check_none, fn=_check_none_impl)
+ex.register_implementation(prims.check_none, check_none, checker=_always_executable)
+
+
 def _check_number_type_impl(n: Number, typ: bool | int | float | complex) -> None:
     assert type(n) == typ
 

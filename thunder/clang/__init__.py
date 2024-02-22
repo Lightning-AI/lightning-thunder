@@ -16,7 +16,7 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, pyval, pytype, proxy
+from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy
 import thunder.core.devices as devices
 from thunder.core.script.noinline import noinline
 
@@ -61,6 +61,11 @@ def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t, tuple(t.shape), str(t.device), dtypes.to_torch_dtype(t.dtype), t.requires_grad
     )
+
+
+@clangop()
+def check_none(p: AnyProxy, /) -> None:
+    return prims.check_none(p)
 
 
 @clangop()

@@ -416,6 +416,58 @@ def test_binary_add_strings():
 
 
 #
+# None tests
+#
+
+
+def test_none_return():
+    def foo(n):
+        return n
+
+    jfoo = thunder.jit(foo)
+    actual = jfoo(None)
+    expected = foo(None)
+
+    assert actual == expected
+
+
+def test_none_condition():
+    def foo(a, b):
+        if b is None:
+            return a
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+    assert_close(actual, expected)
+
+    actual = jfoo(a, None)
+    expected = foo(a, None)
+    assert_close(actual, expected)
+
+
+def test_filtering_nones():
+    def foo(seq):
+        accum = 0
+        for x in (x for x in seq if x is not None):
+            accum = accum + x
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    seq = (0, 1, None, None, 2, 3, None, 4, 5, None)
+
+    actual = jfoo(seq)
+    expected = foo(seq)
+    assert_close(actual, expected)
+
+
+#
 # Tuple tests
 #
 
@@ -1146,6 +1198,44 @@ def test_constant_values_caching_with_kwargs():
     assert_close(actual, expected)
 
     assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
+
+
+def test_constant_values_caching_with_none():
+    def foo(a, b):
+        if b is None:
+            return a * 2
+        return a * b
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    expected = foo(a, b)
+    actual = jfoo(a, b=b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(a, b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    actual = jfoo(a, None)
+    expected = foo(a, None)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    actual = jfoo(a, None)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 2
 
 

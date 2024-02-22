@@ -73,6 +73,7 @@ from thunder.core.proxies import (
     Proxy,
     StringProxy,
     TupleProxy,
+    AnyProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -93,6 +94,7 @@ class PrimIDs(Enum):
     # Unpacking and input validation prims
     ASSERT_TENSOR_METADATA = auto()
     CHECK_TENSOR_SHAPE_AND_METADATA = auto()
+    CHECK_NONE = auto()
     CHECK_NUMBER_TYPE = auto()
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
@@ -453,6 +455,20 @@ check_tensor_shape_and_metadata = make_prim(
     PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
     "check_tensor_metadata",
     meta=_check_tensor_shape_and_metadata_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_none_meta(p: AnyProxy, /) -> None:
+    # Validates types
+    baseutils.check_type(p, AnyProxy)
+    baseutils.check(pytype(p) is NoneType, lambda: f"Expected {p} to be None")
+
+
+check_none = make_prim(
+    PrimIDs.CHECK_NONE,
+    "check_none",
+    meta=_check_none_meta,
     tags=(OpTags.DONT_DCE,),
 )
 
