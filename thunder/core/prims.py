@@ -131,6 +131,7 @@ class PrimIDs(Enum):
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
     RANDN = auto()
+    TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     # Reshaping and permuting prims
@@ -2262,6 +2263,82 @@ def _randn_meta(
 
 
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
+
+
+# Prim to construct a Tensor from sequence/nested sequence of Numbers.
+def _tensor_from_sequence_meta(
+    seq: Sequence[Number | Sequence], *, dtype: None | dtypes.dtype, device: devices.Device
+) -> TensorProxy:
+    utils.check_type(dtype, (dtypes.dtype, NoneType))
+    utils.check_type(device, devices.Device)
+    utils.check_type(seq, Sequence)
+
+    # str is treated as Sequence but we don't want to treat it as such.
+    def is_sequence_not_str(obj):
+        return isinstance(obj, Sequence) and not isinstance(obj, str)
+
+    # Compute shape and validate that we have homogenous sequence.
+    shape = []
+    sequences = seq
+    dim_len = len(sequences)
+    shape.append(dim_len)
+    while dim_len > 0 and is_sequence_not_str(first := sequences[0]):
+        dim_len = len(first)
+        next_sequences = []
+        for s in sequences:
+            # Check for homogenous sequence.
+            utils.check(len(s) == dim_len, lambda: f"Expected seq of len={dim_len} at dim {len(shape)}")
+            next_sequences.extend(s)
+
+        shape.append(dim_len)
+        sequences = next_sequences
+
+    # Infer the dtype
+    types = set()
+    for element in sequences:
+        utils.check(
+            isinstance(element, (bool, int, float, complex)),
+            lambda: f"Expected sequences of numbers, but found type {type(element)} when constructing a tensor from a sequence",
+            ValueError,
+        )
+        types.add(pytype(element))
+
+    # NOTE: inferred_dtype will stay None if sequence was empty.
+    inferred_dtype = None
+    if complex in types:
+        inferred_dtype = complex
+    elif float in types:
+        inferred_dtype = float
+    elif int in types:
+        inferred_dtype = int
+    elif bool in types:
+        inferred_dtype = bool
+
+    # user specified a dtype and we could infer the dtype
+    if dtype is not None and inferred_dtype is not None:
+        # verify that the inferred dtype can be safely cast to user requested dtype.
+        # NOTE: We can't use `utils.can_safe_cast_to` as it is more fine-grained and it differentiates between
+        #       unsigned and signed integers.
+        #       But for Python Number types we can only infer `bool`, `int`, `float`, `complex`.
+        utils.check(
+            utils.can_safe_cast_number_to(inferred_dtype(0), dtype),
+            lambda: f"Can't safely cast sequence with numbertype {inferred_dtype} to dtype {dtype}",
+        )
+    # user specified a dtype and we couldn't infer the dtype (empty sequence)
+    elif dtype is not None and inferred_dtype is None:
+        pass
+    else:  # user didn't specify the dtype.
+        # use inferred_dtype if available else default to float
+        # NOTE: In future, we should rely on something like [thunder/torch].get_default_dtype.
+        dtype = inferred_dtype if inferred_dtype is not None else float
+
+    # We set `requires_grad` to False as this tensor will show up only in trace and
+    # user won't have access to it. See also, the note on _full_meta.
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+# Prim to construct a Tensor from sequence/nested sequence of Numbers.
+tensor_from_sequence = make_prim(PrimIDs.TENSOR_FROM_SEQUENCE, "tensor_from_sequence", meta=_tensor_from_sequence_meta)
 
 
 def _multinomial_meta(

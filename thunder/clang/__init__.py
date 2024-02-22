@@ -309,6 +309,21 @@ def uniform_philox(
     )
 
 
+@clangop()
+def tensor_from_sequence(
+    sequence: Sequence[Number | Sequence], *, dtype: None | dtypes.dtype = None, device: None | DeviceLike = None
+) -> TensorLike:
+    # NOTE: default the device to `cpu`
+    if device is None:
+        device = "cpu"
+    device: DeviceLike = devices.to_device(device)
+
+    # NOTE: dtype is None means that the prim should infer the dtype.
+    dtype: None | dtypes.dtype = dtypes.to_dtype(dtype)
+
+    return prims.tensor_from_sequence(sequence, dtype=dtype, device=device)
+
+
 #
 # Shape operations
 #

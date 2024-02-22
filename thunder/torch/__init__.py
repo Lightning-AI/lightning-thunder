@@ -342,17 +342,30 @@ def ones_like(a: TensorLike, /, *, device: None | DeviceLike = None, dtype: None
     return full_like(a, 1, device=device, dtype=dtype)
 
 
-@torchsymbol(is_method=False, id="torch.tensor")
+@torchsymbol(torch.tensor, is_method=False, id="torch.tensor")
 def tensor(
-    n: Number,
+    seq_or_number: Sequence | Number,
+    *,
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
 ) -> TensorLike:
+    # TODO: Support torch.Tensor/np.ndarray as input similar to `torch.tensor`
     utils.check(
-        isinstance(n, Number),
-        lambda: f"Currently only directly constructing tensors with a single number is supported, but received {n}",
+        isinstance(seq_or_number, (Number, Sequence)),
+        lambda: f"Currently only directly constructing tensors with a single number or a Sequence of numbers is supported, but received {n}",
         exception_type=NotImplementedError,
     )
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+    )
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
 
-    return full((), n)
+    if isinstance(seq_or_number, Number):
+        return full((), seq_or_number, dtype=dtype, device=device)
+
+    return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
 
 
 # TODO based on uniform_, check if Torch now has a functional uniform

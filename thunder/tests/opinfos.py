@@ -4803,6 +4803,149 @@ randn_like_opinfo = OpInfo(
 tensor_creation_ops.append(randn_like_opinfo)
 
 
+def tensor_constructor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # Used to generate sequence.
+    make_t = partial(make_tensor, device="cpu", dtype=dtype, requires_grad=False)
+    bool_list = [True, False] * 8
+    unsigned_int_list = [0, 1, 2, 12, 24, 65, 127, 255] * 2
+    small_int_list = [-127, -64, 0, 32, 64, 65, 123] * 2
+    int_list = [-50000, -25000, 0, 1, 2, 5000, 10000, 150000] * 2
+    INF = float("-inf")
+    NEG_INF = -INF
+    NAN = float("nan")
+    float_list = [
+        INF,
+        NEG_INF,
+        NAN,
+        -0.0,
+        0.0,
+        2e30,
+        -2e30,
+        0.000012,
+        -0.000012,
+        -5e10,
+        5e10,
+        24e32,
+        -24e32,
+        1e-30,
+        -1e-30,
+        2.0,
+    ]
+
+    complex_list = [
+        complex(INF, 0),
+        complex(-0.0, NEG_INF),
+        complex(NAN, NAN),
+        complex(NAN, INF),
+        10e5j,
+        -10e5j,
+        0.000012j,
+        -0.0000012j,
+        1 + 2j,
+        -1 - 2j,
+        1 - 2j,
+        -1 + 2j,
+        0.000012 + 0.0000012j,
+        1e30 + 2e24j,
+        -0.0 - 0j,
+        0.0 + 0j,
+    ]
+
+    # Python Scalars
+    yield SampleInput(False, device=device)
+    yield SampleInput(2, device=device)
+    yield SampleInput(3.14, device=device)
+    yield SampleInput(2j, device=device)
+
+    # Infer dtype
+    yield SampleInput(
+        bool_list,
+        device=device,
+    )
+    yield SampleInput(
+        [bool_list, int_list],
+        device=device,
+    )
+    yield SampleInput(
+        [[bool_list, int_list], [float_list, float_list]],
+        device=device,
+    )
+    yield SampleInput(
+        [[bool_list, int_list], [float_list, complex_list]],
+        device=device,
+    )
+
+    # Interesting shapes
+    yield SampleInput(make_t(()).tolist(), device=device)
+    yield SampleInput(make_t(0).tolist(), device=device)
+    yield SampleInput(make_t(0, 1, 2).tolist(), device=device)
+    yield SampleInput(make_t(1, 2, 0).tolist(), device=device)
+    yield SampleInput(make_t(1, 2, 0, 2, 3).tolist(), device=device)
+
+    # Normal shapes
+    yield SampleInput(make_t(1, 2, 3).tolist(), device=device)
+    yield SampleInput(make_t(2, 2, 3).tolist(), device=device)
+    yield SampleInput(make_t(1, 2, 1, 4, 3).tolist(), device=device)
+
+    def get_seq_list(dtype):
+        if dtype.is_complex:
+            return complex_list
+        elif dtype.is_floating_point:
+            return float_list
+        elif dtype == torch.bool:
+            return bool_list
+        elif dtype == torch.uint8:
+            return unsigned_int_list
+        elif dtype in (torch.int8, torch.int16):
+            return small_int_list
+        else:
+            return int_list
+
+    # dtype specified
+    yield SampleInput(
+        get_seq_list(dtype),
+        dtype=dtype,
+        device=device,
+    )
+    yield SampleInput(
+        [[]],
+        dtype=dtype,
+        device=device,
+    )
+
+
+def tensor_constructor_error_generator(op, device, **kwargs):
+    err_msg = "Expected seq of len=2 at dim 1"
+    yield (SampleInput([[1, 0], [1]]), RuntimeError, err_msg)
+
+    err_msg = "Expected sequences of numbers, but found type <class 'str'>"
+    yield (SampleInput(["hi"]), ValueError, err_msg)
+
+    err_msg = "Expected sequences of numbers, but found type <class 'str'>"
+    yield (SampleInput([[1], ["hi"]]), ValueError, err_msg)
+
+    err_msg = "Expected sequences of numbers, but found type <class 'list'>"
+    yield (SampleInput([[1], [[6, 2]]]), ValueError, err_msg)
+
+    err_msg = "Can't safely cast sequence with numbertype <class 'float'> to dtype int32"
+    yield (SampleInput([[1, 2.0], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
+
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype int32"
+    yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
+
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype float64"
+    yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.float64), RuntimeError, err_msg)
+
+
+tensor_constructor_opinfo = OpInfo(
+    ltorch.tensor,
+    sample_input_generator=tensor_constructor_sample_generator,
+    error_input_generator=tensor_constructor_error_generator,
+    torch_reference=torch.tensor,
+)
+
+tensor_creation_ops.append(tensor_constructor_opinfo)
+
 opinfos.extend(tensor_creation_ops)
 
 #

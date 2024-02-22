@@ -156,7 +156,7 @@ full = _register_torch_operation("full")
 full_like = _register_torch_operation("full_like")
 ones = _register_torch_operation("ones")
 ones_like = _register_torch_operation("ones_like")
-tensor = _register_torch_operation("tensor")
+tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
@@ -265,10 +265,6 @@ def _ones_like_transform(
     return ones_like(a, device=torch_device, dtype=torch_dtype)
 
 
-def _tensor_transform(n: Number) -> TensorLike:
-    return tensor(n)
-
-
 def _iota_transform(
     length: Number, *, start: Number, step: Number, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorLike:
@@ -307,8 +303,8 @@ def _uniform_philox_prim_transform(
     torch_device = to_torch_device(device)
     torch_dtype = to_torch_dtype(dtype)
 
-    seed_tensor: TensorLike = tensor(seed) if isinstance(seed, int) else seed
-    offset_tensor: TensorLike = tensor(offset) if isinstance(offset, int) else offset
+    seed_tensor: TensorLike = ltorch.tensor(seed) if isinstance(seed, int) else seed
+    offset_tensor: TensorLike = ltorch.tensor(offset) if isinstance(offset, int) else offset
 
     random_values, offset = uniform_philox(
         shape, stride=None, seed=seed_tensor, offset=offset_tensor, device=torch_device, dtype=torch_dtype
@@ -354,8 +350,8 @@ def _uniform_philox_transform(
     torch_device = to_torch_device(device)
     torch_dtype = to_torch_dtype(dtype)
 
-    seed_tensor: TensorLike = tensor(seed) if isinstance(seed, int) else seed
-    offset_tensor: TensorLike = tensor(offset) if isinstance(offset, int) else offset
+    seed_tensor: TensorLike = ltorch.tensor(seed) if isinstance(seed, int) else seed
+    offset_tensor: TensorLike = ltorch.tensor(offset) if isinstance(offset, int) else offset
 
     random_values, offset = uniform_philox(
         shape, stride=None, seed=seed_tensor, offset=offset_tensor, device=torch_device, dtype=torch_dtype
@@ -414,6 +410,14 @@ def _randn_prims_transform(
     return randn(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _tensor_from_sequence_prims_transform(
+    seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
@@ -421,14 +425,15 @@ _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
+_register_implementation(
+    prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
+)
 
 _register_implementation(ltorch.arange, checker=_always_executable, execution_transform=_arange_transform)
 _register_implementation(ltorch.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(ltorch.full_like, checker=_always_executable, execution_transform=_full_like_transform)
 _register_implementation(ltorch.ones, checker=_always_executable, execution_transform=_ones_transform)
 _register_implementation(ltorch.ones_like, checker=_always_executable, execution_transform=_ones_like_transform)
-_register_implementation(ltorch.tensor, checker=_always_executable, execution_transform=_tensor_transform)
-_register_implementation(ltorch.tensor, tensor, checker=_always_executable, execution_transform=None)
 _register_implementation(ltorch.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     ltorch.uniform_philox, checker=_uniform_philox_checker, execution_transform=_uniform_philox_transform
