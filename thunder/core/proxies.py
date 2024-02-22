@@ -408,6 +408,12 @@ class TupleProxy(Proxy, tuple):
 
         return self._value + other
 
+    def __bool__(self, /) -> bool:
+        return bool(self._value)
+
+    def __eq__(self, other, /) -> bool:
+        return self._value == other
+
     def __setitem__(self, *args):
         raise TypeError("'tuple' object does not support item assignment")
 
@@ -432,6 +438,12 @@ class ListProxy(Proxy, list):
             raise TypeError(f"can only concatenate list (not '{type(other)}') to list")
 
         return self._value + other
+
+    def __bool__(self, /) -> bool:
+        return bool(self._value)
+
+    def __eq__(self, other, /) -> bool:
+        return self._value == other
 
     def __setitem__(self, *args):
         raise NotImplementedError("Assigning to elements of an input list is not yet supported")

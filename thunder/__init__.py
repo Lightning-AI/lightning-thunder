@@ -577,6 +577,8 @@ def jit(
         # TODO GTC Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
+        # TODO GTC Record prologue time vs computation (not execution) time
+        # TODO GTC Set interpreted_instructions and history
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for pro, pro_traces, comp, comp_traces in cs.interpreter_cache:
@@ -585,9 +587,13 @@ def jit(
                 except Exception as ex:
                     continue
 
+                cs.last_trace_host_tracing_start = time.time_ns()
+                cs.last_trace_host_tracing_stop = time.time_ns()
+
+                cs.last_trace_host_execution_start = time.time_ns()
                 result = comp(*inps)
+                cs.last_trace_host_execution_stop = time.time_ns()
                 # Updates cache statistics
-                # TODO GTC Update all of these
                 cs.cache_hits += 1
                 cs.last_executed = comp
                 cs.last_traces = comp_traces
@@ -595,15 +601,23 @@ def jit(
                 cs.last_interpreted_history = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
+                cs.last_trace_cache_stop = time.time_ns()
+                cs.last_trace_host_stop = time.time_ns()
                 return result
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
                 pro, pro_traces, comp, comp_traces = cs.interpreter_cache[0]
                 inps = pro(*args, **kwargs)
+
+                cs.last_trace_host_tracing_start = time.time_ns()
+                cs.last_trace_host_tracing_stop = time.time_ns()
+
+                cs.last_trace_host_execution_start = time.time_ns()
                 result = comp(*inps)
+                cs.last_trace_host_execution_stop = time.time_ns()
+
                 # Updates cache statistics
-                # TODO GTC Update all of these
                 cs.cache_hits += 1
                 cs.last_executed = comp
                 cs.last_traces = comp_traces
@@ -611,6 +625,8 @@ def jit(
                 cs.last_interpreted_history = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
+                cs.last_trace_cache_stop = time.time_ns()
+                cs.last_trace_host_stop = time.time_ns()
                 return result
 
         cs.cache_misses += 1

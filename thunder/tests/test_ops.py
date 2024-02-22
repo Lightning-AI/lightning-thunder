@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+import thunder
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_map
 from thunder.tests.framework import ops, run_snippet, requiresJAX
@@ -56,6 +57,8 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
         pytest.skip("Your CUDA device does not support bfloat16")
 
+    # jitted = thunder.jit(op.op, executors=executor.executors_list(), interpretation_option="python interpreter")
+    cfn = executor.make_callable(op.op)
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp
 
@@ -64,7 +67,8 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
             op,
             device,
             dtype,
-            executor.make_callable(op.op),
+            cfn,
+            # jitted,
             op.torch_reference,
             sample,
             lambda a, b: comp(a, b, equal_nan=True),

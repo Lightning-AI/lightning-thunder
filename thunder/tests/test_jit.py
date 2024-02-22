@@ -628,6 +628,48 @@ def test_nested_tuples_with_tensors():
     assert_close(actual, expected)
 
 
+def test_tuple_equality():
+    def foo(tup0, tup1):
+        return tup0 == tup1
+
+    jfoo = thunder.jit(foo)
+
+    tup0 = (1, 3, 5)
+    tup1 = (1, 3, 5)
+
+    actual = jfoo(tup0, tup1)
+    expected = foo(tup0, tup1)
+
+    assert_close(actual, expected)
+
+    tup2 = (4, 6)
+    actual = jfoo(tup0, tup2)
+    expected = foo(tup0, tup2)
+
+    assert_close(actual, expected)
+
+
+def test_tuple_bool():
+    def foo(tup):
+        return bool(tup)
+
+    jfoo = thunder.jit(foo)
+
+    tup0 = (1, 3, 5)
+
+    actual = jfoo(tup0)
+    expected = foo(tup0)
+
+    assert_close(actual, expected)
+
+    tup1 = []
+
+    actual = jfoo(tup1)
+    expected = foo(tup1)
+
+    assert_close(actual, expected)
+
+
 #
 # List tests
 #
@@ -859,6 +901,48 @@ def test_list_remove():
         jfoo(lst)
 
 
+def test_list_equality():
+    def foo(lst0, lst1):
+        return lst0 == lst1
+
+    jfoo = thunder.jit(foo)
+
+    lst0 = [1, 3, 5]
+    lst1 = [1, 3, 5]
+
+    actual = jfoo(lst0, lst1)
+    expected = foo(lst0, lst1)
+
+    assert_close(actual, expected)
+
+    lst2 = [4, 6]
+    actual = jfoo(lst0, lst2)
+    expected = foo(lst0, lst2)
+
+    assert_close(actual, expected)
+
+
+def test_list_bool():
+    def foo(lst):
+        return bool(lst)
+
+    jfoo = thunder.jit(foo)
+
+    lst0 = [1, 3, 5]
+
+    actual = jfoo(lst0)
+    expected = foo(lst0)
+
+    assert_close(actual, expected)
+
+    lst1 = []
+
+    actual = jfoo(lst1)
+    expected = foo(lst1)
+
+    assert_close(actual, expected)
+
+
 #
 # Return value tests
 #
@@ -1056,6 +1140,59 @@ def test_constant_values_caching():
 
     assert thunder.cache_misses(jfoo) == 5
     assert thunder.cache_hits(jfoo) == 6
+
+
+def test_constant_values_caching_args_vs_kwargs():
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(b=b, a=a)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+
+def test_constant_values_cache_is_not_shared():
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    jfoo = thunder.jit(foo)
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
 
 
 def test_constant_values_caching_with_tuples():
@@ -1453,6 +1590,23 @@ def test_intermediate_nonlocal_not_sharp_edge():
     actual = jfoo(5)
 
     assert_close(expected, actual)
+
+
+#
+# Sharp edges --- modifying inputs
+#
+
+
+@pytest.mark.xfail(reason="Fails with an AssertionError, not the correct sharp edges warning")
+def test_modifying_input_list_sharp_edge():
+    def foo(lst):
+        list.append(lst, 5)
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+    lst = [1, 2, 3]
+
+    with pytest.raises(JITError):
+        jfoo(lst)
 
 
 #
