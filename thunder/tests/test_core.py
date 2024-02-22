@@ -1684,6 +1684,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2118"),),
 )
 def test_transforms_vjp_1_2(executor, device, _):
     from thunder.core.transforms import vjp
