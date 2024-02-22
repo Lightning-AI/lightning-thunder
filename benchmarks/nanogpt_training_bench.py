@@ -131,7 +131,6 @@ if is_distributed:
 
                 model = ddp(
                     model,
-                    broadcast_from=0,
                     bucket_size_in_mb=bucket_size_in_mb,
                 )
             case "fsdp":
@@ -142,7 +141,6 @@ if is_distributed:
 
                 model = fsdp(
                     model,
-                    broadcast_from=0,
                     sharding_strategy=sharding_strategy,
                     bucketing_strategy=bucketing_strategy,
                 )

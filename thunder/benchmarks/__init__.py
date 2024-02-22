@@ -853,7 +853,7 @@ class get_default_thunder_ddp_dynamic_strides_executor:
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
             return thunder.compile(
-                ddp(fn, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
+                ddp(fn, bucket_size_in_mb=self.bucket_size_in_mb),
                 cache_mode="constant values",
                 executors_list=[
                     sdpa_ex,
@@ -883,7 +883,6 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
             return thunder.compile(
                 fsdp(
                     fn,
-                    broadcast_from=0,
                     bucketing_strategy=self.bucketing_strategy,
                     sharding_strategy=self.sharding_strategy,
                 ),

@@ -431,7 +431,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
         cm = thunder.compile(
-            ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
+            ddp(m, bucket_size_in_mb=bucket_size_in_mb),
             executors_list=executors_map[executor].executors_list(),
         )
         x = torch.ones((2, 12)).to(device)
@@ -599,7 +599,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
-            ddp_m = ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb)
+            ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
             compiled_ddp_m = thunder.compile(
                 ddp_m,
                 cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
@@ -693,7 +693,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             m = ToyModel().to(device)
             m.load_state_dict(initial_model_state)
             cm = thunder.compile(
-                ddp(m, broadcast_from=0, bucket_size_in_mb=bucket_size_in_mb),
+                ddp(m, bucket_size_in_mb=bucket_size_in_mb),
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12)).to(device)
@@ -731,7 +731,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             m = ToyModel().to(device)
             m.load_state_dict(initial_model_state)
             cm = thunder.compile(
-                fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+                fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12)).to(device)
@@ -967,10 +967,7 @@ def _test_native_ddp_helper(input_data):
 
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
-    ddp_model = ddp(
-        model,
-        broadcast_from=0,
-    )
+    ddp_model = ddp(model)
     cmodel = thunder.compile(
         ddp_model,
         executors_list=executor.executors_list(),
@@ -1073,11 +1070,7 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(
-        model,
-        broadcast_from=0,
-        bucketing_strategy=bucketing_strategy,
-    )
+    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy)
 
     # Check that the model is sharded
     sharded_weight_net1 = fsdp_model.net1.weight

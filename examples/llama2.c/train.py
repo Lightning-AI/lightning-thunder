@@ -199,7 +199,7 @@ if ddp:
     if compile == "thunder":
         from thunder.distributed import ddp
 
-        train_model = ddp(train_model, broadcast_from=0)
+        train_model = ddp(train_model)
     else:
         # Ignore the `freqs_cis` buffer so that DDP does not broadcast it at
         # construction time since NCCL does not support `ComplexFloat`

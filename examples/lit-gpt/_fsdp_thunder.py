@@ -92,7 +92,6 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         module = module.to(self.root_device)
         module = fsdp(
             module,
-            broadcast_from=0,
             sharding_strategy=self.sharding_strategy,
             bucketing_strategy=self.bucketing_strategy,
         )

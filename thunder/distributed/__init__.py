@@ -63,11 +63,11 @@ def skip_data_parallel_grad_sync() -> None:
 # TODO Handle buffers
 # TODO Improve initial broadcast logic
 # Syncs a module's parameters across multiple processes
-#   broadcast_from, if specified, is the rank to broadcast tensors from
+#   broadcast_from is the rank to broadcast tensors from
 def ddp(
     model: torch.nn.Module,
     *,
-    broadcast_from: int | None = None,
+    broadcast_from: int | None = 0,
     bucket_size_in_mb: float = 25.0,
 ) -> torch.nn.Module:
     """Thunder's Distributed Data Parallel.
@@ -81,8 +81,9 @@ def ddp(
         model: A model before ``thunder.compile`` applied
 
     Keyword Args:
-        broadcast_from: The rank of the device hosting the parameters to broadcast. The lowest rank
-            will be used if none specified.
+        broadcast_from: The rank of the device hosting the parameters to broadcast. If None is passed,
+            broadcasting will be skipped. Skipping can be useful for models whose weights have been loaded
+            from a checkpoint. Defaults to 0.
         bucket_size_in_mb: Size of a gradient bucket.
 
 
@@ -135,7 +136,7 @@ def ddp(
             tdist.init_process_group(backend="nccl")
 
             model = MyModel().to(LOCAL_RANK)
-            ddp_model = dist.ddp(model, LOCAL_RANK, broadcast_from=0)
+            ddp_model = dist.ddp(model)
             compiled = thunder.compile(ddp_model)
             optimizer = torch.optim.AdamW(compiled.parameters())
             losses = []
@@ -199,8 +200,8 @@ def ddp(
             ),
         )
 
-    # Identifies which process to broadcast from
-    broadcast_from = broadcast_from if broadcast_from is not None else 0
+    if broadcast_from is None:
+        return model
 
     # Starts broadcasts
     # TODO Make these broadcast asyncs
@@ -208,7 +209,7 @@ def ddp(
     # https://github.com/Lightning-AI/lightning-thunder/issues/727
     # TODO "Bucket" small tensors together before broadcasting
     with torch.no_grad():
-        for name, param in model.named_parameters():
+        for param in model.parameters():
             tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
 
     return model
@@ -291,7 +292,9 @@ def fsdp(
         model:
 
     Keyword Args:
-        broadcast_from:
+        broadcast_from: The rank of the device hosting the parameters to broadcast. If None is passed,
+            broadcasting will be skipped (default). Enabling can be useful for models whose weights have been loaded
+            from a checkpoint in a single rank.
         sharding_strategy:
         bucketing_strategy:
 
