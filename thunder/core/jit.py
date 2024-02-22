@@ -2561,6 +2561,11 @@ class JIT_CALLBACKS(enum.Enum):
     #   The returned value is loaded instead of the original value
     GLOBAL_CALLBACK = enum.auto()
 
+    # Called when storing into a global variable
+    #   (orig_value: Any | WrappedValue, name: str) -> Any
+    #   The returned value is stored instead of the original value
+    STORE_GLOBAL_CALLBACK = enum.auto()
+
     # Called when a locals (in localsplus) is created
     #   (name: str, value: Any, /) -> Any
     #   The returned value is used in place of the original value
@@ -2661,11 +2666,13 @@ def chain_map_lookup(key: Any, *dicts: tuple[dict, ...]) -> Any | JIT_SIGNALS:
     return do_raise(KeyError(f"Dictionary {key=} is missing"))
 
 
-def global_callback(orig_val: Any | WrappedValue, name: str) -> Any | WrappedValue:
+def global_callback(
+    orig_val: Any | WrappedValue, name: str, callback_type: JIT_CALLBACKS = JIT_CALLBACKS.GLOBAL_CALLBACK
+) -> Any | WrappedValue:
     assert isinstance(name, str)
 
     ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.GLOBAL_CALLBACK)
+    cb: None | Callable = ctx.callback(callback_type)
 
     if cb is None:
         return orig_val
@@ -5088,6 +5095,7 @@ def _store_global_handler(
     # >>> new_fn()
     # >>> t
     # NameError: name 't' is not defined
+    tos = global_callback(tos, name, JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
     res = _jit_no_unwrap(
         lambda frame_globals, name, value: frame_globals.__setitem__(name, value), frame.globals, wrap_const(name), tos
     )

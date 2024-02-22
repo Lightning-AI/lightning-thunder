@@ -244,6 +244,12 @@ def _sharp_edge(desc: str, /) -> None:
         warnings.warn(s)
 
 
+def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
+    _sharp_edge(
+        f"Storing a global variable {name} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
+    )
+
+
 def _minimal_global_callback(orig_value: Any, name: str) -> Any:
     value: Any = orig_value
 
@@ -261,6 +267,7 @@ def _minimal_global_callback(orig_value: Any, name: str) -> Any:
 
 
 _minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {
+    JIT_CALLBACKS.STORE_GLOBAL_CALLBACK: _minimal_store_global_callback,
     JIT_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
 }
 _minimal_callbacks = default_callbacks | _minimal_callbacks

@@ -918,7 +918,6 @@ def test_load_global_sharp_edge():
 _test_store_global_sharp_edge_global = 4
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2186")
 def test_store_global_sharp_edge():
     def foo():
         global _test_store_global_sharp_edge_global
