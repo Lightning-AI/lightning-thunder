@@ -97,12 +97,20 @@ check_string_value = ex.register_operator(
 ex.register_implementation(prims.check_string_value, check_string_value, checker=_always_executable)
 
 
-def _unpack_tuple_impl(tup: tuple, /) -> None:
+def _unpack_tuple_impl(tup: tuple, /) -> tuple:
     return tup
 
 
 unpack_tuple = ex.register_operator("unpack_tuple", like=prims.unpack_tuple, fn=_unpack_tuple_impl)
 ex.register_implementation(prims.unpack_tuple, unpack_tuple, checker=_always_executable)
+
+
+def _unpack_list_impl(lst: list, /) -> list:
+    return lst
+
+
+unpack_list = ex.register_operator("unpack_list", like=prims.unpack_list, fn=_unpack_list_impl)
+ex.register_implementation(prims.unpack_list, unpack_list, checker=_always_executable)
 
 
 def _construct_tuple_impl(tup: tuple, /) -> None:

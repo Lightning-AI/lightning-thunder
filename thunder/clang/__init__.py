@@ -85,6 +85,11 @@ def unpack_tuple(tup: tuple, /) -> tuple:
 
 
 @clangop()
+def unpack_list(lst: list, /) -> list:
+    return prims.unpack_list(lst)
+
+
+@clangop()
 def construct_tuple(tup: tuple, /) -> tuple:
     return prims.construct_tuple(tup)
 

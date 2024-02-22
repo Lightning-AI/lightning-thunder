@@ -456,7 +456,7 @@ def test_tuple_assignment():
 
     tup = (0, 1, 2, 3, 4)
 
-    with pytest.raises(JITError):
+    with pytest.raises(TypeError):
         jfoo(tup)
 
 
@@ -522,15 +522,15 @@ def test_tuple_addition():
 
 
 def test_tuple_list_addition():
-    def foo(tup0):
-        return tup0 + [5, 6, 7]
+    def foo(tup):
+        return tup + [5, 6, 7]
 
     jfoo = thunder.jit(foo)
 
-    tup0 = (0, 1, 2, 3, 4)
+    tup = (0, 1, 2, 3, 4)
 
     with pytest.raises(TypeError):
-        jfoo(tup0)
+        jfoo(tup)
 
 
 def test_nested_tuples():
@@ -574,6 +574,237 @@ def test_nested_tuples_with_tensors():
     expected = foo(tup)
 
     assert_close(actual, expected)
+
+
+#
+# List tests
+#
+
+
+def test_list_len():
+    def foo(lst):
+        return len(lst) + 2
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert_close(actual, expected)
+
+
+def test_list_binary_subscr():
+    def foo(lst):
+        return lst[0], lst[1:3]
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert_close(actual, expected)
+
+
+def test_list_unpack_repack():
+    def foo(lst):
+        a, b, *_ = lst
+        return [a, b]
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert_close(actual, expected)
+
+
+def test_list_tuple_conversion():
+    def foo(lst):
+        return tuple(lst)
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert actual == expected
+
+
+def test_list_enumerate():
+    def foo(lst):
+        accum = 0
+        for x in lst:
+            accum += x
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert actual == expected
+
+
+def test_list_addition():
+    def foo(lst0, lst1):
+        return lst0 + lst1
+
+    jfoo = thunder.jit(foo)
+
+    lst0 = [0, 1, 2, 3, 4]
+    lst1 = [5, 6, 7, 8, 9, 10]
+
+    actual = jfoo(lst0, lst1)
+    expected = foo(lst0, lst1)
+
+    assert actual == expected
+
+
+def test_tuple_list_addition():
+    def foo(lst, tup):
+        return tup + lst
+
+    jfoo = thunder.jit(foo)
+
+    lst = [-1, -2, -3, -4, -5]
+    tup = (0, 1, 2, 3, 4)
+
+    with pytest.raises(TypeError):
+        jfoo(lst, tup)
+
+
+def test_list_basic_binary_subscr_assignment():
+    def foo(lst):
+        lst[0] = 5
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_reverse():
+    def foo(lst):
+        return lst.reverse()
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert_close(actual, expected)
+
+
+def test_list_contains():
+    def foo(lst):
+        return 3 in lst
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    actual = jfoo(lst)
+    expected = foo(lst)
+
+    assert_close(actual, expected)
+
+
+def test_list_slice_assignment():
+    def foo(lst):
+        lst[0:2] = [5, 1, 3]
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_append():
+    def foo(lst):
+        lst.append(3)
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_extend():
+    def foo(lst):
+        lst.extend([1, 2])
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_clear():
+    def foo(lst):
+        lst.clear()
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_insert():
+    def foo(lst):
+        lst.insert(2, 6)
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_pop():
+    def foo(lst):
+        return lst.pop()
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
+
+
+def test_list_remove():
+    def foo(lst):
+        lst.remove(2)
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+
+    with pytest.raises(NotImplementedError):
+        jfoo(lst)
 
 
 #
@@ -827,6 +1058,63 @@ def test_constant_values_caching_with_tuples():
 
     actual = jfoo(tup5, tup1)
     expected = foo(tup5, tup1)
+
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 3
+
+
+def test_constant_values_caching_with_lists():
+    def foo(lst0, lst1):
+        return lst0[0] + lst1[1]
+
+    jfoo = thunder.jit(foo)
+
+    lst0 = (0, 1)
+    lst1 = (2, 3)
+
+    actual = jfoo(lst0, lst1)
+    expected = foo(lst0, lst1)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    jfoo(lst0, lst1)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    lst2 = (0, 1)
+
+    jfoo(lst2, lst1)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
+
+    a = torch.randn((2, 2))
+    lst3 = (a, 1)
+
+    actual = jfoo(lst3, lst1)
+    expected = foo(lst3, lst1)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+    b = torch.randn((2, 2))
+    lst4 = (b, 1)
+
+    actual = jfoo(lst4, lst1)
+    expected = foo(lst4, lst1)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 3
+
+    c = torch.randn((2, 1))
+    tup5 = (c, 1)
+
+    actual = jfoo(tup5, lst1)
+    expected = foo(tup5, lst1)
 
     assert thunder.cache_misses(jfoo) == 3
     assert thunder.cache_hits(jfoo) == 3

@@ -58,6 +58,7 @@ from thunder.core.proxies import (
     FloatProxy,
     ComplexProxy,
     TupleProxy,
+    ListProxy,
 )
 from thunder.core.jit_ext import minimal_thunder_jit, meso_thunder_interpreter
 from thunder.core.pytree import tree_flatten
@@ -263,6 +264,30 @@ def _eager_unpack_tuple(tup: tuple, /, name: None | str, *, co: CACHE_OPTIONS) -
     return p, p
 
 
+def _eager_validate_list(p: ListProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    unpacked = clang.unpack_list(p)
+
+    computation_args = [p]
+
+    for x in unpacked:
+        cargs, iargs = _eager_validate(x, co=co)
+        computation_args.extend(cargs)
+
+    return (computation_args, [p])
+
+
+def _eager_unpack_list(lst: list, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[TupleProxy, TupleProxy]:
+    unpack = partial(_eager_unpack, name=None, co=co)
+
+    values = []
+    for x in lst:
+        p, a = unpack(x)
+        values.append(a)
+
+    p = proxy(list(values), name=name)
+    return p, p
+
+
 _type_to_unpack_map: dict[type, Callable] = {
     pytorch.Tensor: _eager_unpack_tensor,
     bool: _eager_unpack_number,
@@ -271,6 +296,7 @@ _type_to_unpack_map: dict[type, Callable] = {
     complex: _eager_unpack_number,
     str: _eager_unpack_string,
     tuple: _eager_unpack_tuple,
+    list: _eager_unpack_list,
 }
 
 _type_to_validation_map: dict[type, Callable] = {
@@ -280,6 +306,7 @@ _type_to_validation_map: dict[type, Callable] = {
     ComplexProxy: _eager_validate_number,
     StringProxy: _eager_validate_string,
     TupleProxy: _eager_validate_tuple,
+    ListProxy: _eager_validate_list,
 }
 
 
@@ -320,7 +347,7 @@ def _eager_unpacking_interpreter(
     # TODO GTC Consider supporting nested sequences of mappings that have these properties
     # TODO GTC Consider supporting arbitrary literal inputs
     # TODO GTC Consider supporiting arbitrary object inputs
-    supported_input_types = (Number, str, pytorch.Tensor, tuple)
+    supported_input_types = (Number, str, pytorch.Tensor, tuple, list)
 
     si: SigInfo = get_siginfo(fn, args, kwargs)
 

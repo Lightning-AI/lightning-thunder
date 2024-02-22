@@ -404,8 +404,51 @@ class TupleProxy(Proxy, tuple):
 
         return self._value + other
 
-    def __setitem__(self, key):
+    def __setitem__(self, *args):
         raise TypeError("'tuple' object does not support item assignment")
+
+
+class ListProxy(Proxy, list):
+    def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None):
+        l = list.__new__(cls, lst)
+
+        # NOTE This intentionally does not call the ListProxy.extend() method
+        list.extend(l, lst)
+        return l
+
+    def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._value = lst
+
+    def type_string(self, /) -> str:
+        return "list"
+
+    def __add__(self, other, /):
+        if not isinstance(other, list):
+            raise TypeError(f"can only concatenate list (not '{type(other)}') to list")
+
+        return self._value + other
+
+    def __setitem__(self, *args):
+        raise NotImplementedError("Assigning to elements of an input list is not yet supported")
+
+    def append(self, arg, /):
+        raise NotImplementedError("Appending to an input list is not yet supported")
+
+    def clear(self, /):
+        raise NotImplementedError("Clearing an input list is not yet supported")
+
+    def extend(self, arg, /):
+        raise NotImplementedError("Extending an input list is not yet supported")
+
+    def insert(self, *args):
+        raise NotImplementedError("Inserting into an input list is not yet supported")
+
+    def pop(self):
+        raise NotImplementedError("Popping from an input list is not yet supported")
+
+    def remove(self, arg, /):
+        raise NotImplementedError("Removing from an input list is not yet supported")
 
 
 # NOTE NumberProxies are NOT Numbers
@@ -1371,5 +1414,7 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
 
     if isinstance(x, tuple):
         return TupleProxy(x, name=name, history=history)
+    if isinstance(x, list):
+        return ListProxy(x, name=name, history=history)
 
     return x

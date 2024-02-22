@@ -109,6 +109,7 @@ class PrimIDs(Enum):
     UNPACK_SEQUENCE = auto()
     UNPACK_TRIVIAL = auto()
     UNPACK_TUPLE = auto()
+    UNPACK_LIST = auto()
     CONSTRUCT_TUPLE = auto()
     # TODO: UNPACK_SET
     # Utility prims
@@ -678,7 +679,7 @@ def _unpack_tuple_printer(
         lambda: f"Expected no kwargs for unpack_tuple but got {kwarg_printables}",
         exception_type=AssertionError,
     )
-    utils.check_type(bsym.output, Sequence)
+    utils.check_type(bsym.output, tuple)
 
     (x,) = arg_printables
     call_str = f"{codeutils.prettyprint(x)}"
@@ -701,6 +702,59 @@ unpack_tuple = make_prim(
     "unpack_tuple",
     meta=_unpack_tuple_meta,
     python_printer=_unpack_tuple_printer,
+)
+
+
+# NOTE This actually returns a new tuple of the elements, which allows the elements of tup
+#   to appear in the symbol's output. If the original tuple is a proxy and it were just
+#   returned directly then the output would just be the tuple
+def _unpack_list_meta(lst: list, /) -> list:
+    utils.check_type(lst, list)
+
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    return list(_proxy(x) for x in lst)
+
+
+def _unpack_list_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_list but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_list but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check_type(bsym.output, list)
+
+    (x,) = arg_printables
+    call_str = f"{codeutils.prettyprint(x)}"
+
+    # Short-circuits if there's nothing to unpack:
+    if len(bsym.output) == 0:
+        return f"# {call_str} (empty list)"
+
+    lines = []
+    for out in out_printables:
+        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
+        lines.append(line)
+
+    lines.append(f"= {call_str}")
+    return lines
+
+
+unpack_list = make_prim(
+    PrimIDs.UNPACK_LIST,
+    "unpack_list",
+    meta=_unpack_list_meta,
+    python_printer=_unpack_list_printer,
 )
 
 
