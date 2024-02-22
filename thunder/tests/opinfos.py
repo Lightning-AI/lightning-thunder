@@ -1808,6 +1808,13 @@ copysign_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.copysign,
+    test_directives=(
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/2218
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
+    ),
 )
 elementwise_binary_ops.append(copysign_opinfo)
 
