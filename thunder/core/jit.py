@@ -248,6 +248,8 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
             assert len(value.value) == len(
                 value.item_wrappers
             ), f"{len(value.value)} {len(value.item_wrappers)} {value.provenance}"
+        if isinstance(value.value, dict):
+            assert len(value.item_wrappers) == len(value.key_wrappers), f"{value.value}"
         return value
 
     ctx: JitCompileCtx = get_jitcompilectx()
@@ -1057,10 +1059,9 @@ class JITFrame:
     code: CodeType
     qualname: str
     globals: dict[str, Any] | WrappedValue
-    builtins: dict[str, Any] | WrappedValue
     # Name storage, for LOAD_NAME, STORE_NAME, and DELETE_NAME
     # TODO Is this the best way to model this?
-    names: dict[str, Any] = dataclasses.field(default_factory=dict)
+    names: dict[str, Any] | WrappedValue
     positions: Positions | None = None
     inst: dis.Instruction | None = None
     call_shape_kwnames: tuple[str] | None = None  # for KW_NAMES opcode in 3.11+
@@ -1280,28 +1281,12 @@ def eval_lookaside(
     globals: dict[str, Any] | None = None,
     locals: Mapping[str, object] | None = None,
     /,
-    *,
-    closure: tuple[CellType, ...] | None = None,
 ) -> Any:
     """Emulate the builtin `eval` function, but evaluate the code in the interpreter."""
-
-    __globals = globals if globals is not None else _globals_lookaside()
-    __locals = locals if locals is not None else (globals if globals else _locals_lookaside())
-    __closure = closure
-
-    if not isinstance(source, CodeType):
-        source = compile(str(source), "<string>", "eval")
-
-    rctx = get_jitruntimectx()
-    to_exec = FunctionType(
-        code=source, globals=unwrap(__globals), name="<eval>", argdefs=None, closure=unwrap(__closure)
-    )
-
-    res: JIT_SIGNALS | Any = _jit(to_exec)
-    return res
+    return eval_exec_helper(source, globals, locals, closure=None, mode="eval")
 
 
-@jit_needs_wrap
+# https://docs.python.org/3/library/functions.html#exec
 def exec_lookaside(
     source: str | bytes | bytearray | CodeType,  # A python statement
     globals: dict[str, Any] | None = None,
@@ -1311,26 +1296,77 @@ def exec_lookaside(
     closure: tuple[CellType, ...] | None = None,
 ):
     """Emulate the builtin `exec` function, but evaluate the code in the interpreter."""
+    return eval_exec_helper(source, globals, locals, closure=closure, mode="exec")
 
-    # globals and locals have been overwritten as local vars.
-    __globals = globals if globals is not None else _globals_lookaside()
-    __locals = locals if locals is not None else (globals if globals else _locals_lookaside())
-    __closure = closure
 
-    if not isinstance(source, CodeType):
-        source = compile(str(source), "<string>", "exec")
+def eval_exec_helper(
+    source: str | bytes | bytearray | CodeType,  # A python statement
+    globals: dict[str, Any] | None = None,
+    locals: Mapping[str, object] | None = None,
+    /,
+    *,
+    closure: tuple[CellType, ...] | None = None,
+    mode: str,
+):
+    if unwrap(globals) is None and unwrap(locals) is None:
+        globals = _globals_lookaside()
+        locals = _locals_lookaside()
+    elif unwrap(globals) is None:
+        globals = _globals_lookaside()
+    elif unwrap(locals) is None:
+        locals = globals  # !
 
-    # TODO: FunctionType doesn't do anything with the locals dict.
-    # We need some way to say "Evaluate this in this context."
-    rctx = get_jitruntimectx()
-    to_exec = FunctionType(
-        code=source, globals=unwrap(__globals), name="<exec>", argdefs=None, closure=unwrap(__closure)
-    )
+    if not wrapped_isinstance(source, CodeType):
+        ## TODO: revisit str here!
+        ucode = compile(str(unwrap(source)), "<string>", mode)
+    else:
+        ucode = unwrap(source)
 
-    res: JIT_SIGNALS | Any = _jit(to_exec)
+    if unwrap(closure) is not None:
+        raise NotImplementedError("the closure argument is not yet supported in eval")
+    else:
+        closure = wrap_const(None)
+
+    uglobals = unwrap(globals)
+
+    compilectx: JitCompileCtx = get_jitcompilectx()
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+
+    if "__builtins__" not in uglobals:
+
+        def set_builtins(globals, builtins_dict):
+            globals["__builtins__"] = builtins_dict
+
+        # note that it always is *the* (same) builtins_dict
+        if compilectx._with_provenance_tracking:
+            bd = wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
+        else:
+            bd = builtins_dict
+
+        res = _jit_no_unwrap(set_builtins, globals, bd)
+        assert res is not JIT_SIGNALS.EXCEPTION_RAISED
+
+    # execed code has no LOCALSPLUS but only NAMES...
+    frame = JITFrame(code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>")
+
+    if ucode.co_flags & (inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR):
+        # we should split the preparation from _jit_inner
+        raise NotImplementedError("exec / eval with generator / coroutine / async generator flags")
+
+    try:
+        res, status = _jit_run(frame, compilectx, runtimectx)
+    except Exception as e:
+        # We need to cheat a bit to get a Python frame here...
+        python_frame = frame.get_or_make_python_frame()
+        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        raise e.with_traceback(tb)
+
+    if mode == "eval":
+        return res
+
     if res is JIT_SIGNALS.EXCEPTION_RAISED:
         return res
-    return None
+    return wrap_const(None)  # exec does not return anything
 
 
 # The `__get__`, `__set__`, and `__delete__` methods on a property are implemented in C
@@ -1505,6 +1541,7 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
         obj_dict = obj.attribute_wrappers.get("__dict__")
         if obj_dict is not None:
             obj_dict.item_wrappers[uname] = value
+            obj_dict.key_wrappers[uname] = name
 
     return wrap_const(None)
 
@@ -2650,20 +2687,32 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     return cell
 
 
-def chain_map_lookup(key: Any, *dicts: tuple[dict, ...]) -> Any | JIT_SIGNALS:
+def globals_lookup(globals_dict: dict, name: Any) -> Any | JIT_SIGNALS:
     # TODO: extend to arbitrary non wrap_const'able types
-    assert wrapped_isinstance(key, str)
-    assert all(wrapped_isinstance(d, dict) for d in dicts)
+    assert wrapped_isinstance(name, str)
+    assert wrapped_isinstance(globals_dict, dict)
 
-    for d in dicts:
-        if unwrap(key) in unwrap(d):
-            val = _jit_no_unwrap(
-                lambda curr_dict, k: curr_dict[k], d, key if isinstance(key, WrappedValue) else wrap_const(key)
-            )
-            assert val is not JIT_SIGNALS.EXCEPTION_RAISED
-            return val
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
-    return do_raise(KeyError(f"Dictionary {key=} is missing"))
+    # this cannot be well implemented in an impl because we would get infinite recursions
+
+    if unwrap(name) in unwrap(globals_dict):
+        return _jit_no_unwrap(lambda d, k: d[k], globals_dict, name)
+
+    builtins = _jit_no_unwrap(lambda d, k: d[k], globals_dict, wrap_const("__builtins__"))
+
+    if isinstance(unwrap(builtins), ModuleType):
+        res = _jit_no_unwrap(getattr, builtins, name)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            return do_raise(NameError(f"name '{unwrap(name)}' is not defined"))
+        return res
+
+    # here CPython subscripts without checking that it's a dict, so do we
+    res = _jit_no_unwrap(lambda d, k: d[k], builtins, name)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(runtimectx._curexc, KeyError):
+        return do_raise(NameError(f"name '{unwrap(name)}' is not defined"))
+
+    return res
 
 
 def global_callback(
@@ -2696,6 +2745,12 @@ def check_and_append(stack, val):
     if val is JIT_SIGNALS.EXCEPTION_RAISED:
         return val
     stack.append(val)
+
+
+def check_signal(val):
+    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+        return val
+    return None
 
 
 #
@@ -3452,8 +3507,12 @@ def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame
     namei: int = inst.arg
     name: str = co.co_names[namei]
 
-    assert name in frame.names
-    del frame.names[name]
+    def impl(names_dict, name):
+        if name not in names_dict:
+            raise NameError(f"name '{name}' is not defined")
+        del names_dict[name]
+
+    return check_signal(_jit_no_unwrap(impl, frame.names, wrap_const(name)))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
@@ -3772,7 +3831,7 @@ def _import_from_handler(
         # TODO: the below needs a test
         # CPython links to https://bugs.python.org/issue17636
         # TODO: check that module.__name__ is a valid name
-        fullname = f"{module.__name_}.{name}"
+        fullname = f"{module.__name__}.{name}"
         return __import__(fullname)
 
     return check_and_append(stack, _jit(impl))
@@ -3795,9 +3854,9 @@ def _import_name_handler(
     # but that isn't available if we use impl, so we resolve it here.
     if level > 0:  # relative import
         # cannot do this in impl easily, but error handling?
-        current_name = chain_map_lookup("__name__", frame.globals)
+        current_name = _jit_no_unwrap(lambda d, k: d[k], frame.globals, wrap_const("__name__"))
         if current_name is JIT_SIGNALS.EXCEPTION_RAISED:
-            return current_name
+            return do_raise(KeyError("'__name__' not in globals"))
         current_name = unwrap(current_name)
         module_parts = current_name.split(".")[:-level]
         if module_name:  # from . import foo will have '' as module_name
@@ -4055,7 +4114,7 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: Co
 def _load_build_class_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs
 ) -> None | JIT_SIGNALS:
-    build_class = chain_map_lookup("__build_class__", frame.builtins, frame.globals)
+    build_class = globals_lookup(frame.globals, wrap_const("__build_class__"))
     return check_and_append(stack, build_class)
 
 
@@ -4150,7 +4209,6 @@ def _load_global_handler(
     stack: list,
     co: CodeType,
     globals_dict: dict[str, Any],
-    builtins_dict: dict[str, Any],
     **kwargs,
 ) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
@@ -4159,11 +4217,9 @@ def _load_global_handler(
         idx = idx // 2
     co_name: str = co.co_names[idx]
 
-    obj: Any | WrappedValue = chain_map_lookup(co_name, globals_dict)
+    obj: Any | WrappedValue = globals_lookup(globals_dict, wrap_const(co_name))
     if obj is JIT_SIGNALS.EXCEPTION_RAISED:
-        obj = chain_map_lookup(co_name, builtins_dict)
-        if obj is JIT_SIGNALS.EXCEPTION_RAISED:
-            return do_raise(NameError(f"name '{co_name}' is not defined"))
+        return do_raise(NameError(f"name '{co_name}' is not defined"))
     else:
         obj = global_callback(obj, co_name)
 
@@ -4220,16 +4276,16 @@ def _load_name_handler(
     name: str = co.co_names[namei]
 
     value: Any
-    # TODO: wrap frame.names as well?
-    if name in frame.names:
-        value = frame.names[name]
+
+    if name in unwrap(frame.names):
+        value = _jit_no_unwrap(lambda d, k: d[k], frame.names, wrap_const(name))
     else:
         # Look up globals, then builtins.
-        value = chain_map_lookup(name, frame.globals, frame.builtins)
+        value = globals_lookup(frame.globals, wrap_const(name))
         if value is JIT_SIGNALS.EXCEPTION_RAISED:
             return do_raise(NameError(f"{name=} is not defined"))
 
-    stack.append(value)
+    return check_and_append(stack, value)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
@@ -5123,10 +5179,14 @@ def _store_name_handler(
 ) -> None:
     assert type(inst.arg) is int
     namei: int = inst.arg
-
     name: str = co.co_names[namei]
-    tos: Any = stack.pop()
-    frame.names[name] = tos
+
+    tos: Any = stack.pop_wrapped()
+
+    def impl(names_dict, name, value):
+        names_dict[name] = value
+
+    return check_signal(_jit_no_unwrap(impl, frame.names, wrap_const(name), tos))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_SUBSCR
@@ -5546,11 +5606,19 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             assert len(res.value) == len(
                 res.item_wrappers
             ), f"{len(res.value)} {len(res.item_wrappers)} {res.value} {res.item_wrappers} {fn}"
+        if isinstance(res.value, dict):
+            assert len(res.key_wrappers) == len(
+                res.item_wrappers
+            ), f"{len(res.value)} {len(res.item_wrappers)} {len(res.key_wrappers)} {res.value} {res.item_wrappers} {fn}"
         for a in args:
             if isinstance(a.value, list):
                 assert len(a.value) == len(
                     a.item_wrappers
                 ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers} {fn}"
+            if isinstance(a.value, dict):
+                assert len(a.key_wrappers) == len(
+                    a.item_wrappers
+                ), f"{len(a.value)} {len(a.item_wrappers)} {len(a.key_wrappers)} {a.value} {a.item_wrappers} {fn}"
 
     return unwrap(res)
 
@@ -5878,7 +5946,7 @@ def _jit_inner(
 
     # Creates the current ready to run stack frame for the current function
     frame = JITFrame(
-        code=code, localsplus=localsplus, globals=frame_globals, builtins=frame_builtins, qualname=fn.__qualname__
+        code=code, localsplus=localsplus, globals=frame_globals, names=wrap_const({}), qualname=fn.__qualname__
     )
 
     # Python 3.10 deals with creating the generator on call,
@@ -5943,7 +6011,6 @@ def _jit_run(
                 inst_ptr=frame.inst_ptr,
                 stack=frame.interpreter_stack,
                 globals_dict=frame.globals,
-                builtins_dict=frame.builtins,
                 try_stack=frame.try_stack,
                 exception_stack=runtimectx.exception_stack,
                 co=frame.code,

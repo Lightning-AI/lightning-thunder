@@ -1,5 +1,6 @@
 import thunder
 from typing import Any
+import builtins
 from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
@@ -250,6 +251,10 @@ def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
     )
 
 
+# TODO: we need the builtins for impl functions...
+safe_builtins = {id(bi): bi for bi in builtins.__dict__.values()}
+
+
 def _minimal_global_callback(orig_value: Any, name: str) -> Any:
     value: Any = orig_value
 
@@ -260,6 +265,9 @@ def _minimal_global_callback(orig_value: Any, name: str) -> Any:
     #   the module is captured at interpretation time, or that global module names will not change for
     #   the lifetime of the program.
     #   We could consider adding a check that the name refers to the same module as it did previously.
+    if id(value) in safe_builtins:
+        return value
+
     if not isinstance(value, ModuleType):
         _sharp_edge("Loading a global that is not a module")
 
@@ -289,11 +297,11 @@ def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) ->
 
 
 #
-# Objects and functions related to the meso_thunder_jit context
+# Objects and functions related to the general thunder jit
 #
 
 
-def _meso_sharp_edge(desc: str, /) -> None:
+def _general_jit_sharp_edge(desc: str, /) -> None:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
     s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
@@ -305,7 +313,7 @@ def _meso_sharp_edge(desc: str, /) -> None:
         warnings.warn(s)
 
 
-class MesoCtx(MinimalCtx):
+class GeneralJitCtx(MinimalCtx):
     def __init__(self, prologue_trace, computation_trace, *, sharp_edges: SHARP_EDGES_OPTIONS):
         super().__init__(sharp_edges=sharp_edges)
 
@@ -350,33 +358,44 @@ class MesoCtx(MinimalCtx):
         return proxy(val, name=name, history=history)
 
 
-lit_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {}
 
 
-def register_lit_callback(key: JIT_CALLBACKS) -> Callable:
+def register_general_jit_callback(key: JIT_CALLBACKS) -> Callable:
     def decorator(fn: Callable):
-        assert key not in lit_callbacks
-        lit_callbacks[key] = fn
+        assert key not in general_jit_callbacks
+        general_jit_callbacks[key] = fn
         return fn
 
     return decorator
 
 
 #
-# lit lookasides
+# general_jit lookasides
 #
 
-# TODO Add all lit operation translations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
-_lit_lookaside_map = {}
+# TODO Add all general_jit operation translations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
+_general_jit_lookaside_map = {}
 
-_lit_lookaside_map.update({k: jit_needs_wrap(v) for k, v in _torch_to_thunder_function_map.items()})
+_general_jit_lookaside_map.update({k: jit_needs_wrap(v) for k, v in _torch_to_thunder_function_map.items()})
+
+
+def general_jit_lookaside(diverted_fn):
+    def lookaside_wrapper(lookaside):
+        _general_jit_lookaside_map[diverted_fn] = lookaside
+        return lookaside
+
+    return lookaside_wrapper
 
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside)
 
 
-def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
+@general_jit_lookaside(getattr)
+def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
+    import inspect
+
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
 
@@ -390,30 +409,39 @@ def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return value
 
 
-_lit_lookaside_map[getattr] = _lit_getattr_lookaside
+# @general_jit_lookaside(setattr)
+# def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
+#     setattr_lookaside = default_lookaside(setattr)
+#     assert setattr_lookaside is not None
+#     if isinstance(value.value, Proxy):
+#         return wrap_const(None)
+#     res = setattr_lookaside(obj, name, value)
+#     if res is JIT_SIGNALS.EXCEPTION_RAISED:
+#         return res
+#     return res
 
 
 # TODO Expand on this
 @jit_needs_wrap
-def _lit_hasattr_lookaside(obj: Any, name: str):
+def _general_jit_hasattr_lookaside(obj: Any, name: str):
     hasattr_lookaside = default_lookaside(hasattr) or hasattr
     return hasattr_lookaside(obj, name)
 
 
-_lit_lookaside_map[hasattr] = _lit_hasattr_lookaside
+_general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 
 
 # We want to record a constraint when we go from proxy -> value here.
 # At the same time Python expects to (but we might think to loosen the requirement
 # to return a bool for the JIT, return a proxy with origin informaiton and postpone
 # recording the constraint to conditional jumps and such.
-def _lit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
+def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(wrapped_x)
 
 
-_lit_lookaside_map[bool] = _lit_bool_lookaside
+_general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
 
 # Adds proxy methods
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
@@ -458,7 +486,7 @@ def get_methods_properties(typ):
                 yield meth.fget, prop_lookaside_wrap(meth.fget)
 
 
-_lit_lookaside_map.update(
+_general_jit_lookaside_map.update(
     {
         **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
         **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(TensorProxy)},
@@ -510,7 +538,7 @@ _safe_functions: set = {
 
 
 # TODO Document this function (with steps)
-def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
+def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
     if isinstance(fn, Symbol) or fn in _clang_fn_set:
@@ -518,15 +546,15 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
         lookaside = jit_needs_wrap(fn)
-    elif (lit_lookaside := _lit_lookaside_map.get(fn, None)) is not None:
-        lookaside = lit_lookaside
+    elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
+        lookaside = general_jit_lookaside
     else:
         # Falls through to the interpreter's default lookaside
         lookaside = default_lookaside(fn, *args, **kwargs)
 
     if lookaside is None:
         if is_opaque(fn) and fn not in _safe_functions:
-            _meso_sharp_edge(
+            _general_jit_sharp_edge(
                 f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
             )
 
@@ -536,18 +564,18 @@ def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
 
 #
-# lit callbacks
+# general_jit callbacks
 #
 
-get_meso_ctx = get_minimal_ctx
+get_general_jit_ctx = get_minimal_ctx
 
 
-def _lit_const_callback(value: Any) -> WrappedValue:
+def _general_jit_const_callback(value: Any) -> WrappedValue:
     return value
 
 
 # TODO Do we need to warn here? It would find its way in the wrap callback
-def _lit_global_callback(orig_value: Any, name: str) -> Any:
+def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     # Allows loading the torch module
     value = orig_value
     if (
@@ -562,7 +590,7 @@ def _lit_global_callback(orig_value: Any, name: str) -> Any:
     ):
         return value
 
-    _meso_sharp_edge(f"Tried to loading global {name}. Global support is limited.")
+    _general_jit_sharp_edge(f"Tried to loading global {name}. Global support is limited.")
     return value
 
 
@@ -588,8 +616,8 @@ safe_provenance_inst = {
 }
 
 
-def _lit_wrap_callback(value):
-    ctx: MesoCtx = get_meso_ctx()
+def _general_jit_wrap_callback(value):
+    ctx: GeneralJitCtx = get_general_jit_ctx()
 
     uvalue = value.value
     if isinstance(uvalue, torch.Tensor):
@@ -631,21 +659,21 @@ def _lit_wrap_callback(value):
                 raise NotImplementedError(f"Unsupported cache option {co}")
 
         else:
-            _meso_sharp_edge(
+            _general_jit_sharp_edge(
                 f"We are using a (non-const) value of type {type(uvalue).__name__} with provenance {value.provenance}, which is not identified as an input."
             )
     else:
-        _meso_sharp_edge(
+        _general_jit_sharp_edge(
             f"We are using a (non-const) value of unknown type {type(uvalue).__name__}, which may or may not be safe."
         )
 
 
-lit_callbacks: dict[JIT_CALLBACKS, Callable] = {
-    JIT_CALLBACKS.CONST_CALLBACK: _lit_const_callback,
-    JIT_CALLBACKS.GLOBAL_CALLBACK: _lit_global_callback,
-    JIT_CALLBACKS.WRAP_CALLBACK: _lit_wrap_callback,
+general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {
+    JIT_CALLBACKS.CONST_CALLBACK: _general_jit_const_callback,
+    JIT_CALLBACKS.GLOBAL_CALLBACK: _general_jit_global_callback,
+    JIT_CALLBACKS.WRAP_CALLBACK: _general_jit_wrap_callback,
 }
-lit_callbacks = default_callbacks | lit_callbacks
+general_jit_callbacks = default_callbacks | general_jit_callbacks
 
 
 def get_computation_inputs(computation_trace):
@@ -823,7 +851,7 @@ def unpack_inputs(ctx, prologue_trace, inputs):
     return prologue_outputs
 
 
-def meso_thunder_interpreter(
+def thunder_general_jit(
     fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> tuple[TraceCtx, TraceCtx]:
     co: CACHE_OPTIONS = get_cache_option()
@@ -838,11 +866,11 @@ def meso_thunder_interpreter(
     si.varkwargs = ("kwargs", None)
     prologue_trace._siginfo = si
 
-    ctx: MesoCtx = MesoCtx(prologue_trace, computation_trace, sharp_edges=sharp_edges)
+    ctx: GeneralJitCtx = GeneralJitCtx(prologue_trace, computation_trace, sharp_edges=sharp_edges)
     jfn = jit(
         fn,
-        fn_lookaside=lit_lookaside,
-        callbacks=lit_callbacks,
+        fn_lookaside=general_jit_lookaside,
+        callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
     )

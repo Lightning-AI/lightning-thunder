@@ -63,7 +63,7 @@ from thunder.core.proxies import (
     ListProxy,
     AnyProxy,
 )
-from thunder.core.jit_ext import minimal_thunder_jit, meso_thunder_interpreter
+from thunder.core.jit_ext import minimal_thunder_jit, thunder_general_jit
 from thunder.core.pytree import tree_flatten
 from thunder.executors.torch_autograd import thunder_backward
 
@@ -502,10 +502,8 @@ def _translate_functions_interpreter(
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _translate_python_interpreter(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
-) -> tuple[TraceCtx, TraceCtx]:
-    return meso_thunder_interpreter(fn, args, kwargs, sharp_edges=sharp_edges)
+def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> tuple[TraceCtx, TraceCtx]:
+    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
 
 
 # This function will replace compile() (below) before gtc
@@ -630,7 +628,7 @@ def jit(
         elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS:
             interpreter = _translate_functions_interpreter
         elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-            interpreter = _translate_python_interpreter
+            interpreter = _general_frontend
         else:
             raise NotImplementedError(
                 f"Only the 'python interpreter' and 'translate functions' interpretation options are currently implemented."

@@ -1345,6 +1345,13 @@ def test_import(jit):
 
     assert jit(foo)() is foo()
 
+    # reload is implemented using exec of the module
+    from . import lit_gpt_model
+    import importlib
+
+    importlib.reload(lit_gpt_model)
+    assert hasattr(lit_gpt_model, "GPT")
+
 
 def test_locals_lookaside(jit):
     def foo():
