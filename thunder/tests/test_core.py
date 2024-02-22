@@ -1162,10 +1162,8 @@ def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
 
     trace = thunder.trace()(foo)
 
-    assert len(trace.bound_symbols) == 2
-    symbol = trace.bound_symbols[0]
-    assert symbol.sym.name == "add"
-    assert symbol.are_all_args_constant
+    assert len(trace.bound_symbols) == 1
+    assert trace.bound_symbols[0].are_all_args_constant
 
     def bar(a, b):
         return clang.add(a, b)

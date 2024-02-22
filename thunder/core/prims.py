@@ -1383,15 +1383,22 @@ def _elementwise_unary_meta_factory(
                 utils.check(False, lambda: f"Unknown {output_dtype_kind=}")
 
             if val is None or number_fn is None:
+                utils.check(
+                    isinstance(a, NumberProxy),
+                    lambda: f"Trying to call an elementwise unary operation {name} on a number, but the operation is not eagerly defined",
+                )
                 return numberproxy(output_type, None)
 
             value = number_fn(val)
-            result = numberproxy(type(value), value)
             utils.check(
                 type(value) is output_type,
                 lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
             )
-            return result
+
+            # Only returns a proxy if the input is a proxy
+            if isinstance(a, Proxy):
+                return numberproxy(type(value), value)
+            return value
 
         # NOTE a is a TensorProxy
         utils.check(
@@ -1786,10 +1793,17 @@ def _elementwise_binary_meta_factory(
             # Handles the case where a number has an indeterminate value, or the operation has
             #   no number handler, by returning another indeterminate value
             if aval is None or bval is None or number_fn is None:
+                utils.check(
+                    isinstance(a, NumberProxy) or isinstance(b, NumberProxy),
+                    lambda: f"Trying to call an elementwise binary operation {name} on two numbers, but the operation is not eagerly defined",
+                )
                 return numberproxy(numbertype, None)
 
             value = number_fn(aval, bval)
-            return numberproxy(type(value), value)
+            # Only returns a NumberProxy if at least one input is a number proxy
+            if isinstance(a, NumberProxy) or isinstance(b, NumberProxy):
+                return numberproxy(type(value), value)
+            return value
 
         else:
             # NOTE a or b is a TensorProxy
