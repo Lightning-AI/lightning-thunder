@@ -4363,7 +4363,13 @@ def autocast_matmul_rule(a, b, dtype):
 @register_autocast_rule("torch.nn.functional.linear")
 @register_autocast_rule(prims.PrimIDs.LINEAR)
 def autocast_linear_rule(a, w, bias, dtype):
-    return prims.linear(*maybe_downcast_to(dtype, (a, w, bias)))
+    if bias is None:
+        # Don't pass `bias` to maybe_downcast_to.
+        downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
+    else:
+        downcast_args = maybe_downcast_to(dtype, (a, w, bias))
+
+    return prims.linear(*downcast_args)
 
 
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
