@@ -116,6 +116,7 @@ class PrimIDs(Enum):
     UNPACK_TRIVIAL = auto()
     UNPACK_TUPLE = auto()
     UNPACK_LIST = auto()
+    UNPACK_DICT_KEY = auto()
     CONSTRUCT_TUPLE = auto()
     # TODO: UNPACK_SET
     # Utility prims
@@ -477,9 +478,9 @@ check_none = make_prim(
 )
 
 
-def _check_empty_meta(seq: tuple | list, /) -> None:
+def _check_empty_meta(seq: tuple | list | dict, /) -> None:
     # Validates types
-    baseutils.check_type(seq, (tuple, list))
+    baseutils.check_type(seq, (tuple, list, dict))
     baseutils.check(len(seq) == 0, lambda: f"Expected an empty sequence, but found {seq=}")
 
 
@@ -1038,6 +1039,54 @@ unpack_key = make_prim(
     meta=unpack_key_meta,
     python_printer=unpack_key_printer,
     python_impl=unpack_key_impl,
+)
+
+
+def _unpack_dict_key_meta(d: dict, key: int | str, /) -> Proxy:
+    baseutils.check_type(d, dict)
+    baseutils.check_type(key, (int, str))
+
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    return _proxy(d[key])
+
+
+def _unpack_dict_key_impl(d: dict, key: int | str, /) -> Any:
+    return d[key]
+
+
+def _unpack_dict_key_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_dict_key but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_dict_key but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    d, key = arg_printables
+    dstr = codeutils.prettyprint(d)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {dstr}[{keystr}]"
+
+
+unpack_dict_key = make_prim(
+    PrimIDs.UNPACK_DICT_KEY,
+    "unpack_dict_key",
+    meta=_unpack_dict_key_meta,
+    python_printer=_unpack_dict_key_printer,
+    python_impl=_unpack_dict_key_impl,
 )
 
 

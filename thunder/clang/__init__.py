@@ -16,7 +16,7 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy
+from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
 from thunder.core.script.noinline import noinline
 
@@ -102,6 +102,11 @@ def unpack_tuple(tup: tuple, /) -> tuple:
 @clangop()
 def unpack_list(lst: list, /) -> list:
     return prims.unpack_list(lst)
+
+
+@clangop()
+def unpack_dict_key(d: dict, key: int | str, /) -> Proxy:
+    return prims.unpack_dict_key(d, key)
 
 
 @clangop()

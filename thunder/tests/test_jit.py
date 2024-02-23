@@ -984,6 +984,370 @@ def test_list_bool():
 
 
 #
+# Dict tests
+#
+def test_dict_getitem():
+    def foo(d):
+        return d["a"] + d[0]
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert_close(actual, expected)
+
+    d = {"a": a, 0: 4.0}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert_close(actual, expected)
+
+
+def test_dict_contains():
+    def foo(d):
+        return 3 in d
+
+    jfoo = thunder.jit(foo)
+
+    d = {3: 4, 5: 6}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert_close(actual, expected)
+
+    d = {0: 1}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert_close(actual, expected)
+
+
+def test_dict_del():
+    def foo(d):
+        del d["a"]
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+
+def test_dict_eq():
+    def foo(d0, d1):
+        return d0 == d1
+
+    jfoo = thunder.jit(foo)
+
+    d0 = {0: 0, 1: 1}
+    d1 = {0: 0, 1: 1}
+
+    actual = jfoo(d0, d1)
+    expected = foo(d0, d1)
+
+    assert_close(actual, expected)
+
+    d2 = {0: 4}
+
+    actual = jfoo(d0, d2)
+    expected = foo(d0, d2)
+
+    assert_close(actual, expected)
+
+
+def test_dict_bitwise_or():
+    def foo(d0, d1):
+        return d0 | d1
+
+    jfoo = thunder.jit(foo)
+
+    d0 = {0: 0, 1: 1}
+    d1 = {0: 0, 4: 5}
+
+    actual = jfoo(d0, d1)
+    expected = foo(d0, d1)
+
+    assert_close(actual, expected)
+
+
+def test_dict_len():
+    def foo(d):
+        return len(d)
+
+    jfoo = thunder.jit(foo)
+
+    d = {0: 0, 1: 1}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert_close(actual, expected)
+
+
+def test_dict_iter():
+    def foo(d):
+        l = []
+        for x in d:
+            l.append(x)
+        return l
+
+    jfoo = thunder.jit(foo)
+
+    d = {0: 0, 1: 1, 5: 7, "x": "y", "hello": "goodbye", 9: [1, 2]}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+def test_dict_reverse():
+    def foo(d):
+        l = []
+        for x in reversed(d):
+            l.append(x)
+        return l
+
+    jfoo = thunder.jit(foo)
+
+    d = {0: 0, 1: 1, 5: 7, "x": "y", "hello": "goodbye", 9: [1, 2]}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+def test_dict_setitem():
+    def foo(d):
+        d[5] = 9
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+
+def test_dict_clear():
+    def foo(d):
+        d.clear()
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+
+def test_dict_get():
+    def foo(d):
+        return d.get(0, 5), d.get(10, 9)
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+def test_dict_items():
+    def foo(d):
+        accum = 0
+        for k, v in d.items():
+            accum = accum + k + v
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {0: 1, 2: 3, 4: 5}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+def test_dict_keys():
+    def foo(d):
+        accum = 0
+        for k in d.keys():
+            accum = accum + k
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {0: 1, 2: 3, 4: 5}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+def test_dict_values():
+    def foo(d):
+        accum = 0
+        for v in d.values():
+            accum = accum + v
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {0: 1, 2: 3, 4: 5}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+def test_dict_pop():
+    def foo(d):
+        d.popitem()
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+
+def test_dict_setdefault():
+    def foo(d):
+        d.setdefault(5, 7)
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+
+def test_dict_update():
+    def foo(d):
+        d.update({1: 1})
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    d = {"a": a, 0: b}
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+    def foo(d):
+        d |= {1: 1}
+
+    jfoo = thunder.jit(foo)
+
+    with pytest.raises(NotImplementedError):
+        jfoo(d)
+
+
+def test_dict_return():
+    def foo(d):
+        return d
+
+    jfoo = thunder.jit(foo)
+
+    d = {0: 1, 2: 3, 4: 5}
+
+    actual = jfoo(d)
+    expected = foo(d)
+
+    assert actual == expected
+
+
+#
+# General collection tests
+#
+def test_nested_collections():
+    def foo(d):
+        d0 = d[0]
+        d1 = d[1]
+        t1 = d[2]
+        l0 = d[3]
+        t0, l1 = t1
+        a = d1[0][1] + t0[0]
+        b = l0[0] + l1[1]
+
+        return {
+            "a": a,
+            "b": b,
+            "c": [d1, d0],
+            0: (t0, l1),
+            1: {0: t0, 1: a},
+        }
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    l0 = [a, 1, {"x": 0, "y": 1}]
+    l1 = [b, 0, 2]
+    t0 = (a, a, -1, b)
+    t1 = (t0, l1)
+    l2 = [l1, t0, 5]
+
+    d0 = {0: 0, 1: 1, "a": a}
+    d1 = {0: d0, 1: l2}
+    d2 = {0: d0, 1: d1, 2: t1, 3: l0}
+
+    actual = jfoo(d2)
+    expected = foo(d2)
+
+    assert_close(actual, expected)
+
+
+#
 # Return value tests
 #
 # Return values must be proxies or (simple) printable objects (or both)
@@ -1465,7 +1829,7 @@ def test_constant_values_empty_tuples_and_lists_caching():
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 0
 
-    actual = jfoo(empty_tup)
+    actual = jfoo(())
     assert_close(actual, expected)
 
     assert thunder.cache_misses(jfoo) == 1
@@ -1485,6 +1849,93 @@ def test_constant_values_empty_tuples_and_lists_caching():
 
     assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 2
+
+
+def test_constant_values_empty_dict_caching():
+    def foo(d):
+        return len(d)
+
+    jfoo = thunder.jit(foo)
+
+    empty_dict = {}
+
+    expected = foo(empty_dict)
+    actual = jfoo(empty_dict)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo({})
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    d = {1: 1}
+    actual = jfoo(d)
+    expected = foo(d)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    d = {1: 1}
+    actual = jfoo(d)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+
+def test_constant_values_dict_caching():
+    def foo(d):
+        return d["a"] + d["b"]
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    d0 = {"a": a, "b": b}
+
+    expected = foo(d0)
+    actual = jfoo(d0)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(d0)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    c = torch.randn((2, 2))
+    d1 = {"a": a, "b": c}
+
+    expected = foo(d1)
+    actual = jfoo(d1)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
+
+    d = torch.randn((2, 1))
+    d2 = {"a": a, "b": d}
+
+    expected = foo(d2)
+    actual = jfoo(d2)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+    actual = jfoo(d2)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 3
 
 
 #

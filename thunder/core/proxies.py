@@ -110,7 +110,7 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f"{self._name}"
+        return f"{self.name}"
 
     def type_string(self) -> str:
         return "Any"
@@ -482,6 +482,63 @@ class ListProxy(Proxy, list):
         raise NotImplementedError("Removing from an input list is not yet supported")
 
 
+class DictProxy(Proxy, dict):
+    def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None):
+        nd = dict.__new__(cls, d)
+        dict.update(nd, d)
+        return nd
+
+    def __init__(self, d: dict, *, name: None | str = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._value = d
+
+    def type_string(self, /) -> str:
+        return "dict"
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return DictProxy(self._value, name=name, history=self.history)
+
+    def __add__(self, other, /):
+        return self._value + other
+
+    def __bool__(self, /) -> bool:
+        return bool(self._value)
+
+    def __delitem__(self, key: Any):
+        raise NotImplementedError("Deleting keys of an input dict is not yet supported")
+
+    def __eq__(self, other, /) -> bool:
+        return self._value == other
+
+    def __ior__(self, other, /):
+        raise NotImplementedError("Modifying an input dict inplace is not yet supported")
+
+    def __or__(self, other, /) -> bool:
+        return self._value | other
+
+    def __setitem__(self, *args):
+        raise NotImplementedError("Assigning to keys of an input dict is not yet supported")
+
+    def clear(self, /):
+        raise NotImplementedError("Clearning an input dict is not yet supported")
+
+    def items(self, /):
+        return self._value.items()
+
+    def pop(self, key, /):
+        raise NotImplementedError("Popping an input dict is not yet supported")
+
+    def popitem(self, /):
+        raise NotImplementedError("Popping an input dict is not yet supported")
+
+    def update(self, other, /):
+        raise NotImplementedError("Updating an input dict is not yet supported")
+
+    def setdefault(self, *args):
+        raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
+
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
@@ -836,6 +893,8 @@ def pytype(x: Proxy) -> type:
         return tuple
     if isinstance(x, list):
         return list
+    if isinstance(x, dict):
+        return dict
 
 
 # TODO GTC Update Proxy number inits to be value, /, *, name, history
@@ -1454,6 +1513,8 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return TupleProxy(x, name=name, history=history)
     if isinstance(x, list):
         return ListProxy(x, name=name, history=history)
+    if isinstance(x, dict):
+        return DictProxy(x, name=name, history=history)
 
     if isinstance(x, torch.dtype):
         return AnyProxy(x, name=name, history=history)

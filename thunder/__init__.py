@@ -61,6 +61,7 @@ from thunder.core.proxies import (
     ComplexProxy,
     TupleProxy,
     ListProxy,
+    DictProxy,
     AnyProxy,
 )
 from thunder.core.jit_ext import minimal_thunder_jit, thunder_general_jit
@@ -332,6 +333,35 @@ def _eager_unpack_list(lst: list, /, name: None | str, *, co: CACHE_OPTIONS) -> 
     return p, p
 
 
+def _eager_validate_dict(p: DictProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
+    clang.check_type(p, dict)
+
+    if len(p) == 0:
+        clang.check_empty(p)
+
+    computation_args = [p]
+    for k, v in p.items():
+        pv = clang.unpack_dict_key(p, k)
+        cargs, iargs = _eager_validate(pv, co=co)
+        computation_args.extend(cargs)
+
+    return (computation_args, [p])
+
+
+def _eager_unpack_dict(d: dict, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[TupleProxy, TupleProxy]:
+    unpack = partial(_eager_unpack, name=None, co=co)
+    proxied = {}
+    for k, v in d.items():
+        if not isinstance(k, (int, str)):
+            raise ValueError(f"Unsupported input dict key type {type(k)}. Supported types are int and str.")
+
+        vp, a = unpack(v)
+        proxied[k] = a
+
+    p = proxy(proxied, name=name)
+    return p, p
+
+
 def _eager_validate_any(p: Proxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     typ: type = pytype(p)
     if typ is NoneType:
@@ -352,6 +382,7 @@ _type_to_unpack_map: dict[type, Callable] = {
     tuple: _eager_unpack_tuple,
     pytorch.Size: _eager_unpack_tuple,
     list: _eager_unpack_list,
+    dict: _eager_unpack_dict,
     NoneType: _eager_unpack_none,
     pytorch.dtype: _eager_unpack_literal_like,
 }
@@ -364,6 +395,7 @@ _type_to_validation_map: dict[type, Callable] = {
     StringProxy: _eager_validate_string,
     TupleProxy: _eager_validate_tuple,
     ListProxy: _eager_validate_list,
+    DictProxy: _eager_validate_dict,
     AnyProxy: _eager_validate_any,
 }
 

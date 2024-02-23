@@ -340,6 +340,8 @@ def prettyprint(
         return m("tuple")
     if x is list:
         return m("list")
+    if x is dict:
+        return m("dict")
     if x is torch.Size:
         return m("torch.Size")
     # TODO Handle complex infinities and nans
