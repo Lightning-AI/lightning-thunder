@@ -73,8 +73,8 @@ jobs:
     - name: Install package & dependencies
       run: |
         pip --version
-        pip install -e '.[test]' -U --pre \
-          --find-links=${TORCH_URL_STABLE} --find-links=${TORCH_URL_RC}
+        pip install -e '.[test]' -U \
+          --find-links=${TORCH_URL_STABLE} # --find-links=${TORCH_URL_RC}
         pip list
       shell: bash
 
