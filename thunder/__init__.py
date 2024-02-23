@@ -10,6 +10,7 @@ import time
 from numbers import Number
 from itertools import chain
 from types import NoneType
+import optree
 
 from looseversion import LooseVersion
 
@@ -46,7 +47,7 @@ from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values
 from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
-from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable
+from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable_collection, is_simple_printable_value
 from thunder.core.proxies import (
     is_proxyable,
     proxy,
@@ -517,14 +518,19 @@ def _eager_unpacking_interpreter(
         result = interpreter(fn)(*interpretation_args, **interpretation_kwargs)
 
         # Validates that the returned items are proxies or printable values
-        # TODO GTC This assumes pytrees are printable (fix this)
-        flat, _ = tree_flatten(result)
-        for f in flat:
-            if is_simple_printable(f) or isinstance(f, Proxy):
-                continue
+        def leaf_test(x: Any) -> bool:
+            if isinstance(x, Proxy):
+                return True
+            if is_simple_printable_value(x):
+                return True
+            if is_simple_printable_collection(x):
+                return False
+
             raise RuntimeError(
-                f"Trying to return non-proxy non-printable type {type(f)}. Please file an issue requesting support for this."
+                f"Trying to return object of type {type(x)}, but only proxies, strings, torch.device objects, numbers, tuples, lists, and dicts can be returned."
             )
+
+        optree.tree_flatten(result, is_leaf=leaf_test)
 
         prims.python_return(result)
 

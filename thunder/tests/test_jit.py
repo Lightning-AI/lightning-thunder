@@ -1375,7 +1375,16 @@ def test_return_object():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+def test_return_object_in_collection():
+    def foo():
+        return [object()]
+
+    jfoo = thunder.jit(foo)
+
+    with pytest.raises(RuntimeError):
+        jfoo()
+
+
 def test_return_tuple():
     def foo(a, b):
         return (a, b)
@@ -1387,7 +1396,6 @@ def test_return_tuple():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
 def test_return_list():
     def foo(a, b):
         return [a, b]
@@ -1399,7 +1407,6 @@ def test_return_list():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
 def test_return_list_with_intermediates():
     def foo(a, b):
         l = [a, b]
@@ -1425,7 +1432,6 @@ def test_return_set():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
 def test_return_dict():
     def foo(a, b):
         return {1: a, 2: b}

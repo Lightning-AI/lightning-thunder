@@ -50,8 +50,7 @@ def indent_string(indent):
 
 
 # Whether the object or type can be printed without an import
-# TODO GTC Add collections
-def is_simple_printable(x: Any) -> bool:
+def is_simple_printable_value(x: Any) -> bool:
     # Short-circuits for proxies
     if isinstance(x, ProxyInterface):
         return True
@@ -73,24 +72,31 @@ def is_simple_printable(x: Any) -> bool:
     if x is complex:
         return True
 
-    simple_printable_types = (
+    simple_printable_value_types = (
         str,
         torch.device,
-        Number,
+        bool,
+        int,
+        float,
+        complex,
         slice,
-        type,
     )
 
-    if isinstance(x, simple_printable_types):
-        return True
-
-    return False
+    return type(x) in simple_printable_value_types
 
 
-# TODO GTC Review collections printing
-# TODO GTC Review whether "simple printables" should require an import
+def is_simple_printable_collection(x: Any) -> bool:
+    simple_printable_collection_types = (
+        tuple,
+        list,
+        dict,
+    )
+
+    return type(x) in simple_printable_collection_types
+
+
 def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
-    if is_simple_printable(x):
+    if is_simple_printable_value(x):
         return True, None
 
     if isinstance(x, ContextObject):
