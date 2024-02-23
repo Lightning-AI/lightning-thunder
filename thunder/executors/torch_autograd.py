@@ -29,7 +29,7 @@ class ThunderFunction(torch.autograd.Function):
         from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
         from thunder.distributed.transforms import FSDPCommBucketing
 
-        assert compile_data is not None
+        utils.check(compile_data is not None, lambda: "`compile_data` is required")
 
         def make_trace(func):
             return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=True), func)
