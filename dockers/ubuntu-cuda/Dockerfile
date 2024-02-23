@@ -13,7 +13,7 @@
 # limitations under the License.
 
 ARG UBUNTU_VERSION="22.04"
-ARG CUDA_VERSION="11.8.0"
+ARG CUDA_VERSION="12.1.0"
 # select devel | runtime
 ARG IMAGE_TYPE="devel"
 
@@ -22,8 +22,8 @@ FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 ARG CUDNN_VERSION="8.9.7.29-1"
 ARG CUDNN_FRONTEND_CHECKOUT="v1.1.0"
 ARG PYTHON_VERSION="3.10"
-ARG TORCH_VERSION="2.1.2"
-ARG TRITON_VERSION="2.1.0"
+ARG TORCH_VERSION="2.2.1"
+ARG TRITON_VERSION="2.2.0"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -107,7 +107,7 @@ RUN \
         git submodule sync && \
         git submodule update --init --recursive && \
         pip install . && \
-        make triton && \
+        pip install "pytorch-triton==$(cat .ci/docker/triton_version.txt)" --index-url="https://download.pytorch.org/whl/nightly/" && \
         cd .. && \
         rm -rf pytorch; \
     elif [ "${TORCH_INSTALL}" == "test" ]; then \

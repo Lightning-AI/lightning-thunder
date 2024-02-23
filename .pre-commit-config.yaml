@@ -35,12 +35,6 @@ repos:
         additional_dependencies: [tomli]
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
-  # - repo: https://github.com/PyCQA/isort
-  #   rev: 5.10.1
-  #   hooks:
-  #     - id: isort
-  #       args: ["--profile", "black", "--filter-files"]
-
   - repo: https://github.com/psf/black
     rev: 23.9.1
     hooks:
