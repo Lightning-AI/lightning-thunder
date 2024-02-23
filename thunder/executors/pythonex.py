@@ -60,7 +60,7 @@ ex.register_implementation(
 
 
 def _check_literal_like_impl(p: Any, v: Any, /) -> None:
-    assert p == v
+    utils.check(p == v, lambda: f"Expected {p} to be equal to {v}")
 
 
 check_literal_like = ex.register_operator(
@@ -70,7 +70,7 @@ ex.register_implementation(prims.check_literal_like, check_literal_like, checker
 
 
 def _check_none_impl(n: None, /) -> None:
-    assert n is None
+    utils.check(n is None, lambda: f"Expected {n} to be None")
 
 
 check_none = ex.register_operator("check_none", like=prims.check_none, fn=_check_none_impl)
@@ -78,7 +78,7 @@ ex.register_implementation(prims.check_none, check_none, checker=_always_executa
 
 
 def _check_type_impl(x: Any, typ: type, /) -> None:
-    assert type(x) is typ
+    utils.check(type(x) is typ, lambda: f"Expected {x} to be have the type {typ}")
 
 
 check_type = ex.register_operator("check_type", like=prims.check_type, fn=_check_type_impl)
@@ -86,7 +86,7 @@ ex.register_implementation(prims.check_type, check_type, checker=_always_executa
 
 
 def _check_instance_impl(x: Any, types: tuple[type], /) -> None:
-    assert isinstance(x, types)
+    utils.check(isinstance(x, types), lambda: f"Expected {x} to be an instance of one of {types}")
 
 
 check_instance = ex.register_operator("check_instance", like=prims.check_instance, fn=_check_instance_impl)
@@ -94,7 +94,10 @@ ex.register_implementation(prims.check_instance, check_instance, checker=_always
 
 
 def _check_number_type_and_value_impl(n: Number, v: Number) -> None:
-    assert type(n) == type(v) and (n == v or (n != n and v != v))
+    utils.check(
+        type(n) == type(v) and (n == v or (n != n and v != v)),
+        lambda: f"Expected {n} to be equal to and have the type of {v}",
+    )
 
 
 check_number_type_and_value = ex.register_operator(
@@ -114,7 +117,7 @@ ex.register_implementation(prims.check_bool_conversion, check_bool_conversion, c
 
 
 def _check_string_value_impl(s: str, value: str) -> None:
-    assert s == value
+    utils.check(s == value, lambda: f"Expected '{s}' to be equal to '{value}'")
 
 
 check_string_value = ex.register_operator(
@@ -140,7 +143,7 @@ ex.register_implementation(prims.unpack_list, unpack_list, checker=_always_execu
 
 
 def _check_empty_impl(seq: tuple | list, /) -> None:
-    assert not len(seq)
+    utils.check(not len(seq), lambda: f"Expected {seq=} to be empty")
 
 
 check_empty = ex.register_operator("check_empty", like=prims.check_empty, fn=_check_empty_impl)

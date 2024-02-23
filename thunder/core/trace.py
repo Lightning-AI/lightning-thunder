@@ -328,7 +328,6 @@ class TraceCtx:
                 program.append(provenance_str)
 
             # NOTE torch is explicitly imported because we always run in the no_grad() ctx (see below)
-            # TODO Only do this if calling torch operators?
             import torch
 
             import_ctx["torch"] = torch

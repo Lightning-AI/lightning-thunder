@@ -208,7 +208,7 @@ def _eager_validate_literal_like(p: AnyProxy, /, *, co: CACHE_OPTIONS) -> tuple[
 
 def _eager_unpack_literal_like(x: Any, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[AnyProxy, None]:
     p = proxy(x, name=name)
-    return p, None
+    return p, x
 
 
 def _eager_validate_none(p: AnyProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
@@ -442,16 +442,6 @@ def _eager_unpacking_interpreter(
 
     si: SigInfo = get_siginfo(fn, args, kwargs)
 
-    for arg in args:
-        if not isinstance(arg, supported_input_types):
-            raise NotImplementedError(
-                f"Inputs with {type(arg)} are not supported when using the {interpreter_name} interpreter. Supported input types are {supported_input_types}"
-            )
-
-    # TODO GTC Support varkwargs
-    if si.varkwargs is not None:
-        raise NotImplementedError("varkwargs are not yet supported")
-
     # Constructs the prologue trace (which just trivially unpacks the tensor arguments for now)
     # TODO GTC Remove the no_grad and no_autocast context managers from this trace
     # TODO GTC Provide a mechanism to add context managers to the prologue and computation functions
@@ -502,6 +492,21 @@ def _eager_unpacking_interpreter(
             prologue_kwargs[name] = p
             (iarg,) = iargs
             interpretation_kwargs[name] = iarg
+
+        if si.varkwargs is not None:
+            name, x = si.varkwargs
+
+            p: Proxy
+            p, _ = _eager_unpack(x, name, co=co)
+            prims.unpack_trivial(p)
+            cargs, iargs = _eager_validate(p, co=co)
+            computation_args.extend(cargs)
+
+            prologue_kwargs[name] = p
+            (iarg,) = iargs
+
+            for k, v in iarg.items():
+                interpretation_kwargs[k] = v
 
     prologue_trc.args = prologue_args
     prologue_trc.kwargs = prologue_kwargs

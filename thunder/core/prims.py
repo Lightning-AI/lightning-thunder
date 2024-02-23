@@ -486,7 +486,7 @@ def _check_empty_meta(seq: tuple | list | dict, /) -> None:
 
 check_empty = make_prim(
     PrimIDs.CHECK_EMPTY,
-    "check_none",
+    "check_empty",
     meta=_check_empty_meta,
     tags=(OpTags.DONT_DCE,),
 )

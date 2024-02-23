@@ -56,25 +56,31 @@ def is_simple_printable_value(x: Any) -> bool:
         return True
 
     # Literals
-    if x is None:
-        return True
-    if x is Ellipsis:
+    printable_literals = (None, Ellipsis, torch.strided)
+
+    if x in printable_literals:
         return True
 
     # Types
-    # TODO We should look at generically extending type printing
-    if x is bool:
-        return True
-    if x is int:
-        return True
-    if x is float:
-        return True
-    if x is complex:
+    printable_types = (
+        bool,
+        int,
+        float,
+        complex,
+        list,
+        tuple,
+        dict,
+        torch.Size,
+    )
+
+    if x in printable_types:
         return True
 
+    # Printable objects
     simple_printable_value_types = (
         str,
         torch.device,
+        torch.dtype,
         bool,
         int,
         float,
@@ -82,7 +88,10 @@ def is_simple_printable_value(x: Any) -> bool:
         slice,
     )
 
-    return type(x) in simple_printable_value_types
+    if type(x) in simple_printable_value_types:
+        return True
+
+    return False
 
 
 def is_simple_printable_collection(x: Any) -> bool:
@@ -350,6 +359,8 @@ def prettyprint(
         return m("dict")
     if x is torch.Size:
         return m("torch.Size")
+    if x is torch.strided:
+        return m("torch.strided")
     # TODO Handle complex infinities and nans
     if isinstance(x, Number):
         s: str

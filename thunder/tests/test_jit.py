@@ -155,6 +155,61 @@ def test_positional_args_varargs_and_kwargs():
     assert_close(actual, expected)
 
 
+def test_varkwargs():
+    def foo(**kwargs):
+        return kwargs["a"] + kwargs["b"][0]
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    actual = jfoo(a=a, b=[b])
+    expected = foo(a=a, b=[b])
+
+    assert_close(actual, expected)
+
+
+def test_empty_varkwargs():
+    def foo(**kwargs):
+        return len(kwargs)
+
+    jfoo = thunder.jit(foo)
+
+    actual = jfoo()
+    expected = foo()
+
+    assert_close(actual, expected)
+
+
+def test_args_varargs_kwargs_and_varkwargs():
+    def foo(a, b, /, c, *args, d, e, **kwargs):
+        accum = 0
+        accum = accum + a + b + c
+        for arg in args:
+            accum = accum + arg
+        accum = accum + d + e
+        for k, v in kwargs.items():
+            accum = accum + v
+
+        return accum
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    c = torch.randn((2, 2))
+    args = [torch.randn((2, 1)), torch.randn((1, 2))]
+    d = torch.randn((1, 1))
+    e = torch.randn((1,))
+    kwargs = {"x": torch.randn((2, 2)), "y": torch.randn((2, 2))}
+
+    actual = jfoo(a, b, c, *args, d=d, e=e, **kwargs)
+    expected = foo(a, b, c, *args, d=d, e=e, **kwargs)
+
+    assert_close(actual, expected)
+
+
 #
 # Binary operation tests
 #
@@ -1941,6 +1996,67 @@ def test_constant_values_dict_caching():
     assert_close(actual, expected)
 
     assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 3
+
+
+def constant_values_varkwargs_caching():
+    def foo(**kwargs):
+        return kwargs["a"] + kwargs["b"]
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    expected = foo(a=a, b=b)
+    actual = jfoo(a=a, b=b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(a=a, b=b)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    c = torch.randn((2, 2))
+
+    expected = foo(a=a, b=c)
+    actual = jfoo(a=a, b=c)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
+
+    d = torch.randn((2, 1))
+
+    expected = foo(a=a, b=d)
+    actual = jfoo(a=a, b=d)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+    actual = jfoo(a=a, b=d)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 3
+
+    # Adding an unused key causes a cache miss
+    expected = foo(a=a, b=d, c=3)
+    actual = jfoo(a=a, b=d, c=3)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 2
+
+    expected = foo(a=a, b=d, c=3)
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 3
     assert thunder.cache_hits(jfoo) == 3
 
 
