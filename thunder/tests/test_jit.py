@@ -690,6 +690,27 @@ def test_tuple_bool():
 
 
 #
+# torch.Size tests
+#
+# NOTE torch.Size is treated as a tuple
+
+
+def test_torchsize():
+    def foo(a, shape):
+        return a.reshape(shape)
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((4, 4))
+    s = torch.Size((16, 1))
+
+    actual = jfoo(a, s)
+    expected = foo(a, s)
+
+    assert_close(actual, expected)
+
+
+#
 # List tests
 #
 

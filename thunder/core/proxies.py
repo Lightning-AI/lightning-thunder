@@ -10,6 +10,8 @@ import operator
 import builtins
 import math
 
+import torch
+
 from thunder.core.compile_data import using_symbolic_values, using_jit
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
@@ -345,6 +347,10 @@ class AnyProxy(Proxy):
     def type_string(self) -> str:
         return str(type(self._o))
 
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return AnyProxy(self._o, name=name, history=self.history)
+
 
 class StringProxy(Proxy, str):
     def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
@@ -403,6 +409,10 @@ class TupleProxy(Proxy, tuple):
     def type_string(self) -> str:
         return "tuple"
 
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return TupleProxy(self._value, name=name, history=self.history)
+
     def __add__(self, other):
         if not isinstance(other, tuple):
             raise TypeError(f"can only concatenate tuple (not '{type(other)}') to tuple")
@@ -433,6 +443,10 @@ class ListProxy(Proxy, list):
 
     def type_string(self, /) -> str:
         return "list"
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return ListProxy(self._value, name=name, history=self.history)
 
     def __add__(self, other, /):
         if not isinstance(other, list):
@@ -483,7 +497,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __hash__(self) -> int:
         return hash(self.value)
 
-    def replace_name(self, name):
+    def replace_name(self, name: str, /):
         """Return a copy of this proxy with the given name."""
         return self.__class__(name=name, value=self.value, python_type=self.python_type)
 
@@ -1384,8 +1398,6 @@ _cls_to_number_proxy_map = {
     bool: IntegerProxy,
     complex: ComplexProxy,
 }
-
-import torch
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:

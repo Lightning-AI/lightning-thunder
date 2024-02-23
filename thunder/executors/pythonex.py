@@ -78,11 +78,19 @@ ex.register_implementation(prims.check_none, check_none, checker=_always_executa
 
 
 def _check_type_impl(x: Any, typ: type, /) -> None:
-    assert type(x) == typ
+    assert type(x) is typ
 
 
 check_type = ex.register_operator("check_type", like=prims.check_type, fn=_check_type_impl)
 ex.register_implementation(prims.check_type, check_type, checker=_always_executable)
+
+
+def _check_instance_impl(x: Any, types: tuple[type], /) -> None:
+    assert isinstance(x, types)
+
+
+check_instance = ex.register_operator("check_instance", like=prims.check_instance, fn=_check_instance_impl)
+ex.register_implementation(prims.check_instance, check_instance, checker=_always_executable)
 
 
 def _check_number_type_and_value_impl(n: Number, v: Number) -> None:

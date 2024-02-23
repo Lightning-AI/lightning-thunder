@@ -78,6 +78,11 @@ def check_type(x: Any, typ: type, /) -> None:
     return prims.check_type(x, typ)
 
 
+@clangop()
+def check_instance(x: Any, types: tuple[type], /) -> None:
+    return prims.check_instance(x, types)
+
+
 # Checks a number's value
 @clangop()
 def check_number_type_and_value(n: Number, value: Number, /) -> None:

@@ -281,7 +281,7 @@ def _eager_validate_tuple(p: TupleProxy, /, *, co: CACHE_OPTIONS) -> tuple[list,
 
     computation_args = [p]
 
-    clang.check_type(p, tuple)
+    clang.check_instance(p, (tuple, pytorch.Size))
     if len(p) == 0:
         clang.check_empty(p)
 
@@ -350,6 +350,7 @@ _type_to_unpack_map: dict[type, Callable] = {
     complex: _eager_unpack_number,
     str: _eager_unpack_string,
     tuple: _eager_unpack_tuple,
+    pytorch.Size: _eager_unpack_tuple,
     list: _eager_unpack_list,
     NoneType: _eager_unpack_none,
     pytorch.dtype: _eager_unpack_literal_like,
@@ -371,7 +372,7 @@ def _eager_validate(x: Any, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     typ: type = type(x)
     unpack_fn = _type_to_validation_map.get(typ, None)
     if unpack_fn is None:
-        raise ValueError(f"Cannot unpack object of type {typ}. Please file an issue requesting support.")
+        raise ValueError(f"Cannot validate object of type {typ}. Please file an issue requesting support.")
 
     return unpack_fn(x, co=co)
 

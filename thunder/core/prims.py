@@ -99,6 +99,7 @@ class PrimIDs(Enum):
     CHECK_EMPTY = auto()
     CHECK_LITERAL_LIKE = auto()
     CHECK_TYPE = auto()
+    CHECK_INSTANCE = auto()
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
@@ -514,6 +515,27 @@ check_type = make_prim(
     PrimIDs.CHECK_TYPE,
     "check_type",
     meta=_check_type_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_instance_meta(x: Any, types: tuple[type], /) -> None:
+    # Validates types
+    baseutils.check(types, tuple, lambda: f"Expected a tuple of types for check_instance, but found {types}")
+
+    for typ in types:
+        baseutils.check(
+            type(typ) is type,
+            lambda: f"Expected a tuple of types for check_instance, but found an object of type {type(typ)} in the tuple",
+        )
+
+    baseutils.check(any(map(lambda y: issubclass(pytype(x), y), types)), lambda: f"Type {pytype(x)} was not in {types}")
+
+
+check_instance = make_prim(
+    PrimIDs.CHECK_INSTANCE,
+    "check_instance",
+    meta=_check_instance_meta,
     tags=(OpTags.DONT_DCE,),
 )
 

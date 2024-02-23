@@ -8,8 +8,10 @@ from inspect import Parameter
 import string
 import functools
 from functools import partial
-
 import dis
+
+import torch
+
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface
 import thunder.core.dtypes as dtypes
@@ -338,6 +340,8 @@ def prettyprint(
         return m("tuple")
     if x is list:
         return m("list")
+    if x is torch.Size:
+        return m("torch.Size")
     # TODO Handle complex infinities and nans
     if isinstance(x, Number):
         s: str
@@ -352,6 +356,7 @@ def prettyprint(
         return s
     if isinstance(x, torch.dtype):
         return m(_torch_dtype_to_str_map[x])
+
     if isinstance(x, slice):
         return m(str(x))
     if x is Ellipsis:
