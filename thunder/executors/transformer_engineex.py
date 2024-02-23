@@ -16,7 +16,7 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.trace import get_tracectx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
-import thunder.torch as ltorch
+import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import (
@@ -41,10 +41,6 @@ TE_VERSION_1_3_PLUS: bool = False
 te: None | Any = None
 if TE_AVAILABLE:
     try:
-        import transformer_engine.pytorch as te
-        from transformer_engine.common import recipe
-        import transformer_engine_extensions as tex
-        from transformer_engine.pytorch.constants import TE_DType
         from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
@@ -68,7 +64,7 @@ if TE_AVAILABLE:
 # Stateful Operator:
 # This means that every call to this `linear` requires a corresponding `TELinear` instance for
 # backing the required FP8 state. This is done by creating a new `BoundSymbol` with corresponding instance
-# when replacing calls to `ltorch.linear` (see `_create_fp8_linear_bound_symbol`).
+# when replacing calls to `prims.linear` (see `_create_fp8_linear_bound_symbol`).
 # Eg.
 # Original Program:
 #
@@ -415,13 +411,13 @@ def linear_forward_rule_checker(a: TensorProxy, w: TensorProxy, bias: None | Ten
 
 register_augmented_forward_with_checker(
     transformer_engine_ex,
-    ltorch.linear.id,
+    prims.linear.id,
     linear_forward_rule_checker,
     linear_forwad_rule,
 )
 
 
-@register_backward((transformer_engine_ex, ltorch.linear.id))
+@register_backward((transformer_engine_ex, prims.linear.id))
 def linear_backward_rule(a_shape, w_shape, b_shape, ctx_idx, grad):
     return te_functional_linear_backward(grad, a_shape, w_shape, b_shape, ctx_idx)
 
@@ -433,7 +429,7 @@ def _linear_transform(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> torch.T
 
 # Registers the implementation for torch.nn.functional.linear
 transformer_engine_ex.register_implementation(
-    ltorch.linear,
+    prims.linear,
     checker=_linear_checker,
     execution_transform=_linear_transform,
 )

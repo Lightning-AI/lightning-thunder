@@ -156,3 +156,24 @@ def test_te_linear_invalid_inputs():
     x = torch.randn(16, 4, device=device)
     w = torch.randn(16, 4, device=device)
     assert_not_transformed(x, w)
+
+
+@requiresCUDA
+def test_te_with_autocast():
+    def foo(x, w):
+        return thunder.torch.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(16, 16, device=device, requires_grad=True)
+    w = torch.randn(16, 16, device=device, requires_grad=True)
+
+    cfunc = thunder.compile(
+        thunder.core.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
+        executors_list=[transformer_engine_ex],
+        disable_preprocessing=True,
+    )
+    cfunc(x, w)
+
+    fwd_traces, _ = thunder.last_traces(cfunc)
+    # Verify that we have replaced `prims.linear` with `te_linear`
+    assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
