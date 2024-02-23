@@ -2383,6 +2383,11 @@ addcdiv_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.exact,),
         ),
+        # This test is flaky, see https://github.com/Lightning-AI/lightning-thunder/issues/2244
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
     ),
 )
 opinfos.append(addcdiv_opinfo)
