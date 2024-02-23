@@ -1492,6 +1492,10 @@ def is_proxyable(x: Any, /) -> bool:
 def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any | Proxy:
     if x is None:
         return AnyProxy(None, name=name, history=history)
+    if type(x) is slice:
+        return AnyProxy(x, name=name, history=history)
+    if x is ...:
+        return AnyProxy(x, name=name, history=history)
 
     if isinstance(x, torch.Tensor):
         return tensorproxy(x, name=name, history=history)

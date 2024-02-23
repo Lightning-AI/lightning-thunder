@@ -210,6 +210,42 @@ def test_args_varargs_kwargs_and_varkwargs():
     assert_close(actual, expected)
 
 
+def test_default_parameters():
+    def foo(a, b=3):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+    a = torch.randn((2, 2))
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+    actual = jfoo(a, 4)
+    expected = foo(a, 4)
+
+    assert_close(actual, expected)
+
+
+def test_default_parameters_tensor():
+    def foo(a, b=torch.randn((2, 2))):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+    a = torch.randn((2, 2))
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+    actual = jfoo(a, 4)
+    expected = foo(a, 4)
+
+    assert_close(actual, expected)
+
+
 #
 # Binary operation tests
 #
@@ -520,6 +556,49 @@ def test_filtering_nones():
     actual = jfoo(seq)
     expected = foo(seq)
     assert_close(actual, expected)
+
+
+#
+# slice inputs
+#
+
+
+def test_slice_input():
+    def foo(lst, slc):
+        return lst[slc], slc
+
+    jfoo = thunder.jit(foo)
+
+    lst = [0, 1, 2, 3, 4]
+    slc = slice(0, 2, 1)
+
+    actual = jfoo(lst, slc)
+    expected = foo(lst, slc)
+
+    assert actual == expected
+
+
+#
+# ellipsis tests
+#
+
+
+def test_ellipsis_input():
+    def foo(a, ell):
+        return a[ell], ell
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+
+    actual = jfoo(a, ...)
+    expected = foo(a, ...)
+
+    actual_t, actual_ell = actual
+    expected_t, expected_ell = expected
+
+    assert_close(actual_t, expected_t)
+    assert actual_ell is expected_ell
 
 
 #

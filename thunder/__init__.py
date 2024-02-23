@@ -1,5 +1,6 @@
 from functools import wraps, partial
 from typing import Dict, Set, Optional, Any, List, Tuple, Type
+from types import EllipsisType
 from collections import defaultdict
 from collections.abc import Callable
 from collections.abc import Sequence
@@ -369,6 +370,10 @@ def _eager_validate_any(p: Proxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
         return _eager_validate_none(p, co=co)
     if typ is pytorch.dtype:
         return _eager_validate_literal_like(p, co=co)
+    if typ is slice:
+        return _eager_validate_literal_like(p, co=co)
+    if typ is EllipsisType:
+        return _eager_validate_literal_like(p, co=co)
 
     raise NotImplementedError("Trying to validate an object with type {typ}, but this is not implemented")
 
@@ -384,6 +389,8 @@ _type_to_unpack_map: dict[type, Callable] = {
     pytorch.Size: _eager_unpack_tuple,
     list: _eager_unpack_list,
     dict: _eager_unpack_dict,
+    slice: _eager_unpack_literal_like,
+    EllipsisType: _eager_unpack_literal_like,
     NoneType: _eager_unpack_none,
     pytorch.dtype: _eager_unpack_literal_like,
 }

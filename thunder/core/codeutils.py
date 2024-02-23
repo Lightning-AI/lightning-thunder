@@ -1,4 +1,4 @@
-from types import CodeType, FunctionType, MethodType
+from types import CodeType, FunctionType, MethodType, EllipsisType
 from typing import List, Dict, Tuple, Set, Deque, Any
 from numbers import Number
 from collections import deque
@@ -70,6 +70,8 @@ def is_simple_printable_value(x: Any) -> bool:
         list,
         tuple,
         dict,
+        slice,
+        EllipsisType,
         torch.Size,
     )
 
@@ -357,6 +359,10 @@ def prettyprint(
         return m("list")
     if x is dict:
         return m("dict")
+    if x is slice:
+        return m("slice")
+    if x is EllipsisType:
+        return m("ellipsis")
     if x is torch.Size:
         return m("torch.Size")
     if x is torch.strided:
