@@ -1534,7 +1534,6 @@ def test_store_global_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2177")
 def test_calling_globals_sharp_edge():
     def foo():
         g = globals()
@@ -1545,7 +1544,6 @@ def test_calling_globals_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2180")
 def test_calling_vars_sharp_edge():
     def foo():
         g = vars()
@@ -1556,7 +1554,6 @@ def test_calling_vars_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2178")
 def test_calling_locals_sharp_edge():
     def foo():
         l = locals()
@@ -1567,7 +1564,6 @@ def test_calling_locals_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2188")
 def test_accessing_globals_through_function_sharp_edge():
     def foo():
         return foo.__globals__()
@@ -1578,7 +1574,6 @@ def test_accessing_globals_through_function_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2179")
 def test_calling_input_sharp_edge():
     def foo():
         inp = input()

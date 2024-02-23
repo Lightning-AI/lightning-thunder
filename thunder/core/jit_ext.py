@@ -207,7 +207,12 @@ def reset_minimal_ctx(token) -> None:
 
 # Minimal lookasides
 
-_minimal_lookaside_map = {}
+_minimal_lookaside_map = {
+    globals: lambda *args, **kwargs: _sharp_edge("Calling globals()"),
+    locals: lambda *args, **kwargs: _sharp_edge("Calling locals()"),
+    vars: lambda *args, **kwargs: _sharp_edge("Calling vars()"),
+    input: lambda *args, **kwargs: _sharp_edge("Calling input()"),
+}
 
 # Translates actual torch functions to their corresponding thunder functions
 _minimal_lookaside_map.update(_torch_to_thunder_function_map)
@@ -246,9 +251,7 @@ def _sharp_edge(desc: str, /) -> None:
 
 
 def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
-    _sharp_edge(
-        f"Storing a global variable {name} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
-    )
+    _sharp_edge(f"Storing a global variable `{name}`")
 
 
 # TODO: we need the builtins for impl functions...
