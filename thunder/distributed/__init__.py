@@ -7,6 +7,7 @@ import torch
 import torch.distributed as tdist
 
 import thunder.core.utils as utils
+from thunder.core.proxies import DDPType
 
 
 __all__ = [
@@ -200,6 +201,15 @@ def ddp(
             ),
         )
 
+    # Note [DistributedDataParallel and ddp_type]
+    # If model was wrapped with thunder.distributed.ddp it would have a
+    # .use_ddp attribute set to True and all parameters would be already
+    # broadcasted to all other processes. So that our tracing is aware of
+    # this we need to mark the ddp_type of model's parameters as
+    # thunder.proxies.DDPType.REPLICATED
+    for p in model.parameters():
+        p.ddp_type = DDPType.REPLICATED
+
     if broadcast_from is None:
         return model
 
@@ -335,4 +345,14 @@ def fsdp(
         # NOTE This could be a ShardTensor to indicate other parts of the code
         # that it's sharded and should be treated differently
         param.data = param.data.narrow(0, chunk_size * current_rank, chunk_size).clone()
+
+    # See Note [DistributedDataParallel and ddp_type]
+    # If model was wrapped with thunder.distributed.fsdp it would have a
+    # .use_fsdp attribute set to True and all parameters would be already
+    # sharded across all other processes. So that our tracing is aware of
+    # this we need to mark the ddp_type of model's parameters as
+    # thunder.proxies.DDPType.FULLY_SHARDED
+    for p in distributed_params_module.parameters():
+        p.ddp_type = DDPType.FULLY_SHARDED
+
     return distributed_params_module

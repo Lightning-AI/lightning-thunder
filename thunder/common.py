@@ -310,25 +310,6 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
         self._forward_fn = fn
         self._tfn = tfn
 
-        # Note [DistributedDataParallel and ddp_type]
-        # If model was wrapped with thunder.distributed.ddp it would have a
-        # .use_ddp attribute set to True and all parameters would be already
-        # broadcasted to all other processes. So that our tracing is aware of
-        # this we need to mark the ddp_type of model's parameters as
-        # thunder.proxies.DDPType.REPLICATED
-        if getattr(model, "use_ddp", False):
-            for v in additional_param_values:
-                v.ddp_type = DDPType.REPLICATED
-
-        # If model was wrapped with thunder.distributed.fsdp it would have a
-        # .use_fsdp attribute set to True and all parameters would be already
-        # sharded across all other processes. So that our tracing is aware of
-        # this we need to mark the ddp_type of model's parameters as
-        # thunder.proxies.DDPType.FULLY_SHARDED
-        if getattr(model, "use_fsdp", False):
-            for v in additional_param_values:
-                v.ddp_type = DDPType.FULLY_SHARDED
-
         self._additional_param_values = additional_param_values
         self._additional_param_names = additional_param_names
         self._additional_return_names = additional_return_names
