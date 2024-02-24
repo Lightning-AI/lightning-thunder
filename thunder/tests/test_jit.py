@@ -605,6 +605,7 @@ def test_ellipsis_input():
 # torch.dtype inputs
 #
 
+
 def test_torch_dtypes():
     def foo(a, dtyp):
         return a.to(dtyp)
@@ -618,23 +619,6 @@ def test_torch_dtypes():
     expected = foo(a, dtyp)
     assert_close(actual, expected, check_dtype=True)
 
-#
-# torch.device inputs
-#
-    
-def test_torch_device_input():
-    def foo(a, dev):
-        return a.to(dev)
-    
-    jfoo = thunder.jit(foo)
-
-    a = torch.randn((2, 2))
-    dev = torch.device('cpu')
-
-    actual = jfoo(a, dev)
-    expected = foo(a, dev)
-
-    assert_close(actual, expected)
 
 #
 # Tuple tests

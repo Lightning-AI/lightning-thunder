@@ -1519,10 +1519,8 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return ListProxy(x, name=name, history=history)
     if isinstance(x, dict):
         return DictProxy(x, name=name, history=history)
-    
+
     if isinstance(x, torch.dtype):
-        return AnyProxy(x, name=name, history=history)
-    if isinstance(x, torch.device):
         return AnyProxy(x, name=name, history=history)
 
     return x

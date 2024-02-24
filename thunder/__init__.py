@@ -368,7 +368,11 @@ def _eager_validate_any(p: Proxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     typ: type = pytype(p)
     if typ is NoneType:
         return _eager_validate_none(p, co=co)
-    if typ in (pytorch.dtype, pytorch.device, slice, EllipsisType):
+    if typ is pytorch.dtype:
+        return _eager_validate_literal_like(p, co=co)
+    if typ is slice:
+        return _eager_validate_literal_like(p, co=co)
+    if typ is EllipsisType:
         return _eager_validate_literal_like(p, co=co)
 
     raise NotImplementedError("Trying to validate an object with type {typ}, but this is not implemented")
@@ -389,7 +393,6 @@ _type_to_unpack_map: dict[type, Callable] = {
     EllipsisType: _eager_unpack_literal_like,
     NoneType: _eager_unpack_none,
     pytorch.dtype: _eager_unpack_literal_like,
-    pytorch.device: _eager_unpack_literal_like,
 }
 
 _type_to_validation_map: dict[type, Callable] = {
