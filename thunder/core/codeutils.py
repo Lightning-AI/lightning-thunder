@@ -73,6 +73,8 @@ def is_simple_printable_value(x: Any) -> bool:
         slice,
         EllipsisType,
         torch.Size,
+        torch.device,
+        torch.dtype,
     )
 
     if x in printable_types:
@@ -344,7 +346,7 @@ def prettyprint(
     if isinstance(x, devices.Device):
         return m(f'devices.Device("{str(x)}")')
     if isinstance(x, torch.device):
-        return m(f'"{str(x)}"')
+        return m(f'torch.device("{str(x)}")')
     if x is bool:
         return m("bool")
     if x is int:
