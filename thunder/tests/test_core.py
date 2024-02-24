@@ -1789,6 +1789,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2118"),),
 )
 def test_transforms_vjp_2_1(executor, device, _):
     from thunder.core.transforms import vjp
