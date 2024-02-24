@@ -621,6 +621,26 @@ def test_torch_dtypes():
 
 
 #
+# torch.device inputs
+#
+
+
+def test_torch_device_input():
+    def foo(a, dev):
+        return a.to(dev)
+
+    jfoo = thunder.jit(foo)
+
+    a = torch.randn((2, 2))
+    dev = torch.device("cpu")
+
+    actual = jfoo(a, dev)
+    expected = foo(a, dev)
+
+    assert_close(actual, expected)
+
+
+#
 # Tuple tests
 #
 
