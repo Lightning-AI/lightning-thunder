@@ -48,7 +48,8 @@ from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values
 from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
-from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable_collection, is_simple_printable_value
+from thunder.core.baseutils import is_base_printable
+from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable_collection
 from thunder.core.proxies import (
     is_proxyable,
     proxy,
@@ -530,7 +531,7 @@ def _eager_unpacking_interpreter(
         def leaf_test(x: Any) -> bool:
             if isinstance(x, Proxy):
                 return True
-            if is_simple_printable_value(x):
+            if is_base_printable(x):
                 return True
             if is_simple_printable_collection(x):
                 return False
@@ -657,7 +658,7 @@ def jit(
         # TODO GTC Set interpreted_instructions and history
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for pro, pro_traces, comp, comp_traces in cs.interpreter_cache:
+            for pro, pro_traces, comp, comp_traces in reversed(cs.interpreter_cache):
                 try:
                     inps = pro(*args, **kwargs)
                 except Exception as ex:

@@ -2,6 +2,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
 import random
+import math
 
 import sys
 import dis
@@ -2157,6 +2158,85 @@ def constant_values_varkwargs_caching():
 
     assert thunder.cache_misses(jfoo) == 3
     assert thunder.cache_hits(jfoo) == 3
+
+
+# NOTE Values like complex(math.inf, 0) and math.inf compare as equal
+#   This test verifies that they are understood as distinct values
+#   (since we understand numbers as type x value)
+def test_constant_values_caching_float_complex_equality():
+    def foo(a):
+        return a
+
+    jfoo = thunder.jit(foo)
+
+    a = complex(math.inf, 0)
+
+    expected = foo(a)
+    actual = jfoo(a)
+    assert_close(actual, expected, check_dtype=True)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    actual = jfoo(a)
+    assert_close(actual, expected, check_dtype=True)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    b = math.inf
+
+    expected = foo(b)
+    actual = jfoo(b)
+    assert_close(actual, expected, check_dtype=True)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    actual = jfoo(b)
+    assert_close(actual, expected, check_dtype=True)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+    c = complex(math.inf, -math.inf)
+
+    expected = foo(c)
+    actual = jfoo(c)
+    assert_close(actual, expected, check_dtype=True)
+
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 2
+
+    d = complex(math.nan, 0)
+
+    expected = foo(d)
+    actual = jfoo(d)
+    assert_close(actual, expected, check_dtype=True, equal_nan=True)
+
+    assert thunder.cache_misses(jfoo) == 4
+    assert thunder.cache_hits(jfoo) == 2
+
+    actual = jfoo(d)
+    assert_close(actual, expected, check_dtype=True, equal_nan=True)
+
+    assert thunder.cache_misses(jfoo) == 4
+    assert thunder.cache_hits(jfoo) == 3
+
+    e = math.nan
+
+    expected = foo(e)
+    actual = jfoo(e)
+    assert_close(actual, expected, check_dtype=True, equal_nan=True)
+
+    assert thunder.cache_misses(jfoo) == 5
+    assert thunder.cache_hits(jfoo) == 3
+
+    actual = jfoo(e)
+    assert_close(actual, expected, check_dtype=True, equal_nan=True)
+
+    assert thunder.cache_misses(jfoo) == 5
+    assert thunder.cache_hits(jfoo) == 4
 
 
 #

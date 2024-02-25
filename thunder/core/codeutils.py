@@ -13,7 +13,7 @@ import dis
 import torch
 
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface
+from thunder.core.baseutils import ProxyInterface, check
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -49,55 +49,6 @@ def indent_string(indent):
     return f"{tab * indent}"
 
 
-# Whether the object or type can be printed without an import
-def is_simple_printable_value(x: Any) -> bool:
-    # Short-circuits for proxies
-    if isinstance(x, ProxyInterface):
-        return True
-
-    # Literals
-    printable_literals = (None, Ellipsis, torch.strided)
-
-    if x in printable_literals:
-        return True
-
-    # Types
-    printable_types = (
-        bool,
-        int,
-        float,
-        complex,
-        list,
-        tuple,
-        dict,
-        slice,
-        EllipsisType,
-        torch.Size,
-        torch.device,
-        torch.dtype,
-    )
-
-    if x in printable_types:
-        return True
-
-    # Printable objects
-    simple_printable_value_types = (
-        str,
-        torch.device,
-        torch.dtype,
-        bool,
-        int,
-        float,
-        complex,
-        slice,
-    )
-
-    if type(x) in simple_printable_value_types:
-        return True
-
-    return False
-
-
 def is_simple_printable_collection(x: Any) -> bool:
     simple_printable_collection_types = (
         tuple,
@@ -109,19 +60,19 @@ def is_simple_printable_collection(x: Any) -> bool:
 
 
 def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
-    if is_simple_printable_value(x):
+    if baseutils.is_base_printable(x):
         return True, None
 
     if isinstance(x, ContextObject):
         return True, None
     if is_collection(x):
+        # TODO GTC Fix collection printing by testing if each item is printable and gathering the imports
+        #   required (if any)
         flat, _ = tree_flatten(x)
         return True, None
         # return all((is_printable(f) for f in flat)), None
     if isinstance(x, dtypes.dtype):
         return True, ("dtypes", dtypes)
-    if isinstance(x, torch.dtype):
-        return True, ("torch", torch)
     if isinstance(x, devices.Device):
         return True, ("devices", devices)
 
@@ -196,7 +147,6 @@ def to_printable(
 
 
 # NOTE This quote marker allows for removal of quotation marks when printing collections
-# TODO Review this
 _quote_marker = "_@_"
 
 
@@ -205,92 +155,6 @@ def _qm(s: str, quote_markers: bool) -> str:
         return s
 
     return f"{_quote_marker}{s}{_quote_marker}"
-
-
-_torch_dtype_to_str_map = {
-    torch.bool: "torch.bool",
-    torch.uint8: "torch.uint8",
-    torch.int8: "torch.int8",
-    torch.int16: "torch.int16",
-    torch.int32: "torch.int32",
-    torch.int64: "torch.int64",
-    torch.bfloat16: "torch.bfloat16",
-    torch.float16: "torch.float16",
-    torch.float32: "torch.float32",
-    torch.float64: "torch.float64",
-    torch.complex32: "torch.complex32",
-    torch.complex64: "torch.complex64",
-    torch.complex128: "torch.complex128",
-}
-
-
-# Function objects have a lot of stuff in them, that may not be relevant when we
-# just want to preview bytecode. Here, we make a list of the things we don't need to see.
-fnprint_exclude_attrs = {
-    "__class__",
-    "__doc__",
-    "co_code",
-    "co_lnotab",
-    "co_name",
-    "co_firstlineno",
-    "co_filename",
-    "co_kwonlyargcount",
-    "co_stacksize",
-    "co_flags",
-    "co_nlocals",
-    "co_linetable",
-}
-
-
-# View the bytecode and code object of a function or code object and any nested functions.
-# This is meant to be useful for figuring out what's going on in a function.
-# Example:
-#     @fnprint
-#     def foo(a, b):
-#         return a + b
-def fnprint(fn: FunctionType | MethodType | CodeType, first=True) -> Callable:
-    if isinstance(fn, FunctionType):
-        x = fn.__code__
-    elif isinstance(fn, MethodType):
-        x = fn.__func__.__code__  # type: ignore
-    else:
-        x = fn
-
-    if first:
-        try:
-            source = inspect.getsource(x)
-        except:
-            source = "Source could not be found."
-    else:
-        source = f"SUBFUNCTION {x.co_name}:"
-
-    print(source)
-    for k in dir(x):
-        v = getattr(x, k)
-        if hasattr(v, "__call__"):
-            continue
-        if k in fnprint_exclude_attrs:
-            continue
-        print(f"{k}: {v}")
-
-    print("co_code:")
-    dis.dis(x, depth=0)
-    print()
-
-    # Recurse for nested functions
-    for f in x.co_consts:
-        if f.__class__ == x.__class__:
-            fnprint(f, False)
-            print()
-
-    if first:
-        print("=" * 50)
-        print()
-
-    def error_fn(*args, **kwargs):
-        raise ValueError("A code object was passed to fnprint(). Cannot return a callable of it.")
-
-    return fn if isinstance(fn, Callable) else error_fn
 
 
 # TODO Review prettyprinting other map types like dict -- these need to print strings in a particular way
@@ -314,8 +178,9 @@ def prettyprint(
     if literals_as_underscores and is_literal(x) and not is_collection(x):
         return m("_")
 
-    if x is None:
-        return m("None")
+    if baseutils.is_base_printable(x):
+        return m(baseutils.print_base_printable(x))
+
     if isinstance(x, ContextObject):
         return m(x.name)
     if isinstance(x, ProxyInterface):
@@ -339,55 +204,12 @@ def prettyprint(
         unflattened_str = unflattened_str.replace(f"{_quote_marker}'", "")
         unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
         return unflattened_str
-    if isinstance(x, str):
-        return m(f'"{x}"')
     if isinstance(x, dtypes.dtype):
         return m(f"dtypes.{str(x)}")
     if isinstance(x, devices.Device):
         return m(f'devices.Device("{str(x)}")')
-    if isinstance(x, torch.device):
-        return m(f'torch.device("{str(x)}")')
-    if x is bool:
-        return m("bool")
-    if x is int:
-        return m("int")
-    if x is float:
-        return m("float")
-    if x is complex:
-        return m("complex")
-    if x is tuple:
-        return m("tuple")
-    if x is list:
-        return m("list")
-    if x is dict:
-        return m("dict")
-    if x is slice:
-        return m("slice")
-    if x is EllipsisType:
-        return m("ellipsis")
-    if x is torch.Size:
-        return m("torch.Size")
-    if x is torch.strided:
-        return m("torch.strided")
-    # TODO Handle complex infinities and nans
-    if isinstance(x, Number):
-        s: str
-        if x == float("inf"):
-            s = m("float('inf')")
-        elif x == -float("inf"):
-            s = m("-float('inf')")
-        elif x != x:
-            s = m("float('NaN')")
-        else:
-            s = m(str(x))
-        return s
-    if isinstance(x, torch.dtype):
-        return m(_torch_dtype_to_str_map[x])
-
-    if isinstance(x, slice):
-        return m(str(x))
-    if x is Ellipsis:
-        return m("...")
+    if type(x) is type:
+        return m(f"{baseutils.print_type(x, with_quotes=False)}")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")

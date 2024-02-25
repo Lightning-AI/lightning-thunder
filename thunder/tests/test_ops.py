@@ -57,10 +57,11 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
     if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
         pytest.skip("Your CUDA device does not support bfloat16")
 
-    # jitted = thunder.jit(op.op, executors=executor.executors_list(), interpretation_option="python interpreter")
     cfn = executor.make_callable(op.op)
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp
+        # jitted = thunder.jit(op.op, executors=executor.executors_list(), interpretation_option="python interpreter", cache="no caching")
+        # cfn = thunder.compile(op.op, executors=executor.executors_list(), cache_mode="no caching", disable_preprocessing=True)
 
         result = run_snippet(
             snippet_torch_consistency,

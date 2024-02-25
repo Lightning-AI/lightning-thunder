@@ -94,6 +94,10 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "C"
             elif isinstance(self, TupleProxy):
                 prefix = "tup"
+            elif isinstance(self, ListProxy):
+                prefix = "lst"
+            elif isinstance(self, DictProxy):
+                prefix = "d"
             else:
                 prefix = "p"
 
