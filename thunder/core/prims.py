@@ -2614,7 +2614,7 @@ cat = make_prim(
 )
 
 
-def item_meta(a: TensorProxy) -> NumberProxy:
+def item_meta(a: TensorProxy, /) -> NumberProxy:
     utils.check_type(a, TensorProxy)
 
     utils.check(a.numel == 1, lambda: f"Expects input with numel=1 but got {a.numel=} instead", ValueError)

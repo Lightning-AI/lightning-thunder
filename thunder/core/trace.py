@@ -472,6 +472,10 @@ def reset_tracectx(token):
     _tracectx.reset(token)
 
 
+def is_tracing() -> bool:
+    return get_tracectx() is not None
+
+
 def maybe_start_trace(fn) -> tuple[bool, Any | None, TraceCtx]:
     trace = get_tracectx()
     if trace is None:

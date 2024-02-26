@@ -217,13 +217,14 @@ def prettyprint(
 
 # TODO Make this a frozen dataclass?
 class SigInfo:
-    def __init__(self, name):
+    def __init__(self, name, /):
         self.name = name
         self.args = []
         self.varargs = None
         self.kwargs = {}
         self.varkwargs = None
         self.defaultdict = {}
+        self.unwrapped_fn = None
 
     def __repr__(self):
         return f"[SigInfo args={self.args}, varargs={self.varargs}, kwargs={self.kwargs}, varkwargs={self.varkwargs}]"
@@ -298,6 +299,7 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     kwargs = kwargs if kwargs is not None else {}
 
     fn_ = fn
+    unwrapped: Callable = fn
     while True:
         if not isinstance(fn_, functools.partial):
             break
@@ -311,6 +313,7 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
         )
 
         fn_ = fn_.func
+        unwrapped = fn_
 
     # NOTE That the partials are iterated over in REVERSE order because the keywords from later partials override
     #   the keywords from earlier partials
@@ -356,13 +359,17 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     # Acquires the name of the function
     # NOTE Not all callables define __name__, including objects that define __call__ and
     #   objects created with functools.partial
-    # TODO Is there a better way to extract the name here?
 
     match fn_:
         case functools.partial():
             name = fn_.func.__name__
         case _:
-            name = fn_.__name__
+            if hasattr(fn_, "__name__"):
+                name = fn_.__name__
+            elif hasattr(fn_, "__call__"):
+                raise NotImplementedError(f"Can't yet create a signature for a callable object, like {type(fn_)}")
+            else:
+                raise ValueError(f"Don't know how to extract a signature from type {type(fn_)}")
 
     si = SigInfo(name)
 
@@ -385,4 +392,5 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     si.args = tuple((x[2], x[0]) for x in si.args)
 
     si.defaultdict = default_dict
+    si.unwrapped_fn = unwrapped
     return si

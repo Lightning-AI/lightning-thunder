@@ -12,6 +12,7 @@ from numbers import Number
 from itertools import chain
 from types import NoneType
 import optree
+import warnings
 
 from looseversion import LooseVersion
 
@@ -29,6 +30,7 @@ from thunder.core.trace import (
     set_tracectx,
     reset_tracectx,
     tracectx,
+    is_tracing,
 )
 
 import thunder.core.prims as prims
@@ -48,7 +50,7 @@ from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values
 from thunder.core.langctxs import LanguageContext, resolve_language, Languages
 import thunder.core.langctxs as langctxs
-from thunder.core.baseutils import is_base_printable
+from thunder.core.baseutils import is_base_printable, run_once
 from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable_collection
 from thunder.core.proxies import (
     is_proxyable,
@@ -433,11 +435,11 @@ def _eager_unpack(x: Any, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[Pr
 def _eager_unpacking_interpreter(
     interpreter: Callable, fn: Callable, args, kwargs, /, *, interpreter_name: str
 ) -> tuple[TraceCtx, TraceCtx]:
-    prologue_trc: TraceCtx = TraceCtx(fn)
-    computation_trc: TraceCtx = TraceCtx()
-
     # Unpacks the inputs
     si: SigInfo = get_siginfo(fn, args, kwargs)
+
+    prologue_trc: TraceCtx = TraceCtx(si.unwrapped_fn)
+    computation_trc: TraceCtx = TraceCtx()
 
     # Constructs the prologue trace (which just trivially unpacks the tensor arguments for now)
     # TODO GTC Remove the no_grad and no_autocast context managers from this trace
@@ -517,7 +519,7 @@ def _eager_unpacking_interpreter(
             csi.args.append((p.name, None))
             computation_trc.add_name(p.name)
 
-        result = interpreter(fn)(*interpretation_args, **interpretation_kwargs)
+        result = interpreter(si.unwrapped_fn)(*interpretation_args, **interpretation_kwargs)
 
         # Validates that the returned items are proxies or printable values
         def leaf_test(x: Any) -> bool:
@@ -575,6 +577,13 @@ def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
 
 
+@run_once
+def _recursive_jit_call_warning() -> None:
+    warnings.warn(
+        "Calling a jitted function from a jitted function currently uses all settings from the caller. In the future this behavior may change."
+    )
+
+
 # This function will replace compile() (below) before gtc
 # TODO GTC Consider adding a debug_log parameter to control debug printing
 # TODO GTC Consider renaming compile_options to additional_compile_options
@@ -620,8 +629,9 @@ def jit(
 
     @wraps(fn)
     def fn_(*args, **kwargs) -> Any:
-        # TODO GTC Support being called from another jitted function by just calling fn with
-        #   distinct compile data (test this)
+        if is_tracing():
+            _recursive_jit_call_warning()
+            return fn(*args, **kwargs)
 
         # Updats call statistics
         cs.last_trace_host_start = time.time_ns()
@@ -714,6 +724,8 @@ def jit(
 
             cs.last_trace_tracing_stop = time.time_ns()
 
+            print(f"{prologue_trc=}")
+            print(f"{computation_trc=}")
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
             protraces = transform_for_execution(

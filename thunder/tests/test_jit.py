@@ -2252,6 +2252,103 @@ def test_symbolic_value_warning():
 
 
 #
+# Graceful unsupported input handling tests
+#
+
+
+def test_callable_class_failure():
+    m = torch.nn.Linear(10, 10)
+    jfoo = thunder.jit(m)
+    a = torch.randn((10, 10))
+
+    with pytest.raises(NotImplementedError):
+        jfoo(a)
+
+
+#
+# Partial tests
+#
+
+
+def test_partial_simple():
+    def foo(a, b):
+        return a + b
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    pfoo = partial(foo, b=b)
+    jfoo = thunder.jit(pfoo)
+
+    actual = jfoo(a)
+    expected = pfoo(a)
+
+    assert_close(actual, expected)
+
+
+def test_partial_partial_arg():
+    def foo(a, b, c):
+        return a + b + c
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    c = torch.randn((2, 2))
+
+    pfoo = partial(partial(foo, c=c), b=b)
+    jfoo = thunder.jit(pfoo)
+
+    actual = jfoo(a)
+    expected = pfoo(a)
+
+    assert_close(actual, expected)
+
+
+@pytest.mark.xfail(reason="Support for partials with positional arguments is not yet implemented")
+def test_partial_positional_arg():
+    def foo(a, b, c):
+        return a + b + c
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+    c = torch.randn((2, 2))
+
+    pfoo = partial(foo, a, c=c)
+    jfoo = thunder.jit(pfoo)
+
+    actual = jfoo(b)
+    expected = pfoo(b)
+
+    assert_close(actual, expected)
+
+
+#
+# jit(jit...) tests
+#
+
+
+def test_jit_jit():
+    def foo(a, b):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    def bar(a, b):
+        return jfoo(a, b)
+
+    jbar = thunder.jit(bar)
+
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    actual: torch.Tensor
+    with pytest.warns():
+        actual = jbar(a, b)
+
+    expected = a + b
+    assert_close(actual, expected)
+
+
+#
 # Sharp edges tests
 #
 # See thunder/core/options.py for a longer description of sharp edges and the option.
@@ -2448,6 +2545,40 @@ def test_intermediate_nonlocal_not_sharp_edge():
     actual = jfoo(5)
 
     assert_close(expected, actual)
+
+
+def test_intermediate_default_param_sharp_edge():
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    def foo(a, b=b):
+        return a + b
+
+    def bar(a):
+        return foo(a)
+
+    jbar = thunder.jit(bar, sharp_edges="error")
+
+    with pytest.raises(ThunderSharpEdgeError):
+        jbar(a)
+
+
+def test_intermediate_from_partial_sharp_edge():
+    a = torch.randn((2, 2))
+    b = torch.randn((2, 2))
+
+    def foo(a, b):
+        return a + b
+
+    pfoo = partial(foo, b=b)
+
+    def bar(a):
+        return pfoo(a)
+
+    jbar = thunder.jit(bar, sharp_edges="error")
+
+    with pytest.raises(ThunderSharpEdgeError):
+        jbar(a)
 
 
 #
