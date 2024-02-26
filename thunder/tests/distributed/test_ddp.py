@@ -1,22 +1,30 @@
 import math
+import multiprocessing as mp
 import sys
+import tempfile
 import unittest
 import weakref
+from collections.abc import Sequence
+from functools import partial, wraps
 from itertools import product
 
 import pytest
-
 import torch
+import torch.distributed as tdist
 import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.utils.data as tudata
 from torch.distributed import distributed_c10d as c10d
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing import assert_close, make_tensor
 
 import thunder
-from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 import thunder.torch as ltorch
-from thunder.distributed import prims
+from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
+from thunder.distributed import ddp, fsdp
+from thunder.distributed import prims
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor
+from thunder.tests.framework import instantiate
 
 try:
     import expecttest  # noqa: F401
@@ -27,7 +35,6 @@ except ImportError:
         "Install them with `pip install expecttest hypothesis`"
     )
 from torch.testing._internal import common_distributed, common_utils
-
 
 executors_map = {
     TorchExecutor.name: TorchExecutor,
@@ -745,23 +752,34 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
                 self.assertEqual(loss, orig_loss)
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
+    def test_fsdp_shard_unshard(self):
+        from thunder.distributed import _shard_params, _unshard_params
+
+        device = torch.device("cuda", self.rank)
+        pg = c10d.new_group()
+
+        model = torch.nn.Linear(3, 5, bias=False, device="meta")
+        with pytest.raises(RuntimeError, match=r"parameter 'weight' \(5\) to be divisible by the world size \(2\)"):
+            _shard_params(model, pg)
+
+        model = torch.nn.Linear(3, 4, bias=False, device="meta")
+        weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)
+        model.load_state_dict({"weight": weight}, assign=True)
+
+        _shard_params(model, pg)
+        # TODO: in the future `_shard_params` should support moving to device, making this unnecessary
+        assert model.weight.device.type == "cpu"
+        model.to(device)
+
+        expected = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]] if self.rank == 0 else [[6.0, 7.0, 8.0], [9.0, 10.0, 11.0]]
+        assert torch.equal(model.weight, torch.tensor(expected, device=device))
+
+        _unshard_params(model, pg, cpu_offload=True)
+
+        assert torch.equal(model.weight, weight)
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
-
-from thunder.tests.framework import instantiate
-from thunder.core import dtypes
-from thunder.core import devices
-from thunder.distributed import ddp, fsdp
-
-import torch.distributed as tdist
-import torch.utils.data as tudata
-
-import os
-import copy
-from collections.abc import Sequence
-from functools import partial, wraps
-import tempfile
-import multiprocessing as mp
 
 
 # Configures PyTorch's default process group, must be called at the start of each
@@ -912,8 +930,6 @@ class ddp_wrapper:
 
             ctx = mp.get_context("spawn")
             pool = ctx.Pool(world_size)
-
-            results: list = []
 
             def callback(result):
                 pass

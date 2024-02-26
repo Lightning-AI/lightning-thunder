@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import auto, Enum
-from typing import Any
+from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as tdist
@@ -9,6 +9,8 @@ import torch.distributed as tdist
 import thunder.core.utils as utils
 from thunder.core.proxies import DDPType
 
+if TYPE_CHECKING:
+    from torch.distributed import ProcessGroup
 
 __all__ = [
     "ddp",
@@ -322,29 +324,9 @@ def fsdp(
     distributed_params_module.bucketing_strategy = bucketing_strategy
     process_group = distributed_params_module.process_group_for_ddp
 
-    current_rank = tdist.get_rank(group=process_group)
-    world_size = tdist.get_world_size(group=process_group)
-
     # Now we need to shard the parameters
     # We will definitely change the sharding logic in the future
-    for name, param in distributed_params_module.named_parameters():
-        # Note [FSDP Sharding]
-        # Here we shard the parameters on the first
-        # dimension and all internal code will assume that the parameters are
-        # sharded on the first dimension
-
-        # narrow the param to the current rank on the first dimension
-        utils.check(
-            param.shape[0] % world_size == 0,
-            lambda: (
-                f"Current sharding requires the first dimension of the parameter to be divisible by the world size, "
-                f"but got {param.shape[0]} and {world_size}"
-            ),
-        )
-        chunk_size = param.shape[0] // world_size
-        # NOTE This could be a ShardTensor to indicate other parts of the code
-        # that it's sharded and should be treated differently
-        param.data = param.data.narrow(0, chunk_size * current_rank, chunk_size).clone()
+    _shard_params(distributed_params_module, process_group)
 
     # See Note [DistributedDataParallel and ddp_type]
     # If model was wrapped with thunder.distributed.fsdp it would have a
@@ -356,3 +338,40 @@ def fsdp(
         p.ddp_type = DDPType.FULLY_SHARDED
 
     return distributed_params_module
+
+
+def _shard_params(module: torch.nn.Module, process_group: "ProcessGroup") -> None:
+    rank = tdist.get_rank(group=process_group)
+    world_size = tdist.get_world_size(group=process_group)
+
+    # We will definitely change the sharding logic in the future
+    for name, param in module.named_parameters():
+        # Note [FSDP Sharding]
+        # Here we shard the parameters on the first
+        # dimension and all internal code will assume that the parameters are
+        # sharded on the first dimension
+
+        # narrow the param to the current rank on the first dimension
+        utils.check(
+            param.shape[0] % world_size == 0,
+            lambda: (
+                f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]}) to be "
+                f"divisible by the world size ({world_size})"
+            ),
+        )
+        chunk_size = param.shape[0] // world_size
+        # NOTE This could be a ShardTensor to indicate other parts of the code
+        # that it's sharded and should be treated differently
+        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        param.data = shard
+
+
+def _unshard_params(module: torch.nn.Module, process_group: "ProcessGroup", cpu_offload: bool = False) -> None:
+    from thunder.executors.torchex import _all_gather_prim_impl
+
+    cpu = torch.device("cpu")
+    for param in module.parameters():
+        out = _all_gather_prim_impl(param.data, group=process_group, do_async=0)
+        if cpu_offload:
+            out = out.to(device=cpu)
+        param.data = out
