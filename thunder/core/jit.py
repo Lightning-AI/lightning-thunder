@@ -2594,7 +2594,7 @@ class JIT_CALLBACKS(enum.Enum):
     FREEVAR_CALLBACK = enum.auto()
 
     # Called when a global is loaded
-    #   (orig_value: Any | WrappedValue, name: str) -> Any
+    #   (orig_value: Any | WrappedValue, name: str) -> Any | JIT_SIGNALS
     #   The returned value is loaded instead of the original value
     GLOBAL_CALLBACK = enum.auto()
 
@@ -2717,7 +2717,7 @@ def globals_lookup(globals_dict: dict, name: Any) -> Any | JIT_SIGNALS:
 
 def global_callback(
     orig_val: Any | WrappedValue, name: str, callback_type: JIT_CALLBACKS = JIT_CALLBACKS.GLOBAL_CALLBACK
-) -> Any | WrappedValue:
+) -> Any | WrappedValue | JIT_SIGNALS:
     assert isinstance(name, str)
 
     ctx: JitCompileCtx = get_jitcompilectx()
@@ -4222,13 +4222,15 @@ def _load_global_handler(
         return do_raise(NameError(f"name '{co_name}' is not defined"))
     else:
         obj = global_callback(obj, co_name)
+        if obj is JIT_SIGNALS.EXCEPTION_RAISED:
+            return obj
 
     if (3, 11) <= sys.version_info:
         # for 3.11+, the lowest bit indicates whether a NULL should be pushed
         if inst.arg & 1:
             stack.append(wrap_const(Py_NULL()))
 
-    stack.append(obj)
+    return check_and_append(stack, obj)
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1525
@@ -5152,6 +5154,9 @@ def _store_global_handler(
     # >>> t
     # NameError: name 't' is not defined
     tos = global_callback(tos, name, JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
+    if tos is JIT_SIGNALS.EXCEPTION_RAISED:
+        return tos
+
     res = _jit_no_unwrap(
         lambda frame_globals, name, value: frame_globals.__setitem__(name, value), frame.globals, wrap_const(name), tos
     )

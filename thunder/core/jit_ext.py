@@ -207,11 +207,23 @@ def reset_minimal_ctx(token) -> None:
 
 # Minimal lookasides
 
+
+def _lookaside_sharp_edge(lookaside: Callable, lookaside_name: str):
+    def wrapped_lookaside(*args, **kwargs):
+        res = _sharp_edge(f"Calling {lookaside_name}()", lookaside)
+        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            return res
+        else:
+            return res(*args, **kwargs)
+
+    return wrapped_lookaside
+
+
 _minimal_lookaside_map = {
-    globals: lambda *args, **kwargs: _sharp_edge("Calling globals()"),
-    locals: lambda *args, **kwargs: _sharp_edge("Calling locals()"),
-    vars: lambda *args, **kwargs: _sharp_edge("Calling vars()"),
-    input: lambda *args, **kwargs: _sharp_edge("Calling input()"),
+    globals: _lookaside_sharp_edge(globals, "globals"),
+    locals: _lookaside_sharp_edge(locals, "locals"),
+    vars: _lookaside_sharp_edge(vars, "vars"),
+    input: _lookaside_sharp_edge(input, "input"),
 }
 
 # Translates actual torch functions to their corresponding thunder functions
@@ -238,20 +250,33 @@ def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
 # Minimal callbacks (necessary for sharp edges)
 
 
-def _sharp_edge(desc: str, /) -> None:
+class ThunderSharpEdgeError(RuntimeError):
+    """
+    Thrown when the user program cannot be safely translated to a thunder program,
+    unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON.
+    Such cases are referred to as "sharp edges".
+    """
+
+    pass
+
+
+def _sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
     s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
-        raise AssertionError(s)
+        return do_raise(ThunderSharpEdgeError(s))
 
+    # Warn and return value anyway
     if sharp_edges is SHARP_EDGES_OPTIONS.WARN:
         warnings.warn(s)
 
+    return value
+
 
 def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
-    _sharp_edge(f"Storing a global variable `{name}`")
+    return _sharp_edge(f"Storing a global variable `{name}`", orig_value)
 
 
 # TODO: we need the builtins for impl functions...
@@ -272,7 +297,7 @@ def _minimal_global_callback(orig_value: Any, name: str) -> Any:
         return value
 
     if not isinstance(value, ModuleType):
-        _sharp_edge("Loading a global that is not a module")
+        return _sharp_edge("Loading a global that is not a module", value)
 
     return value
 
@@ -304,16 +329,29 @@ def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) ->
 #
 
 
-def _general_jit_sharp_edge(desc: str, /) -> None:
+class JITSharpEdgeError(RuntimeError):
+    """
+    Thrown when the program cannot be safely translated to a thunder program,
+    even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON.
+    Such cases are referred to as JIT "sharp edges".
+    """
+
+    pass
+
+
+def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
     s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
-        raise AssertionError(s)
+        return do_raise(JITSharpEdgeError(s))
 
+    # Warn and return value anyway
     if sharp_edges is SHARP_EDGES_OPTIONS.WARN:
         warnings.warn(s)
+
+    return value
 
 
 class GeneralJitCtx(MinimalCtx):
@@ -557,8 +595,9 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
     if lookaside is None:
         if is_opaque(fn) and fn not in _safe_functions:
-            _general_jit_sharp_edge(
-                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
+            return _general_jit_sharp_edge(
+                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting.",
+                None,
             )
 
         return None
@@ -593,8 +632,10 @@ def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     ):
         return value
 
-    _general_jit_sharp_edge(f"Tried to loading global {name}. Global support is limited.")
-    return value
+    return _general_jit_sharp_edge(
+        f"Tried to loading global {name}. Global support is limited.",
+        value,
+    )
 
 
 def collect_provenance_inst(pr):
@@ -662,12 +703,14 @@ def _general_jit_wrap_callback(value):
                 raise NotImplementedError(f"Unsupported cache option {co}")
 
         else:
-            _general_jit_sharp_edge(
-                f"We are using a (non-const) value of type {type(uvalue).__name__} with provenance {value.provenance}, which is not identified as an input."
+            return _general_jit_sharp_edge(
+                f"We are using a (non-const) value of type {type(uvalue).__name__} with provenance {value.provenance}, which is not identified as an input.",
+                value,
             )
     else:
-        _general_jit_sharp_edge(
-            f"We are using a (non-const) value of unknown type {type(uvalue).__name__}, which may or may not be safe."
+        return _general_jit_sharp_edge(
+            f"We are using a (non-const) value of unknown type {type(uvalue).__name__}, which may or may not be safe.",
+            value,
         )
 
 

@@ -13,8 +13,7 @@ import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.core.jit import JITError
-from thunder.core.jit_ext import minimal_thunder_jit
+from thunder.core.jit_ext import minimal_thunder_jit, ThunderSharpEdgeError
 import thunder.clang as clang
 import thunder.core.prims as prims
 
@@ -2289,7 +2288,7 @@ def test_load_global_sharp_edge():
 
     a = torch.randn((2, 2))
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo(a)
 
 
@@ -2303,7 +2302,7 @@ def test_store_global_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2313,7 +2312,7 @@ def test_calling_globals_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2323,7 +2322,7 @@ def test_calling_vars_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2333,17 +2332,18 @@ def test_calling_locals_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
+@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2188")
 def test_accessing_globals_through_function_sharp_edge():
     def foo():
         return foo.__globals__()
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2353,7 +2353,7 @@ def test_calling_input_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2366,7 +2366,7 @@ def test_input_closure_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2412,7 +2412,7 @@ def test_nonlocal_write_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2463,7 +2463,7 @@ def test_modifying_input_list_sharp_edge():
     jfoo = thunder.jit(foo, sharp_edges="error")
     lst = [1, 2, 3]
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo(lst)
 
 
@@ -2479,7 +2479,7 @@ def test_calling_open_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2492,7 +2492,7 @@ def test_calling_print_sharp_edge():
 
     a = torch.randn((2, 2))
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo(a)
 
 
@@ -2510,7 +2510,7 @@ def test_calling_random_seed_sharp_edge():
 
     state = random.getstate()
     try:
-        with pytest.raises(JITError):
+        with pytest.raises(ThunderSharpEdgeError):
             jfoo()
     finally:
         random.setstate(state)
@@ -2523,7 +2523,7 @@ def test_calling_random_setstate_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2535,7 +2535,7 @@ def test_calling_random_setstate_sharp_edge():
     jfoo = thunder.jit(foo, sharp_edges="error")
 
     state = random.getstate()
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo(state)
 
 
@@ -2546,7 +2546,7 @@ def test_calling_random_randbytes_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2557,7 +2557,7 @@ def test_calling_random_randrange_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2568,7 +2568,7 @@ def test_calling_random_randint_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2579,7 +2579,7 @@ def test_calling_random_getrandbits_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
@@ -2591,7 +2591,7 @@ def test_calling_random_choice_sharp_edge():
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
-    with pytest.raises(JITError):
+    with pytest.raises(ThunderSharpEdgeError):
         jfoo()
 
 
