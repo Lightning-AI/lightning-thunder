@@ -232,7 +232,7 @@ def create_fd(
                 else:
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguous=contiguity, dtype=nvdtype)
             elif isinstance(x, Proxy):
-                utils.check(False, lambda: f"Unsupported proxy type {x} in fusion", exception_type=AssertionError)
+                utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
                 nv = x
 
@@ -348,10 +348,8 @@ def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool,
     return compute_tensor_descriptor(t.shape, t.stride())
 
 
-# NOTE Currently assumes that only numbers and tensors are passed in
-# TODO Add check that only numbers and tensors are passed in
 # TODO Inline the get_tensor_descriptor call
-def to_descriptors(args):
+def to_descriptors(args) -> tuple:
     return tuple(type(arg) if isinstance(arg, Number) else (*get_tensor_descriptor(arg), arg.dtype) for arg in args)
 
 

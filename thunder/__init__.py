@@ -437,14 +437,6 @@ def _eager_unpacking_interpreter(
     computation_trc: TraceCtx = TraceCtx()
 
     # Unpacks the inputs
-    # TODO GTC Support PyTorch dtypes
-    # TODO GTC Support sequences of numbers, tensors, arrays, and strings
-    # TODO GTC Support mappings from strings and numbers to numbers, tensors, arrays, strings
-    # TODO GTC Consider supporting nested sequences of mappings that have these properties
-    # TODO GTC Consider supporting arbitrary literal inputs
-    # TODO GTC Consider supporiting arbitrary object inputs
-    supported_input_types = tuple(_type_to_unpack_map.keys())
-
     si: SigInfo = get_siginfo(fn, args, kwargs)
 
     # Constructs the prologue trace (which just trivially unpacks the tensor arguments for now)
@@ -595,34 +587,18 @@ def jit(
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
-    **compile_options,
+    disable_torch_autograd: bool = False,  # TODO Revisit this UX for gtc
+    **compile_options,  # TODO GTC Make this explicit -- dict of options
 ) -> Callable:
-    # Resolves langctx
-    if langctx is None:
-        langctx = Languages.TORCH
-    langctx: LanguageContext = resolve_language(langctx)
-
-    # Resolves executors
-    # TODO GTC Review exposed executor names
-    if executors is None:
-        executors = tuple(get_default_executors() + get_always_executors())
-    else:
-        executors = tuple(executors)
-
-        for ex in executors:
-            if not isinstance(ex, Executor):
-                raise ValueError(f"Value {ex} passed in 'executors' was not an executor")
-
-        # Extends with always executors (ensuring they are always present and in the correct order)
-        #   if not already present and in the correct order
-        always_executors: tuple[Executor] = get_always_executors()
-        if executors[-len(always_executors) :] != always_executors:
-            executors = executors + always_executors
-
-    # Resolves options
-    sharp_edges = resolve_sharp_edges_option(sharp_edges)
+    # Resolves interpreter option
     interpretation = resolve_interpretation_option(interpretation)
-    cache = resolve_cache_option(cache)
+    interpreter: Callable
+    if interpretation is INTERPRETATION_OPTIONS.PYTHON_INTERPRETER:
+        interpreter = _python_interpreter
+    elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS:
+        interpreter = _translate_functions_interpreter
+    elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
+        interpreter = _general_frontend
 
     # TODO GTC Refine the compile data option to remove unused options
     cd = CompileData(
@@ -630,10 +606,11 @@ def jit(
         langctx=langctx,
         executors_list=executors,
         cache_option=cache,
+        sharp_edges=sharp_edges,
         using_jit=True,
         use_cudagraphs=False,
         use_torch_compile=False,
-        disable_torch_autograd_support=False,
+        disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
@@ -654,13 +631,13 @@ def jit(
         # TODO GTC Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
-        # TODO GTC Record prologue time vs computation (not execution) time
-        # TODO GTC Set interpreted_instructions and history
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for pro, pro_traces, comp, comp_traces in reversed(cs.interpreter_cache):
                 try:
+                    cs.last_prologue_execution_start = time.time_ns()
                     inps = pro(*args, **kwargs)
+                    cs.last_prologue_execution_stop = time.time_ns()
                 except Exception as ex:
                     continue
 
@@ -670,6 +647,9 @@ def jit(
                 cs.last_trace_host_execution_start = time.time_ns()
                 result = comp(*inps)
                 cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_prologue_execution_start = cs.last_trace_host_execution_start
+                cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
+
                 # Updates cache statistics
                 cs.cache_hits += 1
                 cs.last_executed = comp
@@ -680,12 +660,20 @@ def jit(
                 cs.last_prologue = pro
                 cs.last_trace_cache_stop = time.time_ns()
                 cs.last_trace_host_stop = time.time_ns()
+                cs.last_prologue_transformation_start = 0
+                cs.last_prologue_transformation_stop = 0
+                cs.last_computation_transformation_start = 0
+                cs.last_computation_transformation_stop = 0
+
                 return result
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
                 pro, pro_traces, comp, comp_traces = cs.interpreter_cache[0]
+
+                cs.last_prologue_execution_start = time.time_ns()
                 inps = pro(*args, **kwargs)
+                cs.last_prologue_execution_stop = time.time_ns()
 
                 cs.last_trace_host_tracing_start = time.time_ns()
                 cs.last_trace_host_tracing_stop = time.time_ns()
@@ -693,6 +681,8 @@ def jit(
                 cs.last_trace_host_execution_start = time.time_ns()
                 result = comp(*inps)
                 cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_prologue_execution_start = cs.last_trace_host_execution_start
+                cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
                 # Updates cache statistics
                 cs.cache_hits += 1
@@ -712,21 +702,6 @@ def jit(
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
 
-        # TODO GTC Acquires the interpreter
-        # TODO GTC Implement all INTERPRETATION_OPTIONS
-        # TODO GTC Acquire the interpretation option from the compile data
-        interpreter: Callable
-        if interpretation is INTERPRETATION_OPTIONS.PYTHON_INTERPRETER:
-            interpreter = _python_interpreter
-        elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS:
-            interpreter = _translate_functions_interpreter
-        elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-            interpreter = _general_frontend
-        else:
-            raise NotImplementedError(
-                f"Only the 'python interpreter' and 'translate functions' interpretation options are currently implemented."
-            )
-
         with compile_data_and_stats(cd, cs):
             # Acquires the trace OR inlines the trace into an existing trace and
             #   returns the (proxied) result of the operation
@@ -735,12 +710,12 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                # TODO GTC Review if sharp_edges should come from a CompileOptions object
-                prologue_trc, computation_trc = interpreter(fn, args, kwargs, sharp_edges=sharp_edges)
+                prologue_trc, computation_trc = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
 
             cs.last_trace_tracing_stop = time.time_ns()
 
             # Makes the prologue callable
+            cs.last_prologue_transformation_start = time.time_ns()
             protraces = transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
@@ -748,37 +723,46 @@ def jit(
             )
             protrace = protraces[-1]
             pro = protrace.python_callable()
+            cs.last_prologue_transformation_stop = time.time_ns()
 
-            # TODO GTC Apply transforms
-            # note: prologue runtime is not in the measurement below
+            cs.last_prologue_execution_start = time.time_ns()
             prologue_outputs = pro(*args, **kwargs)
+            cs.last_prologue_execution_stop = time.time_ns()
 
-            tensor_cls = (pytorch.Tensor, TensorProxy)
-            requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in prologue_outputs)
-            if not cd.disable_torch_autograd_support and requires_grad:
-                # thunder_backward may recursively call compile and wraps the result in a
-                # torch.autograd.Function to support embedding of Thunder-compiled
-                # functions in torch's Autograd
-                cs.last_trace_host_execution_start = time.time_ns()
-                comp = thunder_backward(compile_data=cd, compile_stats=cs)(computation_trc.python_callable())
-                computation_result = comp(*prologue_outputs)
-                cs.last_trace_host_execution_stop = time.time_ns()
-                cs.last_executed = comp
-                extraces = []  # todo
-            else:
-                # TODO GTC Update this transform's parameters to take 'executors' instead of 'executors_list'
+            computed: bool = False
+            if not cd.disable_torch_autograd_support:
+                tensor_cls = (pytorch.Tensor, TensorProxy)
+                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in prologue_outputs)
+
+                if requires_grad:
+                    # thunder_backward may recursively call compile and wraps the result in a
+                    # torch.autograd.Function to support embedding of Thunder-compiled
+                    # functions in torch's Autograd
+                    cs.last_trace_host_execution_start = time.time_ns()
+                    comp = thunder_backward(compile_data=cd, compile_stats=cs)(computation_trc.python_callable())
+                    computation_result = comp(*prologue_outputs)
+                    cs.last_trace_host_execution_stop = time.time_ns()
+                    cs.last_executed = comp
+                    extraces = []  # todo
+                    computed = True
+
+            if not computed:
+                cs.last_computation_transformation_start = time.time_ns()
                 extraces = transform_for_execution(
                     computation_trc,
                     executors_list=cd.executors_list,
                 )
                 extrace = extraces[-1]
-
                 comp = extrace.python_callable()
+                cs.last_computation_transformation_stop = time.time_ns()
 
                 # Executes the traced program
                 cs.last_trace_host_execution_start = time.time_ns()
+
                 computation_result = comp(*prologue_outputs)
                 cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_computation_execution_start = cs.last_trace_host_execution_start
+                cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
             # TODO GTC Update the cache
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
@@ -789,7 +773,6 @@ def jit(
             cs.last_executed = comp
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
-
             cs.last_trace_host_stop = time.time_ns()
 
         return computation_result

@@ -8,6 +8,7 @@ from collections import namedtuple
 import operator
 from types import EllipsisType, NoneType
 import copy
+import time
 
 from thunder.core.compile_data import using_symbolic_values
 from thunder.clang.langctx import register_method

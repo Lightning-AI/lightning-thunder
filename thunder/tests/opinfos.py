@@ -2569,28 +2569,29 @@ opinfos.extend(conditional_and_mask_ops)
 #
 data_movement_ops = []
 
+# NOTE The following opinfo for convert_element_type is commented out because each language
+#   needs its own dtype conversion (torch -> jax, and torch -> thunder conversions, in particular)
+# def convert_element_type_sample_generator(op, device, dtype, requires_grad, **kwargs):
+#     a = make_tensor((2, 3, 4), device=device, dtype=dtype, requires_grad=requires_grad)
 
-def convert_element_type_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    a = make_tensor((2, 3, 4), device=device, dtype=dtype, requires_grad=requires_grad)
-
-    # TODO Add more source and target dtype pairs
-    yield SampleInput(a, torch.float32)
+#     # TODO Add more source and target dtype pairs
+#     yield SampleInput(a, torch.float32)
 
 
-convert_element_type_opinfo = OpInfo(
-    prims.convert_element_type,
-    sample_input_generator=convert_element_type_sample_generator,
-    torch_reference=torch.Tensor.to,
-    jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
-    test_directives=(
-        # These usually pass but tols are still too tight to perform these tests
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-        ),
-    ),
-)
-data_movement_ops.append(convert_element_type_opinfo)
+# convert_element_type_opinfo = OpInfo(
+#     prims.convert_element_type,
+#     sample_input_generator=convert_element_type_sample_generator,
+#     torch_reference=torch.Tensor.to,
+#     jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
+#     test_directives=(
+#         # These usually pass but tols are still too tight to perform these tests
+#         DecorateInfo(
+#             pytest.mark.skip,
+#             "test_vjp_correctness",
+#         ),
+#     ),
+# )
+# data_movement_ops.append(convert_element_type_opinfo)
 
 
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -7094,58 +7095,59 @@ opinfos.extend(nn_ops)
 prob_distr_ops = []
 
 
-def multinomial_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+# multinomial testing is currently disabled due to https://github.com/Lightning-AI/lightning-thunder/issues/2258
+# def multinomial_sample_generator(op, device, dtype, requires_grad, **kwargs):
+#     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-    shapes = [
-        (10),
-        (10, 10),
-    ]
-    num_samples = (1, 3, 5)
-    replacement = (True, False)
-    seed = 13
+#     shapes = [
+#         (10),
+#         (10, 10),
+#     ]
+#     num_samples = (1, 3, 5)
+#     replacement = (True, False)
+#     seed = 13
 
-    for shape, ns, r in itertools.product(shapes, num_samples, replacement):
-        weights = make(shape).abs()
-        gen = torch.Generator(device).manual_seed(seed)
-        yield SampleInput(weights, ns, r, generator=gen)
-
-
-def torch_multinomial_like(
-    a: torch.Tensor,
-    num_samples: int,
-    replacement: bool,
-    *,
-    generator: torch.Generator,
-):
-    return prims.multinomial(a, num_samples, replacement, generator.initial_seed())
+#     for shape, ns, r in itertools.product(shapes, num_samples, replacement):
+#         weights = make(shape).abs()
+#         gen = torch.Generator(device).manual_seed(seed)
+#         yield SampleInput(weights, ns, r, generator=gen)
 
 
-multinomial_prim_opinfo = OpInfo(
-    torch_multinomial_like,
-    name="multinomial_prim",
-    supports_grad=False,
-    sample_input_generator=multinomial_sample_generator,
-    torch_reference=torch.multinomial,
-    dtypes=(datatypes.floating,),
-    test_directives=(
-        # PyTorch does not support CUDA BFloat16 multinomial
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
-            devicetypes=(devices.DeviceType.CUDA,),
-        ),
-        # PyTorch does not support CPU Half multinomial
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-    ),
-)
-prob_distr_ops.append(multinomial_prim_opinfo)
+# def torch_multinomial_like(
+#     a: torch.Tensor,
+#     num_samples: int,
+#     replacement: bool,
+#     *,
+#     generator: torch.Generator,
+# ):
+#     return prims.multinomial(a, num_samples, replacement, generator.initial_seed())
+
+
+# multinomial_prim_opinfo = OpInfo(
+#     torch_multinomial_like,
+#     name="multinomial_prim",
+#     supports_grad=False,
+#     sample_input_generator=multinomial_sample_generator,
+#     torch_reference=torch.multinomial,
+#     dtypes=(datatypes.floating,),
+#     test_directives=(
+#         # PyTorch does not support CUDA BFloat16 multinomial
+#         DecorateInfo(
+#             pytest.mark.xfail,
+#             "test_core_vs_torch_consistency",
+#             dtypes=(datatypes.bfloat16,),
+#             devicetypes=(devices.DeviceType.CUDA,),
+#         ),
+#         # PyTorch does not support CPU Half multinomial
+#         DecorateInfo(
+#             pytest.mark.xfail,
+#             "test_core_vs_torch_consistency",
+#             dtypes=(datatypes.float16,),
+#             devicetypes=(devices.DeviceType.CPU,),
+#         ),
+#     ),
+# )
+# prob_distr_ops.append(multinomial_prim_opinfo)
 
 
 opinfos.extend(prob_distr_ops)

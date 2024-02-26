@@ -9,7 +9,12 @@ from functools import wraps
 import os
 from io import StringIO
 
-from thunder.core.options import CACHE_OPTIONS, resolve_cache_option
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    resolve_cache_option,
+    SHARP_EDGES_OPTIONS,
+    resolve_sharp_edges_option,
+)
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
@@ -69,6 +74,15 @@ class CompileStats:
         self.last_trace_host_execution_start: int = -1
         self.last_trace_host_execution_stop: int = -1
 
+        self.last_prologue_transformation_start: int = -1
+        self.last_prologue_transformation_stop: int = -1
+        self.last_prologue_execution_start: int = -1
+        self.last_prologue_execution_stop: int = -1
+        self.last_computation_transformation_start: int = -1
+        self.last_computation_transformation_stop: int = -1
+        self.last_computation_execution_start: int = -1
+        self.last_computation_execution_stop: int = -1
+
         # Cache stats
         self.cache = {}
         self.interpreter_cache: list = []
@@ -78,6 +92,43 @@ class CompileStats:
 
         # Compiler option stats
         self.last_compile_reasons: dict = defaultdict(list)
+
+    def _time_template(self, start: int, stop: int, desc: str, /) -> int:
+        if start < 0 or stop < 0 or stop < start:
+            if start == -1 and stop == -1:
+                raise AssertionError(f"Querying for {desc} time, but it seems that the function hasn't been called")
+            raise AssertionError(f"The {desc} times {start=} and {stop=} were not recorded correctly")
+        return stop - start
+
+    def last_cache_lookup_time(self, /) -> int:
+        start: int = self.last_trace_cache_start
+        stop: int = self.last_trace_cache_stop
+        return self._time_template(start, stop, "cache lookup")
+
+    def last_trace_construction_time(self, /) -> int:
+        start: int = self.last_trace_host_start
+        stop: int = self.last_trace_host_stop
+        return self._time_template(start, stop, "trace construction")
+
+    def last_prologue_transformation_time(self, /) -> int:
+        start: int = self.last_prologue_transformation_start
+        stop: int = self.last_prologue_transformation_stop
+        return self._time_template(start, stop, "prologue construction")
+
+    def last_prologue_execution_time(self, /) -> int:
+        start: int = self.last_prologue_execution_start
+        stop: int = self.last_prologue_execution_stop
+        return self._time_template(start, stop, "prologue execution")
+
+    def last_computation_transformation_time(self, /) -> int:
+        start: int = self.last_computation_transformation_start
+        stop: int = self.last_computation_transformation_stop
+        return self._time_template(start, stop, "computation transformation")
+
+    def last_computation_execution_time(self, /) -> int:
+        start: int = self.last_computation_execution_start
+        stop: int = self.last_computation_execution_stop
+        return self._time_template(start, stop, "computation execution")
 
 
 import thunder.core.script.frontend as script_frontend
@@ -126,6 +177,7 @@ class CompileData:
         langctx: None | LanguageContext = None,
         executors_list: None | tuple[Executor, ...] = None,
         cache_option: None | str | CACHE_OPTIONS = None,
+        sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
         using_jit: bool = False,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
@@ -151,10 +203,19 @@ class CompileData:
 
         # Constructs executors list
         # NOTE The executors list is fixed at compile time
+        always_executors: tuple[Executor] = get_always_executors()
         if executors_list is None:
-            self.executors_list = tuple(get_default_executors() + get_always_executors())
+            self.executors_list = get_default_executors() + always_executors
         else:
-            self.executors_list = tuple(executors_list) + tuple(get_always_executors())
+            # Validates executors list
+            for ex in executors_list:
+                if not isinstance(ex, Executor):
+                    raise ValueError(f"{ex} was not an executor")
+
+            self.executors_list = tuple(executors_list)
+            # Adds always executors (if not present)
+            if self.executors_list[-len(always_executors) :] != always_executors:
+                self.executors_list = self.executors_list + always_executors
 
         # Validates executors list
         for ex in self.executors_list:
@@ -162,13 +223,17 @@ class CompileData:
                 ex, Executor
             ), f"Expected all elements of the executors list to be executors, but found {ex}"
 
-        self.fn = fn
+        # Resolves language context (defaulting to the torch language)
         self.langctx = langctx if langctx is not None else resolve_language(Languages.TORCH)
         if not isinstance(self.langctx, LanguageContext):
             raise ValueError(
                 f"Attempting to construct a CompileData object with an invalid language context type {type(self.langctx)}"
             )
 
+        # Resolves sharp edges option
+        self.sharp_edges = resolve_sharp_edges_option(sharp_edges)
+
+        self.fn = fn
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
