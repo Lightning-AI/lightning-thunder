@@ -799,6 +799,69 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
         assert torch.equal(model.weight, weight)
 
+    @common_utils.parametrize(
+        "executor,bucketing_strategy,fsdptype",
+        product(
+            tuple(executors_map.keys()),
+            (FSDPBucketingStrategy.NONE, FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
+            (FSDPType.ZERO3,),
+        ),
+        name_fn=lambda executor, bucketing_strategy, fsdptype: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        ),
+    )
+    def test_limit_in_flight_allgathers(
+        self,
+        executor,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
+        from thunder.distributed import fsdp
+        from thunder.tests.nanogpt_model import Block, GPTConfig
+
+        def check_inflight_allgather_number(trc, n: int, is_bucket: bool):
+            from thunder.core.utils import producers
+            from thunder.executors.torchex import all_gather_prim_impl, pack_for_fsdp_prim_impl, wait_prim_impl
+
+            producers = producers(trc)
+            cnt = 0
+            for idx, bsym in enumerate(trc.bound_symbols):
+                if bsym.sym.id == all_gather_prim_impl.id:
+                    cnt += 1
+                    if is_bucket:
+                        self.assertEqual(trc.bound_symbols[idx - 1].sym.id, pack_for_fsdp_prim_impl.id)
+                self.assertLessEqual(cnt, n)
+                if bsym.sym.id == wait_prim_impl.id:
+                    if producers[bsym.flat_proxy_args[0]].sym.id == all_gather_prim_impl.id:
+                        cnt -= 1
+
+        device = torch.device("cuda", self.rank)
+        config = GPTConfig(dropout=0)
+        initial_model_state = Block(config).to(device=device).state_dict()
+        m = Block(config).to(device=device)
+        m.load_state_dict(initial_model_state)
+        cm = thunder.compile(
+            fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+            executors_list=executors_map[executor].executors_list(),
+        )
+        x = torch.ones((2, config.block_size, config.n_embd)).to(device)
+        loss = cm(x).mean()
+        loss.backward()
+
+        # get the trace before sorting
+        fwd_trc = thunder.last_traces(cm)[0][-2]
+        bwd_trc = thunder.last_traces(cm)[1][-2]
+
+        from thunder.distributed.utils import limit_in_flight_allgathers
+
+        is_bucketing = bucketing_strategy != FSDPBucketingStrategy.NONE
+        for i in range(1, 12):
+            aft_trc = limit_in_flight_allgathers(fwd_trc, i, is_bucketing)
+            check_inflight_allgather_number(aft_trc, i, is_bucketing)
+        for i in range(1, 6):
+            aft_trc = limit_in_flight_allgathers(bwd_trc, i, is_bucketing)
+            check_inflight_allgather_number(aft_trc, i, is_bucketing)
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 
