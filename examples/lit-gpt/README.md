@@ -3,10 +3,10 @@
 ## Setup
 
 ```bash
-wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/main/scripts/download.py
-wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/main/scripts/convert_hf_checkpoint.py
+wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/1a5e7c/scripts/download.py
+wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/1a5e7c/scripts/convert_hf_checkpoint.py
 pip install jsonargparse huggingface_hub sentencepiece tokenizers
-pip install git+https://github.com/Lightning-AI/lit-gpt
+pip install git+https://github.com/Lightning-AI/lit-gpt@1a5e7c
 ```
 
 ## [1 forward](1_forward.py)
@@ -19,9 +19,9 @@ Runs a single forward call with a (B=10 x T=2048) tensor:
 
 | Method   | Time ↓ | Memory ↓ |
 |----------|--------|----------|
-| Inductor | 1.18 s | 17.3 GB  |
-| Thunder  | 1.26 s | 16.3 GB  |
-| Eager    | 1.48 s | 17.4 GB  |
+| Inductor | 1.18 s | 17.38 GB |
+| Thunder  | 1.27 s | 16.32 GB |
+| Eager    | 1.48 s | 17.44 GB |
 
 ## [Compiled model inference](compiled_model_inference.py)
 
@@ -37,9 +37,9 @@ Runs the existing generation logic with the model `forward` compiled:
 
 | Method   | Speed ↑      | Memory ↓ |
 |----------|--------------|----------|
-| Inductor | 89.5 tok/sec | 13.8 GB  |
-| Eager    | 46.7 tok/sec | 13.6 GB  |
-| Thunder  | 40.0 tok/sec | 13.8 GB  |
+| Inductor | 87.5 tok/sec | 14.38 GB |
+| Eager    | 45.9 tok/sec | 13.60 GB |
+| Thunder  | 36.7 tok/sec | 13.82 GB |
 
 ## [Compiled generation inference](compiled_generation_inference.py)
 
@@ -56,9 +56,9 @@ This is advantageous because `torch.multinomial(probs, num_samples=1)` is very s
 
 | Method   | Speed ↑      | Memory ↓ |
 |----------|--------------|----------|
-| Inductor | 93.5 tok/sec | 13.8 GB  |
-| Eager    | 46.5 tok/sec | 13.6 GB  |
-| Thunder  | 40.0 tok/sec | 13.8 GB  |
+| Inductor | Error        | Error    |
+| Eager    | 46.4 tok/sec | 13.60 GB |
+| Thunder  | 36.9 tok/sec | 13.82 GB |
 
 ## [Single-device training](train.py)
 
@@ -73,17 +73,17 @@ Static shapes (45 iters)
 
 | Method   | Time ↓ | Memory ↓ |
 |----------|--------|----------|
-| Inductor | 20.3 s | 20.9 GB  |
-| Thunder  | 22.1 s | 23.6 GB  |
-| Eager    | 24.6 s | 24.2 GB  |
+| Inductor | 20.1 s | 20.95 GB |
+| Thunder  | 21.9 s | 23.75 GB |
+| Eager    | 24.6 s | 24.28 GB |
 
 Dynamic shapes (45 iters)
 
-| Method   | Time ↓ |
-|----------|--------|
-| Inductor | 14.7 s |
-| Eager    | 17.5 s |
-| Thunder  | 1600 s |
+| Method   | Time ↓   | Memory ↓ |
+|----------|----------|----------|
+| Inductor | 17.0 s   | 20.69 GB |
+| Eager    | 17.6 s   | 23.91 GB |
+| Thunder  | ~5715 s  | -        |
 
 ## [Multi-device training](train_fsdp.py)
 
@@ -98,34 +98,34 @@ Static shapes (45 iters)
 
 | Stage | Bucketing | Method    | Time ↓  | Memory ↓ |
 |-------|-----------|-----------|---------|----------|
-| 2     | No        | Inductor  | 23.43 s | 24.36 GB |
-| 2     | No        | Thunder   | 23.34 s | 26.98 GB |
-| 2     | No        | Eager     | 27.89 s | 27.61 GB |
+| 2     | No        | Inductor  | Error   | Error    |
+| 2     | No        | Thunder   | 23.29 s | 26.99 GB |
+| 2     | No        | Eager     | 27.76 s | 27.61 GB |
 |       |           |           |         |          |
-| 2     | Block     | Inductor  | 23.47 s | 24.31 GB |
-| 2     | Block     | Thunder   | 24.18 s | 26.83 GB |
-| 2     | Block     | Eager     | 26.15 s | 27.67 GB |
+| 2     | Block     | Inductor  | 21.71 s | 24.31 GB |
+| 2     | Block     | Thunder   | 24.30 s | 26.96 GB |
+| 2     | Block     | Eager     | 26.05 s | 27.67 GB |
 |       |           |           |         |          |
-| 3     | No        | Inductor  | 24.97 s | 17.49 GB |
-| 3     | No        | Thunder   | 25.38 s | 20.24 GB |
-| 3     | No        | Eager     | 28.53 s | 20.75 GB |
+| 3     | No        | Inductor  | Error   | Error    |
+| 3     | No        | Thunder   | 24.39 s | 20.25 GB |
+| 3     | No        | Eager     | 28.56 s | 20.75 GB |
 |       |           |           |         |          |
-| 3     | Block     | Inductor  | 21.84 s | 17.86 GB |
-| 3     | Block     | Thunder   | 24.77 s | 26.90 GB |
-| 3     | Block     | Eager     | 26.39 s | 21.23 GB |
+| 3     | Block     | Inductor  | 21.76 s | 17.86 GB |
+| 3     | Block     | Thunder   | 24.11 s | 26.93 GB |
+| 3     | Block     | Eager     | 26.33 s | 21.23 GB |
 
 ## Setup
 
 ```text
-Python version: 3.10.12 (main, Jun 11 2023, 05:26:28) [GCC 11.4.0] (64-bit runtime)
+Python version: 3.10.12 (main, Nov 20 2023, 15:14:05) [GCC 11.4.0] (64-bit runtime)
 Is debug build: False
 CUDA used to build PyTorch: 12.1
-CUDA runtime version: 12.1.105
+CUDA runtime version: 12.3.107
 GPU 0: NVIDIA A100-SXM4-40GB
-Nvidia driver version: 525.125.06
+Nvidia driver version: 545.23.08
 
-pytorch-triton==2.3.0.dev20240115+cu121
-torch==2.3.0.dev20240115+cu121
-lightning-thunder==7adf3e56e00ad52f9214437828512bc3de89277e
-nvfuser_cu121==0.1.5.dev20240116
+pytorch-triton==3.0.0+901819d2b6
+torch==2.3.0.dev20240225+cu121
+lightning-thunder==51993f9a6894f59f3779b30485e72b93d5e7b150
+nvfuser_cu121==0.1.6.dev20240226
 ```
