@@ -10,6 +10,7 @@ import inspect
 import functools
 from types import ModuleType
 
+import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
@@ -417,6 +418,7 @@ class TraceCtx:
         if global_dicts is not None:
             ctx["__global_dicts"] = global_dicts
         ctx["__function_obj"] = self.fn
+        ctx["thunder"] = thunder
 
         callable = baseutils.compile_and_exec(
             self.siginfo().name, python_str=python_str, program_name=f"thunder.{self.siginfo().name}", ctx=ctx

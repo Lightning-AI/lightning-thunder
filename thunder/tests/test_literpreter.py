@@ -283,20 +283,20 @@ def test_nn_module():
     def fn2(a):
         return m2(a)
 
+    tom = tp_jit(m)
+    assert isinstance(tom, thunder.ThunderModule)
+    expected = m(a)
+    actual = tom(a)
+    assert_close(expected, actual)
+
+    tom2 = tp_jit(m2)
+    expected = m2(a)
+    actual = tom2(a)
+    assert_close(expected, actual)
+
     jfn = tp_jit(fn)
     expected = fn(a)
     actual = jfn(a)
-    assert_close(expected, actual)
-
-    jfn = tp_jit(fn2)
-    expected = fn2(a)
-    actual = jfn(a)
-    assert_close(expected, actual)
-
-    jm = tp_jit(m.__call__)
-
-    expected = m(a)
-    actual = jm(a)
     assert_close(expected, actual)
 
 

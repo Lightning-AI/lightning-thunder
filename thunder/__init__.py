@@ -4,6 +4,8 @@ from types import EllipsisType
 from collections import defaultdict
 from collections.abc import Callable
 from collections.abc import Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
 import dis
 from enum import Enum, auto
@@ -577,6 +579,82 @@ def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
 
 
+class ThunderModule(pytorch.nn.Module):
+    # todo: subclass nn.Module or forward things like .state_dict() to the
+    #       model
+    def __init__(self, model, compiled_model_call):
+        super().__init__()
+        self._model = model
+
+        self._forward_fn = compiled_model_call
+
+    def forward(self, *args, **kwargs):
+        res = self._forward_fn(*args, **kwargs)
+        return res
+
+    @contextmanager
+    def no_sync(self):
+        """Context manager to disable gradient synchronization in data parallel mode.
+
+        This context manager is intended to be used in conjunction with
+        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
+        synchronization in the backward pass. It will not have any effect when
+        used with other modules.
+
+        .. note::
+
+            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
+            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
+            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
+            In contrast, this synchronizes accumulated gradients when exiting, leading to
+            :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+
+        """
+        from torch.distributed import distributed_c10d as c10d
+
+        from thunder.distributed import set_skip_data_parallel_grad_sync
+        from thunder.distributed import reset_skip_data_parallel_grad_sync
+
+        token = set_skip_data_parallel_grad_sync(True)
+        try:
+            yield
+        finally:
+            reset_skip_data_parallel_grad_sync(token)
+
+            params_with_grad = list(filter(lambda p: p.grad is not None, self.parameters()))
+            grads = [p.grad for p in params_with_grad]
+            process_group = self._lc_cd.process_group_for_ddp
+            pytorch._foreach_div_(grads, process_group.size())
+            with c10d._coalescing_manager(
+                group=process_group,
+                async_ops=True,
+            ) as cm:
+                for p in params_with_grad:
+                    c10d.all_reduce(p.grad)
+            cm.wait()
+
+
+# this captures the information needed to decide whether a cached function
+# matches (e.g. ddp and autocast state)
+_cache_info_ctx = ContextVar("cache_info_ctx")
+
+
+def _with_cache_info_ctx(fn):
+    def cache_info_wrapper(*args, **kwargs):
+        tok = _cache_info_ctx.set({})
+        try:
+            res = fn(*args, **kwargs)
+        finally:
+            _cache_info_ctx.reset(tok)
+        return res
+
+    return cache_info_wrapper
+
+
+def _get_cache_info():
+    return _cache_info_ctx.get()
+
+
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -628,6 +706,7 @@ def jit(
     cs = CompileStats()
 
     @wraps(fn)
+    @_with_cache_info_ctx
     def fn_(*args, **kwargs) -> Any:
         if is_tracing():
             _recursive_jit_call_warning()
@@ -639,6 +718,16 @@ def jit(
 
         # TODO GTC Add autocast checks to prologue (make it a compile option)
         # TODO GTC Add module and function checks to prologue (make it a compile option)
+
+        cache_info = _get_cache_info()
+        # TODO(crcrpar): support FSDP as well
+        is_ddp_enabled = getattr(fn, "use_ddp", False)
+        no_grad_sync = False
+        if is_ddp_enabled:
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
+            no_grad_sync = get_skip_data_parallel_grad_sync()
+        cache_info["no_grad_sync"] = no_grad_sync
 
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
@@ -788,6 +877,9 @@ def jit(
             cs.last_trace_host_stop = time.time_ns()
 
         return computation_result
+
+    if isinstance(fn, pytorch.nn.Module):
+        fn_ = ThunderModule(fn, fn_)
 
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd

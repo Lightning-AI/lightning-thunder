@@ -18,6 +18,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing import assert_close, make_tensor
 
 import thunder
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor
+from thunder import INTERPRETATION_OPTIONS
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
@@ -131,7 +133,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/646
     def test_ddp_compile_module(self):
         model = ToyModel().to(self.rank)
-        ddp_model = DDP(thunder.compile(model), device_ids=[self.rank])
+        ddp_model = DDP(
+            thunder.jit(model, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON), device_ids=[self.rank]
+        )
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
@@ -155,10 +159,12 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     def test_compile_ddp_module(self):
         model = ToyModel().to(self.rank)
         with self.assertRaisesRegex(
-            RuntimeError,
-            r"Unsupported instruction = ThunderInstruction\(opname='SETUP_WITH'",
+            NotImplementedError,
+            r"DistributedDataParallel.*not supported",
         ):
-            thunder.compile(DDP(model, device_ids=[self.rank]))
+            cm = thunder.jit(DDP(model, device_ids=[self.rank]), interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
+            x = torch.randn(20, 12).to(self.rank)
+            outputs = cm(x)
 
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_sort_waits(self, executor):
@@ -176,7 +182,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             e = c @ b + a
             return e, d
 
-        cfunc = thunder.compile(func, executors_list=_executor.executors_list(), disable_preprocessing=True)
+        cfunc = thunder.jit(
+            func, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
+        )
         device = f"cuda:{self.rank}"
         a = make_tensor((2, 2), device=device, dtype=torch.float32)
         b = make_tensor((2, 2), device=device, dtype=torch.float32)
@@ -250,7 +258,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+        cfoo = thunder.jit(
+            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
+        )
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
             expected = foo(a, b, op, process_group, async_op)
@@ -302,7 +312,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+        cfoo = thunder.jit(
+            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
+        )
 
         for async_op in (True, False):
             expected = foo(a, b, process_group, async_op)
@@ -360,7 +372,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+        cfoo = thunder.jit(
+            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
+        )
 
         for async_op in (True, False):
             expected = foo(a, b, process_group, async_op)
@@ -417,7 +431,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.compile(lc_foo, executors_list=_executor.executors_list(), disable_preprocessing=True)
+        cfoo = thunder.jit(
+            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
+        )
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
             expected = foo(a, b, op, process_group, async_op)
@@ -437,8 +453,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
-        cm = thunder.compile(
+        cm = thunder.jit(
             ddp(m, bucket_size_in_mb=bucket_size_in_mb),
+            interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
             executors_list=executors_map[executor].executors_list(),
         )
         x = torch.ones((2, 12)).to(device)
@@ -489,6 +506,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             finally:
                 thunder.trace = old_func
 
+        # TODO: this does not use preprocessing anymore, but ideally,
+        #       we would switch it to the jit, but currently, it
+        #       does not play well with thunder.trace...
         @partial(thunder.compile, disable_preprocessing=True)
         @vjp
         def func1(x, y):
@@ -607,8 +627,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
             ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
-            compiled_ddp_m = thunder.compile(
+            compiled_ddp_m = thunder.jit(
                 ddp_m,
+                interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
                 cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors_list=executors_map[executor].executors_list(),
             )
@@ -674,7 +695,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
                     num_expected_caches = 2
                 else:
                     num_expected_caches = 1
-                self.assertEqual(len(compiled_ddp_m._lc_cs.cache), num_expected_caches)
+                self.assertEqual(len(compiled_ddp_m._lc_cs.interpreter_cache), num_expected_caches)
 
                 torch.testing.assert_close(loss, ground_truth_losses[iter_count], atol=1e-4, rtol=1e-4)
                 torch.testing.assert_close(
@@ -699,8 +720,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         for bucket_size_in_mb in (0, 100):
             m = ToyModel().to(device)
             m.load_state_dict(initial_model_state)
-            cm = thunder.compile(
+            cm = thunder.jit(
                 ddp(m, bucket_size_in_mb=bucket_size_in_mb),
+                interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12)).to(device)
@@ -737,8 +759,9 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         for strategy in (FSDPBucketingStrategy.NONE, bucketing_strategy):
             m = ToyModel()
             m.load_state_dict(initial_model_state)
-            cm = thunder.compile(
+            cm = thunder.jit(
                 fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+                interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12), device=device)
@@ -982,8 +1005,9 @@ def _test_native_ddp_helper(input_data):
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
     ddp_model = ddp(model)
-    cmodel = thunder.compile(
+    cmodel = thunder.jit(
         ddp_model,
+        interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
         executors_list=executor.executors_list(),
     )
 
@@ -1091,8 +1115,9 @@ def _test_native_fsdp_helper(input_data):
     assert sharded_weight_net1.shape != original_weight_net1_shape
     assert sharded_weight_net1.shape == (1, 2)
 
-    cmodel = thunder.compile(
+    cmodel = thunder.jit(
         fsdp_model,
+        interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
         executors_list=executor.executors_list(),
     )
 

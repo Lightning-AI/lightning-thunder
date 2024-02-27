@@ -3822,10 +3822,10 @@ def _import_from_handler(
     namei: int = inst.arg
 
     # NOTE The stack is peeked, not popped
-    module = stack[-1]
-    name: str = co.co_names[namei]
+    module = stack.getitem_wrapped(-1)
+    name: str = wrap_const(co.co_names[namei])
 
-    def impl():
+    def impl(module, name):
         if hasattr(module, name):
             return getattr(module, name)
         # TODO: the below needs a test
@@ -3834,7 +3834,7 @@ def _import_from_handler(
         fullname = f"{module.__name__}.{name}"
         return __import__(fullname)
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _jit_no_unwrap(impl, module, name))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
@@ -3864,11 +3864,11 @@ def _import_name_handler(
         module_name = ".".join(module_parts)
         level = 0
 
-    def impl():
+    def impl(module_name, fromlist, level):
         module = __import__(module_name, fromlist=fromlist, level=level)
         return module
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _jit(impl, module_name, fromlist, level))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
@@ -4335,12 +4335,13 @@ def _make_function_handler(
         if ctx._with_provenance_tracking:
             for i, cell in enumerate(closure.value):
                 assert isinstance(cell, CellType)
-                cell_wrapper = closure.item_wrappers[i]
-                # TODO: investigate: the store_deref and load_closure does this to us, apparently
-                wrapped_contents = cell.cell_contents
-                if isinstance(wrapped_contents, WrappedValue):
-                    cell.cell_contents = cell.cell_contents.value
-                    populate_attribute_wrapper(cell_wrapper, "cell_contents", wrapped_contents)
+                if cell != CellType():
+                    cell_wrapper = closure.item_wrappers[i]
+                    # TODO: investigate: the store_deref and load_closure does this to us, apparently
+                    wrapped_contents = cell.cell_contents
+                    if isinstance(wrapped_contents, WrappedValue):
+                        cell.cell_contents = cell.cell_contents.value
+                        populate_attribute_wrapper(cell_wrapper, "cell_contents", wrapped_contents)
     else:
         closure = None
 

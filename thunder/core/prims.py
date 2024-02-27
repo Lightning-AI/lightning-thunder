@@ -106,6 +106,7 @@ class PrimIDs(Enum):
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
     UNPACK_FUNCTION_OBJ = auto()
+    UNPACK_CACHE_INFO = auto()
     UNPACK_ATTR = auto()
     UNPACK_GETITEM = auto()
     UNPACK_EMPTY_DICT = auto()
@@ -640,12 +641,12 @@ def unpack_function_obj_printer(
 ) -> str:
     utils.check(
         len(arg_printables) == 0,
-        lambda: f"Expected zero arguments for unpack_trivial but got {arg_printables}",
+        lambda: f"Expected zero arguments for unpack_function_obj but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
         len(kwarg_printables) <= 1,
-        lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
+        lambda: f"Expected at most one kwarg for unpack_function_obj but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -660,6 +661,43 @@ unpack_function_obj = make_prim(
     meta=unpack_function_obj_meta,
     python_printer=unpack_function_obj_printer,
     python_impl=unpack_function_obj_impl,
+    _bind_postprocess=_unpack_trivial_bind_postprocess,
+)
+
+
+def unpack_cache_info_impl(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_cache_info_meta(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_cache_info_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 0,
+        lambda: f"Expected zero arguments for unpack_cache_info but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) <= 1,
+        lambda: f"Expected at most one kwarg for unpack_cache_info but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    s = f"{result_str} = thunder._get_cache_info()"
+    return s
+
+
+unpack_cache_info = make_prim(
+    PrimIDs.UNPACK_CACHE_INFO,
+    "unpack_cache_info",
+    meta=unpack_cache_info_meta,
+    python_printer=unpack_cache_info_printer,
+    python_impl=unpack_cache_info_impl,
     _bind_postprocess=_unpack_trivial_bind_postprocess,
 )
 

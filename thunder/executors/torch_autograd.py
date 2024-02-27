@@ -32,7 +32,7 @@ class ThunderFunction(torch.autograd.Function):
         utils.check(compile_data is not None, lambda: "`compile_data` is required")
 
         def make_trace(func):
-            return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=True), func)
+            return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=False), func)
 
         def split_forward_backward(*args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used

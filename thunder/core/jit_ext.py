@@ -14,7 +14,7 @@ from enum import Enum, auto
 from io import StringIO
 import time
 
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
 import thunder.clang as clang
 
 from types import (
@@ -45,6 +45,7 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
+    DDPType,
     proxy,
     Proxy,
     NumberProxy,
@@ -375,12 +376,15 @@ def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
 
 
 class GeneralJitCtx(MinimalCtx):
-    def __init__(self, prologue_trace, computation_trace, *, sharp_edges: SHARP_EDGES_OPTIONS):
+    def __init__(
+        self, prologue_trace, computation_trace, *, sharp_edges: SHARP_EDGES_OPTIONS, process_group_for_ddp=None
+    ):
         super().__init__(sharp_edges=sharp_edges)
 
         self._prologue_trace = prologue_trace
         self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
+        self._process_group_for_ddp = process_group_for_ddp
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -687,12 +691,29 @@ def _general_jit_wrap_callback(value):
     if isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
         p = ctx.proxify(uvalue, history=value.provenance)
+
+        from thunder.core import utils
+        from thunder.distributed import get_skip_data_parallel_grad_sync
+
+        no_sync = get_skip_data_parallel_grad_sync()
+        compile_data = get_compile_data()
+        utils.check(
+            not (no_sync and getattr(compile_data, "use_fsdp", False)),
+            lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
+        )
+
+        if not no_sync and isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+            p_new = thunder.distributed.prims.synchronize(p, ctx._process_group_for_ddp)
+            p_orig = p
+            p = p_new
+        else:
+            p_orig = p
         if p is not uvalue:
             value.register_proxy(p)
         # TODO: other caching modes
         co: CACHE_OPTIONS = get_cache_option()
         if co is CACHE_OPTIONS.CONSTANT_VALUES:
-            ctx.add_constraint((clang.check_tensor_shape_and_metadata, p))
+            ctx.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
         elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
             raise NotImplementedError(f"Unsupported cache option {co}")
     elif value.provenance.inst is PseudoInst.CONSTANT:
@@ -767,7 +788,7 @@ def unpack_inputs(ctx, prologue_trace, inputs):
         else:
             p = v.proxy
 
-        assert p.history is not None
+        assert p.history is not None, f"{p} has history None"
         if id(p) in already_unpacked:
             return p
 
@@ -912,6 +933,23 @@ def unpack_inputs(ctx, prologue_trace, inputs):
                     unpack(a)
             prim(*args)
 
+        cache_info = thunder._get_cache_info()
+        # assert len of cache info to ensure that we're not missing anything?
+        if cache_info:
+            cache_info_p = Proxy(name="cache_info")
+            bsym = prims.unpack_cache_info.bind(cache_info_p, output=cache_info_p)
+            prologue_trace.bound_symbols.append(bsym)
+            for k, v in cache_info.items():
+                p = ctx.proxify(v, name=f"cache_info_{k}", history=None)
+                bsym = prims.unpack_getitem.bind(cache_info_p, k, output=p)
+                prologue_trace.bound_symbols.append(bsym)
+                if isinstance(v, str):
+                    clang.check_string_value(p, v)
+                elif isinstance(v, (int, bool, float)):
+                    clang.check_number_type_and_value(p, v)
+                else:
+                    raise NotImplementedError(f"cache info of type {type(v).__name__}")
+
         prims.python_return(prologue_outputs)
 
     return prologue_outputs
@@ -920,6 +958,12 @@ def unpack_inputs(ctx, prologue_trace, inputs):
 def thunder_general_jit(
     fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> tuple[TraceCtx, TraceCtx]:
+    # TODO: move into wrap_callback or so
+    if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
+        raise NotImplementedError(
+            f"jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
+        )
+
     co: CACHE_OPTIONS = get_cache_option()
     if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING}:
         raise NotImplementedError(f"Only constant constraints is supported")
@@ -932,7 +976,10 @@ def thunder_general_jit(
     si.varkwargs = ("kwargs", None)
     prologue_trace._siginfo = si
 
-    ctx: GeneralJitCtx = GeneralJitCtx(prologue_trace, computation_trace, sharp_edges=sharp_edges)
+    process_group_for_ddp = getattr(fn, "process_group_for_ddp", None)
+    ctx: GeneralJitCtx = GeneralJitCtx(
+        prologue_trace, computation_trace, sharp_edges=sharp_edges, process_group_for_ddp=process_group_for_ddp
+    )
     jfn = jit(
         fn,
         fn_lookaside=general_jit_lookaside,
