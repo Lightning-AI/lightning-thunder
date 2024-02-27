@@ -23,6 +23,7 @@ class ThunderFunction(torch.autograd.Function):
         from thunder import trace
         from thunder.executors.passes import transform_for_execution
         from thunder.executors.passes import del_last_used
+        from thunder.core.compile_data import using_jit
         from thunder.core.rematerialization import rematerialize_forward_and_backward
         from thunder.core.transforms import forward_and_backward_from_trace
         from thunder.cudagraphs import CUDAGraphExecutor
@@ -32,7 +33,7 @@ class ThunderFunction(torch.autograd.Function):
         utils.check(compile_data is not None, lambda: "`compile_data` is required")
 
         def make_trace(func):
-            return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=False), func)
+            return partial(trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not using_jit()), func)
 
         def split_forward_backward(*args, **kwargs):
             # NOTE: This function is rather slow, so it's intended to be used
