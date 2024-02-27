@@ -24,16 +24,16 @@ def main(name: str = "open_llama_7b", num_samples: int = 10, compile: str = "eag
         torch._dynamo.config.automatic_dynamic_shapes = True
         torch._inductor.config.triton.unique_kernel_names = True
         torch._inductor.config.coordinate_descent_tuning = True
-        model = torch.compile(model, fullgraph=True)  # , mode="reduce-overhead")
+        model = torch.compile(model, fullgraph=True)
     elif compile == "thunder":
         import thunder
         from thunder.executors.sdpaex import sdpa_ex
 
-        model = thunder.compile(
+        model = thunder.jit(
             model,
-            disable_torch_autograd_support=True,
-            use_cudagraphs=False,
-            executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+            disable_torch_autograd=True,
+            executors=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+            interpretation=thunder.INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
         )
     elif compile != "eager":
         raise ValueError(compile)

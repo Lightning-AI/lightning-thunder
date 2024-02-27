@@ -30,13 +30,11 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
         import thunder
         from thunder.executors.sdpaex import sdpa_ex
 
-        model = thunder.compile(
+        model = thunder.jit(
             model,
-            # DISABLED: goes OOM
-            use_cudagraphs=False,
-            executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
-            # nv_enable_bookend because of https://github.com/Lightning-AI/lightning-thunder/issues/2025
-            nv_enable_bookend=True,
+            executors=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+            interpretation=thunder.INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
+            # TODO: we'd want to enable CUDAGraphs for parity with `torch.compile` but it goes OOM
         )
         model.max_seq_length = og_model.max_seq_length
     elif compile != "eager":
