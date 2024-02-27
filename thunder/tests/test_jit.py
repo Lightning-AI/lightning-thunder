@@ -2602,7 +2602,6 @@ def test_modifying_input_list_sharp_edge():
 #
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2181")
 def test_calling_open_sharp_edge():
     def foo():
         open("nonexistent file")

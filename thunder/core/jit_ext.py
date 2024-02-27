@@ -243,6 +243,7 @@ _minimal_lookaside_map = {
     vars: _lookaside_sharp_edge(vars, "vars"),
     input: _lookaside_sharp_edge(input, "input"),
     getattr: _getattr_lookaside_sharp_edge,
+    open: _lookaside_sharp_edge(open, "open"),
 }
 
 # Translates actual torch functions to their corresponding thunder functions
