@@ -141,6 +141,7 @@ if is_distributed:
 
                 model = fsdp(
                     model,
+                    device=device,
                     sharding_strategy=sharding_strategy,
                     bucketing_strategy=bucketing_strategy,
                 )

@@ -16,6 +16,7 @@ __all__ = [
     "ddp",
     "fsdp",
     "FSDPBucketingStrategy",
+    "FSDPType",
 ]
 
 
@@ -77,8 +78,8 @@ def ddp(
 
     This function does two things. One is to broadcast the parameters hosted on the rank specified
     by ``broadcast_from`` to all the other ranks belonging to default process_group. The other is to
-    updates the behavior of backward trace generation and optimization of it so that each gradient
-    gets pre-averaged, i.e., divided by world size, and asynchronously allreduced.
+    update the behavior of backward trace generation and optimization of it so that each gradient
+    gets pre-averaged, i.e., divided by world size, and asynchronously all-reduced.
 
     Args:
         model: A model before ``thunder.compile`` applied
@@ -191,14 +192,14 @@ def ddp(
             param.device.type == devicetype,
             lambda: (
                 "Trying to ddp a model with parameters on devices with different device types, "
-                f"including {devicetype} and {param.device.type}"
+                f"including {devicetype} and {param.device.type} for {name!r}"
             ),
         )
         utils.check(
             deviceindex == param.device.index,
             lambda: (
                 "Trying to ddp a model with parameters on multiple devices, including devices "
-                f"{deviceindex} and {param.device.index}, but currently only models with all their "
+                f"{deviceindex} and {param.device.index} for {name!r}, but currently only models with all their "
                 "parameters on one device are supported"
             ),
         )
@@ -229,11 +230,11 @@ def ddp(
 
 class FSDPType(Enum):
     """
-    This specifies the sharding strategy to be used for FSDP in Thunder.
+    Specifies the sharding strategy to be used for FSDP in Thunder.
 
     Attributes:
-        ZERO2: Similar to torch.distributed.fsdp.ShardingStrategy.SHARD_GRAD_OP
-        ZERO3: Similar to torch.distributed.fsdp.ShardingStrategy.FULL_SHARD
+        ZERO2: Similar to :attr:`torch.distributed.fsdp.ShardingStrategy.SHARD_GRAD_OP`.
+        ZERO3: Similar to :attr:`torch.distributed.fsdp.ShardingStrategy.FULL_SHARD`.
     """
 
     ZERO2 = auto()
@@ -241,14 +242,19 @@ class FSDPType(Enum):
 
 
 class FSDPBucketingStrategy(Enum):
-    """Enum class to specify how we group parameters into a bucket for collective communication in fsdp."""
+    """
+    Specify how we group parameters into a bucket for collective communication in fsdp.
+
+
+    Attributes:
+        NONE: Disables bucketing.
+        LAYER: Creates buckets per layer such as :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
+        BLOCK: Creates buckets per block such as Transformer block.
+    """
 
     NONE = auto()
-    """Disables Bucketing."""
     LAYER = auto()
-    """Creates buckets per layer such as :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`."""
     BLOCK = auto()
-    """Creates buckets per block such as Transformer block."""
 
 
 def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy):
@@ -280,6 +286,7 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
 def fsdp(
     model: torch.nn.Module,
     *,
+    device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
@@ -290,7 +297,7 @@ def fsdp(
     then has rank-``i`` host ``i``-th chunks of them.
     This means the implementation is different from :class:`torch.distributed.fsdp.FullyShardedDataParallel`
     which creates what's called :class:`torch.distributed.fsdp._flat_param.FlatParameter` as of
-    https://github.com/pytorch/pytorch/blob/647f14e70baffa383515c28c2ac219b7084c41c2. PyTorch however
+    https://github.com/pytorch/pytorch/tree/647f14e7. PyTorch however
     seems to be interested in per-parameter sharding as per https://github.com/pytorch/pytorch/issues/114299.
 
     To apply bucketing of collective communications, specify either
@@ -301,9 +308,10 @@ def fsdp(
     :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
 
      Args:
-        model:
+        model: The model to convert.
 
     Keyword Args:
+        device: The corresponding model shard will be moved to this device. We recommend setting this to ``torch.cuda.current_device()``.
         broadcast_from: The rank of the device hosting the parameters to broadcast. If None is passed,
             broadcasting will be skipped (default). Enabling can be useful for models whose weights have been loaded
             from a checkpoint in a single rank.
@@ -325,8 +333,11 @@ def fsdp(
     process_group = distributed_params_module.process_group_for_ddp
 
     # Now we need to shard the parameters
-    # We will definitely change the sharding logic in the future
     _shard_params(distributed_params_module, process_group)
+
+    # Move leftover params and buffers to device
+    with torch.no_grad():
+        distributed_params_module.to(device)
 
     # See Note [DistributedDataParallel and ddp_type]
     # If model was wrapped with thunder.distributed.fsdp it would have a
@@ -340,18 +351,16 @@ def fsdp(
     return distributed_params_module
 
 
+@torch.no_grad()
 def _shard_params(module: torch.nn.Module, process_group: "ProcessGroup") -> None:
+    """Shards the parameters on the first dimension."""
     rank = tdist.get_rank(group=process_group)
     world_size = tdist.get_world_size(group=process_group)
 
     # We will definitely change the sharding logic in the future
     for name, param in module.named_parameters():
         # Note [FSDP Sharding]
-        # Here we shard the parameters on the first
-        # dimension and all internal code will assume that the parameters are
-        # sharded on the first dimension
-
-        # narrow the param to the current rank on the first dimension
+        # All internal code will assume that the parameters are sharded on the first dimension
         utils.check(
             param.shape[0] % world_size == 0,
             lambda: (
@@ -366,7 +375,12 @@ def _shard_params(module: torch.nn.Module, process_group: "ProcessGroup") -> Non
         param.data = shard
 
 
+@torch.no_grad()
 def _unshard_params(module: torch.nn.Module, process_group: "ProcessGroup", cpu_offload: bool = False) -> None:
+    """Unshard a module's parameters.
+
+    This supports CPU offloading of parameters.
+    """
     from thunder.executors.torchex import _all_gather_prim_impl
 
     cpu = torch.device("cpu")

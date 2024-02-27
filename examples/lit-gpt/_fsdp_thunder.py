@@ -89,9 +89,9 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
 
     @override
     def setup_module(self, module: Module) -> Module:
-        module = module.to(self.root_device)
         module = fsdp(
             module,
+            device=self.root_device,
             sharding_strategy=self.sharding_strategy,
             bucketing_strategy=self.bucketing_strategy,
         )

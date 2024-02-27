@@ -732,16 +732,16 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         from thunder.distributed import fsdp
 
         device = torch.device("cuda", self.rank)
-        initial_model_state = ToyModel().to(device).state_dict()
+        initial_model_state = ToyModel().state_dict()
 
         for strategy in (FSDPBucketingStrategy.NONE, bucketing_strategy):
-            m = ToyModel().to(device)
+            m = ToyModel()
             m.load_state_dict(initial_model_state)
             cm = thunder.compile(
-                fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+                fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
                 executors_list=executors_map[executor].executors_list(),
             )
-            x = torch.ones((2, 12)).to(device)
+            x = torch.ones((2, 12), device=device)
             loss = cm(x).mean()
             loss.backward()
 
@@ -767,8 +767,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         model.load_state_dict({"weight": weight}, assign=True)
 
         _shard_params(model, pg)
-        # TODO: in the future `_shard_params` should support moving to device, making this unnecessary
-        assert model.weight.device.type == "cpu"
         model.to(device)
 
         expected = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]] if self.rank == 0 else [[6.0, 7.0, 8.0], [9.0, 10.0, 11.0]]
