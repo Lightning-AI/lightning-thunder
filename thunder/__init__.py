@@ -813,8 +813,6 @@ def jit(
 
             cs.last_trace_tracing_stop = time.time_ns()
 
-            print(f"{prologue_trc=}")
-            print(f"{computation_trc=}")
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
             protraces = transform_for_execution(
