@@ -219,11 +219,30 @@ def _lookaside_sharp_edge(lookaside: Callable, lookaside_name: str):
     return wrapped_lookaside
 
 
+# Accessing these attributes for these specific types are sharp edges
+_attr_sharp_edge_map = {
+    "__globals__": (FunctionType,),
+}
+
+
+def _getattr_lookaside_sharp_edge(obj: Any, attr_name: str, *default):
+    default_getattr_lookaside = default_lookaside(getattr)
+    getattr_res = default_getattr_lookaside(obj, attr_name, *default)
+
+    types_with_name_attr = _attr_sharp_edge_map.get(unwrap(attr_name), ())
+    for py_type in types_with_name_attr:
+        if isinstance(unwrap(obj), py_type):
+            return _sharp_edge(f"Accessing attribute '{attr_name}' of type {py_type}", getattr_res)
+
+    return getattr_res
+
+
 _minimal_lookaside_map = {
     globals: _lookaside_sharp_edge(globals, "globals"),
     locals: _lookaside_sharp_edge(locals, "locals"),
     vars: _lookaside_sharp_edge(vars, "vars"),
     input: _lookaside_sharp_edge(input, "input"),
+    getattr: _getattr_lookaside_sharp_edge,
 }
 
 # Translates actual torch functions to their corresponding thunder functions

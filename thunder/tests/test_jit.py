@@ -2433,10 +2433,9 @@ def test_calling_locals_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2188")
 def test_accessing_globals_through_function_sharp_edge():
     def foo():
-        return foo.__globals__()
+        x = foo.__globals__
 
     jfoo = thunder.jit(foo, sharp_edges="error")
 
