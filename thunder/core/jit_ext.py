@@ -70,6 +70,7 @@ from thunder.core.jit import (
     JITFrame,
     do_raise,
     get_jitcompilectx,
+    get_jitruntimectx,
     JitCompileCtx,
     is_opaque,
     Py_NULL,
@@ -459,8 +460,6 @@ def general_jit_lookaside(diverted_fn):
 
 @general_jit_lookaside(getattr)
 def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
-    import inspect
-
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
 
@@ -662,19 +661,7 @@ def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     )
 
 
-def collect_provenance_inst(pr):
-    inst = pr.inst
-    if isinstance(inst, dis.Instruction):
-        inst = inst.opname
-    else:
-        inst = inst.value
-    res = {inst}
-    for i in pr.inputs:
-        res |= collect_provenance_inst(i)
-    return res
-
-
-safe_provenance_inst = {
+_safe_provenance_inst = {
     "INPUT_ARGS",
     "INPUT_KWARGS",
     "INPUT_FN",
@@ -682,6 +669,25 @@ safe_provenance_inst = {
     "CONSTANT",
     "BINARY_SUBSCR",
 }
+
+EXT_FLAG_IS_PROXY_DERIVED = 1
+EXT_FLAG_IS_TENSOR_PROXY = 2
+
+
+def should_register_for_prologue(pr):
+    inst = pr.inst
+    if pr.ext_flag & EXT_FLAG_IS_TENSOR_PROXY:
+        return False
+    if isinstance(inst, dis.Instruction):
+        inst = inst.opname
+    else:
+        inst = inst.value
+    if inst not in _safe_provenance_inst:
+        return False
+    if inst == "CONSTANT" and callable(pr.value):
+        if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
+            return False
+    return all(should_register_for_prologue(i) for i in pr.inputs)
 
 
 def _general_jit_wrap_callback(value):
@@ -691,6 +697,9 @@ def _general_jit_wrap_callback(value):
     if isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
         p = ctx.proxify(uvalue, history=value.provenance)
+
+        # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
+        value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
         from thunder.core import utils
         from thunder.distributed import get_skip_data_parallel_grad_sync
@@ -717,19 +726,18 @@ def _general_jit_wrap_callback(value):
         elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
             raise NotImplementedError(f"Unsupported cache option {co}")
     elif value.provenance.inst is PseudoInst.CONSTANT:
-        value.provenance.jit_flat = 1
+        value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
         pass  # we only care if it is called
     elif type(uvalue) in (tuple, list, dict, CellType, ModuleType, set):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
-        value.provenance.ext_flag = 1
+        value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
-        if value.provenance.ext_flag:  # we already have seen this
+        if value.provenance.ext_flag & EXT_FLAG_IS_PROXY_DERIVED:  # we already have seen this
             pass
-        elif not (collect_provenance_inst(value.provenance) - safe_provenance_inst):
-            value.provenance.ext_flag = 1
-
+        elif should_register_for_prologue(value.provenance):
+            value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
             p = ctx.proxify(uvalue, history=value.provenance)
             assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
@@ -745,7 +753,7 @@ def _general_jit_wrap_callback(value):
 
         else:
             return _general_jit_sharp_edge(
-                f"We are using a (non-const) value of type {type(uvalue).__name__} with provenance {value.provenance}, which is not identified as an input.",
+                f"We are using a (non-const) value of type {type(uvalue).__name__}, which is not identified as an input.",
                 value,
             )
     else:
