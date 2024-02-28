@@ -716,10 +716,31 @@ def jit(
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
 
-        # TODO GTC Add autocast checks to prologue (make it a compile option)
         # TODO GTC Add module and function checks to prologue (make it a compile option)
 
         cache_info = _get_cache_info()
+
+        # autocast related operations
+        is_autocast_enabled = False
+        autocast_key = None
+        if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():
+            if pytorch.is_autocast_enabled() and pytorch.is_autocast_cpu_enabled():
+                raise NotImplementedError(
+                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
+                )
+            is_autocast_enabled = True
+            autocast_gpu_dtype = dtypes.to_dtype(pytorch.get_autocast_gpu_dtype())
+            autocast_cpu_dtype = dtypes.to_dtype(pytorch.get_autocast_cpu_dtype())
+            cache_info.update(
+                autocast_config_torch_enabled=pytorch.is_autocast_enabled(),
+                autocast_config_torch_cpu_enabled=pytorch.is_autocast_cpu_enabled(),
+                autocast_gpu_dtype=str(autocast_gpu_dtype),
+                autocast_cpu_dtype=str(autocast_cpu_dtype),
+            )
+            autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+
+        cache_info["is_autocast_enabled"] = is_autocast_enabled
+
         # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(fn, "use_ddp", False)
         no_grad_sync = False
@@ -827,6 +848,14 @@ def jit(
             cs.last_prologue_execution_start = time.time_ns()
             prologue_outputs = pro(*args, **kwargs)
             cs.last_prologue_execution_stop = time.time_ns()
+
+            if is_autocast_enabled:
+                is_transformed = True
+                from thunder.core.transforms import autocast
+
+                computation_trc = trace(compile_data=cd)(
+                    autocast(computation_trc.python_callable(), dtype=autocast_thunder_dtype), *prologue_outputs
+                )
 
             computed: bool = False
             if not cd.disable_torch_autograd_support:

@@ -70,7 +70,6 @@ from thunder.core.jit import (
     JITFrame,
     do_raise,
     get_jitcompilectx,
-    get_jitruntimectx,
     JitCompileCtx,
     is_opaque,
     Py_NULL,
@@ -951,6 +950,7 @@ def unpack_inputs(ctx, prologue_trace, inputs):
                 p = ctx.proxify(v, name=f"cache_info_{k}", history=None)
                 bsym = prims.unpack_getitem.bind(cache_info_p, k, output=p)
                 prologue_trace.bound_symbols.append(bsym)
+
                 if isinstance(v, str):
                     clang.check_string_value(p, v)
                 elif isinstance(v, (int, bool, float)):
