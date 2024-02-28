@@ -1201,22 +1201,52 @@ class register_opcode_handler:
 #
 
 
-# Tag a lookaside as needing unwrapping of args and wrapping of results
-# In general, you should not use this when writing new lookasides
+# Returns a new (lookaside) callable that unwraps inputs and wraps its result.
+# If the original callable raises an exception, this exception is
+# wrapped into JIT_SIGNALS
 def jit_needs_wrap(fn):
-    # usually we just set a flag on the function
-    try:
-        fn.__jit_needs_wrap = True
-        return fn
-    except (TypeError, AttributeError):
-        # but sometimes setting the flag will fail (for objects that
-        # do not allow arbitrary attributes), so we wrap it in a function,
-        # which always allows this.
-        @jit_needs_wrap
-        def fn_(*args, **kwargs):
-            return fn(*args, **kwargs)
+    def jit_wrapped(*args, **kwargs):
+        if isinstance(fn, WrappedValue):
+            wrapped_fn = fn
+        else:
+            wrapped_fn = wrap_const(fn)
+        ufn = unwrap(fn)
 
-        return fn_
+        ctx: JitCompileCtx = get_jitcompilectx()
+
+        if ctx._with_provenance_tracking:
+            uargs = tuple(unwrap(arg) for arg in args)
+            ukwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+        else:
+            uargs = args
+            ukwargs = kwargs
+
+        try:
+            res = ufn(*uargs, **ukwargs)
+
+            # If result is a WrappedValue, we trust its provenance record
+            if isinstance(res, WrappedValue):
+                return res
+
+            # Pass along detected exceptions
+            if res is JIT_SIGNALS.EXCEPTION_RAISED:
+                return res
+
+            if ctx._with_provenance_tracking:
+                pr = ProvenanceRecord(
+                    inst=PseudoInst.LOOKASIDE,
+                    inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
+                )
+                res = wrap(res, provenance=pr)
+
+            return res
+
+        except Exception as e:
+            # Any exceptions from opaque calls are being wrapped with `do_raise`
+            res = do_raise(e)
+            return res
+
+    return jit_wrapped
 
 
 #
@@ -5771,21 +5801,7 @@ def _jit_inner(
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
-        # we expect lookasides to use do_raise rather than raising exceptions
-        needs_wrap = getattr(lookaside_fn, "__jit_needs_wrap", False) and compilectx._with_provenance_tracking
-        if needs_wrap:
-            args_ = [unwrap(a) for a in args]
-            kwargs_ = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
-        else:
-            args_ = args
-            kwargs_ = kwargs
-        res = lookaside_fn(*args_, **kwargs_)
-        if needs_wrap and res is not JIT_SIGNALS.EXCEPTION_RAISED:
-            pr = ProvenanceRecord(
-                inst=PseudoInst.LOOKASIDE,
-                inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
-            )
-            res = wrap(res, provenance=pr)
+        res = lookaside_fn(*args, **kwargs)
         return res
 
     # TODO: disabled as partial is just like any other class

@@ -2969,6 +2969,13 @@ def test_eval_exec_exception(jit):
     with pytest.raises(ZeroDivisionError):
         jit(fn_exec)()
 
+    # This should raise inside opaque `compile`
+    def fn_eval():
+        return eval("x = lambda a: a + 1")
+
+    with pytest.raises(SyntaxError):
+        jit(fn_eval)()
+
 
 def test_is_jitting_opaque(jit):
     def foo():
