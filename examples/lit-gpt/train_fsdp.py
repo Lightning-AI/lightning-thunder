@@ -38,7 +38,7 @@ def main(
     config = Config.from_name(model_name)
     fabric.print(f"Loading model with {config.__dict__}")
     t0 = time.perf_counter()
-    with fabric.init_module():
+    with fabric.init_module(empty_init=True):
         og_model = model = GPT(config)
     fabric.print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 

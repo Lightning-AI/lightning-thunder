@@ -18,7 +18,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing import assert_close, make_tensor
 
 import thunder
-from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder import INTERPRETATION_OPTIONS
 import thunder.torch as ltorch
 from thunder.core import devices
@@ -783,21 +782,82 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
 
         model = torch.nn.Linear(3, 5, bias=False, device="meta")
         with pytest.raises(RuntimeError, match=r"parameter 'weight' \(5\) to be divisible by the world size \(2\)"):
-            _shard_params(model, pg)
+            _shard_params(model, pg, device, None)
 
         model = torch.nn.Linear(3, 4, bias=False, device="meta")
         weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)
         model.load_state_dict({"weight": weight}, assign=True)
 
-        _shard_params(model, pg)
-        model.to(device)
-
+        # each shard got its corresponding piece of the weight
+        _shard_params(model, pg, device, None)
         expected = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]] if self.rank == 0 else [[6.0, 7.0, 8.0], [9.0, 10.0, 11.0]]
+        # the weight was moved to device
         assert torch.equal(model.weight, torch.tensor(expected, device=device))
 
+        # unsharding reconstructs the original weight (and cpu offloads)
         _unshard_params(model, pg, cpu_offload=True)
-
         assert torch.equal(model.weight, weight)
+
+    def test_fsdp_broadcast_from(self):
+        from thunder.distributed import _shard_params
+
+        device = torch.device("cuda", self.rank)
+        pg = c10d.new_group()
+
+        model = torch.nn.Linear(3, 4, bias=False, device="meta")
+        model.register_buffer("foo", torch.tensor([123.0]), persistent=False)
+        weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)
+        if self.rank == 0:
+            weight *= -1.0
+            model.foo *= -1.0
+        model.load_state_dict({"weight": weight}, assign=True)
+
+        _shard_params(model, pg, device, 0)
+        # since rank 0's params are negative and rank 1's are positive, we know broadcasting worked if all params are negative
+        expected = (
+            [[-0.0, -1.0, -2.0], [-3.0, -4.0, -5.0]] if self.rank == 0 else [[-6.0, -7.0, -8.0], [-9.0, -10.0, -11.0]]
+        )
+        # the weight was moved to device
+        assert torch.equal(model.weight, torch.tensor(expected, device=device))
+        # same check for the buffer
+        assert torch.equal(model.foo, torch.tensor([-123.0], device=device))
+
+    def test_materialize_meta_tensors(self):
+        from thunder.distributed import _shard_params
+
+        class Submodule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l = torch.nn.Linear(4, 8)
+
+        class MyModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("buf", torch.tensor(0))
+                self.l = torch.nn.Linear(2, 4)
+                self.inner = Submodule()
+
+        device = torch.device("cuda", self.rank)
+        pg = c10d.new_group()
+
+        with torch.device("meta"):
+            model = MyModel()
+        with pytest.raises(TypeError, match="MyModel.reset_parameters` method is implemented"):
+            _shard_params(model, pg, device, None)
+
+        class MyModel2(MyModel):
+            def reset_parameters(self):
+                self.buf = torch.empty_like(self.buf)
+
+        with torch.device("meta"):
+            model = MyModel2()
+
+        _shard_params(model, pg, device, None)
+        # all parameters were moved
+        assert len(list(model.parameters())) == 4
+        assert all(p.device.type == "cuda" for p in model.parameters())
+        # buffers were moved too
+        assert model.buf.device.type == "cuda"
 
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
@@ -841,10 +901,10 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         m = Block(config).to(device=device)
         m.load_state_dict(initial_model_state)
         cm = thunder.compile(
-            fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+            fsdp(m, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype, device=device),
             executors_list=executors_map[executor].executors_list(),
         )
-        x = torch.ones((2, config.block_size, config.n_embd)).to(device)
+        x = torch.ones((2, config.block_size, config.n_embd), device=device)
         loss = cm(x).mean()
         loss.backward()
 
@@ -1171,7 +1231,7 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy)
+    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
 
     # Check that the model is sharded
     sharded_weight_net1 = fsdp_model.net1.weight

@@ -1,5 +1,5 @@
 """Fabric Strategy to support Thunder FSDP: To be upstreamed into Fabric eventually."""
-from contextlib import nullcontext
+from contextlib import nullcontext, ExitStack
 from typing import Any, Callable, ContextManager, Dict, List, Literal, Optional, Union
 
 import torch
@@ -112,9 +112,15 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
 
     @override
     def module_init_context(self, empty_init: Optional[bool] = None) -> ContextManager:
+        precision_init_ctx = self.precision.module_init_context()
+        module_sharded_ctx = self.module_sharded_context()
+        stack = ExitStack()
         if empty_init:
-            raise NotImplementedError
-        return self.precision.module_init_context()
+            # Materialization happens in `setup`. When modules get wrapped by FSDP
+            stack.enter_context(torch.device("meta"))
+        stack.enter_context(precision_init_ctx)
+        stack.enter_context(module_sharded_ctx)
+        return stack
 
     @override
     def module_sharded_context(self) -> ContextManager:

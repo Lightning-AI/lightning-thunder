@@ -1,7 +1,11 @@
+import os
+from itertools import chain
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import auto, Enum
 from typing import TYPE_CHECKING
+from functools import partial
+
 
 import torch
 import torch.distributed as tdist
@@ -323,21 +327,20 @@ def fsdp(
 
     """
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
+    utils.check(
+        tdist.is_available(),
+        lambda: "fsdp requires torch distributed to be available (but it's not)",
+    )
 
-    # We are going to use DDP to broadcast the parameters
-    distributed_params_module = ddp(model, broadcast_from=broadcast_from)
-    distributed_params_module.use_ddp = False
-    distributed_params_module.use_fsdp = True
-    distributed_params_module.sharding_strategy = sharding_strategy
-    distributed_params_module.bucketing_strategy = bucketing_strategy
-    process_group = distributed_params_module.process_group_for_ddp
+    process_group = tdist.distributed_c10d._get_default_group()
+    utils.check(process_group is not None, lambda: "The default process group is None")
+    model.use_fsdp = True
+    model.process_group_for_ddp = process_group
+    model.sharding_strategy = sharding_strategy
+    model.bucketing_strategy = bucketing_strategy
 
-    # Now we need to shard the parameters
-    _shard_params(distributed_params_module, process_group)
-
-    # Move leftover params and buffers to device
-    with torch.no_grad():
-        distributed_params_module.to(device)
+    # Shard the parameters
+    _shard_params(model, process_group, device, broadcast_from)
 
     # See Note [DistributedDataParallel and ddp_type]
     # If model was wrapped with thunder.distributed.fsdp it would have a
@@ -345,34 +348,61 @@ def fsdp(
     # sharded across all other processes. So that our tracing is aware of
     # this we need to mark the ddp_type of model's parameters as
     # thunder.proxies.DDPType.FULLY_SHARDED
-    for p in distributed_params_module.parameters():
+    for p in model.parameters():
         p.ddp_type = DDPType.FULLY_SHARDED
 
-    return distributed_params_module
+    return model
 
 
 @torch.no_grad()
-def _shard_params(module: torch.nn.Module, process_group: "ProcessGroup") -> None:
+def _shard_params(
+    module: torch.nn.Module, process_group: "ProcessGroup", device: torch.device | None, broadcast_from: int | None
+) -> None:
     """Shards the parameters on the first dimension."""
-    rank = tdist.get_rank(group=process_group)
+    global_rank = tdist.get_rank(group=process_group)
     world_size = tdist.get_world_size(group=process_group)
+    if device is None:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device("cuda", local_rank)
 
     # We will definitely change the sharding logic in the future
-    for name, param in module.named_parameters():
+    for module_name, submodule in module.named_modules():
+        # Materialize meta-parameters on-device if necessary.
+        # This is done before sharding in case the materialization logic depends on the tensor shape.
+        # The tradeoff is that all of a module's direct parameters need to fit in device.
+        # Each module only initializes its own parameters and not those of its children (recurse=False)
+        if any(t.is_meta for t in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False))):
+            # TODO: we could also support calling a "param_init_fn" argument like PyTorch
+            _materialize(submodule, device)
+        else:
+            # Move leftover params and buffers to device. This is at least required to broadcast.
+            # Cannot `submodule.to(device)` because we don't want it to recurse
+            submodule._apply(partial(torch.Tensor.to, device=device), recurse=False)
+
+        # Broadcast parameters if requested
+        if broadcast_from is not None:
+            for tensor in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False)):
+                tdist.broadcast(tensor, src=broadcast_from, group=process_group, async_op=False)
+
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
-        utils.check(
-            param.shape[0] % world_size == 0,
-            lambda: (
-                f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]}) to be "
-                f"divisible by the world size ({world_size})"
-            ),
-        )
-        chunk_size = param.shape[0] // world_size
-        # NOTE This could be a ShardTensor to indicate other parts of the code
-        # that it's sharded and should be treated differently
-        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-        param.data = shard
+        for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
+            _shard_param(param, global_rank, world_size, param_name)
+
+
+def _shard_param(param: torch.Tensor, rank: int, world_size: int, name: str) -> None:
+    utils.check(
+        param.shape[0] % world_size == 0,
+        lambda: (
+            f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+            f" to be divisible by the world size ({world_size})"
+        ),
+    )
+    chunk_size = param.shape[0] // world_size
+    # NOTE This could be a ShardTensor to indicate other parts of the code
+    # that it's sharded and should be treated differently
+    shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+    param.data = shard
 
 
 @torch.no_grad()
@@ -389,3 +419,15 @@ def _unshard_params(module: torch.nn.Module, process_group: "ProcessGroup", cpu_
         if cpu_offload:
             out = out.to(device=cpu)
         param.data = out
+    # TODO(@carmocca): this should cpu-offload buffers or persistent buffers
+
+
+def _materialize(module: torch.nn.Module, device: torch.device) -> None:
+    """Materialize a module's direct children parameters by calling ``module.reset_parameters()``."""
+    module.to_empty(device=device, recurse=False)
+    if not hasattr(module, "reset_parameters"):
+        raise TypeError(
+            f"Materialization requires that the `{type(module).__name__}.reset_parameters` method is implemented."
+            " This method is used to initialize any children parameters or buffers in this module."
+        )
+    module.reset_parameters()
