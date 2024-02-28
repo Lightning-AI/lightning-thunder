@@ -2630,7 +2630,6 @@ def test_calling_print_sharp_edge():
 #
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_seed_sharp_edge():
     def foo():
         random.seed(1234)
@@ -2645,7 +2644,6 @@ def test_calling_random_seed_sharp_edge():
         random.setstate(state)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_setstate_sharp_edge():
     def foo():
         return random.getstate()
@@ -2656,7 +2654,6 @@ def test_calling_random_setstate_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_setstate_sharp_edge():
     def foo(state):
         random.setstate(state)
@@ -2668,7 +2665,6 @@ def test_calling_random_setstate_sharp_edge():
         jfoo(state)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_randbytes_sharp_edge():
     def foo():
         return random.randbytes(20)
@@ -2679,7 +2675,6 @@ def test_calling_random_randbytes_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_randrange_sharp_edge():
     def foo():
         return random.randrange(10)
@@ -2690,7 +2685,6 @@ def test_calling_random_randrange_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_randint_sharp_edge():
     def foo():
         return random.randint(0, 10)
@@ -2701,7 +2695,6 @@ def test_calling_random_randint_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_getrandbits_sharp_edge():
     def foo():
         return random.getrandbits(10)
@@ -2712,7 +2705,6 @@ def test_calling_random_getrandbits_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2183")
 def test_calling_random_choice_sharp_edge():
     def foo():
         l = [1, 3, 5]
@@ -2724,24 +2716,47 @@ def test_calling_random_choice_sharp_edge():
         jfoo()
 
 
-# Additional random functions
-# random.choices
-# random.shuffle
-# random.sample
-# random.binomialvariate
-# random.random
-# random.uniform
-# random.triangular
-# random.betavariate
-# random.expovariate
-# random.gammavariate
-# random.gauss
-# random.lognormvariate
-# random.normalvariate
-# random.vonmisesvariate
-# random.paretovariate
-# random.weibullvariate
-# random.SystemRandom (class)
+def test_accessing_random_function():
+    # Just accessing shouldn't raise an error.
+    def foo():
+        a = random.choice if 0 > 1 else 1
+        return a
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo()
+
+
+def test_random_functions():
+    # Additional random functions
+    fn_arg_tuple = (
+        (random.choices, ([1, 2])),
+        (random.shuffle, ([1, 2])),
+        (random.sample, ([1, 2], 1)),
+        (random.random, ()),
+        (random.uniform, ()),
+        (random.triangular, ()),
+        (random.betavariate, ()),
+        (random.expovariate, ()),
+        (random.gammavariate, ()),
+        (random.gauss, ()),
+        (random.lognormvariate, ()),
+        (random.normalvariate, ()),
+        (random.vonmisesvariate, ()),
+        (random.paretovariate, ()),
+        (random.weibullvariate, ()),
+        # only in python 3.12
+        # (random.binomialvariate, (10, 0.7)),
+    )
+
+    for fn, arg in fn_arg_tuple:
+
+        def foo():
+            _ = fn(*arg)
+            return 1
+
+        jfoo = thunder.jit(foo, sharp_edges="error")
+        with pytest.raises(ThunderSharpEdgeError):
+            jfoo()
 
 
 # NOTE This use of randomness is OK (and we could add a Proxy for random.Random)

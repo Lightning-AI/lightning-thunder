@@ -1,5 +1,5 @@
 import thunder
-from typing import Any
+from typing import Any, Optional, Dict, Tuple, Literal
 import builtins
 from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
@@ -12,6 +12,7 @@ import dis
 import warnings
 from enum import Enum, auto
 from io import StringIO
+import inspect
 import time
 
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
@@ -251,6 +252,79 @@ _minimal_lookaside_map = {
 _minimal_lookaside_map.update(_torch_to_thunder_function_map)
 
 
+# NOTE: [SharpEdge - random]
+# We want to mark functions from `random` module as Sharp Edges.
+# These functions are actually method of a hidden/global `random.Random` object
+# which manages the required state. Also, note that we want to allow these methods
+# on an user instantiated `random.Random` object.
+# So, we need to know the method being called and the object it is bound to, to figure out
+# if that call is valid or not (within SharpEdge context).
+#
+# By the time, we get the function to lookaside in `_minimal_lookaside`,
+# we get the function and `self` is passed as the first argument.
+# We check if `self` is same as the id of the hidden/global object, in which case,
+# we wrap it as a SharpEdge otherwise it is from a user's instance which is ok.
+#
+# Reference:
+# 1. Defintion of random.Random : https://github.com/python/cpython/blob/418e72041349dccdd2bf6ad58643fec3314b1691/Lib/random.py#L110
+# 2. Instantiation of global random.Random: https://github.com/python/cpython/blob/418e72041349dccdd2bf6ad58643fec3314b1691/Lib/random.py#L913-L920
+_RANDOM_MODULE_DETAILS: dict[str, Any] = {}
+
+
+# Populate the functions present in `random` module and also get reference to the hidden/global `random.Random`
+# object.
+# See NOTE: [SharpEdge - random] for more information
+def _populate_random_module_details() -> None:
+    random_classes_and_members = filter(lambda x: not x.startswith("_"), dir(random))
+    random_functions = []
+    random_global_obj = None
+    for attr in random_classes_and_members:
+        random_attr = getattr(random, attr)
+        if hasattr(random_attr, "__func__"):
+            random_functions.append(random_attr.__func__)
+
+            # `__self__` on method points to bound object.
+            if hasattr(random_attr, "__self__"):
+                if random_global_obj is None:
+                    random_global_obj = random_attr.__self__
+                assert random_global_obj == random_attr.__self__
+
+    _RANDOM_MODULE_DETAILS["random_global_obj"] = random_global_obj
+    _RANDOM_MODULE_DETAILS["random_functions"] = frozenset(random_functions)
+
+
+_populate_random_module_details()
+
+
+# Calling functions from random is a sharp edge.
+# See NOTE: [SharpEdge - random] for more information
+def _random_module_lookaside(
+    lookaside: Callable, args: tuple[Any, ...]
+) -> Callable | None | Literal[JIT_SIGNALS.EXCEPTION_RAISED]:
+    # Calls for `random` function will always have the global object or
+    # user's `random.Random` object passed as first argument
+    # (except for something like `random.Random.__init__` which is ok)
+    if len(args) == 0:
+        return None
+
+    # These methods are resolved to method of parent `_random.Random` class
+    SPECIAL_METHODS = ["getrandbits", "random"]
+
+    # grab the bound object for the passed method.
+    bound_obj = args[0]
+    # if we can match the bound object to be the global object
+    # then any calls to it's method is a sharp edge.
+    # NOTE: Use `is` for checking the global object, if we use `==` and bound_obj is a Proxy
+    #       then we take a path where `random.Random` global object shouldn't
+    #       show up and it errors with found `random.Random` but expected
+    #       `TensorProxy` or `NumberProxy`.
+    if bound_obj is _RANDOM_MODULE_DETAILS["random_global_obj"]:
+        # Sanity assertion.
+        if not (lookaside in _RANDOM_MODULE_DETAILS["random_functions"] or lookaside.__name__ in SPECIAL_METHODS):
+            return do_raise(AssertionError(f"Found an unexpected function {lookaside} in random."))
+        return _lookaside_sharp_edge(lookaside, lookaside_name=f"random.{lookaside.__qualname__}")
+
+
 def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
@@ -261,6 +335,8 @@ def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
         lookaside = fn
     elif (minimal_lookaside := _minimal_lookaside_map.get(fn, None)) is not None:
         lookaside = minimal_lookaside
+    elif (random_lookaside := _random_module_lookaside(fn, args)) is not None:
+        lookaside = random_lookaside
     else:
         # Falls through to the interpreter's default lookaside
         lookaside = default_lookaside(fn, *args, **kwargs)
