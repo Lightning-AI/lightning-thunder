@@ -2612,7 +2612,6 @@ def test_calling_open_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2182")
 def test_calling_print_sharp_edge():
     def foo(a):
         print(a)

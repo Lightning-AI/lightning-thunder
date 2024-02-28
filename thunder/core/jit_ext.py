@@ -244,6 +244,7 @@ _minimal_lookaside_map = {
     locals: _lookaside_sharp_edge(locals, "locals"),
     vars: _lookaside_sharp_edge(vars, "vars"),
     input: _lookaside_sharp_edge(input, "input"),
+    print: _lookaside_sharp_edge(print, "print"),
     getattr: _getattr_lookaside_sharp_edge,
     open: _lookaside_sharp_edge(open, "open"),
 }
