@@ -593,6 +593,10 @@ def ddp_runner(args):
     benchmark.device = f"cuda:{rank}"
     torch.cuda.set_device(rank)
 
+    import os
+
+    os.environ["LOCAL_RANK"] = str(rank)
+
     stats = _run_benchmark(benchmark, ddp_constructor(rank), warmup_iters=warmup_iters, benchmark_iters=benchmark_iters)
     return rank, stats
 
