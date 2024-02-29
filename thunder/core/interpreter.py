@@ -881,6 +881,7 @@ class PseudoInst(str, enum.Enum):
     CONTAINS_OP = "CONTAINS_OP"
     SUPER = "SUPER"
     BUILTINS = "BUILTINS"
+    STORE_SUBSCR = "STORE_SUBSCR"
 
 
 @dataclasses.dataclass
@@ -916,6 +917,8 @@ class ProvenanceRecord:
             if self.inst == PseudoInst.CONSTANT:
                 if isinstance(self.value, (int, str, bool, NoneType)):
                     return repr(self.value)
+                elif isinstance(self.value, type):
+                    return self.value.__name__
                 else:
                     s = repr(self.value)
                     if len(s) < 80 and "\n" not in s:
@@ -1528,6 +1531,15 @@ def check_self(obj, potential_method):
                 populate_attribute_wrapper(potential_method, "__self__", superself)
 
 
+def plausibly_wrapper_of(wrapper, value):
+    if wrapper.value is value or wrapper.original_value is value:
+        return True
+    if callable(value) or True:
+        if wrapper.value == value or wrapper.original_value == value:
+            return True
+    return False
+
+
 def wrap_attribute(plain_result, obj, name):
     compilectx: JitCompileCtx = get_jitcompilectx()
     if not compilectx._with_provenance_tracking:
@@ -1537,12 +1549,9 @@ def wrap_attribute(plain_result, obj, name):
     # note: there are cases where "is" will always fail (e.g. BuiltinMethods
     #       are recreated every time)
     if known_wrapper is not None:
-        assert (
-            known_wrapper.value is plain_result
-            or known_wrapper.original_value is plain_result
-            or known_wrapper.value == plain_result
-            or known_wrapper.original_value == plain_result
-        ), f"attribute {name.value} out of sync: {known_wrapper.value} vs. {plain_result}"
+        assert plausibly_wrapper_of(
+            known_wrapper, plain_result
+        ), f"attribute {name.value} of {type(obj.value).__name__} object out of sync: {known_wrapper.value} vs. {plain_result}"
         return known_wrapper
 
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
@@ -1560,10 +1569,10 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
     uname = unwrap(name)
     uvalue = unwrap(value)
     compilectx: JitCompileCtx = get_jitcompilectx()
-    try:
-        setattr(uobj, uname, uvalue)
-    except Exception as e:
-        return do_raise(e)
+
+    res = _jit_no_unwrap(lambda o, n, v: o.__setattr__(n, v), obj, name, value)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
 
     if compilectx._with_provenance_tracking:
         obj.attribute_wrappers[uname] = value
@@ -2554,7 +2563,25 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
     return res
 
 
+def _cell_new_provenance_tracking_lookaside(typ, *contents):
+    assert typ.value is CellType
+    if contents:
+        (contents,) = contents
+        ucell = CellType(contents.value)
+        pr = ProvenanceRecord(
+            PseudoInst.OPAQUE, inputs=[wrap_const(CellType).provenance, typ.provenance, contents.provenance]
+        )
+        cell = wrap(ucell, provenance=pr)
+        populate_attribute_wrapper(cell, "cell_contents", contents)
+    else:
+        ucell = CellType()
+        pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(CellType).provenance, typ.provenance])
+        cell = wrap(ucell, provenance=pr)
+    return cell
+
+
 _default_provenance_tracking_lookaside_map = {
+    CellType.__new__: _cell_new_provenance_tracking_lookaside,
     tuple.__new__: _tuple_new_provenance_tracking_lookaside,
     MappingKeysView.__iter__: MappingKeysView.__iter__,
     MappingKeysView.__reversed__: MappingKeysView.__reversed__,
@@ -3884,15 +3911,29 @@ def _import_name_handler(
     # but that isn't available if we use impl, so we resolve it here.
     if level > 0:  # relative import
         # cannot do this in impl easily, but error handling?
-        current_name = _jit_no_unwrap(lambda d, k: d[k], frame.globals, wrap_const("__name__"))
+        # TODO: model this more after resove_name in CPython's Python/import.c
+        def get_current_name(globals):
+            package = globals.get("__package__")
+            if package is None:
+                spec = globals.get("__spec__")
+                if spec is not None:
+                    package = spec.parent
+            if package is None:
+                package = globals["__name__"]
+            return package
+
+        current_name = _jit_no_unwrap(get_current_name, frame.globals)
         if current_name is JIT_SIGNALS.EXCEPTION_RAISED:
             return do_raise(KeyError("'__name__' not in globals"))
         current_name = unwrap(current_name)
-        module_parts = current_name.split(".")[:-level]
+        name_parts = current_name.split(".")
+        module_parts = name_parts[: len(name_parts) - level + 1]
         if module_name:  # from . import foo will have '' as module_name
             module_parts.append(module_name)
         module_name = ".".join(module_parts)
         level = 0
+    else:
+        current_name = "n/a"
 
     def impl(module_name, fromlist, level):
         module = __import__(module_name, fromlist=fromlist, level=level)

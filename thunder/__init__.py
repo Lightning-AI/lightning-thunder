@@ -754,10 +754,13 @@ def jit(
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for pro, pro_traces, comp, comp_traces in reversed(cs.interpreter_cache):
+            for pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces in reversed(cs.interpreter_cache):
                 try:
                     cs.last_prologue_execution_start = time.time_ns()
-                    inps = pro(*args, **kwargs)
+                    if epilogue:
+                        inps, pro_to_epi = pro(*args, **kwargs)
+                    else:
+                        inps = pro(*args, **kwargs)
                     cs.last_prologue_execution_stop = time.time_ns()
                 except Exception as ex:
                     continue
@@ -766,7 +769,12 @@ def jit(
                 cs.last_trace_host_tracing_stop = time.time_ns()
 
                 cs.last_trace_host_execution_start = time.time_ns()
-                result = comp(*inps)
+                if epilogue:
+                    result, comp_to_epi = comp(*inps)
+                    epilogue(*pro_to_epi, *comp_to_epi)
+                else:
+                    result = comp(*inps)
+
                 cs.last_trace_host_execution_stop = time.time_ns()
                 cs.last_prologue_execution_start = cs.last_trace_host_execution_start
                 cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
@@ -790,17 +798,24 @@ def jit(
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
-                pro, pro_traces, comp, comp_traces = cs.interpreter_cache[0]
+                pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces = cs.interpreter_cache[0]
 
                 cs.last_prologue_execution_start = time.time_ns()
-                inps = pro(*args, **kwargs)
+                if epilogue:
+                    inps, pro_to_epi = pro(*args, **kwargs)
+                else:
+                    inps = pro(*args, **kwargs)
                 cs.last_prologue_execution_stop = time.time_ns()
 
                 cs.last_trace_host_tracing_start = time.time_ns()
                 cs.last_trace_host_tracing_stop = time.time_ns()
 
                 cs.last_trace_host_execution_start = time.time_ns()
-                result = comp(*inps)
+                if epilogue:
+                    result, comp_to_epi = comps(*inps)
+                    epilogue(*pro_to_epi, *comp_to_epi)
+                else:
+                    result = comp(*inps)
                 cs.last_trace_host_execution_stop = time.time_ns()
                 cs.last_prologue_execution_start = cs.last_trace_host_execution_start
                 cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
@@ -831,7 +846,16 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                prologue_trc, computation_trc = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
+                prologue_trc, computation_trc, *maybe_epilogue = interpreter(
+                    fn, args, kwargs, sharp_edges=cd.sharp_edges
+                )
+
+            if maybe_epilogue:
+                epilogue_traces = maybe_epilogue
+                epilogue = epilogue_traces[-1].python_callable()
+            else:
+                epilogue_traces = None
+                epilogue = None
 
             cs.last_trace_tracing_stop = time.time_ns()
 
@@ -844,10 +868,14 @@ def jit(
             )
             protrace = protraces[-1]
             pro = protrace.python_callable()
+
             cs.last_prologue_transformation_stop = time.time_ns()
 
             cs.last_prologue_execution_start = time.time_ns()
-            prologue_outputs = pro(*args, **kwargs)
+            if epilogue:
+                prologue_outputs, pro_to_epi = pro(*args, **kwargs)
+            else:
+                prologue_outputs = pro(*args, **kwargs)
             cs.last_prologue_execution_stop = time.time_ns()
 
             if is_autocast_enabled:
@@ -869,7 +897,12 @@ def jit(
                     # functions in torch's Autograd
                     cs.last_trace_host_execution_start = time.time_ns()
                     comp = thunder_backward(compile_data=cd, compile_stats=cs)(computation_trc.python_callable())
-                    computation_result = comp(*prologue_outputs)
+                    if epilogue:
+                        computation_result, comp_to_epi = comp(*prologue_outputs)
+                        epilogue(*pro_to_epi, *comp_to_epi)
+                    else:
+                        computation_result = comp(*prologue_outputs)
+
                     cs.last_trace_host_execution_stop = time.time_ns()
                     cs.last_executed = comp
                     extraces = []  # todo
@@ -888,14 +921,18 @@ def jit(
                 # Executes the traced program
                 cs.last_trace_host_execution_start = time.time_ns()
 
-                computation_result = comp(*prologue_outputs)
+                if epilogue:
+                    computation_result, comp_to_epi = comp(*prologue_outputs)
+                    epilogue(*pro_to_epi, *comp_to_epi)
+                else:
+                    computation_result = comp(*prologue_outputs)
                 cs.last_trace_host_execution_stop = time.time_ns()
                 cs.last_computation_execution_start = cs.last_trace_host_execution_start
                 cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
             # TODO GTC Update the cache
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-                cs.interpreter_cache.append((pro, protraces, comp, extraces))
+                cs.interpreter_cache.append((pro, protraces, comp, extraces, epilogue, epilogue_traces))
 
             # Updates statistics
             cs.last_traces = [computation_trc] + extraces

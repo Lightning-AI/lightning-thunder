@@ -119,6 +119,7 @@ class PrimIDs(Enum):
     UNPACK_LIST = auto()
     UNPACK_DICT_KEY = auto()
     CONSTRUCT_TUPLE = auto()
+    PACK_SETITEM = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -912,6 +913,47 @@ unpack_attr = make_prim(
     meta=unpack_attr_meta,
     python_printer=unpack_attr_printer,
     python_impl=unpack_attr_impl,
+)
+
+
+# NOTE PACK_SETITEM is intended only to be bound to directly, and not called
+def pack_setitem_meta(o: Any, key: Any, value: Any) -> Any:
+    raise NotImplementedError
+
+
+def pack_setitem_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 3,
+        lambda: f"Expected three arguments for pack_setitem but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_setitem but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    obj, key, value = arg_printables
+    obj_str = codeutils.prettyprint(obj)
+    key_str = codeutils.prettyprint(key)
+    value_str = codeutils.prettyprint(value)
+    return f"{obj_str}[{key_str}] = {value_str}"
+
+
+def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
+    o[key] = value
+    return None
+
+
+pack_setitem = make_prim(
+    PrimIDs.PACK_SETITEM,
+    "unpack_setitem",
+    meta=pack_setitem_meta,
+    python_printer=pack_setitem_printer,
+    python_impl=pack_setitem_impl,
 )
 
 

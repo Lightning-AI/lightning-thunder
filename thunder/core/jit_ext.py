@@ -1,6 +1,7 @@
 import thunder
 from typing import Any, Optional, Dict, Tuple, Literal
 import builtins
+import collections
 from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
@@ -42,6 +43,7 @@ from types import (
     FunctionType,
     MethodType,
     GetSetDescriptorType,
+    UnionType,
 )
 
 import torch
@@ -462,6 +464,7 @@ class GeneralJitCtx(MinimalCtx):
         self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
         self._process_group_for_ddp = process_group_for_ddp
+        self._additional_outputs = collections.defaultdict(list)
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -549,16 +552,60 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return value
 
 
-# @general_jit_lookaside(setattr)
-# def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
-#     setattr_lookaside = default_lookaside(setattr)
-#     assert setattr_lookaside is not None
-#     if isinstance(value.value, Proxy):
-#         return wrap_const(None)
-#     res = setattr_lookaside(obj, name, value)
-#     if res is JIT_SIGNALS.EXCEPTION_RAISED:
-#         return res
-#     return res
+@general_jit_lookaside(isinstance)
+def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[type | UnionType]):
+    uobj = unwrap(obj)
+    ucls = unwrap(cls)
+    if isinstance(uobj, TensorProxy):
+        res = issubclass(torch.Tensor, ucls)
+    else:
+        res = isinstance(uobj, ucls)
+
+    pr = ProvenanceRecord(
+        PseudoInst.LOOKASIDE, inputs=[wrap_const(isinstance).provenance, obj.provenance, cls.provenance]
+    )
+    return wrap(res, provenance=pr)
+
+
+@general_jit_lookaside(collections.OrderedDict.__setitem__)
+def _general_jit_dict_setitem(d, key, value):
+    dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
+    assert dict_setitem_lookaside is not None
+
+    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        if d.original_value is d.nothing:
+            proxy_d = d.value.copy()
+            d.register_proxy(proxy_d)
+            for an, av in d.attribute_wrappers.items():
+                if callable(av.value):
+                    av.register_proxy(getattr(proxy_d, an))
+                else:
+                    raise NotImplementedError(f"Proxying dict with attribute {an} of type {type(av.value).__name__}")
+        ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
+
+    return dict_setitem_lookaside(d, key, value)
+
+
+@general_jit_lookaside(setattr)
+def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
+    setattr_lookaside = default_lookaside(setattr)
+    assert setattr_lookaside is not None
+
+    uobj = unwrap(obj)
+    uname = unwrap(name)
+    if isinstance(uobj, torch.nn.Module):
+        # 1) modify the inner thing
+        # 2) divert the actual setattr...
+        for n in ("_parameters", "_modules", "_buffers"):
+            member_dict = _jit_no_unwrap(getattr, obj, wrap_const(n))
+            member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
+
+    # check if it is an "outside value"?
+    res = setattr_lookaside(obj, name, value)
+    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        return res
+    return res
 
 
 # TODO Expand on this
@@ -748,6 +795,7 @@ _safe_provenance_inst = {
 
 EXT_FLAG_IS_PROXY_DERIVED = 1
 EXT_FLAG_IS_TENSOR_PROXY = 2
+EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
 
 
 def should_register_for_prologue(pr):
@@ -847,20 +895,24 @@ general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 
 
-def get_computation_inputs(computation_trace):
+def get_computation_inputs_and_intermediates(computation_trace):
     inputs_list = []
     inputs_set = set()
+    intermediates_set = set()
+
     for bsym in computation_trace.bound_symbols:
         v: Variable
         for v in bsym.flat_variableified_proxy_args:
-            if v.proxy.history is not None:
-                if v not in inputs_set:
-                    inputs_list.append(v)
-                    inputs_set.add(v)
-    return inputs_list
+            if v not in inputs_set and v not in intermediates_set:
+                inputs_list.append(v)
+                inputs_set.add(v)
+        for v in bsym.flat_variableified_proxy_outs:
+            intermediates_set.add(v)
+
+    return inputs_list, intermediates_set
 
 
-def unpack_inputs(ctx, prologue_trace, inputs):
+def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps):
     already_unpacked: dict[int, Proxy] = {}
 
     # Unpacks the inputs in the prologue trace
@@ -992,7 +1044,10 @@ def unpack_inputs(ctx, prologue_trace, inputs):
 
         assert isinstance(p.history, ProvenanceRecord), p.history
         with tracectx(prologue_trace):
-            from_provenance(p.history)
+            try:
+                from_provenance(p.history)
+            except Exception as e:
+                raise NotImplementedError(f"Exception occured unpacking object from {p.history}") from e
 
         already_unpacked[id(p)] = p
 
@@ -1005,10 +1060,8 @@ def unpack_inputs(ctx, prologue_trace, inputs):
 
         return p
 
-    prologue_outputs = []
-    for v in inputs:
-        prologue_outputs.append(unpack(v))
-    prologue_outputs = tuple(prologue_outputs)
+    pro_to_epi = tuple(unpack(v) for v in pro_to_epi_inps)
+    pro_to_comp = tuple(unpack(v) for v in pro_to_comp_inps)
 
     with tracectx(prologue_trace):
         for prim, *args in ctx._constraints:
@@ -1035,9 +1088,57 @@ def unpack_inputs(ctx, prologue_trace, inputs):
                 else:
                     raise NotImplementedError(f"cache info of type {type(v).__name__}")
 
-        prims.python_return(prologue_outputs)
+        prims.python_return((pro_to_comp, pro_to_epi))
 
-    return prologue_outputs
+    return pro_to_comp, pro_to_epi
+
+
+def process_recorded_modifications(ctx, epilogue_trace):
+    for modified_object, modifications in ctx._additional_outputs.items():
+        umodified_object = modified_object.value
+        ## we want this to created in the compute trace context for namespace...
+        modified_object_proxy = Proxy(history=modified_object.provenance)
+        epilogue_trace.add_name(modified_object_proxy.name)
+
+        if isinstance(umodified_object, dict):
+            last_modification = {}
+            for inst, *args in modifications:
+                if inst == PseudoInst.STORE_SUBSCR:
+                    _, key, value = args
+                    # should we warn if we have multiple assignments?
+                    last_modification[key.value] = (inst, value)
+                else:
+                    raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
+            for k, (inst, *args) in last_modification.items():
+                if inst == PseudoInst.STORE_SUBSCR:
+                    (value,) = args
+                    assert isinstance(value.value, Proxy)
+
+                    with tracectx(epilogue_trace):
+                        bsym = prims.pack_setitem.bind(modified_object_proxy, k, value.value, output=None)
+                        epilogue_trace.bound_symbols.append(bsym)
+                else:
+                    raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
+        else:
+            raise NotImplementedError(f"Modifications of {type(uvalue).__name__} objects are not supported")
+
+
+def bind_inputs(name, trace, input_vars, input_proxies):
+    # Unpacks inputs into the computation trace
+    # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
+    #   almost certainly a more elegant way to do this
+    with tracectx(trace):
+        p: Proxy
+        for p in input_proxies:
+            prims.unpack_trivial(p)
+
+    bsyms = trace.bound_symbols
+    trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]
+
+    si = SigInfo(name)
+    si.args = [(v.proxy.name, None) for v in input_vars]
+    trace._siginfo = si
+    trace.args = input_proxies
 
 
 def thunder_general_jit(
@@ -1055,6 +1156,7 @@ def thunder_general_jit(
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
+    epilogue_trace: TraceCtx = TraceCtx()
 
     si = SigInfo("prologue")
     si.varargs = ("args", None)
@@ -1077,28 +1179,39 @@ def thunder_general_jit(
         try:
             tok = set_minimal_ctx(ctx)
             result = jfn(*args, **kwargs)
+            prims.python_return(result)
+            process_recorded_modifications(ctx, epilogue_trace)
         finally:
             reset_minimal_ctx(tok)
 
-        prims.python_return(result)
+    pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
-    computation_inputs = get_computation_inputs(computation_trace)
-    prologue_outputs = unpack_inputs(ctx, prologue_trace, computation_inputs)
+    epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
-    # Unpacks inputs into the computation trace
-    # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
-    #   almost certainly a more elegant way to do this
+    comp_to_epi = []
+    pro_to_epi = []
+
+    for i in epilogue_inputs:
+        if i in computation_intermediates:
+            comp_to_epi.append(i)
+        else:
+            pro_to_epi.append(i)
+    comp_to_epi = tuple(comp_to_epi)
+    comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
+    pro_to_epi = tuple(pro_to_epi)
+
     with tracectx(computation_trace):
-        p: Proxy
-        for p in prologue_outputs:
-            prims.unpack_trivial(p)
+        last = computation_trace.bound_symbols.pop(-1)
+        assert last.sym.id == prims.PrimIDs.RETURN
+        prims.python_return((result, comp_to_epi_proxies))
 
-    bsyms = computation_trace.bound_symbols
-    computation_trace.bound_symbols = bsyms[-len(prologue_outputs) :] + bsyms[: -len(prologue_outputs)]
+    with tracectx(epilogue_trace):
+        prims.python_return(None)
 
-    si = SigInfo("computation")
-    si.args = [(v.proxy.name, None) for v in computation_inputs]
-    computation_trace._siginfo = si
-    computation_trace.args = prologue_outputs
+    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi)
 
-    return prologue_trace, computation_trace
+    bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
+    bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+
+    print(computation_trace)
+    return prologue_trace, computation_trace, epilogue_trace

@@ -228,7 +228,7 @@ def test_cache_always_trace():
     assert thunder.cache_hits(jfoo) == 0
 
 
-def test_cache_equality_contraint():
+def test_cache_equality_constraint():
     x, y = torch.randn(2, 2)
 
     def fn(b):
@@ -566,7 +566,6 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.skip()
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -587,6 +586,8 @@ def test_litgpt_variants(name, device):
     ("cpu", "cuda"),
 )
 def test_litgpt_variants_kvcache(name, device):
+    import torch._dynamo  # this monkeypatches torch.manual_seed
+
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
@@ -597,6 +598,9 @@ def test_litgpt_variants_kvcache(name, device):
     with device:
         model = lit_gpt_model.GPT(config)
         model.max_seq_length = 3
+
+    for p in model.parameters():
+        p.requires_grad_(False)
 
     executors = nvfuserex if device.type == "cuda" else torchex
     executors = [sdpa_ex] + executors
