@@ -386,26 +386,25 @@ def find_cut(
     return tuple(sorted(cut_nodes))
 
 
-def rematerialize_all_gather(trace: TraceCtx, N: int) -> TraceCtx:
-    """Insert a new allgather+wait for the first consumer whose index is greater than or equal to the length N.
-    Note N should be the length of the forward trace"""
-    utils.check(
-        N >= 0,
-        "N must be greater than or equal to 0",
-    )
+def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
+    """Insert new allgather+wait for backward trace and update the return statement for forward trace"""
+
     from thunder.core.proxies import FutureTensorProxy
     from thunder.core.trace import reset_tracectx, set_tracectx
     from thunder.distributed.prims import PrimIDs as distPrimIDs
     from thunder.executors.torchex import all_gather_prim_impl, wait_prim_impl
 
-    new_trace = from_trace(trace)
-    consumers = utils.consumers(trace)
+    new_bw_trace = from_trace(bw_trace)
+    consumers = utils.consumers(fw_trace)
 
     # Find all waits that consume all_gather outputs
-    all_gathers = tuple(x for x in trace.bound_symbols if x.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id})
-    all_gather_outputs = tuple(chain.from_iterable((y for y in x.flat_outs) for x in all_gathers))
+    all_gathers = tuple(
+        x for x in fw_trace.bound_symbols if x.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id}
+    )
+    all_gather_outputs = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in all_gathers))
     waits = tuple(consumers[o][0] for o in all_gather_outputs)
-    wait_outputs = tuple(chain.from_iterable((y for y in x.flat_outs) for x in waits))
+    assert all(x.sym.id in (distPrimIDs.WAIT, wait_prim_impl.id) for x in waits)
+    wait_outputs = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in waits))
 
     visited_wait_output = set()
     # map the output of the original waitop to the output of the new waitop
@@ -418,29 +417,28 @@ def rematerialize_all_gather(trace: TraceCtx, N: int) -> TraceCtx:
         wait_output_to_wait[v] = w
 
     try:
-        token = set_tracectx(new_trace)
+        token = set_tracectx(new_bw_trace)
         new_symbols = []
-        new_trace.bound_symbols = new_symbols
-        for idx, bsym in enumerate(trace.bound_symbols):
-            if idx == N:
-                visited_wait_output.clear()
+        new_bw_trace.bound_symbols = new_symbols
+        for bsym in bw_trace.bound_symbols:
             if bsym.sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id}:
                 continue
             if bsym.sym.id in {distPrimIDs.WAIT, wait_prim_impl.id} and bsym in waits:
                 continue
             # update the unpack operators in the joint_fn trace
-            if bsym.sym.id in {PrimIDs.UNPACK_SEQUENCE, PrimIDs.UNPACK_TRIVIAL}:
-                bsym = bsym.from_bsym_swap_proxies(wait_output_replacement_map, skip_subsymbols=True)
+            if bsym.sym.id in {
+                PrimIDs.UNPACK_TRIVIAL,
+                PrimIDs.UNPACK_SEQUENCE,
+                PrimIDs.UNPACK_EMPTY_DICT,
+                PrimIDs.UNPACK_KEY,
+            }:
                 new_symbols.append(bsym)
                 continue
 
-            used_wait_outputs = tuple(
-                x for x in bsym.flat_args if isinstance(x, ProxyInterface) and x in wait_output_to_wait
-            )
+            used_wait_outputs = tuple(x for x in bsym.flat_proxy_args if x in wait_output_to_wait)
             if used_wait_outputs:
                 for used_wait_output in used_wait_outputs:
-                    # Skip inserting all_gather+wait if it's not the first consumer in the first half of length=N
-                    # or the remainder
+                    # Skip inserting all_gather+wait if it's not the first consumer of the wait op
                     if used_wait_output.name in visited_wait_output:
                         continue
                     visited_wait_output.add(used_wait_output.name)
@@ -463,7 +461,43 @@ def rematerialize_all_gather(trace: TraceCtx, N: int) -> TraceCtx:
     finally:
         reset_tracectx(token)
 
-    return new_trace
+    new_bw_bsyms = list(
+        bsym
+        for bsym in new_bw_trace.bound_symbols
+        if bsym.sym.id
+        not in (
+            PrimIDs.UNPACK_TRIVIAL,
+            PrimIDs.UNPACK_SEQUENCE,
+            PrimIDs.UNPACK_EMPTY_DICT,
+            PrimIDs.UNPACK_KEY,
+            PrimIDs.RETURN,
+        )
+    )
+    all_args = tuple(
+        chain.from_iterable((x for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_bw_bsyms)
+    )
+    producers = utils.producers(new_bw_bsyms)
+    new_required_for_backward = tuple(
+        a
+        for a in all_args
+        if producers.get(a, None) is None
+        and a.name not in (y.name for y in tree_flatten(bw_trace.args[1])[0] if isinstance(y, ProxyInterface))
+    )
+    new_required_for_backward = tuple(
+        sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)
+    )  # Removes duplicates and sorts by name
+    # Now construct the updated backward and forward traces
+    from thunder.core.transforms import (
+        _update_backward_with_new_saved_for_backward,
+        _update_forward_with_new_saved_for_backward,
+    )
+
+    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
+
+    new_fw_trace = from_trace(fw_trace)
+    new_fw_trace.bound_symbols = list(fw_trace.bound_symbols)
+    _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
+    return new_fw_trace, new_bw_trace
 
 
 def rematerialize(trace: TraceCtx) -> TraceCtx:
@@ -530,15 +564,12 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     return rematerialized_trace
 
 
-def rematerialize_forward_and_backward(
-    fw_trace: TraceCtx, bw_trace: TraceCtx, rematerialize_params_in_backward: bool = False
-) -> tuple[TraceCtx, TraceCtx]:
+def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
     """Apply rematerialization optimization to the forward and backward traces.
 
     Args:
         fw_trace (TraceCtx): Forward trace.
         bw_trace (TraceCtx): Backward trace.
-        rematerialize_params_in_backward (bool): used for FSDP, indicates whether to insert all_gathers for parameters at the start of the backward trace
 
     Returns:
         tuple[TraceCtx, TraceCtx]: Rematerialized forward and backward traces.
@@ -564,9 +595,6 @@ def rematerialize_forward_and_backward(
         replace(fw_trace.bound_symbols[-1], args=(fw_trace.bound_symbols[-1].args[0], bw_trace.bound_symbols[-1].args))
     )
     joint_extrace = rematerialize(joint_extrace)
-
-    if rematerialize_params_in_backward:
-        joint_extrace = rematerialize_all_gather(joint_extrace, len(fw_trace.bound_symbols) - 1)
 
     # We need to update "save_for_backward" sequence
     new_bw_bsyms = joint_extrace.bound_symbols[len(fw_trace.bound_symbols) :]

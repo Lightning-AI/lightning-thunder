@@ -23,7 +23,7 @@ class ThunderFunction(torch.autograd.Function):
         from thunder import trace
         from thunder.executors.passes import transform_for_execution
         from thunder.executors.passes import del_last_used
-        from thunder.core.rematerialization import rematerialize_forward_and_backward
+        from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
         from thunder.core.transforms import forward_and_backward_from_trace
         from thunder.cudagraphs import CUDAGraphExecutor
         from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
@@ -62,6 +62,16 @@ class ThunderFunction(torch.autograd.Function):
             fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
             fw_traces = [fw_trace]
             bw_traces = [bw_trace]
+
+            from thunder.distributed import FSDPType
+
+            # only enable rematerialize_params_in_backward when using FSDP ZeRO3
+            _rematerialize_params_in_backward = (
+                getattr(compile_data.fn, "use_fsdp", False)
+                and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
+            )
+            if _rematerialize_params_in_backward:
+                fw_trace, bw_trace = rematerialize_all_gather(fw_trace, bw_trace)
 
             # Update the backward trace to only compute gradients for the
             # inputs that require gradients
@@ -113,7 +123,6 @@ class ThunderFunction(torch.autograd.Function):
                 skip_subsymbols=False,
             )
             bw_trace.bound_symbols = new_bsyms
-
             if getattr(compile_data.fn, "use_ddp", False):
                 from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
 
@@ -129,16 +138,7 @@ class ThunderFunction(torch.autograd.Function):
             )
             bw_traces.append(bw_extrace)
 
-            from thunder.distributed import FSDPType
-
-            # only enable rematerialize_params_in_backward when using FSDP ZeRO3
-            _rematerialize_params_in_backward = (
-                getattr(compile_data.fn, "use_fsdp", False)
-                and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
-            )
-            fw_extrace, bw_extrace = rematerialize_forward_and_backward(
-                fw_extrace, bw_extrace, _rematerialize_params_in_backward
-            )
+            fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
             fw_traces.append(fw_extrace)
             bw_traces.append(bw_extrace)
 

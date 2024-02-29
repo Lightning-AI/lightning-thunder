@@ -96,7 +96,7 @@ def sort_waits_for_zero3(execution_trace):
                     # Prefer nodes that are earlier in the trace
                     return order_in_trace[node.bsym]
 
-        return min(range(len(eligible_nodes)), key=lambda i: key(eligible_nodes[i]))
+        return max(range(len(eligible_nodes)), key=lambda i: key(eligible_nodes[i]))
 
     new_execution_trace = from_trace(execution_trace)
 
@@ -106,8 +106,8 @@ def sort_waits_for_zero3(execution_trace):
         lambda: "Cannot sort execution trace with del nodes",
     )
     new_execution_trace.bound_symbols = toposort_bsym_dag(
-        bsym_list_to_dag(execution_trace.bound_symbols)[0],
-        TOPOSORT_ORDER.TOP_DOWN,
+        bsym_list_to_dag(execution_trace.bound_symbols)[1],
+        TOPOSORT_ORDER.BOTTOM_UP,
         selector=prefer_comm_over_other_over_wait_over_allgather,
     )
     return new_execution_trace
