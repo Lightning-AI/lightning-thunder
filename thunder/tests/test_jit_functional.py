@@ -33,7 +33,7 @@ def test_basic_kwargs():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a=a, b=b)
     expected = foo(a, b)
 
@@ -47,7 +47,7 @@ def test_tuple_kwargs():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a=a, b=(a, b))
     expected = foo(a, (a, b))
 
@@ -61,7 +61,7 @@ def test_kwargs_inorder():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(b=b, a=a)
     expected = foo(a, b)
 
@@ -75,7 +75,7 @@ def test_kwonly_args():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a=a, b=b)
     expected = foo(a=a, b=b)
 
@@ -90,7 +90,7 @@ def test_posonly_and_kwonly_args():
     b = torch.randn((2, 2))
     c = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b=b, c=c)
     expected = foo(a, b, c=c)
 
@@ -105,7 +105,7 @@ def test_varargs():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -126,7 +126,7 @@ def test_positional_args_and_varargs():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b, *args)
     expected = foo(a, b, *args)
 
@@ -148,7 +148,7 @@ def test_positional_args_varargs_and_kwargs():
     b = torch.randn((2, 2))
     z = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b, *args, z=z)
     expected = foo(a, b, *args, z=z)
 
@@ -159,7 +159,7 @@ def test_varkwargs():
     def foo(**kwargs):
         return kwargs["a"] + kwargs["b"][0]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -174,7 +174,7 @@ def test_empty_varkwargs():
     def foo(**kwargs):
         return len(kwargs)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     actual = jfoo()
     expected = foo()
@@ -194,7 +194,7 @@ def test_args_varargs_kwargs_and_varkwargs():
 
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -214,7 +214,7 @@ def test_default_parameters():
     def foo(a, b=3):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     a = torch.randn((2, 2))
 
     actual = jfoo(a)
@@ -232,7 +232,7 @@ def test_default_parameters_tensor():
     def foo(a, b=torch.randn((2, 2))):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     a = torch.randn((2, 2))
 
     actual = jfoo(a)
@@ -258,7 +258,7 @@ def test_binary_add_tensors():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -285,7 +285,7 @@ def test_binary_ops_compare_numbers():
         d = {}
         exec(f"def foo(a, b): return a {op} b", d)
         foo = d["foo"]
-        jfoo = thunder.jit(foo)
+        jfoo = thunder.functional.jit(foo)
 
         for a, b in inps:
             assert jfoo(a, b) == foo(a, b)
@@ -306,10 +306,10 @@ def test_binary_ops_int_numbers():
         d = {}
         exec(f"def foo(a, b): return a {op} b", d)
         foo = d["foo"]
-        jfoo = thunder.jit(foo)
+        jfoo = thunder.functional.jit(foo)
         exec(f"def bar(a, b):\n a {op}= b\n return a", d)
         bar = d["bar"]
-        jbar = thunder.jit(bar)
+        jbar = thunder.functional.jit(bar)
 
         for a, b in int_inps:
             assert jfoo(a, b) == foo(a, b)
@@ -330,10 +330,10 @@ def test_binary_ops_bool_numbers():
         d = {}
         exec(f"def foo(a, b): return a {op} b", d)
         foo = d["foo"]
-        jfoo = thunder.jit(foo)
+        jfoo = thunder.functional.jit(foo)
         exec(f"def bar(a, b):\n a {op}= b\n return a", d)
         bar = d["bar"]
-        jbar = thunder.jit(bar)
+        jbar = thunder.functional.jit(bar)
         for a, b in bool_inps:
             if op not in {"//", "/", "%"} or b:  # could check exceptions for these
                 assert jfoo(a, b) == foo(a, b)
@@ -357,10 +357,10 @@ def test_binary_ops_float_numbers():
         d = {}
         exec(f"def foo(a, b): return a {op} b", d)
         foo = d["foo"]
-        jfoo = thunder.jit(foo)
+        jfoo = thunder.functional.jit(foo)
         exec(f"def bar(a, b):\n a {op}= b\n return a", d)
         bar = d["bar"]
-        jbar = thunder.jit(bar)
+        jbar = thunder.functional.jit(bar)
         for a, b in float_inps:
             assert jfoo(a, b) == foo(a, b)
             assert jbar(a, b) == bar(a, b)
@@ -379,10 +379,10 @@ def test_binary_ops_complex_numbers():
         d = {}
         exec(f"def foo(a, b): return a {op} b", d)
         foo = d["foo"]
-        jfoo = thunder.jit(foo)
+        jfoo = thunder.functional.jit(foo)
         exec(f"def bar(a, b):\n a {op}= b\n return a", d)
         bar = d["bar"]
-        jbar = thunder.jit(bar)
+        jbar = thunder.functional.jit(bar)
         for a, b in float_inps:
             assert jfoo(a, b) == foo(a, b)
             assert jbar(a, b) == bar(a, b)
@@ -395,7 +395,7 @@ def test_binary_add_tensor_number():
     a = torch.randn((2, 2))
     b = 3
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -413,7 +413,7 @@ def test_hasattr_on_proxies():
     a = torch.randn((2, 2))
     b = 3
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -427,7 +427,7 @@ def test_clang_add_tensors():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = a + b
 
@@ -441,7 +441,7 @@ def test_prim_add_tensors():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = a + b
 
@@ -458,7 +458,7 @@ def test_python_fn_binary_add_tensors():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -472,7 +472,7 @@ def test_torch_add_tensors():
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -488,7 +488,7 @@ def test_string_return():
     def foo(s):
         return s
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo("hi")
     expected = "hi"
 
@@ -499,7 +499,7 @@ def test_binary_add_strings():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo("he", "llo")
     expected = "hello"
 
@@ -515,7 +515,7 @@ def test_none_return():
     def foo(n):
         return n
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(None)
     expected = foo(None)
 
@@ -528,7 +528,7 @@ def test_none_condition():
             return a
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -549,7 +549,7 @@ def test_filtering_nones():
             accum = accum + x
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     seq = (0, 1, None, None, 2, 3, None, 4, 5, None)
 
@@ -567,7 +567,7 @@ def test_slice_input():
     def foo(lst, slc):
         return lst[slc], slc
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
     slc = slice(0, 2, 1)
@@ -587,7 +587,7 @@ def test_ellipsis_input():
     def foo(a, ell):
         return a[ell], ell
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
 
@@ -610,7 +610,7 @@ def test_torch_dtypes():
     def foo(a, dtyp):
         return a.to(dtyp)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     dtyp = torch.float64
@@ -629,7 +629,7 @@ def test_torch_device_input():
     def foo(a, dev):
         return a.to(dev)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     dev = torch.device("cpu")
@@ -649,7 +649,7 @@ def test_tuple_len():
     def foo(tup):
         return len(tup) + 5
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -663,7 +663,7 @@ def test_tuple_binary_subscr():
     def foo(tup):
         return tup[0], tup[1:3]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -677,7 +677,7 @@ def test_tuple_assignment():
     def foo(tup):
         tup[0] = 5
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -690,7 +690,7 @@ def test_tuple_unpack_repack():
         a, b, *_ = tup
         return a, (b, a)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -704,7 +704,7 @@ def test_tuple_list_conversion():
     def foo(tup):
         return list(tup)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -721,7 +721,7 @@ def test_tuple_enumerate():
             accum += x
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -735,7 +735,7 @@ def test_tuple_addition():
     def foo(tup0, tup1):
         return tup0 + tup1
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup0 = (0, 1, 2, 3, 4)
     tup1 = (5, 6, 7, 8, 9, 10)
@@ -750,7 +750,7 @@ def test_tuple_list_addition():
     def foo(tup):
         return tup + [5, 6, 7]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup = (0, 1, 2, 3, 4)
 
@@ -764,7 +764,7 @@ def test_nested_tuples():
         tup2, tup3 = tup0
         return tup1, tup3
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup3 = (3, 4)
     tup2 = (1, 2)
@@ -784,7 +784,7 @@ def test_nested_tuples_with_tensors():
         tup2, tup3 = tup0
         return tup1, tup3, tup2[0] + tup3[1]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
@@ -805,7 +805,7 @@ def test_tuple_equality():
     def foo(tup0, tup1):
         return tup0 == tup1
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup0 = (1, 3, 5)
     tup1 = (1, 3, 5)
@@ -826,7 +826,7 @@ def test_tuple_bool():
     def foo(tup):
         return bool(tup)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup0 = (1, 3, 5)
 
@@ -853,7 +853,7 @@ def test_torchsize():
     def foo(a, shape):
         return a.reshape(shape)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((4, 4))
     s = torch.Size((16, 1))
@@ -873,7 +873,7 @@ def test_list_len():
     def foo(lst):
         return len(lst) + 2
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -887,7 +887,7 @@ def test_list_binary_subscr():
     def foo(lst):
         return lst[0], lst[1:3]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -902,7 +902,7 @@ def test_list_unpack_repack():
         a, b, *_ = lst
         return [a, b]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -916,7 +916,7 @@ def test_list_tuple_conversion():
     def foo(lst):
         return tuple(lst)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -933,7 +933,7 @@ def test_list_enumerate():
             accum += x
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -947,7 +947,7 @@ def test_list_addition():
     def foo(lst0, lst1):
         return lst0 + lst1
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst0 = [0, 1, 2, 3, 4]
     lst1 = [5, 6, 7, 8, 9, 10]
@@ -962,7 +962,7 @@ def test_tuple_list_addition():
     def foo(lst, tup):
         return tup + lst
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [-1, -2, -3, -4, -5]
     tup = (0, 1, 2, 3, 4)
@@ -975,7 +975,7 @@ def test_list_basic_binary_subscr_assignment():
     def foo(lst):
         lst[0] = 5
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -987,7 +987,7 @@ def test_list_reverse():
     def foo(lst):
         return lst.reverse()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1001,7 +1001,7 @@ def test_list_contains():
     def foo(lst):
         return 3 in lst
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1015,7 +1015,7 @@ def test_list_slice_assignment():
     def foo(lst):
         lst[0:2] = [5, 1, 3]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1027,7 +1027,7 @@ def test_list_append():
     def foo(lst):
         lst.append(3)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1039,7 +1039,7 @@ def test_list_extend():
     def foo(lst):
         lst.extend([1, 2])
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1051,7 +1051,7 @@ def test_list_clear():
     def foo(lst):
         lst.clear()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1063,7 +1063,7 @@ def test_list_insert():
     def foo(lst):
         lst.insert(2, 6)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1075,7 +1075,7 @@ def test_list_pop():
     def foo(lst):
         return lst.pop()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1087,7 +1087,7 @@ def test_list_remove():
     def foo(lst):
         lst.remove(2)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst = [0, 1, 2, 3, 4]
 
@@ -1099,7 +1099,7 @@ def test_list_equality():
     def foo(lst0, lst1):
         return lst0 == lst1
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst0 = [1, 3, 5]
     lst1 = [1, 3, 5]
@@ -1120,7 +1120,7 @@ def test_list_bool():
     def foo(lst):
         return bool(lst)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst0 = [1, 3, 5]
 
@@ -1144,7 +1144,7 @@ def test_dict_getitem():
     def foo(d):
         return d["a"] + d[0]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1168,7 +1168,7 @@ def test_dict_contains():
     def foo(d):
         return 3 in d
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d = {3: 4, 5: 6}
 
@@ -1189,7 +1189,7 @@ def test_dict_del():
     def foo(d):
         del d["a"]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1204,7 +1204,7 @@ def test_dict_eq():
     def foo(d0, d1):
         return d0 == d1
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d0 = {0: 0, 1: 1}
     d1 = {0: 0, 1: 1}
@@ -1226,7 +1226,7 @@ def test_dict_bitwise_or():
     def foo(d0, d1):
         return d0 | d1
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d0 = {0: 0, 1: 1}
     d1 = {0: 0, 4: 5}
@@ -1241,7 +1241,7 @@ def test_dict_len():
     def foo(d):
         return len(d)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d = {0: 0, 1: 1}
 
@@ -1258,7 +1258,7 @@ def test_dict_iter():
             l.append(x)
         return l
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d = {0: 0, 1: 1, 5: 7, "x": "y", "hello": "goodbye", 9: [1, 2]}
 
@@ -1275,7 +1275,7 @@ def test_dict_reverse():
             l.append(x)
         return l
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d = {0: 0, 1: 1, 5: 7, "x": "y", "hello": "goodbye", 9: [1, 2]}
 
@@ -1289,7 +1289,7 @@ def test_dict_setitem():
     def foo(d):
         d[5] = 9
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1304,7 +1304,7 @@ def test_dict_clear():
     def foo(d):
         d.clear()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1319,7 +1319,7 @@ def test_dict_get():
     def foo(d):
         return d.get(0, 5), d.get(10, 9)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1339,7 +1339,7 @@ def test_dict_items():
             accum = accum + k + v
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1359,7 +1359,7 @@ def test_dict_keys():
             accum = accum + k
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1379,7 +1379,7 @@ def test_dict_values():
             accum = accum + v
         return accum
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1396,7 +1396,7 @@ def test_dict_pop():
     def foo(d):
         d.popitem()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1411,7 +1411,7 @@ def test_dict_setdefault():
     def foo(d):
         d.setdefault(5, 7)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1426,7 +1426,7 @@ def test_dict_update():
     def foo(d):
         d.update({1: 1})
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1439,7 +1439,7 @@ def test_dict_update():
     def foo(d):
         d |= {1: 1}
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     with pytest.raises(NotImplementedError):
         jfoo(d)
@@ -1449,7 +1449,7 @@ def test_dict_return():
     def foo(d):
         return d
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     d = {0: 1, 2: 3, 4: 5}
 
@@ -1480,7 +1480,7 @@ def test_nested_collections():
             1: {0: t0, 1: a},
         }
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1511,7 +1511,7 @@ def test_return_number():
     def foo():
         return 5
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo()
     actual = jfoo()
@@ -1523,7 +1523,7 @@ def test_return_object():
     def foo():
         return object()
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     with pytest.raises(RuntimeError):
         jfoo()
@@ -1533,7 +1533,7 @@ def test_return_object_in_collection():
     def foo():
         return [object()]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     with pytest.raises(RuntimeError):
         jfoo()
@@ -1543,7 +1543,7 @@ def test_return_tuple():
     def foo(a, b):
         return (a, b)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo(5, 3)
     actual = jfoo(5, 3)
@@ -1554,7 +1554,7 @@ def test_return_list():
     def foo(a, b):
         return [a, b]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo(5, 3)
     actual = jfoo(5, 3)
@@ -1567,7 +1567,7 @@ def test_return_list_with_intermediates():
         l.append(3)
         return l
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo(5, 3)
     actual = jfoo(5, 3)
@@ -1579,7 +1579,7 @@ def test_return_set():
     def foo(a, b):
         return {a, b}
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo(5, 3)
     actual = jfoo(5, 3)
@@ -1590,7 +1590,7 @@ def test_return_dict():
     def foo(a, b):
         return {1: a, 2: b}
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo(5, 3)
     actual = jfoo(5, 3)
@@ -1601,7 +1601,7 @@ def test_return_varargs():
     def foo(*args):
         return args
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     expected = foo(5, 3, 9, 9)
     actual = jfoo(5, 3, 9, 9)
@@ -1626,7 +1626,7 @@ def test_constant_values_caching():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1710,7 +1710,7 @@ def test_constant_values_caching_args_vs_kwargs():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1735,7 +1735,7 @@ def test_constant_values_cache_is_not_shared():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1748,7 +1748,7 @@ def test_constant_values_cache_is_not_shared():
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 0
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     actual = jfoo(a, b)
     expected = foo(a, b)
@@ -1763,7 +1763,7 @@ def test_constant_values_caching_with_tuples():
     def foo(tup0, tup1):
         return tup0[0] + tup1[1]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     tup0 = (0, 1)
     tup1 = (2, 3)
@@ -1820,7 +1820,7 @@ def test_constant_values_caching_with_lists():
     def foo(lst0, lst1):
         return lst0[0] + lst1[1]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     lst0 = (0, 1)
     lst1 = (2, 3)
@@ -1877,7 +1877,7 @@ def test_constant_values_caching_with_kwargs():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1908,7 +1908,7 @@ def test_constant_values_caching_with_none():
             return a * 2
         return a * b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -1944,7 +1944,7 @@ def test_constant_values_caching_with_torch_dtypes():
     def foo(a, dtyp):
         return a.to(dtyp)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     dtyp0 = torch.bfloat16
@@ -1978,7 +1978,7 @@ def test_constant_values_empty_tuples_and_lists_caching():
     def foo(seq):
         return seq
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     empty_tup = ()
 
@@ -2015,7 +2015,7 @@ def test_constant_values_empty_dict_caching():
     def foo(d):
         return len(d)
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     empty_dict = {}
 
@@ -2052,7 +2052,7 @@ def test_constant_values_dict_caching():
     def foo(d):
         return d["a"] + d["b"]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -2102,7 +2102,7 @@ def constant_values_varkwargs_caching():
     def foo(**kwargs):
         return kwargs["a"] + kwargs["b"]
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -2166,7 +2166,7 @@ def test_constant_values_caching_float_complex_equality():
     def foo(a):
         return a
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     a = complex(math.inf, 0)
 
@@ -2248,7 +2248,7 @@ def test_symbolic_value_warning():
         return
 
     with pytest.warns(UserWarning):
-        thunder.jit(foo, cache="symbolic values")
+        thunder.functional.jit(foo, cache="symbolic values")
 
 
 #
@@ -2258,7 +2258,7 @@ def test_symbolic_value_warning():
 
 def test_callable_class_failure():
     m = torch.nn.Linear(10, 10)
-    jfoo = thunder.jit(m)
+    jfoo = thunder.functional.jit(m)
     a = torch.randn((10, 10))
 
     with pytest.raises(NotImplementedError):
@@ -2278,7 +2278,7 @@ def test_partial_simple():
     b = torch.randn((2, 2))
 
     pfoo = partial(foo, b=b)
-    jfoo = thunder.jit(pfoo)
+    jfoo = thunder.functional.jit(pfoo)
 
     actual = jfoo(a)
     expected = pfoo(a)
@@ -2295,7 +2295,7 @@ def test_partial_partial_arg():
     c = torch.randn((2, 2))
 
     pfoo = partial(partial(foo, c=c), b=b)
-    jfoo = thunder.jit(pfoo)
+    jfoo = thunder.functional.jit(pfoo)
 
     actual = jfoo(a)
     expected = pfoo(a)
@@ -2313,7 +2313,7 @@ def test_partial_positional_arg():
     c = torch.randn((2, 2))
 
     pfoo = partial(foo, a, c=c)
-    jfoo = thunder.jit(pfoo)
+    jfoo = thunder.functional.jit(pfoo)
 
     actual = jfoo(b)
     expected = pfoo(b)
@@ -2330,12 +2330,12 @@ def test_jit_jit():
     def foo(a, b):
         return a + b
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
 
     def bar(a, b):
         return jfoo(a, b)
 
-    jbar = thunder.jit(bar)
+    jbar = thunder.functional.jit(bar)
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
@@ -2358,12 +2358,12 @@ def test_sharp_edges_pass():
     def foo(a, b):
         return torch.add(a, b)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     a = torch.randn((2, 2))
     b = torch.randn((2, 2))
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.functional.jit(foo)
     actual = jfoo(a, b)
     expected = foo(a, b)
 
@@ -2381,7 +2381,7 @@ def test_load_global_sharp_edge():
     def foo(a):
         return torch.add(a, _test_load_global_sharp_edge_global)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     a = torch.randn((2, 2))
 
@@ -2397,7 +2397,7 @@ def test_store_global_sharp_edge():
         global _test_store_global_sharp_edge_global
         _test_store_global_sharp_edge_global = 5
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2407,7 +2407,7 @@ def test_calling_globals_sharp_edge():
     def foo():
         g = globals()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2417,7 +2417,7 @@ def test_calling_vars_sharp_edge():
     def foo():
         g = vars()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2427,7 +2427,7 @@ def test_calling_locals_sharp_edge():
     def foo():
         l = locals()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2437,7 +2437,7 @@ def test_accessing_globals_through_function_sharp_edge():
     def foo():
         x = foo.__globals__
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2447,7 +2447,7 @@ def test_calling_input_sharp_edge():
     def foo():
         inp = input()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2460,7 +2460,7 @@ def test_input_closure_sharp_edge():
     def foo():
         return x
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2475,7 +2475,7 @@ def test_fn_closure_no_sharp_edge():
     def foo():
         return bar(5)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     actual = jfoo()
     expected = foo()
@@ -2491,7 +2491,7 @@ def test_fn_global_no_sharp_edge():
     def foo(x):
         return x + _test_fn_global_no_sharp_edge_fn()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     actual = jfoo(2)
     expected = foo(2)
@@ -2506,7 +2506,7 @@ def test_nonlocal_write_sharp_edge():
         nonlocal x
         x = 7
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2520,7 +2520,7 @@ def test_intermediate_closure_not_sharp_edge():
 
         return bar()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     expected = foo(5)
     actual = jfoo(5)
@@ -2538,7 +2538,7 @@ def test_intermediate_nonlocal_not_sharp_edge():
 
         return bar()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     expected = foo(5)
     actual = jfoo(5)
@@ -2556,7 +2556,7 @@ def test_intermediate_default_param_sharp_edge():
     def bar(a):
         return foo(a)
 
-    jbar = thunder.jit(bar, sharp_edges="error")
+    jbar = thunder.functional.jit(bar, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jbar(a)
@@ -2574,7 +2574,7 @@ def test_intermediate_from_partial_sharp_edge():
     def bar(a):
         return pfoo(a)
 
-    jbar = thunder.jit(bar, sharp_edges="error")
+    jbar = thunder.functional.jit(bar, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jbar(a)
@@ -2590,7 +2590,7 @@ def test_modifying_input_list_sharp_edge():
     def foo(lst):
         list.append(lst, 5)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
     lst = [1, 2, 3]
 
     with pytest.raises(ThunderSharpEdgeError):
@@ -2606,7 +2606,7 @@ def test_calling_open_sharp_edge():
     def foo():
         open("nonexistent file")
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2616,7 +2616,7 @@ def test_calling_print_sharp_edge():
     def foo(a):
         print(a)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     a = torch.randn((2, 2))
 
@@ -2633,7 +2633,7 @@ def test_calling_random_seed_sharp_edge():
     def foo():
         random.seed(1234)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     state = random.getstate()
     try:
@@ -2647,7 +2647,7 @@ def test_calling_random_setstate_sharp_edge():
     def foo():
         return random.getstate()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2657,7 +2657,7 @@ def test_calling_random_setstate_sharp_edge():
     def foo(state):
         random.setstate(state)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     state = random.getstate()
     with pytest.raises(ThunderSharpEdgeError):
@@ -2668,7 +2668,7 @@ def test_calling_random_randbytes_sharp_edge():
     def foo():
         return random.randbytes(20)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2678,7 +2678,7 @@ def test_calling_random_randrange_sharp_edge():
     def foo():
         return random.randrange(10)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2688,7 +2688,7 @@ def test_calling_random_randint_sharp_edge():
     def foo():
         return random.randint(0, 10)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2698,7 +2698,7 @@ def test_calling_random_getrandbits_sharp_edge():
     def foo():
         return random.getrandbits(10)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2709,7 +2709,7 @@ def test_calling_random_choice_sharp_edge():
         l = [1, 3, 5]
         return random.choice(l)
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
@@ -2721,7 +2721,7 @@ def test_accessing_random_function():
         a = random.choice if 0 > 1 else 1
         return a
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
     jfoo()
 
 
@@ -2753,7 +2753,7 @@ def test_random_functions():
             _ = fn(*arg)
             return 1
 
-        jfoo = thunder.jit(foo, sharp_edges="error")
+        jfoo = thunder.functional.jit(foo, sharp_edges="error")
         with pytest.raises(ThunderSharpEdgeError):
             jfoo()
 
@@ -2763,7 +2763,7 @@ def test_random_Random_class():
     def foo():
         return random.Random(1234).random()
 
-    jfoo = thunder.jit(foo, sharp_edges="error")
+    jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
     expected = foo()
     actual = jfoo()

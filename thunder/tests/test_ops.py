@@ -62,7 +62,7 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
 
         tfn: Callable
         if torch.device(device).type == "cpu":
-            tfn = thunder.jit(
+            tfn = thunder.functional.jit(
                 op.op,
                 executors=executor.executors_list(),
                 interpretation="python interpreter",

@@ -57,8 +57,8 @@ from thunder.core.proxies import (
     unvariableify,
 )
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
-from thunder.core.jit import (
-    jit,
+from thunder.core.interpreter import (
+    interpret,
     _jit,
     _jit_no_unwrap,
     CapsuleType,
@@ -410,7 +410,7 @@ _minimal_callbacks = default_callbacks | _minimal_callbacks
 # TODO GTC Add debug_log
 def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
     ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
-    jfn = jit(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
+    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
 
     def fn_(*args, **kwargs):
         try:
@@ -1065,7 +1065,7 @@ def thunder_general_jit(
     ctx: GeneralJitCtx = GeneralJitCtx(
         prologue_trace, computation_trace, sharp_edges=sharp_edges, process_group_for_ddp=process_group_for_ddp
     )
-    jfn = jit(
+    jfn = interpret(
         fn,
         fn_lookaside=general_jit_lookaside,
         callbacks=general_jit_callbacks,

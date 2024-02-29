@@ -8,7 +8,7 @@ import pytest
 import torch
 import thunder
 from thunder.core.transforms import grad, grad_v1, clear_grads, populate_grads, get_grad, put_grad, put_grads
-from thunder.core.jit import jit
+from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
     Benchmark,
@@ -88,7 +88,7 @@ def torch_fwd(b: Benchmark):
 def interpreter_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_executor(module)
-    fn_ = jit(fn_)
+    fn_ = interpret(fn_)
 
     if isinstance(module, torch.nn.Sequential):
 
@@ -897,7 +897,7 @@ def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex:
 
 
 #
-# Jit benchmarks
+# interpreter benchmarks
 #
 
 

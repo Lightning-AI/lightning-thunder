@@ -35,6 +35,7 @@ from thunder.core.trace import (
     is_tracing,
 )
 
+from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 from thunder.core.symbol import BoundSymbol

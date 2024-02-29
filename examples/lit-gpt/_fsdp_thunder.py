@@ -103,7 +103,6 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         return thunder.jit(
             module,
             executors_list=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
-            interpretation=thunder.INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
         )
 
     @override

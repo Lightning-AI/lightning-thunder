@@ -120,7 +120,7 @@ def test_compile_autocast(executor, device, dtype):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
     a = torch.randn(2, 2, device=device, dtype=torch_dtype)
     b = torch.randn(2, 2, device=device, dtype=torch_dtype)
-    cfunc = thunder.jit(func, interpretation=thunder.INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
+    cfunc = thunder.jit(func)
     devicetype = torch.device(device).type
     test_dtype = torch.float16 if torch_device.type == "cuda" else torch.bfloat16
     with torch.autocast(device_type=devicetype, dtype=test_dtype):

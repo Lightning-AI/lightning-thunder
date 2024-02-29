@@ -33,7 +33,6 @@ def main(name: str = "open_llama_7b", num_samples: int = 10, compile: str = "eag
             model,
             disable_torch_autograd=True,
             executors=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
-            interpretation=thunder.INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
         )
     elif compile != "eager":
         raise ValueError(compile)

@@ -33,7 +33,6 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
         model = thunder.jit(
             model,
             executors=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
-            interpretation=thunder.INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
             # TODO: we'd want to enable CUDAGraphs for parity with `torch.compile` but it goes OOM
         )
         model.max_seq_length = og_model.max_seq_length

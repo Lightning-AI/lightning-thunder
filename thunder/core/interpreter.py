@@ -372,7 +372,7 @@ member_descriptor = type(inspect.getattr_static(ModuleType, "__dict__"))
 
 
 # The Jit's compile context, which handles compilation directives
-# See the comment for jit() for how these functions work
+# See the comment for interpret() for how these functions work
 class JitCompileCtx:
     def __init__(
         self,
@@ -6195,7 +6195,7 @@ class JIT_SIGNALS(enum.Enum):
 
 
 #
-# Defines jit ux
+# Defines interpreter ux
 #
 
 
@@ -6241,7 +6241,7 @@ class JIT_SIGNALS(enum.Enum):
 #       should be returned.
 #
 #   Otherwise, the function should implement the lookaside when called with the same args and kwargs.
-def jit(
+def interpret(
     fn: Callable,
     *,
     opcode_interpreter: Callable = default_opcode_interpreter,

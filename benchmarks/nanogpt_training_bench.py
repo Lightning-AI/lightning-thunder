@@ -196,7 +196,6 @@ elif compile_mode == "thunder":
             torch_compile_ex,
             thunder.nvfuser_executor,
         ],
-        interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
     )
 else:
     raise ValueError(f"Unknown compile_mode: {compile_mode}")

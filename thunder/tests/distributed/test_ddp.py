@@ -132,9 +132,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
     # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/646
     def test_ddp_compile_module(self):
         model = ToyModel().to(self.rank)
-        ddp_model = DDP(
-            thunder.jit(model, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON), device_ids=[self.rank]
-        )
+        ddp_model = DDP(thunder.jit(model, device_ids=[self.rank]))
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
@@ -161,7 +159,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             NotImplementedError,
             r"DistributedDataParallel.*not supported",
         ):
-            cm = thunder.jit(DDP(model, device_ids=[self.rank]), interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON)
+            cm = thunder.jit(DDP(model, device_ids=[self.rank]))
             x = torch.randn(20, 12).to(self.rank)
             outputs = cm(x)
 
@@ -181,9 +179,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             e = c @ b + a
             return e, d
 
-        cfunc = thunder.jit(
-            func, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
-        )
+        cfunc = thunder.jit(func, executors_list=_executor.executors_list())
         device = f"cuda:{self.rank}"
         a = make_tensor((2, 2), device=device, dtype=torch.float32)
         b = make_tensor((2, 2), device=device, dtype=torch.float32)
@@ -257,9 +253,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.jit(
-            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
-        )
+        cfoo = thunder.jit(lc_foo, executors_list=_executor.executors_list())
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
             expected = foo(a, b, op, process_group, async_op)
@@ -311,9 +305,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.jit(
-            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
-        )
+        cfoo = thunder.jit(lc_foo, executors_list=_executor.executors_list())
 
         for async_op in (True, False):
             expected = foo(a, b, process_group, async_op)
@@ -371,9 +363,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.jit(
-            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
-        )
+        cfoo = thunder.jit(lc_foo, executors_list=_executor.executors_list())
 
         for async_op in (True, False):
             expected = foo(a, b, process_group, async_op)
@@ -430,9 +420,7 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.jit(
-            lc_foo, interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON, executors_list=_executor.executors_list()
-        )
+        cfoo = thunder.jit(lc_foo, executors_list=_executor.executors_list())
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
             expected = foo(a, b, op, process_group, async_op)
@@ -454,7 +442,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         m = ToyModel().to(device)
         cm = thunder.jit(
             ddp(m, bucket_size_in_mb=bucket_size_in_mb),
-            interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
             executors_list=executors_map[executor].executors_list(),
         )
         x = torch.ones((2, 12)).to(device)
@@ -628,7 +615,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
             compiled_ddp_m = thunder.jit(
                 ddp_m,
-                interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
                 cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors_list=executors_map[executor].executors_list(),
             )
@@ -721,7 +707,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             m.load_state_dict(initial_model_state)
             cm = thunder.jit(
                 ddp(m, bucket_size_in_mb=bucket_size_in_mb),
-                interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12)).to(device)
@@ -760,7 +745,6 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
             m.load_state_dict(initial_model_state)
             cm = thunder.jit(
                 fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
-                interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
                 executors_list=executors_map[executor].executors_list(),
             )
             x = torch.ones((2, 12), device=device)
@@ -1130,7 +1114,6 @@ def _test_native_ddp_helper(input_data):
     ddp_model = ddp(model)
     cmodel = thunder.jit(
         ddp_model,
-        interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
         executors_list=executor.executors_list(),
     )
 
@@ -1240,7 +1223,6 @@ def _test_native_fsdp_helper(input_data):
 
     cmodel = thunder.jit(
         fsdp_model,
-        interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
         executors_list=executor.executors_list(),
     )
 

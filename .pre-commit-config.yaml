@@ -26,7 +26,7 @@ repos:
       - id: pyupgrade
         args: ["--py310-plus"]
         name: Upgrade code
-        exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_literpreter.py"
+        exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_jit_general.py"
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.5

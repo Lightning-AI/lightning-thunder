@@ -13,29 +13,27 @@ import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.core.jit import is_jitting, jit, JITError, print_last_interpreted_history
+from thunder.core.interpreter import is_jitting, interpret, JITError, print_last_interpreted_history
 
 #
 # Test suite for core Python interpreter functionality
 #
+interpret_no_tracking = interpret
 
 
 # This wraps the jit call into a tracking one (using a wrapper function
 # rather than partial to get a nice test name).
-def jit_tracking(*args, **kwargs):
-    return jit(
+def interpret_tracking(*args, **kwargs):
+    return interpret(
         *args, with_provenance_tracking=True, uncacheable_classes=(torch.Tensor, int, float, str, type(None)), **kwargs
     )
-
-
-jit_no_tracking = jit
 
 
 # This will be called by PyTest and parametrize each test that has
 # a jit attribute (all?) with versions that use jit and jit_tracking.
 def pytest_generate_tests(metafunc):
     if "jit" in metafunc.fixturenames:
-        metafunc.parametrize("jit", [jit, jit_tracking])
+        metafunc.parametrize("jit", [interpret, interpret_tracking])
 
 
 def skipif_python_3_11_plus(f):
@@ -1829,12 +1827,12 @@ def test_iter_lookaside_types_jitting(jit):
     class NonSequenceExample:
         def __len__(self):
             # TODO: list init is not looked aside in non-tracking
-            assert jit is jit_no_tracking or is_jitting() == jitting
+            assert jit is interpret_no_tracking or is_jitting() == jitting
             return 3
 
         def __getitem__(self, idx):
             # TODO: list init is not looked aside in non-tracking
-            assert jit is jit_no_tracking or is_jitting() == jitting
+            assert jit is interpret_no_tracking or is_jitting() == jitting
             if idx >= len(self):
                 raise IndexError
             return idx + 1
@@ -2617,7 +2615,7 @@ def test_displayhook(jit):
         def smt(s):
             interpreter.runsource(s)
 
-        smt("from thunder.core.jit import jit")
+        smt("from thunder.core.interpreter import interpret")
         smt(
             """
 def foo():
@@ -2630,7 +2628,7 @@ def foo():
     print('Reset.')
 """
         )
-        smt("jfoo = jit(foo)")
+        smt("jfoo = interpret(foo)")
         smt("jfoo()")
         smt("assert any(i.opname == 'PRINT_EXPR' for i in jfoo._last_interpreted_instructions)")
 
@@ -2895,7 +2893,7 @@ def test_torch_autocast_nograd(jit):
 def test_module_hooks(jit):
     def cook_hook(l, name):
         def fn(*args):
-            l.append((name, thunder.core.jit.is_jitting()))
+            l.append((name, thunder.core.interpreter.is_jitting()))
 
         return fn
 

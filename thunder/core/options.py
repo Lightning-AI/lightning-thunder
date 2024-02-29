@@ -52,7 +52,7 @@ def resolve_interpretation_option(x: Any, /) -> INTERPRETATION_OPTIONS:
     io: None | INTERPRETATION_OPTIONS
 
     if x is None:
-        io = INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS
+        io = INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
     elif isinstance(x, INTERPRETATION_OPTIONS):
         io = x
     elif isinstance(x, str):
