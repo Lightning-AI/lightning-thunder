@@ -503,6 +503,43 @@ class nvFuserExecutor(FusionExecutor):
         else:
             self.set_fuel(FUEL_LEVEL.UNLIMITED)
 
+        env_var_save_serde = os.getenv("ENABLE_NVFUSER_SERIALIZATION", None)
+        save_serde: bool = env_var_save_serde in ("true", "1")
+        self.write_cache_on_exit(save_serde)
+
+    def write_cache_on_exit(self, save_cache: bool = False):
+        """
+        Selects whether nvFuser writes its cache when the program exits.
+
+        Args:
+            save_cache (bool): A flag that enables saving nvFuser cache.
+            Defaults to False.
+
+        nvFuser's serialization will save the FusionCache data structure and any
+        CUDA cubins into a FlatBuffer binary upon exiting the python program.
+        The binary is stored in /tmp/nvfuser_kernel_db/ with the filename
+        nvf_serde_[local_rank]_[cuda_major]_[cuda_minor]_[nvrtc_major]_[nvrtc_minor].
+
+        Details:
+         * If the common workspace is exists, nvFuser will load it automatically
+         when the FusionCache is constructed.
+         * When this function is enabled, then when the program exits NvFuser
+         will save the FusionCache, overwritting the previous common workspace.
+         * If this function is disabled, then when the program exits NvFuser
+         does nothing. The previous common workspace is preserved if it exists.
+         * If there are any issues when loading the serialized binary, it is
+         deleted and the FusionCache is created with its default constructor.
+         * When the LOCAL_RANK environment variable is set for ddp or fsdp, a
+         separate fusion cache is saved for each device.
+        """
+        if nv_version >= LooseVersion("0.1.4"):
+            from nvfuser import enable_automatic_serialization, disable_automatic_serialization
+
+            if save_cache:
+                enable_automatic_serialization()
+            else:
+                disable_automatic_serialization()
+
     def get_fuel(self, amount: int = 1, /) -> bool:
         if self._optimization_fuel is FUEL_LEVEL.UNLIMITED:
             return True
