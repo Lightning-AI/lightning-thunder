@@ -21,7 +21,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
     torch_device = torch.device(device)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
-    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
 
     def f(a, b, c):
@@ -38,7 +38,11 @@ def test_thunder_autocast_transform(executor, device, dtype):
     if torch_device.type == "cpu":
         autocast_dtypes = (thunder.bfloat16,)
     elif torch_device.type == "cuda":
-        autocast_dtypes = (thunder.bfloat16, thunder.float16) if torch.cuda.is_bf16_supported() else (thunder.float16,)
+        autocast_dtypes = (
+            (thunder.bfloat16, thunder.float16)
+            if thunder.tests.bf16.device_supports_bf16(device)
+            else (thunder.float16,)
+        )
     else:
         pytest.fail(f"Invalid combination of parameters: {executor=}, {device=}, {dtype=}")
     for (func, should_autocast), autocast_dtype in itertools.product(
@@ -85,7 +89,7 @@ def test_no_autocast(executor, device, dtype):
     torch_device = torch.device(device)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
-    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
 
     devicetype = torch.device(device).type
@@ -116,7 +120,7 @@ def test_compile_autocast(executor, device, dtype):
         pytest.skip("float64 autocast is not supported.")
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
-    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
     a = torch.randn(2, 2, device=device, dtype=torch_dtype)
     b = torch.randn(2, 2, device=device, dtype=torch_dtype)

@@ -54,7 +54,11 @@ def snippet_torch_consistency(op, torch_op, sample, comp):
 def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
     if dtypes.is_complex_dtype(dtype):
         pytest.skip("Skipping complex operator tests in CI for speed")
-    if torch.device(device).type == "cuda" and dtype is dtypes.bfloat16 and not torch.cuda.is_bf16_supported():
+    if (
+        torch.device(device).type == "cuda"
+        and dtype is dtypes.bfloat16
+        and not thunder.tests.bf16.device_supports_bf16(device)
+    ):
         pytest.skip("Your CUDA device does not support bfloat16")
 
     for sample in op.sample_inputs(device, dtype):
