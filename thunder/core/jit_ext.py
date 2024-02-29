@@ -1213,5 +1213,4 @@ def thunder_general_jit(
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
     bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
 
-    print(computation_trace)
     return prologue_trace, computation_trace, epilogue_trace
