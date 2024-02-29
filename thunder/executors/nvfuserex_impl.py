@@ -18,10 +18,19 @@ import thunder.torch as ltorch
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify, unvariableify, Variable, pyval
+from thunder.core.proxies import (
+    NumberProxy,
+    Proxy,
+    TupleProxy,
+    TensorProxy,
+    variableify,
+    unvariableify,
+    Variable,
+    pyval,
+)
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check
+from thunder.core.utils import OrderedSet, check, check_same_dtype
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType
@@ -231,6 +240,11 @@ def create_fd(
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
                 else:
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguous=contiguity, dtype=nvdtype)
+            elif isinstance(x, TupleProxy):
+                # TODO: discuss the contract here on baked in number from a tuple
+                # TODO: validate x is a tuple of int
+                utils.check_type(y, type)
+                nv = fd.define_vector(len(x._value))
             elif isinstance(x, Proxy):
                 utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
@@ -350,7 +364,24 @@ def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool,
 
 # TODO Inline the get_tensor_descriptor call
 def to_descriptors(args) -> tuple:
-    return tuple(type(arg) if isinstance(arg, Number) else (*get_tensor_descriptor(arg), arg.dtype) for arg in args)
+    def to_descriptor(arg):
+        if isinstance(arg, Number):
+            return type(arg)
+        elif isinstance(arg, tuple):
+            if len(arg) != 0:
+                numbertype, _ = check_same_dtype(*arg)
+                check(
+                    numbertype == int,
+                    lambda: f"tuple in nvfuser only supports int, but found {numbertype}",
+                    exception_type=AssertionError,
+                )
+            return type(arg)
+        elif isinstance(arg, torch.Tensor):
+            return (*get_tensor_descriptor(arg), arg.dtype)
+
+        raise ValueError(f"unrecognized type in arguments: {type(arg)}")
+
+    return tuple(to_descriptor(arg) for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class

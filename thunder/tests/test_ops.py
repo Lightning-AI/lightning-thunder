@@ -65,16 +65,13 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
         comp = sample.comp if sample.comp is not None else comp
 
         tfn: Callable
-        if torch.device(device).type == "cpu":
-            tfn = thunder.functional.jit(
-                op.op,
-                executors=executor.executors_list(),
-                interpretation="python interpreter",
-                cache="no caching",
-                disable_torch_autograd=True,
-            )
-        else:
-            tfn = executor.make_callable(op.op)
+        tfn = thunder.functional.jit(
+            op.op,
+            executors=executor.executors_list(),
+            interpretation="python interpreter",
+            cache="no caching",
+            disable_torch_autograd=True,
+        )
 
         result = run_snippet(
             snippet_torch_consistency,
