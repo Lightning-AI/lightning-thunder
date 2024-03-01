@@ -12,6 +12,12 @@ from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
+# FP8 is supported on compute arch 8.9 onwards.
+# Skip the tests if current hardware is not supported.
+is_supported, msg = te.fp8.check_fp8_support()
+if not is_supported:
+    pytest.skip(msg, allow_module_level=True)
+
 # Create an FP8 recipe.
 fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
 
