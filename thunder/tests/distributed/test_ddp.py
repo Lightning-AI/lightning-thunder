@@ -1,5 +1,6 @@
 import math
 import multiprocessing as mp
+import os
 import sys
 import tempfile
 import unittest
@@ -80,11 +81,7 @@ class ToyModel(nn.Module):
 # but it would require us to make the function which defines the test logic picklable and would
 # lead to boilerplate test functions.
 # Ref: https://github.com/NVIDIA/apex/blob/7b2e71b0d4013f8e2f9f1c8dd21980ff1d76f1b6/apex/transformer/testing/distributed_test_base.py#L22
-@unittest.skipUnless(
-    torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
-    "DDP test requires CUDA and NCCL `torch.distributed` backend",
-)
-class CompileDDPTest(common_distributed.MultiProcessTestCase):
+class DataParallelTestCase(common_distributed.MultiProcessTestCase):
     DISTRIBUTED_BACKEND = "nccl"
 
     def __init__(self, *args, **kwargs) -> None:
@@ -116,11 +113,13 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         torch.distributed.init_process_group(
             init_method=self.init_method,
             backend=self.DISTRIBUTED_BACKEND,
-            world_size=int(self.world_size),
+            world_size=self.world_size,
             rank=self.rank,
         )
 
-        torch.cuda.set_device(self.rank % torch.cuda.device_count())
+        local_rank = self.rank % torch.cuda.device_count()
+        torch.cuda.set_device(local_rank)
+        os.environ["LOCAL_RANK"] = str(local_rank)
 
         torch.distributed.barrier()
         self.run_test(test_name, pipe)
@@ -129,6 +128,12 @@ class CompileDDPTest(common_distributed.MultiProcessTestCase):
         torch.distributed.destroy_process_group()
         sys.exit(0)
 
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
+    "DDP test requires CUDA and NCCL `torch.distributed` backend",
+)
+class CompileDDPTest(DataParallelTestCase):
     # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/646
     def test_ddp_compile_module(self):
         model = ToyModel().to(self.rank)
