@@ -19,6 +19,7 @@ import torch
 from typing import Any, Literal, NamedTuple, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
 import collections
+import operator
 
 from io import StringIO
 
@@ -1636,6 +1637,13 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 #     return _jit(impl, obj, name)
 
 
+def _getitem_lookaside(obj, key, /):
+    def impl(obj, key):
+        return obj[key]
+
+    return _jit_no_unwrap(impl, obj, key)
+
+
 def _globals_lookaside() -> dict[str, Any]:
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
     frame = runtimectx.frame_stack[-1]
@@ -1985,7 +1993,14 @@ class SequenceWrapperMethods:
 
     def __mul__(self, n, /):
         self.track_items()
-        raise NotImplementedError()
+
+        def impl(self, n):
+            l = []
+            for _ in range(n):
+                l.extend(self)
+            return l
+
+        return _jit_no_unwrap(impl, self, n)
 
     def __rmul__(self, n, /):
         self.track_items()
@@ -2517,6 +2532,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     type.__call__: _type_lookaside,
     isinstance: _isinstance_lookaside,
     functools.reduce: _functools_reduce_lookaside,
+    operator.getitem: _getitem_lookaside,
 }
 
 

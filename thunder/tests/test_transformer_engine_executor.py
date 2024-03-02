@@ -47,7 +47,7 @@ def test_te_linear_forward_backward():
         o = torch.nn.functional.linear(x, w1)
         return torch.nn.functional.linear(o + x, w2)
 
-    cfn = thunder.compile(fn, executors_list=[transformer_engine_ex])
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex])
 
     # Enable autocasting for the forward pass
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
@@ -122,7 +122,7 @@ def test_te_linear_forward_backward_multiple_iteration():
         o = torch.nn.functional.linear(x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
-    cfn = thunder.compile(fn, executors_list=[transformer_engine_ex])
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex])
 
     # Enable grad on thunder params.
     list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
@@ -146,7 +146,7 @@ def test_te_linear_invalid_inputs():
         def fn(x, w):
             return torch.nn.functional.linear(x, w)
 
-        cfn = thunder.compile(fn, executors_list=[transformer_engine_ex])
+        cfn = thunder.jit(fn, executors=[transformer_engine_ex])
         cfn(x, w)
         trace = thunder.last_traces(cfn)[-1]
         assert not any(bsym.sym.name.startswith("te_linear") for bsym in trace.bound_symbols)

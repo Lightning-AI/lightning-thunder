@@ -53,7 +53,7 @@ def test_triton_cross_entropy(device, dtype):
             logits, labels, weight=weight, reduction=reduction, ignore_index=ignore_index
         )
 
-    ctest = thunder.compile(test, executors_list=[triton_ex])
+    ctest = thunder.jit(test, executors=[triton_ex])
     actual = ctest(logits, labels, weight, reduction, ignore_index)
     torch.testing.assert_close(actual, expected)
     last_trace = thunder.last_traces(ctest)[-1]

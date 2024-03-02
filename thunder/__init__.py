@@ -45,7 +45,6 @@ from thunder.common import (
     CompileStats,
     _create_callable,
     trace,
-    preprocess,
     transform_for_execution,
 )
 import thunder.extend as extend
@@ -678,6 +677,11 @@ def jit(
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for gtc
     **compile_options,  # TODO GTC Make this explicit -- dict of options
 ) -> Callable:
+    if "executors_list" in compile_options:
+        warnings.warn("outdated argument executors_list= in call, please use executors=")
+        if executors is None:
+            executors = compile_options.pop("executors_list")
+
     # Resolves interpreter option
     interpretation = resolve_interpretation_option(interpretation)
     interpreter: Callable

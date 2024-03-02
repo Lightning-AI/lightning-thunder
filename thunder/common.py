@@ -4,6 +4,7 @@ from enum import Enum, auto
 from collections import deque, defaultdict
 from contextlib import contextmanager
 import time
+import warnings
 from collections.abc import Hashable, Sequence
 from functools import wraps
 import os
@@ -263,6 +264,9 @@ class CompileData:
         if disable_preprocessing:
             self._processed_function = fn
         else:
+            warnings.warn(
+                "please use thunder.jit if possible and upgrade and use thunder.jit if it is not yet possible"
+            )
             self._processed_function = preprocess(fn, is_module=self.is_module)
 
             # TODO Revisit assuming parameters are const

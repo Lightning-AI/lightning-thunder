@@ -907,7 +907,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     def foo(a, b):
         return a + b, a - b
 
-    cfoo = executor.make_callable(foo)
+    cfoo = executor.make_callable_legacy(foo)
     _, _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
@@ -945,7 +945,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 
     a = make((4, 3, 2, 3))
 
-    cbar = executor.make_callable(bar)
+    cbar = executor.make_callable_legacy(bar)
     expected = cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
@@ -1635,11 +1635,11 @@ def test_transforms_identity(executor, device, _):
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import vmap
 
-    actual = executor.make_callable(vmap(lambda: 2, axis_size=4))()
+    actual = executor.make_callable_legacy(vmap(lambda: 2, axis_size=4))()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = executor.make_callable(vmap(lambda x: x, axis_size=4))(2)
+    actual = executor.make_callable_legacy(vmap(lambda x: x, axis_size=4))(2)
     assert_close(actual, expected)
 
 
@@ -1699,12 +1699,12 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = executor.make_callable(vjp(func_1_2))
+    vjp_eager = executor.make_callable_legacy(vjp(func_1_2))
 
     primals = (a,)
     cotangents = (g1, g2)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable(func_1_2)(a)
+    expected_out_p = executor.make_callable_legacy(func_1_2)(a)
     assert_close(out_p, expected_out_p, equal_nan=True, atol=1e-3, rtol=1e-5)
 
     # Now check the gradients
@@ -1750,7 +1750,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = executor.make_callable(vjp(func_2_2))
+    vjp_eager = executor.make_callable_legacy(vjp(func_2_2))
 
     primals = (x, y)
     primal_kwargs = {"z": z}
@@ -1806,14 +1806,14 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = clang.asin(b)
         return c
 
-    vjp_eager = executor.make_callable(vjp(func_2_1))
+    vjp_eager = executor.make_callable_legacy(vjp(func_2_1))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable(func_2_1)(*primals)
+    expected_out_p = executor.make_callable_legacy(func_2_1)(*primals)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     aa = a.clone().requires_grad_(True)
@@ -1929,7 +1929,7 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = executor.make_callable(vmap(jvp(func), out_dims=(0, 0)))(args, args)
+    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -2198,10 +2198,11 @@ def test_no_passthrough_symbol(executor, device, _):
         return x.type_as(x)
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable(func)
+    compiled = executor.make_callable_legacy(func)
     out = compiled(x)
     assert out is x
     initial_trace = thunder.last_traces(compiled)[0]
+    print(initial_trace)
     assert len(initial_trace.bound_symbols) == 2
     assert initial_trace.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
     assert initial_trace.bound_symbols[1].sym.id == prims.PrimIDs.RETURN

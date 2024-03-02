@@ -24,7 +24,7 @@ def test_apex_cross_entropy(device: str, dtype: torch.dtype):
     def fn(logits, labels):
         return torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
 
-    cfn = thunder.compile(fn, executors_list=[apex_ex])
+    cfn = thunder.jit(fn, executors=[apex_ex])
 
     # Verifies the result is close to PyTorch
     thunder_result = cfn(logits, labels)
@@ -56,7 +56,7 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
     def fn(*args, **kwargs):
         return torch.nn.functional.cross_entropy(*args, **kwargs)
 
-    cfn = thunder.compile(fn, executors_list=[apex_ex])
+    cfn = thunder.jit(fn, executors=[apex_ex])
     at_least_one_supported_input = False
 
     # NOTE reference inputs take a long time to run in CI, so this uses sample inputs in CI
@@ -205,7 +205,7 @@ def test_apex_cross_entropy_phantom_grad(device, dtype):
         ce = torch.nn.functional.cross_entropy(logits, labels, reduction="none", ignore_index=-1)
         return ce.sum()
 
-    ccaz = thunder.compile(caz, executors_list=[apex_ex])
+    ccaz = thunder.jit(caz, executors=[apex_ex])
     ccaz_grad = grad(ccaz)
     (thunder_grad,) = ccaz_grad(logits, labels)
 

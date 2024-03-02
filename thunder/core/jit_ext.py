@@ -477,30 +477,84 @@ class GeneralJitCtx(MinimalCtx):
     def add_constraint(self, constraint):
         self._constraints.append(constraint)
 
-    # NOTE All proxies are constructed in the context of the computation trace, and their
-    #   names must be added to the prologue trace (this is done when constructing the prologue trace)
-    def proxify(self, val: Any, /, *, name: None | str = None, history: tuple, **kwargs) -> Any:
-        # NOTE This marker indicates that the local has not yet been created, and so this skips them
-        if val is Py_NULL():
-            return val
+    def proxify(self, value: WrappedValue) -> Any:
+        assert isinstance(value, WrappedValue)
+        uvalue = value.value
+        if isinstance(uvalue, Proxy):
+            return p
+        elif isinstance(uvalue, torch.Tensor):
+            # we always want to proxy torch.Tensor, even const
+            p = proxy(uvalue, history=value.provenance)
 
-        # Short-circuits if the val is a WrappedValue (in which case it's a constant that doesn't need to be proxied)
-        if isinstance(val, WrappedValue) and val.provenance.inst == PseudoInst.CONSTANT:
-            return val
+            # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
+            value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-        # Short-circuits if val is already a proxy
-        # TODO Check for distinct provenances for types that care about that (mutable collections)
-        if isinstance(val, Proxy):
-            return val
+            from thunder.core import utils
+            from thunder.distributed import get_skip_data_parallel_grad_sync
 
-        if isinstance(val, str):
-            return proxy(val, name=name, history=history)
+            no_sync = get_skip_data_parallel_grad_sync()
+            compile_data = get_compile_data()
+            utils.check(
+                not (no_sync and getattr(compile_data, "use_fsdp", False)),
+                lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
+            )
 
-        # TODO Add history
-        if isinstance(val, torch.Tensor):
-            return proxy(val, name=name, history=history)
+            if not no_sync and isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+                p_new = thunder.distributed.prims.synchronize(p, self._process_group_for_ddp)
+                p_orig = p
+                p = p_new
+            else:
+                p_orig = p
+            if p is not uvalue:
+                value.register_proxy(p)
+            # TODO: other caching modes
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            return p
 
-        return proxy(val, name=name, history=history)
+        elif isinstance(uvalue, (float, int, complex, str)):
+            assert should_register_for_prologue(value.provenance)
+            value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
+            # we follow the caching mechanisms of the eager_unpack_interpreter
+            p = proxy(uvalue, history=value.provenance)
+            assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
+
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                if isinstance(uvalue, str):
+                    self.add_constraint((clang.check_string_value, p, uvalue))
+                else:
+                    self.add_constraint((clang.check_number_type_and_value, p, uvalue))
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            return p
+        elif isinstance(uvalue, dict):
+            value.track_items()
+            proxy_d = type(uvalue)((k, i.value) for k, i in value.item_wrappers.items())
+            value.register_proxy(proxy_d)
+            for an, av in value.attribute_wrappers.items():
+                if callable(av.value):
+                    av.register_proxy(getattr(proxy_d, an))
+                else:
+                    raise NotImplementedError(
+                        f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
+                    )
+        elif isinstance(uvalue, Sequence):
+            value.track_items()
+            proxy_s = type(uvalue)(i.value for i in value.item_wrappers)
+            value.register_proxy(proxy_s)
+            for an, av in value.attribute_wrappers.items():
+                if callable(av.value):
+                    av.register_proxy(getattr(proxy_s, an))
+                else:
+                    raise NotImplementedError(
+                        f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
+                    )
+        else:
+            raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
 
 general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {}
@@ -522,7 +576,19 @@ def register_general_jit_callback(key: JIT_CALLBACKS) -> Callable:
 # TODO Add all general_jit operation translations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
 _general_jit_lookaside_map = {}
 
-_general_jit_lookaside_map.update({k: jit_needs_wrap(v) for k, v in _torch_to_thunder_function_map.items()})
+
+def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        recursively_proxy(*args, **kwargs)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+_general_jit_lookaside_map.update(
+    {k: ensure_recursive_proxies(jit_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
+)
 
 
 def general_jit_lookaside(diverted_fn):
@@ -575,13 +641,7 @@ def _general_jit_dict_setitem(d, key, value):
     if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
         ctx: GeneralJitCtx = get_general_jit_ctx()
         if d.original_value is d.nothing:
-            proxy_d = d.value.copy()
-            d.register_proxy(proxy_d)
-            for an, av in d.attribute_wrappers.items():
-                if callable(av.value):
-                    av.register_proxy(getattr(proxy_d, an))
-                else:
-                    raise NotImplementedError(f"Proxying dict with attribute {an} of type {type(av.value).__name__}")
+            ctx.proxify(d)
         ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
 
     return dict_setitem_lookaside(d, key, value)
@@ -676,19 +736,8 @@ def get_methods_properties(typ):
 _general_jit_lookaside_map.update(
     {
         **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
-        **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(TensorProxy)},
+        **{fn: ensure_recursive_proxies(jit_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
         prop_lookaside_helper: prop_lookaside_helper,
-        # review how this works...
-        NumberProxy.__add__: jit_needs_wrap(NumberProxy.__add__),
-        NumberProxy.__bool__: jit_needs_wrap(NumberProxy.__bool__),  # TODO Review returning a BoolProxy from this
-        NumberProxy.__neg__: jit_needs_wrap(NumberProxy.__neg__),
-        NumberProxy.__sub__: jit_needs_wrap(NumberProxy.__sub__),
-        NumberProxy.__floordiv__: jit_needs_wrap(NumberProxy.__floordiv__),
-        NumberProxy.__le__: jit_needs_wrap(NumberProxy.__ge__),
-        NumberProxy.__ge__: jit_needs_wrap(NumberProxy.__le__),
-        TensorProxy.__add__: jit_needs_wrap(TensorProxy.__add__),
-        TensorProxy.__mul__: jit_needs_wrap(TensorProxy.__mul__),
-        TensorProxy.__sub__: jit_needs_wrap(TensorProxy.__sub__),
     }
 )
 
@@ -724,6 +773,28 @@ _safe_functions: set = {
 }
 
 
+# when we pass containers to the computation trace, we want these to be using the proxies
+def recursively_proxy(*args, **kwargs):
+    def proxy_recursion(v):
+        if isinstance(v.value, str):
+            need_proxy = False
+        elif isinstance(v.value, (Sequence, dict)):
+            v.track_items()
+            need_proxy = any(proxy_recursion(i) for i in v.item_wrappers)
+        else:
+            need_proxy = isinstance(v.value, torch.Tensor)
+        if need_proxy:
+            ctx: GeneralJitCtx = get_general_jit_ctx()
+            ctx.proxify(v)
+        is_proxied = v.original_value is not v.nothing
+        return is_proxied
+
+    for a in args:
+        proxy_recursion(a)
+    for v in kwargs.values():
+        proxy_recursion(v)
+
+
 # TODO Document this function (with steps)
 def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
@@ -732,6 +803,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # Performs symbol lookasides
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+        recursively_proxy(*args, **kwargs)
         lookaside = jit_needs_wrap(fn)
     elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
         lookaside = general_jit_lookaside
@@ -820,35 +892,7 @@ def _general_jit_wrap_callback(value):
     uvalue = value.value
     if isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
-        p = ctx.proxify(uvalue, history=value.provenance)
-
-        # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
-        value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
-
-        from thunder.core import utils
-        from thunder.distributed import get_skip_data_parallel_grad_sync
-
-        no_sync = get_skip_data_parallel_grad_sync()
-        compile_data = get_compile_data()
-        utils.check(
-            not (no_sync and getattr(compile_data, "use_fsdp", False)),
-            lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
-        )
-
-        if not no_sync and isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
-            p_new = thunder.distributed.prims.synchronize(p, ctx._process_group_for_ddp)
-            p_orig = p
-            p = p_new
-        else:
-            p_orig = p
-        if p is not uvalue:
-            value.register_proxy(p)
-        # TODO: other caching modes
-        co: CACHE_OPTIONS = get_cache_option()
-        if co is CACHE_OPTIONS.CONSTANT_VALUES:
-            ctx.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
-        elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
-            raise NotImplementedError(f"Unsupported cache option {co}")
+        p = ctx.proxify(value)
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
@@ -863,18 +907,7 @@ def _general_jit_wrap_callback(value):
         elif should_register_for_prologue(value.provenance):
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
-            p = ctx.proxify(uvalue, history=value.provenance)
-            assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
-
-            co: CACHE_OPTIONS = get_cache_option()
-            if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                if isinstance(uvalue, str):
-                    ctx.add_constraint((clang.check_string_value, p, uvalue))
-                else:
-                    ctx.add_constraint((clang.check_number_type_and_value, p, uvalue))
-            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
-                raise NotImplementedError(f"Unsupported cache option {co}")
-
+            p = ctx.proxify(value)
         else:
             return _general_jit_sharp_edge(
                 f"We are using a (non-const) value of type {type(uvalue).__name__}, which is not identified as an input.",
@@ -1077,7 +1110,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps):
             bsym = prims.unpack_cache_info.bind(cache_info_p, output=cache_info_p)
             prologue_trace.bound_symbols.append(bsym)
             for k, v in cache_info.items():
-                p = ctx.proxify(v, name=f"cache_info_{k}", history=None)
+                p = proxy(v, name=f"cache_info_{k}", history=None)
                 bsym = prims.unpack_getitem.bind(cache_info_p, k, output=p)
                 prologue_trace.bound_symbols.append(bsym)
 

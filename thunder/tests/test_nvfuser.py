@@ -53,7 +53,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
-    expected_vjp_func = executor.make_callable(value_and_grad(func))
+    expected_vjp_func = executor.make_callable_legacy(value_and_grad(func))
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -99,7 +99,7 @@ def test_redundant_cast_basic(executor, device: str, dtype: dtypes.dtype):
         c = b.to(torch.float64)
         return c
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
     cfoo(a)
 
     traces = thunder.last_traces(cfoo)
@@ -119,7 +119,7 @@ def test_redundant_cast_basic(executor, device: str, dtype: dtypes.dtype):
         e = d.to(torch.float16)
         return e
 
-    cbar = thunder.compile(bar)
+    cbar = thunder.jit(bar)
     cbar(a)
 
     traces = thunder.last_traces(cbar)
@@ -143,7 +143,7 @@ def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.d
         d = b.to(torch.float16)
         return c, d
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.functional.jit(foo)
     cfoo(a)
 
     traces = thunder.last_traces(cfoo)
@@ -183,7 +183,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
         y = i.to(torch.float64)
         return d, g, y, i, g2, g3
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.functional.jit(foo)
     cfoo(a, x)
     traces = thunder.last_traces(cfoo)
 
@@ -261,7 +261,7 @@ def test_cse_subsymbol_removal(executor, device, _):
         return t4
 
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.compile(func, executors_list=executor.executors_list())
+    compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
     compiled_func(x)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -297,7 +297,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
     y = make_tensor(5, 5, dtype=torch.float16, device=device)
     z = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.compile(func, executors_list=executor.executors_list())
+    compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
     compiled_func(w, x, y, z)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -381,7 +381,7 @@ def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
 
         return c, d, e
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -408,7 +408,7 @@ def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -435,7 +435,7 @@ def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -462,7 +462,7 @@ def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -489,7 +489,7 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
         return c, d, e, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     result = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -516,7 +516,7 @@ def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -542,7 +542,7 @@ def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -569,7 +569,7 @@ def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype)
 
         return d, f, g
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
 
     _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
@@ -597,7 +597,7 @@ def test_cse_issue1789(executor, device, _):
 
     x = make_tensor(2, 3, device=device, dtype=torch.float32)
     s = make_tensor(1, 3, device=device, dtype=torch.float32)
-    compiled_func = thunder.compile(func)
+    compiled_func = thunder.jit(func)
     compiled_func(x, s)
 
     traces = thunder.last_traces(compiled_func)
@@ -622,7 +622,7 @@ def test_bookend_meta_optimization(executor, device, _):
 
     def subtest(fn, n):
         # Enable bookending so it gets tested.
-        cfn = thunder.compile(fn, nv_enable_bookend=True)
+        cfn = thunder.jit(fn, nv_enable_bookend=True)
 
         _ = cfn(a)
         traces = thunder.last_traces(cfn)
@@ -841,11 +841,11 @@ def test_optimization_fuel(executor, device, _):
 
     # Only the first compilation is fueled.
     x = torch.ones(2, 3, device=device, dtype=torch.float32)
-    cfn_with_fusion = thunder.compile(fn)
+    cfn_with_fusion = thunder.jit(fn)
     cfn_with_fusion(x)
     assert get_num_fusions(cfn_with_fusion) == 1
 
-    cfn_without_fusion = thunder.compile(fn)
+    cfn_without_fusion = thunder.jit(fn)
     cfn_without_fusion(x)
     assert get_num_fusions(cfn_without_fusion) == 0
 

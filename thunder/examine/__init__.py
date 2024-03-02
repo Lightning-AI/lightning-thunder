@@ -4,7 +4,6 @@ import collections
 import traceback
 
 import thunder
-import thunder.core.script.instrumentation as script_instrumentation
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
@@ -44,7 +43,6 @@ _method_name_remap_map = {
 
 
 # TODO Maybe have this print additional information and return more metadata?
-# TODO Add option to disable attempted preprocessing
 # TODO Accept kwargs for compile (like langctx)
 # TODO Add profiling (or profiling option) to determine if we have a slowdown
 # TODO If an error occurs, try to minify the program to produce a smaller sample to reproduce the error
@@ -105,55 +103,38 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
             f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100:.1f}%) are supported"
         )
 
-    # Step 2 Attempts to preprocess the function
-    preprocessing_exception: None | Exception = None
-    with script_instrumentation.intercept_errors() as preprocessing_errors:
-        try:
-            thunder.preprocess(fn, is_module=isinstance(fn, torch.nn.Module))
-        except Exception as e:
-            preprocessing_exception = e
-
     # Terminates early if there are unsupported operations or there was a preprocessing exception
-    if len(unsupported_ops) > 0 or preprocessing_exception is not None or preprocessing_errors:
-        if len(unsupported_ops) > 0:
-            print(
-                "Please file an issue requesting the following operators here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
-            )
+    if len(unsupported_ops) > 0:
+        print(
+            "Please file an issue requesting the following operators here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+        )
 
-            for name, op in unsupported_ops:
-                print(f"{name}")
-                if show_call_stack is not False:
-                    call_sites = collected_ops[(name, op)]
-                    for i, cs in enumerate(call_sites[:5]):
-                        if i == 0:
-                            print("  used in")
-                        else:
-                            print("  and in")
-                        if show_call_stack is True:
-                            start_idx = 0
-                            while start_idx < len(cs) and "thunder/examine/__init__.py" not in cs[start_idx]:
-                                start_idx += 1
+        for name, op in unsupported_ops:
+            print(f"{name}")
+            if show_call_stack is not False:
+                call_sites = collected_ops[(name, op)]
+                for i, cs in enumerate(call_sites[:5]):
+                    if i == 0:
+                        print("  used in")
+                    else:
+                        print("  and in")
+                    if show_call_stack is True:
+                        start_idx = 0
+                        while start_idx < len(cs) and "thunder/examine/__init__.py" not in cs[start_idx]:
                             start_idx += 1
-                        else:
-                            start_idx = -1 - show_call_stack
+                        start_idx += 1
+                    else:
+                        start_idx = -1 - show_call_stack
 
-                        print("  " + "  ".join(cs[start_idx:-1]))  # stop before -1 to split off the collector
-                    if len(call_sites) > i + 1:
-                        print(f"  ...and {len(call_sites) - i - 1} more")
-
-        if preprocessing_exception is not None:
-            print("Encountered an error while preprocessing the function")
-            print(
-                "Please file an issue with your function and this error here: https://github.com/Lightning-AI/lightning-thunder/issues/new"
-            )
-            print("\n".join(preprocessing_errors))
-            print(preprocessing_exception)
+                    print("  " + "  ".join(cs[start_idx:-1]))  # stop before -1 to split off the collector
+                if len(call_sites) > i + 1:
+                    print(f"  ...and {len(call_sites) - i - 1} more")
 
         return
 
     # Step 3 Attempts to compile the function using lightning.compile
     try:
-        cfn = thunder.compile(fn)
+        cfn = thunder.jit(fn)
     except Exception as e:
         print("Encountered an error while compiling the function")
         print(

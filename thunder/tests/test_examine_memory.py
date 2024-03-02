@@ -130,7 +130,7 @@ def test_nanogpt_block(executor, device, dtype):
 
     config = nanogpt_model.GPTConfig(dropout=0)
     block = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-    cblock = executor.make_callable(block, disable_preprocessing=False)
+    cblock = executor.make_callable_legacy(block, disable_preprocessing=False)
 
     with runtime_allocated_memory(device):
         inp = make((2, config.block_size, config.n_embd))

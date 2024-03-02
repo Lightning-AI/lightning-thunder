@@ -25,7 +25,7 @@ def test_sdpa(device: str, dtype: torch.dtype):
     def fn(query, key, value):
         return torch.nn.functional.scaled_dot_product_attention(query, key, value)
 
-    cfn = thunder.compile(fn, executors_list=[sdpa_ex])
+    cfn = thunder.jit(fn, executors=[sdpa_ex])
 
     # Verifies the result is close to PyTorch
     thunder_result = cfn(query, key, value)
@@ -54,7 +54,7 @@ def test_sdpa_autocast_flash():
     def fn(q, k, v):
         return torch.nn.functional.scaled_dot_product_attention(q, k, v)
 
-    cfn = thunder.compile(fn, executors_list=[sdpa_ex])
+    cfn = thunder.jit(fn, executors=[sdpa_ex])
 
     # Verifies the result is close to PyTorch
     for autocast_dtype in (torch.bfloat16, torch.float16):
