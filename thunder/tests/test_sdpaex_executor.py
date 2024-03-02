@@ -2,9 +2,33 @@ import pytest
 import torch
 
 import thunder
+import thunder.core
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.tests.framework import requiresCUDA, run_snippet
 from thunder.tests.opinfos import get_opinfo
+from collections import namedtuple
+
+CudaVersion = namedtuple("CudaVersion", "major minor")
+
+
+def device_version_support(
+    device: None | str | torch.device | thunder.core.devices.Device,
+    /,
+    cuda_min_version: CudaVersion,
+    cuda_max_version: CudaVersion,
+) -> bool:
+    """Check if the cuda capability of a given device is supported."""
+    if not torch.cuda.is_available():
+        return False
+
+    dev: torch.device = thunder.core.devices.to_torch_device(device)
+    cuda_major: int
+    cuda_minor: int
+    cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
+
+    lower_bound = cuda_major >= cuda_min_version.major and cuda_minor >= cuda_min_version.minor
+    upper_bound = cuda_major <= cuda_max_version.major and cuda_minor >= cuda_max_version.minor
+    return lower_bound and upper_bound
 
 
 @pytest.mark.parametrize(
@@ -42,6 +66,12 @@ def test_sdpa(device: str, dtype: torch.dtype):
 
 @requiresCUDA
 def test_sdpa_autocast_flash():
+    # Flash Attention sdpa only support Ampere and Hopper devices.
+    # Skip this test on Volta and prior devices.
+    torch_device = torch.device("cuda")
+    if not device_version_support(torch_device, CudaVersion(8, 0), CudaVersion(9, 0)):
+        pytest.skip(f"sdpa flash attention is not supported on {torch.cuda.get_device_name()}")
+
     batch = 1
     seq_len = 2
     num_heads = 14
@@ -107,6 +137,12 @@ def snippet_torch_consistency(op, torch_op, sample):
 @requiresCUDA
 def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
     from thunder.executors.sdpaex import _scaled_dot_product_attention_checker
+
+    # Enable math and memory-efficient sdpa options for Volta and prior devices
+    torch_device = torch.device(device)
+    if not device_version_support(torch_device, CudaVersion(8, 0), CudaVersion(9, 0)):
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(True)
 
     op = get_opinfo("grad_forward_scaled_dot_product_attention")
 
