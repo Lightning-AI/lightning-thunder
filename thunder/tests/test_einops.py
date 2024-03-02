@@ -51,7 +51,7 @@ def test_rearrange(device: str, dtype: torch.dtype):
     def f(input, expr, **kwargs):
         return einops.rearrange(input, expr, **kwargs)
 
-    fc = thunder.jit(f)
+    fc = thunder.compile(f)
 
     for shape, expr, kwargs in cases:
         input = make_tensor(shape, dtype=dtype, device=device)
@@ -78,7 +78,7 @@ def test_repeat(device: str, dtype: torch.dtype):
     def f(input, expr, **kwargs):
         return einops.repeat(input, expr, **kwargs)
 
-    fc = thunder.jit(f)
+    fc = thunder.compile(f)
 
     for shape, expr, kwargs in cases:
         input = make_tensor(shape, dtype=dtype, device=device)
