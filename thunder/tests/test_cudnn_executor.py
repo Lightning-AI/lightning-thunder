@@ -97,6 +97,13 @@ def test_cudnn_sdpa():
     if cudnn.backend_version() <= 8902:
         pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
 
+    dev: torch.device = thunder.core.devices.to_torch_device("cuda:0")
+    cuda_major: int
+    cuda_minor: int
+    cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
+    if cuda_major < 8:
+        pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
+
     for dtype in (thunder.float16, thunder.bfloat16):
         b, h, s_q, s_kv, d_q, d_v = 8, 8, 256, 256, 64, 64
         shape_Q = (b, h, s_q, d_q)
