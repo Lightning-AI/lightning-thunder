@@ -61,10 +61,10 @@ def resolve_interpretation_option(x: Any, /) -> INTERPRETATION_OPTIONS:
     if io is None:
         _unknown_option("interpretation", _str_to_interpretation_option_map.keys(), "translate functions", x)
 
-    if io is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-        warnings.warn(
-            "The 'translate python' interpretation option is experimental and still in development. It may not work as expected."
-        )
+    # if io is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
+    #     warnings.warn(
+    #         "The 'translate python' interpretation option is experimental and still in development. It may not work as expected."
+    #     )
 
     return io
 
