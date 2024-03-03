@@ -19,7 +19,7 @@ def test_torch_var(executor, device, dtype):
     def foo(a, dim, *, keepdim=False, correction=1):
         return ttorch.var(a, dim, keepdim=keepdim, correction=correction)
 
-    traced_foo = executor.make_callable_legacy(foo)
+    traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype)

@@ -945,7 +945,7 @@ def get_computation_inputs_and_intermediates(computation_trace):
     return inputs_list, intermediates_set
 
 
-def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps):
+def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
     already_unpacked: dict[int, Proxy] = {}
 
     # Unpacks the inputs in the prologue trace
@@ -966,25 +966,19 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps):
             prologue_trace.add_name(p.name)
 
         def from_input(provenance, *, new_output=False):
-            if new_output:
-                if provenance.inst == PseudoInst.INPUT_ARGS:
-                    name = "args"
-                elif provenance.inst == PseudoInst.INPUT_KWARGS:
-                    name = "kwargs"
-                elif provenance.inst == PseudoInst.INPUT_FN:
-                    name = "fn"
-
+            assert new_output
+            if provenance.inst == PseudoInst.INPUT_ARGS:
+                return pro_args_proxy
+            elif provenance.inst == PseudoInst.INPUT_KWARGS:
+                return pro_kwargs_proxy
+            elif provenance.inst == PseudoInst.INPUT_FN:
+                name = "fn"
                 output = Proxy(name=name)
                 provenance.proxy = output
-            else:
-                output = p
-                provenance.proxy = output
-            if provenance.inst == PseudoInst.INPUT_FN:
                 bsym = prims.unpack_function_obj.bind(output, output=output)
-            else:
-                bsym = prims.unpack_trivial.bind(output, output=output)
-            prologue_trace.bound_symbols.append(bsym)
-            return output
+                prologue_trace.bound_symbols.append(bsym)
+                return output
+            assert False
 
         def from_load_attr(provenance, *, new_output=False):
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
@@ -1092,6 +1086,19 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps):
                 prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
 
         return p
+
+    with tracectx(prologue_trace):
+        for n, l in (("args", len(args)), ("kwargs", len(kwargs))):
+            output = Proxy(name=n)
+            bsym = prims.unpack_trivial.bind(output, output=output)
+            prologue_trace.bound_symbols.append(bsym)
+            bsym = prims.check_len.bind(output, l, output=None)
+            prologue_trace.bound_symbols.append(bsym)
+            if n == "args":
+                pro_args_proxy = output
+            else:
+                assert n == "kwargs"
+                pro_kwargs_proxy = output
 
     pro_to_epi = tuple(unpack(v) for v in pro_to_epi_inps)
     pro_to_comp = tuple(unpack(v) for v in pro_to_comp_inps)
@@ -1241,7 +1248,7 @@ def thunder_general_jit(
     with tracectx(epilogue_trace):
         prims.python_return(None)
 
-    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi)
+    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
     bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)

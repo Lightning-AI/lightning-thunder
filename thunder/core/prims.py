@@ -103,6 +103,7 @@ class PrimIDs(Enum):
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
+    CHECK_LEN = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
     UNPACK_FUNCTION_OBJ = auto()
@@ -490,6 +491,20 @@ check_empty = make_prim(
     PrimIDs.CHECK_EMPTY,
     "check_empty",
     meta=_check_empty_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_len_meta(seq: tuple | list | dict, length: int, /) -> None:
+    # Validates types
+    # baseutils.check_type(seq, (tuple, list, dict))
+    baseutils.check_type(length, (int,))
+
+
+check_len = make_prim(
+    PrimIDs.CHECK_LEN,
+    "check_len",
+    meta=_check_len_meta,
     tags=(OpTags.DONT_DCE,),
 )
 
@@ -954,6 +969,7 @@ pack_setitem = make_prim(
     meta=pack_setitem_meta,
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
+    tags=(OpTags.DONT_DCE,),
 )
 
 

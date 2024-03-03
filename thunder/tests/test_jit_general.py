@@ -120,6 +120,17 @@ def test_torch_add_tensors_closure_external():
     assert_close(actual, expected)
 
 
+def test_args_len():
+    def foo(a, b=1):
+        return a + b
+
+    jfoo = thunder.jit(foo)
+
+    assert foo(2) == jfoo(2)
+    assert foo(2, 3) == jfoo(2, 3)
+    assert foo(2, b=2) == jfoo(2, b=2)
+
+
 def test_intermediate_torch_operations():
     def foo(a, b):
         c = a + b

@@ -153,6 +153,14 @@ check_empty = ex.register_operator("check_empty", like=prims.check_empty, fn=_ch
 ex.register_implementation(prims.check_empty, check_empty, checker=_always_executable)
 
 
+def _check_len_impl(seq: tuple | list, length: int, /) -> None:
+    utils.check(len(seq) == length, lambda: f"Expected {seq=} to be of length {length}")
+
+
+check_len = ex.register_operator("check_len", like=prims.check_len, fn=_check_len_impl)
+ex.register_implementation(prims.check_len, check_len, checker=_always_executable)
+
+
 def _construct_tuple_impl(tup: tuple, /) -> None:
     return tup
 
