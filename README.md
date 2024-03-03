@@ -15,16 +15,16 @@ Given a program, Thunder can generate an optimized program that:
 - dispatches computations to optimized kernels
 - distributes computations optimally across machines
 
-To do so, Lightning Thunder ships with:
+To do so, Thunder ships with:
 
 - a JIT for acquiring Python programs targeting PyTorch and custom operations
 - a multi-level IR to represent them as a trace of a reduced op-set
 - an extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
 - a way to dispatch operations to an extensible collection of executors
 
-Lightning Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
+Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
 
-Lightning Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
+Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
 
 - [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
 - [nvFuser](https://github.com/NVIDIA/Fuser)
