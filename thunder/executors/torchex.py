@@ -1779,3 +1779,7 @@ if has_einops:
 
         def is_float_type(self, input):
             return dtypes.is_float_dtype(input.dtype)
+
+    # We force the registration of the backend here to not use
+    # the torch backend when diverting isinstance
+    einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
