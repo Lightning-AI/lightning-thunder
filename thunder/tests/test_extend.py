@@ -87,7 +87,7 @@ def test_extend_core():
     a = torch.randn((4, 4), device="cpu", dtype=torch.float32, requires_grad=False)
     b = torch.randn((4, 4), device="cpu", dtype=torch.float32, requires_grad=False)
 
-    cbar = thunder.compile(bar, executors_list=[myex, thunder.pytorch_executor])
+    cbar = thunder.jit(bar, executors=[myex, thunder.pytorch_executor])
     cbar(a, b)
     traces = thunder.last_traces(cbar)
 

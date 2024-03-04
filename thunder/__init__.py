@@ -953,6 +953,8 @@ def jit(
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd
     fn_._lc_cs = cs
+    fn_._lc_transforms = []  ## transforms
+    fn_._lc_post_optimization_transforms = []  ## post_optimization_transforms
 
     return fn_
 

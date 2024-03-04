@@ -1940,13 +1940,13 @@ def test_traceback():
     def f(a):
         return -(a > 0)  # negating a bool tensor raises
 
-    compiled_f = thunder.compile(f)
+    compiled_f = thunder.jit(f)
     a = torch.ones((), dtype=torch.float32)
     with pytest.raises(RuntimeError) as excinfo:
         compiled_f(a)
     assert "on a bool tensor" in str(excinfo.value)
     assert "torch.neg" in str(excinfo.traceback[-1].statement)
-    assert "thunder.f" in excinfo.traceback[-1].path
+    assert "thunder.computation" in excinfo.traceback[-1].path
 
 
 # TODO Add nvFuser support (https://github.com/Lightning-AI/lightning-thunder/issues/809)
