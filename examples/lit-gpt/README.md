@@ -4,7 +4,6 @@
 
 ```bash
 wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/1a5e7c/scripts/download.py
-wget -nc https://raw.githubusercontent.com/Lightning-AI/lit-gpt/1a5e7c/scripts/convert_hf_checkpoint.py
 pip install jsonargparse huggingface_hub sentencepiece tokenizers
 pip install git+https://github.com/Lightning-AI/lit-gpt@1a5e7c
 ```
@@ -22,43 +21,6 @@ Runs a single forward call with a (B=10 x T=2048) tensor:
 | Inductor | 1.18 s | 17.38 GB |
 | Thunder  | 1.27 s | 16.32 GB |
 | Eager    | 1.48 s | 17.44 GB |
-
-## [Compiled model inference](compiled_model_inference.py)
-
-```shell
-# setup
-python download.py --repo_id meta-llama/Llama-2-7b-hf
-python convert_hf_checkpoint.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf
-# run
-python compiled_model_inference.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf --compile thunder --fake false
-```
-
-Runs the existing generation logic with the model `forward` compiled:
-
-| Method   | Speed ↑      | Memory ↓ |
-|----------|--------------|----------|
-| Inductor | 87.5 tok/sec | 14.38 GB |
-| Eager    | 45.9 tok/sec | 13.60 GB |
-| Thunder  | 36.7 tok/sec | 13.82 GB |
-
-## [Compiled generation inference](compiled_generation_inference.py)
-
-```shell
-# setup
-python download.py --repo_id meta-llama/Llama-2-7b-hf
-python convert_hf_checkpoint.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf
-# run
-python compiled_generation_inference.py --checkpoint_dir checkpoints/meta-llama/Llama-2-7b-hf --compile thunder --fake false
-```
-
-Runs a customized generation logic that is compiled and a customized multinomial implementation.
-This is advantageous because `torch.multinomial(probs, num_samples=1)` is very slow. The model is also compiled:
-
-| Method   | Speed ↑      | Memory ↓ |
-|----------|--------------|----------|
-| Inductor | Error        | Error    |
-| Eager    | 46.4 tok/sec | 13.60 GB |
-| Thunder  | 36.9 tok/sec | 13.82 GB |
 
 ## [Single-device training](train.py)
 
