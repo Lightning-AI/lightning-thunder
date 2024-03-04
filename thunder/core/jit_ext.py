@@ -455,6 +455,40 @@ def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
     return value
 
 
+def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
+    # TODO: revisit. Maybe it is not bad to show some of these,
+    # especially now with the index being shown in the name.
+    skipped_attrs = {
+        "_modules",
+        "_parameters",
+        "_buffers",
+        "__dict__",
+    }
+
+    # Instructions that are considered terminal for recursions below
+    terminal_instructions = {PseudoInst.INPUT_ARGS, PseudoInst.INPUT_FN}
+
+    def get_postfix(pr: ProvenanceRecord):
+        if pr.inst in terminal_instructions:
+            return [""]
+        elif pr.inst == PseudoInst.BINARY_SUBSCR or pr.inst == PseudoInst.LOAD_ATTR:
+            # These we recurse over
+            assert len(pr.inputs) == 2
+            lhs, rhs = pr.inputs
+            postfix = get_postfix(lhs)
+            if rhs.inst == PseudoInst.CONSTANT:
+                rhs_postfix = str(rhs.value)
+                if rhs_postfix not in skipped_attrs:
+                    postfix.append(rhs_postfix)
+            return postfix
+        else:
+            # Skip as if terminal for now
+            # TODO: improve this later
+            return [""]
+
+    return "_".join(get_postfix(pr))
+
+
 class GeneralJitCtx(MinimalCtx):
     def __init__(
         self, prologue_trace, computation_trace, *, sharp_edges: SHARP_EDGES_OPTIONS, process_group_for_ddp=None
@@ -485,7 +519,14 @@ class GeneralJitCtx(MinimalCtx):
             return p
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
-            p = proxy(uvalue, history=value.provenance)
+
+            name_postfix = _infer_name_postfix_from_provenance(value.provenance)
+            if name_postfix:
+                name = f"t{name_postfix}"
+            else:
+                name = None
+
+            p = proxy(uvalue, name=name, history=value.provenance)
 
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
