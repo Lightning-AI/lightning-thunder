@@ -656,6 +656,16 @@ class JitRuntimeCtx:
         return os.linesep.join(f.format_with_source() for f in self.frame_stack)
 
 
+def print_to_history(*objects, sep=" ", end=os.linesep):
+    if sep is None:
+        sep = " "
+    if end is None:
+        end = os.linesep
+
+    ctx: JitRuntimeCtx = get_jitruntimectx()
+    ctx._history.append(str(sep).join(str(o) for o in objects) + str(end))
+
+
 _jitruntimectx = contextvars.ContextVar("jitruntimectx")
 
 
@@ -6402,6 +6412,7 @@ def print_history(
     print_fn: Callable = print,
     use_colors: bool = True,
     indent: bool = True,
+    max_depth: int | None = None,
     color_internals: bool = False,
     print_source_code: bool = True,
 ) -> None:
@@ -6482,10 +6493,11 @@ def print_history(
             case _:
                 raise NotImplementedError(f"Unexpected history item {item}")
 
-        print_fn(f"{nl}{' ' * c_indent if indent else ''}{linecolor}{history_line}{colors['RESET']}")
+        if max_depth is None or c_indent <= max_depth:
+            print_fn(f"{nl}{' ' * c_indent if indent else ''}{linecolor}{history_line}{colors['RESET']}")
 
-        if source_line:
-            print_fn(f"{' ' * c_indent if indent else ''}{linecolor}{source_line}{colors['RESET']}")
+            if source_line:
+                print_fn(f"{' ' * c_indent if indent else ''}{linecolor}{source_line}{colors['RESET']}")
 
         if deindent:
             c_indent -= 1
@@ -6497,6 +6509,7 @@ def print_last_interpreted_history(
     print_fn: Callable = print,
     use_colors: bool = True,
     indent: bool = True,
+    max_depth: int | None = None,
     color_internals: bool = False,
     print_source_code: bool = True,
 ) -> None:
@@ -6508,6 +6521,7 @@ def print_last_interpreted_history(
         print_fn=print_fn,
         use_colors=use_colors,
         indent=indent,
+        max_depth=max_depth,
         color_internals=color_internals,
         print_source_code=print_source_code,
     )
