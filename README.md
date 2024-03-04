@@ -30,6 +30,7 @@ Thunder doesn't generate device code. It acquires and transforms user programs s
 - [nvFuser](https://github.com/NVIDIA/Fuser)
 - [cuDNN](https://developer.nvidia.com/cudnn)
 - [Apex](https://github.com/NVIDIA/apex)
+- [TransformerEngine](https://github.com/NVIDIA/TransformerEngine)
 - [PyTorch eager](https://github.com/pytorch/pytorch) operations
 - custom kernels, including those written with [OpenAI Triton](https://github.com/openai/triton)
 
