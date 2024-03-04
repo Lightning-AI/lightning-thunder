@@ -19,12 +19,14 @@ def find_multiple(n: int, k: int) -> int:
 class Config:
     name: str = ""
     hf_config: dict = field(default_factory=dict)
+    scale_embeddings: bool = False
     block_size: int = 4096
     vocab_size: int = 50254
     padding_multiple: int = 512
     padded_vocab_size: int | None = None
     n_layer: int = 16
     n_head: int = 32
+    head_size: int | None = None
     n_embd: int = 4096
     rotary_percentage: float = 0.25
     parallel_residual: bool = True
@@ -34,7 +36,7 @@ class Config:
     shared_attention_norm: bool = False
     _norm_class: Literal["LayerNorm", "RMSNorm"] = "LayerNorm"
     norm_eps: float = 1e-5
-    _mlp_class: Literal["GptNeoxMLP", "LLaMAMLP"] = "GptNeoxMLP"
+    _mlp_class: Literal["GptNeoxMLP", "LLaMAMLP", "GemmaMLP", "LLaMAMoE"] = "GptNeoxMLP"
     gelu_approximate: str = "none"
     intermediate_size: int | None = None
     rope_condense_ratio: int = 1
@@ -46,8 +48,9 @@ class Config:
         if not self.name:
             self.name = self.hf_config.get("name", self.name)
 
-        assert self.n_embd % self.n_head == 0
-        self.head_size = self.n_embd // self.n_head
+        if self.head_size is None:
+            assert self.n_embd % self.n_head == 0
+            self.head_size = self.n_embd // self.n_head
 
         # vocab size should be a power of 2 to be optimal on hardware. compute the closest value
         if self.padded_vocab_size is None:
@@ -96,7 +99,9 @@ class Config:
     def norm_class(self) -> type:
         # `self._norm_class` cannot be the type to keep the config json serializable
         if self._norm_class == "RMSNorm":
-            return RMSNorm
+            from functools import partial
+
+            return partial(RMSNorm, add_unit_offset="Gemma" in self.name)
         return getattr(torch.nn, self._norm_class)
 
 
@@ -107,19 +112,27 @@ class RMSNorm(torch.nn.Module):
     https://github.com/bzhangGo/rmsnorm/blob/master/LICENSE.
     """
 
-    def __init__(self, size: int, dim: int = -1, eps: float = 1e-5) -> None:
+    def __init__(self, size: int, dim: int = -1, eps: float = 1e-6, add_unit_offset: bool = False) -> None:
         super().__init__()
         self.weight = torch.nn.Parameter(torch.ones(size))
         self.eps = eps
         self.dim = dim
+        self.add_unit_offset = add_unit_offset
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        dtype = x.dtype
+        x = x.float()
         # NOTE: the original RMSNorm paper implementation is not equivalent
         norm_x = torch.mean(x * x, dim=self.dim, keepdim=True)
         x_normed = x * torch.rsqrt(norm_x + self.eps)
-        return self.weight * x_normed
+        x_normed = x_normed.to(dtype=dtype)
+        if self.add_unit_offset:
+            # Gemma model requires a unit offset
+            # https://github.com/google/gemma_pytorch/blob/main/gemma/model.py#L176
+            return x_normed * (1 + self.weight)
+        return x_normed * self.weight
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         torch.nn.init.ones_(self.weight)
 
 
@@ -343,17 +356,20 @@ class GPT(nn.Module):
             raise ValueError(f"Cannot forward sequence of length {T}, max seq length is only {self.max_seq_length}.")
 
         if input_pos is not None:  # use the kv cache
-            cos = torch.index_select(self.cos, 0, input_pos)
-            sin = torch.index_select(self.sin, 0, input_pos)
+            cos = self.cos.index_select(0, input_pos)
+            sin = self.sin.index_select(0, input_pos)
             if self.mask_cache is None:
                 raise TypeError("You need to call `gpt.set_kv_cache()`")
-            mask = torch.index_select(self.mask_cache, 2, input_pos)
+            mask = self.mask_cache.index_select(2, input_pos)
         else:
             cos = self.cos[:T]
             sin = self.sin[:T]
             mask = None
 
         x = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
+        if self.config.scale_embeddings:
+            x = x * (self.config.n_embd**0.5)
+
         for block in self.transformer.h:
             x = block(x, cos, sin, mask, input_pos)
         x = self.transformer.ln_f(x)
@@ -441,7 +457,8 @@ class CausalSelfAttention(nn.Module):
         # key, query, value projections for all heads, but in a batch
         self.attn = nn.Linear(config.n_embd, shape, bias=config.bias)
         # output projection
-        self.proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # if `head_size` is explicitly specified in the config, `n_emd` might not be equal to `head_size * n_head`
+        self.proj = nn.Linear(config.head_size * config.n_head, config.n_embd, bias=config.bias)
         # disabled by default
         self.kv_cache: KVCache | None = None
 
@@ -485,14 +502,13 @@ class CausalSelfAttention(nn.Module):
         k = torch.cat((k_roped, k[..., self.config.rope_n_elem :]), dim=-1)
 
         if input_pos is not None:
-            # THUNDER bug: assertion triggers could not eliminate self
-            # if not isinstance(self.kv_cache, KVCache):
-            #    raise TypeError("You need to call `gpt.set_kv_cache()`")
+            if not isinstance(self.kv_cache, KVCache):
+                raise TypeError("You need to call `gpt.set_kv_cache()`")
             k, v = self.kv_cache(input_pos, k, v)
 
         y = self.scaled_dot_product_attention(q, k, v, mask)
 
-        y = y.reshape(B, T, self.config.n_embd)  # re-assemble all head outputs side by side
+        y = y.reshape(B, T, self.config.head_size * self.config.n_head)  # re-assemble all head outputs side by side
 
         # output projection
         return self.proj(y)
@@ -558,6 +574,14 @@ class LLaMAMLP(nn.Module):
         return self.proj(x)
 
 
+class GemmaMLP(LLaMAMLP):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_fc_1 = self.fc_1(x)
+        x_fc_2 = self.fc_2(x)
+        x = torch.nn.functional.gelu(x_fc_1) * x_fc_2
+        return self.proj(x)
+
+
 class LLaMAMoE(nn.Module):
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -580,7 +604,6 @@ class LLaMAMoE(nn.Module):
         masks = indices.unsqueeze(-1) == torch.arange(self.config.n_expert, device=x.device)
         masks = masks.permute(2, 0, 1)  # (n_expert, B*T, n_expert_per_token)
         y = torch.zeros_like(x)  # (B*T, C)
-        # THUNDER bug: https://github.com/Lightning-AI/lightning-thunder/issues/2080
         for mask, expert in zip(masks, self.experts):
             token_idx, expert_idx = torch.where(mask)
             y[token_idx] += probs[token_idx, expert_idx, None] * expert(x[token_idx])
@@ -631,9 +654,8 @@ class KVCache(nn.Module):
 
     def forward(self, input_pos: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # move the buffer to the activation dtype for when AMP is used
-        # THUNDER bug: https://github.com/Lightning-AI/lightning-thunder/issues/1144
-        self.k = torch.Tensor.to(self.k, k.dtype)
-        self.v = torch.Tensor.to(self.v, v.dtype)
+        self.k = self.k.to(k.dtype)
+        self.v = self.v.to(v.dtype)
         # update the cache
         if torch._dynamo.is_compiling():
             # inductor doesn't support `index_add` with bfloat16
