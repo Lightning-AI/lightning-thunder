@@ -30,6 +30,7 @@ from thunder.core.symbol import Symbol
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
+import thunder.tests.bf16
 
 #
 # Helpful constants and utility functions
@@ -6288,7 +6289,9 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # TODO Reconcile the grad and non-grad samples
     if not requires_grad:
         # NOTE: torch.log_softmax(x, dim, dtype=float) returns a float64 tensor while thunder returns a float32 tensor.
-        supported_float_dtypes = {None, torch.bfloat16, torch.float32, torch.float64}
+        supported_float_dtypes = {None, torch.float32, torch.float64}
+        if thunder.tests.bf16.device_supports_bf16(device):
+            supported_float_dtypes.update({torch.bfloat16})
 
         # Defines a custom comparator for when the output is bfloat16
         # TODO These are very loose tolerances, but observered differences can be up to 0.019 in absolute difference
