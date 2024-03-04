@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, IterableDataset
 from _fsdp_thunder import FSDPThunderStrategy
 from thunder.tests.lit_gpt_model import GPT, Block, Config
 
+
 model_name = "open_llama_3b"
 learning_rate = 6e-4
 micro_batch_size = 2
@@ -25,7 +26,11 @@ def main(
     sharding_strategy = {"2": "SHARD_GRAD_OP", "3": "FULL_SHARD"}[stage]
     auto_wrap_policy = always_wrap_policy if bucketing_strategy.lower() == "none" else {Block}
     strategy = (
-        FSDPThunderStrategy(sharding_strategy=fsdp_type, bucketing_strategy=bucketing_strategy)
+        FSDPThunderStrategy(
+            sharding_strategy=fsdp_type,
+            bucketing_strategy=bucketing_strategy,
+            executors_list=("sdpa", "nvfuser", "torch"),
+        )
         if compile == "thunder"
         else FSDPStrategy(auto_wrap_policy=auto_wrap_policy, sharding_strategy=sharding_strategy)
     )
