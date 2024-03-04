@@ -6,36 +6,6 @@ The main goal for Lightning Thunder is to allow optimizing user programs in the 
 
 **NOTE: Lightning Thunder is alpha and not ready for production runs.** Feel free to get involved, expect a few bumps along the way.
 
-## What's in the box
-
-Given a program, Thunder can generate an optimized program that:
-
-- computes its forward and backward passes
-- coalesces operations into efficient fusion regions
-- dispatches computations to optimized kernels
-- distributes computations optimally across machines
-
-To do so, Thunder ships with:
-
-- a JIT for acquiring Python programs targeting PyTorch and custom operations
-- a multi-level IR to represent them as a trace of a reduced op-set
-- an extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
-- a way to dispatch operations to an extensible collection of executors
-
-Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
-
-Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
-
-- [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
-- [nvFuser](https://github.com/NVIDIA/Fuser)
-- [cuDNN](https://developer.nvidia.com/cudnn)
-- [Apex](https://github.com/NVIDIA/apex)
-- [TransformerEngine](https://github.com/NVIDIA/TransformerEngine)
-- [PyTorch eager](https://github.com/pytorch/pytorch) operations
-- custom kernels, including those written with [OpenAI Triton](https://github.com/openai/triton)
-
-Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
-
 ## Install Thunder
 
 Install the nvFuser nightly, which will also install the matching PyTorch nightly:
@@ -69,12 +39,12 @@ def foo(a, b):
     return a + b
 
 
-cfoo = thunder.jit(foo)
+jfoo = thunder.jit(foo)
 
 a = torch.full((2, 2), 1)
 b = torch.full((2, 2), 3)
 
-result = cfoo(a, b)
+result = jfoo(a, b)
 
 print(result)
 
@@ -83,8 +53,7 @@ print(result)
 #  [[4, 4]
 #   [4, 4]])
 ```
-
-The compiled function `cfoo` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by Thunder can be used as part of larger PyTorch programs.
+The compiled function `jfoo` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by Thunder can be used as part of larger PyTorch programs.
 
 ## Running training
 
@@ -105,6 +74,36 @@ python examples/lit-gpt/train_fsdp.py
 ```
 
 See [README.md](examples/lit-gpt/README.md) for details on running LitGPT with Thunder.
+
+## What's in the box
+
+Given a program, Thunder can generate an optimized program that:
+
+- computes its forward and backward passes
+- coalesces operations into efficient fusion regions
+- dispatches computations to optimized kernels
+- distributes computations optimally across machines
+
+To do so, Thunder ships with:
+
+- a JIT for acquiring Python programs targeting PyTorch and custom operations
+- a multi-level IR to represent them as a trace of a reduced op-set
+- an extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
+- a way to dispatch operations to an extensible collection of executors
+
+Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
+
+Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
+
+- [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
+- [nvFuser](https://github.com/NVIDIA/Fuser)
+- [cuDNN](https://developer.nvidia.com/cudnn)
+- [Apex](https://github.com/NVIDIA/apex)
+- [TransformerEngine](https://github.com/NVIDIA/TransformerEngine)
+- [PyTorch eager](https://github.com/pytorch/pytorch) operations
+- custom kernels, including those written with [OpenAI Triton](https://github.com/openai/triton)
+
+Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
 
 ## Build the documentation
 
