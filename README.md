@@ -100,7 +100,7 @@ Thunder doesn't generate device code. It acquires and transforms user programs s
 - [cuDNN](https://developer.nvidia.com/cudnn)
 - [Apex](https://github.com/NVIDIA/apex)
 - [TransformerEngine](https://github.com/NVIDIA/TransformerEngine)
-- [PyTorch eager](https://github.com/pytorch/pytorch) operations
+- [PyTorch eager](https://github.com/pytorch/pytorch)
 - custom kernels, including those written with [OpenAI Triton](https://github.com/openai/triton)
 
 Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
