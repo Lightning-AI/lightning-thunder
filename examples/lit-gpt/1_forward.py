@@ -28,11 +28,12 @@ def main(name: str = "open_llama_7b", num_samples: int = 10, compile: str = "eag
     elif compile == "thunder":
         import thunder
         from thunder.executors.sdpaex import sdpa_ex
+        from thunder.executors.torch_compile import torch_compile_executor
 
         model = thunder.jit(
             model,
             disable_torch_autograd=True,
-            executors=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+            executors=[sdpa_ex, torch_compile_executor, thunder.nvfuser_executor, thunder.pytorch_executor],
         )
     elif compile != "eager":
         raise ValueError(compile)

@@ -29,10 +29,11 @@ def main(compile: str = "eager", dynamic: bool = False) -> None:
     elif compile == "thunder":
         import thunder
         from thunder.executors.sdpaex import sdpa_ex
+        from thunder.executors.torch_compile import torch_compile_executor
 
         model = thunder.jit(
             model,
-            executors=[sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor],
+            executors=[sdpa_ex, torch_compile_executor, thunder.nvfuser_executor, thunder.pytorch_executor],
             # TODO: we'd want to enable CUDAGraphs for parity with `torch.compile` but it goes OOM
         )
         model.max_seq_length = og_model.max_seq_length

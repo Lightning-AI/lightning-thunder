@@ -55,7 +55,7 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
         precision: Optional[Precision] = None,
         sharding_strategy: "_FSDP_TYPE" = "ZERO3",
         bucketing_strategy: "_BUCKETING_STRATEGY" = "NONE",
-        executors_list: Optional[Tuple[Union["Executor", str], ...]] = None,
+        executors: Optional[Tuple[Union["Executor", str], ...]] = None,
         state_dict_type: Literal["full", "sharded"] = "sharded",
         **kwargs: Any,
     ):
@@ -76,7 +76,7 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
             if isinstance(bucketing_strategy, str)
             else bucketing_strategy
         )
-        self.executors_list = _validate_executors(executors_list)
+        self.executors = _validate_executors(executors)
         self._state_dict_type = state_dict_type
         self._fsdp_kwargs = kwargs
 
@@ -124,7 +124,7 @@ class FSDPThunderStrategy(ParallelStrategy, _Sharded):
 
         # NOTE @IvanYaschuck says that `fsdp(jit(model))` could be supported in the future so that the user owns the `jit` call.
         # we would still `jit(fsdp(undo_jit(jit(model))))` internally
-        return thunder.jit(module, executors_list=self.executors_list)
+        return thunder.jit(module, executors=self.executors)
 
     @override
     def module_to_device(self, module: Module) -> None:
