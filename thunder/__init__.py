@@ -580,8 +580,6 @@ def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES
 
 
 class ThunderModule(pytorch.nn.Module):
-    # todo: subclass nn.Module or forward things like .state_dict() to the
-    #       model
     def __init__(self, model, compiled_model_call):
         super().__init__()
         self._model = model
@@ -632,6 +630,17 @@ class ThunderModule(pytorch.nn.Module):
                 for p in params_with_grad:
                     c10d.all_reduce(p.grad)
             cm.wait()
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_model":
+            return self._modules["_model"]
+        return getattr(self._model, name)
+
+    def state_dict(self, *args: Any, **kwargs: Any) -> Any:
+        return self._model.state_dict(*args, **kwargs)
+
+    def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
+        return self._model.load_state_dict(*args, **kwargs)
 
 
 # this captures the information needed to decide whether a cached function

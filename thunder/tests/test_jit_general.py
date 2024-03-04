@@ -283,29 +283,43 @@ def test_nn_module():
         torch.nn.Linear(3, 4),
         torch.nn.Linear(4, 3),
     )
-
     a = torch.randn(2, 3)
-
-    def fn(a):
-        return m(a)
-
-    def fn2(a):
-        return m2(a)
 
     tom = thunder.jit(m)
     assert isinstance(tom, thunder.ThunderModule)
+    # attributes are forwarded
+    assert isinstance(tom.weight, torch.Tensor)
     expected = m(a)
     actual = tom(a)
     assert_close(expected, actual)
 
     tom2 = thunder.jit(m2)
+    assert isinstance(tom2, thunder.ThunderModule)
+    # `ThunderModule` is not subscriptable even though it compiles a `Sequential`
+    with pytest.raises(TypeError, match="not subscriptable"):
+        assert isinstance(tom2[1].weight, torch.Tensor)
+    # saving is the same
+    torch.testing.assert_close(tom2.state_dict(), m2.state_dict(), rtol=0, atol=0)
+    # loading works
+    tom2.load_state_dict(m2.state_dict(), strict=False, assign=True)
     expected = m2(a)
     actual = tom2(a)
     assert_close(expected, actual)
 
+    def fn(a):
+        return m(a)
+
     jfn = thunder.jit(fn)
     expected = fn(a)
     actual = jfn(a)
+    assert_close(expected, actual)
+
+    def fn2(a):
+        return m2(a)
+
+    jfn2 = thunder.jit(fn2)
+    expected = fn2(a)
+    actual = jfn2(a)
     assert_close(expected, actual)
 
 
