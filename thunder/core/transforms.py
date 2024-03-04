@@ -572,13 +572,14 @@ def clear_grads(module: torch.nn.Module) -> None:
 
 
 from thunder.core.script.noinline import noinline
+from thunder.core.interpreter import make_opaque
 from thunder.core.langctxs import langctx, Languages
 
 
 # TODO GTC Replace with langctx
 def torchctx(fn):
     _fn = langctx(Languages.TORCH)(fn)
-    return noinline(_fn)
+    return noinline(make_opaque(_fn))
 
 
 _grad_fn_map: dict[Any, Callable] = {}

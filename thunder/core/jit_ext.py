@@ -18,6 +18,7 @@ import time
 
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
 import thunder.clang as clang
+import thunder.core.transforms
 
 from types import (
     CellType,

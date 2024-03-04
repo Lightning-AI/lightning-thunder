@@ -99,7 +99,7 @@ __all__ = [
 # result will be wrapped as originating from the lookaside.
 # If a lookaside does not want to handle WrappedValues but needs unwrapping
 # of the inputs and wrapping of the results, it needs to
-# be decorated with @jit_needs_wrap (as the outmost decorator).
+# be decorated with @jit_needs_wrap.
 
 # The core difference to proxies is that the code running in the JIT will
 # *not* see the wrapper but will only ever see the original values
@@ -1248,7 +1248,7 @@ def jit_needs_wrap(fn):
 
             if ctx._with_provenance_tracking:
                 pr = ProvenanceRecord(
-                    inst=PseudoInst.LOOKASIDE,
+                    inst=PseudoInst.OPAQUE,
                     inputs=[wrapped_fn.provenance, wrap_args(args).provenance, wrap_kwargs(kwargs).provenance],
                 )
                 res = wrap(res, provenance=pr)
@@ -1263,16 +1263,38 @@ def jit_needs_wrap(fn):
     return jit_wrapped
 
 
+# Calling a function as an opaque function makes the interpeter not trace into it
+@jit_needs_wrap
+def call_opaque(fn, /, *args, **kwargs):
+    return fn(*args, **kwargs)
+
+
+# Decorator for call opaque
+def make_opaque(fn):
+    @functools.wraps(fn)
+    def fn_(*args, **kwargs):
+        if is_jitting():
+            return call_opaque(fn, *args, **kwargs)
+        else:
+            return fn(*args, **kwargs)
+
+    return fn_
+
+
 #
 # Jit lookasides
 #
-def is_jitting():
+def is_jitting_with_raise():
     """Allow code to behave differently under `@jit`. (For testing.)"""
 
     # Guard against opaque functions which interrupt jitting.
     if (ctx := get_jitcompilectx_if_available()) is not None:
         raise JITError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
 
+    return False
+
+
+def is_jitting():
     return False
 
 
@@ -2525,6 +2547,8 @@ class MutMappingWrapperMethods:
 _default_lookaside_map: dict[Callable, Callable] = {
     # Jit lookasides
     is_jitting: _is_jitting_lookaside,
+    is_jitting_with_raise: _is_jitting_lookaside,
+    call_opaque: call_opaque,
     # Python builtin lookasides
     any: _any_lookaside,
     bool: _bool_lookaside,
