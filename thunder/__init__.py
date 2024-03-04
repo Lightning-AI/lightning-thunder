@@ -914,10 +914,11 @@ def jit(
 
             if not computed:
                 cs.last_computation_transformation_start = time.time_ns()
-                extraces = transform_for_execution(
-                    computation_trc,
-                    executors_list=cd.executors_list,
-                )
+                with langctxs.langctx(cd.langctx):
+                    extraces = transform_for_execution(
+                        computation_trc,
+                        executors_list=cd.executors_list,
+                    )
                 extrace = extraces[-1]
                 comp = extrace.python_callable()
                 cs.last_computation_transformation_stop = time.time_ns()

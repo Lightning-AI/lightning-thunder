@@ -20,6 +20,7 @@ from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.core.compile_data import compile_data_and_stats
+import thunder.core.langctxs as langctxs
 from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
@@ -727,12 +728,13 @@ def _execute_trace(
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
 
-    extraces = transform_for_execution(
-        trc,
-        executors_list=compile_data.executors_list,
-        only_execute_prims=compile_data.only_execute_prims,
-        use_rematerialization=compile_data.use_rematerialization,
-    )
+    with langctxs.langctx(compile_data.langctx):
+        extraces = transform_for_execution(
+            trc,
+            executors_list=compile_data.executors_list,
+            only_execute_prims=compile_data.only_execute_prims,
+            use_rematerialization=compile_data.use_rematerialization,
+        )
     extrace = extraces[-1]
 
     # Applies post-optimization transforms
