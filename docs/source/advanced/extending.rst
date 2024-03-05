@@ -1,7 +1,10 @@
 Extending Thunder
 #################
 
-This section describes how to add an executor to *thunder* for a PyTorch operation.
+..
+  TODO RC1: update using the extend API
+
+This section describes how to add an executor to Thunder for a PyTorch operation.
 
 First, define a Python function with the same signature as the targeted operation, and have it call your implementation. For example, the Apex executor for ``torch.nn.functional.cross_entropy`` might define its implementation like::
 

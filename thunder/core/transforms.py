@@ -576,7 +576,7 @@ from thunder.core.interpreter import make_opaque
 from thunder.core.langctxs import langctx, Languages
 
 
-# TODO GTC Replace with langctx
+# TODO RC1 Replace with langctx
 def torchctx(fn):
     _fn = langctx(Languages.TORCH)(fn)
     return noinline(make_opaque(_fn))

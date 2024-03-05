@@ -49,8 +49,8 @@ import numpy as np
 
 
 # Holds statistics and caches for a compiled function
-# TODO GTC Update last_executed to last_computation
-# TODO GTC Review how autograd traces are presented
+# TODO RC1 Update last_executed to last_computation
+# TODO RC1 Review how autograd traces are presented
 class CompileStats:
     def __init__(self):
         # Callables and traces
@@ -170,7 +170,7 @@ def preprocess(fn, is_module):
 # A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
 #   like additional_param_names
-# TODO GTC Rename this to CompileOptions
+# TODO RC1 Rename this to CompileOptions
 class CompileData:
     def __init__(
         self,
@@ -587,7 +587,7 @@ def cache_get(
 # If include_return_statement is True then the trace will terminate with a RETURN operation
 # If include_return_statement is False then the trace will end without an explicit RETURN
 # TODO Consider modeling additional calls to trace()
-# TODO GTC Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
+# TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
 
 
@@ -605,7 +605,7 @@ def trace(
         **kwargs,
     ) -> Any | TraceCtx:
         # Resolves language context
-        # TODO GTC Don't require the isinstance check here -- compile data should do this (and make langctx a property)
+        # TODO RC1 Don't require the isinstance check here -- compile data should do this (and make langctx a property)
         langctx_: LanguageContext = resolve_language(Languages.TORCH)
         if compile_data is not None and isinstance(compile_data.langctx, LanguageContext):
             langctx_ = compile_data.langctx
@@ -745,11 +745,11 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    # TODO GTC Remove this option (by modeling torch.compile as another executor)
+    # TODO RC1 Remove this option (by modeling torch.compile as another executor)
     if compile_data.use_torch_compile:
         c = torch.compile(c)
 
-    # TODO GTC Mark this option as experimental
+    # TODO RC1 Mark this option as experimental
     if compile_data.use_cudagraphs:
         c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 

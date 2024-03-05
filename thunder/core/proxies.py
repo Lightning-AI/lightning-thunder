@@ -339,7 +339,7 @@ class Proxy(VariableInterface, ProxyInterface):
 
 # A generic "anything" proxy
 # Unlike many other proxies, this does not mimic the type of the object it wraps
-# TODO GTC Rename ._o to ._value for consistency
+# TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
     def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
         super().__init__(name=name, history=history)
@@ -901,7 +901,7 @@ def pytype(x: Proxy) -> type:
         return dict
 
 
-# TODO GTC Update Proxy number inits to be value, /, *, name, history
+# TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy, complex):
     def __new__(cls, *, name=None, value, history: None | tuple = None):
         if value is None:
@@ -1013,7 +1013,7 @@ def _infer_tensor_properties(
     _ddp_type = ddp_type if ddp_type is not None else _ddp_type
 
     # Extracts actual values for shape
-    # TODO GTC Enable this
+    # TODO RC1 Enable this
     if using_symbolic_values():
         raise NotImplementedError(
             f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
@@ -1118,7 +1118,7 @@ class FutureTensorProxy(Proxy):
         return wait(self)
 
 
-# TODO GTC Review dunders -- any remaining?
+# TODO RC1 Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
@@ -1196,7 +1196,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         fn = resolve_method("len", self)
         return fn(self)
 
-    # TODO GTC Review this with other changes
+    # TODO RC1 Review this with other changes
     def replace_name(self, name: str):
         """Return a copy of this proxy with the given name."""
         return tensorproxy(self, name=name)
@@ -1485,7 +1485,7 @@ def numberproxy(cls: type, value: Number | None) -> NumberProxy:
     return pcls(value=value)
 
 
-# TODO GTC Remove this function
+# TODO RC1 Remove this function
 def is_proxyable(x: Any, /) -> bool:
     if isinstance(x, Proxy):
         return False

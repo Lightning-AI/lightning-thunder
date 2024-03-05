@@ -1,17 +1,17 @@
 Additional executors
 ####################
 
-nvFuser and Pytorch are not the only executors available in *thunder* today. Additional executors can be added to *thunder* prior to compilation through a registration mechanism, which makes it easy to have specialized executors perform certain operations more efficiently.
+nvFuser and Pytorch are not the only executors available in Thunder today. Additional executors can be added to *thunder* prior to compilation through a registration mechanism, which makes it easy to have specialized executors perform certain operations more efficiently.
 
 This section contains a list of all executors supported by PyTorch beyond nvFuser and PyTorch.
 
 Triton CrossEntropy Executor
 ============================
 
-The Triton CrossEntropy executor can execute ``torch.cross_entropy()`` using an optimized kernel written in Triton (https://github.com/openai/triton). It can be used like in the following example::
+The Triton CrossEntropy executor can execute ``torch.cross_entropy()`` using an optimized kernel written in OpenAI Triton (https://github.com/openai/triton). It can be used like in the following example::
 
   import thunder
-  from thunder.executors import NVFUSER, TORCH
+  from thunder.executors import nvfuserex, torchex
   from thunder.executors.triton_crossentropy import deregister_triton_entropyex, register_triton_entropyex
 
   register_triton_entropyex(add_to_default_executors=False)
@@ -21,9 +21,9 @@ The Triton CrossEntropy executor can execute ``torch.cross_entropy()`` using an 
           logits, labels, weight=weight, reduction=reduction, ignore_index=ignore_index
       )
 
-  cxentropy = thunder.compile(
+  jitted_xentropy = thunder.jit(
     xentropy,
-    executors_list=['triton_crossentropy', NVFUSER, TORCH]
+    executors_list=['triton_crossentropy', nvfuserex, torchex]
   )
 
   device = 'cuda'
@@ -35,8 +35,8 @@ The Triton CrossEntropy executor can execute ``torch.cross_entropy()`` using an 
   reduction = "sum"
   ignore_index = labels[5].item()
 
-  cxentropy(logits, labels, weight, reduction, ignore_index)
-  traces = thunder.last_traces(cxentropy)
+  jitted_xentropy(logits, labels, weight, reduction, ignore_index)
+  traces = thunder.last_traces(jitted_xentropy)
   print(traces[-1])
 
 This prints::
@@ -62,7 +62,7 @@ Apex CrossEntropy Executor
 The Apex CrossEntropy executor can execute ``torch.cross_entropy()`` through an optimized kernel, like this::
 
   import thunder
-  from thunder.executors import NVFUSER, TORCH
+  from thunder.executors import nvfuserex, torchex
   from thunder.executors.apex_entropyex import deregister_apex_entropyex, register_apex_entropyex
 
   register_apex_entropyex(add_to_default_executors=False)
@@ -72,7 +72,7 @@ The Apex CrossEntropy executor can execute ``torch.cross_entropy()`` through an 
           logits, labels, reduction='mean', ignore_index=-1
       )
 
-  cxentropy = thunder.compile(xentropy, executors_list=['apex_xentropy', NVFUSER, TORCH])
+  jitted_xentropy = thunder.jit(xentropy, executors_list=['apex_xentropy', nvfuserex, torchex])
 
   device = 'cuda'
   dtype = torch.float32
@@ -80,8 +80,8 @@ The Apex CrossEntropy executor can execute ``torch.cross_entropy()`` through an 
   logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype))
   labels = torch.randint(0, 50257, [2048], device=device)
 
-  cxentropy(logits, labels)
-  traces = thunder.last_traces(cxentropy)
+  jitted_xentropy(logits, labels)
+  traces = thunder.last_traces(jitted_xentropy)
   print(traces[-1])
 
 This prints::
@@ -101,4 +101,9 @@ showing that Apex is running the operation.
 cuDNN SDPA Executor
 ===================
 
-TODO
+TODO RC1
+
+TransformerEngine Executor
+==========================
+
+TODO RC1

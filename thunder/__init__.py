@@ -91,7 +91,7 @@ pythonex = extend.get_executor("python")
 _PACKAGE_ROOT = os.path.dirname(__file__)
 _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
-# TODO GTC Review exposed names
+# TODO RC1 Review exposed names
 __all__ = [
     # dtype aliases
     "bool8",
@@ -444,9 +444,9 @@ def _eager_unpacking_interpreter(
     computation_trc: TraceCtx = TraceCtx()
 
     # Constructs the prologue trace (which just trivially unpacks the tensor arguments for now)
-    # TODO GTC Remove the no_grad and no_autocast context managers from this trace
-    # TODO GTC Provide a mechanism to add context managers to the prologue and computation functions
-    # TODO GTC Don't always import torch in traces (particularly the prologue trace)
+    # TODO RC1 Remove the no_grad and no_autocast context managers from this trace
+    # TODO RC1 Provide a mechanism to add context managers to the prologue and computation functions
+    # TODO RC1 Don't always import torch in traces (particularly the prologue trace)
     csi = SigInfo("computation")
     csi.args = []
     prologue_args = []  # Arguments to the prologue
@@ -513,7 +513,7 @@ def _eager_unpacking_interpreter(
     prologue_trc.kwargs = prologue_kwargs
 
     # Constructs the computation trace
-    # TODO GTC Only unpack what's used in the computation
+    # TODO RC1 Only unpack what's used in the computation
     with tracectx(computation_trc):
         p: Proxy
         for p in computation_args:
@@ -671,9 +671,9 @@ def _recursive_jit_call_warning() -> None:
     )
 
 
-# This function will replace compile() (below) before gtc
-# TODO GTC Consider adding a debug_log parameter to control debug printing
-# TODO GTC Consider renaming compile_options to additional_compile_options
+# This function will replace compile() (below) before RC1
+# TODO RC1 Consider adding a debug_log parameter to control debug printing
+# TODO RC1 Consider renaming compile_options to additional_compile_options
 def jit(
     fn: Callable,
     /,
@@ -683,8 +683,8 @@ def jit(
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
-    disable_torch_autograd: bool = False,  # TODO Revisit this UX for gtc
-    **compile_options,  # TODO GTC Make this explicit -- dict of options
+    disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     if "executors_list" in compile_options:
         warnings.warn("outdated argument executors_list= in call, please use executors=")
@@ -701,7 +701,7 @@ def jit(
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
 
-    # TODO GTC Refine the compile data option to remove unused options
+    # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
         fn=fn,
         langctx=langctx,
@@ -730,7 +730,7 @@ def jit(
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
 
-        # TODO GTC Add module and function checks to prologue (make it a compile option)
+        # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
         cache_info = _get_cache_info()
 
@@ -944,7 +944,7 @@ def jit(
                 cs.last_computation_execution_start = cs.last_trace_host_execution_start
                 cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
-            # TODO GTC Update the cache
+            # TODO RC1 Update the cache
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append((pro, protraces, comp, extraces, epilogue, epilogue_traces))
 

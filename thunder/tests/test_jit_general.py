@@ -29,7 +29,7 @@ from thunder.executors.sdpaex import sdpa_ex
 # Test suite for the general jit
 #
 
-# TODO GTC Merge this test file with test_jit.py
+# TODO RC1 Merge this test file with test_jit.py
 
 torchex = [pytorch_executor]
 nvfuserex = [nvfuser_executor, pytorch_executor]

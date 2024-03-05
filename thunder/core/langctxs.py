@@ -22,7 +22,7 @@ class LanguageContext:
     def name(self, /) -> str:
         return self._name
 
-    # TODO GTC Update this signature to include args and kwargs?
+    # TODO RC1 Update this signature to include args and kwargs?
     def has_method(self, id: str) -> bool:
         raise NotImplementedError("Abstract base class")
 

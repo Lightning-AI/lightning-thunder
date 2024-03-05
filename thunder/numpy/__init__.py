@@ -11,7 +11,7 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol
 import thunder.clang as clang
 
-# TODO GTC Remove this
+# TODO RC1 Remove this
 from thunder.core.script.noinline import noinline
 
 

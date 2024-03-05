@@ -1611,12 +1611,12 @@ def test_return_varargs():
 #
 # No caching tests
 #
-# TODO GTC Simple test that the option works and programs run as expected
+# TODO RC1 Simple test that the option works and programs run as expected
 
 #
 # Same input caching tests
 #
-# TODO GTC Verify works and fails as expected
+# TODO RC1 Verify works and fails as expected
 
 
 #

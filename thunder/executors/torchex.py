@@ -1096,7 +1096,7 @@ def _index_put_prim_transform(
 
 
 # NOTE torch.compile currently fails to compile scatter add in bfloat16
-# TODO GTC Separate this into a torch.compile executor
+# TODO RC1 Separate this into a torch.compile executor
 # NOTE The scatter add transforms must set the torch language context explicitly so the .to() method
 #   on tensors is resolved (alternatively they could explicitly call thunder.torch.to)
 @langctx(Languages.TORCH)

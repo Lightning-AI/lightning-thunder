@@ -23,7 +23,7 @@ _method_name_to_fn_map: dict[str, Callable] = {}
 
 
 # Creates and registers the primitive language context
-# TODO GTC Register additinoal methods and record operations on numbers
+# TODO RC1 Register additinoal methods and record operations on numbers
 class PrimCtx(LanguageContext):
     def __init__(self):
         super().__init__("primitive")
@@ -263,7 +263,7 @@ class OpTags(Enum):
     DONT_DCE = auto()
 
 
-# TODO GTC Document this function and describe the parts of a primitive
+# TODO RC1 Document this function and describe the parts of a primitive
 def make_prim(
     id,
     name,
@@ -446,7 +446,7 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
     return x
 
 
-# TODO GTC Align with ASSERT_TENSOR_METADATA
+# TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
     t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool

@@ -35,7 +35,7 @@ from thunder.core.trace import (
 #   A "traceable" function is one that doesn't require interpretation for thunder to translate
 #   to a thunder program. Put another way, these functions have no "sharp edges." Every Symbol
 #   must be a traceable function.
-# TODO GTC Consider if we need to provide a mechanism to register operations as traceable
+# TODO RC1 Consider if we need to provide a mechanism to register operations as traceable
 #   (like clang operations and methods on proxies)
 
 

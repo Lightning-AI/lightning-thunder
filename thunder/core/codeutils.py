@@ -66,7 +66,7 @@ def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
     if isinstance(x, ContextObject):
         return True, None
     if is_collection(x):
-        # TODO GTC Fix collection printing by testing if each item is printable and gathering the imports
+        # TODO RC1 Fix collection printing by testing if each item is printable and gathering the imports
         #   required (if any)
         flat, _ = tree_flatten(x)
         return True, None
@@ -288,8 +288,8 @@ class SigInfo:
 #   and the kwargs and varkwargs into kwarg_values
 
 
-# TODO GTC Review errors and improve message quality (ex. too many arguments error)
-# TODO GTC Have this always return a SigInfo or another type (maybe by wrapping in another function)
+# TODO RC1 Review errors and improve message quality (ex. too many arguments error)
+# TODO RC1 Have this always return a SigInfo or another type (maybe by wrapping in another function)
 def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False) -> SigInfo | Any:
     # Unwraps partials and records their arguments
     partials = []

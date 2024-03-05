@@ -47,7 +47,7 @@ DeviceLike = str | devices.Device | torch.device
 dtypeLike = dtypes.dtype | torch.dtype
 
 
-# TODO GTC Remove this map
+# TODO RC1 Remove this map
 _torch_noinline_functions = {
     torch.nn.modules.utils._single,
     torch.nn.modules.utils._pair,

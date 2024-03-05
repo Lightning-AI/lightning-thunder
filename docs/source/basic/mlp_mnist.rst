@@ -3,6 +3,10 @@ Train a MLP on MNIST
 
 Here's a complete program that trains a torchvision MLP on MNIST::
 
+  pip install --pre torchvision --index-url https://download.pytorch.org/whl/nightly/cu121
+
+Here's the code::
+
   import os
   import torch
   import torchvision
@@ -11,19 +15,13 @@ Here's a complete program that trains a torchvision MLP on MNIST::
 
   # Creates train and test datasets
   device = 'cuda'
+
   device_transform = transforms.Lambda(lambda t: t.to(device))
   flatten_transform = transforms.Lambda(lambda t: t.flatten())
   my_transform = transforms.Compose((transforms.ToTensor(), device_transform, flatten_transform))
-  train_dataset = torchvision.datasets.MNIST(
-    os.path.join("/tmp/mnist/train"),
-    train=True,
-    download=True,
-    transform=my_transform)
-  test_dataset = torchvision.datasets.MNIST(
-    os.path.join("/tmp/mnist/test"),
-    train=False,
-    download=True,
-    transform=my_transform)
+
+  train_dataset = torchvision.datasets.MNIST("/tmp/mnist/train", train=True, download=True, transform=my_transform)
+  test_dataset = torchvision.datasets.MNIST("/tmp/mnist/test", train=False, download=True, transform=my_transform)
 
   # Creates Samplers
   train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -31,23 +29,17 @@ Here's a complete program that trains a torchvision MLP on MNIST::
 
   # Creates DataLoaders
   batch_size = 8
-  train_loader = torch.utils.data.DataLoader(
-    train_dataset,
-    batch_size=batch_size,
-    sampler=train_sampler)
-  test_loader = torch.utils.data.DataLoader(
-    test_dataset,
-    batch_size=batch_size,
-    sampler=test_sampler)
+  train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler)
+  test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler)
 
   # Evaluates the model
-  def eval_model(net, test_loader):
+  def eval_model(model, test_loader):
       num_correct = 0
       total_guesses = 0
       for data, targets in iter(test_loader):
           targets = targets.cuda()
           # Acquires the model's best guesses at each class
-          results = net(data)
+          results = model(data)
           best_guesses = torch.argmax(results, 1)
           # Updates number of correct and total guesses
           num_correct += torch.eq(targets, best_guesses).sum().item()
@@ -56,14 +48,14 @@ Here's a complete program that trains a torchvision MLP on MNIST::
       print("Correctly guessed ", (num_correct/total_guesses) * 100, "% of the dataset")
 
   # Trains the model
-  def train_model(net, train_loader, *, num_epochs: int = 1):
+  def train_model(model, train_loader, *, num_epochs: int = 1):
       loss_fn = torch.nn.CrossEntropyLoss().to(device)
-      optimizer = torch.optim.Adam(net.parameters())
+      optimizer = torch.optim.Adam(model.parameters())
       for epoch in range(num_epochs):
           for data, targets in iter(train_loader):
               targets = targets.cuda()
               # Acquires the model's best guesses at each class
-              results = net(data)
+              results = model(data)
               # Computes loss
               loss = loss_fn(results, targets)
               # Updates model
@@ -72,111 +64,124 @@ Here's a complete program that trains a torchvision MLP on MNIST::
               optimizer.step()
 
   # Constructs the model
-  net = torchvision.ops.MLP(in_channels=784, hidden_channels=[784, 784, 784, 28, 10], bias=True, dropout=.1).to(device)
+  model = torchvision.ops.MLP(in_channels=784, hidden_channels=[784, 784, 784, 28, 10], bias=True, dropout=.1).to(device)
 
   # Performs an initial evaluation
-  net.eval().requires_grad_(False)
-  compiled_eval_net = thunder.compile(net)
-  eval_model(compiled_eval_net, test_loader)
+  model.eval().requires_grad_(False)
+  jitted_eval_model = thunder.jit(model)
+  eval_model(jitted_eval_model, test_loader)
 
   # Trains the model
-  net.train().requires_grad_(True)
-  compiled_train_net = thunder.compile(net)
-  train_model(compiled_train_net, train_loader)
-  net.eval().requires_grad_(False)
+  model.train().requires_grad_(True)
+  jitted_train_model = thunder.jit(model)
+  train_model(jitted_train_model, train_loader)
+
+  model.eval().requires_grad_(False)
 
   # Performs a final evaluation
-  eval_model(compiled_eval_net, test_loader)
+  eval_model(jitted_eval_model, test_loader)
 
-  # Evaluates the original, uncompiled model
-  # The uncompiled and compiled model share parameters, so it's
+  # Evaluates the original, unjitted model
+  # The unjitted and jitted model share parameters, so it's
   # also updated
-  eval_model(net, test_loader)
+  eval_model(model, test_loader)
 
   # Acquires and prints thunder's "traces", which show what thunder executed
   # The training model has both "forward" and "backward" traces, corresponding
   # to its forward and backward computations.
   # The evaluation model has only one set of traces.
-  fwd_traces, bwd_traces = thunder.last_traces(compiled_train_net)
-  eval_traces = thunder.last_traces(compiled_eval_net)
+  fwd_traces, bwd_traces = thunder.last_traces(jitted_train_model)
+  eval_traces = thunder.last_traces(jitted_eval_model)
+
   print("This is the trace that thunder executed for training's forward computation:")
   print(fwd_traces[-1])
+
   print("This is the trace that thunder executed for training's backward computation:")
   print(bwd_traces[-1])
+
   print("This is the trace that thunder executed for eval's computation:")
   print(eval_traces[-1])
 
 Let's look at a few parts of this program more closely.
 
-First, up until the call to ``thunder.compile()`` the program is just Python, PyTorch and torchvision. ``thunder.compile()`` accepts a PyTorch module (or function) and returns a “Thunder Optimized Module (TOM)”. The TOM's input signature and outputs will match exactly the PyTorch module or function passed to compile. The TOM is simply an optimized version and is expected to be used as a direct replacement. Furthermore, the PyTorch module and the TOM share their parameters and buffers, as we'll see in a moment.
+First, up until the call to ``thunder.jit()`` the program is just Python, PyTorch and torchvision. ``thunder.jit()`` accepts a PyTorch module (or function) and returns a Thunder-optimized module that has the same signature, parameters and buffers.
 
-There's a lot that goes into running a TOM, and we'll take a peek behind the scenes in a moment. What's important to know, however, is that we have to ``thunder.compile()`` our model twice if we want to train and evaluate it. This is because the metadata of a module's parameters is assumed to be constant after the TOM is first run, so it will ignore calls to ``requires_grad_()``. This assumption is a performance optimization, and it'll be easier to work directly with TOMs in the future.
+After compilation the program is, again, just Python and PyTorch, until the very end. Behind the scenes, when a Thunder module is called it produces a “trace” representing the sequence of tensor operations to perform. This trace is then transformed and optimized, and the sequence of these traces for the last inputs can be acquired by calling ``thunder.last_traces()`` on the module (the traced program changes when different input data types, devices, or other properties are used). When the module is used for training, ``thunder.last_traces()`` will return both the sequence of “forward” traces and the sequence of “backward” traces, and when it's just used for evaluation it will just return one sequence of traces. In this case we're printing the last traces in the sequence, which print as Python programs, and these Python programs are what gets executed by Thunder.
 
-After compilation the program is, again, just Python and PyTorch, until the very end. Behind the scenes, when a TOM is called it produces a “trace” representing the sequence of tensor operations to perform. This trace is then transformed and optimized, and the sequence of these traces for the last inputs can be acquired by calling ``thunder.last_traces()`` on the TOM (the traced program changes when different input data types, devices, or other properties are used). When the TOM is used for training, ``thunder.last_traces()`` will return both the sequence of “forward” traces and the sequence of “backward” traces, and when it's just used for evaluation it will just return one sequence of traces. In this case we're printing the last traces in the sequence, which print as Python programs, and these Python programs are what gets executed by *thunder*.
-
-Let's take a look at the execution trace for the training TOM's forward::
+Let's take a look at the execution trace for the training module's forward::
 
   @torch.no_grad()
-  def augmented_forward_fn(_0_weight, _0_bias, _3_weight, _3_bias, _6_weight, _6_bias, _9_weight, _9_bias, _12_weight, _12_bias, input):
-    # _0_weight: "cuda:0 f32[784, 784]"
-    # _0_bias: "cuda:0 f32[784]"
-    # _3_weight: "cuda:0 f32[784, 784]"
-    # _3_bias: "cuda:0 f32[784]"
-    # _6_weight: "cuda:0 f32[784, 784]"
-    # _6_bias: "cuda:0 f32[784]"
-    # _9_weight: "cuda:0 f32[28, 784]"
-    # _9_bias: "cuda:0 f32[28]"
-    # _12_weight: "cuda:0 f32[10, 28]"
-    # _12_bias: "cuda:0 f32[10]"
-    # input: "cuda:0 f32[8, 784]"
-    t0 = torch.nn.functional.linear(input, _0_weight, _0_bias)  # t0: "cuda:0 f32[8, 784]"
-    (t1, t4, t7) = nvFusion0(t0)
-      # t1 = prims.gt(t0, 0.0)  # t1: "cuda:0 b8[8, 784]"
-      # t2 = prims.where(t1, t0, 0.0)  # t2: "cuda:0 f32[8, 784]"
-      # t3 = prims.uniform((8, 784), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t3: "cuda:0 f32[8, 784]"
-      # t4 = prims.lt(t3, 0.9)  # t4: "cuda:0 b8[8, 784]"
-      # t5 = prims.convert_element_type(t4, dtypes.float32)  # t5: "cuda:0 f32[8, 784]"
-      # t6 = prims.mul(t2, t5)  # t6: "cuda:0 f32[8, 784]"
-      # t7 = prims.mul(t6, 1.1111111111111112)  # t7: "cuda:0 f32[8, 784]"
-    del [t0]
-    t8 = torch.nn.functional.linear(t7, _3_weight, _3_bias)  # t8: "cuda:0 f32[8, 784]"
-    (t12, t15, t9) = nvFusion1(t8)
-      # t9 = prims.gt(t8, 0.0)  # t9: "cuda:0 b8[8, 784]"
-      # t10 = prims.where(t9, t8, 0.0)  # t10: "cuda:0 f32[8, 784]"
-      # t11 = prims.uniform((8, 784), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t11: "cuda:0 f32[8, 784]"
-      # t12 = prims.lt(t11, 0.9)  # t12: "cuda:0 b8[8, 784]"
-      # t13 = prims.convert_element_type(t12, dtypes.float32)  # t13: "cuda:0 f32[8, 784]"
-      # t14 = prims.mul(t10, t13)  # t14: "cuda:0 f32[8, 784]"
-      # t15 = prims.mul(t14, 1.1111111111111112)  # t15: "cuda:0 f32[8, 784]"
-    del [t8]
-    t16 = torch.nn.functional.linear(t15, _6_weight, _6_bias)  # t16: "cuda:0 f32[8, 784]"
-    (t17, t20, t23) = nvFusion2(t16)
-      # t17 = prims.gt(t16, 0.0)  # t17: "cuda:0 b8[8, 784]"
-      # t18 = prims.where(t17, t16, 0.0)  # t18: "cuda:0 f32[8, 784]"
-      # t19 = prims.uniform((8, 784), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t19: "cuda:0 f32[8, 784]"
-      # t20 = prims.lt(t19, 0.9)  # t20: "cuda:0 b8[8, 784]"
-      # t21 = prims.convert_element_type(t20, dtypes.float32)  # t21: "cuda:0 f32[8, 784]"
-      # t22 = prims.mul(t18, t21)  # t22: "cuda:0 f32[8, 784]"
-      # t23 = prims.mul(t22, 1.1111111111111112)  # t23: "cuda:0 f32[8, 784]"
-    del [t16]
-    t24 = torch.nn.functional.linear(t23, _9_weight, _9_bias)  # t24: "cuda:0 f32[8, 28]"
-    (t25, t28, t31) = nvFusion3(t24)
-      # t25 = prims.gt(t24, 0.0)  # t25: "cuda:0 b8[8, 28]"
-      # t26 = prims.where(t25, t24, 0.0)  # t26: "cuda:0 f32[8, 28]"
-      # t27 = prims.uniform((8, 28), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t27: "cuda:0 f32[8, 28]"
-      # t28 = prims.lt(t27, 0.9)  # t28: "cuda:0 b8[8, 28]"
-      # t29 = prims.convert_element_type(t28, dtypes.float32)  # t29: "cuda:0 f32[8, 28]"
-      # t30 = prims.mul(t26, t29)  # t30: "cuda:0 f32[8, 28]"
-      # t31 = prims.mul(t30, 1.1111111111111112)  # t31: "cuda:0 f32[8, 28]"
-    del [t24]
-    t32 = torch.nn.functional.linear(t31, _12_weight, _12_bias)  # t32: "cuda:0 f32[8, 10]"
-    (t34, t37) = nvFusion4(t32)
-      # t33 = prims.uniform((8, 10), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t33: "cuda:0 f32[8, 10]"
-      # t34 = prims.lt(t33, 0.9)  # t34: "cuda:0 b8[8, 10]"
-      # t35 = prims.convert_element_type(t34, dtypes.float32)  # t35: "cuda:0 f32[8, 10]"
-      # t36 = prims.mul(t32, t35)  # t36: "cuda:0 f32[8, 10]"
-      # t37 = prims.mul(t36, 1.1111111111111112)  # t37: "cuda:0 f32[8, 10]"
-    del [t32]
-    return {'output': t37, 'flat_args': [_0_weight, _0_bias, _3_weight, _3_bias, _6_weight, _6_bias, _9_weight, _9_bias, _12_weight, _12_bias, input], 'flat_output': (t37,)}, ((_12_weight, _3_weight, _6_weight, _9_weight, input, t1, t12, t15, t17, t20, t23, t25, t28, t31, t34, t4, t7, t9), (1.1111111111111112, 1.1111111111111112, 1.1111111111111112, 1.1111111111111112, 1.1111111111111112))
+  @no_autocast()
+  def augmented_forward_fn(t0, t4, t5, t21, t22, t38, t39, t55, t56, t72, t73):
+    # t0
+    # t4
+    # t5
+    # t21
+    # t22
+    # t38
+    # t39
+    # t55
+    # t56
+    # t72
+    # t73
+    t1 = torch.nn.functional.linear(t0, t4, t5)  # t1
+      # t1 = ltorch.linear(t0, t4, t5)  # t1
+        # t1 = prims.linear(t0, t4, t5)  # t1
+    [t10, t2, t7] = nvFusion0(t1)
+      # t2 = prims.gt(t1, 0.0)  # t2
+      # t3 = prims.where(t2, t1, 0.0)  # t3
+      # t6 = prims.uniform((8, 784), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t6
+      # t7 = prims.lt(t6, 0.9)  # t7
+      # t8 = prims.convert_element_type(t7, dtypes.float32)  # t8
+      # t9 = prims.mul(t3, t8)  # t9
+      # t10 = prims.mul(t9, 1.1111111111111112)  # t10
+    del t1
+    t11 = torch.nn.functional.linear(t10, t21, t22)  # t11
+      # t11 = ltorch.linear(t10, t21, t22)  # t11
+        # t11 = prims.linear(t10, t21, t22)  # t11
+    [t12, t15, t18] = nvFusion1(t11)
+      # t12 = prims.gt(t11, 0.0)  # t12
+      # t13 = prims.where(t12, t11, 0.0)  # t13
+      # t14 = prims.uniform((8, 784), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t14
+      # t15 = prims.lt(t14, 0.9)  # t15
+      # t16 = prims.convert_element_type(t15, dtypes.float32)  # t16
+      # t17 = prims.mul(t13, t16)  # t17
+      # t18 = prims.mul(t17, 1.1111111111111112)  # t18
+    del t11
+    t19 = torch.nn.functional.linear(t18, t38, t39)  # t19
+      # t19 = ltorch.linear(t18, t38, t39)  # t19
+        # t19 = prims.linear(t18, t38, t39)  # t19
+    [t20, t25, t28] = nvFusion2(t19)
+      # t20 = prims.gt(t19, 0.0)  # t20
+      # t23 = prims.where(t20, t19, 0.0)  # t23
+      # t24 = prims.uniform((8, 784), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t24
+      # t25 = prims.lt(t24, 0.9)  # t25
+      # t26 = prims.convert_element_type(t25, dtypes.float32)  # t26
+      # t27 = prims.mul(t23, t26)  # t27
+      # t28 = prims.mul(t27, 1.1111111111111112)  # t28
+    del t19
+    t29 = torch.nn.functional.linear(t28, t55, t56)  # t29
+      # t29 = ltorch.linear(t28, t55, t56)  # t29
+        # t29 = prims.linear(t28, t55, t56)  # t29
+    [t30, t33, t36] = nvFusion3(t29)
+      # t30 = prims.gt(t29, 0.0)  # t30
+      # t31 = prims.where(t30, t29, 0.0)  # t31
+      # t32 = prims.uniform((8, 28), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t32
+      # t33 = prims.lt(t32, 0.9)  # t33
+      # t34 = prims.convert_element_type(t33, dtypes.float32)  # t34
+      # t35 = prims.mul(t31, t34)  # t35
+      # t36 = prims.mul(t35, 1.1111111111111112)  # t36
+    del t29
+    t37 = torch.nn.functional.linear(t36, t72, t73)  # t37
+      # t37 = ltorch.linear(t36, t72, t73)  # t37
+        # t37 = prims.linear(t36, t72, t73)  # t37
+    [t41, t44] = nvFusion4(t37)
+      # t40 = prims.uniform((8, 10), 0.0, 1.0, device=devices.Device("cuda:0"), dtype=dtypes.float32)  # t40
+      # t41 = prims.lt(t40, 0.9)  # t41
+      # t42 = prims.convert_element_type(t41, dtypes.float32)  # t42
+      # t43 = prims.mul(t37, t42)  # t43
+      # t44 = prims.mul(t43, 1.1111111111111112)  # t44
+    del t37
+    return {'output': (t44, ()), 'flat_args': [t0, t4, t5, t21, t22, t38, t39, t55, t56, t72, t73], 'flat_output': (t44,)}, ((t0, t10, t12, t15, t18, t2, t20, t21, t25, t28, t30, t33, t36, t38, t41, t55, t7, t72), (1.1111111111111112, 1.1111111111111112, 1.1111111111111112, 1.1111111111111112, 1.1111111111111112))
 
-There's a lot going on here, and if you'd like to get into the details then keep reading! But we can see that the trace is a functional Python function, and *thunder* has produced several groups of primitives that are sent to nvFuser. Instead of leaving these primitives directly in the TOM, nvFuser has produced several optimized kernels (fusions) and inserted them into the program (``nvFusion0``, ``nvFusion1``, ...). Under each fusion (in comments) are the “primitive” operations that describe precisely what each group does, although how each fusion is executed is entirely up to nvFuser.
+There's a lot going on here, and if you'd like to get into the details then keep reading! But we can see that the trace is a functional Python function, and Thunder has produced several groups of primitives that are sent to nvFuser. Instead of leaving these primitives directly in the module, nvFuser has produced several optimized kernels (fusions) and inserted them into the program (``nvFusion0``, ``nvFusion1``, ...). Under each fusion (in comments) are the “primitive” operations that describe precisely what each group does, although how each fusion is executed is entirely up to nvFuser.

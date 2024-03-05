@@ -20,8 +20,8 @@ def jit(
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
-    disable_torch_autograd: bool = False,  # TODO Revisit this UX for gtc
-    **compile_options,  # TODO GTC Make this explicit -- dict of options
+    disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     if interpretation is None:
         interpretation = INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS

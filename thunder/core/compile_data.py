@@ -71,7 +71,7 @@ def get_cache_option() -> CACHE_OPTIONS:
     return cd.cache_option
 
 
-# TODO GTC Remove the try (hack for when operating outside of this contextvar being set)
+# TODO RC1 Remove the try (hack for when operating outside of this contextvar being set)
 def using_symbolic_values() -> bool:
     try:
         return get_cache_option() is CACHE_OPTIONS.SYMBOLIC_VALUES

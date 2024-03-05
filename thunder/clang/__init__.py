@@ -34,7 +34,7 @@ DeviceLike = Union[str, devices.Device]
 _clang_fn_set: set = set()
 
 
-# TODO GTC Remove noinline
+# TODO RC1 Remove noinline
 # Decorator that sets the core language context and registers the function
 class clangop:
     def __init__(self, *, method_name: None | str = None):

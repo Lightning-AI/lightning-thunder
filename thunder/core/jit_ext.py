@@ -174,14 +174,14 @@ def is_uncopyable(val: Any, /) -> bool:
 # This extension supports detecting and warning or erroring on "sharp edges" -- behavior in the
 #   original Python program that cannot be translated to the thunder program
 
-# TODO GTC Add all symbols + methods
-# TODO GTC Reuse minimal objects in other executors
-# TODO GTC Detect additional sharp edges
+# TODO RC1 Add all symbols + methods
+# TODO RC1 Reuse minimal objects in other executors
+# TODO RC1 Detect additional sharp edges
 #   - inputs that are not function arguments (or their derivatives)
 #   - modifying an input
 #   - calling a function with a side effect (e.g. randn, print)
-# TODO GTC What kind of error should a sharp edge raise?
-# TODO GTC Improve sharp edges warnings and errors to show the source line
+# TODO RC1 What kind of error should a sharp edge raise?
+# TODO RC1 Improve sharp edges warnings and errors to show the source line
 #   https://github.com/Lightning-AI/lightning-thunder/issues/2099
 
 
@@ -390,7 +390,7 @@ def _minimal_global_callback(orig_value: Any, name: str) -> Any:
     # Allows loading global modules.
     #   Some global loads, like these, are so essential that they have to be part of any Python program
     #   translation scheme.
-    # TODO GTC Review this check. There may be other types we want to allow. This essentially assumes that
+    # TODO RC1 Review this check. There may be other types we want to allow. This essentially assumes that
     #   the module is captured at interpretation time, or that global module names will not change for
     #   the lifetime of the program.
     #   We could consider adding a check that the name refers to the same module as it did previously.
@@ -410,7 +410,7 @@ _minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {
 _minimal_callbacks = default_callbacks | _minimal_callbacks
 
 
-# TODO GTC Add debug_log
+# TODO RC1 Add debug_log
 def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
     ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
     jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
