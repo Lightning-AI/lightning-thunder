@@ -52,6 +52,11 @@ repos:
           - mdformat_frontmatter
         exclude: "examples"
 
+  - repo: https://github.com/sphinx-contrib/sphinx-lint
+    rev: v0.9.1
+    hooks:
+      - id: sphinx-lint
+
   - repo: https://github.com/asottile/yesqa
     rev: v1.4.0
     hooks:

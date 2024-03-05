@@ -385,4 +385,4 @@ import torch
 """
 coverage_skip_undoc_in_source = True
 
-import thunder
+import thunder  # noqa: E402 # making the docs build happy
