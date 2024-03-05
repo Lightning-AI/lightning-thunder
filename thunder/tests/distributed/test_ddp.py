@@ -689,6 +689,7 @@ class CompileDDPTest(DataParallelTestCase):
                 self.assertEqual(loss, orig_loss)
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
         from thunder.distributed import _shard_params, _unshard_params
 
@@ -713,6 +714,7 @@ class CompileDDPTest(DataParallelTestCase):
         _unshard_params(model, pg, cpu_offload=True)
         assert torch.equal(model.weight, weight)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_broadcast_from(self):
         from thunder.distributed import _shard_params
 
@@ -737,6 +739,7 @@ class CompileDDPTest(DataParallelTestCase):
         # same check for the buffer
         assert torch.equal(model.foo, torch.tensor([-123.0], device=device))
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_materialize_meta_tensors(self):
         from thunder.distributed import _shard_params
 

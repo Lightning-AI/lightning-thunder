@@ -106,6 +106,7 @@ class DistributedCheckpointTest(DataParallelTestCase):
         tmp_path = broadcast_list[0]
         return tmp_path
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_get_model_state_dict(self):
         device = torch.device("cuda", self.rank)
 
@@ -172,6 +173,7 @@ class DistributedCheckpointTest(DataParallelTestCase):
         with pytest.raises(ValueError, match="cannot be used"):
             get_model_state_dict(sharded_model, options, self.rank)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_load_model_state_dict(self):
         device = torch.device("cuda", self.rank)
         pg = c10d.new_group()
