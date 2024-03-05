@@ -10,7 +10,7 @@ from types import ModuleType
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
@@ -68,7 +68,7 @@ def bsym_header(header: str):
 # NOTE Assumes the outputs of symbols are proxies or collections of proxies
 def default_python_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
-):
+) -> str | Iterable[str]:
     arg_str = (
         ""
         if (arg_printables is None or len(arg_printables) == 0)
@@ -582,13 +582,14 @@ class BoundSymbol(BoundSymbolInterface):
         lines = []
 
         s = self.sym.python_printer(self, self._out_printables, self._arg_printables, self._kwarg_printables)
-        commented = "# " if commented else ""
+
+        comment = "# " if commented else ""
+
         if isinstance(s, str):
-            lines.append(f"{codeutils.indent_string(indent)}{commented}{s}")
+            lines.append(f"{codeutils.indent_string(indent)}{comment}{s}")
         else:
             for line in s:
-                lines.append(f"{codeutils.indent_string(indent)}{commented}{line}")
-
+                lines.append(f"{codeutils.indent_string(indent)}{comment}{line}")
         return lines
 
     def python(self, indent: int, commented: bool = False, print_depth: int = 1) -> list[str]:

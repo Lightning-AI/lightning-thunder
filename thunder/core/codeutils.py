@@ -115,7 +115,7 @@ def to_printable(
     *,
     import_ctx: Optional[dict] = None,
     object_ctx: Optional[dict] = None,
-) -> Any:
+) -> Printable:
     # Short-circuits if x is a Proxy
     if isinstance(x, ProxyInterface):
         return x
@@ -177,6 +177,9 @@ def prettyprint(
 
     if literals_as_underscores and is_literal(x) and not is_collection(x):
         return m("_")
+
+    if type(x) is str:
+        return m(repr(x))
 
     if baseutils.is_base_printable(x):
         return m(baseutils.print_base_printable(x))

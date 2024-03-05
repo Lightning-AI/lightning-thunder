@@ -17,7 +17,7 @@ import traceback
 import weakref
 import torch
 from typing import Any, Literal, NamedTuple, TypedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
 import collections
 import operator
 
@@ -125,7 +125,7 @@ class WrappedValue:
         assert isinstance(provenance, ProvenanceRecord)
 
         ctx: JitCompileCtx = get_jitcompilectx()
-        runtimectx: JitCompileCtx = get_jitruntimectx()
+        runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
         self.python_typ = type(value)
 
@@ -141,7 +141,7 @@ class WrappedValue:
         elif isinstance(value, Sequence):
             self.item_wrappers = None
         else:
-            self.item_wrappers: dict | list = {}  # TODO: wrappers for things via getitem/setiem
+            self.item_wrappers: None | dict | list = {}  # TODO: wrappers for things via getitem/setiem
             self.key_wrappers = {}
 
         self.attribute_wrappers = {}  # TODO: wrappers for things via getattr/setattr
@@ -198,7 +198,7 @@ def wrap_kwargs_from_dict(d):  # returns a new dict
     return {k: _jit_no_unwrap(lambda d, k: d[k], d, wrap_const(k)) for k in unwrap(d)}
 
 
-def wrapped_build_tuple(l: list[WrappedValue]) -> WrappedValue:
+def wrapped_build_tuple(l: Sequence[WrappedValue]) -> WrappedValue:
     assert all(isinstance(v, WrappedValue) for v in l)
     if l:
         pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in l][::-1])  # other inst?
@@ -246,15 +246,17 @@ def wrap_kwargs(d):
 def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
     if isinstance(value, WrappedValue):
         if isinstance(value.value, list):
+            assert isinstance(value.item_wrappers, Sized)
             assert len(value.value) == len(
                 value.item_wrappers
             ), f"{len(value.value)} {len(value.item_wrappers)} {value.provenance}"
         if isinstance(value.value, dict):
+            assert value.item_wrappers is not None
             assert len(value.item_wrappers) == len(value.key_wrappers), f"{value.value}"
         return value
 
     ctx: JitCompileCtx = get_jitcompilectx()
-    runtimectx: JitCompileCtx = get_jitruntimectx()
+    runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
     if ctx._with_provenance_tracking:
         cached = runtimectx._known_wrappers.get(id(value))
@@ -382,7 +384,7 @@ class JitCompileCtx:
         fn_lookaside: Callable,
         callbacks: dict[JIT_CALLBACKS, Callable],
         with_provenance_tracking: bool = False,
-        uncacheable_classes: list[type] | None = None,
+        uncacheable_classes: Sequence[type] | None = None,
     ):
         self._opcode_interpreter: Callable = opcode_interpreter
         self._fn_lookaside: Callable = fn_lookaside
@@ -1017,6 +1019,7 @@ class InterpreterStack:
             raise NotImplementedError("sorry, todo")
 
         assert key is None or key < 0
+        assert self.provenance_inputs is not None
         self.provenance_inputs.append(wrapped_value.provenance)
         return unwrap(wrapped_value)
 
@@ -1033,6 +1036,7 @@ class InterpreterStack:
         if isinstance(val, WrappedValue):
             if isinstance(val.value, tuple):
                 val.track_items()
+                assert val.item_wrappers is not None
                 for u, v in zip(val.value, val.item_wrappers):
                     assert u is v.value or u is v.original_value, f"{u}, {v.value}"
         self._stack.append(self.get_provenance_record(val))
@@ -1965,11 +1969,15 @@ class SequenceIter:
 #
 # TODO: maybe make these generic for sequences / mutuable sequence
 # https://docs.python.org/3/library/stdtypes.html#common-sequence-operations
-class SequenceWrapperMethods:
+class SequenceWrapperMethods(WrappedValue):
+    # NOTE! This is not actually a WrappedValue. However,
+
     def __init__(self, iterable=(), /):
         if iterable == ():
             iterable = wrap_const(())
         l = wrap_const([])
+        assert l.item_wrappers is not None
+
         res = _jit_no_unwrap(list.extend, l, iterable)
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
             return res
@@ -1979,6 +1987,7 @@ class SequenceWrapperMethods:
 
     def __getitem__(self, idx, /):
         self.track_items()
+        assert self.item_wrappers is not None
 
         uidx = idx.value
         uself = self.value
@@ -2094,12 +2103,16 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
             value = _jit_no_unwrap(list, value)
             if value is JIT_SIGNALS.EXCEPTION_RAISED:
                 return value
+            assert isinstance(value, WrappedValue)
+            assert isinstance(value.value, list)
             populate_item_wrappers(value)
 
         uvalue = value.value
 
         assert isinstance(uself, list)
         self.value[ukey] = uvalue
+        assert self.item_wrappers is not None
+        assert value.item_wrappers is not None
         if isinstance(ukey, slice):
             self.item_wrappers[ukey] = value.item_wrappers[:]
         else:
@@ -2111,6 +2124,8 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def __delitem__(self, key, /):
         self.track_items()
+        assert self.item_wrappers is not None
+
         ukey = key.value
         try:
             del self.value[ukey]
@@ -2121,9 +2136,12 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def append(self, value, /):
         self.track_items()
+        assert self.item_wrappers is not None
+
         pr = ProvenanceRecord(PseudoInst.LIST_APPEND, inputs=[self.provenance, value.provenance])
         self.provenance = pr  # should have an update method
         self.value.append(value.value)
+        assert type(self.item_wrappers) is list
         self.item_wrappers.append(value)
         assert len(self.value) == len(self.item_wrappers)
         return wrap_const(None)
@@ -2138,6 +2156,8 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def extend(self, iterable, /):
         self.track_items()
+        assert self.item_wrappers is not None
+
         if not isinstance(iterable.value, (tuple, list)):
 
             def impl(l, iterable):
@@ -2154,6 +2174,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         assert len(iterable.value) == len(iterable.item_wrappers)
         # also includes l.value is iterable.value
         self.value.extend(iterable.value)
+        assert type(self.item_wrappers) is list
         self.item_wrappers.extend(iterable.item_wrappers)
         assert len(self.value) == len(self.item_wrappers)
         return wrap_const(None)
@@ -2199,6 +2220,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
         assert res is not JIT_SIGNALS.EXCEPTION_RAISED
 
+        assert self.item_wrappers is not None
         assert len(self.value) == len(self.item_wrappers)
         del uself[uindex]
         del self.item_wrappers[uindex]
@@ -2213,6 +2235,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
     def reverse(self, /):
         self.track_items()
         self.value.reverse()
+        assert type(self.item_wrappers) is list
         self.item_wrappers.reverse()
         return wrap_const(None)
 
@@ -2312,7 +2335,7 @@ class MappingItemsWrapper:
         return MappingItemsIterator(self._mapping)
 
 
-class MutMappingWrapperMethods:
+class MutMappingWrapperMethods(WrappedValue):
     def __new__(cls, /, *args, **kwds):
         uvalue = unwrap(cls)()
         # todo: for subclasses, better record the call to the constructor
@@ -2324,6 +2347,8 @@ class MutMappingWrapperMethods:
 
     def __setitem__(self, key, value):
         self.track_items()
+        assert self.item_wrappers is not None
+
         self.value[key.value] = value.value
         self.key_wrappers[key.value] = key
         self.item_wrappers[key.value] = value
@@ -2331,6 +2356,8 @@ class MutMappingWrapperMethods:
 
     def __delitem__(self, key):
         self.track_items()
+        assert self.item_wrappers is not None
+
         try:
             del self.value[key.value]
         except Exception as e:
@@ -2341,6 +2368,9 @@ class MutMappingWrapperMethods:
         return wrap_const(None)
 
     def __getitem__(self, key):
+        # Calling self.track_items() here breaks things.
+        assert self.item_wrappers is not None
+
         try:
             uv = self.value[key.value]
         except Exception as e:
@@ -2371,6 +2401,8 @@ class MutMappingWrapperMethods:
 
     def clear(self):
         self.track_items()
+        assert self.item_wrappers is not None
+
         self.value.clear()
         self.key_wrappers.clear()
         self.item_wrappers.clear()
@@ -2378,6 +2410,8 @@ class MutMappingWrapperMethods:
     # note: popitem with last is only for ordered dict
     def popitem(self, last=Py_NULL()):
         self.track_items()
+        assert self.item_wrappers is not None
+
         if last is Py_NULL():
             last_d = {}
         else:
@@ -2794,7 +2828,7 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     return cell
 
 
-def globals_lookup(globals_dict: dict, name: Any) -> Any | JIT_SIGNALS:
+def globals_lookup(globals_dict: dict | WrappedValue, name: Any) -> Any | JIT_SIGNALS:
     # TODO: extend to arbitrary non wrap_const'able types
     assert wrapped_isinstance(name, str)
     assert wrapped_isinstance(globals_dict, dict)
@@ -3560,11 +3594,11 @@ def _delete_attr_handler(
 def _delete_deref_handler(
     inst: dis.Instruction,
     /,
-    stack: list,
+    stack: InterpreterStack,
     co: CodeType,
     frame: JITFrame,
     **kwargs,
-) -> None:
+) -> None | JIT_SIGNALS:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
     if sys.version_info < (3, 11):
@@ -3593,7 +3627,7 @@ def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame
 
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_GLOBAL
 @register_opcode_handler("DELETE_GLOBAL")
-def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -3609,7 +3643,7 @@ def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFra
 
 # https://docs.python.org/3.11/library/dis.html#opcode-DELETE_NAME
 @register_opcode_handler("DELETE_NAME")
-def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -3624,7 +3658,7 @@ def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
 @register_opcode_handler("DELETE_SUBSCR")
-def _delete_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+def _delete_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
@@ -3671,7 +3705,7 @@ def _dup_top_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DUP_TOP_TWO
 @register_opcode_handler("DUP_TOP_TWO", max_ver=(3, 10))
-def _dup_top_two_handler(inst: dis.Instruction, /, stack: list, **kwargs) -> None:
+def _dup_top_two_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     stack.extend(stack[-2:])
 
 
@@ -3930,7 +3964,7 @@ def _import_from_handler(
 
     # NOTE The stack is peeked, not popped
     module = stack.getitem_wrapped(-1)
-    name: str = wrap_const(co.co_names[namei])
+    name: WrappedValue = wrap_const(co.co_names[namei])
 
     def impl(module, name):
         if hasattr(module, name):
@@ -3995,7 +4029,7 @@ def _import_name_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
 @register_opcode_handler("IMPORT_STAR")
 def _import_star_handler(
-    inst: dis.Instruction, /, stack: list, co: CodeType, frame: JITFrame, **kwargs
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
 ) -> None | JIT_SIGNALS:
     # The module is actually imported from another instruction.
     # This instruction can only be parsed at top level and modify globals,
@@ -4159,7 +4193,7 @@ def _jump_if_false_or_pop_handler(
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_APPEND
 @register_opcode_handler("LIST_APPEND")
-def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     i: int = inst.arg
 
@@ -4179,7 +4213,7 @@ def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
 @register_opcode_handler("LIST_EXTEND")
-def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     i: int = inst.arg
 
@@ -4225,7 +4259,7 @@ def _load_attr_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: Co
     assert type(inst.arg) is int
 
     a = stack.pop_wrapped()
-    name: str = wrap_const(co.co_names[inst.arg])
+    name: WrappedValue = wrap_const(co.co_names[inst.arg])
 
     return check_and_append(stack, _jit_no_unwrap(getattr, a, name))
 
@@ -4294,6 +4328,7 @@ def _load_deref_handler(
     if ctx._with_provenance_tracking:
         assert isinstance(val, WrappedValue), f"{val}"
         if isinstance(val.value, list):
+            assert isinstance(val.item_wrappers, Sized)
             assert len(val.value) == len(val.item_wrappers)
 
     stack.append(val)
@@ -4327,7 +4362,7 @@ def _load_fast_handler(
 def _load_global_handler(
     inst: dis.Instruction,
     /,
-    stack: list,
+    stack: InterpreterStack,
     co: CodeType,
     globals_dict: dict[str, Any],
     **kwargs,
@@ -5216,7 +5251,7 @@ def _store_attr_handler(
 def _store_deref_handler(
     inst: dis.Instruction,
     /,
-    stack: list,
+    stack: InterpreterStack,
     co: CodeType,
     frame: JITFrame,
     **kwargs,
@@ -5249,7 +5284,7 @@ def _store_deref_handler(
 @register_opcode_handler("STORE_GLOBAL")
 def _store_global_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None:
+) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
 
@@ -5303,7 +5338,7 @@ def _store_fast_handler(
 @register_opcode_handler("STORE_NAME")
 def _store_name_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None:
+) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -5395,8 +5430,8 @@ def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
     assert type(inst.arg) is int
     counts: int = inst.arg
-    before_list: int = wrap_const(counts & 0xFF)
-    after_list: int = wrap_const(counts >> 8)
+    before_list: WrappedValue = wrap_const(counts & 0xFF)
+    after_list: WrappedValue = wrap_const(counts >> 8)
 
     seq: Iterable = stack.pop_wrapped()
     assert wrapped_isinstance(seq, Iterable)
@@ -5426,6 +5461,8 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
     ctx: JitCompileCtx = get_jitcompilectx()
     if ctx._with_provenance_tracking:
         populate_item_wrappers(results)
+        assert type(results) is WrappedValue
+        assert results.item_wrappers is not None
         results = results.item_wrappers[:]
 
     assert type(results) is list
@@ -5724,6 +5761,8 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     args = wrap_consts(*args)
     kwargs = {k: wrap_const(v) for k, v in kwargs.items()}
     res = _jit_no_unwrap(fn, *args, **kwargs)
+    if isinstance(res, JIT_SIGNALS):
+        return res
 
     compilectx: JitCompileCtx = get_jitcompilectx()
     if compilectx._with_provenance_tracking:
@@ -5739,10 +5778,12 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
             ), f"{len(res.value)} {len(res.item_wrappers)} {len(res.key_wrappers)} {res.value} {res.item_wrappers} {fn}"
         for a in args:
             if isinstance(a.value, list):
+                assert isinstance(a.item_wrappers, Sized)
                 assert len(a.value) == len(
                     a.item_wrappers
                 ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers} {fn}"
             if isinstance(a.value, dict):
+                assert isinstance(a.item_wrappers, Sized)
                 assert len(a.key_wrappers) == len(
                     a.item_wrappers
                 ), f"{len(a.value)} {len(a.item_wrappers)} {len(a.key_wrappers)} {a.value} {a.item_wrappers} {fn}"
@@ -5750,15 +5791,16 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     return unwrap(res)
 
 
-def _jit_no_unwrap(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
+def _jit_no_unwrap(fn: Callable | WrappedValue, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     compilectx: JitCompileCtx = get_jitcompilectx()
     runtimectx: JitRuntimeCtx = get_jitruntimectx()
 
-    runtimectx.record_jit_call(fn)
-    rval = _jit_inner(compilectx, runtimectx, fn, *args, **kwargs)
+    # TODO: Implement generics and fix WrappedValue[T] everywhere.
+    runtimectx.record_jit_call(fn)  # type: ignore
+    rval = _jit_inner(compilectx, runtimectx, fn, *args, **kwargs)  # type: ignore
     if compilectx._with_provenance_tracking:
         assert isinstance(rval, (JIT_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
-    runtimectx.record_jit_return(fn, rval)
+    runtimectx.record_jit_return(fn, rval)  # type: ignore
 
     return rval
 
@@ -5772,6 +5814,7 @@ def _jit_inner(
         # TODO: think about whether this is a good choice in all circumstances
         wrapped_fn = wrap_const(fn)
     fn = unwrap(fn)
+    assert not isinstance(fn, WrappedValue)
 
     if compilectx._with_provenance_tracking:
         assert all(isinstance(a, WrappedValue) for a in args)
@@ -5785,6 +5828,7 @@ def _jit_inner(
     # (1) Already (jit)
     if hasattr(fn, "__thunder_jit_orig_fn"):
         fn = fn.__thunder_jit_orig_fn
+        assert isinstance(fn, Callable)
         wrapped_fn = wrap_const(fn)
     # (0) Bound methods are unbound
     # (1a) The callable is a bound method (implemented in Python), in which case it's unwrapped
@@ -5937,6 +5981,7 @@ def _jit_inner(
             return obj
 
         wrapped_init = _jit_no_unwrap(getattr, obj, wrap_const("__init__"))
+        assert not isinstance(wrapped_init, JIT_SIGNALS)
         populate_attribute_wrapper(wrapped_init, "__self__", obj)
         res = _jit_no_unwrap(wrapped_init, *args, **kwargs)
         if res is JIT_SIGNALS.EXCEPTION_RAISED:
@@ -5951,6 +5996,7 @@ def _jit_inner(
             )
 
         wrapped_call = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__call__"))
+        assert not isinstance(wrapped_call, JIT_SIGNALS)
         populate_attribute_wrapper(wrapped_call, "__self__", wrapped_fn)
         return _jit_no_unwrap(wrapped_call, *args, **kwargs)
 
@@ -6388,6 +6434,7 @@ def interpret(
                         wrapped_fn_2.value.__closure__, wrapped_fn_2, wrap_const("__closure__")
                     )
                     wrapped_cell = wrap_binary_subscr(wrapped_closure.value[0], wrapped_closure, 0)
+                    assert isinstance(wrapped_closure.item_wrappers, list)
                     wrapped_closure.item_wrappers[0] = wrapped_cell
                     populate_attribute_wrapper(wrapped_cell, "cell_contents", fn_wrapped)
 
@@ -6418,7 +6465,7 @@ def interpret(
 
             return jit_result
 
-    fn_.__thunder_jit_orig_fn = fn
+    fn_.__thunder_jit_orig_fn = fn  # type: ignore
     return fn_
 
 
