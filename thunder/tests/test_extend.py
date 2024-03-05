@@ -2,15 +2,14 @@ from numbers import Number
 
 import numpy as np
 import torch
-from torch.testing import make_tensor, assert_close
+from torch.testing import assert_close
 
 import thunder
-from thunder.core.langctxs import langctx
-from thunder.extend import OperatorExecutor, register_executor, get_default_executors, add_default_executor
-from thunder.core.proxies import TensorProxy
-from thunder.core.utils import check
-from thunder.core.transforms import grad, get_grad, put_grad, put_grads
 import thunder.core.devices as devices
+from thunder.core.langctxs import langctx
+from thunder.core.proxies import TensorProxy
+from thunder.core.transforms import grad, get_grad, put_grads
+from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors
 
 
 def test_extend_core():
@@ -36,21 +35,20 @@ def test_extend_core():
 
     multimul = myex.register_operator("multimul", like=multimul_like, fn=multimul_impl)
 
-    # TODO Restore this once nonlocals are supported
-    # def foo(a, b):
-    #     return multimul(a, b, 0, 0)
+    def foo(a, b):
+        return multimul(a, b, 0, 0)
 
-    # cfoo = thunder.compile(foo, executors_list=[myex, thunder.pytorch_executor])
+    cfoo = thunder.jit(foo, executors=[myex, thunder.pytorch_executor])
 
-    # a = torch.randn((4, 4), device='cpu', dtype=torch.float32, requires_grad=False)
-    # b = torch.randn((4, 4), device='cpu', dtype=torch.float32, requires_grad=False)
+    a = torch.randn((4, 4), device="cpu", dtype=torch.float32, requires_grad=False)
+    b = torch.randn((4, 4), device="cpu", dtype=torch.float32, requires_grad=False)
 
-    # thunder_result = cfoo(a, b)
+    thunder_result = cfoo(a, b)
 
-    # assert_close(thunder_result, a * b)
+    assert_close(thunder_result[0], a * b)
 
-    # cfoo_grad = grad(cfoo)
-    # cfoo_grad(a, b)
+    cfoo_grad = grad(cfoo)
+    cfoo_grad(a, b)
 
     def mul_to_multimul(a: Number | TensorProxy, b: Number | TensorProxy) -> TensorProxy:
         result, _ = multimul(a, b, 0, 0)
@@ -103,7 +101,7 @@ def test_extend_core():
     b.requires_grad_(True)
 
     cbar_grad = grad(cbar)
-    result = cbar_grad(a, b)
+    _ = cbar_grad(a, b)
     traces = thunder.last_traces(cbar_grad)
 
     multimul_count: int = 0
@@ -112,3 +110,24 @@ def test_extend_core():
             multimul_count += 1
 
     assert multimul_count == 1
+
+    deregister_executor(myex)
+
+
+def test_get_all_executors_includes_all_native_executors():
+    executors = get_all_executors()
+    actual = {e.name for e in executors}
+    expected = {
+        "apex",
+        "cudnn",
+        "torch",
+        "cudnn_layernorm",
+        "sdpa",
+        "torchcompile",
+        "python",
+        "transformer_engine",
+    }
+    actual.discard("triton")  # remove when triton can always be imported
+    if torch.cuda.is_available():
+        expected.update({"nvfuser"})
+    assert actual == expected

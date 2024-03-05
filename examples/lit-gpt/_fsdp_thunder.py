@@ -364,10 +364,6 @@ def _validate_executors(executors: Optional[Tuple[Union["Executor", str], ...]])
         return None
     from thunder import get_all_executors
 
-    # https://github.com/Lightning-AI/lightning-thunder/issues/2201
-    from thunder.executors import sdpaex
-    from thunder.executors import torch_compile
-
     final = []
     issues = []
     all = get_all_executors()

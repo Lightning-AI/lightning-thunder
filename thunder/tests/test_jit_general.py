@@ -301,7 +301,7 @@ def test_nn_module():
     # saving is the same
     torch.testing.assert_close(tom2.state_dict(), m2.state_dict(), rtol=0, atol=0)
     # loading works
-    tom2.load_state_dict(m2.state_dict(), strict=False, assign=True)
+    tom2.load_state_dict(m2.state_dict(), strict=True, assign=True)
     expected = m2(a)
     actual = tom2(a)
     assert_close(expected, actual)

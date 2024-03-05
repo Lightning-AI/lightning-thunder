@@ -50,6 +50,8 @@ if TE_AVAILABLE:
         TE_AVAILABLE = False
 
     TE_VERSION_1_3_PLUS = LooseVersion(version("transformer_engine")) >= LooseVersion("1.3")
+if not TE_AVAILABLE:
+    TransformerEngineBaseModule = object
 
 # [NOTE] IMPLEMENTATION DETAILS
 #

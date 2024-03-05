@@ -5,6 +5,8 @@ from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
 
+import torch.cuda
+
 from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
@@ -288,6 +290,24 @@ def register_executor(
 
 
 def get_all_executors() -> tuple[Executor]:
+    # manually import all native executors to let them register themselves
+    from thunder.executors import (
+        apex_entropyex,
+        cudnn_layernormex,
+        cudnnex,
+        nvfuserex,
+        pythonex,
+        sdpaex,
+        torch_compile,
+        torchex,
+        transformer_engineex,
+    )
+
+    if torch.cuda.is_available():
+        # raise an error when a dependency is not available at import time
+        # TODO: this should only happen at runtime
+        from thunder.executors import triton_crossentropy
+
     return tuple(_executor_map.values())
 
 

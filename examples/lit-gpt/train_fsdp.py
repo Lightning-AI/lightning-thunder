@@ -29,7 +29,7 @@ def main(
         FSDPThunderStrategy(
             sharding_strategy=fsdp_type,
             bucketing_strategy=bucketing_strategy,
-            executors_list=("sdpa", "torchcompile", "nvfuser", "torch"),
+            executors=("sdpa", "torchcompile", "nvfuser", "torch"),
         )
         if compile == "thunder"
         else FSDPStrategy(auto_wrap_policy=auto_wrap_policy, sharding_strategy=sharding_strategy)
