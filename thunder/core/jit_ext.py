@@ -108,6 +108,17 @@ from thunder.core.compile_data import compile_data_and_stats
 #
 
 
+EXT_FLAG_IS_PROXY_DERIVED = 1
+EXT_FLAG_IS_TENSOR_PROXY = 2
+EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
+MODULE_MEMBER_DICT_ATTRS = {
+    "_parameters",
+    "_modules",
+    "_buffers",
+    "__dict__",
+}
+
+
 #
 # Functions and objects related to type properties
 #
@@ -456,15 +467,6 @@ def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
 
 
 def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
-    # TODO: revisit. Maybe it is not bad to show some of these,
-    # especially now with the index being shown in the name.
-    skipped_attrs = {
-        "_modules",
-        "_parameters",
-        "_buffers",
-        "__dict__",
-    }
-
     # Instructions that are considered terminal for recursions below
     terminal_instructions = {PseudoInst.INPUT_ARGS, PseudoInst.INPUT_FN}
 
@@ -476,10 +478,22 @@ def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
             assert len(pr.inputs) == 2
             lhs, rhs = pr.inputs
             postfix = get_postfix(lhs)
+
             if rhs.inst == PseudoInst.CONSTANT:
                 rhs_postfix = str(rhs.value)
-                if rhs_postfix not in skipped_attrs:
+
+                if pr.inst == PseudoInst.BINARY_SUBSCR:
+                    maybe_module_pr = lhs
+                else:
+                    # LOAD_ATTR
+                    maybe_module_pr = pr
+
+                if maybe_module_pr.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+                    if rhs_postfix not in MODULE_MEMBER_DICT_ATTRS:
+                        postfix.append(rhs_postfix)
+                else:
                     postfix.append(rhs_postfix)
+
             return postfix
         else:
             # Skip as if terminal for now
@@ -643,8 +657,6 @@ def general_jit_lookaside(diverted_fn):
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside)
-
-
 @general_jit_lookaside(getattr)
 def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
@@ -656,6 +668,10 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 
     assert isinstance(value, WrappedValue)
     assert isinstance(name, WrappedValue)
+
+    if (not maybe_default) and (value is not JIT_SIGNALS.EXCEPTION_RAISED):
+        if isinstance(unwrap(obj), torch.nn.Module) and (unwrap(name) in MODULE_MEMBER_DICT_ATTRS):
+            value.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
 
     return value
 
@@ -699,7 +715,7 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     if isinstance(uobj, torch.nn.Module):
         # 1) modify the inner thing
         # 2) divert the actual setattr...
-        for n in ("_parameters", "_modules", "_buffers"):
+        for n in MODULE_MEMBER_DICT_ATTRS:
             member_dict = _jit_no_unwrap(getattr, obj, wrap_const(n))
             member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
 
@@ -906,10 +922,6 @@ _safe_provenance_inst = {
     "CONSTANT",
     "BINARY_SUBSCR",
 }
-
-EXT_FLAG_IS_PROXY_DERIVED = 1
-EXT_FLAG_IS_TENSOR_PROXY = 2
-EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
 
 
 def should_register_for_prologue(pr):
