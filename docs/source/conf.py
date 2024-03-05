@@ -49,6 +49,8 @@ release = about.__version__
 github_user = "Lightning-AI"
 github_repo = project
 
+linkcheck_ignore = [rf"https://github.com/Lightning-AI/lightning-thunder(/.*|\.git)"]
+
 # -- Project documents -------------------------------------------------------
 
 
@@ -382,3 +384,5 @@ import torch
 
 """
 coverage_skip_undoc_in_source = True
+
+import thunder

@@ -28,9 +28,9 @@ The code is configured to run with Thunder by default.
 
 Results with 1 GPU:
 
-* ~339 ms/iter (torch.compile 'inductor')
-* ~347 ms/iter (thunder nvfuser)
-* ~431 ms/iter (eager)
+- ~339 ms/iter (torch.compile 'inductor')
+- ~347 ms/iter (thunder nvfuser)
+- ~431 ms/iter (eager)
 
 CUDAGraphs are not used as the results were worse with them.
 
