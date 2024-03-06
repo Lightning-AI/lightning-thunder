@@ -58,7 +58,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
         try:
             torch_result = fn(*args, **kwargs)
         except Exception as e:
-            print("Found an issue running the function with torch tensors!")
+            print("Failed to run the unmodified function. Please verify that your code runs without thunder")
             print(e)
             return
 
