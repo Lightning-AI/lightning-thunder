@@ -607,29 +607,32 @@ class ThunderModule(pytorch.nn.Module):
             In contrast, this synchronizes accumulated gradients when exiting, leading to
             :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
 
-        """
-        from torch.distributed import distributed_c10d as c10d
+        .. warning::
 
-        from thunder.distributed import set_skip_data_parallel_grad_sync
-        from thunder.distributed import reset_skip_data_parallel_grad_sync
+            You must reuse this context manager in each group of gradient accumulation iterations since gradients will get synchronized
+            on context manager exit.
+
+            .. code-block:: python
+
+                with model.no_sync():
+                    for _ in range(len(gradient_accumulation_iters)):
+                        loss(model(x)).backward()  # uses no-sync-backward trace
+                loss(model(x)).backward()  # uses the regular backward trace
+                optimizer.step()
+
+        """
+        from thunder.distributed import (
+            set_skip_data_parallel_grad_sync,
+            reset_skip_data_parallel_grad_sync,
+            _sync_grads,
+        )
 
         token = set_skip_data_parallel_grad_sync(True)
         try:
             yield
         finally:
             reset_skip_data_parallel_grad_sync(token)
-
-            params_with_grad = list(filter(lambda p: p.grad is not None, self.parameters()))
-            grads = [p.grad for p in params_with_grad]
-            process_group = self._lc_cd.process_group_for_ddp
-            pytorch._foreach_div_(grads, process_group.size())
-            with c10d._coalescing_manager(
-                group=process_group,
-                async_ops=True,
-            ) as cm:
-                for p in params_with_grad:
-                    c10d.all_reduce(p.grad)
-            cm.wait()
+            _sync_grads(self)
 
     def __getattr__(self, name: str) -> Any:
         if name == "_model":
