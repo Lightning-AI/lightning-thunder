@@ -148,8 +148,12 @@ class ThunderFunction(torch.autograd.Function):
             # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
             # backward trace and increases the peak allocated memory
             if getattr(compile_data.fn, "use_fsdp", False):
-                assert hasattr(compile_data.fn, "sharding_strategy")
-                if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
+                utils.check(
+                    hasattr(compile_data.fn, "sharding_strategy"),
+                    lambda: "`compile_data.fn` does not have the attribute of `sharding_strategy`. Have you called `thunder.distributed.fsdp` on the callable to optimize?",
+                )
+                sharding_strategy = compile_data.fn.sharding_strategy
+                if sharding_strategy == FSDPType.ZERO3:
                     from thunder.distributed.utils import limit_in_flight_allgathers
                     from thunder.distributed import FSDPBucketingStrategy
 
@@ -165,7 +169,7 @@ class ThunderFunction(torch.autograd.Function):
                         3,
                         compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
                     )
-                if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
+                if sharding_strategy == FSDPType.ZERO2:
                     fw_extrace = sort_waits(fw_extrace)
                     bw_extrace = sort_waits(bw_extrace)
             if getattr(compile_data.fn, "use_ddp", False):
