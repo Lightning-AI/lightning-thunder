@@ -2744,6 +2744,11 @@ class JIT_CALLBACKS(enum.Enum):
     #   The returned value is stored instead of the original value
     STORE_GLOBAL_CALLBACK = enum.auto()
 
+    # Called when storing into a nonlocal variable
+    #   (orig_value: Any | WrappedValue, name: str, co_cellvars: tuple[str], co_freevars: tuple[str]) -> Any
+    #   The returned value is stored instead of the original value
+    STORE_DEREF_CALLBACK = enum.auto()
+
     # Called when a locals (in localsplus) is created
     #   (name: str, value: Any, /) -> Any
     #   The returned value is used in place of the original value
@@ -2868,6 +2873,20 @@ def global_callback(
         return orig_val
     else:
         return cb(orig_val, name)
+
+
+def store_deref_callback(value: Any, name: str, co_cellvars: tuple[str], co_freevars: tuple[str]) -> Any:
+    assert isinstance(name, str)
+    assert isinstance(co_cellvars, tuple)
+    assert isinstance(co_freevars, tuple)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.STORE_DEREF_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(value, name, co_cellvars, co_freevars)
 
 
 def local_callback(name: str, value: Any, /) -> Any:
@@ -5264,6 +5283,11 @@ def _store_deref_handler(
     assert i >= 0 and i < len(frame.localsplus)
 
     tos = stack.pop_wrapped()
+
+    tos = store_deref_callback(tos, inst.argval, co.co_cellvars, co.co_freevars)
+
+    if tos is JIT_SIGNALS.EXCEPTION_RAISED:
+        return tos
 
     # TODO: we would like to do this, but litjit currently blocks all of setattr
 

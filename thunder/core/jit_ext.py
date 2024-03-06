@@ -391,6 +391,18 @@ def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
     return _sharp_edge(f"Storing a global variable `{name}`", orig_value)
 
 
+def _minimal_store_deref_callback(orig_value: Any, name: str, co_cellsvars: tuple[str], co_freevars: tuple[str]) -> Any:
+    # ShapeEdge Description: Writing a non-local outside of current scope is a SharpEdge.
+    # code_obj.co_freevars contains the names of free variables in a function.
+    # Free variables are non-local variables defined in an outer function
+    # and used in an inner function.
+    # So if the STORE_DEREF is updating a variable in `co_freevars`,
+    # it means we are mutating a captured variable.
+    if name in co_freevars:
+        return _sharp_edge(f"Storing into a nonlocal variable `{name}`", orig_value)
+    return orig_value
+
+
 # TODO: we need the builtins for impl functions...
 safe_builtins = {id(bi): bi for bi in builtins.__dict__.values()}
 
@@ -417,6 +429,7 @@ def _minimal_global_callback(orig_value: Any, name: str) -> Any:
 _minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {
     JIT_CALLBACKS.STORE_GLOBAL_CALLBACK: _minimal_store_global_callback,
     JIT_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
+    JIT_CALLBACKS.STORE_DEREF_CALLBACK: _minimal_store_deref_callback,
 }
 _minimal_callbacks = default_callbacks | _minimal_callbacks
 

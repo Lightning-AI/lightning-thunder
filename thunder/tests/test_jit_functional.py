@@ -2498,7 +2498,6 @@ def test_fn_global_no_sharp_edge():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2187")
 def test_nonlocal_write_sharp_edge():
     x = 5
 
@@ -2510,6 +2509,26 @@ def test_nonlocal_write_sharp_edge():
 
     with pytest.raises(ThunderSharpEdgeError):
         jfoo()
+
+
+def test_nonlocal_no_mutation_not_sharp_edge():
+    def foo():
+        # In this case, we do have a STORE_DEREF for x
+        # as it is a co_cellvar (captured by nested_fn)
+        x = 0
+
+        def nested_fn():
+            return x
+
+        y = nested_fn()
+
+        # This STORE_DEREF is safe as `x` is local here.
+        x = 1
+        return x, y
+
+    jfoo = thunder.jit(foo, sharp_edges="error")
+
+    assert_close(jfoo(), foo())
 
 
 # NOTE This is NOT a sharp edge -- this test is to ensure this works as expected
