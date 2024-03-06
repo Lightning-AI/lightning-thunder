@@ -11,6 +11,7 @@ expecttest ==0.2.1  # for test_ddp.py
 hypothesis ==6.98.15  # for test_ddp.py
 numpy  # for test_ops.py
 einops  # for test_einops.py
+lit_gpt @ git+https://github.com/Lightning-AI/lit-gpt@f241d94df59d82b2017bfdcd3800ac8779eb45f5
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
