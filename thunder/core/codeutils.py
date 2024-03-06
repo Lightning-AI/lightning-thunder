@@ -181,17 +181,18 @@ def prettyprint(
     if type(x) is str:
         return m(repr(x))
 
-    if baseutils.is_base_printable(x):
-        return m(baseutils.print_base_printable(x))
-
-    if isinstance(x, ContextObject):
-        return m(x.name)
+    # ProxyInterface is base-printable, but we treat it with special care
     if isinstance(x, ProxyInterface):
         # NOTE This doesn't need quote markers because it can't
         #   occur in a collection
         if with_type:
             return f'{x.name}: "{x.type_string()}"'
+        return m(x.name)
 
+    if baseutils.is_base_printable(x):
+        return m(baseutils.print_base_printable(x))
+
+    if isinstance(x, ContextObject):
         return m(x.name)
     if is_collection(x):
         flat, spec = tree_flatten(x)
