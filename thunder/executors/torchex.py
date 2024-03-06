@@ -1582,7 +1582,7 @@ if torch.distributed.is_available():
         bucket_key: str,
     ) -> torch.Tensor:
         if bucket_key not in _key_to_bucket_and_views:
-            buffer = torch.cat([torch.flatten(t) for t in tensors])
+            buffer = torch._utils._flatten_dense_tensors(tensors)
             offset = 0
             views = []
             for t in tensors:
@@ -1599,13 +1599,7 @@ if torch.distributed.is_available():
         tensors: list[torch.Tensor],
         bucket_key: str,
     ) -> list[torch.Tensor]:
-        offset = 0
-        results = []
-        for t in tensors:
-            n = t.numel()
-            results.append(buffer[offset : offset + n].view_as(t))
-            offset += n
-        return results
+        return torch._utils._unflatten_dense_tensors(buffer, tensors)
 
     # TODO(crcrpar): Make this compatible with the coming torch_compile executor as it's doing really well for cat and reshape.
     # NOTE(crcrpar): why no caching/resue of buffer?
@@ -1666,7 +1660,7 @@ if torch.distributed.is_available():
                     list(chain.from_iterable(zip(*[torch.chunk(t.view(-1), world_size) for t in tensors])))
                 )
             case "gather":
-                return torch.cat([torch.flatten(t) for t in tensors])
+                return torch._utils._flatten_dense_tensors(tensors)
             case _:
                 utils.check(False, lambda: f"Invalid {mode=}. Supported are (gather, scatter)")
 
