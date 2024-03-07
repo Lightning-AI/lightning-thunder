@@ -592,6 +592,7 @@ def cache_get(
 # TODO Consider modeling additional calls to trace()
 # TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
+from thunder.core.interpreter import make_opaque
 
 
 def trace(
@@ -602,6 +603,7 @@ def trace(
     use_dce: bool = True,
     insert_ddp_syncs: bool = False,
 ) -> Callable:
+    @make_opaque
     def _trace(
         fn,
         *args,

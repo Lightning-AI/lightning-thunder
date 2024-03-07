@@ -13,6 +13,7 @@ import math
 import torch
 
 from thunder.core.compile_data import using_symbolic_values, using_jit
+from thunder.core.interpreter import is_jitting
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
@@ -654,7 +655,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
             #   executed by the Python interpreter
             return fn(vala, valb)
 
-        if using_jit():
+        if is_jitting():
             fn: Callable = resolve_method(name, a, b)
             return fn(a, b)
 
@@ -805,7 +806,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return int(self.value)
 
     def __bool__(self):
-        if using_jit():
+        if is_jitting():
             method = resolve_method("check_bool_conversion", self)
             method(self, bool(self.value))
         return bool(self.value)

@@ -579,7 +579,7 @@ from thunder.core.langctxs import langctx, Languages
 # TODO RC1 Replace with langctx
 def torchctx(fn):
     _fn = langctx(Languages.TORCH)(fn)
-    return noinline(make_opaque(_fn))
+    return make_opaque(noinline(_fn))
 
 
 _grad_fn_map: dict[Any, Callable] = {}

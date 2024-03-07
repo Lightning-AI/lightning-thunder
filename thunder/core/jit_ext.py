@@ -1,4 +1,5 @@
 import thunder
+import math
 from typing import Any, Optional, Dict, Tuple, Literal
 import builtins
 import collections
@@ -1012,8 +1013,12 @@ def get_computation_inputs_and_intermediates(computation_trace):
     return inputs_list, intermediates_set
 
 
-def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
+def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
     already_unpacked: dict[int, Proxy] = {}
+    is_pure = True
+
+    # param_ordering[id(proxy] is a list that contains either finite numbers or (strings preceded by math.inf)
+    param_ordering: dict[int, list] = {}
 
     # Unpacks the inputs in the prologue trace
     # TODO Generate unpacking constraints
@@ -1035,10 +1040,15 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         def from_input(provenance, *, new_output=False):
             assert new_output
             if provenance.inst == PseudoInst.INPUT_ARGS:
+                param_ordering[id(p)][1].insert(0, 0)
                 return pro_args_proxy
             elif provenance.inst == PseudoInst.INPUT_KWARGS:
+                param_ordering[id(p)][1].insert(0, 1)
+                is_pure = False
                 return pro_kwargs_proxy
             elif provenance.inst == PseudoInst.INPUT_FN:
+                param_ordering[id(p)][1].insert(0, 3)
+                is_pure = False
                 name = "fn"
                 output = Proxy(name=name)
                 provenance.proxy = output
@@ -1048,11 +1058,13 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             assert False
 
         def from_load_attr(provenance, *, new_output=False):
+            is_pure = False
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             if new_output:
                 output = Proxy("obj")
             else:
                 output = p
+            param_ordering[id(p)][1][:0] = [math.inf, "." + str(inputs[1])]
             bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
             prologue_trace.bound_symbols.append(bsym)
             return output
@@ -1075,6 +1087,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     idx = int(idx)
                 elif isinstance(idx, str):
                     idx = str(idx)
+                param_ordering[id(p)][1][:0] = [math.inf, "[" + str(idx) + "]"]
                 bsym = prims.unpack_getitem.bind(obj, idx, output=output)
                 prologue_trace.bound_symbols.append(bsym)
             else:
@@ -1137,6 +1150,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             return res
 
         assert isinstance(p.history, ProvenanceRecord), p.history
+        param_ordering[id(p)] = (p, [])
         with tracectx(prologue_trace):
             try:
                 from_provenance(p.history)
@@ -1167,8 +1181,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
-    pro_to_epi = tuple(unpack(v) for v in pro_to_epi_inps)
-    pro_to_comp = tuple(unpack(v) for v in pro_to_comp_inps)
+    pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
+    pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
     with tracectx(prologue_trace):
         for prim, *args in ctx._constraints:
@@ -1195,7 +1209,10 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 else:
                     raise NotImplementedError(f"cache info of type {type(v).__name__}")
 
-        prims.python_return((pro_to_comp, pro_to_epi))
+        if has_epilogue:
+            prims.python_return((pro_to_comp, pro_to_epi))
+        else:
+            prims.python_return(pro_to_comp)
 
     return pro_to_comp, pro_to_epi
 
@@ -1307,17 +1324,26 @@ def thunder_general_jit(
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
 
-    with tracectx(computation_trace):
-        last = computation_trace.bound_symbols.pop(-1)
-        assert last.sym.id == prims.PrimIDs.RETURN
-        prims.python_return((result, comp_to_epi_proxies))
+    if epilogue_trace.bound_symbols:
+        with tracectx(computation_trace):
+            last = computation_trace.bound_symbols.pop(-1)
+            assert last.sym.id == prims.PrimIDs.RETURN
+            prims.python_return((result, comp_to_epi_proxies))
 
-    with tracectx(epilogue_trace):
-        prims.python_return(None)
+        with tracectx(epilogue_trace):
+            prims.python_return(None)
+    else:
+        epilogue_trace = None
 
-    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
+    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(
+        ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs, has_epilogue=epilogue_trace is not None
+    )
+
+    proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
+    pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
 
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
-    bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+    if epilogue_trace:
+        bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
 
     return prologue_trace, computation_trace, epilogue_trace

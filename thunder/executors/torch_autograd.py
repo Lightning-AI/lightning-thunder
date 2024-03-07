@@ -36,166 +36,11 @@ class ThunderFunction(torch.autograd.Function):
                 trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
             )
 
-        def split_forward_backward(*args, **kwargs):
-            # NOTE: This function is rather slow, so it's intended to be used
-            # behind a cache.
-            ba = signature(func).bind(*args, **kwargs)
-            ba.apply_defaults()
-            args, kwargs = ba.args, ba.kwargs
-            flat_args, _ = tree_flatten((args, kwargs))
-            tensor_cls = (torch.Tensor, TensorProxy)
-            requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
-            # If none of the inputs require gradients, raise an error
-            if not any(requires_grad_mask):
-                raise RuntimeError(
-                    "PyTorch's Autograd interface requires at least one tensor input with requires_grad=True"
-                )
-
-            primal_trace = make_trace(func)(*args, **kwargs)
-            primal_trace = sort_data_parallel_syncs(primal_trace)
-
-            # torch.autograd.Function doesn't support non-flat outputs, the
-            # grads wouldn't be propagated and backward receives None for each
-            # non-flat non-tensor output. The output must also be a flat tuple,
-            # not any other container type. So we need to flatten the outputs of
-            # the forward trace and inputs of the backward trace.
-            fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
-            fw_traces = [fw_trace]
-            bw_traces = [bw_trace]
-
-            from thunder.distributed import FSDPType
-
-            # only enable rematerialize_params_in_backward when using FSDP ZeRO3
-            _rematerialize_params_in_backward = (
-                getattr(compile_data.fn, "use_fsdp", False)
-                and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
-            )
-            if _rematerialize_params_in_backward:
-                fw_trace, bw_trace = rematerialize_all_gather(fw_trace, bw_trace)
-
-            # Update the backward trace to only compute gradients for the
-            # inputs that require gradients
-            assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
-            filtered_grads = tuple(
-                (arg_grad if requires_grad else None)
-                for arg_grad, requires_grad in utils.safe_zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
-            )
-
-            # autograd.Function.backward expects a flat tuple of gradients
-            bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
-
-            _fsdp_comm_bucketing: FSDPCommBucketing | None = None
-            if getattr(compile_data.fn, "use_fsdp", False):
-                _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
-                fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
-                _fsdp_comm_bucketing.update_name_set(bw_trace)
-
-            # Now we can run the optimization passes on the forward trace
-            # TODO Restore request for no rematerialization
-            fw_extrace = transform_for_execution(
-                fw_trace,
-                executors_list=compile_data.executors_list,
-            )
-            fw_traces.append(fw_extrace)
-
-            # Some of the optimization passes change proxies in the trace and
-            # any change in the forward trace must be reflected in the backward
-            # trace.
-            original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
-            new_fw_saved_tensors_for_backward = fw_extrace.output[1][0]
-            swap_map = {
-                variableify(x): y
-                for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
-                if variableify(x) != variableify(y)
-            }
-            new_bsyms = replace_redundant_inputs(swap_map, bw_trace.bound_symbols)
-            # replace_redundant_inputs doesn't replace the output of
-            # UNPACK_SEQUENCE so we do it manually. Here we have certain
-            # assumptions about the structure of the backward trace.
-            assert bw_trace.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
-            assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
-            assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
-            assert bw_trace.bound_symbols[4].args[0].name == "C0"
-            new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
-                swap_map,
-                skip_inputs=False,
-                skip_output=False,
-                skip_subsymbols=False,
-            )
-            bw_trace.bound_symbols = new_bsyms
-            if getattr(compile_data.fn, "use_ddp", False):
-                from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
-
-                bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
-            if getattr(compile_data.fn, "use_fsdp", False):
-                bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
-
-            # Now we can run the optimization passes on the backward trace
-            # TODO Restore request for no rematerialization
-            bw_extrace = transform_for_execution(
-                bw_trace,
-                executors_list=compile_data.executors_list,
-            )
-            bw_traces.append(bw_extrace)
-
-            fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
-            fw_traces.append(fw_extrace)
-            bw_traces.append(bw_extrace)
-
-            # We need to sort the waits in forward and backward trace to overlap
-            # computation with communication
-            # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
-            # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
-            # backward trace and increases the peak allocated memory
-            if getattr(compile_data.fn, "use_fsdp", False):
-                utils.check(
-                    hasattr(compile_data.fn, "sharding_strategy"),
-                    lambda: "`compile_data.fn` does not have the attribute of `sharding_strategy`. Have you called `thunder.distributed.fsdp` on the callable to optimize?",
-                )
-                sharding_strategy = compile_data.fn.sharding_strategy
-                if sharding_strategy == FSDPType.ZERO3:
-                    from thunder.distributed.utils import limit_in_flight_allgathers
-                    from thunder.distributed import FSDPBucketingStrategy
-
-                    fw_extrace = sort_waits_for_zero3(fw_extrace)
-                    fw_extrace = limit_in_flight_allgathers(
-                        fw_extrace,
-                        3,
-                        compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
-                    )
-                    bw_extrace = sort_waits_for_zero3(bw_extrace)
-                    bw_extrace = limit_in_flight_allgathers(
-                        bw_extrace,
-                        3,
-                        compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
-                    )
-                if sharding_strategy == FSDPType.ZERO2:
-                    fw_extrace = sort_waits(fw_extrace)
-                    bw_extrace = sort_waits(bw_extrace)
-            if getattr(compile_data.fn, "use_ddp", False):
-                bw_extrace = sort_waits(bw_extrace)
-
-            fw_extrace = del_last_used(fw_extrace)
-            fw_traces.append(fw_extrace)
-
-            bw_extrace = del_last_used(bw_extrace, clear_collections=True)
-            bw_traces.append(bw_extrace)
-
-            if compile_stats is not None:
-                compile_stats.primal_trace = primal_trace
-                compile_stats.forward_last_traces = fw_traces
-                compile_stats.backward_last_traces = bw_traces
-
-                if compile_data.use_cudagraphs:
-                    fw = CUDAGraphExecutor(
-                        fw_extrace.python_callable(), num_constant_args=compile_data.num_constant_args
-                    )
-                    bw = CUDAGraphExecutor(bw_extrace.python_callable(), num_constant_args=len(bw_extrace.args[0][0]))
-                    return fw, bw
-
+        def split_forward_backward_compat(*args, **kwargs):
+            fw_extrace, bw_extrace = split_forward_backward(func, compile_data, compile_stats, *args, **kwargs)
             return fw_extrace.python_callable(), bw_extrace.python_callable()
 
-        return split_forward_backward
+        return split_forward_backward_compat
 
     @staticmethod
     def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
@@ -233,6 +78,7 @@ class ThunderFunction(torch.autograd.Function):
         return (None, None, None, None, *grads)
 
 
+# TODO: RC1 Remove this
 def thunder_backward(*, compile_data, compile_stats=None):
     """Decorator to wrap a Thunder function for use with PyTorch autograd.
 
@@ -313,3 +159,166 @@ def thunder_backward(*, compile_data, compile_stats=None):
         return wrapper
 
     return decorator
+
+
+def split_forward_backward(func, compile_data, compile_stats, /, *args, **kwargs):
+    from thunder import trace
+    from thunder.executors.passes import transform_for_execution
+    from thunder.executors.passes import del_last_used
+    from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
+    from thunder.core.transforms import forward_and_backward_from_trace
+    from thunder.cudagraphs import CUDAGraphExecutor
+    from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
+    from thunder.distributed.transforms import FSDPCommBucketing
+
+    utils.check(compile_data is not None, lambda: "`compile_data` is required")
+
+    def make_trace(func):
+        return partial(
+            trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
+        )
+
+    # NOTE: This function is rather slow, so it's intended to be used
+    # behind a cache.
+    ba = signature(func).bind(*args, **kwargs)
+    ba.apply_defaults()
+    args, kwargs = ba.args, ba.kwargs
+    flat_args, _ = tree_flatten((args, kwargs))
+    tensor_cls = (torch.Tensor, TensorProxy)
+    requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
+    # If none of the inputs require gradients, raise an error
+    if not any(requires_grad_mask):
+        raise RuntimeError("PyTorch's Autograd interface requires at least one tensor input with requires_grad=True")
+
+    primal_trace = make_trace(func)(*args, **kwargs)
+    primal_trace = sort_data_parallel_syncs(primal_trace)
+
+    # torch.autograd.Function doesn't support non-flat outputs, the
+    # grads wouldn't be propagated and backward receives None for each
+    # non-flat non-tensor output. The output must also be a flat tuple,
+    # not any other container type. So we need to flatten the outputs of
+    # the forward trace and inputs of the backward trace.
+    fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
+
+    fw_traces = [fw_trace]
+    bw_traces = [bw_trace]
+
+    from thunder.distributed import FSDPType
+
+    # only enable rematerialize_params_in_backward when using FSDP ZeRO3
+    _rematerialize_params_in_backward = (
+        getattr(compile_data.fn, "use_fsdp", False) and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
+    )
+    if _rematerialize_params_in_backward:
+        fw_trace, bw_trace = rematerialize_all_gather(fw_trace, bw_trace)
+
+    # Update the backward trace to only compute gradients for the
+    # inputs that require gradients
+    assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
+    filtered_grads = tuple(
+        (arg_grad if requires_grad else None)
+        for arg_grad, requires_grad in utils.safe_zip(bw_trace.bound_symbols[-1].args[0], requires_grad_mask)
+    )
+
+    # autograd.Function.backward expects a flat tuple of gradients
+    bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
+
+    _fsdp_comm_bucketing: FSDPCommBucketing | None = None
+    if getattr(compile_data.fn, "use_fsdp", False):
+        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
+        _fsdp_comm_bucketing.update_name_set(bw_trace)
+
+    # Now we can run the optimization passes on the forward trace
+    # TODO Restore request for no rematerialization
+    fw_extrace = transform_for_execution(
+        fw_trace,
+        executors_list=compile_data.executors_list,
+    )
+    fw_traces.append(fw_extrace)
+
+    # Some of the optimization passes change proxies in the trace and
+    # any change in the forward trace must be reflected in the backward
+    # trace.
+    original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
+    new_fw_saved_tensors_for_backward = fw_extrace.output[1][0]
+    swap_map = {
+        variableify(x): y
+        for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
+        if variableify(x) != variableify(y)
+    }
+    new_bsyms = replace_redundant_inputs(swap_map, bw_trace.bound_symbols)
+    # replace_redundant_inputs doesn't replace the output of
+    # UNPACK_SEQUENCE so we do it manually. Here we have certain
+    # assumptions about the structure of the backward trace.
+    assert bw_trace.bound_symbols[0].sym.id == PrimIDs.UNPACK_TRIVIAL
+    assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
+    assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
+    assert bw_trace.bound_symbols[4].args[0].name == "C0"
+    new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
+        swap_map,
+        skip_inputs=False,
+        skip_output=False,
+        skip_subsymbols=False,
+    )
+    bw_trace.bound_symbols = new_bsyms
+    if getattr(compile_data.fn, "use_ddp", False):
+        from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
+
+        bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
+    if getattr(compile_data.fn, "use_fsdp", False):
+        bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
+
+    # Now we can run the optimization passes on the backward trace
+    # TODO Restore request for no rematerialization
+    bw_extrace = transform_for_execution(
+        bw_trace,
+        executors_list=compile_data.executors_list,
+    )
+    bw_traces.append(bw_extrace)
+
+    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+    fw_traces.append(fw_extrace)
+    bw_traces.append(bw_extrace)
+
+    # We need to sort the waits in forward and backward trace to overlap
+    # computation with communication
+    # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
+    # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
+    # backward trace and increases the peak allocated memory
+    if getattr(compile_data.fn, "use_fsdp", False):
+        assert hasattr(compile_data.fn, "sharding_strategy")
+        if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
+            from thunder.distributed.utils import limit_in_flight_allgathers
+            from thunder.distributed import FSDPBucketingStrategy
+
+            fw_extrace = sort_waits_for_zero3(fw_extrace)
+            fw_extrace = limit_in_flight_allgathers(
+                fw_extrace,
+                3,
+                compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+            )
+            bw_extrace = sort_waits_for_zero3(bw_extrace)
+            bw_extrace = limit_in_flight_allgathers(
+                bw_extrace,
+                3,
+                compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+            )
+        if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
+            fw_extrace = sort_waits(fw_extrace)
+            bw_extrace = sort_waits(bw_extrace)
+    if getattr(compile_data.fn, "use_ddp", False):
+        bw_extrace = sort_waits(bw_extrace)
+
+    fw_extrace = del_last_used(fw_extrace)
+    fw_traces.append(fw_extrace)
+
+    bw_extrace = del_last_used(bw_extrace, clear_collections=True)
+    bw_traces.append(bw_extrace)
+
+    if compile_stats is not None:
+        compile_stats.primal_trace = primal_trace
+        compile_stats.forward_last_traces = fw_traces
+        compile_stats.backward_last_traces = bw_traces
+
+    return fw_extrace, bw_extrace

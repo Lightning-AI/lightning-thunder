@@ -73,7 +73,8 @@ from thunder.core.proxies import (
 )
 from thunder.core.jit_ext import minimal_thunder_jit, thunder_general_jit
 from thunder.core.pytree import tree_flatten
-from thunder.executors.torch_autograd import thunder_backward
+from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.cudagraphs import CUDAGraphExecutor
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -722,19 +723,10 @@ def jit(
     )
     cs = CompileStats()
 
-    @wraps(fn)
     @_with_cache_info_ctx
-    def fn_(*args, **kwargs) -> Any:
-        if is_tracing():
-            _recursive_jit_call_warning()
-            return fn(*args, **kwargs)
-
-        # Updats call statistics
-        cs.last_trace_host_start = time.time_ns()
-        cs.calls += 1
-
-        # TODO RC1 Add module and function checks to prologue (make it a compile option)
-
+    def get_computation_and_inputs(*args, **kwargs):
+        # set up a record of things in the current environment that impact caching / prologues
+        # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
 
         # autocast related operations
@@ -767,16 +759,21 @@ def jit(
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
 
+        # TODO RC1 Add module and function checks to prologue (make it a compile option)
+
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces in reversed(cs.interpreter_cache):
+            for pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces, backward_fn, backward_traces in reversed(
+                cs.interpreter_cache
+            ):
                 try:
                     cs.last_prologue_execution_start = time.time_ns()
                     if epilogue:
                         inps, pro_to_epi = pro(*args, **kwargs)
                     else:
                         inps = pro(*args, **kwargs)
+                        pro_to_epi = None
                     cs.last_prologue_execution_stop = time.time_ns()
                 except Exception as ex:
                     continue
@@ -784,69 +781,53 @@ def jit(
                 cs.last_trace_host_tracing_start = time.time_ns()
                 cs.last_trace_host_tracing_stop = time.time_ns()
 
-                cs.last_trace_host_execution_start = time.time_ns()
-                if epilogue:
-                    result, comp_to_epi = comp(*inps)
-                    epilogue(*pro_to_epi, *comp_to_epi)
-                else:
-                    result = comp(*inps)
-
-                cs.last_trace_host_execution_stop = time.time_ns()
-                cs.last_prologue_execution_start = cs.last_trace_host_execution_start
-                cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
-
                 # Updates cache statistics
                 cs.cache_hits += 1
-                cs.last_executed = comp
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
                 cs.last_interpreted_history = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
-                cs.last_trace_cache_stop = time.time_ns()
-                cs.last_trace_host_stop = time.time_ns()
                 cs.last_prologue_transformation_start = 0
                 cs.last_prologue_transformation_stop = 0
                 cs.last_computation_transformation_start = 0
                 cs.last_computation_transformation_stop = 0
 
-                return result
+                return inps, pro_to_epi, comp, epilogue, backward_fn
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
-                pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces = cs.interpreter_cache[0]
+                (
+                    pro,
+                    pro_traces,
+                    comp,
+                    comp_traces,
+                    epilogue,
+                    epilogue_traces,
+                    backward_fn,
+                    backward_traces,
+                ) = cs.interpreter_cache[0]
 
                 cs.last_prologue_execution_start = time.time_ns()
                 if epilogue:
                     inps, pro_to_epi = pro(*args, **kwargs)
                 else:
                     inps = pro(*args, **kwargs)
+                    pro_to_epi = None
                 cs.last_prologue_execution_stop = time.time_ns()
 
                 cs.last_trace_host_tracing_start = time.time_ns()
                 cs.last_trace_host_tracing_stop = time.time_ns()
 
-                cs.last_trace_host_execution_start = time.time_ns()
-                if epilogue:
-                    result, comp_to_epi = comps(*inps)
-                    epilogue(*pro_to_epi, *comp_to_epi)
-                else:
-                    result = comp(*inps)
-                cs.last_trace_host_execution_stop = time.time_ns()
-                cs.last_prologue_execution_start = cs.last_trace_host_execution_start
-                cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
-
                 # Updates cache statistics
                 cs.cache_hits += 1
-                cs.last_executed = comp
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
                 cs.last_interpreted_history = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
-                cs.last_trace_cache_stop = time.time_ns()
-                cs.last_trace_host_stop = time.time_ns()
-                return result
+
+                return inps, pro_to_epi, comp, epilogue, backward_fn
 
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.time_ns()
@@ -868,7 +849,11 @@ def jit(
 
             if maybe_epilogue:
                 epilogue_traces = maybe_epilogue
-                epilogue = epilogue_traces[-1].python_callable()
+                if epilogue_traces[-1] is not None:
+                    epilogue = epilogue_traces[-1].python_callable()
+                else:
+                    epilogue_traces = None
+                    epilogue = None
             else:
                 epilogue_traces = None
                 epilogue = None
@@ -889,76 +874,110 @@ def jit(
 
             cs.last_prologue_execution_start = time.time_ns()
             if epilogue:
-                prologue_outputs, pro_to_epi = pro(*args, **kwargs)
+                inps, pro_to_epi = pro(*args, **kwargs)
             else:
-                prologue_outputs = pro(*args, **kwargs)
+                inps = pro(*args, **kwargs)
+                pro_to_epi = None
             cs.last_prologue_execution_stop = time.time_ns()
 
+            computation_traces = [computation_trc]
+
             if is_autocast_enabled:
-                is_transformed = True
                 from thunder.core.transforms import autocast
 
                 computation_trc = trace(compile_data=cd)(
-                    autocast(computation_trc.python_callable(), dtype=autocast_thunder_dtype), *prologue_outputs
+                    autocast(computation_trc.python_callable(), dtype=autocast_thunder_dtype), *inps
                 )
+                computation_traces.append(computation_trc)
 
-            computed: bool = False
+            backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
-                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in prologue_outputs)
+                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
 
                 if requires_grad:
                     # thunder_backward may recursively call compile and wraps the result in a
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
-                    cs.last_trace_host_execution_start = time.time_ns()
-                    comp = thunder_backward(compile_data=cd, compile_stats=cs)(computation_trc.python_callable())
-                    if epilogue:
-                        computation_result, comp_to_epi = comp(*prologue_outputs)
-                        epilogue(*pro_to_epi, *comp_to_epi)
-                    else:
-                        computation_result = comp(*prologue_outputs)
-
-                    cs.last_trace_host_execution_stop = time.time_ns()
-                    cs.last_executed = comp
-                    extraces = []  # todo
-                    computed = True
-
-            if not computed:
-                cs.last_computation_transformation_start = time.time_ns()
-                with langctxs.langctx(cd.langctx):
-                    extraces = transform_for_execution(
-                        computation_trc,
-                        executors_list=cd.executors_list,
+                    computation_trc, backward_trc = split_forward_backward(
+                        computation_trc.python_callable(), cd, cs, *inps
                     )
-                extrace = extraces[-1]
-                comp = extrace.python_callable()
-                cs.last_computation_transformation_stop = time.time_ns()
+                    computation_traces.append(computation_trc)
 
-                # Executes the traced program
-                cs.last_trace_host_execution_start = time.time_ns()
+            cs.last_computation_transformation_start = time.time_ns()
+            with langctxs.langctx(cd.langctx):
+                extraces = transform_for_execution(
+                    computation_trc,
+                    executors_list=cd.executors_list,
+                )
+            extrace = extraces[-1]
+            comp = extrace.python_callable()
 
-                if epilogue:
-                    computation_result, comp_to_epi = comp(*prologue_outputs)
-                    epilogue(*pro_to_epi, *comp_to_epi)
-                else:
-                    computation_result = comp(*prologue_outputs)
-                cs.last_trace_host_execution_stop = time.time_ns()
-                cs.last_computation_execution_start = cs.last_trace_host_execution_start
-                cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
+            if backward_trc is not None:
+                backward_fn = backward_trc.python_callable()
+                backward_traces = [backward_trc]
+            else:
+                backward_fn = None
+                backward_traces = []
 
             # TODO RC1 Update the cache
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-                cs.interpreter_cache.append((pro, protraces, comp, extraces, epilogue, epilogue_traces))
+                cs.interpreter_cache.append(
+                    (pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces)
+                )
 
-            # Updates statistics
-            cs.last_traces = [computation_trc] + extraces
-            cs.last_executed = comp
+            cs.last_computation_transformation_stop = time.time_ns()
+            cs.last_traces = computation_traces + extraces
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
-            cs.last_trace_host_stop = time.time_ns()
 
-        return computation_result
+        return inps, pro_to_epi, comp, epilogue, backward_fn
+
+    @wraps(fn)
+    def fn_(*args, **kwargs) -> Any:
+        if is_tracing():
+            _recursive_jit_call_warning()
+            return fn(*args, **kwargs)
+
+        # Updats call statistics
+        cs.last_trace_host_start = time.time_ns()
+        cs.calls += 1
+
+        inps, pro_to_epi, comp, epilogue, backward_fn = get_computation_and_inputs(*args, **kwargs)
+        cs.last_trace_host_execution_start = time.time_ns()
+
+        result = comp(*inps)
+
+        if backward_fn:
+            # Run the compiled forward function
+            data_for_autograd, (saved_tensors, saved_other) = result
+
+            # Connect produced tensors with PyTorch's autograd graph
+            ThunderFunction.apply(
+                backward_fn,
+                saved_tensors,
+                saved_other,
+                data_for_autograd["flat_output"],
+                *data_for_autograd["flat_args"],
+            )
+            result = data_for_autograd["output"]
+
+        if epilogue:
+            result, comp_to_epi = result
+            epilogue(*pro_to_epi, *comp_to_epi)
+
+        cs.last_trace_host_execution_stop = time.time_ns()
+        cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
+
+        cs.last_executed = comp
+        cs.last_trace_cache_stop = time.time_ns()
+        cs.last_trace_host_stop = time.time_ns()
+
+        # Updates statistics
+        cs.last_executed = comp
+        cs.last_trace_host_stop = time.time_ns()
+
+        return result
 
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)

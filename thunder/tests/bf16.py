@@ -12,6 +12,10 @@ def device_supports_bf16(device: None | str | torch.device | thunder.core.device
         return False
 
     dev: torch.device = thunder.core.devices.to_torch_device(device)
+
+    if dev.type != "cuda":
+        return False
+
     cuda_major: int
     cuda_minor: int
     cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
