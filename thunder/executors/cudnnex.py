@@ -33,7 +33,8 @@ def _get_cudnn_handle(query_device):
             device_to_cudnn_handle[query_device] = handle
 
     # Make sure the user stream is set on the handle
-    cudnn.set_stream(handle=handle, stream=torch.cuda.Stream().cuda_stream)
+    # Fetch the current user stream and pass the data pointer to set_stream API
+    cudnn.set_stream(handle=handle, stream=torch.cuda.current_stream().cuda_stream)
 
     return handle
 
@@ -325,6 +326,8 @@ def _cudnn_sdpa_fwd_impl(
     if attn_mask is not None:
         cudnn_to_torch_tensor[Bias] = attn_mask.detach()
 
+    # Even though the handle is created on query.device, cudnn still requires to set current device to query.device.
+    # This is most probably a bug and is being actively looked into.
     with torch.cuda.device(query.device):
         graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(query.device))
 
@@ -605,7 +608,10 @@ def cudnn_sdpa_bwd_impl(
 
     workspace = torch.empty(graph.get_workspace_size(), device=query.device, dtype=torch.uint8)
 
-    graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(query.device))
+    # Even though the handle is created on query.device, cudnn still requires to set current device to query.device.
+    # This is most probably a bug and is being actively looked into.
+    with torch.cuda.device(query.device):
+        graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(query.device))
 
     if attn_mask is None:
         return grad_query, grad_key, grad_value
