@@ -49,7 +49,8 @@ exclude_lines = [
 
 [tool.codespell]
 # Todo: enable also python files in a next step
-skip = '*.py'
+# Gives false positives in fsdp_tutorial.ipynb
+skip = '*.py,*fsdp_tutorial.ipynb'
 quiet-level = 3
 # comma separated list of words; waiting for:
 #  https://github.com/codespell-project/codespell/issues/2839#issuecomment-1731601603
