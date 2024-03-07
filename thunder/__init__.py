@@ -688,6 +688,7 @@ def jit(
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    additional_transforms: list | None = None,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     if "executors_list" in compile_options:
@@ -704,6 +705,9 @@ def jit(
         interpreter = _translate_functions_interpreter
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
+
+    if additional_transforms is None:
+        additional_transforms = []
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
@@ -905,6 +909,13 @@ def jit(
                     computation_traces.append(computation_trc)
 
             cs.last_computation_transformation_start = time.time_ns()
+
+            ## EPILOGUE and TRANSFORMS should not mix...
+            # applies transforms
+            for transform in additional_transforms:
+                computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                computation_traces.append(computation_trc)
+
             with langctxs.langctx(cd.langctx):
                 extraces = transform_for_execution(
                     computation_trc,
@@ -927,7 +938,7 @@ def jit(
                 )
 
             cs.last_computation_transformation_stop = time.time_ns()
-            cs.last_traces = computation_traces + extraces
+            cs.last_traces = [computation_trc] + extraces
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
 
@@ -985,7 +996,7 @@ def jit(
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd
     fn_._lc_cs = cs
-    fn_._lc_transforms = []  ## transforms
+    fn_._lc_transforms = additional_transforms[:]  ## transforms
     fn_._lc_post_optimization_transforms = []  ## post_optimization_transforms
 
     return fn_

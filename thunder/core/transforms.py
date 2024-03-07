@@ -403,6 +403,20 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
 
+    if cd.using_jit:
+        from thunder import jit
+
+        return jit(
+            cd.fn,
+            langctx=cd.langctx,
+            executors=cd.executors_list,
+            sharp_edges=cd.sharp_edges,
+            # cache, interpretation?
+            additional_transforms=cfn._lc_transforms + [transform],
+            disable_torch_autograd=True,  # cd.disable_torch_autograd_support,
+            **cd.compile_options,
+        )
+
     cs = CompileStats()
     transforms = cfn._lc_transforms + [transform]
     potransforms = cfn._lc_post_optimization_transforms
@@ -1276,6 +1290,12 @@ def grad(
 
             gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
             return gradfn is None
+
+        # TODO RC1: maybe move to produce these always on creation
+        if trc.kwargs is None:
+            trc.kwargs = {}
+        if trc.fn is None:
+            trc.fn = trc.python_callable()
 
         gradtrc = from_trace(trc)
         flattened_bsyms: list[BoundSymbol] = flatten_for_transform(should_flatten_for_grad, trc.bound_symbols)

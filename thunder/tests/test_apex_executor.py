@@ -142,7 +142,7 @@ def test_apex_cross_entropy_phantom_grad(device, dtype):
         ce = torch.nn.functional.cross_entropy(logits, labels, reduction="sum", ignore_index=-1)
         return ce
 
-    cfoo = thunder.compile(foo, executors_list=[apex_ex])
+    cfoo = thunder.jit(foo, executors_list=[apex_ex])
     cfoo_grad = grad(cfoo)
     (thunder_grad,) = cfoo_grad(logits, labels)
 
@@ -181,7 +181,7 @@ def test_apex_cross_entropy_phantom_grad(device, dtype):
         ce = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=-1)
         return ce
 
-    cbar = thunder.compile(bar, executors_list=[apex_ex])
+    cbar = thunder.jit(bar, executors=[apex_ex])
     cbar_grad = grad(cbar)
     (thunder_grad,) = cbar_grad(logits, labels)
 
