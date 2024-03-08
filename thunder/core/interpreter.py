@@ -2744,6 +2744,16 @@ class JIT_CALLBACKS(enum.Enum):
     #   The returned value is stored instead of the original value
     STORE_GLOBAL_CALLBACK = enum.auto()
 
+    # Called when a local variable is loaded
+    #   (orig_value: Any | WrappedValue, name: str) -> Any | JIT_SIGNALS
+    #   The returned value is loaded instead of the original value
+    LOAD_FAST_CALLBACK = enum.auto()
+
+    # Called when a cell variable is loaded
+    #   (orig_value: Any | WrappedValue, name: str) -> Any | JIT_SIGNALS
+    #   The returned value is loaded instead of the original value
+    LOAD_DEREF_CALLBACK = enum.auto()
+
     # Called when storing into a nonlocal variable
     #   (orig_value: Any | WrappedValue, name: str, co_cellvars: tuple[str], co_freevars: tuple[str]) -> Any
     #   The returned value is stored instead of the original value
@@ -2887,6 +2897,30 @@ def store_deref_callback(value: Any, name: str, co_cellvars: tuple[str], co_free
         return value
 
     return cb(value, name, co_cellvars, co_freevars)
+
+
+def load_fast_callback(value: Any, name: str):
+    assert isinstance(name, str)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_FAST_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(value, name)
+
+
+def load_deref_callback(value: Any, name: str):
+    assert isinstance(name, str)
+
+    ctx: JitCompileCtx = get_jitcompilectx()
+    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_DEREF_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(value, name)
 
 
 def local_callback(name: str, value: Any, /) -> Any:
@@ -4350,7 +4384,9 @@ def _load_deref_handler(
             assert isinstance(val.item_wrappers, Sized)
             assert len(val.value) == len(val.item_wrappers)
 
-    stack.append(val)
+    val = load_deref_callback(val, name)
+
+    return check_and_append(stack, val)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_FAST
@@ -4373,7 +4409,9 @@ def _load_fast_handler(
     if ctx._with_provenance_tracking:
         assert isinstance(val, WrappedValue), f"unexpected value of type {type(val)}, {val}, {inst}"
 
-    stack.append(val)
+    val = load_fast_callback(val, name)
+
+    return check_and_append(stack, val)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_GLOBAL

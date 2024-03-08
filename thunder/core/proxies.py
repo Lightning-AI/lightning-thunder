@@ -58,13 +58,31 @@ def unvariableify(x: Any) -> Any:
     return x
 
 
-def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
+# Tries to register a proxy name and returns a boolean indicating success
+def register_proxy_name(name: None | str = None):
     trc = get_tracectx()
 
     if name is not None and not trc.has_name(name):
         trc.add_name(name)
+        return True
+
+    return False
+
+
+def is_proxy_name_available(name: None | str = None):
+    trc = get_tracectx()
+
+    if name is not None and not trc.has_name(name):
+        return True
+
+    return False
+
+
+def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
+    if register_proxy_name(name):
         return name
 
+    trc = get_tracectx()
     return trc.make_name(prefix=prefix)
 
 

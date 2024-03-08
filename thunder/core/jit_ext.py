@@ -10,6 +10,7 @@ import random
 from functools import partial, wraps
 import copy
 import contextvars
+from contextlib import contextmanager
 import dis
 import warnings
 from enum import Enum, auto
@@ -56,11 +57,14 @@ from thunder.core.proxies import (
     NumberProxy,
     StringProxy,
     TensorProxy,
+    FutureTensorProxy,
     make_proxy_name,
+    Variable,
     variableify,
     unvariableify,
+    is_proxy_name_available,
 )
-from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
+from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
     interpret,
     _jit,
@@ -100,7 +104,6 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.proxies import proxy, Variable
 from thunder.core.pytree import tree_map
 from thunder.core.compile_data import compile_data_and_stats
 
@@ -896,7 +899,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
 
 #
-# general_jit callbacks
+# general_jit callbacks and callback utilities
 #
 
 get_general_jit_ctx = get_minimal_ctx
@@ -906,8 +909,74 @@ def _general_jit_const_callback(value: Any) -> WrappedValue:
     return value
 
 
+# Records proxies that could later be replaced with better names
+_rename_proxy_swapmap: contextvars.ContextVar[dict[Variable, Proxy]] = contextvars.ContextVar(
+    "rename_proxy_swapmap", default=dict()
+)
+
+
+@contextmanager
+def rename_proxy_ctx(proxy_swapmap: dict[Variable, Proxy]):
+    token = _rename_proxy_swapmap.set(proxy_swapmap)
+    try:
+        yield
+    finally:
+        _rename_proxy_swapmap.reset(token)
+
+
+# TODO(nikitaved): maybe call it upon Frame creation
+def _maybe_update_proxy_name(orig_value: Any, name: str):
+    uvalue = unwrap(orig_value)
+
+    # TODO(nikitaved): add support for futures
+    if isinstance(uvalue, FutureTensorProxy):
+        return
+    if isinstance(uvalue, Proxy) and is_proxy_name_available(name):
+        uvalue_var = variableify(uvalue)
+        uvalue_renamed = uvalue.replace_name(name)
+        rename_proxy_swapmap = _rename_proxy_swapmap.get()
+        rename_proxy_swapmap[uvalue_var] = uvalue_renamed
+
+
+def _apply_trace_proxy_rename(trace: TraceCtx, name: None | str = None) -> TraceCtx:
+    rename_proxy_swapmap = _rename_proxy_swapmap.get()
+
+    new_trace = from_trace(trace)
+
+    # Rename args/kwargs {
+    def proxy_name_replacer(arg: Any):
+        if isinstance(arg, Proxy):
+            return rename_proxy_swapmap.get(variableify(arg), arg)
+        else:
+            return arg
+
+    new_trace.args = tree_map(proxy_name_replacer, new_trace.args)
+    new_trace.kwargs = tree_map(proxy_name_replacer, new_trace.kwargs)
+    # }
+
+    # Rename proxies in bound symbols {
+    new_bsyms = []
+    for bsym in trace.bound_symbols:
+        new_bsym = bsym.from_bsym_swap_proxies(rename_proxy_swapmap)
+        new_bsyms.append(new_bsym)
+
+    new_trace.bound_symbols = new_bsyms
+    # }
+
+    # Update signature {
+    if name is not None:
+        si = SigInfo(name)
+        si.args = [(p.name, None) for p in new_trace.args]
+        new_trace._siginfo = si
+    # }
+
+    return new_trace
+
+
 # TODO Do we need to warn here? It would find its way in the wrap callback
 def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
     # Allows loading the torch module
     value = orig_value
     if (
@@ -988,10 +1057,33 @@ def _general_jit_wrap_callback(value):
         )
 
 
+def _general_jit_load_fast_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
+    return orig_value
+
+
+def _general_jit_load_deref_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
+    return orig_value
+
+
+def _general_jit_store_deref_callback(
+    orig_value: Any, name: str, co_cellsvars: tuple[str], co_freevars: tuple[str]
+) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
+    return orig_value
+
+
 general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {
     JIT_CALLBACKS.CONST_CALLBACK: _general_jit_const_callback,
     JIT_CALLBACKS.GLOBAL_CALLBACK: _general_jit_global_callback,
     JIT_CALLBACKS.WRAP_CALLBACK: _general_jit_wrap_callback,
+    JIT_CALLBACKS.LOAD_FAST_CALLBACK: _general_jit_load_fast_callback,
+    JIT_CALLBACKS.LOAD_DEREF_CALLBACK: _general_jit_load_deref_callback,
+    JIT_CALLBACKS.STORE_DEREF_CALLBACK: _general_jit_store_deref_callback,
 }
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 
@@ -1299,14 +1391,16 @@ def thunder_general_jit(
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
     )
 
-    with tracectx(computation_trace):
-        try:
-            tok = set_minimal_ctx(ctx)
-            result = jfn(*args, **kwargs)
-            prims.python_return(result)
-            process_recorded_modifications(ctx, epilogue_trace)
-        finally:
-            reset_minimal_ctx(tok)
+    rename_proxy_swapmap: dict[Variable, Proxy] = {}
+    with rename_proxy_ctx(rename_proxy_swapmap):
+        with tracectx(computation_trace):
+            try:
+                tok = set_minimal_ctx(ctx)
+                result = jfn(*args, **kwargs)
+                prims.python_return(result)
+                process_recorded_modifications(ctx, epilogue_trace)
+            finally:
+                reset_minimal_ctx(tok)
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
@@ -1345,5 +1439,12 @@ def thunder_general_jit(
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
     if epilogue_trace:
         bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+
+    with rename_proxy_ctx(rename_proxy_swapmap):
+        # TODO(nikitaved): update prologue/epilogue as well
+        computation_trace = _apply_trace_proxy_rename(computation_trace, "computation")
+        if epilogue_trace:
+            # TODO: is it safe to use current swapdict here?
+            epilogue_trace = _apply_trace_proxy_rename(epilogue_trace, "epilogue")
 
     return prologue_trace, computation_trace, epilogue_trace
