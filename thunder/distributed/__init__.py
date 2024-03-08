@@ -97,7 +97,7 @@ def ddp(
     gets pre-averaged, i.e., divided by world size, and asynchronously all-reduced.
 
     Args:
-        model: A model before ``thunder.compile`` applied
+        model: A model before ``thunder.jit`` applied
 
     Keyword Args:
         broadcast_from: The rank of the device hosting the parameters to broadcast. If None is passed,
@@ -156,7 +156,7 @@ def ddp(
 
             model = MyModel().to(LOCAL_RANK)
             ddp_model = dist.ddp(model)
-            compiled = thunder.compile(ddp_model)
+            compiled = thunder.jit(ddp_model)
             optimizer = torch.optim.AdamW(compiled.parameters())
             losses = []
             loss_all_reduce_workers = []

@@ -193,7 +193,7 @@ class TELinear(TransformerEngineBaseModule):
         self.primary_weights_in_fp8 = False
 
         if FP8GlobalStateManager.with_fp8_parameters():
-            raise RuntimeError("Primary weights in FP8 is not supported under `thunder.compile`.")
+            raise RuntimeError("Primary weights in FP8 is not supported under `thunder.jit`.")
 
         # Required by `get_fp8_weights_scratchpad`
         self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))

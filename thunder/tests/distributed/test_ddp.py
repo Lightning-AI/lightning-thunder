@@ -65,8 +65,8 @@ class ToyModel(nn.Module):
 #     - calling `torch.distributed.init_process_group` with NCCL backend
 #     - setting rank to each process group / device
 # so what you'd need to do is to prepare a model and tensors, wrap the model with DDP, and
-# `thunder.compile` the original model or the DDP'd model, and do some computation and/or
-# examine the traces of the `thunder.compile`d.
+# `thunder.jit` the original model or the DDP'd model, and do some computation and/or
+# examine the traces of the `thunder.jit`d.
 # If you force a test to be run with >2 GPUs for a test, you might want to inherit `CompileDDPTest`
 # and modify `world_size` to e.g. `max(torch.cuda.device_count(), 2)`.
 
@@ -230,7 +230,7 @@ class CompileDDPTest(DataParallelTestCase):
             e = c + 1
             return a, e
 
-        # NOTE lightning.compiles all_reduce is a functional operation
+        # NOTE thunders all_reduce is a functional operation
         def lc_foo(
             a,
             b,
@@ -862,7 +862,7 @@ def init_per_process_distributed(
     #   public mechanism to acquire the default process group, which is specified
     #   in operations by setting process_group=None.
     #   Actually acquiring the default ProcessGroup is not typically necessary, but
-    #   lightning.compile doesn't like to model primitives with implicit defaults,
+    #   thunder doesn't like to model primitives with implicit defaults,
     #   so we want to pass the ProcessGroup explicitly
     return tdist.distributed_c10d._get_default_group()
 
