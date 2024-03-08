@@ -157,6 +157,7 @@ import lit_gpt.rmsnorm
 lit_gpt.model.KVCache = OverridenKVCache
 # add the testing configurations
 lit_gpt.config.name_to_config.update(name_to_config)
+name_to_config.update(lit_gpt.config.name_to_config)
 
 # manually expose for backwards compatibility
 Config = lit_gpt.Config
