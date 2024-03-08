@@ -144,3 +144,7 @@ scripts/build
 benchmarks/traces
 
 .ruff_cache/
+
+# come CI artifacts
+notebooks/all.txt
+notebooks/ci.txt
