@@ -210,7 +210,7 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     def foo(a):
         return a.to(torch.float32)
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
     cfoo(a)
 
     traces = thunder.last_traces(cfoo)
@@ -229,7 +229,7 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
         g = d.to(torch.float32)
         return d, e, f, g
 
-    cbar = thunder.compile(bar)
+    cbar = thunder.jit(bar)
     cbar(a)
 
     traces = thunder.last_traces(cbar)
@@ -242,10 +242,11 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     assert len(fusion.subsymbols) == 1
 
     # Verifies that the trace outputs are updated properly
-    t1, t2, a0, a1 = extrace.output
-    assert t1.name == "t1"
-    assert t2.name == "t1"
-    assert a0.name == a1.name == "a"
+    d, e, f, g = extrace.output
+    assert d.name == "d"
+    assert e.name == "d"
+    assert f.name == "f"
+    assert g.name == "f"
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))

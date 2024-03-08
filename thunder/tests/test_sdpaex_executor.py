@@ -149,7 +149,7 @@ def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
     def fn(*args, **kwargs):
         return torch.nn.functional.scaled_dot_product_attention(*args, **kwargs)
 
-    cfn = thunder.compile(fn, executors_list=[sdpa_ex])
+    cfn = thunder.jit(fn, executors=[sdpa_ex])
     for sample in op.sample_input_generator(op, device, dtype, requires_grad=False):
         result = run_snippet(
             snippet_torch_consistency,

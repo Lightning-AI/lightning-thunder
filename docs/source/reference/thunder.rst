@@ -18,4 +18,5 @@ thunder
     last_interpreted_instructions
     last_interpreted_history
     last_compile_options
+    jit
     grad

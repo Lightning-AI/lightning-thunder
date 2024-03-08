@@ -767,7 +767,7 @@ def test_torch_autograd_saved_tensors_memory_release():
             x = noop(x)
         return x
 
-    cfunc = thunder.jit(func, disable_preprocessing=True, executors=[thunder.executors.torchex.ex])
+    cfunc = thunder.jit(func, executors=[thunder.executors.torchex.ex])
 
     initial_allocated = torch.cuda.memory_allocated()
 
