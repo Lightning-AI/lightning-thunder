@@ -545,7 +545,9 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
 # TODO Test with buffers
 def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None, args=None, kwargs=None) -> None:
     idx: int = 0
-    if tom is not None and tom._additional_param_values is not None:
+    from thunder.common import ThunderOptimizedModule
+
+    if tom is not None and isinstance(tom, ThunderOptimizedModule) and tom._additional_param_values is not None:
         for p in tom._additional_param_values:
             if p.requires_grad:
                 # Supports grad accumulation (like when weight tying)
