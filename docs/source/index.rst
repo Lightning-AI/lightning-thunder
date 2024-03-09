@@ -33,12 +33,12 @@ Thunder is written entirely in Python. Even its trace is represented as valid Py
 
 Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
 
-- [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
-- [nvFuser](https://github.com/NVIDIA/Fuser)
-- [cuDNN](https://developer.nvidia.com/cudnn)
-- [Apex](https://github.com/NVIDIA/apex)
-- [PyTorch eager](https://github.com/pytorch/pytorch) operations
-- custom kernels, including those written with [OpenAI Triton](https://github.com/openai/triton)
+- `torch.compile <https://pytorch.org/get-started/pytorch-2.0/>`_
+- `nvFuser <https://github.com/NVIDIA/Fuser>`_
+- `cuDNN <https://developer.nvidia.com/cudnn>`_
+- `Apex <https://github.com/NVIDIA/apex>`_
+- `PyTorch eager <https://github.com/pytorch/pytorch>`_ operations
+- custom kernels, including those written with `OpenAI Triton <https://github.com/openai/triton>`_
 
 Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
 

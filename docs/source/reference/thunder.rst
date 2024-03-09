@@ -3,10 +3,25 @@
 thunder
 =======
 
+
+Compiling functions and modules
+-------------------------------
+
+
 .. autosummary::
     :toctree: generated/
 
-    compile
+    jit
+    functional.jit
+
+
+Querying information on compiled functions and modules
+------------------------------------------------------
+
+
+.. autosummary::
+    :toctree: generated/
+
     compile_data
     compile_stats
     last_traces
@@ -18,5 +33,13 @@ thunder
     last_interpreted_instructions
     last_interpreted_history
     last_compile_options
-    jit
+..
+    compile
     grad
+
+JITed Model wrapper
+-------------------
+
+.. autoclass:: ThunderModule
+    :members: no_sync
+    :exclude-members: forward,load_state_dict,state_dict

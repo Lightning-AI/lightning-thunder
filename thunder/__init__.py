@@ -581,7 +581,15 @@ def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES
 
 
 class ThunderModule(pytorch.nn.Module):
+    """A wrapper nn.Module subclass.
+
+    This wrapper is returned by ``thunder.jit``, you would typically not
+    instantiate it manually.
+
+    """
+
     def __init__(self, model, compiled_model_call):
+        """"""
         super().__init__()
         self._model = model
 
@@ -593,7 +601,7 @@ class ThunderModule(pytorch.nn.Module):
 
     @contextmanager
     def no_sync(self):
-        """Context manager to disable gradient synchronization in data parallel mode.
+        r"""Context manager to disable gradient synchronization in data parallel mode.
 
         This context manager is intended to be used in conjunction with
         :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
@@ -604,9 +612,9 @@ class ThunderModule(pytorch.nn.Module):
 
             This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
             PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
+            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
             In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
 
         .. warning::
 
@@ -699,12 +707,14 @@ def jit(
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
         executors: list of executors to use. Defaults to the executors returned by `thunder.get_default_executors()` and always amened by `thunder.get_always_executors()`.
                    You can get a list of all available executors with `thunder.get_all_executors()`.
-        sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be "allow", "warn", "error". Defaults to allow.
+        sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
+        cache: caching mode. default: ``"constant values"```
+
+               - ``"no caching"`` - disable caching and always recompute,
+               - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
+               - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
-        cache: caching mode. default: "constant values"
-               - "no caching" - disable caching and always recompute,
-               - "constant values" - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
-               - "same input" - don't check, but just assume that a cached function works if it exists."""
+    """
 
     if "executors_list" in compile_options:
         warnings.warn("outdated argument executors_list= in call, please use executors=")
@@ -1051,15 +1061,34 @@ def compile(
 
 
 def compile_data(fn) -> CompileData | None:
+    """Obtains the compilation data from a JITed function.
+
+    The compile data (:class:`CompileData`) contains information about how the JIT has been configured
+    for compilation (including referencing the function or module that is being compiled).
+    """
     return getattr(fn, "_lc_cd", None)
 
 
 def compile_stats(fn) -> CompileStats | None:
+    """Obtains the compilation statistics from a JITed function.
+
+    The compilation statistics (:class:`CompileStats`) contain information about each compilation run -
+    collected when a JITed function is called for the first time or with previously unseen state.
+    This includes the cache of traces (pologues, computation, possibly backward and epilogue) and
+    how they have been transformed and information about cache hits and misses and timings.
+    """
     return getattr(fn, "_lc_cs", None)
 
 
 # TODO We should remove compiledata.last_traces in favor of forward_last_traces and backward_last_traces
+# TODO: should we return fw and bw from separate functions. The return type (list or tuple of lists) is not so nice
 def last_traces(fn) -> list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
+    """Obtains the list of computation traces that have been produced for the last run of the function. This is a list
+    of traces mirroring the progression of transformations being applied to the trace (at index 0) that has
+    been acquired from interpreting the user program.
+
+    If the function has forward and backward, a tuple of them is returned.
+    """
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1071,6 +1100,7 @@ def last_traces(fn) -> list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
 
 
 def last_prologue_traces(fn) -> TraceCtx:
+    """Obtains the list of prologue traces that have been produced for the last run of the function and the selected prologue."""
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1080,6 +1110,7 @@ def last_prologue_traces(fn) -> TraceCtx:
 
 
 def cache_option(fn) -> CACHE_OPTIONS:
+    """Returns the cache options set when JITting the function."""
     cd = compile_data(fn)
     if cd is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1087,6 +1118,7 @@ def cache_option(fn) -> CACHE_OPTIONS:
 
 
 def cache_hits(fn) -> int:
+    """Returns the number of cache hits we found when running the function."""
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1094,6 +1126,7 @@ def cache_hits(fn) -> int:
 
 
 def cache_misses(fn) -> int:
+    """Returns the number of cache misses we found when running the function."""
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1101,10 +1134,14 @@ def cache_misses(fn) -> int:
 
 
 def list_transforms(fn) -> list:
+    """Returns the list of (explicit) transforms applied to the JITed function."""
     return fn._lc_transforms
 
 
 def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
+    """Returns the list of instructions the interpreter encountered while tracing through the
+    user program (on the last cache miss).
+    """
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1114,6 +1151,9 @@ def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
 
 
 def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
+    """Returns the list of instructions and other information the interpreter encountered while tracing through the
+    user program (on the last cache miss).
+    """
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
@@ -1122,8 +1162,9 @@ def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
     return cs.last_interpreted_history
 
 
-# Prints how compiled options were used (or not)
 def last_compile_options(fn: Callable, /) -> None:
+    """Prints how compiled options were used (or not)"""
+
     cd = compile_data(fn)
     cs = compile_stats(fn)
 
