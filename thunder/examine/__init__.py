@@ -54,12 +54,21 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
     #   and ensure the operation itself is working correctly
     collected_ops = {}
     torch_result: Any
+
+    if not callable(fn):
+        # `examine` doesn't throw error and doesn't crash the user program.
+        # Hence, using print and return.
+        print(
+            f"examine: expected `fn` to be a callable instead received {type(fn)}. Use `examine(fn, *args, **kwargs)` to test `fn(*args, **kwargs)`"
+        )
+        return
+
     with CollectFunctionsUsed(collected_ops):
         try:
             torch_result = fn(*args, **kwargs)
         except Exception as e:
             print("Failed to run the unmodified function. Please verify that your code runs without thunder")
-            print(e)
+            print(f"The code failed with exception - {e}")
             return
 
     # Step 1 Identifies supported (and unsupported) operations
