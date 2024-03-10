@@ -85,6 +85,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    :caption: Basic
 
    Overview <basic/overview>
+   Zero to Thunder <notebooks/zero_to_thunder>
    Thunder step by step <basic/inspecting_traces>
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
@@ -110,6 +111,14 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    notebooks/adding_custom_operator
    notebooks/adding_custom_operator_backward
    notebooks/adding_operator_executor
+
+.. toctree::
+   :maxdepth: 1
+   :name: experimental_dev_tutorials
+   :caption: Experimental dev tutorials
+
+   notebooks/dev_tutorials/extend
+   notebooks/dev_tutorials/patterns
 
 ..
    TODO RC1: update notebooks
