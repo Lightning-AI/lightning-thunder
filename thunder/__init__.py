@@ -40,6 +40,7 @@ import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 from thunder.core.symbol import BoundSymbol
 import thunder.core.devices as devices
+from thunder.core.transform_common import dce
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -910,6 +911,9 @@ def jit(
             cs.last_prologue_execution_stop = time.time_ns()
 
             computation_traces = [computation_trc]
+
+            computation_trc = dce(computation_trc)
+            computation_traces.append(computation_trc)
 
             if is_autocast_enabled:
                 from thunder.core.transforms import autocast
