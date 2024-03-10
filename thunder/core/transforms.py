@@ -3976,7 +3976,6 @@ def backward_pass(forward_env, trace, init_cotangents):
                 raise NotImplementedError(f"Backward for {symbol.sym.id} is not implemented")
 
         result = backward(*residuals, *cotangents)
-
         if isinstance(result, dict):
             # If the backward returns a dict, we assume that it is a dict of
             # forward arguments to the corresponding
@@ -4018,13 +4017,16 @@ def backward_pass(forward_env, trace, init_cotangents):
             # to match the number of arguments. Alternatively, we could just
             # have a for-loop with a conditional when writing to the
             # environment.
+
             iter_result = iter(result)
-            result = tuple(next(iter_result) if is_differentiable(arg) else None for arg in symbol.args)
+            n_differentiable_args = sum(bool(is_differentiable(arg)) for arg in symbol.args)
             check(
-                len(result) == len(symbol.args),
-                lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} values, "
-                + f"but expected {len([is_differentiable(arg) for arg in symbol.args])}",
+                n_differentiable_args <= orig_res_len,
+                lambda: f"Backward for {symbol.sym.id} returned {orig_res_len} value(s), "
+                + f"but expected {n_differentiable_args}",
             )
+
+            result = tuple(next(iter_result) if is_differentiable(arg) else None for arg in symbol.args)
 
         # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
         # This is a temporary workaround.

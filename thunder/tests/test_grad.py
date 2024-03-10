@@ -1353,3 +1353,48 @@ def test_populate_grads_nanogpt(executor, device, dtype):
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
+
+
+def test_too_few_results_from_backward():
+    # this tests the error message, previously we checked the condition too late and hit an
+    # opaque error
+
+    global myadd
+    from thunder.core.prims import make_prim
+    from thunder.core.transforms import register_augmented_forward, register_backward
+    from thunder.core.proxies import TensorProxy
+    from thunder.core import codeutils
+
+    def myadd_meta(a, b):
+        return TensorProxy(like=a)
+
+    myadd = make_prim(
+        "myadd",
+        "myadd",
+        meta=myadd_meta,
+    )
+
+    myex = thunder.extend.OperatorExecutor("myex", version="0.1")
+    thunder.extend.register_executor(myex)
+    myadd_op = myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
+
+    @register_augmented_forward("myadd")
+    def myadd_augmented_fw(a, b):
+        out = myadd(a, b)
+        saved = (out,)
+        return out, saved
+
+    @register_backward("myadd")
+    def myadd_backward(out, g):
+        return g
+
+    def func(a, b):
+        return myadd(a, b)
+
+    cfunc = thunder.jit(func, executors=[myex, thunder.executors.torchex.ex])
+
+    a = torch.tensor(1.0, requires_grad=False)
+    b = torch.tensor(1.0, requires_grad=True)
+
+    with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
+        fw_out = cfunc(a, b)
