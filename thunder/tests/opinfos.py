@@ -2750,12 +2750,12 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+        yield SampleInput(*[make(s) for s in shapes], dim=dim)
 
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
     b = make((1,)).expand((5,))
-    yield SampleInput((a, b))
+    yield SampleInput(a, b, dim=0)
 
 
 def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -2771,15 +2771,21 @@ def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
     ]
 
     for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+        yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
+
+
+# nvfuserex_impl.to_descriptors can't take a **nested** list of tensors.
+# `cat_wrapper` is created to work around that.
+def cat_wrapper(*args, dim):
+    return ltorch.cat(args, dim=dim)
 
 
 cat_opinfo = OpInfo(
-    ltorch.cat,
+    cat_wrapper,
     supports_grad=True,
     sample_input_generator=cat_sample_generator,
     error_input_generator=cat_error_generator,
-    torch_reference=torch.cat,
+    torch_reference=lambda *args, dim: torch.cat(args, dim=dim),
     test_torch_compile_executor=True,
     test_directives=(
         # There's a bug in torch.compile + torch.cat for empty tensors in 2.1.0
@@ -3691,7 +3697,7 @@ def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+        yield SampleInput(*[make(s) for s in shapes], dim=dim)
 
 
 def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -3710,14 +3716,20 @@ def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
     ]
 
     for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+        yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
+
+
+# nvfuserex_impl.to_descriptors can't take a **nested** list of tensors.
+# `stack_wrapper` is created to work around that.
+def stack_wrapper(*args, dim):
+    return ltorch.stack(args, dim=dim)
 
 
 stack_opinfo = OpInfo(
-    ltorch.stack,
+    stack_wrapper,
     sample_input_generator=stack_sample_generator,
     error_input_generator=stack_error_generator,
-    torch_reference=torch.stack,
+    torch_reference=lambda *args, dim: torch.stack(args, dim=dim),
     test_directives=(
         # vjp and jvp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
