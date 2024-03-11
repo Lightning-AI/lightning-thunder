@@ -34,7 +34,7 @@ def _get_cudnn_handle(query_device):
 
     # Make sure the user stream is set on the handle
     # Fetch the current user stream and pass the data pointer to set_stream API
-    cudnn.set_stream(handle=handle, stream=torch.cuda.current_stream().cuda_stream)
+    cudnn.set_stream(handle=handle, stream=torch.cuda.current_stream(device=query_device).cuda_stream)
 
     return handle
 
@@ -70,7 +70,7 @@ class CudnnTensorAttributes:
     size: tuple
     stride: tuple
     dtype: torch.dtype
-
+    device_index: int
 
 from collections import OrderedDict
 
@@ -102,7 +102,7 @@ def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_c
     graph = cudnn.pygraph(
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
-        handle=_get_cudnn_handle(torch.cuda.current_device()),
+        handle=_get_cudnn_handle(query.device_index),
     )
 
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
@@ -209,11 +209,11 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
             stride *= shape[i]
         return tuple(strides)
 
-    query_4d = CudnnTensorAttributes(query.shape, compute_NHWC_strides(query.shape), query.dtype)
+    query_4d = CudnnTensorAttributes(query.shape, compute_NHWC_strides(query.shape), query.dtype, query.device.index)
 
-    key_4d = CudnnTensorAttributes(key.shape, compute_NHWC_strides(key.shape), key.dtype)
+    key_4d = CudnnTensorAttributes(key.shape, compute_NHWC_strides(key.shape), key.dtype, key.device.index)
 
-    value_4d = CudnnTensorAttributes(value.shape, compute_NHWC_strides(value.shape), value.dtype)
+    value_4d = CudnnTensorAttributes(value.shape, compute_NHWC_strides(value.shape), value.dtype, value.device.index)
 
     attn_mask_4d = None
     if attn_mask is not None:
@@ -222,7 +222,7 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 
         # cudnn does not support boolean attn_mask, so make one with -inf
         attn_mask_dtype = query.dtype if attn_mask.dtype in [torch.bool, dtypes.bool8] else attn_mask.dtype
-        attn_mask_4d = CudnnTensorAttributes(attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask_dtype)
+        attn_mask_4d = CudnnTensorAttributes(attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask_dtype, attn_mask.device.index)
 
     return query_4d, key_4d, value_4d, attn_mask_4d
 
@@ -405,7 +405,7 @@ def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_
         io_data_type=torch_to_cudnn_dtype(query.dtype),
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
-        handle=_get_cudnn_handle(torch.cuda.current_device()),
+        handle=_get_cudnn_handle(query.device_index),
     )
 
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
