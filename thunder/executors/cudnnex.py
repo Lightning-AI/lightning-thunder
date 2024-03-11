@@ -72,6 +72,7 @@ class CudnnTensorAttributes:
     dtype: torch.dtype
     device_index: int
 
+
 from collections import OrderedDict
 
 
@@ -222,7 +223,9 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 
         # cudnn does not support boolean attn_mask, so make one with -inf
         attn_mask_dtype = query.dtype if attn_mask.dtype in [torch.bool, dtypes.bool8] else attn_mask.dtype
-        attn_mask_4d = CudnnTensorAttributes(attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask_dtype, attn_mask.device.index)
+        attn_mask_4d = CudnnTensorAttributes(
+            attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask_dtype, attn_mask.device.index
+        )
 
     return query_4d, key_4d, value_4d, attn_mask_4d
 
