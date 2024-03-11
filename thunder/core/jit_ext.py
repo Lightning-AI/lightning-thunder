@@ -67,19 +67,15 @@ from thunder.core.proxies import (
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
     interpret,
-    _jit,
-    _jit_no_unwrap,
+    _interpret_call,
     CapsuleType,
     default_callbacks,
-    JIT_CALLBACKS,
-    JIT_SIGNALS,
+    INTERPRETER_CALLBACKS,
+    INTERPRETER_SIGNALS,
     default_opcode_interpreter,
     _default_lookaside_map,
     default_lookaside,
-    JITFrame,
     do_raise,
-    get_jitcompilectx,
-    JitCompileCtx,
     is_opaque,
     Py_NULL,
     member_descriptor,
@@ -89,7 +85,7 @@ from thunder.core.interpreter import (
     wrap_const,
     PseudoInst,
     ProvenanceRecord,
-    jit_needs_wrap,
+    interpreter_needs_wrap,
 )
 from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
 from thunder.core.baseutils import extract_callable_name
@@ -231,7 +227,7 @@ def reset_minimal_ctx(token) -> None:
 def _lookaside_sharp_edge(lookaside: Callable, lookaside_name: str):
     def wrapped_lookaside(*args, **kwargs):
         res = _sharp_edge(f"Calling {lookaside_name}()", lookaside)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
         else:
             return res(*args, **kwargs)
@@ -319,7 +315,7 @@ _populate_random_module_details()
 # See NOTE: [SharpEdge - random] for more information
 def _random_module_lookaside(
     lookaside: Callable, args: tuple[Any, ...]
-) -> Callable | None | Literal[JIT_SIGNALS.EXCEPTION_RAISED]:
+) -> Callable | None | Literal[INTERPRETER_SIGNALS.EXCEPTION_RAISED]:
     # Calls for `random` function will always have the global object or
     # user's `random.Random` object passed as first argument
     # (except for something like `random.Random.__init__` which is ok)
@@ -376,7 +372,7 @@ class ThunderSharpEdgeError(RuntimeError):
     pass
 
 
-def _sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
+def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
     s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
@@ -430,10 +426,10 @@ def _minimal_global_callback(orig_value: Any, name: str) -> Any:
     return value
 
 
-_minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {
-    JIT_CALLBACKS.STORE_GLOBAL_CALLBACK: _minimal_store_global_callback,
-    JIT_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
-    JIT_CALLBACKS.STORE_DEREF_CALLBACK: _minimal_store_deref_callback,
+_minimal_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
+    INTERPRETER_CALLBACKS.STORE_GLOBAL_CALLBACK: _minimal_store_global_callback,
+    INTERPRETER_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
+    INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK: _minimal_store_deref_callback,
 }
 _minimal_callbacks = default_callbacks | _minimal_callbacks
 
@@ -468,7 +464,7 @@ class JITSharpEdgeError(RuntimeError):
     pass
 
 
-def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | JIT_SIGNALS:
+def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
     s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
@@ -630,10 +626,10 @@ class GeneralJitCtx(MinimalCtx):
             raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
 
-general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {}
 
 
-def register_general_jit_callback(key: JIT_CALLBACKS) -> Callable:
+def register_general_jit_callback(key: INTERPRETER_CALLBACKS) -> Callable:
     def decorator(fn: Callable):
         assert key not in general_jit_callbacks
         general_jit_callbacks[key] = fn
@@ -660,7 +656,7 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
 
 
 _general_jit_lookaside_map.update(
-    {k: ensure_recursive_proxies(jit_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
+    {k: ensure_recursive_proxies(interpreter_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
 )
 
 
@@ -680,13 +676,13 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     assert getattr_lookaside is not None
 
     value = getattr_lookaside(obj, name, *maybe_default)
-    if value is JIT_SIGNALS.EXCEPTION_RAISED:
+    if value is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return value
 
     assert isinstance(value, WrappedValue)
     assert isinstance(name, WrappedValue)
 
-    if (not maybe_default) and (value is not JIT_SIGNALS.EXCEPTION_RAISED):
+    if (not maybe_default) and (value is not INTERPRETER_SIGNALS.EXCEPTION_RAISED):
         if isinstance(unwrap(obj), torch.nn.Module) and (unwrap(name) in MODULE_MEMBER_DICT_ATTRS):
             value.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
 
@@ -733,18 +729,18 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
         # 1) modify the inner thing
         # 2) divert the actual setattr...
         for n in MODULE_MEMBER_DICT_ATTRS:
-            member_dict = _jit_no_unwrap(getattr, obj, wrap_const(n))
+            member_dict = _interpret_call(getattr, obj, wrap_const(n))
             member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
 
     # check if it is an "outside value"?
     res = setattr_lookaside(obj, name, value)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     return res
 
 
 # TODO Expand on this
-@jit_needs_wrap
+@interpreter_needs_wrap
 def _general_jit_hasattr_lookaside(obj: Any, name: str):
     hasattr_lookaside = default_lookaside(hasattr) or hasattr
     return hasattr_lookaside(obj, name)
@@ -757,7 +753,7 @@ _general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 # At the same time Python expects to (but we might think to loosen the requirement
 # to return a bool for the JIT, return a proxy with origin informaiton and postpone
 # recording the constraint to conditional jumps and such.
-def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
+def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(wrapped_x)
@@ -771,7 +767,7 @@ _general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
 #   interpreter their internals is unnecessary and would just add complexity at this time
 
 
-@jit_needs_wrap
+@interpreter_needs_wrap
 def prop_lookaside_helper(meth, /, *args, **kwargs):
     res = meth(*args, **kwargs)
     return res
@@ -810,8 +806,8 @@ def get_methods_properties(typ):
 
 _general_jit_lookaside_map.update(
     {
-        **{fn: jit_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
-        **{fn: ensure_recursive_proxies(jit_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
+        **{fn: interpreter_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
+        **{fn: ensure_recursive_proxies(interpreter_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
         prop_lookaside_helper: prop_lookaside_helper,
     }
 )
@@ -879,7 +875,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
         recursively_proxy(*args, **kwargs)
-        lookaside = jit_needs_wrap(fn)
+        lookaside = interpreter_needs_wrap(fn)
     elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
         lookaside = general_jit_lookaside
     else:
@@ -1077,13 +1073,13 @@ def _general_jit_store_deref_callback(
     return orig_value
 
 
-general_jit_callbacks: dict[JIT_CALLBACKS, Callable] = {
-    JIT_CALLBACKS.CONST_CALLBACK: _general_jit_const_callback,
-    JIT_CALLBACKS.GLOBAL_CALLBACK: _general_jit_global_callback,
-    JIT_CALLBACKS.WRAP_CALLBACK: _general_jit_wrap_callback,
-    JIT_CALLBACKS.LOAD_FAST_CALLBACK: _general_jit_load_fast_callback,
-    JIT_CALLBACKS.LOAD_DEREF_CALLBACK: _general_jit_load_deref_callback,
-    JIT_CALLBACKS.STORE_DEREF_CALLBACK: _general_jit_store_deref_callback,
+general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
+    INTERPRETER_CALLBACKS.CONST_CALLBACK: _general_jit_const_callback,
+    INTERPRETER_CALLBACKS.GLOBAL_CALLBACK: _general_jit_global_callback,
+    INTERPRETER_CALLBACKS.WRAP_CALLBACK: _general_jit_wrap_callback,
+    INTERPRETER_CALLBACKS.LOAD_FAST_CALLBACK: _general_jit_load_fast_callback,
+    INTERPRETER_CALLBACKS.LOAD_DEREF_CALLBACK: _general_jit_load_deref_callback,
+    INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK: _general_jit_store_deref_callback,
 }
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 

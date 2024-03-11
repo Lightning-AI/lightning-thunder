@@ -14,7 +14,7 @@ from torch.testing import assert_close
 from lightning_utilities import compare_version
 
 import thunder
-from thunder.core.interpreter import is_jitting, JITError
+from thunder.core.interpreter import is_jitting, InterpreterError
 
 from thunder.tests import lit_gpt_model
 import thunder.clang as clang

@@ -47,25 +47,30 @@ from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
 
 
 #
-# jit.py implements a Python interpreter in Python.
+# interpreter.py implements a Python interpreter in Python.
 #
-#   The jit is still being developed.
-#   See thunder/tests/test_jit.py for its current capabilities.
+#   The interpreter is still being developed.
+#   See thunder/tests/test_interpreter.py for its current capabilities.
 #
 #   Python opcodes are executed by "handlers" that manipulate the stack and other
 #   components of the interpreter state, and can return a new instruction pointer
 #   for the interpreter to jump to.
 #
-#   The jit has a JitMode.PYTHON mode, where it just tries to emulate the
+#   The interpreter has two fundamental modes. By default it just tries to emulate the
 #   Python interpreter. This is useful when adding opcodes, and for verifying
-#   that the Python updates are correct.
+#   that the Python updates are correct. It also is used by the functional jit.
 #
-#   A work in progress is JitMode.THUNDER. When this mode is set the jit
-#   avoids Python side effects and constructs a Thunder program to be executed.
+#   When using provenance tracking, the interpreter additionally tries to keep track
+#   of where values originated. This mode is used by the general jit. This is done by
+#   wrapping all values in WrappedValues.
 #
-#   The Thunder program constructed has two parts, a "prologue trace" and a
-#   "computation trace". The prologue trace has the original function's signature
-#   and it:
+#   Both thunder.jit and thunder.functional.jit use extensions (in jit_ext.py) to
+#   create Thunder Programs. They use callbacks and additional lookasides to
+#   add their functionality.
+#
+#   The Thunder program constructed has three parts, a "prologue trace", a
+#   "computation trace", and (optionally) an "epilogue trace". The prologue trace has
+#   the original function's signature and it:
 #
 #       - Gathers all the "inputs" to the function, including inputs like globals
 #           accessed by the function
@@ -81,9 +86,12 @@ from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
 #   never performs a container access. Python operations with side effects
 #   occur in the same order they did in the original program.
 #
+#   The epilogue trace applies modifications that were recorded in interpretation.
+#   (Initially only setattrs to nn.Module values.)
+#
 
 __all__ = [
-    "jit",
+    "interpret",
 ]
 
 #
@@ -93,17 +101,17 @@ __all__ = [
 
 # WrappedValues
 
-# In provenance tracking mode (set in the compile ctx), the JIT wraps the
+# In provenance tracking mode (set in the compile ctx), the interpreter wraps the
 # values it handles in this wrapper.
 # For now, lookasides will get unwrapped inputs by default and their
 # result will be wrapped as originating from the lookaside.
 # If a lookaside does not want to handle WrappedValues but needs unwrapping
 # of the inputs and wrapping of the results, it needs to
-# be decorated with @jit_needs_wrap.
+# be decorated with @interpreter_needs_wrap.
 
-# The core difference to proxies is that the code running in the JIT will
+# The core difference to proxies is that the code running in the interpreter will
 # *not* see the wrapper but will only ever see the original values
-# while proxies are intended to be run inside the JIT.
+# while proxies are intended to be run inside the interpreter.
 # Thus we expect wrappers and proxies to complement each other and not
 # one to replace the other.
 
@@ -114,7 +122,7 @@ __all__ = [
 # that we have the following regions where everything is wrapped
 # - all things in localsplus are wrapped
 # - all things on the stack are wrapped
-# - all things in _jit_unwrapped are wrapped
+# - all things in _interpret_call are wrapped
 # In contrast for opcode handlers, wrapping is "opt-in" (by popping
 # values with .pop_wrapped() and wrapping what they push on the stack.
 # For lookasides, it currently is also opt-in, see above.
@@ -124,8 +132,8 @@ class WrappedValue:
     def __init__(self, value, /, *, provenance: ProvenanceRecord):
         assert isinstance(provenance, ProvenanceRecord)
 
-        ctx: JitCompileCtx = get_jitcompilectx()
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        ctx: InterpreterCompileCtx = get_interpretercompilectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
         self.python_typ = type(value)
 
@@ -152,7 +160,7 @@ class WrappedValue:
 
         runtimectx.cache_wrapper(self)
 
-        cb: None | Callable = ctx.callback(JIT_CALLBACKS.WRAP_CALLBACK)
+        cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.WRAP_CALLBACK)
         if cb is not None:
             cb(self)
 
@@ -162,8 +170,8 @@ class WrappedValue:
 
         populate_item_wrappers(self)
 
-        ctx: JitCompileCtx = get_jitcompilectx()
-        cb: None | Callable = ctx.callback(JIT_CALLBACKS.PROXIFY_CALLBACK)
+        ctx: InterpreterCompileCtx = get_interpretercompilectx()
+        cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.PROXIFY_CALLBACK)
 
         if cb is not None:
             cb(self)
@@ -178,7 +186,7 @@ class WrappedValue:
         self.original_value = self.value
         self.value = proxy
 
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         # we need to keep a strong ref on things that have been proxied to recover the proxy via the cache or we could structure the cache to do this for us
         runtimectx.register_proxied_value(self)
 
@@ -190,12 +198,12 @@ class WrappedValue:
 #       In some situations - in particular *args/**kwargs, Python creates tuples and dicts for us,
 #       these functions are intended to do the appropriate wrapping for them.
 def wrap_args_from_list(l):  # returns a new list!
-    res = [_jit_no_unwrap(lambda l, i: l[i], l, wrap_const(i)) for i in range(len(unwrap(l)))]
+    res = [_interpret_call(lambda l, i: l[i], l, wrap_const(i)) for i in range(len(unwrap(l)))]
     return res
 
 
 def wrap_kwargs_from_dict(d):  # returns a new dict
-    return {k: _jit_no_unwrap(lambda d, k: d[k], d, wrap_const(k)) for k in unwrap(d)}
+    return {k: _interpret_call(lambda d, k: d[k], d, wrap_const(k)) for k in unwrap(d)}
 
 
 def wrapped_build_tuple(l: Sequence[WrappedValue]) -> WrappedValue:
@@ -255,8 +263,8 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
             assert len(value.item_wrappers) == len(value.key_wrappers), f"{value.value}"
         return value
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     if ctx._with_provenance_tracking:
         cached = runtimectx._known_wrappers.get(id(value))
@@ -308,7 +316,7 @@ def populate_single_dict_item_wrapper(uvalue, obj, key):
 
 
 def populate_attribute_wrapper(wrapped_object, name, wrapped_attribute):
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if not ctx._with_provenance_tracking:
         return
 
@@ -331,7 +339,7 @@ def wrap_binary_subscr(uvalue, obj, key):
 
 
 def populate_item_wrappers(l):
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if not ctx._with_provenance_tracking:
         return
 
@@ -363,7 +371,7 @@ def populate_item_wrappers(l):
 
 
 #
-# Jit context
+# interpreter context
 #
 
 # Constructs the builtins dictionary
@@ -374,21 +382,21 @@ getset_descriptor = type(type(open(__file__)).name)
 member_descriptor = type(inspect.getattr_static(ModuleType, "__dict__"))
 
 
-# The Jit's compile context, which handles compilation directives
+# The interpreter's compile context, which handles compilation directives
 # See the comment for interpret() for how these functions work
-class JitCompileCtx:
+class InterpreterCompileCtx:
     def __init__(
         self,
         *,
         opcode_interpreter: Callable,
         fn_lookaside: Callable,
-        callbacks: dict[JIT_CALLBACKS, Callable],
+        callbacks: dict[INTERPRETER_CALLBACKS, Callable],
         with_provenance_tracking: bool = False,
         uncacheable_classes: Sequence[type] | None = None,
     ):
         self._opcode_interpreter: Callable = opcode_interpreter
         self._fn_lookaside: Callable = fn_lookaside
-        self._callbacks: dict[JIT_CALLBACKS, Callable] = callbacks
+        self._callbacks: dict[INTERPRETER_CALLBACKS, Callable] = callbacks
         self._with_provenance_tracking = with_provenance_tracking
         if with_provenance_tracking:
             assert isinstance(uncacheable_classes, (list, tuple))
@@ -396,47 +404,47 @@ class JitCompileCtx:
 
         self._uncacheable_classes = uncacheable_classes
 
-    def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
+    def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | INTERPRETER_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
 
     def lookaside(self, fn: Callable, /, *args, **kwargs) -> None | Callable:
         return self._fn_lookaside(fn, *args, **kwargs)
 
-    def callback(self, id: JIT_CALLBACKS) -> None | Callable:
+    def callback(self, id: INTERPRETER_CALLBACKS) -> None | Callable:
         cb: None | Callable = self._callbacks.get(id, None)
         return cb
 
 
-_jitcompilectx = contextvars.ContextVar("jitcompilectx")
+_interpretercompilectx = contextvars.ContextVar("interpretercompilectx")
 
 
-# Sets the jit ctx
-def set_jitcompilectx(ctx) -> Any:
-    return _jitcompilectx.set(ctx)
+# Sets the interpreter ctx
+def set_interpretercompilectx(ctx) -> Any:
+    return _interpretercompilectx.set(ctx)
 
 
-# Returns the current jitctx
-def get_jitcompilectx() -> JitCompileCtx:
-    return _jitcompilectx.get()
+# Returns the current interpreter ctx
+def get_interpretercompilectx() -> InterpreterCompileCtx:
+    return _interpretercompilectx.get()
 
 
-def get_jitcompilectx_if_available() -> JitCompileCtx | None:
-    return _jitcompilectx.get(None)
+def get_interpretercompilectx_if_available() -> InterpreterCompileCtx | None:
+    return _interpretercompilectx.get(None)
 
 
-# Resets the jitctx
-def reset_jitcompilectx(token) -> None:
-    _jitcompilectx.reset(token)
+# Resets the interpreter ctx
+def reset_interpretercompilectx(token) -> None:
+    _interpretercompilectx.reset(token)
 
 
-# Context manager for setting the jitctx
+# Context manager for setting the interpreter ctx
 @contextlib.contextmanager
-def jitcompilectx(_jitcompilectx: JitCompileCtx):
-    tok: Any = set_jitcompilectx(_jitcompilectx)
+def interpretercompilectx(_interpretercompilectx: InterpreterCompileCtx):
+    tok: Any = set_interpretercompilectx(_interpretercompilectx)
     try:
         yield
     finally:
-        reset_jitcompilectx(tok)
+        reset_interpretercompilectx(tok)
 
 
 class LineHistoryItem(TypedDict):
@@ -457,19 +465,19 @@ class LookasideHistoryItem(TypedDict):
 
 
 class CallHistoryItem(TypedDict):
-    kind: Literal["JitCall"]
+    kind: Literal["InterpreterCall"]
     fn: Callable
     prev_frame: str
 
 
 class ReturnHistoryItem(TypedDict):
-    kind: Literal["JitReturn"]
+    kind: Literal["InterpreterReturn"]
     fn: Callable
     is_signal: bool
-    rval: type | JIT_SIGNALS
+    rval: type | INTERPRETER_SIGNALS
 
 
-JitHistoryItem = (
+InterpreterHistoryItem = (
     dis.Instruction
     | str
     | LineHistoryItem
@@ -480,36 +488,36 @@ JitHistoryItem = (
 )
 
 
-# How the JIT deals with exceptions:
+# How the Interpreter deals with exceptions:
 # Conceptually, there are two sources of exceptions that we want to distinguish:
 # - Things arising from user code ("User Exceptions").
-# - Things that stem from the JIT itself ("JIT Errors").
+# - Things that stem from the interpreter itself ("Interpreter Errors").
 
-# To the JIT User Exceptions are part of its normal operations. So we usually
+# To the interpreter User Exceptions are part of its normal operations. So we usually
 # don't use Python's exception mechanism to handle these. Instead the
-# JIT mimics CPython's implementation of exception handling by
+# interpreter mimics CPython's implementation of exception handling by
 # defining analoguous structures (curexec and exception_stack) set by do_raise and returns
-# JIT_SIGNALS.EXCEPTION_RAISED when running things that raised exceptions.
+# INTERPRETER_SIGNALS.EXCEPTION_RAISED when running things that raised exceptions.
 # Here in particular:
-# - Handlers are "inside JIT",
-# - _jit(...) is "inside JIT",
-# - lookasides are "inside JIT",
-# - opaque functions are necessarily outside the JIT,
-# - function objects, iterators, generators,... created in the JIT are NOT per se in inside the JIT,
-#   so they should raise as usual. When called with _jit(...) that will be handled appropriately
+# - Handlers are "inside the interpreter",
+# - _interpret_call_with_unwrapping(...) is "inside the interpreter",
+# - lookasides are "inside the interpreter",
+# - opaque functions are necessarily outside the interpreter,
+# - function objects, iterators, generators,... created in the interpreter are NOT per se in inside the interpreter,
+#   so they should raise as usual. When called with _interpret_call_with_unwrapping(...) that will be handled appropriately
 #   in the RAISE_VALUE handler.
 # Note that for user exceptions, we need to manually amend the traceback as we unwrap. We do so in
-# _jit_run.
-# JIT Errors are raised wrapped in a JITError exception to signal that we have run into
-# something with the JIT itself or how it was called.
+# _run_frame.
+# Interpreter Errors are raised wrapped in a InterpreterError exception to signal that we have run into
+# something with the Interpreter itself or how it was called.
 
 
-# The Jit's runtime context, which tracks stack changes in Python mode
-class JitRuntimeCtx:
+# The interpreter's runtime context, which tracks stack changes in Python mode
+class InterpreterRuntimeCtx:
     def __init__(self, *, debug_log: None | StringIO = None):
-        self.frame_stack: list[JITFrame] = []
+        self.frame_stack: list[InterpreterFrame] = []
         self._globals_dict: dict[str, Any] | None = None
-        self._history: list[JitHistoryItem] = []
+        self._history: list[InterpreterHistoryItem] = []
         self._interpreted_instructions: list[dis.Instruction] = []
         self._curexc: BaseException | None = None
         # The exception_stack mirrors the exc_info/exc_state from PyThreadState
@@ -532,7 +540,7 @@ class JitRuntimeCtx:
         self._proxied_values.add(v)
 
     def cache_wrapper(self, wrapped_value: WrappedValue):
-        compilectx: JitCompileCtx = get_jitcompilectx()
+        compilectx: InterpreterCompileCtx = get_interpretercompilectx()
         # we don't know what wrapped_value does for eq, so "is not ()" is correct here but python does not like "is ()"
         _empty_tup = ()
         if not isinstance(wrapped_value.value, compilectx._uncacheable_classes) and (
@@ -562,10 +570,10 @@ class JitRuntimeCtx:
 
     # The operations and opaque calls encountered while interpreting
     @property
-    def history(self) -> list[JitHistoryItem]:
+    def history(self) -> list[InterpreterHistoryItem]:
         return self._history
 
-    def record(self, val: JitHistoryItem, /) -> None:
+    def record(self, val: InterpreterHistoryItem, /) -> None:
         self._history.append(val)
 
         if self.debug_log is not None:
@@ -575,10 +583,10 @@ class JitRuntimeCtx:
         return self.frame_stack[-1].interpreter_stack
 
     # get current top of stack
-    def peek_frame_stack(self) -> JITFrame | None:
+    def peek_frame_stack(self) -> InterpreterFrame | None:
         return self.frame_stack[-1] if len(self.frame_stack) != 0 else None
 
-    def _push_frame_stack(self, frame: JITFrame):
+    def _push_frame_stack(self, frame: InterpreterFrame):
         self.frame_stack.append(frame)
 
     # for returning from method calls
@@ -587,7 +595,7 @@ class JitRuntimeCtx:
         return self.frame_stack.pop()
 
     @contextlib.contextmanager
-    def push_frame_stack(self, frame: JITFrame):
+    def push_frame_stack(self, frame: InterpreterFrame):
         self._push_frame_stack(frame)
         try:
             yield
@@ -598,19 +606,19 @@ class JitRuntimeCtx:
     # TODO Instead of appending to both history and and interpreted_instructions we could
     #   consider just appending to history and then filtering to only instructions when
     #   interpreted_instructions is accessed
-    def record_interpreted_instruction(self, inst: dis.Instruction, /) -> JitRuntimeCtx:
+    def record_interpreted_instruction(self, inst: dis.Instruction, /) -> InterpreterRuntimeCtx:
         self._interpreted_instructions.append(inst)
         self.record(inst)
         return self
 
-    def record_jit_call(self, fn: Callable) -> JitRuntimeCtx:
-        frame: JITFrame | None = self.peek_frame_stack()
+    def record_interpreter_call(self, fn: Callable) -> InterpreterRuntimeCtx:
+        frame: InterpreterFrame | None = self.peek_frame_stack()
 
-        # If frame is None, that means that this is the first call to _jit, in _jit_run.
+        # If frame is None, that means that this is the first call to _interpret_call, in _run_frame.
         # In that case we should also print out what line we're starting on, since
         # no line number changes have happened yet.
         if frame is not None:
-            self.record({"kind": "JitCall", "fn": fn, "prev_frame": frame.qualname})
+            self.record({"kind": "InterpreterCall", "fn": fn, "prev_frame": frame.qualname})
         else:
             if hasattr(self._original_callsite, "positions"):
                 pos = self._original_callsite.positions
@@ -619,28 +627,30 @@ class JitRuntimeCtx:
             # self.record_position(fn, self._original_callsite.filename, pos)
             self.record(
                 {
-                    "kind": "JitCall",
+                    "kind": "InterpreterCall",
                     "fn": fn,
                     "prev_frame": self._original_callsite.function,
                 }
             )
         return self
 
-    def record_jit_return(self, fn: Callable, rval: Any | JIT_SIGNALS, /) -> JitRuntimeCtx:
-        is_signal: bool = isinstance(rval, JIT_SIGNALS)
-        rv: type | JIT_SIGNALS = rval if is_signal else type(rval)
-        self.record(ReturnHistoryItem(kind="JitReturn", fn=fn, is_signal=is_signal, rval=rv))
+    def record_interpreter_return(self, fn: Callable, rval: Any | INTERPRETER_SIGNALS, /) -> InterpreterRuntimeCtx:
+        is_signal: bool = isinstance(rval, INTERPRETER_SIGNALS)
+        rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(rval)
+        self.record(ReturnHistoryItem(kind="InterpreterReturn", fn=fn, is_signal=is_signal, rval=rv))
         return self
 
-    def record_opaque_call(self, fn: Callable) -> JitRuntimeCtx:
+    def record_opaque_call(self, fn: Callable) -> InterpreterRuntimeCtx:
         self.record(OpaqueHistoryItem(kind="Opaque", fn=fn))
         return self
 
-    def record_lookaside(self, fn: Callable) -> JitRuntimeCtx:
+    def record_lookaside(self, fn: Callable) -> InterpreterRuntimeCtx:
         self.record(LookasideHistoryItem(kind="Lookaside", fn=fn))
         return self
 
-    def record_position(self, fn: Callable | CodeType, filename: str, position: Positions | None, /) -> JitRuntimeCtx:
+    def record_position(
+        self, fn: Callable | CodeType, filename: str, position: Positions | None, /
+    ) -> InterpreterRuntimeCtx:
         # Only record a change in the Python line
         if filename == self._prev_filename and _positions_equal(position, self._prev_position):
             return self
@@ -664,48 +674,48 @@ def print_to_history(*objects, sep=" ", end=os.linesep):
     if end is None:
         end = os.linesep
 
-    ctx: JitRuntimeCtx = get_jitruntimectx()
+    ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     ctx._history.append(str(sep).join(str(o) for o in objects) + str(end))
 
 
-_jitruntimectx = contextvars.ContextVar("jitruntimectx")
+_interpreterruntimectx = contextvars.ContextVar("interpreterruntimectx")
 
 
-# Sets the jit ctx
-def set_jitruntimectx(ctx) -> Any:
-    return _jitruntimectx.set(ctx)
+# Sets the interpreter ctx
+def set_interpreterruntimectx(ctx) -> Any:
+    return _interpreterruntimectx.set(ctx)
 
 
-# Returns the current jitctx
-def get_jitruntimectx() -> JitRuntimeCtx:
-    return _jitruntimectx.get()
+# Returns the current interpreter ctx
+def get_interpreterruntimectx() -> InterpreterRuntimeCtx:
+    return _interpreterruntimectx.get()
 
 
-# Resets the jitctx
-def reset_jitruntimectx(token) -> None:
-    _jitruntimectx.reset(token)
+# Resets the interpreter ctx
+def reset_interpreterruntimectx(token) -> None:
+    _interpreterruntimectx.reset(token)
 
 
-# Context manager for setting the jitctx
+# Context manager for setting the interpreter ctx
 @contextlib.contextmanager
-def jitruntimectx(_jitruntimectx: JitRuntimeCtx):
-    tok: Any = set_jitruntimectx(_jitruntimectx)
+def interpreterruntimectx(_interpreterruntimectx: InterpreterRuntimeCtx):
+    tok: Any = set_interpreterruntimectx(_interpreterruntimectx)
     try:
         yield
     finally:
-        reset_jitruntimectx(tok)
+        reset_interpreterruntimectx(tok)
 
 
-# A convenience helper for setting both the jit compile and runtime ctx
+# A convenience helper for setting both the interpreter compile and runtime ctx
 @contextlib.contextmanager
-def jitctx(_jitcompilectx: JitCompileCtx, _jitruntimectx: JitRuntimeCtx):
-    compile_tok: Any = set_jitcompilectx(_jitcompilectx)
-    runtime_tok: Any = set_jitruntimectx(_jitruntimectx)
+def interpreter_ctx(_interpretercompilectx: InterpreterCompileCtx, _interpreterruntimectx: InterpreterRuntimeCtx):
+    compile_tok: Any = set_interpretercompilectx(_interpretercompilectx)
+    runtime_tok: Any = set_interpreterruntimectx(_interpreterruntimectx)
     try:
         yield
     finally:
-        reset_jitcompilectx(compile_tok)
-        reset_jitruntimectx(runtime_tok)
+        reset_interpretercompilectx(compile_tok)
+        reset_interpreterruntimectx(runtime_tok)
 
 
 #
@@ -734,7 +744,7 @@ def extract_code(fn) -> CodeType:
         return extract_code(fn.__func__)
 
     if not hasattr(fn, "__code__"):
-        raise ValueError(f"Cannot JIT object {repr(fn)} of type {type(fn)}")
+        raise ValueError(f"Cannot interpret object {repr(fn)} of type {type(fn)}")
 
     code: CodeType = fn.__code__
 
@@ -757,7 +767,7 @@ def is_generalized_method(fn):
 
 
 # Our own exception class for reporting compilation problems
-class JITError(RuntimeError):
+class InterpreterError(RuntimeError):
     pass
 
 
@@ -772,10 +782,10 @@ class _CallableIterator:
         return self
 
     def __next__(self) -> Any:
-        # TODO: This call to _fn() needs to be jitted.
+        # TODO: This call to _fn() needs to be interpreted.
         # We should decide how to accomplish this, because
-        # this object could outlive the jit/runtime contexts.
-        # Perhaps all calls to builtin iterators by _jit should be looked aside?
+        # this object could outlive the interpreter/runtime contexts.
+        # Perhaps all calls to builtin iterators by _interpret_call should be looked aside?
         if (n := self._fn()) == self._sentinel:
             raise StopIteration
         return n
@@ -788,7 +798,7 @@ class Py_NULL(metaclass=Singleton):
 # Python <= 3.10 keeps a stack of TryBlocks in the frame. When an exception happens, it unwinds the try block
 #                looking for handlers.
 # Python >= 3.11 does not use this and has an map from instruction (offsets) to exception handlers instead
-#                (code.co_excepttiontable), this is handled in _jit_run
+#                (code.co_excepttiontable), this is handled in _run_frame
 class PyTryBlock:
     # These constants are from Python
     SETUP_FINALLY_TYPE = dis.opmap.get("SETUP_FINALLY", 122)  # 122 is the opcode from 3.10
@@ -991,7 +1001,7 @@ class InterpreterStack:
         return value
 
     def unpack_provenance_record(self, wrapped_value, key: int | slice | None = None):
-        ctx: JitCompileCtx = get_jitcompilectx()
+        ctx: InterpreterCompileCtx = get_interpretercompilectx()
         if not ctx._with_provenance_tracking:
             return wrapped_value
         # key=None is pop
@@ -1068,12 +1078,12 @@ class InterpreterStack:
         del self._stack[key]
 
 
-# This is an interpreter frame, similar to Python's for use fo the JIT
+# This is an interpreter frame, similar to Python's for use in our interpreter
 # It contains all information needed to execute the current code
 # so for generators (which need to suspend and resume) one only needs to
-# have the JITFrame around to continue execution.
+# have the InterpreterFrame around to continue execution.
 @dataclasses.dataclass
-class JITFrame:
+class InterpreterFrame:
     code: CodeType
     qualname: str
     globals: dict[str, Any] | WrappedValue
@@ -1110,7 +1120,7 @@ class JITFrame:
         else:
             raise NotImplementedError(f"Python {sys.version_info} not supported")
 
-        ctx: JitRuntimeCtx = get_jitruntimectx()
+        ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         file_name: None | str = self.code.co_filename
         ctx.record_position(self.code, file_name, self.positions)
 
@@ -1187,10 +1197,10 @@ class JITFrame:
 _default_opcode_handler_map: dict[str, Callable] = {}
 
 
-def default_opcode_interpreter(inst: dis.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS:
+def default_opcode_interpreter(inst: dis.Instruction, /, **interpreter_state) -> None | int | INTERPRETER_SIGNALS:
     handler: None | Callable = _default_opcode_handler_map.get(inst.opname, None)
     if handler is None:
-        return JIT_SIGNALS.UNHANDLED_OPCODE
+        return INTERPRETER_SIGNALS.UNHANDLED_OPCODE
 
     with interpreter_state["stack"].set_cur_instruction(inst):
         return handler(inst, **interpreter_state)
@@ -1221,16 +1231,16 @@ class register_opcode_handler:
 
 # Returns a new (lookaside) callable that unwraps inputs and wraps its result.
 # If the original callable raises an exception, this exception is
-# wrapped into JIT_SIGNALS
-def jit_needs_wrap(fn):
-    def jit_wrapped(*args, **kwargs):
+# wrapped into INTERPRETER_SIGNALS
+def interpreter_needs_wrap(fn):
+    def wrapping_wrapper(*args, **kwargs):
         if isinstance(fn, WrappedValue):
             wrapped_fn = fn
         else:
             wrapped_fn = wrap_const(fn)
         ufn = unwrap(fn)
 
-        ctx: JitCompileCtx = get_jitcompilectx()
+        ctx: InterpreterCompileCtx = get_interpretercompilectx()
 
         if ctx._with_provenance_tracking:
             uargs = tuple(unwrap(arg) for arg in args)
@@ -1247,7 +1257,7 @@ def jit_needs_wrap(fn):
                 return res
 
             # Pass along detected exceptions
-            if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 return res
 
             if ctx._with_provenance_tracking:
@@ -1264,11 +1274,11 @@ def jit_needs_wrap(fn):
             res = do_raise(e)
             return res
 
-    return jit_wrapped
+    return wrapping_wrapper
 
 
 # Calling a function as an opaque function makes the interpeter not trace into it
-@jit_needs_wrap
+@interpreter_needs_wrap
 def call_opaque(fn, /, *args, **kwargs):
     return fn(*args, **kwargs)
 
@@ -1292,8 +1302,8 @@ def is_jitting_with_raise():
     """Allow code to behave differently under `@jit`. (For testing.)"""
 
     # Guard against opaque functions which interrupt jitting.
-    if (ctx := get_jitcompilectx_if_available()) is not None:
-        raise JITError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+    if (ctx := get_interpretercompilectx_if_available()) is not None:
+        raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
 
     return False
 
@@ -1319,11 +1329,11 @@ def _any_lookaside(obj: Iterable):
                 return True
         return False
 
-    return _jit_no_unwrap(impl, obj)
+    return _interpret_call(impl, obj)
 
 
 # Implements a less opaque function than bool() that can interpret into dunder bool and dunder len calls
-def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
+def _bool_lookaside(x: Any) -> bool | INTERPRETER_SIGNALS:
     def impl(x):
         # Handles objects that define __bool__
         null = object()
@@ -1342,10 +1352,10 @@ def _bool_lookaside(x: Any) -> bool | JIT_SIGNALS:
     ux = unwrap(x)  # make the shortcut also work for WrappedValue True or False
     if ux is True or ux is False:
         return x
-    return _jit_no_unwrap(impl, x)
+    return _interpret_call(impl, x)
 
 
-@jit_needs_wrap
+@interpreter_needs_wrap
 def eval_lookaside(
     source: str | bytes | bytearray | CodeType,  # A python expression
     globals: dict[str, Any] | None = None,
@@ -1399,8 +1409,8 @@ def eval_exec_helper(
 
     uglobals = unwrap(globals)
 
-    compilectx: JitCompileCtx = get_jitcompilectx()
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     if "__builtins__" not in uglobals:
 
@@ -1413,18 +1423,18 @@ def eval_exec_helper(
         else:
             bd = builtins_dict
 
-        res = _jit_no_unwrap(set_builtins, globals, bd)
-        assert res is not JIT_SIGNALS.EXCEPTION_RAISED
+        res = _interpret_call(set_builtins, globals, bd)
+        assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
     # execed code has no LOCALSPLUS but only NAMES...
-    frame = JITFrame(code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>")
+    frame = InterpreterFrame(code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>")
 
     if ucode.co_flags & (inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR):
-        # we should split the preparation from _jit_inner
+        # we should split the preparation from _setup_frame_and_run_python_function
         raise NotImplementedError("exec / eval with generator / coroutine / async generator flags")
 
     try:
-        res, status = _jit_run(frame, compilectx, runtimectx)
+        res, status = _run_frame(frame, compilectx, runtimectx)
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
@@ -1434,13 +1444,13 @@ def eval_exec_helper(
     if mode == "eval":
         return res
 
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     return wrap_const(None)  # exec does not return anything
 
 
 # The `__get__`, `__set__`, and `__delete__` methods on a property are implemented in C
-# so we have to help the jit find its way to the underlying user defined methods.
+# so we have to help the interpreter find its way to the underlying user defined methods.
 _PROPERTY_ALIASES = {"__get__": "fget", "__set__": "fset", "__delete__": "fdel"}
 
 
@@ -1484,7 +1494,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         )
 
     def lookup_descriptor_field(field_name):
-        # Bypass the C portions of `property` so we don't break the `_jit` chain
+        # Bypass the C portions of `property` so we don't break the `_interpret_call` chain
         if type(cls_var) is property and (shortcut := _PROPERTY_ALIASES.get(field_name)):
             # `property` will define `__set__` / `__delete__` even if `fget` / `fdelete` are null
             # However in those cases we should not go through the data descriptor path.
@@ -1493,11 +1503,11 @@ def _object_getattribute_lookaside(obj: Any, name: str):
 
             # We need to emulate a pure Python version of `property.__get__ / __set__ / __delete__`
             return lambda _, obj, __: method(obj)
-        result = _jit(getattr, type(cls_var), field_name, null)
+        result = _interpret_call_with_unwrapping(getattr, type(cls_var), field_name, null)
 
         # TODO: For now we can't handle custom `__getattr__`s which raise when we check for
         #       __get__, __set__, or __delete__.
-        assert result is not JIT_SIGNALS.EXCEPTION_RAISED
+        assert result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
         return result
 
     # Check for class variables.
@@ -1510,38 +1520,38 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         assert cls_var is not null
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
-            compilectx = get_jitcompilectx()
+            compilectx = get_interpretercompilectx()
 
-            # if it is opaque, don't JIT here, to avoid a wrap/unwrap dance
+            # if it is opaque, don't _interpret_call here, to avoid a wrap/unwrap dance
             if is_opaque(descr_get):
                 return descr_get(cls_var, uobj, objtype)
-            result = _jit(descr_get, cls_var, obj, objtype)
+            result = _interpret_call_with_unwrapping(descr_get, cls_var, obj, objtype)
             return result
 
     # NOTE: `__dict__` is somewhat special, since we can't look inside `__dict__` when we call `obj.__dict__`.
     #       Instead there is a `tp_dict` field in the C struct which controls `__dict__`. (Note that calling
     #       `obj.__dict__` may not return the dict in `tp_dict`, but rather a view on it.) It is, however,
     #       possible to assign to the `__dict__` field of an object. (Including `dict` subclasses.)
-    obj_dict = _jit_no_unwrap(getattr, obj, wrap_const("__dict__"), wrap_const(null))
+    obj_dict = _interpret_call(getattr, obj, wrap_const("__dict__"), wrap_const(null))
     uobj_dict = unwrap(obj_dict)
     if uobj_dict is not null:
-        # TODO: error return from _jit?
+        # TODO: error return from _interpret_call?
         assert isinstance(uobj_dict, dict), uobj_dict  # This should be enforced by `PyObject`
 
         # Even if `obj_dict` is a subclass (which only happens in the corner case that `__dict__` has
         # been manually assigned) Python appears to reinterpret it as a simple dict for the purpose of
         # attribute resolution.
-        # TODO: we might avoid jitting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
+        # we avoid interpreting into dict.get if obj_dict is a plain dict to avoid creating a wrapper for it.
         if type(uobj_dict) == dict:
             instance_value = uobj_dict.get(name, null)
         else:
-            instance_value = _jit(dict.get, obj_dict, name, null)
+            instance_value = _interpret_call_with_unwrapping(dict.get, obj_dict, name, null)
         if instance_value is not null:
             return instance_value
 
     if descr_get is not null:
         assert callable(descr_get)
-        return _jit(descr_get, cls_var, obj, objtype)
+        return _interpret_call_with_unwrapping(descr_get, cls_var, obj, objtype)
 
     if cls_var is not null:
         return cls_var
@@ -1578,7 +1588,7 @@ def plausibly_wrapper_of(wrapper, value):
 
 
 def wrap_attribute(plain_result, obj, name):
-    compilectx: JitCompileCtx = get_jitcompilectx()
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
     if not compilectx._with_provenance_tracking:
         return plain_result
 
@@ -1605,10 +1615,10 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
     uvalue = unwrap(value)
-    compilectx: JitCompileCtx = get_jitcompilectx()
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
 
-    res = _jit_no_unwrap(lambda o, n, v: o.__setattr__(n, v), obj, name, value)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(lambda o, n, v: o.__setattr__(n, v), obj, name, value)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
     if compilectx._with_provenance_tracking:
@@ -1626,17 +1636,17 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     """Emulate slot_tp_getattr_hook()."""
     result = _object_getattribute_lookaside(obj, name)
 
-    ctx: JitRuntimeCtx = get_jitruntimectx()
-    compilectx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
 
     assert not isinstance(result, WrappedValue)
-    if result is not JIT_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
-        if result is not JIT_SIGNALS.EXCEPTION_RAISED and compilectx._with_provenance_tracking:
+    if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED or not isinstance(ctx.curexc, AttributeError):
+        if result is not INTERPRETER_SIGNALS.EXCEPTION_RAISED and compilectx._with_provenance_tracking:
             result = wrap_attribute(result, obj, name)
         return result
 
     # `__getattr__` is only triggered if `__getattribute__` fails.
-    # TODO: this should be `_jit(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
+    # TODO: this should be `_interpret_call_with_unwrapping(getattr, obj, "__getattr__", null := object())`, but that would require multiple current exceptions.
     null = object()
     obj_getattr = getattr(unwrap(obj), "__getattr__", null)
 
@@ -1645,12 +1655,12 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
         assert callable(obj_getattr)
         if compilectx._with_provenance_tracking:
             obj_getattr = wrap_attribute(obj_getattr, obj, wrap_const("__getattr__"))
-        result = _jit_no_unwrap(obj_getattr, name)
+        result = _interpret_call(obj_getattr, name)
         # which provenances to cache here?
         # result = wrap_attribute(unwrap(result), obj, name)
 
     # And finally if all else fails apply the default. (If provided.)
-    if result is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
+    if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED and isinstance(ctx.curexc, AttributeError) and maybe_default:
         ctx.curexc = None
         (default,) = maybe_default
         return default
@@ -1663,32 +1673,32 @@ def _getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
 #     def impl(o, n, v):
 #         o.n = v
 #
-#     return _jit(impl, obj, name, value)
+#     return _interpret_call_with_unwrapping(impl, obj, name, value)
 
 
 # def _delattr_lookaside(obj: Any, name: str) -> None:
 #     def impl(o, n):
 #         del o.n
 #
-#     return _jit(impl, obj, name)
+#     return _interpret_call_with_unwrapping(impl, obj, name)
 
 
 def _getitem_lookaside(obj, key, /):
     def impl(obj, key):
         return obj[key]
 
-    return _jit_no_unwrap(impl, obj, key)
+    return _interpret_call(impl, obj, key)
 
 
 def _globals_lookaside() -> dict[str, Any]:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     frame = runtimectx.frame_stack[-1]
     return frame.globals
 
 
 # https://docs.python.org/3/library/functions.html?highlight=len#len
 # Calls https://docs.python.org/3/reference/datamodel.html?highlight=__len__#object.__len__
-def _len_lookaside(obj: Any) -> int | JIT_SIGNALS:
+def _len_lookaside(obj: Any) -> int | INTERPRETER_SIGNALS:
     def impl(obj):
         if not hasattr(obj, "__len__"):
             raise TypeError(f"object of type '{type(obj).__name__}' has no len()")
@@ -1704,15 +1714,15 @@ def _len_lookaside(obj: Any) -> int | JIT_SIGNALS:
 
         return result
 
-    result = _jit_no_unwrap(impl, obj)
-    if result is JIT_SIGNALS.EXCEPTION_RAISED:
+    result = _interpret_call(impl, obj)
+    if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return result
 
     assert wrapped_isinstance(result, int)
     return result
 
 
-def _iter_lookaside(obj, *sentinel) -> Iterator | JIT_SIGNALS:
+def _iter_lookaside(obj, *sentinel) -> Iterator | INTERPRETER_SIGNALS:
     # If sentinel is provided
     if len(sentinel) != 0:
         assert len(sentinel) == 1, f"Too many arguments to iter(): {sentinel}"
@@ -1723,8 +1733,8 @@ def _iter_lookaside(obj, *sentinel) -> Iterator | JIT_SIGNALS:
                 raise TypeError(f"obj must be callable, not {type(obj).__name__}")
             return _CallableIterator(obj, sentinel)
 
-        ret = _jit_no_unwrap(iter_sentinel_impl, obj, sentinel)
-        if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+        ret = _interpret_call(iter_sentinel_impl, obj, sentinel)
+        if ret is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return ret
         assert isinstance(unwrap(ret), _CallableIterator)
         return ret
@@ -1759,7 +1769,7 @@ def _iter_lookaside(obj, *sentinel) -> Iterator | JIT_SIGNALS:
         else:
             raise TypeError(f"{type(object)} object is not iterable")
 
-    ret = _jit_no_unwrap(nosentinel_impl, obj)
+    ret = _interpret_call(nosentinel_impl, obj)
     # This used to be a trick to return the same type as the iter.
 
     # uret = unwrap(ret)
@@ -1776,13 +1786,13 @@ def _iter_lookaside(obj, *sentinel) -> Iterator | JIT_SIGNALS:
     #                 raise IndexError
     #             return r
 
-    #     ret = _jit_no_unwrap(lambda cls, ret: iter(cls(ret)), _IteratorSequenceWrapper, ret)
+    #     ret = _interpret_call(lambda cls, ret: iter(cls(ret)), _IteratorSequenceWrapper, ret)
 
     return ret
 
 
 def _locals_lookaside() -> dict[str, Any]:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     frame = runtimectx.frame_stack[-1]
     _locals = frame._locals
     u_locals = unwrap(_locals)
@@ -1796,8 +1806,8 @@ def _locals_lookaside() -> dict[str, Any]:
                 def delitem(d, k):
                     del d[k]
 
-                res = _jit_no_unwrap(delitem, _locals, wrap_const(name))
-                assert not isinstance(res, JIT_SIGNALS)
+                res = _interpret_call(delitem, _locals, wrap_const(name))
+                assert not isinstance(res, INTERPRETER_SIGNALS)
             continue
         elif isinstance(v, CellType):  # sketchy, we should keep this info
             v = v.cell_contents
@@ -1805,7 +1815,7 @@ def _locals_lookaside() -> dict[str, Any]:
         def setitem(d, k, v):
             d[k] = v
 
-        res = _jit_no_unwrap(setitem, _locals, wrap_const(name), v)
+        res = _interpret_call(setitem, _locals, wrap_const(name), v)
 
     return _locals
 
@@ -1818,10 +1828,10 @@ def _next_lookaside(iterator, default=_nil):
     def impl(iterator):
         return iterator.__next__()
 
-    res = _jit_no_unwrap(impl, iterator)
+    res = _interpret_call(impl, iterator)
 
-    if default is not _nil and res is JIT_SIGNALS.EXCEPTION_RAISED:
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    if default is not _nil and res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         if isinstance(runtimectx._curexc, StopIteration):
             res = default
     return res
@@ -1838,7 +1848,7 @@ def _reversed_lookaside(seq):
 
         return SequenceIter(seq, is_reversed=True)
 
-    return _jit_no_unwrap(impl, seq)
+    return _interpret_call(impl, seq)
 
 
 # we do like the built-in super (and in fact it is impossible to implement
@@ -1853,7 +1863,7 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     # magic for super() per frame inspection. Note that we do not currently
     # do frame entries for lookasides, so the thing calling super is at the top
     if cls is Py_NULL() and obj is None:
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
         frame = runtimectx.frame_stack[-1]
         self_name = frame.code.co_varnames[0]  # is this guaranteed to be self?
@@ -1868,10 +1878,10 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
         if class_idx is None or not wrapped_isinstance(frame.localsplus[class_idx], CellType):
             return do_raise(RuntimeError("super(): __class__ cell not found"))
         assert self_idx is not None
-        cls = _jit_no_unwrap(lambda c: c.cell_contents, frame.localsplus[class_idx])
+        cls = _interpret_call(lambda c: c.cell_contents, frame.localsplus[class_idx])
         obj = frame.localsplus[self_idx]
         if wrapped_isinstance(obj, CellType):  # this is a bit fishy, Python knows in advance
-            obj = _jit_no_unwrap(lambda c: c.cell_contents, obj)
+            obj = _interpret_call(lambda c: c.cell_contents, obj)
 
     # now cls and obj are set
     ucls = unwrap(cls)
@@ -1884,7 +1894,7 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
 
     usup = super(ucls, uobj)  # type: ignore
 
-    compilectx: JitCompileCtx = get_jitcompilectx()
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
     if not compilectx._with_provenance_tracking:
         return usup
 
@@ -1896,12 +1906,12 @@ def _super_lookaside(cls=Py_NULL(), obj=None):
     return sup
 
 
-@jit_needs_wrap
+@interpreter_needs_wrap
 def _type_lookaside(obj):
     return type(unwrap(obj))
 
 
-@jit_needs_wrap
+@interpreter_needs_wrap
 def _isinstance_lookaside(obj, cls):
     obj = unwrap(obj)
     cls = unwrap(cls)
@@ -1912,7 +1922,7 @@ def _isinstance_lookaside(obj, cls):
 
 def _functools_reduce_lookaside(
     fn: Callable, iterable: Iterable, initializer: Py_NULL | Any = Py_NULL(), /
-) -> Any | JIT_SIGNALS:
+) -> Any | INTERPRETER_SIGNALS:
     null = wrap_const(object())
     if initializer is Py_NULL():
         initializer = null
@@ -1934,10 +1944,10 @@ def _functools_reduce_lookaside(
 
         return res
 
-    return _jit_no_unwrap(impl, fn, iterable, initializer, null)
+    return _interpret_call(impl, fn, iterable, initializer, null)
 
 
-# An iterator to be returned from Sequence.__iter__ lookasides below. This will be run in the JIT
+# An iterator to be returned from Sequence.__iter__ lookasides below. This will be run in the interpreter
 # Note: this potentially might imitate a list_iterator / tuple_iterator more...
 class SequenceIter:
     def __init__(self, s, is_reversed=False):
@@ -1978,8 +1988,8 @@ class SequenceWrapperMethods(WrappedValue):
         l = wrap_const([])
         assert l.item_wrappers is not None
 
-        res = _jit_no_unwrap(list.extend, l, iterable)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        res = _interpret_call(list.extend, l, iterable)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
         self.value = self.python_typ(l.value)
         self.item_wrappers = l.item_wrappers[:]
@@ -1997,7 +2007,7 @@ class SequenceWrapperMethods(WrappedValue):
                 return do_raise(IndexError(f"{type(uself)} index out of range"))
 
             if uidx < 0:
-                # TODO: callback to allow LitJit to assert length of list/tuple
+                # TODO: callback to allow asserting length of list/tuple
                 #       either only for uidx < 0 or for any uid
                 uidx += len(uself)
             assert (
@@ -2016,7 +2026,7 @@ class SequenceWrapperMethods(WrappedValue):
 
     def __contains__(self, key, /):
         self.track_items()
-        return _jit_no_unwrap(lambda s, k: any((i == k) for i in s), self, key)
+        return _interpret_call(lambda s, k: any((i == k) for i in s), self, key)
 
     def __add__(self, value, /):
         self.track_items()
@@ -2041,7 +2051,7 @@ class SequenceWrapperMethods(WrappedValue):
                 l.extend(self)
             return l
 
-        return _jit_no_unwrap(impl, self, n)
+        return _interpret_call(impl, self, n)
 
     def __rmul__(self, n, /):
         self.track_items()
@@ -2070,7 +2080,7 @@ class SequenceWrapperMethods(WrappedValue):
                     return idx
             raise ValueError(f"{value} is not in {type(seq)}")
 
-        return _jit_no_unwrap(impl, self, value, start, stop)
+        return _interpret_call(impl, self, value, start, stop)
 
     def count(self, value, /):
         self.track_items()
@@ -2078,11 +2088,11 @@ class SequenceWrapperMethods(WrappedValue):
 
     def __iter__(self):
         self.track_items()
-        return _jit_no_unwrap(SequenceIter, self)
+        return _interpret_call(SequenceIter, self)
 
     def __reversed__(self):
         self.track_items()
-        return _jit_no_unwrap(SequenceIter, self, wrap_const(True))
+        return _interpret_call(SequenceIter, self, wrap_const(True))
 
 
 class MutSequenceWrapperMethods(SequenceWrapperMethods):
@@ -2100,8 +2110,8 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         ukey = key.value
 
         if isinstance(ukey, slice):
-            value = _jit_no_unwrap(list, value)
-            if value is JIT_SIGNALS.EXCEPTION_RAISED:
+            value = _interpret_call(list, value)
+            if value is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 return value
             assert isinstance(value, WrappedValue)
             assert isinstance(value.value, list)
@@ -2164,7 +2174,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
                 for i in iterable:
                     l.append(i)
 
-            res = _jit_no_unwrap(impl, self, iterable)
+            res = _interpret_call(impl, self, iterable)
             assert len(self.value) == len(self.item_wrappers)
             return res
 
@@ -2181,7 +2191,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def __iadd__(self, iterable, /):
         self.track_items()
-        res = _jit_no_unwrap(list.extend, self, iterable)
+        res = _interpret_call(list.extend, self, iterable)
         return self
 
     def __imul__(self, n, /):
@@ -2216,9 +2226,9 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         if uindex < -len(uself) or uindex >= len(uself):
             return do_raise(IndexError(f"pop index out of range"))
 
-        res = _jit_no_unwrap(lambda l, i: l[i], self, index)
+        res = _interpret_call(lambda l, i: l[i], self, index)
 
-        assert res is not JIT_SIGNALS.EXCEPTION_RAISED
+        assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
         assert self.item_wrappers is not None
         assert len(self.value) == len(self.item_wrappers)
@@ -2243,7 +2253,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 class MappingKeysIterator(Iterator):
     # note: the __init__ will be executed by Python itself, and
     #       the caller needs to set up the wrapped_attribute for _mapping
-    # The other methods are called through the JIT mechanism.
+    # The other methods are called through the interpreter mechanism.
     def __init__(self, mapping, underlying_key_iterator):
         self._mapping = mapping
         self._underlying_key_iterator = underlying_key_iterator
@@ -2385,13 +2395,13 @@ class MutMappingWrapperMethods(WrappedValue):
         def impl(self):
             return self.keys().__iter__()
 
-        return _jit_no_unwrap(impl, self)
+        return _interpret_call(impl, self)
 
     def __reversed__(self):
         def impl(self):
             return self.keys().__reversed__()
 
-        return _jit_no_unwrap(impl, self)
+        return _interpret_call(impl, self)
 
     def __len__(self):
         self.track_items()
@@ -2435,9 +2445,9 @@ class MutMappingWrapperMethods(WrappedValue):
         return wrap(key.value in self.value, provenance=pr)
 
     def get(self, key, default=None):
-        res = _jit_no_unwrap(lambda d, k: d[k], self, key)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
-            runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        res = _interpret_call(lambda d, k: d[k], self, key)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
             if isinstance(runtimectx._curexc, KeyError):
                 runtimectx._curexc = None
                 if default is None:
@@ -2470,8 +2480,8 @@ class MutMappingWrapperMethods(WrappedValue):
                     for k in other.keys():
                         self[k] = other[k]
 
-                res = _jit_no_unwrap(impl_other_keys, self, other)
-                if res is JIT_SIGNALS.EXCEPTION_RAISED:
+                res = _interpret_call(impl_other_keys, self, other)
+                if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     return res
             elif other.value:
 
@@ -2479,8 +2489,8 @@ class MutMappingWrapperMethods(WrappedValue):
                     for k, v in other:
                         self[k] = v
 
-                res = _jit_no_unwrap(impl_other_nokeys, self, other)
-                if res is JIT_SIGNALS.EXCEPTION_RAISED:
+                res = _interpret_call(impl_other_nokeys, self, other)
+                if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     return res
 
         for uk, v in other_kw.items():
@@ -2489,23 +2499,23 @@ class MutMappingWrapperMethods(WrappedValue):
             def setitem(self, k, v):
                 self[k] = v
 
-            res = _jit_no_unwrap(setitem, self, k, v)
-            if res is JIT_SIGNALS.EXCEPTION_RAISED:
+            res = _interpret_call(setitem, self, k, v)
+            if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 return res
 
         return wrap_const(None)
 
     def keys(self):
         self.track_items()
-        return _jit_no_unwrap(MappingKeysView, self)
+        return _interpret_call(MappingKeysView, self)
 
     def items(self):
         self.track_items()
-        return _jit_no_unwrap(MappingItemsWrapper, self)
+        return _interpret_call(MappingItemsWrapper, self)
 
     def values(self):
         self.track_items()
-        return _jit_no_unwrap(MappingValuesWrapper, self)
+        return _interpret_call(MappingValuesWrapper, self)
 
     # __ne__ = _collections_abc.MutableMapping.__ne__
 
@@ -2519,7 +2529,7 @@ class MutMappingWrapperMethods(WrappedValue):
                 del self[key]
                 return v
 
-            return _jit_no_unwrap(impl_no_default, self, key)
+            return _interpret_call(impl_no_default, self, key)
 
         def impl(self, key, default):
             if key in self:
@@ -2528,7 +2538,7 @@ class MutMappingWrapperMethods(WrappedValue):
                 return v
             return default
 
-        return _jit_no_unwrap(impl, self, key, default)
+        return _interpret_call(impl, self, key, default)
 
     def setdefault(self, key, default=None):
         def impl(self, key, default):
@@ -2537,13 +2547,13 @@ class MutMappingWrapperMethods(WrappedValue):
             self[key] = default
             return default
 
-        return _jit_no_unwrap(impl, self, key, default)
+        return _interpret_call(impl, self, key, default)
 
     # def __repr__(self):
     # def __reduce__(self):
 
     def copy(self):
-        return _jit_no_unwrap(self.value.__class__, self)
+        return _interpret_call(self.value.__class__, self)
 
     # @classmethod
     # def fromkeys(cls, iterable, value=None):
@@ -2555,7 +2565,7 @@ class MutMappingWrapperMethods(WrappedValue):
             self.update(other)
             return self
 
-        return _jit_no_unwrap(impl, self, other)
+        return _interpret_call(impl, self, other)
 
     def __or__(self, other):
         def impl(self, other):
@@ -2565,7 +2575,7 @@ class MutMappingWrapperMethods(WrappedValue):
             new.update(other)
             return new
 
-        return _jit_no_unwrap(impl, self, other)
+        return _interpret_call(impl, self, other)
 
     def __ror__(self, other):
         def impl(self, other):
@@ -2575,7 +2585,7 @@ class MutMappingWrapperMethods(WrappedValue):
             new.update(self)
             return new
 
-        return _jit_no_unwrap(impl, self, other)
+        return _interpret_call(impl, self, other)
 
 
 _default_lookaside_map: dict[Callable, Callable] = {
@@ -2618,22 +2628,22 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
         item_wrappers = []
         # TODO: investigate why just taking the wrappers will break test_interpreter.py::test_module_hooks
         for i in range(len(iterable.value)):
-            item_wrappers.append(_jit_no_unwrap(lambda l, i: l[i], iterable, wrap_const(i)))
+            item_wrappers.append(_interpret_call(lambda l, i: l[i], iterable, wrap_const(i)))
     else:
-        iterator = _jit_no_unwrap(iter, iterable)
-        if iterator is JIT_SIGNALS.EXCEPTION_RAISED:
-            return JIT_SIGNALS.EXCEPTION_RAISED
+        iterator = _interpret_call(iter, iterable)
+        if iterator is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
         item_wrappers = []
         done = False
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         while not done:
-            wv = _jit_no_unwrap(lambda iterator: iterator.__next__(), iterator)
-            if wv is JIT_SIGNALS.EXCEPTION_RAISED:
+            wv = _interpret_call(lambda iterator: iterator.__next__(), iterator)
+            if wv is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 if isinstance(runtimectx.curexc, StopIteration):
                     done = True
                 else:
-                    return JIT_SIGNALS.EXCEPTION_RAISED
+                    return INTERPRETER_SIGNALS.EXCEPTION_RAISED
             else:
                 item_wrappers.append(wv)
 
@@ -2703,7 +2713,7 @@ _register_provenance_tracking_lookasides(collections.OrderedDict, MutMappingWrap
 
 # The default function lookaside -- currently it doesn't intercept anything
 def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     try:
         if ctx._with_provenance_tracking:
             lookaside = _default_provenance_tracking_lookaside_map.get(fn, None)
@@ -2722,7 +2732,7 @@ def default_lookaside(fn, /, *args, **kwargs) -> None | Callable:
 
 # To register a callback, map from this enum to a callable. The args and kwargs for each
 #   event may be different, as documented below.
-class JIT_CALLBACKS(enum.Enum):
+class INTERPRETER_CALLBACKS(enum.Enum):
     # Called when a constant (in a CodeType's co_consts) is loaded
     #   (value: Any, /) -> Any
     #   The returned value is used in place of the original value
@@ -2735,7 +2745,7 @@ class JIT_CALLBACKS(enum.Enum):
     FREEVAR_CALLBACK = enum.auto()
 
     # Called when a global is loaded
-    #   (orig_value: Any | WrappedValue, name: str) -> Any | JIT_SIGNALS
+    #   (orig_value: Any | WrappedValue, name: str) -> Any | INTERPRETER_SIGNALS
     #   The returned value is loaded instead of the original value
     GLOBAL_CALLBACK = enum.auto()
 
@@ -2745,12 +2755,12 @@ class JIT_CALLBACKS(enum.Enum):
     STORE_GLOBAL_CALLBACK = enum.auto()
 
     # Called when a local variable is loaded
-    #   (orig_value: Any | WrappedValue, name: str) -> Any | JIT_SIGNALS
+    #   (orig_value: Any | WrappedValue, name: str) -> Any | INTERPRETER_SIGNALS
     #   The returned value is loaded instead of the original value
     LOAD_FAST_CALLBACK = enum.auto()
 
     # Called when a cell variable is loaded
-    #   (orig_value: Any | WrappedValue, name: str) -> Any | JIT_SIGNALS
+    #   (orig_value: Any | WrappedValue, name: str) -> Any | INTERPRETER_SIGNALS
     #   The returned value is loaded instead of the original value
     LOAD_DEREF_CALLBACK = enum.auto()
 
@@ -2776,12 +2786,12 @@ class JIT_CALLBACKS(enum.Enum):
     PROXIFY_CALLBACK = enum.auto()
 
 
-default_callbacks: dict[JIT_CALLBACKS, Callable] = {}
+default_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {}
 
 
 def const_callback(value: Any, /) -> Any:
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.CONST_CALLBACK)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.CONST_CALLBACK)
 
     if cb is None:
         return value
@@ -2821,8 +2831,8 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     assert isinstance(name, str)
     assert wrapped_isinstance(cell, CellType)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.FREEVAR_CALLBACK)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.FREEVAR_CALLBACK)
 
     if cb is None:
         return cell
@@ -2843,40 +2853,42 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
     return cell
 
 
-def globals_lookup(globals_dict: dict | WrappedValue, name: Any) -> Any | JIT_SIGNALS:
+def globals_lookup(globals_dict: dict | WrappedValue, name: Any) -> Any | INTERPRETER_SIGNALS:
     # TODO: extend to arbitrary non wrap_const'able types
     assert wrapped_isinstance(name, str)
     assert wrapped_isinstance(globals_dict, dict)
 
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     # this cannot be well implemented in an impl because we would get infinite recursions
 
     if unwrap(name) in unwrap(globals_dict):
-        return _jit_no_unwrap(lambda d, k: d[k], globals_dict, name)
+        return _interpret_call(lambda d, k: d[k], globals_dict, name)
 
-    builtins = _jit_no_unwrap(lambda d, k: d[k], globals_dict, wrap_const("__builtins__"))
+    builtins = _interpret_call(lambda d, k: d[k], globals_dict, wrap_const("__builtins__"))
 
     if isinstance(unwrap(builtins), ModuleType):
-        res = _jit_no_unwrap(getattr, builtins, name)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        res = _interpret_call(getattr, builtins, name)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return do_raise(NameError(f"name '{unwrap(name)}' is not defined"))
         return res
 
     # here CPython subscripts without checking that it's a dict, so do we
-    res = _jit_no_unwrap(lambda d, k: d[k], builtins, name)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED and isinstance(runtimectx._curexc, KeyError):
+    res = _interpret_call(lambda d, k: d[k], builtins, name)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED and isinstance(runtimectx._curexc, KeyError):
         return do_raise(NameError(f"name '{unwrap(name)}' is not defined"))
 
     return res
 
 
 def global_callback(
-    orig_val: Any | WrappedValue, name: str, callback_type: JIT_CALLBACKS = JIT_CALLBACKS.GLOBAL_CALLBACK
-) -> Any | WrappedValue | JIT_SIGNALS:
+    orig_val: Any | WrappedValue,
+    name: str,
+    callback_type: INTERPRETER_CALLBACKS = INTERPRETER_CALLBACKS.GLOBAL_CALLBACK,
+) -> Any | WrappedValue | INTERPRETER_SIGNALS:
     assert isinstance(name, str)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     cb: None | Callable = ctx.callback(callback_type)
 
     if cb is None:
@@ -2890,8 +2902,8 @@ def store_deref_callback(value: Any, name: str, co_cellvars: tuple[str], co_free
     assert isinstance(co_cellvars, tuple)
     assert isinstance(co_freevars, tuple)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.STORE_DEREF_CALLBACK)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK)
 
     if cb is None:
         return value
@@ -2902,8 +2914,8 @@ def store_deref_callback(value: Any, name: str, co_cellvars: tuple[str], co_free
 def load_fast_callback(value: Any, name: str):
     assert isinstance(name, str)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_FAST_CALLBACK)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.LOAD_FAST_CALLBACK)
 
     if cb is None:
         return value
@@ -2914,8 +2926,8 @@ def load_fast_callback(value: Any, name: str):
 def load_deref_callback(value: Any, name: str):
     assert isinstance(name, str)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOAD_DEREF_CALLBACK)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.LOAD_DEREF_CALLBACK)
 
     if cb is None:
         return value
@@ -2926,8 +2938,8 @@ def load_deref_callback(value: Any, name: str):
 def local_callback(name: str, value: Any, /) -> Any:
     assert isinstance(name, str)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
-    cb: None | Callable = ctx.callback(JIT_CALLBACKS.LOCAL_CALLBACK)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.LOCAL_CALLBACK)
 
     if cb is None:
         return value
@@ -2936,13 +2948,13 @@ def local_callback(name: str, value: Any, /) -> Any:
 
 
 def check_and_append(stack, val):
-    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+    if val is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return val
     stack.append(val)
 
 
 def check_signal(val):
-    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+    if val is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return val
     return None
 
@@ -2955,27 +2967,29 @@ def check_signal(val):
 # https://docs.python.org/3.11/library/dis.html#opcode-ASYNC_GEN_WRAP
 @register_opcode_handler("ASYNC_GEN_WRAP", min_ver=(3, 11))
 def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    # the next thing will be to yield the value, but we delegate this along with the wrapping to thunder_jit_async_generator
+    # the next thing will be to yield the value, but we delegate this along with the wrapping to thunder_interpreter_async_generator
     pass
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BEFORE_ASYNC_WITH
 @register_opcode_handler("BEFORE_ASYNC_WITH")
-def _before_async_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+def _before_async_with_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     mgr = stack.pop()
 
     # python does a "special lookup"
-    enter_method = _jit(getattr, mgr, "__aenter__")
-    if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
+    enter_method = _interpret_call_with_unwrapping(getattr, mgr, "__aenter__")
+    if enter_method is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return do_raise(
             TypeError(
                 "{'type(mgr).__name__}' object does not support the async context manager protocol (missed __aenter__ method)"
             )
         )
-    exit_method = _jit(getattr, mgr, "__aexit__")
-    if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
+    exit_method = _interpret_call_with_unwrapping(getattr, mgr, "__aexit__")
+    if exit_method is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return do_raise(
             TypeError(
                 "{'type(mgr).__name__}' object does not support the context manager protocol (missed __aexit__ method)"
@@ -2987,26 +3001,26 @@ def _before_async_with_handler(inst: dis.Instruction, /, stack: InterpreterStack
 
     stack.append(exit_method)
 
-    return check_and_append(stack, _jit(enter_method))
+    return check_and_append(stack, _interpret_call_with_unwrapping(enter_method))
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
-def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     mgr = stack.pop()
 
     # python does a "special lookup"
-    enter_method = _jit(getattr, mgr, "__enter__")
-    if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
+    enter_method = _interpret_call_with_unwrapping(getattr, mgr, "__enter__")
+    if enter_method is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return do_raise(
             TypeError(
                 "{'type(mgr).__name__}' object does not support the context manager protocol (missed __enter__ method)"
             )
         )
-    exit_method = _jit(getattr, mgr, "__exit__")
-    if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
+    exit_method = _interpret_call_with_unwrapping(getattr, mgr, "__exit__")
+    if exit_method is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return do_raise(
             TypeError(
                 "{'type(mgr).__name__}' object does not support the context manager protocol (missed __exit__ method)"
@@ -3018,7 +3032,7 @@ def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
     stack.append(exit_method)
 
-    return check_and_append(stack, _jit(enter_method))
+    return check_and_append(stack, _interpret_call_with_unwrapping(enter_method))
 
 
 class BINARY_OP(enum.Enum):
@@ -3098,7 +3112,7 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
                 return getattr(type(a), inplace_method)(a, b)
             return NotImplemented
 
-        res = _jit(inplace_impl, a, b, inplace_method)
+        res = _interpret_call_with_unwrapping(inplace_impl, a, b, inplace_method)
 
     # Otherwise, if the method is inplace and not defined, or is an
     # out of place operator, call the out of place operator (__add__/__radd__).
@@ -3117,11 +3131,11 @@ def _binary_op(stack: InterpreterStack, op: BINARY_OP, a, b):
                     raise err
             return result
 
-        res = _jit(outofplace_impl, a, b, left_method, right_method, binop_name)
+        res = _interpret_call_with_unwrapping(outofplace_impl, a, b, left_method, right_method, binop_name)
 
     # Either one or the other should have been called, and stored to res.
     assert res is not Py_NULL()
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     stack.append(res)
 
@@ -3134,179 +3148,195 @@ def _binary_op_helper(stack: InterpreterStack, op: BINARY_OP):
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_ADD
 @register_opcode_handler("BINARY_ADD", max_ver=(3, 10))
-def _binary_add_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_add_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ADD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_AND
 @register_opcode_handler("BINARY_AND", max_ver=(3, 10))
-def _binary_and_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_and_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.AND)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_FLOOR_DIVIDE
 @register_opcode_handler("BINARY_FLOOR_DIVIDE", max_ver=(3, 10))
-def _binary_floor_divide_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_floor_divide_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.FLOORDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_LSHIFT
 @register_opcode_handler("BINARY_LSHIFT", max_ver=(3, 10))
-def _binary_lshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_lshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.LSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MATRIX_MULTIPLY
 @register_opcode_handler("BINARY_MATRIX_MULTIPLY", max_ver=(3, 10))
-def _binary_matrix_multiply_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_matrix_multiply_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.MATMUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MULTIPLY
 @register_opcode_handler("BINARY_MULTIPLY", max_ver=(3, 10))
-def _binary_multiply_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_multiply_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.MUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_MODULO
 @register_opcode_handler("BINARY_MODULO", max_ver=(3, 10))
-def _binary_modulo_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_modulo_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.MOD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_OR
 @register_opcode_handler("BINARY_OR", max_ver=(3, 10))
-def _binary_or_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_or_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.OR)
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-BINARY_OP
 @register_opcode_handler("BINARY_OP", min_ver=(3, 11))
-def _binary_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     return _binary_op_helper(stack, BINARY_OP(inst.arg))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_POWER
 @register_opcode_handler("BINARY_POWER", max_ver=(3, 10))
-def _binary_power_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_power_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.POW)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_RSHIFT
 @register_opcode_handler("BINARY_RSHIFT", max_ver=(3, 10))
-def _binary_rshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_rshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.RSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
 @register_opcode_handler("BINARY_SUBTRACT", max_ver=(3, 10))
-def _binary_subtract_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_subtract_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.SUB)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_TRUE_DIVIDE
 @register_opcode_handler("BINARY_TRUE_DIVIDE", max_ver=(3, 10))
-def _binary_true_divide_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_true_divide_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.TRUEDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBTRACT
 @register_opcode_handler("BINARY_XOR", max_ver=(3, 10))
-def _binary_xor_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_xor_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.XOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_ADD
 @register_opcode_handler("INPLACE_ADD", max_ver=(3, 10))
-def _inplace_add_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_add_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IADD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_AND
 @register_opcode_handler("INPLACE_AND", max_ver=(3, 10))
-def _inplace_and_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_and_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IAND)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_FLOOR_DIVIDE
 @register_opcode_handler("INPLACE_FLOOR_DIVIDE", max_ver=(3, 10))
-def _inplace_floor_divide_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_floor_divide_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IFLOORDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_LSHIFT
 @register_opcode_handler("INPLACE_LSHIFT", max_ver=(3, 10))
-def _inplace_lshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_lshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ILSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MATRIX_MULTIPLY
 @register_opcode_handler("INPLACE_MATRIX_MULTIPLY", max_ver=(3, 10))
-def _inplace_matrix_multiply_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_matrix_multiply_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IMATMUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MULTIPLY
 @register_opcode_handler("INPLACE_MULTIPLY", max_ver=(3, 10))
-def _inplace_multiply_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_multiply_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IMUL)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_MODULO
 @register_opcode_handler("INPLACE_MODULO", max_ver=(3, 10))
-def _inplace_modulo_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_modulo_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IMOD)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_OR
 @register_opcode_handler("INPLACE_OR", max_ver=(3, 10))
-def _inplace_or_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_or_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_POWER
 @register_opcode_handler("INPLACE_POWER", max_ver=(3, 10))
-def _inplace_power_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_power_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IPOW)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_RSHIFT
 @register_opcode_handler("INPLACE_RSHIFT", max_ver=(3, 10))
-def _inplace_rshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_rshift_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IRSHIFT)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_SUBTRACT
 @register_opcode_handler("INPLACE_SUBTRACT", max_ver=(3, 10))
-def _inplace_subtract_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_subtract_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ISUB)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_TRUE_DIVIDE
 @register_opcode_handler("INPLACE_TRUE_DIVIDE", max_ver=(3, 10))
-def _inplace_true_divide_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_true_divide_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.ITRUEDIV)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-INPLACE_SUBTRACT
 @register_opcode_handler("INPLACE_XOR", max_ver=(3, 10))
-def _inplace_xor_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _inplace_xor_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     return _binary_op_helper(stack, BINARY_OP.IXOR)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
 @register_opcode_handler("BINARY_SUBSCR")
-def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
     def impl(tos1, tos):
         return tos1.__getitem__(tos)
 
-    res = _jit_no_unwrap(impl, tos1, tos)
+    res = _interpret_call(impl, tos1, tos)
 
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
     return check_and_append(stack, res)
@@ -3331,7 +3361,7 @@ def _build_list_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
     assert type(inst.arg) is int
     values: list[Any] = list(reversed([stack.pop_wrapped() for _ in range(inst.arg)]))
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         pr = ProvenanceRecord(inst, inputs=[v.provenance for v in values])
         result = wrap([v.value for v in values], provenance=pr)
@@ -3392,7 +3422,7 @@ def _build_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     assert type(inst.arg) is int
     data: list[Any] = [stack.pop_wrapped() for _ in range(inst.arg)][::-1]
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         result = wrapped_build_tuple(data)
     else:
@@ -3403,7 +3433,7 @@ def _build_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 # https://docs.python.org/3.11/library/dis.html#opcode-KW_NAMES
 @register_opcode_handler("KW_NAMES", min_ver=(3, 11))
 def _kw_names_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None:
     assert inst.arg is not None
     frame.call_shape_kwnames = co.co_consts[inst.arg]
@@ -3412,7 +3442,9 @@ def _kw_names_handler(
 # NOTE This only accepts positional args
 # https://docs.python.org/3.11/library/dis.html#opcode-CALL
 @register_opcode_handler("CALL", min_ver=(3, 11))
-def _call_handler(inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
+def _call_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(argc))))
@@ -3432,10 +3464,10 @@ def _call_handler(inst: dis.Instruction, /, stack: InterpreterStack, frame: JITF
     else:
         func = func_or_self
 
-    res = _jit_no_unwrap(func, *args, **kwargs)
-    ctx: JitCompileCtx = get_jitcompilectx()
+    res = _interpret_call(func, *args, **kwargs)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
-        assert isinstance(res, (WrappedValue, JIT_SIGNALS)), f"{res} unexpected"
+        assert isinstance(res, (WrappedValue, INTERPRETER_SIGNALS)), f"{res} unexpected"
 
     return check_and_append(stack, res)
 
@@ -3443,17 +3475,19 @@ def _call_handler(inst: dis.Instruction, /, stack: InterpreterStack, frame: JITF
 # NOTE This only accepts positional args
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION
 @register_opcode_handler("CALL_FUNCTION", max_ver=(3, 10))
-def _call_function_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _call_function_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     argc: int = inst.arg
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(argc))))
     func: Callable = stack.pop_wrapped()
-    return check_and_append(stack, _jit_no_unwrap(func, *args))
+    return check_and_append(stack, _interpret_call(func, *args))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_EX
 @register_opcode_handler("CALL_FUNCTION_EX")
-def _call_function_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _call_function_ex_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     kwargs = stack.pop_wrapped() if inst.arg & 0x01 else {}
     args = stack.pop_wrapped()
@@ -3466,20 +3500,22 @@ def _call_function_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack,
         null = stack.pop_wrapped()
         assert wrapped_isinstance(null, Py_NULL)
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         args = wrap_args_from_list(args)
         kwargs = wrap_kwargs_from_dict(kwargs)
-    return check_and_append(stack, _jit_no_unwrap(func, *args, **kwargs))
+    return check_and_append(stack, _interpret_call(func, *args, **kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_FUNCTION_KW
 @register_opcode_handler("CALL_FUNCTION_KW", max_ver=(3, 10))
-def _call_function_kw_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _call_function_kw_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     kw_names: tuple[str, ...] = stack.pop_wrapped()
 
-    kwarg_length: JIT_SIGNALS | int = _jit_no_unwrap(len, kw_names)
-    if kwarg_length is JIT_SIGNALS.EXCEPTION_RAISED:
+    kwarg_length: INTERPRETER_SIGNALS | int = _interpret_call(len, kw_names)
+    if kwarg_length is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return kwarg_length
     kwarg_length = unwrap(kwarg_length)
     assert type(kwarg_length) is int
@@ -3491,12 +3527,12 @@ def _call_function_kw_handler(inst: dis.Instruction, /, stack: InterpreterStack,
     args = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(arg_length))))
     func: Callable = stack.pop_wrapped()
 
-    return check_and_append(stack, _jit(func, *args, **fn_kwargs))
+    return check_and_append(stack, _interpret_call_with_unwrapping(func, *args, **fn_kwargs))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
 @register_opcode_handler("CALL_METHOD", max_ver=(3, 10))
-def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     args: tuple[Any, ...] = tuple(reversed(tuple(stack.pop_wrapped() for _ in range(inst.arg))))
     second_lm = stack.pop_wrapped()
@@ -3507,17 +3543,17 @@ def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     else:
         meth = second_lm
 
-    res = _jit_no_unwrap(meth, *args)
-    ctx: JitCompileCtx = get_jitcompilectx()
+    res = _interpret_call(meth, *args)
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
-        assert isinstance(res, (WrappedValue, JIT_SIGNALS)), f"{res} unexpected"
+        assert isinstance(res, (WrappedValue, INTERPRETER_SIGNALS)), f"{res} unexpected"
     return check_and_append(stack, res)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-CONTAINS_OP
 # https://docs.python.org/3.10/reference/expressions.html#membership-test-operations
 @register_opcode_handler("CONTAINS_OP")
-def _contains_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _contains_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
@@ -3539,13 +3575,13 @@ def _contains_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
         )
         raise err
 
-    result = _jit_no_unwrap(impl, tos, tos1)
-    if result is JIT_SIGNALS.EXCEPTION_RAISED:
+    result = _interpret_call(impl, tos, tos1)
+    if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return result
 
     if invert:
-        result = _jit_no_unwrap(lambda result: not result, result)
-        if result is JIT_SIGNALS.EXCEPTION_RAISED:
+        result = _interpret_call(lambda result: not result, result)
+        if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return result
 
     stack.append(result)
@@ -3593,7 +3629,9 @@ def _copy_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -
 
 # https://docs.python.org/3.10/library/dis.html#opcode-COPY_DICT_WITHOUT_KEYS
 @register_opcode_handler("COPY_DICT_WITHOUT_KEYS", max_ver=(3, 10))
-def _copy_dict_without_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _copy_dict_without_keys_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     keys = stack.pop()
     assert isinstance(keys, Iterable)
     match_subject = stack[-1]
@@ -3611,8 +3649,8 @@ def _copy_dict_without_keys_handler(inst: dis.Instruction, /, stack: Interpreter
             del rest[k]
         return rest
 
-    res = _jit(impl, keys, match_subject)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call_with_unwrapping(impl, keys, match_subject)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     stack.append(res)
 
@@ -3620,7 +3658,7 @@ def _copy_dict_without_keys_handler(inst: dis.Instruction, /, stack: Interpreter
 # https://docs.python.org/3.11/library/dis.html#opcode-COPY_FREE_VARS
 @register_opcode_handler("COPY_FREE_VARS", min_ver=(3, 11))
 def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
-    # we already do this when setting up the function call in _jit
+    # we already do this when setting up the function call in _interpret_call
     pass
 
 
@@ -3628,7 +3666,7 @@ def _copy_free_vars_handler(inst: dis.Instruction, /, **kwargs) -> None:
 @register_opcode_handler("DELETE_ATTR")
 def _delete_attr_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
 
@@ -3639,7 +3677,7 @@ def _delete_attr_handler(
     def impl():
         delattr(tos, name)
 
-    return _jit(impl)
+    return _interpret_call_with_unwrapping(impl)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_DEREF
@@ -3649,9 +3687,9 @@ def _delete_deref_handler(
     /,
     stack: InterpreterStack,
     co: CodeType,
-    frame: JITFrame,
+    frame: InterpreterFrame,
     **kwargs,
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
     if sys.version_info < (3, 11):
@@ -3662,14 +3700,14 @@ def _delete_deref_handler(
     def impl(cell):
         del cell.cell_contents
 
-    res = _jit_no_unwrap(impl, frame.localsplus[i])
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(impl, frame.localsplus[i])
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_FAST
 @register_opcode_handler("DELETE_FAST")
-def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None:
+def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: InterpreterFrame, **kwargs) -> None:
     assert type(inst.arg) is int
     var_num: int = inst.arg
     assert var_num >= 0 and var_num < co.co_nlocals
@@ -3680,23 +3718,27 @@ def _delete_fast_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame
 
 # https://docs.python.org/3/library/dis.html#opcode-DELETE_GLOBAL
 @register_opcode_handler("DELETE_GLOBAL")
-def _delete_global_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
+def _delete_global_handler(
+    inst: dis.Instruction, /, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
     name: str = co.co_names[namei]
 
-    res = _jit_no_unwrap(
+    res = _interpret_call(
         lambda frame_globals, name: frame_globals.__delitem__(name),
         frame.globals,
         wrap_const(name),
     )
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-DELETE_NAME
 @register_opcode_handler("DELETE_NAME")
-def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame, **kwargs) -> None | JIT_SIGNALS:
+def _delete_name_handler(
+    inst: dis.Instruction, /, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -3706,20 +3748,20 @@ def _delete_name_handler(inst: dis.Instruction, /, co: CodeType, frame: JITFrame
             raise NameError(f"name '{name}' is not defined")
         del names_dict[name]
 
-    return check_signal(_jit_no_unwrap(impl, frame.names, wrap_const(name)))
+    return check_signal(_interpret_call(impl, frame.names, wrap_const(name)))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-DELETE_SUBSCR
 @register_opcode_handler("DELETE_SUBSCR")
-def _delete_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _delete_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
 
     def impl(tos1, tos):
         tos1.__delitem__(tos)
 
-    res = _jit_no_unwrap(impl, tos1, tos)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(impl, tos1, tos)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
@@ -3727,7 +3769,7 @@ def _delete_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 @register_opcode_handler("DICT_MERGE")
 def _dict_merge_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     a = stack.pop_wrapped()
     b = stack.getitem_wrapped(-1)
     # TODO: Raise inside interpreter
@@ -3735,8 +3777,8 @@ def _dict_merge_handler(
     assert wrapped_isinstance(a, Mapping), a
     if overlap := unwrap(b).keys() & unwrap(a):
         return do_raise(KeyError(f"{co.co_name} got multiple values for keyword argument {next(iter(overlap))}"))
-    res = _jit_no_unwrap(lambda a, b: b.update(a), a, b)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(lambda a, b: b.update(a), a, b)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
@@ -3771,11 +3813,11 @@ def _end_async_for_handler_3_10(
     stack: InterpreterStack,
     try_stack: list[PyTryBlock],
     inst_ptr: int,
-    frame: JITFrame,
+    frame: InterpreterFrame,
     exception_stack: list,
     **kwargs,
-) -> None | JIT_SIGNALS:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+) -> None | INTERPRETER_SIGNALS:
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     assert inst.arg is None
 
     exc = stack.pop()
@@ -3807,7 +3849,7 @@ def _end_async_for_handler_3_10(
         assert isinstance(val, BaseException)
         val.__traceback__ = tb
         runtimectx.curexc = val
-        return JIT_SIGNALS.EXCEPTION_RAISED
+        return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-END_ASYNC_FOR
@@ -3818,11 +3860,11 @@ def _end_async_for_handler_3_11(
     stack: InterpreterStack,
     try_stack: list[PyTryBlock],
     inst_ptr: int,
-    frame: JITFrame,
+    frame: InterpreterFrame,
     exception_stack: list,
     **kwargs,
-) -> None | JIT_SIGNALS:
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+) -> None | INTERPRETER_SIGNALS:
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     assert inst.arg is None
 
     val = stack.pop()
@@ -3833,7 +3875,7 @@ def _end_async_for_handler_3_11(
         return
     else:
         runtimectx.curexc = val
-        return JIT_SIGNALS.EXCEPTION_RAISED
+        return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
@@ -3843,9 +3885,9 @@ def _extended_arg_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FORMAT_VALUE
-# TODO Extend the jitted implementation to
+# TODO Extend the implementation to
 @register_opcode_handler("FORMAT_VALUE")
-def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     FVC_MASK: int = 0x3
     FVC_NONE: int = 0x0
     FVC_STR: int = 0x1
@@ -3881,14 +3923,14 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
         return formatted
 
-    return check_and_append(stack, _jit(impl, value, fmt_spec))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl, value, fmt_spec))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-FOR_ITER
 @register_opcode_handler("FOR_ITER")
 def _for_iter_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     delta: int = inst.arg
 
@@ -3899,10 +3941,10 @@ def _for_iter_handler(
         return next(tos)
 
     v: Any
-    r = _jit_no_unwrap(_next_impl, tos)
+    r = _interpret_call(_next_impl, tos)
 
-    if r is JIT_SIGNALS.EXCEPTION_RAISED:
-        ctx = get_jitruntimectx()
+    if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        ctx = get_interpreterruntimectx()
         if isinstance(ctx.curexc, StopIteration):
             stack.pop_wrapped()
             return inst_ptr + delta + 1
@@ -3913,7 +3955,7 @@ def _for_iter_handler(
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_AITER
 @register_opcode_handler("GET_AITER")
-def _get_aiter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _get_aiter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -3926,7 +3968,7 @@ def _get_aiter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
             )
         return ait
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
 def is_coro_or_iter(o):
@@ -3960,21 +4002,21 @@ def get_awaitable_iter(tos):
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_ANEXT
 @register_opcode_handler("GET_ANEXT")
-def _get_anext_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _get_anext_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack[-1]
 
     def impl():
         an = tos.__anext__()
         return get_awaitable_iter(an)
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_AWAITABLE
 @register_opcode_handler("GET_AWAITABLE")
-def _get_awaitable_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _get_awaitable_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
-    return check_and_append(stack, _jit(get_awaitable_iter, tos))
+    return check_and_append(stack, _interpret_call_with_unwrapping(get_awaitable_iter, tos))
 
 
 def _iter_impl(obj):
@@ -3986,19 +4028,19 @@ def _iter_impl(obj):
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_ITER
 @register_opcode_handler("GET_ITER")
-def _get_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _get_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
-    return check_and_append(stack, _jit_no_unwrap(iter, tos))
+    return check_and_append(stack, _interpret_call(iter, tos))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_LEN
 @register_opcode_handler("GET_LEN")
-def _get_len_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _get_len_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     def impl(tos):
         return len(tos)
 
-    ret = _jit(impl, stack[-1])
-    if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+    ret = _interpret_call_with_unwrapping(impl, stack[-1])
+    if ret is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return ret
     stack.append(ret)
 
@@ -4011,7 +4053,7 @@ def _get_len_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 @register_opcode_handler("IMPORT_FROM")
 def _import_from_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
 
@@ -4028,14 +4070,14 @@ def _import_from_handler(
         fullname = f"{module.__name__}.{name}"
         return __import__(fullname)
 
-    return check_and_append(stack, _jit_no_unwrap(impl, module, name))
+    return check_and_append(stack, _interpret_call(impl, module, name))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_NAME
 @register_opcode_handler("IMPORT_NAME")
 def _import_name_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
 
@@ -4059,8 +4101,8 @@ def _import_name_handler(
                 package = globals["__name__"]
             return package
 
-        current_name = _jit_no_unwrap(get_current_name, frame.globals)
-        if current_name is JIT_SIGNALS.EXCEPTION_RAISED:
+        current_name = _interpret_call(get_current_name, frame.globals)
+        if current_name is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return do_raise(KeyError("'__name__' not in globals"))
         current_name = unwrap(current_name)
         name_parts = current_name.split(".")
@@ -4076,14 +4118,14 @@ def _import_name_handler(
         module = __import__(module_name, fromlist=fromlist, level=level)
         return module
 
-    return check_and_append(stack, _jit(impl, module_name, fromlist, level))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl, module_name, fromlist, level))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
 @register_opcode_handler("IMPORT_STAR")
 def _import_star_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     # The module is actually imported from another instruction.
     # This instruction can only be parsed at top level and modify globals,
     # since localsplus is of fixed length/positions. It can't be parsed inside a function.
@@ -4097,9 +4139,9 @@ def _import_star_handler(
     module = stack.pop()
     assert isinstance(module, ModuleType)
 
-    # Get the locals of the current frame, not the frame created by jitting impl() below.
-    _locals = _jit(locals)
-    if _locals is JIT_SIGNALS.EXCEPTION_RAISED:
+    # Get the locals of the current frame, not the frame created by interpreted impl() below.
+    _locals = _interpret_call_with_unwrapping(locals)
+    if _locals is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return _locals
     assert isinstance(_locals, dict)
 
@@ -4130,8 +4172,8 @@ def _import_star_handler(
                 continue
             _locals[name] = getattr(module, name)
 
-    res = _jit(impl)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call_with_unwrapping(impl)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
     return None
@@ -4183,7 +4225,7 @@ def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int,
 @register_opcode_handler("JUMP_IF_NOT_EXC_MATCH", max_ver=(3, 10))
 def _jump_if_not_exc_match_handler(
     inst: dis.Instruction, /, inst_ptr: int, stack: InterpreterStack, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     target: int = inst.arg
 
@@ -4201,14 +4243,14 @@ def _jump_if_not_exc_match_handler(
 @register_opcode_handler("JUMP_IF_TRUE_OR_POP")
 def _jump_if_true_or_pop_handler(
     inst: dis.Instruction, /, inst_ptr: int, stack: InterpreterStack, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     target: int = inst.arg
 
     tos = stack.getitem_wrapped(-1)
 
-    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
-    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+    cnd: bool | INTERPRETER_SIGNALS = _interpret_call(bool, tos)
+    if cnd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
     if not unwrap(cnd):
@@ -4225,14 +4267,14 @@ def _jump_if_true_or_pop_handler(
 @register_opcode_handler("JUMP_IF_FALSE_OR_POP")
 def _jump_if_false_or_pop_handler(
     inst: dis.Instruction, /, inst_ptr: int, stack: InterpreterStack, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     target: int = inst.arg
 
     tos = stack.getitem_wrapped(-1)
 
-    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
-    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+    cnd: bool | INTERPRETER_SIGNALS = _interpret_call(bool, tos)
+    if cnd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
     if unwrap(cnd):
@@ -4246,7 +4288,7 @@ def _jump_if_false_or_pop_handler(
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_APPEND
 @register_opcode_handler("LIST_APPEND")
-def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     i: int = inst.arg
 
@@ -4259,14 +4301,14 @@ def _list_append_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     def impl(l, tos):
         l.append(tos)
 
-    res = _jit_no_unwrap(impl, l, tos)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(impl, l, tos)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_EXTEND
 @register_opcode_handler("LIST_EXTEND")
-def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     i: int = inst.arg
 
@@ -4276,9 +4318,9 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
     # NOTE tos does not have to be a list
     assert wrapped_isinstance(l, list)
-    res = _jit_no_unwrap(lambda l1, l2: l1.extend(l2), l, tos)
+    res = _interpret_call(lambda l1, l2: l1.extend(l2), l, tos)
 
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
@@ -4291,7 +4333,7 @@ def _list_to_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 
     res = tuple(unwrap(tos))
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         pr = ProvenanceRecord(inst, inputs=[tos.provenance])
         res = wrap(res, provenance=pr)
@@ -4308,20 +4350,22 @@ def _load_assertion_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR")
-def _load_attr_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs) -> None | JIT_SIGNALS:
+def _load_attr_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
 
     a = stack.pop_wrapped()
     name: WrappedValue = wrap_const(co.co_names[inst.arg])
 
-    return check_and_append(stack, _jit_no_unwrap(getattr, a, name))
+    return check_and_append(stack, _interpret_call(getattr, a, name))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
 @register_opcode_handler("LOAD_BUILD_CLASS")
 def _load_build_class_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     build_class = globals_lookup(frame.globals, wrap_const("__build_class__"))
     return check_and_append(stack, build_class)
 
@@ -4329,7 +4373,7 @@ def _load_build_class_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_CLOSURE
 @register_opcode_handler("LOAD_CLOSURE")
 def _load_closure_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None:
     assert type(inst.arg) is int
     i: int = inst.arg
@@ -4357,8 +4401,8 @@ def _load_const_handler(inst: dis.Instruction, /, stack: InterpreterStack, co: C
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_DEREF
 @register_opcode_handler("LOAD_DEREF")
 def _load_deref_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     i: int = inst.arg
 
@@ -4376,8 +4420,8 @@ def _load_deref_handler(
             NameError(f"free variable '{frame.get_localsplus_name(i)}' referenced before assignment in enclosing scope")
         )
 
-    val = _jit_no_unwrap(getattr, cell, wrap_const("cell_contents"))
-    ctx: JitCompileCtx = get_jitcompilectx()
+    val = _interpret_call(getattr, cell, wrap_const("cell_contents"))
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         assert isinstance(val, WrappedValue), f"{val}"
         if isinstance(val.value, list):
@@ -4392,8 +4436,8 @@ def _load_deref_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_FAST
 @register_opcode_handler("LOAD_FAST")
 def _load_fast_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     var_num: int = inst.arg
     assert var_num >= 0 and var_num < len(frame.localsplus)
@@ -4405,7 +4449,7 @@ def _load_fast_handler(
     if isinstance(val, Py_NULL):
         return do_raise(UnboundLocalError(f"local variable '{name}' referenced before assignment"))
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         assert isinstance(val, WrappedValue), f"unexpected value of type {type(val)}, {val}, {inst}"
 
@@ -4423,7 +4467,7 @@ def _load_global_handler(
     co: CodeType,
     globals_dict: dict[str, Any],
     **kwargs,
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     idx = inst.arg
     if (3, 11) <= sys.version_info:
@@ -4431,11 +4475,11 @@ def _load_global_handler(
     co_name: str = co.co_names[idx]
 
     obj: Any | WrappedValue = globals_lookup(globals_dict, wrap_const(co_name))
-    if obj is JIT_SIGNALS.EXCEPTION_RAISED:
+    if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return do_raise(NameError(f"name '{co_name}' is not defined"))
     else:
         obj = global_callback(obj, co_name)
-        if obj is JIT_SIGNALS.EXCEPTION_RAISED:
+        if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return obj
 
     if (3, 11) <= sys.version_info:
@@ -4451,13 +4495,13 @@ def _load_global_handler(
 @register_opcode_handler("LOAD_METHOD")
 def _load_method_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     name = wrap_const(co.co_names[inst.arg])
     obj = stack.pop_wrapped()
 
-    meth = _jit_no_unwrap(getattr, obj, name)
-    if meth is JIT_SIGNALS.EXCEPTION_RAISED:
+    meth = _interpret_call(getattr, obj, name)
+    if meth is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return meth
 
     umeth = unwrap(meth)
@@ -4466,12 +4510,12 @@ def _load_method_handler(
         populate_attribute_wrapper(meth, "__self__", obj)
 
     if inspect.ismethod(umeth):
-        func_attr = _jit_no_unwrap(getattr, meth, wrap_const("__func__"))
-        if func_attr is JIT_SIGNALS.EXCEPTION_RAISED:
+        func_attr = _interpret_call(getattr, meth, wrap_const("__func__"))
+        if func_attr is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return func_attr
         # meth.__self__ is obj for regular methods but cls for class methods
-        self_attr = _jit_no_unwrap(getattr, meth, wrap_const("__self__"))
-        if self_attr is JIT_SIGNALS.EXCEPTION_RAISED:
+        self_attr = _interpret_call(getattr, meth, wrap_const("__self__"))
+        if self_attr is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return self_attr
         stack.append(func_attr)
         stack.append(self_attr)
@@ -4484,8 +4528,8 @@ def _load_method_handler(
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_NAME
 @register_opcode_handler("LOAD_NAME")
 def _load_name_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -4493,11 +4537,11 @@ def _load_name_handler(
     value: Any
 
     if name in unwrap(frame.names):
-        value = _jit_no_unwrap(lambda d, k: d[k], frame.names, wrap_const(name))
+        value = _interpret_call(lambda d, k: d[k], frame.names, wrap_const(name))
     else:
         # Look up globals, then builtins.
         value = globals_lookup(frame.globals, wrap_const(name))
-        if value is JIT_SIGNALS.EXCEPTION_RAISED:
+        if value is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return do_raise(NameError(f"{name=} is not defined"))
 
     return check_and_append(stack, value)
@@ -4505,7 +4549,7 @@ def _load_name_handler(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-MAKE_CELL
 @register_opcode_handler("MAKE_CELL", min_ver=(3, 11))
-def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> None:
+def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwargs) -> None:
     assert isinstance(inst.arg, int)
     i: int = inst.arg
     assert i >= 0 and i < len(frame.localsplus)
@@ -4513,12 +4557,12 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: JITFrame, **kwargs) -> N
 
     if isinstance(val, Py_NULL):
         # empty local variable slots (Py_NULL()) produce an empty cell
-        c = _jit_no_unwrap(CellType)
-        assert c is not JIT_SIGNALS.EXCEPTION_RAISED
+        c = _interpret_call(CellType)
+        assert c is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
     else:
         # wrap the current val into a cell
-        c = _jit_no_unwrap(CellType, val)
-        assert c is not JIT_SIGNALS.EXCEPTION_RAISED
+        c = _interpret_call(CellType, val)
+        assert c is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
     frame.localsplus[i] = c
 
@@ -4539,12 +4583,12 @@ def _make_function_handler(
     fn_co: CodeType = unwrap(stack.pop_wrapped())
     name = fn_co.co_name
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
 
     if inst.arg & 0x08:
         # Python will have built at tuple of cell vars
         # (via STORE_DEREF, LOAD_CLOSURE)
-        closure = _jit_no_unwrap(tuple, stack.pop_wrapped())
+        closure = _interpret_call(tuple, stack.pop_wrapped())
         if ctx._with_provenance_tracking:
             for i, cell in enumerate(closure.value):
                 assert isinstance(cell, CellType)
@@ -4659,7 +4703,7 @@ def _match_class_impl(kw_names, typ, subject, count) -> tuple | None:
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_CLASS
 @register_opcode_handler("MATCH_CLASS")
-def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     count: int = inst.arg
 
@@ -4668,8 +4712,8 @@ def _match_class_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     subject = stack.pop()
     assert type(kw_attr_names) is tuple
 
-    ret = _jit(_match_class_impl, kw_attr_names, typ, subject, count)
-    if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+    ret = _interpret_call_with_unwrapping(_match_class_impl, kw_attr_names, typ, subject, count)
+    if ret is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return ret
 
     stack.append(ret if ret is not None else stack[-2])
@@ -4693,14 +4737,14 @@ def _match_keys_impl(keys, subject):
 
 # https://docs.python.org/3.10/library/dis.html#opcode-MATCH_KEYS
 @register_opcode_handler("MATCH_KEYS")
-def _match_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _match_keys_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     keys = stack[-1]
     subject = stack[-2]
     assert isinstance(keys, tuple)
     assert isinstance(subject, Mapping)
 
-    ret = _jit(_match_keys_impl, keys, subject)
-    if ret is JIT_SIGNALS.EXCEPTION_RAISED:
+    ret = _interpret_call_with_unwrapping(_match_keys_impl, keys, subject)
+    if ret is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return ret
 
     stack.append(ret)
@@ -4785,13 +4829,13 @@ def _pop_except_handler_3_11(
 @register_opcode_handler("POP_JUMP_BACKWARD_IF_FALSE", min_ver=(3, 11))
 def _pop_jump_backward_if_false_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
 
-    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
-    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+    cnd: bool | INTERPRETER_SIGNALS = _interpret_call_with_unwrapping(bool, tos)
+    if cnd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
     if not cnd:
@@ -4834,13 +4878,13 @@ def _pop_jump_backward_if_not_none_handler(
 @register_opcode_handler("POP_JUMP_BACKWARD_IF_TRUE", min_ver=(3, 11))
 def _pop_jump_backward_if_true_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
 
-    cnd: bool | JIT_SIGNALS = _jit(bool, tos)
-    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+    cnd: bool | INTERPRETER_SIGNALS = _interpret_call_with_unwrapping(bool, tos)
+    if cnd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
     if cnd:
@@ -4853,13 +4897,13 @@ def _pop_jump_backward_if_true_handler(
 @register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11))
 def _pop_jump_forward_if_false_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop_wrapped()
 
-    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
-    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+    cnd: bool | INTERPRETER_SIGNALS = _interpret_call(bool, tos)
+    if cnd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
     if not unwrap(cnd):
@@ -4872,13 +4916,13 @@ def _pop_jump_forward_if_false_handler(
 @register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11))
 def _pop_jump_forward_if_true_handler_3_11(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> int | None | JIT_SIGNALS:
+) -> int | None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop_wrapped()
 
-    cnd: bool | JIT_SIGNALS = _jit_no_unwrap(bool, tos)
-    if cnd is JIT_SIGNALS.EXCEPTION_RAISED:
+    cnd: bool | INTERPRETER_SIGNALS = _interpret_call(bool, tos)
+    if cnd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return cnd
 
     if unwrap(cnd):
@@ -4916,13 +4960,15 @@ def _pop_jump_forward_if_none_handler(
 
 
 @register_opcode_handler("POP_JUMP_IF_FALSE", max_ver=(3, 10))
-def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None | JIT_SIGNALS:
+def _pop_jump_if_false_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
 
     tos = stack.pop_wrapped()
 
-    res = _jit_no_unwrap(bool, tos)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(bool, tos)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     ures = unwrap(res)
     assert ures is False or ures is True
@@ -4934,7 +4980,9 @@ def _pop_jump_if_false_handler(inst: dis.Instruction, /, stack: InterpreterStack
 
 
 @register_opcode_handler("POP_JUMP_IF_TRUE", max_ver=(3, 10))
-def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> int | None | JIT_SIGNALS:
+def _pop_jump_if_true_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
 
     tos = stack.pop()
@@ -4948,8 +4996,8 @@ def _pop_jump_if_true_handler(inst: dis.Instruction, /, stack: InterpreterStack,
     if tos is False or tos is True:
         cnd = tos
     else:
-        tmp = _jit(impl)
-        if tmp is JIT_SIGNALS.EXCEPTION_RAISED:
+        tmp = _interpret_call_with_unwrapping(impl)
+        if tmp is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return tmp
         else:
             assert tmp is False or tmp is True
@@ -4967,11 +5015,11 @@ def _pop_top_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 
 
 # Returns either
-def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNALS.EXCEPTION_RAISED]:
+def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETER_SIGNALS.EXCEPTION_RAISED]:
     # Get the type and exception being raised
     typ: Any = Py_NULL()
     value: Any = Py_NULL()
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     if exc is Py_NULL():
         # Re-raise
         assert runtimectx.exception_stack
@@ -4981,12 +5029,12 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
         runtimectx.curexc = value
-        return JIT_SIGNALS.EXCEPTION_RAISED
+        return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
     if isinstance(exc, type) and issubclass(exc, BaseException):
         typ = exc
-        value = unwrap(_jit(exc))  # TODO: handle elsewhere?
-        if value is JIT_SIGNALS.EXCEPTION_RAISED:
+        value = unwrap(_interpret_call_with_unwrapping(exc))  # TODO: handle elsewhere?
+        if value is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return value
         if not isinstance(value, BaseException):  # TODO: maybe drop: this is from CPython, but can it happen in Python?
             return do_raise(
@@ -5003,9 +5051,9 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
     if cause is not Py_NULL():
         fixed_cause: BaseException | None = None
         if isinstance(cause, type) and issubclass(cause, BaseException):
-            jret = _jit(cause)
+            jret = _interpret_call_with_unwrapping(cause)
             assert isinstance(jret, BaseException)
-            if jret is JIT_SIGNALS.EXCEPTION_RAISED:
+            if jret is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 return jret
             fixed_cause = jret
 
@@ -5026,15 +5074,15 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[JIT_SIGNAL
         value.__cause__ = fixed_cause
 
     runtimectx.curexc = value
-    return JIT_SIGNALS.EXCEPTION_RAISED
+    return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
 # TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
 # https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
 @register_opcode_handler("PRINT_EXPR")
 def _print_expr_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     def impl(tos):
         # NOTE: There is no other way to obtain the display hook, other
         #       than writing a C extension, so we mangle.
@@ -5046,8 +5094,8 @@ def _print_expr_handler(
         return None
 
     tos = stack.pop()
-    val = _jit(impl, tos)
-    if val is JIT_SIGNALS.EXCEPTION_RAISED:
+    val = _interpret_call_with_unwrapping(impl, tos)
+    if val is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return val
     return None
 
@@ -5074,7 +5122,7 @@ def _push_null_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
 @register_opcode_handler("RAISE_VARARGS")
 def _raise_varargs_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     cause: Any = Py_NULL()
     exc: Any = Py_NULL()
     assert type(inst.arg) is int
@@ -5091,8 +5139,8 @@ def _raise_varargs_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE", max_ver=(3, 10))
 def _reraise_handler_3_10(
-    inst: dis.Instruction, /, stack: InterpreterStack, try_stack: list[PyTryBlock], frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, try_stack: list[PyTryBlock], frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert try_stack
     assert type(inst.arg) is int
 
@@ -5103,17 +5151,17 @@ def _reraise_handler_3_10(
     val = stack.pop()
     tb = stack.pop()
     assert isinstance(val, BaseException)
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     val.__traceback__ = tb
     runtimectx.curexc = val
-    return JIT_SIGNALS.EXCEPTION_RAISED
+    return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RERAISE
 @register_opcode_handler("RERAISE", min_ver=(3, 11))
 def _reraise_handler_3_11(
-    inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
 
     val = stack.pop()
@@ -5123,16 +5171,16 @@ def _reraise_handler_3_11(
         assert isinstance(lasti, int)
         frame.lasti = lasti
 
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
     assert isinstance(val, BaseException)
     runtimectx.curexc = val
-    return JIT_SIGNALS.EXCEPTION_RAISED
+    return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
 @register_opcode_handler("RETURN_VALUE")
-def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None | JIT_SIGNALS:
-    return JIT_SIGNALS.RETURN_VALUE
+def _return_value_handler(inst: dis.Instruction, /, **kwargs) -> int | None | INTERPRETER_SIGNALS:
+    return INTERPRETER_SIGNALS.RETURN_VALUE
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-ROT_N
@@ -5216,7 +5264,7 @@ def _set_update_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
 @register_opcode_handler("SETUP_ASYNC_WITH", max_ver=(3, 10))
 def _setup_async_with_handler(
     inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     instr_offset = inst_ptr + inst.arg + 1
 
@@ -5239,18 +5287,18 @@ def _setup_finally_handler(
 @register_opcode_handler("SETUP_WITH", max_ver=(3, 10))
 def _setup_with_handler(
     inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     instr_offset = inst_ptr + inst.arg + 1
 
     mgr = stack.pop()
 
     # python does a "special lookup"
-    enter_method = _jit(getattr, mgr, "__enter__")
-    if enter_method is JIT_SIGNALS.EXCEPTION_RAISED:
+    enter_method = _interpret_call_with_unwrapping(getattr, mgr, "__enter__")
+    if enter_method is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return enter_method
-    exit_method = _jit(getattr, mgr, "__exit__")
-    if exit_method is JIT_SIGNALS.EXCEPTION_RAISED:
+    exit_method = _interpret_call_with_unwrapping(getattr, mgr, "__exit__")
+    if exit_method is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return exit_method
 
     assert callable(enter_method)
@@ -5258,8 +5306,8 @@ def _setup_with_handler(
 
     stack.append(exit_method)
 
-    res = _jit(enter_method)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call_with_unwrapping(enter_method)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
     try_stack.append(PyTryBlock(PyTryBlock.SETUP_FINALLY_TYPE, instr_offset, len(stack)))
@@ -5285,7 +5333,7 @@ def _swap_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -
 @register_opcode_handler("STORE_ATTR")
 def _store_attr_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
 
@@ -5297,8 +5345,8 @@ def _store_attr_handler(
     def impl(tos, name, tos1):
         setattr(tos, name, tos1)
 
-    res = _jit_no_unwrap(impl, tos, name, tos1)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    res = _interpret_call(impl, tos, name, tos1)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
@@ -5310,7 +5358,7 @@ def _store_deref_handler(
     /,
     stack: InterpreterStack,
     co: CodeType,
-    frame: JITFrame,
+    frame: InterpreterFrame,
     **kwargs,
 ) -> None:
     assert isinstance(inst.arg, int)
@@ -5324,17 +5372,17 @@ def _store_deref_handler(
 
     tos = store_deref_callback(tos, inst.argval, co.co_cellvars, co.co_freevars)
 
-    if tos is JIT_SIGNALS.EXCEPTION_RAISED:
+    if tos is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return tos
 
-    # TODO: we would like to do this, but litjit currently blocks all of setattr
+    # TODO: we would like to do this, but the extensions currently block all of setattr
 
     # def impl(cell, v):
     #    cell.cell_contents = v
-    # res = _jit_no_unwrap(impl, frame.localsplus[i], tos)
-    # assert res is not JIT_SIGNALS.EXCEPTION_RAISED
+    # res = _interpret_call(impl, frame.localsplus[i], tos)
+    # assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         frame.localsplus[i].value.cell_contents = tos.value
         populate_attribute_wrapper(frame.localsplus[i], "cell_contents", tos)
@@ -5345,8 +5393,8 @@ def _store_deref_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_GLOBAL
 @register_opcode_handler("STORE_GLOBAL")
 def _store_global_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
 
@@ -5372,21 +5420,21 @@ def _store_global_handler(
     # >>> new_fn()
     # >>> t
     # NameError: name 't' is not defined
-    tos = global_callback(tos, name, JIT_CALLBACKS.STORE_GLOBAL_CALLBACK)
-    if tos is JIT_SIGNALS.EXCEPTION_RAISED:
+    tos = global_callback(tos, name, INTERPRETER_CALLBACKS.STORE_GLOBAL_CALLBACK)
+    if tos is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return tos
 
-    res = _jit_no_unwrap(
+    res = _interpret_call(
         lambda frame_globals, name, value: frame_globals.__setitem__(name, value), frame.globals, wrap_const(name), tos
     )
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_FAST
 @register_opcode_handler("STORE_FAST")
 def _store_fast_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None:
     tos = stack.pop_wrapped()
     assert type(inst.arg) is int
@@ -5399,8 +5447,8 @@ def _store_fast_handler(
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_NAME
 @register_opcode_handler("STORE_NAME")
 def _store_name_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: JITFrame, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     namei: int = inst.arg
     name: str = co.co_names[namei]
@@ -5410,12 +5458,12 @@ def _store_name_handler(
     def impl(names_dict, name, value):
         names_dict[name] = value
 
-    return check_signal(_jit_no_unwrap(impl, frame.names, wrap_const(name), tos))
+    return check_signal(_interpret_call(impl, frame.names, wrap_const(name), tos))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_SUBSCR
 @register_opcode_handler("STORE_SUBSCR")
-def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop_wrapped()
     tos1 = stack.pop_wrapped()
     tos2 = stack.pop_wrapped()
@@ -5423,12 +5471,12 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
     def impl(tos, tos1, tos2):
         return tos1.__setitem__(tos, tos2)
 
-    return _jit(impl, tos, tos1, tos2)
+    return _interpret_call_with_unwrapping(impl, tos, tos1, tos2)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT
 @register_opcode_handler("UNARY_INVERT")
-def _unary_invert_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _unary_invert_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -5439,12 +5487,12 @@ def _unary_invert_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
 
         raise TypeError(f"bad operand type for unary ~: '{type(tos).__name__}'")
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NOT
 @register_opcode_handler("UNARY_NOT")
-def _unary_not_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _unary_not_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -5452,12 +5500,12 @@ def _unary_not_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
             return False
         return True
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_NEGATIVE
 @register_opcode_handler("UNARY_NEGATIVE")
-def _unary_negative_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _unary_negative_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -5468,12 +5516,12 @@ def _unary_negative_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
         raise TypeError(f"bad operand type for unary -: '{type(tos).__name__}'")
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
 @register_opcode_handler("UNARY_POSITIVE")
-def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
 
     def impl():
@@ -5484,12 +5532,12 @@ def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
         raise TypeError(f"bad operand type for unary +: '{type(tos).__name__}'")
 
-    return check_and_append(stack, _jit(impl))
+    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_EX
 @register_opcode_handler("UNPACK_EX")
-def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     counts: int = inst.arg
     before_list: WrappedValue = wrap_const(counts & 0xFF)
@@ -5516,11 +5564,11 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
 
         return results
 
-    results = _jit_no_unwrap(impl, seq, before_list, after_list)
-    if results is JIT_SIGNALS.EXCEPTION_RAISED:
+    results = _interpret_call(impl, seq, before_list, after_list)
+    if results is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return results
 
-    ctx: JitCompileCtx = get_jitcompilectx()
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
         populate_item_wrappers(results)
         assert type(results) is WrappedValue
@@ -5535,21 +5583,21 @@ def _unpack_ex_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_SEQUENCE
 @register_opcode_handler("UNPACK_SEQUENCE")
-def _unpack_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _unpack_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     # contrary to the opname, seq is an Iterable, not necessarily a sequence
     seq: Iterable = stack.pop_wrapped()
 
     assert type(inst.arg) is int
     count: int = inst.arg
 
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
-    seq_iter = _jit_no_unwrap(iter, seq)
+    seq_iter = _interpret_call(iter, seq)
 
     values = []
     for _ in range(count):
-        v = _jit_no_unwrap(next, seq_iter)
-        if v is JIT_SIGNALS.EXCEPTION_RAISED:
+        v = _interpret_call(next, seq_iter)
+        if v is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             if isinstance(runtimectx._curexc, StopIteration):
                 return do_raise(ValueError(f"not enough values to unpack (expected {count}, got {len(values)})"))
             else:
@@ -5557,8 +5605,8 @@ def _unpack_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, 
 
         values.append(v)
 
-    v = _jit_no_unwrap(next, seq_iter)
-    if v is JIT_SIGNALS.EXCEPTION_RAISED:
+    v = _interpret_call(next, seq_iter)
+    if v is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         if isinstance(runtimectx._curexc, StopIteration):
             runtimectx._curexc = None
         else:
@@ -5581,24 +5629,26 @@ def _gen_start_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwar
 
 # https://docs.python.org/3.10/library/dis.html#opcode-GET_YIELD_FROM_ITER
 @register_opcode_handler("GET_YIELD_FROM_ITER")
-def _get_yield_from_iter_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
+def _get_yield_from_iter_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     tos = stack.getitem_wrapped(-1)
     utos = unwrap(tos)
     if not (inspect.isgenerator(utos) or inspect.iscoroutine(utos)):
-        return check_and_append(stack, _jit_no_unwrap(iter, stack.pop_wrapped()))
+        return check_and_append(stack, _interpret_call(iter, stack.pop_wrapped()))
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-RETURN_GENERATOR
 @register_opcode_handler("RETURN_GENERATOR", min_ver=(3, 11))
-def _return_generator_handler(inst: dis.Instruction, /, **kwargs) -> None | JIT_SIGNALS:
-    return JIT_SIGNALS.RETURN_GENERATOR
+def _return_generator_handler(inst: dis.Instruction, /, **kwargs) -> None | INTERPRETER_SIGNALS:
+    return INTERPRETER_SIGNALS.RETURN_GENERATOR
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-SEND
 @register_opcode_handler("SEND", min_ver=(3, 11))
 def _send_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> None | int | JIT_SIGNALS:
+) -> None | int | INTERPRETER_SIGNALS:
     # SEND(delta)
     # Equivalent to STACK[-1] = STACK[-2].send(STACK[-1]). Used in yield from and await statements.
     # If the call raises StopIteration, pop the top value from the stack, push the exception’s value attribute, and increment the bytecode counter by delta.
@@ -5616,9 +5666,9 @@ def _send_handler(
         def impl():
             return generator.send(send_value)
 
-    res = _jit(impl)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    res = _interpret_call_with_unwrapping(impl)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         if isinstance(runtimectx.curexc, StopIteration):
             stack.pop()  # remove generator
             stack.append(runtimectx.curexc.value)
@@ -5634,21 +5684,21 @@ def _send_handler(
 @register_opcode_handler("WITH_EXCEPT_START", max_ver=(3, 10))
 def _with_except_start_handler_3_10(
     inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     exc = stack[-1]
     val = stack[-2]
     tb = stack[-3]
     assert exc is not None
     assert not isinstance(exc, int)  # funny but from Python
     exit_func = stack[-7]
-    return check_and_append(stack, _jit(exit_func, exc, val, tb))
+    return check_and_append(stack, _interpret_call_with_unwrapping(exit_func, exc, val, tb))
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-WITH_EXCEPT_START
 @register_opcode_handler("WITH_EXCEPT_START", min_ver=(3, 11))
 def _with_except_start_handler_3_11(
     inst: dis.Instruction, *, inst_ptr: int, stack: InterpreterStack, try_stack: list[PyTryBlock], **kwargs
-) -> None | JIT_SIGNALS:
+) -> None | INTERPRETER_SIGNALS:
     # in 3.11 the exception representation changed to only val
     val = stack[-1]
     exc = type(val)
@@ -5656,14 +5706,14 @@ def _with_except_start_handler_3_11(
 
     assert isinstance(stack[-3], int)
     exit_func = stack[-4]
-    return check_and_append(stack, _jit(exit_func, exc, val, tb))
+    return check_and_append(stack, _interpret_call_with_unwrapping(exit_func, exc, val, tb))
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-YIELD_FROM
 @register_opcode_handler("YIELD_FROM", max_ver=(3, 10))
 def _yield_from_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, frame: JITFrame, inst_ptr: int, **kwargs
-) -> None | JIT_SIGNALS:
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, inst_ptr: int, **kwargs
+) -> None | INTERPRETER_SIGNALS:
     send_value = stack.pop()
     generator = stack[-1]
 
@@ -5677,9 +5727,9 @@ def _yield_from_handler(
         def impl():
             return generator.send(send_value)
 
-    res = _jit(impl)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
-        runtimectx: JitRuntimeCtx = get_jitruntimectx()
+    res = _interpret_call_with_unwrapping(impl)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         if isinstance(runtimectx.curexc, StopIteration):
             stack.pop()  # remove generator
             stack.append(runtimectx.curexc.value)
@@ -5689,144 +5739,124 @@ def _yield_from_handler(
             return res  # propagate exception
 
     # this is a gross hack, this will be incremented so the inst_ptr is at this YIELD_FROM again
-    # cleaner would be to introduce another JIT_SIGNALS
+    # cleaner would be to introduce another INTERPRETER_SIGNALS
     frame.inst_ptr -= 1
     # this will be yielded
     stack.append(res)
-    return JIT_SIGNALS.YIELD_VALUE
+    return INTERPRETER_SIGNALS.YIELD_VALUE
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-YIELD_VALUE
 @register_opcode_handler("YIELD_VALUE")
-def _yield_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | JIT_SIGNALS:
-    # note that the popping from the stack is done in the _jit_run loop
-    return JIT_SIGNALS.YIELD_VALUE
+def _yield_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    # note that the popping from the stack is done in the _run_frame loop
+    return INTERPRETER_SIGNALS.YIELD_VALUE
 
 
 # In order to support "colored functions" that suspend and resume execution
 # (generator, async generator, coroutine), we define generic equivalents here
-# that take the JIT frame and execute until the next yield point.
+# that take the interpreter frame and execute until the next yield point.
 # The way these functions work in Python is that objects are created and
 # retruned either on invocation (Python <=3.10) or by the RETURN_GENERATOR
 # opcode (Python >= 3.11).
 def make_generator(
-    frame: JITFrame,
-    compilectx: JitCompileCtx,
-    runtimectx: JitRuntimeCtx,
+    frame: InterpreterFrame,
+    compilectx: InterpreterCompileCtx,
+    runtimectx: InterpreterRuntimeCtx,
 ):
-    # TODO: detect whether the send is from the JIT? if so, how? Currently the tracking will miss the connection between send and here. :(
-    def thunder_jit_generator():
+    # TODO: detect whether the send is from the interpreter? if so, how? Currently the tracking will miss the connection between send and here. :(
+    def thunder_interpreter_generator():
         send_value: Any = None  # the value gotten from from <generator>.send
         while True:  # or maybe have return?
-            with jitctx(compilectx, runtimectx):
+            with interpreter_ctx(compilectx, runtimectx):
                 try:
-                    res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                    res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise JITError(msg) from e
-                if status is JIT_SIGNALS.EXCEPTION_RAISED:
+                    raise InterpreterError(msg) from e
+                if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
                     raise e
-            if status == JIT_SIGNALS.RETURN_VALUE:
+            if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
-            assert status == JIT_SIGNALS.YIELD_VALUE
+            assert status == INTERPRETER_SIGNALS.YIELD_VALUE
             send_value = yield unwrap(res)
 
-    return wrap_const(thunder_jit_generator())
+    return wrap_const(thunder_interpreter_generator())
 
 
-# factory to create an async generator for a given JIT frame, see comment for make_generator
+# factory to create an async generator for a given interpreter frame, see comment for make_generator
 def make_async_generator(
-    frame: JITFrame,
-    compilectx: JitCompileCtx,
-    runtimectx: JitRuntimeCtx,
+    frame: InterpreterFrame,
+    compilectx: InterpreterCompileCtx,
+    runtimectx: InterpreterRuntimeCtx,
 ):
-    async def thunder_jit_async_generator():
+    async def thunder_interpreter_async_generator():
         send_value: Any = None  # the value gotten from from <generator>.send
         while True:  # or maybe have return?
-            with jitctx(compilectx, runtimectx):
+            with interpreter_ctx(compilectx, runtimectx):
                 try:
-                    res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                    res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise JITError(msg) from e
-                if status is JIT_SIGNALS.EXCEPTION_RAISED:
+                    raise InterpreterError(msg) from e
+                if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return
                     raise e
-            if status == JIT_SIGNALS.RETURN_VALUE:
+            if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
-            assert status == JIT_SIGNALS.YIELD_VALUE
+            assert status == INTERPRETER_SIGNALS.YIELD_VALUE
             send_value = yield unwrap(res)
 
-    return wrap_const(thunder_jit_async_generator())  # TODO: better than wrap_const
+    return wrap_const(thunder_interpreter_async_generator())  # TODO: better than wrap_const
 
 
-# factory to create a coroutine for a given JIT frame, see comment for make_generator
+# factory to create a coroutine for a given interpreter frame, see comment for make_generator
 def make_coroutine(
-    frame: JITFrame,
-    compilectx: JitCompileCtx,
-    runtimectx: JitRuntimeCtx,
+    frame: InterpreterFrame,
+    compilectx: InterpreterCompileCtx,
+    runtimectx: InterpreterRuntimeCtx,
 ):
-    async def thunder_jit_coroutine():
+    async def thunder_interpreter_coroutine():
         send_value: Any = None  # the value gotten from from <generator>.send
         while True:  # or maybe have return?
-            with jitctx(compilectx, runtimectx):
+            with interpreter_ctx(compilectx, runtimectx):
                 try:
-                    res, status = _jit_run(frame, compilectx, runtimectx, send_value=send_value)
+                    res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise JITError(msg) from e
-                if status is JIT_SIGNALS.EXCEPTION_RAISED:
+                    raise InterpreterError(msg) from e
+                if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
                     raise e
-            if status == JIT_SIGNALS.RETURN_VALUE:
+            if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return unwrap(res)
-            assert status == JIT_SIGNALS.YIELD_VALUE
+            assert status == INTERPRETER_SIGNALS.YIELD_VALUE
             raise NotImplementedError("not implemented")
 
-    return wrap_const(thunder_jit_coroutine())
+    return wrap_const(thunder_interpreter_coroutine())
 
 
-# Interprets the callable with the given args and kwargs
-# NOTE There are (currently) 8 cases for interpretation:
-#
-#   (0) For already jit()-ed functions, we use the original function
-#       to trace through rather than trying to have the jit trace through
-#       itself (which neither does not work nor would it be useful).
-#   (1) Bound methods are unbound
-#       (1a) The callable is a bound method (implemented in Python), in which case it's canonicalized
-#       (1b) The callable is a builtin method, in which case we try to unbind it
-#   (2) The callable has a lookaside, in which case it's used to execute the operation
-#   (3) The callable is a partial object, in which case it's recursively unwrapped
-#           Note that this case is after (1), which allows for lookasides on partial objects
-#   (4) The callable is opaque, in which case it's executed by the CPython interpreter and its
-#           result returned
-#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
-#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
-#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the jit
-#
-# NOTE _jit both inserts the result of what's called onto the stack it's called with and returns the result
-# TODO Consider refactoring this into one function for each case
-def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
+def _interpret_call_with_unwrapping(fn: Callable, /, *args, **kwargs) -> Any | INTERPRETER_SIGNALS:
     args = wrap_consts(*args)
     kwargs = {k: wrap_const(v) for k, v in kwargs.items()}
-    res = _jit_no_unwrap(fn, *args, **kwargs)
-    if isinstance(res, JIT_SIGNALS):
+    res = _interpret_call(fn, *args, **kwargs)
+    if isinstance(res, INTERPRETER_SIGNALS):
         return res
 
-    compilectx: JitCompileCtx = get_jitcompilectx()
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
     if compilectx._with_provenance_tracking:
         assert all(isinstance(a, WrappedValue) for a in args)
         assert all(isinstance(a, WrappedValue) for a in kwargs.values())
@@ -5853,23 +5883,42 @@ def _jit(fn: Callable, /, *args, **kwargs) -> Any | JIT_SIGNALS:
     return unwrap(res)
 
 
-def _jit_no_unwrap(fn: Callable | WrappedValue, /, *args, **kwargs) -> Any | JIT_SIGNALS:
-    compilectx: JitCompileCtx = get_jitcompilectx()
-    runtimectx: JitRuntimeCtx = get_jitruntimectx()
+def _interpret_call(fn: Callable | WrappedValue, /, *args, **kwargs) -> Any | INTERPRETER_SIGNALS:
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     # TODO: Implement generics and fix WrappedValue[T] everywhere.
-    runtimectx.record_jit_call(fn)  # type: ignore
-    rval = _jit_inner(compilectx, runtimectx, fn, *args, **kwargs)  # type: ignore
+    runtimectx.record_interpreter_call(fn)  # type: ignore
+    rval = _call_dispatch(compilectx, runtimectx, fn, *args, **kwargs)  # type: ignore
     if compilectx._with_provenance_tracking:
-        assert isinstance(rval, (JIT_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
-    runtimectx.record_jit_return(fn, rval)  # type: ignore
+        assert isinstance(rval, (INTERPRETER_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
+    runtimectx.record_interpreter_return(fn, rval)  # type: ignore
 
     return rval
 
 
-def _jit_inner(
-    compilectx: JitCompileCtx, runtimectx: JitRuntimeCtx, fn: Callable, /, *args, **kwargs
-) -> Any | JIT_SIGNALS:
+# Interprets the callable with the given args and kwargs
+# NOTE There are (currently) 8 cases for interpretation:
+#
+#   (0) For already interpret()-ed functions, we use the original function
+#       to trace through rather than trying to have the interpreter trace through
+#       itself (which neither does not work nor would it be useful).
+#   (1) Bound methods are unbound
+#       (1a) The callable is a bound method (implemented in Python), in which case it's canonicalized
+#       (1b) The callable is a builtin method, in which case we try to unbind it
+#   (2) The callable has a lookaside, in which case it's used to execute the operation
+#   (3) The callable is a partial object, in which case it's recursively unwrapped
+#           Note that this case is after (1), which allows for lookasides on partial objects
+#   (4) The callable is opaque, in which case it's executed by the CPython interpreter and its
+#           result returned
+#   (5) The callable is a type object, in which case it is instantiated with __new__ and initialized with __init__
+#   (6) The callable is a callable object, in which case its __call__ attribute is called recursively
+#   (7) The callable is a FunctionType, in which case it's recursively interpretered by the interpreter
+#
+# TODO Consider refactoring this into one function for each case
+def _call_dispatch(
+    compilectx: InterpreterCompileCtx, runtimectx: InterpreterRuntimeCtx, fn: Callable, /, *args, **kwargs
+) -> Any | INTERPRETER_SIGNALS:
     if isinstance(fn, WrappedValue):
         wrapped_fn = fn
     else:
@@ -5887,9 +5936,9 @@ def _jit_inner(
                     a.item_wrappers
                 ), f"{len(a.value)} {len(a.item_wrappers)} {a.value} {a.item_wrappers}"
 
-    # (1) Already (jit)
-    if hasattr(fn, "__thunder_jit_orig_fn"):
-        fn = fn.__thunder_jit_orig_fn
+    # (1) Already (interpreter wrapped)
+    if hasattr(fn, "__thunder_interpreter_orig_fn"):
+        fn = fn.__thunder_interpreter_orig_fn
         assert isinstance(fn, Callable)
         wrapped_fn = wrap_const(fn)
     # (0) Bound methods are unbound
@@ -5899,7 +5948,7 @@ def _jit_inner(
         def _impl(fn, *args, **kwargs):
             return fn.__func__(fn.__self__, *args, **kwargs)
 
-        return _jit_no_unwrap(_impl, wrapped_fn, *args, **kwargs)  # type: ignore
+        return _interpret_call(_impl, wrapped_fn, *args, **kwargs)  # type: ignore
 
     # (1b) The callable is a builtin method, in which case it's canonicalized
     #   A builtin is canonicalized when it's a call on a type or a module (or their equivalent)
@@ -5990,9 +6039,9 @@ def _jit_inner(
             #       approach seems limited (as long as people test their lookasides).
             if unbound_fn is not None:
                 assert not isinstance(unbound_fn, BuiltinFunctionType)
-                slf = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__self__"))
+                slf = _interpret_call(getattr, wrapped_fn, wrap_const("__self__"))
                 unbound_fn = wrap_const(unbound_fn)  # TODO!
-                return _jit_no_unwrap(unbound_fn, slf, *args, **kwargs)
+                return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
     # (2) Handles lookasides
     lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
@@ -6008,7 +6057,7 @@ def _jit_inner(
         def partial_call_impl(partial_function, /, *args, **kwargs):
             return partial_function.func(*(partial_function.args + args), **(partial_function.keywords | kwargs))
 
-        return _jit_no_unwrap(partial_call_impl, wrapped_fn, *args, **kwargs)
+        return _interpret_call(partial_call_impl, wrapped_fn, *args, **kwargs)
 
     if isinstance(fn, functools.partialmethod):
         raise NotImplementedError(
@@ -6024,7 +6073,7 @@ def _jit_inner(
             opaque_result: Any = fn(*args_, **kwargs_)
         except Exception as e:
             runtimectx.curexc = e
-            return JIT_SIGNALS.EXCEPTION_RAISED
+            return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
         if compilectx._with_provenance_tracking:
             pr = ProvenanceRecord(
@@ -6037,16 +6086,18 @@ def _jit_inner(
     # (5) Handle types
     if isinstance(fn, type):
         if not hasattr(fn, "__new__"):
-            raise NotImplementedError(f"Don't know how to jit a callable with type {type(fn)} without a __new__ method")
-        obj = _jit_no_unwrap(fn.__new__, wrapped_fn, *args, **kwargs)
-        if obj is JIT_SIGNALS.EXCEPTION_RAISED:
+            raise NotImplementedError(
+                f"Don't know how to interpret a callable with type {type(fn)} without a __new__ method"
+            )
+        obj = _interpret_call(fn.__new__, wrapped_fn, *args, **kwargs)
+        if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return obj
 
-        wrapped_init = _jit_no_unwrap(getattr, obj, wrap_const("__init__"))
-        assert not isinstance(wrapped_init, JIT_SIGNALS)
+        wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
+        assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
         populate_attribute_wrapper(wrapped_init, "__self__", obj)
-        res = _jit_no_unwrap(wrapped_init, *args, **kwargs)
-        if res is JIT_SIGNALS.EXCEPTION_RAISED:
+        res = _interpret_call(wrapped_init, *args, **kwargs)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
             return res
         return obj
 
@@ -6054,17 +6105,24 @@ def _jit_inner(
     if not isinstance(fn, (FunctionType, MethodType)):
         if not hasattr(fn, "__call__"):
             raise NotImplementedError(
-                f"Don't know how to jit a callable with type {type(fn)} without a __call__ method"
+                f"Don't know how to interpret a callable with type {type(fn)} without a __call__ method"
             )
 
-        wrapped_call = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__call__"))
-        assert not isinstance(wrapped_call, JIT_SIGNALS)
+        wrapped_call = _interpret_call(getattr, wrapped_fn, wrap_const("__call__"))
+        assert not isinstance(wrapped_call, INTERPRETER_SIGNALS)
         populate_attribute_wrapper(wrapped_call, "__self__", wrapped_fn)
-        return _jit_no_unwrap(wrapped_call, *args, **kwargs)
+        return _interpret_call(wrapped_call, *args, **kwargs)
 
+    # (7) interprets into the function
     assert isinstance(fn, FunctionType), f"{fn=} had an unexpected type ({type(fn)}"
+    return _setup_frame_and_run_python_function(compilectx, runtimectx, wrapped_fn, *args, **kwargs)
 
-    # (7) Jits into the function
+
+def _setup_frame_and_run_python_function(
+    compilectx: InterpreterCompileCtx, runtimectx: InterpreterRuntimeCtx, wrapped_fn, /, *args, **kwargs
+):
+    fn = unwrap(wrapped_fn)
+
     # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
     # TODO: use the code object as the authorative source
     sig = inspect.signature(fn, follow_wrapped=False)
@@ -6109,10 +6167,10 @@ def _jit_inner(
     if code.co_freevars:
         assert fn.__closure__
         assert len(code.co_freevars) == len(fn.__closure__)
-        closure = _jit_no_unwrap(getattr, wrapped_fn, wrap_const("__closure__"))
+        closure = _interpret_call(getattr, wrapped_fn, wrap_const("__closure__"))
         # we need to use __getiem__ directly to avoid infinite recursion
         closure = [
-            _jit_no_unwrap(lambda x, i: x.__getitem__(i), closure, wrap_const(i)) for i in range(len(fn.__closure__))
+            _interpret_call(lambda x, i: x.__getitem__(i), closure, wrap_const(i)) for i in range(len(fn.__closure__))
         ]
     else:
         closure = []
@@ -6130,8 +6188,8 @@ def _jit_inner(
             locals_dict[n] = local
         for n in code.co_cellvars:
             if n in locals_dict:
-                c = _jit_no_unwrap(CellType, locals_dict[n])
-                assert c is not JIT_SIGNALS.EXCEPTION_RAISED
+                c = _interpret_call(CellType, locals_dict[n])
+                assert c is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
                 localsplus.append(c)
                 localsplus[code.co_varnames.index(n)] = Py_NULL()
             else:
@@ -6166,7 +6224,7 @@ def _jit_inner(
         frame_builtins = builtins_dict
 
     # Creates the current ready to run stack frame for the current function
-    frame = JITFrame(
+    frame = InterpreterFrame(
         code=code, localsplus=localsplus, globals=frame_globals, names=wrap_const({}), qualname=fn.__qualname__
     )
 
@@ -6181,7 +6239,7 @@ def _jit_inner(
             return make_async_generator(frame, compilectx, runtimectx)
 
     try:
-        res, status = _jit_run(frame, compilectx, runtimectx)
+        res, status = _run_frame(frame, compilectx, runtimectx)
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
@@ -6190,10 +6248,10 @@ def _jit_inner(
     return res
 
 
-def _jit_run(
-    frame: JITFrame,
-    compilectx: JitCompileCtx,
-    runtimectx: JitRuntimeCtx,
+def _run_frame(
+    frame: InterpreterFrame,
+    compilectx: InterpreterCompileCtx,
+    runtimectx: InterpreterRuntimeCtx,
     *,
     send_value: Any = Py_NULL(),
 ):
@@ -6227,7 +6285,7 @@ def _jit_run(
             stack_size_before_handler: int = len(stack)
 
             frame.lasti = frame.inst_ptr  # ???
-            interpretation_result: None | int | JIT_SIGNALS = compilectx.interpret(
+            interpretation_result: None | int | INTERPRETER_SIGNALS = compilectx.interpret(
                 inst,
                 inst_ptr=frame.inst_ptr,
                 stack=frame.interpreter_stack,
@@ -6237,7 +6295,7 @@ def _jit_run(
                 co=frame.code,
                 frame=frame,
             )
-            if interpretation_result is JIT_SIGNALS.EXCEPTION_RAISED:
+            if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
                 runtimectx.curexc = None
                 assert isinstance(e, BaseException)
@@ -6328,13 +6386,13 @@ def _jit_run(
                     tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
                     e = e.with_traceback(tb)
                     runtimectx.curexc = e
-                    return JIT_SIGNALS.EXCEPTION_RAISED, JIT_SIGNALS.EXCEPTION_RAISED
+                    return INTERPRETER_SIGNALS.EXCEPTION_RAISED, INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
             # TODO Improve this error message
-            if interpretation_result is JIT_SIGNALS.UNHANDLED_OPCODE:
+            if interpretation_result is INTERPRETER_SIGNALS.UNHANDLED_OPCODE:
                 raise NotImplementedError(f"Encountered unimplemented opcode {inst.opname} while tracing.")
 
-            elif interpretation_result in (JIT_SIGNALS.RETURN_VALUE, JIT_SIGNALS.YIELD_VALUE):
+            elif interpretation_result in (INTERPRETER_SIGNALS.RETURN_VALUE, INTERPRETER_SIGNALS.YIELD_VALUE):
                 # advance the inst_ptr, needed in particular for YIELD
                 frame.inst_ptr += 1
                 # get the result from the current stack
@@ -6342,7 +6400,7 @@ def _jit_run(
                 result = frame.interpreter_stack.pop_wrapped()
                 # Restores the previous stack, the caller needs to put the value on it
                 return result, interpretation_result
-            elif interpretation_result is JIT_SIGNALS.RETURN_GENERATOR:
+            elif interpretation_result is INTERPRETER_SIGNALS.RETURN_GENERATOR:
                 frame.inst_ptr += 1
                 if frame.code.co_flags & inspect.CO_GENERATOR:
                     return make_generator(frame, compilectx, runtimectx), interpretation_result
@@ -6384,7 +6442,7 @@ def _jit_run(
 
 # Special signals for the interpreter
 # TODO Consider a different name for this class
-class JIT_SIGNALS(enum.Enum):
+class INTERPRETER_SIGNALS(enum.Enum):
     UNHANDLED_OPCODE = enum.auto()
     UNSAFE_FUNCTION = enum.auto()
     RETURN_VALUE = enum.auto()
@@ -6402,12 +6460,12 @@ class JIT_SIGNALS(enum.Enum):
 # The interpretation can be extended by specifying one or more of the following:
 #   (1) The opcode_interpreter function, which has the signature
 #
-#   opcode_interpreter(inst: dist.Instruction, /, **interpreter_state) -> None | int | JIT_SIGNALS
+#   opcode_interpreter(inst: dist.Instruction, /, **interpreter_state) -> None | int | INTERPRETER_SIGNALS
 #
 #   The opcode handler is called to interpret an opcode, and is an opportunity to
 #   implement custom opcode handling.
 #
-#   If the opcode is unhandled, then JIT_SIGNALS.UNHANDLED_OPCODE should be returned.
+#   If the opcode is unhandled, then INTERPRETER_SIGNALS.UNHANDLED_OPCODE should be returned.
 #
 #   Otherwise the function will be called with the following keyword arguments:
 #
@@ -6416,7 +6474,7 @@ class JIT_SIGNALS(enum.Enum):
 #       - co, the code object
 #       - globals_dict, the globals dictionary
 #       - builtins_dict, the builtins dictionary
-#       - frame: JIT frame containing local variables, source loc etc.
+#       - frame: interpreter frame containing local variables, source loc etc.
 #       - try_stack, a "try block" stack to facilitate handling exceptions
 #       - exception_stack, the stack of currently handled exceptions
 #
@@ -6432,7 +6490,7 @@ class JIT_SIGNALS(enum.Enum):
 #
 #   The function 'lookaside' is an opportunity to intercept functions and either provide custom
 #   implementations of them or raise exceptions if they are "unsafe".
-#   It is called whenever a function is jitted.
+#   It is called whenever a function is interpreterd.
 #
 #   If there is no lookaside, then None should be returned.
 #
@@ -6445,28 +6503,28 @@ def interpret(
     *,
     opcode_interpreter: Callable = default_opcode_interpreter,
     fn_lookaside: Callable = default_lookaside,
-    callbacks: dict[JIT_CALLBACKS, Callable] = default_callbacks,
+    callbacks: dict[INTERPRETER_CALLBACKS, Callable] = default_callbacks,
     debug_log: None | StringIO = None,
     with_provenance_tracking: bool = False,
     uncacheable_classes: list[type] | None = None,
 ) -> Callable:
-    compilectx: JitCompileCtx = JitCompileCtx(
+    compilectx: InterpreterCompileCtx = InterpreterCompileCtx(
         opcode_interpreter=opcode_interpreter,
         fn_lookaside=fn_lookaside,
         callbacks=callbacks,
         with_provenance_tracking=with_provenance_tracking,
         uncacheable_classes=uncacheable_classes,
     )
-    if hasattr(fn, "__thunder_jit_orig_fn"):
-        fn = fn.__thunder_jit_orig_fn
+    if hasattr(fn, "__thunder_interpreter_orig_fn"):
+        fn = fn.__thunder_interpreter_orig_fn
 
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
-        runtimectx: JitRuntimeCtx = JitRuntimeCtx(debug_log=debug_log)
+        runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log)
 
-        with jitctx(compilectx, runtimectx):
+        with interpreter_ctx(compilectx, runtimectx):
             try:
-                # we normalize the outmost function to be jitted to take
+                # we normalize the outmost function to be interpreted to take
                 # args and kwargs as arguments (not *args and **kwargs).
                 # We thus have three special INPUTs for the entry function: INPUT_ARGS, INPUT_KWARGS, INPUT_FN
                 args = wrap(
@@ -6500,8 +6558,8 @@ def interpret(
                     wrapped_closure.item_wrappers[0] = wrapped_cell
                     populate_attribute_wrapper(wrapped_cell, "cell_contents", fn_wrapped)
 
-                jit_result: Any = _jit_no_unwrap(wrapped_fn_2, args, kwargs)
-                jit_result = unwrap(jit_result)
+                interpretation_result: Any = _interpret_call(wrapped_fn_2, args, kwargs)
+                interpretation_result = unwrap(interpretation_result)
             except Exception as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
@@ -6509,7 +6567,7 @@ def interpret(
                 msg = (
                     f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
                 )
-                raise JITError(msg) from e
+                raise InterpreterError(msg) from e
             finally:
                 # NOTE: Wrapped functions are valid to assign new attributes to.
                 fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
@@ -6519,15 +6577,15 @@ def interpret(
             # fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
             # fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
-            if jit_result is JIT_SIGNALS.EXCEPTION_RAISED:
+            if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
                 assert isinstance(e, BaseException), e
                 runtimectx.curexc = None
                 raise e
 
-            return jit_result
+            return interpretation_result
 
-    fn_.__thunder_jit_orig_fn = fn  # type: ignore
+    fn_.__thunder_interpreter_orig_fn = fn  # type: ignore
     return fn_
 
 
@@ -6535,12 +6593,12 @@ def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
     return getattr(fn, "_last_interpreted_instructions", None)
 
 
-def last_interpreted_history(fn: Callable) -> None | list[JitHistoryItem]:
+def last_interpreted_history(fn: Callable) -> None | list[InterpreterHistoryItem]:
     return getattr(fn, "_last_interpreted_history", None)
 
 
 def print_history(
-    history: list[JitHistoryItem],
+    history: list[InterpreterHistoryItem],
     /,
     print_fn: Callable = print,
     use_colors: bool = True,
@@ -6550,10 +6608,10 @@ def print_history(
     print_source_code: bool = True,
 ) -> None:
     colors = init_colors(use_colors)
-    jitpath = os.path.join("thunder", "core", "jit.py")
+    interpreter_path = os.path.join("thunder", "core", "interpreter.py")
 
     c_indent = -1
-    inside_innner_jit = False
+    inside_inner_interpreter = False
     for item in history:
         linecolor = ""
         nl = ""
@@ -6564,7 +6622,7 @@ def print_history(
         # or typed dicts, with "kind" describing what kind of entry it is.
         match item:
             case dis.Instruction():
-                if color_internals or not inside_innner_jit:
+                if color_internals or not inside_inner_interpreter:
                     linecolor = colors["MAGENTA"]
                 history_line = f"Instruction('{item.opname}', arg={item.arg}, argrepr={repr(item.argrepr)})"
 
@@ -6575,8 +6633,8 @@ def print_history(
 
             case {"kind": "Line", "fn": _fn, "filename": filename, "position": position}:
                 # LineHistoryItem
-                inside_innner_jit = jitpath in filename
-                if color_internals or not inside_innner_jit:
+                inside_inner_interpreter = interpreter_path in filename
+                if color_internals or not inside_inner_interpreter:
                     linecolor = colors["YELLOW"]
                 nl = os.linesep
                 fnname = extract_callable_name(_fn)
@@ -6595,16 +6653,16 @@ def print_history(
                     linestr = linestr[: -len(os.linesep)]
                 source_line = linestr
 
-            case {"kind": "JitCall", "fn": fn, "prev_frame": prev_frame}:
+            case {"kind": "InterpreterCall", "fn": fn, "prev_frame": prev_frame}:
                 # CallHistoryItem
-                if color_internals or not inside_innner_jit:
+                if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1
-                history_line = f"Jitting call to {extract_callable_name(fn)}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                history_line = f"Interpreting call to {extract_callable_name(fn)}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
 
-            case {"kind": "JitReturn", "fn": fn, "is_signal": is_signal, "rval": rval}:
+            case {"kind": "InterpreterReturn", "fn": fn, "is_signal": is_signal, "rval": rval}:
                 # ReturnHistoryItem
-                if color_internals or not inside_innner_jit:
+                if color_internals or not inside_inner_interpreter:
                     linecolor = colors["RED"]
                 deindent = True
                 meaning = "signal" if is_signal else "value of type"
@@ -6613,13 +6671,13 @@ def print_history(
 
             case {"kind": "Lookaside", "fn": fn}:
                 # LookasideHistoryItem
-                if color_internals or not inside_innner_jit:
+                if color_internals or not inside_inner_interpreter:
                     linecolor = colors["BLUE"]
                 history_line = f"Lookaside to {extract_callable_name(fn)}()"
 
             case {"kind": "Opaque", "fn": fn}:
                 # OpaqueHistoryItem
-                if color_internals or not inside_innner_jit:
+                if color_internals or not inside_inner_interpreter:
                     linecolor = colors["CYAN"]
                 history_line = f"Opaque call to {fn} with name {extract_callable_name(fn)}"
 

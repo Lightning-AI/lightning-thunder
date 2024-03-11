@@ -18,7 +18,7 @@ from thunder.core.interpreter import (
     is_jitting,
     make_opaque,
     interpret,
-    JITError,
+    InterpreterError,
     print_last_interpreted_history,
 )
 
@@ -2987,7 +2987,7 @@ def test_is_jitting_with_raise_opaque(jit):
         return tuple(map(lambda _: is_jitting_with_raise(), range(3)))
 
     assert foo() == (False, False, False)
-    with pytest.raises(JITError):
+    with pytest.raises(InterpreterError):
         jit(foo)()
 
 

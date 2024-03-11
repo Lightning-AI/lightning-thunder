@@ -1398,3 +1398,5 @@ def test_too_few_results_from_backward():
 
     with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
         fw_out = cfunc(a, b)
+
+    thunder.extend.deregister_executor(myex)
