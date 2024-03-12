@@ -527,6 +527,7 @@ class GeneralJitCtx(MinimalCtx):
         self._constraints = []
         self._process_group_for_ddp = process_group_for_ddp
         self._additional_outputs = collections.defaultdict(list)
+        self._proxy_swapmap: dict[Variable, Proxy] = {}
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -901,23 +902,17 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 get_general_jit_ctx = get_minimal_ctx
 
 
-def _general_jit_const_callback(value: Any) -> WrappedValue:
-    return value
-
-
-# Records proxies that could later be replaced with better names
-_rename_proxy_swapmap: contextvars.ContextVar[dict[Variable, Proxy]] = contextvars.ContextVar(
-    "rename_proxy_swapmap", default=dict()
-)
-
-
 @contextmanager
-def rename_proxy_ctx(proxy_swapmap: dict[Variable, Proxy]):
-    token = _rename_proxy_swapmap.set(proxy_swapmap)
+def general_jit_ctx(ctx: MinimalCtx):
+    token = set_minimal_ctx(ctx)
     try:
         yield
     finally:
-        _rename_proxy_swapmap.reset(token)
+        reset_minimal_ctx(token)
+
+
+def _general_jit_const_callback(value: Any) -> WrappedValue:
+    return value
 
 
 # TODO(nikitaved): maybe call it upon Frame creation
@@ -926,14 +921,14 @@ def _maybe_update_proxy_name(orig_value: Any, name: str):
 
     if isinstance(uvalue, Proxy) and is_proxy_name_available(name):
         uvalue_var = variableify(uvalue)
-        rename_proxy_swapmap = _rename_proxy_swapmap.get()
+        rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
         if uvalue_var not in rename_proxy_swapmap:
             uvalue_renamed = uvalue.replace_name(name)
             rename_proxy_swapmap[uvalue_var] = uvalue_renamed
 
 
 def _apply_trace_proxy_rename(trace: TraceCtx, name: None | str = None) -> TraceCtx:
-    rename_proxy_swapmap = _rename_proxy_swapmap.get()
+    rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
 
     new_trace = from_trace(trace)
 
@@ -1385,16 +1380,11 @@ def thunder_general_jit(
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
     )
 
-    rename_proxy_swapmap: dict[Variable, Proxy] = {}
-    with rename_proxy_ctx(rename_proxy_swapmap):
+    with general_jit_ctx(ctx):
         with tracectx(computation_trace):
-            try:
-                tok = set_minimal_ctx(ctx)
-                result = jfn(*args, **kwargs)
-                prims.python_return(result)
-                process_recorded_modifications(ctx, epilogue_trace)
-            finally:
-                reset_minimal_ctx(tok)
+            result = jfn(*args, **kwargs)
+            prims.python_return(result)
+            process_recorded_modifications(ctx, epilogue_trace)
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
@@ -1434,7 +1424,7 @@ def thunder_general_jit(
     if epilogue_trace:
         bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
 
-    with rename_proxy_ctx(rename_proxy_swapmap):
+    with general_jit_ctx(ctx):
         # TODO(nikitaved): update prologue/epilogue as well
         computation_trace = _apply_trace_proxy_rename(computation_trace, "computation")
         if epilogue_trace:
