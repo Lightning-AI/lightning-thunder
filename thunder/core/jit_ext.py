@@ -926,9 +926,10 @@ def _maybe_update_proxy_name(orig_value: Any, name: str):
 
     if isinstance(uvalue, Proxy) and is_proxy_name_available(name):
         uvalue_var = variableify(uvalue)
-        uvalue_renamed = uvalue.replace_name(name)
         rename_proxy_swapmap = _rename_proxy_swapmap.get()
-        rename_proxy_swapmap[uvalue_var] = uvalue_renamed
+        if uvalue_var not in rename_proxy_swapmap:
+            uvalue_renamed = uvalue.replace_name(name)
+            rename_proxy_swapmap[uvalue_var] = uvalue_renamed
 
 
 def _apply_trace_proxy_rename(trace: TraceCtx, name: None | str = None) -> TraceCtx:
