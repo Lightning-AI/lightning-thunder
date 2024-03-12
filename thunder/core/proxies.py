@@ -1061,7 +1061,7 @@ def _infer_tensor_properties(
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
-class FutureTensorProxy(Proxy):
+class FutureTensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
         name: str | None = None,
@@ -1070,8 +1070,10 @@ class FutureTensorProxy(Proxy):
         shape: ShapeLike | None = None,
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
+        prefix: None | str = None,
+        history: None | tuple = None,
     ):
-        super().__init__(name)
+        super().__init__(name, prefix=prefix, history=history)
 
         # NOTE FutureTensorProxies never require grad
         (
@@ -1135,6 +1137,10 @@ class FutureTensorProxy(Proxy):
         from thunder.distributed.prims import wait
 
         return wait(self)
+
+    def replace_name(self, name: str):
+        """Return a copy of this proxy with the given name."""
+        return futuretensorproxy(self, name=name, history=self.history)
 
 
 # TODO RC1 Review dunders -- any remaining?
@@ -1495,6 +1501,21 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         dtype=dtype,
         requires_grad=t.requires_grad,
         ddp_type=ddp_type,
+        history=history,
+    )
+
+
+def futuretensorproxy(
+    t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
+) -> FutureTensorProxy:
+    device = devices.device_from_string(str(t.device))
+    dtype = dtypes.to_dtype(t.dtype)
+    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
+    return FutureTensorProxy(
+        name,
+        shape=tuple(t.shape),
+        device=device,
+        dtype=dtype,
         history=history,
     )
 

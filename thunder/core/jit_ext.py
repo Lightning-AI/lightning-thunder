@@ -924,9 +924,6 @@ def rename_proxy_ctx(proxy_swapmap: dict[Variable, Proxy]):
 def _maybe_update_proxy_name(orig_value: Any, name: str):
     uvalue = unwrap(orig_value)
 
-    # TODO(nikitaved): add support for futures
-    if isinstance(uvalue, FutureTensorProxy):
-        return
     if isinstance(uvalue, Proxy) and is_proxy_name_available(name):
         uvalue_var = variableify(uvalue)
         uvalue_renamed = uvalue.replace_name(name)
