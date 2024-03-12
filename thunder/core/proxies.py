@@ -1218,7 +1218,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # TODO RC1 Review this with other changes
     def replace_name(self, name: str):
         """Return a copy of this proxy with the given name."""
-        return tensorproxy(self, name=name)
+        return tensorproxy(self, name=name, history=self.history)
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
