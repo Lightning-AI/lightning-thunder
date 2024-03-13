@@ -444,6 +444,42 @@ def test_lookaside_bool():
     assert_close(expected, actual)
 
 
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_proxy_no_multiple_renames(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    device = torch.device(device)
+
+    def f(a, b, c, d):
+        def g(b, a):
+            return b + a
+
+        def h(d, c):
+            return d + c
+
+        return g(a, b) + h(d, c)
+
+    jf = thunder.jit(f)
+
+    a = torch.rand(1, device=device)
+    b = torch.rand(1, device=device)
+    c = torch.rand(1, device=device)
+    d = torch.rand(1, device=device)
+
+    expected = f(a, b, c, d)
+    actual = jf(a, b, c, d)
+    assert_close(expected, actual)
+
+    comp_trace = thunder.last_traces(jf)[-1]
+    args_names = tuple(p.name for p in comp_trace.args)
+    # Once proxies got their names in `f`, these should not change in `g` and `h`
+    assert args_names == ("a", "b", "c", "d")
+
+
 def test_litgpt():
     from thunder.benchmarks import LitGPTBenchmark
     from thunder.tests.lit_gpt_model import Config
