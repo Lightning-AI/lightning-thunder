@@ -2774,7 +2774,8 @@ def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
         yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
 
 
-# nvfuserex_impl.to_descriptors can't take a **nested** list of tensors.
+# nvfuserex_impl.to_descriptors refuses to take a **nested** list of tensors,
+# reporting `ValueError: unrecognized type in arguments: <class 'list'>`.
 # `cat_wrapper` is created to work around that.
 def cat_wrapper(*args, dim):
     return ltorch.cat(args, dim=dim)
@@ -3719,8 +3720,7 @@ def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
         yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
 
 
-# nvfuserex_impl.to_descriptors can't take a **nested** list of tensors.
-# `stack_wrapper` is created to work around that.
+# `stack_wrapper` is created for the same reason as `cat_wrapper.
 def stack_wrapper(*args, dim):
     return ltorch.stack(args, dim=dim)
 
