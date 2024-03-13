@@ -602,7 +602,6 @@ class FSDPCommBucketing:
         check_num_comm_and_wait(updated_bwd_trace, _ALL_GATHER_SYM_IDS | _REDUCE_SCATTER_SYM_IDS)
         return updated_bwd_trace
 
-    # TODO(crcrpar): Support AllGather bucketing for ZERO3
     def apply_bucketing_to_backward_trace(self, fsdp_bwd_trace: TraceCtx) -> TraceCtx:
         """Apply bucketing to reduce_scatter in fsdp bwd trace.
 
