@@ -131,3 +131,39 @@ def test_get_all_executors_includes_all_native_executors():
     if torch.cuda.is_available():
         expected.update({"nvfuser"})
     assert actual == expected
+
+
+def test_register_implementation_custom_op():
+    myex = OperatorExecutor("myex", version="0.1")
+    register_executor(myex)
+
+    def _myadd(a, b):
+        return a + b
+
+    myadd1 = myex.register_operator("myadd1", like=_myadd, fn=_myadd)
+    myadd2 = myex.register_operator("myadd2", like=_myadd, fn=_myadd)
+
+    def fn(a, b):
+        return myadd1(a, b)
+
+    cfn = thunder.jit(fn, executors=[myex])
+
+    a = torch.randn(2, 2)
+    b = torch.randn(2, 2)
+
+    res = cfn(a, b)
+
+    assert "myadd1" in str(thunder.last_traces(cfn)[-1])
+
+    def myadd_trafo(a, b):
+        return myadd2(a, b)
+
+    myex.register_implementation(myadd1, execution_transform=myadd_trafo)
+
+    cfn = thunder.jit(fn, executors=[myex])
+    res = cfn(a, b)
+
+    s = str(thunder.last_traces(cfn)[-1])
+    assert "myadd2" in s and "myadd1" not in s
+
+    deregister_executor(myex)

@@ -57,12 +57,13 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     #   If the executor has an execution transform, it's called and True is returned
     #   If no executor can execute the BoundSymbol, False is returned
     def visit_helper_(bsym: BoundSymbol) -> None | bool:
-        if bsym.sym.executor is not None or bsym.sym.python_impl is not None:
+        if bsym.sym.python_impl is not None:
             return None
 
         ex: Executor
         for ex in executors_list:
             # TODO Consider allowing operator executors to claim portions of operations
+            # TODO Should FusionExecutors be allowed to claim bsym with bsym.sym.executor?
             if (isinstance(ex, OperatorExecutor) and ex.can_execute(bsym)) or (
                 isinstance(ex, FusionExecutor) and ex.can_fuse(bsym)
             ):
@@ -86,6 +87,9 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
                 safe_map_flat(update_swapmap, bsym.output, out)
                 return True
+
+        if bsym.sym.executor is not None:
+            return None
 
         return False
 
