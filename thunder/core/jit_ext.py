@@ -917,9 +917,15 @@ def _general_jit_const_callback(value: Any) -> WrappedValue:
 
 # TODO(nikitaved): maybe call it upon Frame creation
 def _maybe_update_proxy_name(orig_value: Any, name: str):
+    # Names that we do not re-name proxies into as these are reserved
+    proxy_rename_ignore_names = {
+        "fn",  # For example, `fn = globals()['__function_obj']` in prologue
+        "obj",  # For example, `obj = fn.forward` in prologue
+    }
+
     uvalue = unwrap(orig_value)
 
-    if isinstance(uvalue, Proxy) and is_proxy_name_available(name):
+    if isinstance(uvalue, Proxy) and (name not in proxy_rename_ignore_names) and is_proxy_name_available(name):
         uvalue_var = variableify(uvalue)
         rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
         if uvalue_var not in rename_proxy_swapmap:
@@ -927,8 +933,11 @@ def _maybe_update_proxy_name(orig_value: Any, name: str):
             rename_proxy_swapmap[uvalue_var] = uvalue_renamed
 
 
-def _apply_trace_proxy_rename(trace: TraceCtx, name: None | str = None) -> TraceCtx:
-    rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
+def _apply_trace_proxy_rename(
+    trace: TraceCtx, rename_proxy_swapmap: None | dict[Variable, Proxy] = None, name: str | None = None
+) -> TraceCtx:
+    if rename_proxy_swapmap is None:
+        rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
 
     new_trace = from_trace(trace)
 
@@ -1424,11 +1433,24 @@ def thunder_general_jit(
     if epilogue_trace:
         bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
 
-    with general_jit_ctx(ctx):
-        # TODO(nikitaved): update prologue/epilogue as well
-        computation_trace = _apply_trace_proxy_rename(computation_trace, "computation")
-        if epilogue_trace:
-            # TODO: is it safe to use current swapdict here?
-            epilogue_trace = _apply_trace_proxy_rename(epilogue_trace, "epilogue")
+    # Returns a new swapmap dictionary which has the keys (ctx._proxy_swapmap.key() & variableify(proxies))
+    def restrict_proxy_swapmap(proxies: tuple[Proxy]) -> dict[Variable, Proxy]:
+        proxy_swapmap = ctx._proxy_swapmap
+        proxy_vars = {variableify(p) for p in proxies}
+        common_vars = proxy_swapmap.keys() & proxy_vars
+        restricted_proxy_swapmap = {v: proxy_swapmap[v] for v in common_vars}
+        return restricted_proxy_swapmap
+
+    # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
+    prologue_trace = _apply_trace_proxy_rename(prologue_trace, restrict_proxy_swapmap(pro_to_comp_proxies))
+
+    # Update computation trace by renaming proxies which are in the ctx._proxy_swapmap
+    computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")
+
+    # Update epilogue trace by renaming proxies which are passed to the epilogue trace from prologue and computation traces
+    if epilogue_trace:
+        epilogue_trace = _apply_trace_proxy_rename(
+            epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
+        )
 
     return prologue_trace, computation_trace, epilogue_trace
