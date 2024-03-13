@@ -14,13 +14,10 @@ import torch
 from absl.testing import parameterized
 from absl.testing import absltest
 import os
-import pickle
 import subprocess
-import warnings
 import json
 import pandas as pd
 from datetime import datetime
-import threading
 
 class Runner:
     '''
@@ -65,11 +62,11 @@ class Runner:
         if self.output_format not in ('none', 'print'):
             output_ext = {'xlsx': '.xlsx', }[self.output_format]
             if not is_teardown:
-                filename = '/scratch/lightning-thunder/examples/lit-gpt/mid_output_parameterized_results' + str(output_ext)
+                filename = 'examples/lit-gpt/mid_output_parameterized_results' + str(output_ext)
             else:
                 current_time = datetime.now().strftime('%Y-%m-%d_%H-%M')
                 filename = f"{current_time}_litgpt_benchmark" + str(output_ext)
-                filename = '/scratch/lightning-thunder/examples/lit-gpt/' + str(filename)
+                filename = 'examples/lit-gpt/' + str(filename)
 
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 self.iter_time_df.to_excel(writer, sheet_name='Average Iter Time (ms)')
@@ -87,19 +84,24 @@ class Runner:
             print(self.memory_used_GB_df)
 
     def run_benchmark(self, kwargs):
-        # benchmark_file = '/scratch/lightning-thunder/thunder/benchmarks/benchmark_litgpt.py'
+        # benchmark_file = 'thunder/benchmarks/benchmark_litgpt.py'
         command_list = []
         for key, val in kwargs.items():
             command_list.append("--" + str(key) + "=" + str(val))
         if kwargs['distributed_mode'] != 'none':
-            subprocess_cmd = ["torchrun", "--nproc_per_node=8", "--nnodes=1", "{}".format(self.benchmark_file), "--return_metrics_as_json=True", "--json_path={}".format(self.json_file_path)]
+            nproc_per_node = torch.cuda.device_count()
+            subprocess_cmd = ["torchrun", f"--nproc_per_node={nproc_per_node}", "--nnodes=1", "{}".format(self.benchmark_file), "--return_metrics_as_json=True", "--json_path={}".format(self.json_file_path)]
             subprocess_cmd.extend(command_list)
         else:
-            subprocess_cmd = ["python", "{}".format(benchmark_file), "--return_metrics_as_json=True", "--json_path={}".format(self.json_file_path)]
+            subprocess_cmd = ["python", "{}".format(self.benchmark_file), "--return_metrics_as_json=True", "--json_path={}".format(self.json_file_path)]
             subprocess_cmd.extend(command_list)
 
         print(f'Running {" ".join(subprocess_cmd)!r}')
         proc_output = subprocess.run(subprocess_cmd, capture_output=True, text=True)
+        if proc_output.returncode:
+            print(proc_output.stdout)
+            print(proc_output.stderr)
+            proc_output.check_returncode()
 
         with open(self.json_file_path, 'r') as file:
             self.perf_metrics_dict = json.load(file)
@@ -116,12 +118,13 @@ class Runner:
                 pass_str = "TestCase did not finish reporting metrics due to CUDA out of memory error. Reporting OOM and triggering test success."
                 return True, pass_str
             else:
+                print(proc_output.stdout)
+                print(proc_output.stderr)
                 fail_str = "Testcase did not finish reporting metrics due to an unknown error. Triggering test failure."
                 return False, fail_str
         else:
             return True, "Test passed successfully."
-        # print(proc_output.stdout)
-        # print(proc_output.stderr)
+
 
 class Test(parameterized.TestCase):
 
@@ -152,12 +155,12 @@ class Test(parameterized.TestCase):
     #      dict(distributed_mode = "none", shard_mode = "none")),
     #     (dict(model_name = 'Llama-2-7b-hf', micro_batch_size=1),
     #      dict(model_name = 'Llama-2-7b-hf', micro_batch_size=2),
-    #      dict(model_name = 'Llama-2-13b{}-hf', micro_batch_size=1),
-    #      dict(model_name = 'Llama-2-13b{}-hf', micro_batch_size=2),
+    #      dict(model_name = 'Llama-2-13b-hf', micro_batch_size=1),
+    #      dict(model_name = 'Llama-2-13b-hf', micro_batch_size=2),
     #      dict(model_name = 'stablecode-completion-alpha-3b', micro_batch_size=1),
     #      dict(model_name = 'stablecode-completion-alpha-3b', micro_batch_size=2),
-    #      dict(model_name = 'Mistral-7B-{}v0.1', micro_batch_size=1),
-    #      dict(model_name = 'Mistral-7B-{}v0.1', micro_batch_size=2),
+    #      dict(model_name = 'Mistral-7B-v0.1', micro_batch_size=1),
+    #      dict(model_name = 'Mistral-7B-v0.1', micro_batch_size=2),
     #      dict(model_name = 'open_llama_3b', micro_batch_size=1),
     #      dict(model_name = 'open_llama_3b', micro_batch_size=2),
     #      dict(model_name = 'open_llama_3b', micro_batch_size=4),
@@ -178,8 +181,8 @@ class Test(parameterized.TestCase):
     #      dict(model_name = 'pythia-6.9b', micro_batch_size=2),
     #      dict(model_name = 'pythia-12b', micro_batch_size=1),
     #      dict(model_name = 'pythia-12b', micro_batch_size=2),
-    #      dict(model_name = 'falcon-7b{}', micro_batch_size=1),
-    #      dict(model_name = 'falcon-7b{}', micro_batch_size=2)),
+    #      dict(model_name = 'falcon-7b', micro_batch_size=1),
+    #      dict(model_name = 'falcon-7b', micro_batch_size=2)),
     #     compile = ("eager", "inductor", "thunder", "thunder_inductor",)
     # )
 

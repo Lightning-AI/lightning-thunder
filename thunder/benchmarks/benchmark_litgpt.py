@@ -1,7 +1,5 @@
 import os
-import copy
 import time
-import pprint
 
 import torch
 import functools
@@ -19,18 +17,14 @@ try:
 except:
     LIGHTNING_AVAILABLE = False
 
-world_size, local_rank, global_rank = None, None, None
-if "WORLD_SIZE" in os.environ and "LOCAL_RANK" in os.environ:
+world_size = int(os.environ.get("WORLD_SIZE", 1))
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+global_rank = int(os.environ.get("RANK", 0))
+if world_size > 1:
     torch_dist.init_process_group(backend="nccl")
-    world_size = int(os.environ["WORLD_SIZE"])
-    local_rank = int(os.environ["LOCAL_RANK"])
-    global_rank = int(os.environ["RANK"])
     pg = torch_dist.distributed_c10d._get_default_group()
-    device = torch.device("cuda", local_rank)
-    torch.cuda.set_device(device)
-    use_ddp = True
-else:
-    device = torch.device("cuda", 0)
+device = torch.device("cuda", local_rank)
+torch.cuda.set_device(device)
 
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
@@ -38,7 +32,9 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
 
     fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
     use_fused = fused_available and device_type == "cuda"
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=betas, fused=use_fused)
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas, fused=use_fused
+    )
     return optimizer
 
 
