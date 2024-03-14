@@ -29,6 +29,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, put_grads
 from thunder.core.prims import get_grad, put_grad
+from thunder.core.baseutils import run_once
 
 __all__ = [
     "is_available",
@@ -882,6 +883,33 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
     dims = tuple(d for d in dims if a.shape[d] == 1)
 
     return clang.squeeze(a, dims)
+
+
+@torchsymbol(torch.t, is_method=True)
+def t(a: TensorLike, /) -> TensorLike:
+    utils.check(
+        a.ndim <= 2,
+        lambda: f"t() expects a tensor with <= 2 dimensions, but self is {a.ndim}D",
+        RuntimeError,
+    )
+    return prims.transpose(a, (1, 0)) if a.ndim == 2 else a
+
+
+@run_once
+def warn_ndim_not_2():
+    warnings.warn(
+        "The use of `x.T` on tensors of dimension other than 2 to reverse their shape is deprecated and will throw an error in a future release."
+        "Consider `x.mT` to transpose batches of matrices or `x.permute(*torch.arange(x.ndim - 1, -1, -1))` to reverse the dimensions of a tensor."
+    )
+
+
+def reverse_dims_T(a: TensorLike, /) -> TensorLike:
+    if a.ndim != 2:
+        warn_ndim_not_2()
+    return a if a.ndim < 2 else prims.transpose(a, tuple(reversed(range(a.ndim))))
+
+
+register_method("T", reverse_dims_T)
 
 
 # TODO Add type annotations

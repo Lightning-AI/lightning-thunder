@@ -1462,6 +1462,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
 
     @property
+    def T(self):
+        method = resolve_method("T", self)
+        return method(self)
+
+    @property
     def mT(self):
         method = resolve_method("mT", self)
         return method(self)

@@ -3871,6 +3871,72 @@ permute_opinfo = OpInfo(
 shape_ops.append(permute_opinfo)
 
 
+def t_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape
+    cases = (
+        (),
+        (1),
+        (4),
+        (4, 5),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+def t_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, error type, error message
+    cases = (
+        ((4, 5, 6), RuntimeError, r"t\(\) expects a tensor with <= 2 dimensions, but self is 3D"),
+        (
+            (4, 5, 6, 7),
+            RuntimeError,
+            r"t\(\) expects a tensor with <= 2 dimensions, but self is 4D",
+        ),
+    )
+
+    for shape, err_type, err_msg in cases:
+        yield SampleInput(make(shape)), err_type, err_msg
+
+
+t_opinfo = OpInfo(
+    ltorch.t,
+    sample_input_generator=t_sample_generator,
+    error_input_generator=t_error_generator,
+    torch_reference=lambda x: torch.Tensor.t(x),
+)
+shape_ops.append(t_opinfo)
+
+
+def reverse_dims_T_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape
+    cases = (
+        (),
+        (1),
+        (4),
+        (4, 5),
+        (4, 5, 6),
+        (4, 5, 6, 7),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+reverse_dims_T_opinfo = OpInfo(
+    ltorch.reverse_dims_T,
+    sample_input_generator=reverse_dims_T_sample_generator,
+    torch_reference=lambda x: x.T,
+)
+shape_ops.append(reverse_dims_T_opinfo)
+
+
 def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
