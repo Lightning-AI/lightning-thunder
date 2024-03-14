@@ -24,6 +24,7 @@ ARG CUDNN_FRONTEND_CHECKOUT="v1.1.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
+ARG APEX_CHECKOUT="master"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -131,6 +132,22 @@ RUN \
     python setup.py install --no-test --no-benchmark && \
     cd .. && \
     rm -rf Fuser
+
+RUN \
+    # building Apex from source
+    pip install "pip>=23.1" && \
+    git clone https://github.com/NVIDIA/apex && \
+    cd apex && \
+    git checkout ${APEX_CHECKOUT} && \
+    # https://github.com/NVIDIA/apex#linux
+    pip install -v \
+      --disable-pip-version-check \
+      --no-cache-dir \
+      --no-build-isolation \
+      --config-settings "--build-option=--cpp_ext" \
+      --config-settings "--build-option=--cuda_ext" . && \
+    cd .. && \
+    rm -rf apex
 
 RUN \
     ls -lh requirements/ && \
