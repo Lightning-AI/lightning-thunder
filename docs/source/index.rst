@@ -99,7 +99,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Additional executors <intermediate/additional_executors>
    Distributed Data Parallel <intermediate/ddp>
    What's next <intermediate/whats_next>
-   FSDP Tutorial <notebooks/fsdp_tutorial>
+   FSDP Under the Hood Tutorial <notebooks/dev_tutorials/fsdp_tutorial>
 
 .. toctree::
    :maxdepth: 1
