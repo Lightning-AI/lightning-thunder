@@ -11,7 +11,7 @@ The main goal for Lightning Thunder is to allow optimizing user programs in the 
 Install the nvFuser nightly, which will also install the matching PyTorch nightly:
 
 ```bash
-pip install --pre "nvfuser-cu121[torch]" --extra-index-url https://pypi.nvidia.com
+pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
 ```
 
 Install Thunder:
