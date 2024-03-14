@@ -10,7 +10,7 @@ import thunder.torch as ltorch
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol
 from thunder.core.utils import check, same_shape
-from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, sum_backward
+from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, restore_reduced_dims
 from thunder.core.transforms import (
     register_augmented_forward_with_checker,
     register_backward,
@@ -304,7 +304,7 @@ def _apex_cross_entropy_grad(
     if reduction == "mean":
         g = mean_backward(max_log_sum_exp.ndim, max_log_sum_exp.shape, (0,), g)
     elif reduction == "sum":
-        g, _ = sum_backward(max_log_sum_exp.shape, (0,), g)
+        g = restore_reduced_dims(g, (0,), max_log_sum_exp.shape)
 
     # NOTE Apex's xentropy bwd requires the grad computation to be performed in fp32
     a_ = a.contiguous()

@@ -812,8 +812,8 @@ def safe_map(f, *args):
 
 def safe_map_flat(f, *args):
     def convert_sequences_to_tuple(x):
-        if isinstance(x, Sequence):
-            return tuple(x)
+        if not isinstance(x, str) and isinstance(x, Sequence) and not isinstance(x, Proxy):
+            return tuple(convert_sequences_to_tuple(y) for y in x)
         return x
 
     args_flat_spec = safe_map(lambda x: tree_flatten(convert_sequences_to_tuple(x)), args)

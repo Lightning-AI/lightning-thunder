@@ -2819,6 +2819,11 @@ diagonal_opinfo = OpInfo(
     ltorch.diagonal,
     sample_input_generator=diagonal_sample_generator,
     torch_reference=torch.diagonal,
+    test_directives=(
+        # thunder.torch.diagonal meta function is not correctly implemented for
+        # input case ((1, 2, 0, 3), -1, 0, -1)
+        DecorateInfo(pytest.mark.xfail(strict=True), "test_vjp_correctness"),
+    ),
 )
 shape_ops.append(diagonal_opinfo)
 
