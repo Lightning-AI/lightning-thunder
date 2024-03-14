@@ -189,12 +189,16 @@ class CompileData:
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
+        get_computation_and_inputs: Callable | None = None,
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
         #   but some components are still designed to work with older architectures for
         #   and are being temporarily maintained to facilitate their development.
         self.using_jit = using_jit
+
+        # runs prologues to get the compute/backward/epilogue function and inputs
+        self.get_computation_and_inputs = get_computation_and_inputs
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
@@ -262,20 +266,9 @@ class CompileData:
         self.num_constant_args = 0
 
         self._processed_function: Callable
-        if disable_preprocessing:
-            self._processed_function = fn
-        else:
-            warnings.warn(
-                "please use thunder.jit if possible and upgrade and use thunder.jit if it is not yet possible"
-            )
-            self._processed_function = preprocess(fn, is_module=self.is_module)
 
-            # TODO Revisit assuming parameters are const
-            if self.is_module:
-                self.additional_param_names = self.processed_function._additional_param_names
-                self.additional_param_values = self.processed_function._additional_param_values
-                self.additional_return_names = self.processed_function._additional_return_names
-                self.num_constant_args = len(self.additional_param_values)
+        assert disable_preprocessing, "please use thunder.jit if you need preprocessing"
+        self._processed_function = fn
 
     # Disallows overwriting processed_function
     @property

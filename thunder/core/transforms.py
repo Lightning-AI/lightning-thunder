@@ -546,6 +546,22 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
 def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None, args=None, kwargs=None) -> None:
     idx: int = 0
     from thunder.common import ThunderOptimizedModule
+    from thunder import ThunderModule, compile_data
+
+    if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
+        assert args is not None, "populate grad needs args (and possibly kwargs) to work with ThunderModules"
+        if kwargs is None:
+            kwargs = {}
+        _, computation_inputs, _ = compile_data(tom).get_computation_and_inputs(*args, **kwargs)
+        for p in computation_inputs:
+            if isinstance(p, torch.Tensor) and p.requires_grad:
+                # Supports grad accumulation (like when weight tying)
+                if p.grad is not None:
+                    p.grad += grads[idx]
+                else:
+                    p.grad = grads[idx]
+                idx += 1
+        return
 
     if tom is not None and isinstance(tom, ThunderOptimizedModule) and tom._additional_param_values is not None:
         for p in tom._additional_param_values:

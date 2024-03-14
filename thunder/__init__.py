@@ -1,6 +1,6 @@
 from functools import wraps
 from typing import Any
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import contextmanager
@@ -277,6 +277,21 @@ def _recursive_jit_call_warning() -> None:
     )
 
 
+CacheEntry = namedtuple(
+    "CacheEntry",
+    [
+        "prologue_fn",
+        "prologue_traces",
+        "computation_fn",
+        "computation_traces",
+        "epilogue_fn",
+        "epilogue_traces",
+        "backward_fn",
+        "backward_traces",
+    ],
+)
+
+
 # This function will replace compile() (below) before RC1
 # TODO RC1 Consider adding a debug_log parameter to control debug printing
 # TODO RC1 Consider renaming compile_options to additional_compile_options
@@ -386,9 +401,17 @@ def jit(
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces, backward_fn, backward_traces in reversed(
-                cs.interpreter_cache
-            ):
+            for cache_entry in reversed(cs.interpreter_cache):
+                (
+                    pro,
+                    pro_traces,
+                    comp,
+                    comp_traces,
+                    epilogue,
+                    epilogue_traces,
+                    backward_fn,
+                    backward_traces,
+                ) = cache_entry
                 try:
                     cs.last_prologue_execution_start = time.time_ns()
                     if epilogue:
@@ -415,10 +438,11 @@ def jit(
                 cs.last_computation_transformation_start = 0
                 cs.last_computation_transformation_stop = 0
 
-                return inps, pro_to_epi, comp, epilogue, backward_fn
+                return cache_entry, inps, pro_to_epi
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
+                cache_entry = cs.interpreter_cache[0]
                 (
                     pro,
                     pro_traces,
@@ -428,7 +452,7 @@ def jit(
                     epilogue_traces,
                     backward_fn,
                     backward_traces,
-                ) = cs.interpreter_cache[0]
+                ) = cache_entry
 
                 cs.last_prologue_execution_start = time.time_ns()
                 if epilogue:
@@ -449,7 +473,7 @@ def jit(
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
 
-                return inps, pro_to_epi, comp, epilogue, backward_fn
+                return cache_entry, inps, pro_to_epi
 
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.time_ns()
@@ -553,17 +577,20 @@ def jit(
                 backward_traces = []
 
             # TODO RC1 Update the cache
+            cache_entry = CacheEntry(
+                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+            )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-                cs.interpreter_cache.append(
-                    (pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces)
-                )
+                cs.interpreter_cache.append(cache_entry)
 
             cs.last_computation_transformation_stop = time.time_ns()
             cs.last_traces = [computation_trc] + extraces
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
 
-        return inps, pro_to_epi, comp, epilogue, backward_fn
+        return cache_entry, inps, pro_to_epi
+
+    cd.get_computation_and_inputs = get_computation_and_inputs
 
     @wraps(fn)
     def fn_(*args, **kwargs) -> Any:
@@ -575,18 +602,18 @@ def jit(
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
 
-        inps, pro_to_epi, comp, epilogue, backward_fn = get_computation_and_inputs(*args, **kwargs)
+        cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
         cs.last_trace_host_execution_start = time.time_ns()
 
-        result = comp(*inps)
+        result = cache_entry.computation_fn(*inps)
 
-        if backward_fn:
+        if cache_entry.backward_fn:
             # Run the compiled forward function
             data_for_autograd, (saved_tensors, saved_other) = result
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
-                backward_fn,
+                cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
                 data_for_autograd["flat_output"],
@@ -594,19 +621,15 @@ def jit(
             )
             result = data_for_autograd["output"]
 
-        if epilogue:
+        if cache_entry.epilogue_fn:
             result, comp_to_epi = result
-            epilogue(*pro_to_epi, *comp_to_epi)
+            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
         cs.last_trace_host_execution_stop = time.time_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
-        cs.last_executed = comp
+        cs.last_executed = cache_entry.computation_fn
         cs.last_trace_cache_stop = time.time_ns()
-        cs.last_trace_host_stop = time.time_ns()
-
-        # Updates statistics
-        cs.last_executed = comp
         cs.last_trace_host_stop = time.time_ns()
 
         return result

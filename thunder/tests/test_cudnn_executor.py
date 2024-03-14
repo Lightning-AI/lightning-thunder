@@ -127,7 +127,7 @@ def test_cudnn_sdpa():
                 query, key, value, is_causal=is_causal, attn_mask=attn_mask
             )
 
-        ctest = thunder.compile(test, executors_list=[cudnn_ex])
+        ctest = thunder.jit(test, executors=[cudnn_ex])
         actual = ctest(query, key, value, is_causal=is_causal, attn_mask=attn_mask)
         torch.testing.assert_close(actual, expected, atol=2e-2, rtol=1e-2)
         last_trace = thunder.last_traces(ctest)[-1]
@@ -184,7 +184,7 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
 
     for sample in op.reference_inputs(device, dtype, requires_grad=False):
-        cfn = thunder.compile(op_name_to_fn[op.name], executors_list=[cudnn_ex, cudnn_layernorm_ex])
+        cfn = thunder.jit(op_name_to_fn[op.name], executors=[cudnn_ex, cudnn_layernorm_ex])
 
         result = run_snippet(
             snippet_torch_consistency,

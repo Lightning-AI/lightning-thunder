@@ -338,10 +338,10 @@ def test_cse_rematerialization(executor, device, _):
 
     x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    compiled_func = thunder.compile(
+    compiled_func = thunder.jit(
         model.eval(),
-        disable_torch_autograd_support=True,
-        executors_list=executor.executors_list(),
+        disable_torch_autograd=True,
+        executors=executor.executors_list(),
         nv_enable_bookend=False,
     )
     compiled_func(x, y)
@@ -357,10 +357,10 @@ def test_cse_rematerialization(executor, device, _):
     # fusion groups 1 and 7 correspond with the apply_rotary_emb function
     # Nvfuser with recomputation should use precomputed cos and sin values.
     assert len(fusion_bsyms[1].args) == len(fusion_bsyms[7].args)
-    assert fusion_bsyms[1].args[0].name == "freqs_cos"
-    assert fusion_bsyms[1].args[1].name == "freqs_sin"
-    assert fusion_bsyms[7].args[0].name == "freqs_cos"
-    assert fusion_bsyms[7].args[1].name == "freqs_sin"
+    assert fusion_bsyms[1].subsymbols[0].output.name == "freqs_cos"
+    assert fusion_bsyms[1].subsymbols[1].output.name == "freqs_sin"
+    assert fusion_bsyms[7].subsymbols[0].output.name == "freqs_cos"
+    assert fusion_bsyms[7].subsymbols[1].output.name == "freqs_sin"
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend

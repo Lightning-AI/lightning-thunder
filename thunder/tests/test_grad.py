@@ -1250,11 +1250,11 @@ def test_populate_grads_mlp(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable_legacy(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
     tom_grad = grad(tom)
     thunder_grads = tom_grad(x)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=(x,))
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
@@ -1277,11 +1277,11 @@ def test_populate_grads_csa(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable_legacy(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
     tom_grad = grad(tom)
     thunder_grads = tom_grad(x)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=[x])
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
@@ -1304,11 +1304,11 @@ def test_populate_grads_block(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable_legacy(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
     tom_grad = grad(tom)
     thunder_grads = tom_grad(x)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=[x])
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
@@ -1340,7 +1340,7 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable_legacy(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
 
     def grad_specifier(out) -> None:
         logits, loss = out
@@ -1349,7 +1349,7 @@ def test_populate_grads_nanogpt(executor, device, dtype):
     tom_grad = grad(tom, grad_specifier=grad_specifier)
     thunder_grads = tom_grad(x, targets)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=[x, targets])
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
