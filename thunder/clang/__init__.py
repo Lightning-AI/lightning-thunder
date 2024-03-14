@@ -19,7 +19,6 @@ from thunder.core import utils
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
-from thunder.core.script.noinline import noinline
 
 # This file defines the operations in lightning.compile's "core" language.
 #
@@ -34,7 +33,6 @@ DeviceLike = Union[str, devices.Device]
 _clang_fn_set: set = set()
 
 
-# TODO RC1 Remove noinline
 # Decorator that sets the core language context and registers the function
 class clangop:
     def __init__(self, *, method_name: None | str = None):
@@ -42,7 +40,6 @@ class clangop:
 
     def __call__(self, fn: Callable) -> Callable:
         _fn = langctx(Languages.CLANG)(fn)
-        _fn = noinline(_fn)
         _clang_fn_set.add(_fn)
 
         if self.method_name is not None:

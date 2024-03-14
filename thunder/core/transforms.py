@@ -545,7 +545,6 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
 # TODO Test with buffers
 def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None, args=None, kwargs=None) -> None:
     idx: int = 0
-    from thunder.common import ThunderOptimizedModule
     from thunder import ThunderModule, compile_data
 
     if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
@@ -562,16 +561,6 @@ def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None,
                     p.grad = grads[idx]
                 idx += 1
         return
-
-    if tom is not None and isinstance(tom, ThunderOptimizedModule) and tom._additional_param_values is not None:
-        for p in tom._additional_param_values:
-            if p.requires_grad:
-                # Supports grad accumulation (like when weight tying)
-                if p.grad is not None:
-                    p.grad += grads[idx]
-                else:
-                    p.grad = grads[idx]
-                idx += 1
 
     # Short-circuits if there are no args or kwargs
     if args is None and kwargs is None:
@@ -603,7 +592,6 @@ def clear_grads(module: torch.nn.Module) -> None:
         b.grad = None
 
 
-from thunder.core.script.noinline import noinline
 from thunder.core.interpreter import make_opaque
 from thunder.core.langctxs import langctx, Languages
 
@@ -611,7 +599,7 @@ from thunder.core.langctxs import langctx, Languages
 # TODO RC1 Replace with langctx
 def torchctx(fn):
     _fn = langctx(Languages.TORCH)(fn)
-    return make_opaque(noinline(_fn))
+    return make_opaque(_fn)
 
 
 _grad_fn_map: dict[Any, Callable] = {}

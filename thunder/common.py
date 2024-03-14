@@ -133,40 +133,6 @@ class CompileStats:
         return self._time_template(start, stop, "computation execution")
 
 
-import thunder.core.script.frontend as script_frontend
-import thunder.core.script.instrumentation as script_instrumentation
-import thunder.core.script.passes as passes
-import thunder.core.script.python_ir as python_ir
-
-
-# Preprocesses function
-# Currently tries to map torch.foo lookups to thunder.torch.foo lookups
-@script_instrumentation.record
-def preprocess(fn, is_module):
-    gr = script_frontend.acquire_method(fn.forward if is_module else fn)
-    passes.unroll_for_loops_and_inline_modules(gr)
-    if is_module:
-        (
-            additional_param_names,
-            additional_param_values,
-            additional_return_names,
-        ) = passes.module_to_function(gr)
-    passes.strongly_inline_functions(gr)
-    passes.torch_to_thunder(gr)
-
-    thunder_fn = python_ir.generate_function(gr)
-    if is_module:
-        thunder_fn._additional_param_names = additional_param_names
-        thunder_fn._additional_param_values = additional_param_values
-        thunder_fn._additional_return_names = additional_return_names
-    else:
-        thunder_fn._additional_param_names = None
-        thunder_fn._additional_param_values = None
-        thunder_fn._additional_return_names = None
-
-    return thunder_fn
-
-
 # A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
 #   like additional_param_names
@@ -362,85 +328,6 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
 
     tracectx.unpacked()
     return proxyargs, proxykwargs
-
-
-class ThunderOptimizedModule(torch.nn.Module):  # TOM
-    # todo: subclass nn.Module or forward things like .state_dict() to the
-    #       model
-    def __init__(self, model, fn, tfn, additional_param_names, additional_param_values, additional_return_names):
-        super().__init__()
-        self._model = model
-        self._forward_fn = fn
-        self._tfn = tfn
-
-        self._additional_param_values = additional_param_values
-        self._additional_param_names = additional_param_names
-        self._additional_return_names = additional_return_names
-        d = {k: i for i, k in enumerate(additional_param_names)}
-        self._additional_return_param_idxes = [d[k] for k in additional_return_names]
-
-    def __call__(self, *args, **kwargs):
-        all_args = (*self._additional_param_values, *args)
-        res = self._forward_fn(*all_args, **kwargs)
-        if self._additional_return_names:
-            res, *additional_returns = res
-            assert len(self._additional_return_names) == len(
-                additional_returns
-            ), f"Number of expected additional return args {len(self._additional_return_names)=} does not match the actual number {len(additional_returns)=}"
-            for k, v, idx in zip(
-                self._additional_return_names, additional_returns, self._additional_return_param_idxes
-            ):
-                m = self._model
-                parts = k.split(".")
-                for p in parts[:-1]:
-                    m = getattr(m, p)
-                setattr(m, parts[-1], v)
-                self._additional_param_values[idx] = v
-        return res
-
-    @contextmanager
-    def no_sync(self):
-        """Context manager to disable gradient synchronization in data parallel mode.
-
-        This context manager is intended to be used in conjunction with
-        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
-        synchronization in the backward pass. It will not have any effect when
-        used with other modules.
-
-        .. note::
-
-            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
-            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
-            In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
-
-        .. warning::
-
-            You must reuse this context manager in each group of gradient accumulation iterations since gradients will get synchronized
-            on context manager exit. For example:
-
-            .. code-block:: python
-
-                with model.no_sync():
-                    for _ in range(len(gradient_accumulation_iters)):
-                        loss(model(x)).backward()  # uses no-sync-backward trace
-                loss(model(x)).backward()  # uses the regular backward trace
-                optimizer.step()
-
-        """
-        from thunder.distributed import (
-            set_skip_data_parallel_grad_sync,
-            reset_skip_data_parallel_grad_sync,
-            _sync_grads,
-        )
-
-        token = set_skip_data_parallel_grad_sync(True)
-        try:
-            yield
-        finally:
-            reset_skip_data_parallel_grad_sync(token)
-            _sync_grads(self)
 
 
 #
@@ -946,16 +833,6 @@ def _create_callable(
 
             cs.last_trace_host_stop = time.time_ns()
             return result
-
-    if cd.is_module:
-        _fn = ThunderOptimizedModule(
-            cd.fn,
-            _fn,
-            cd.processed_function,
-            cd.additional_param_names,
-            cd.additional_param_values,
-            cd.additional_return_names,
-        )
 
     # NOTE is_module is False
     _fn._pfn = cd.processed_function
