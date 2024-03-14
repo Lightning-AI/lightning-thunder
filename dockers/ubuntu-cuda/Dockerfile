@@ -135,7 +135,7 @@ RUN \
 
 RUN \
     # building Apex from source
-    pip install "pip>=23.1" && \
+    pip install "pip>=23.1" packaging && \
     git clone https://github.com/NVIDIA/apex && \
     cd apex && \
     git checkout ${APEX_CHECKOUT} && \
