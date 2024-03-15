@@ -548,9 +548,7 @@ def jit(
                     # thunder_backward may recursively call compile and wraps the result in a
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
-                    computation_trc, backward_trc = split_forward_backward(
-                        computation_trc.python_callable(), cd, cs, *inps
-                    )
+                    computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     computation_traces.append(computation_trc)
 
             cs.last_computation_transformation_start = time.time_ns()

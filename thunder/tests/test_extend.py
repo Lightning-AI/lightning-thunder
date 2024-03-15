@@ -158,12 +158,27 @@ def test_register_implementation_custom_op():
     def myadd_trafo(a, b):
         return myadd2(a, b)
 
-    myex.register_implementation(myadd1, execution_transform=myadd_trafo)
+    def myadd_grad_trafo(a, b):
+        res = myadd2(a, b)
+        grad_res = get_grad(res)
+        put_grads((a, b), (grad_res, grad_res))
+        return res
+
+    myex.register_implementation(myadd1, execution_transform=myadd_trafo, grad_transform=myadd_grad_trafo)
 
     cfn = thunder.jit(fn, executors=[myex])
     res = cfn(a, b)
 
     s = str(thunder.last_traces(cfn)[-1])
     assert "myadd2" in s and "myadd1" not in s
+
+    a.requires_grad_()
+
+    res = cfn(a, b)
+
+    s = str(thunder.last_traces(cfn)[0][-1])
+    assert "myadd2" in s and "myadd1" not in s
+
+    a.requires_grad_()
 
     deregister_executor(myex)

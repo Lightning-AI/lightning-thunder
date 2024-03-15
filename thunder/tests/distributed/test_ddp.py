@@ -488,8 +488,11 @@ class CompileDDPTest(DataParallelTestCase):
         result_fwd_trc, result_bwd_trc = rematerialize_all_gather(fwd_trc, bwd_trc)
 
         # check the return statement in forward trace is updated
-        sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        unshard_param_names = ("t5", "t16")
+        # TODO: this is not stable w.r.t. details of the processing, the sharded correspond to ("t_net1_weight", "t_net2_weight")
+        #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
+        #       If you fix this to be dynamically discerned, you'll be my hero.
+        sharded_param_names = ("t3", "t4")
+        unshard_param_names = ("t10", "t21")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
