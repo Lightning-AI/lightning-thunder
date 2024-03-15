@@ -72,14 +72,14 @@ RUN \
     rm -rf /var/lib/apt/lists/* \
 
 RUN \
+    echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
+    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+    # there is missing cudnn for 12.1 so use 12.2 instead
+    CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
+    CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
+    CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" ; \
     # This may be needed only for building from source, otherwise PyTorch wheels include it
     if [ "${TORCH_INSTALL}" == "source" ]; then \
-        echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
-        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-        # there is missing cudnn for 12.1 so use 12.2 instead
-        CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
-        CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
-        CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \
         apt update -qq --fix-missing && \
         apt upgrade -y --allow-change-held-packages \
           libcudnn${CUDNN_BASE_VER}=${CUDNN_PACKAGE_VER} \
