@@ -24,6 +24,7 @@ ARG CUDNN_FRONTEND_CHECKOUT="v1.1.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
+ARG TORCH_INSTALL="stable"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -71,6 +72,8 @@ RUN \
     rm -rf /root/.cache && \
     rm -rf /var/lib/apt/lists/* \
 
+ARG TORCH_INSTALL
+
 RUN \
     echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
@@ -96,7 +99,7 @@ ENV \
     TORCH_CUDA_ARCH_LIST="8.0" \
     CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
-ARG TORCH_INSTALL="wheel"
+ARG TORCH_INSTALL
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
@@ -130,7 +133,7 @@ RUN \
     pip install -r requirements.txt && \
     python setup.py install --no-test --no-benchmark && \
     cd .. && \
-    rm -rf Fuser \
+    rm -rf Fuser
 
 RUN \
     # building cudnn-frontend from source
