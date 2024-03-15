@@ -19,7 +19,7 @@ ARG IMAGE_TYPE="devel"
 
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
-ARG CUDNN_VERSION="8.9.7.29-1"
+ARG CUDNN_VERSION="8.9.7.29"
 ARG CUDNN_FRONTEND_CHECKOUT="v1.1.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
@@ -74,22 +74,9 @@ RUN \
 
 ARG TORCH_INSTALL
 
-RUN \
-    echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
-    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    # there is missing cudnn for 12.1 so use 12.2 instead
-    CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
-    CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
-    CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" ; \
-    # This may be needed only for building from source, otherwise PyTorch wheels include it
-    if [ "${TORCH_INSTALL}" == "source" ]; then \
-        apt update -qq --fix-missing && \
-        apt upgrade -y --allow-change-held-packages \
-          libcudnn${CUDNN_BASE_VER}=${CUDNN_PACKAGE_VER} \
-          libcudnn${CUDNN_BASE_VER}-dev=${CUDNN_PACKAGE_VER} \
-        && \
-        rm -rf /root/.cache && \
-        rm -rf /var/lib/apt/lists/* ; \
+# This may be needed only for building from source, otherwise PyTorch wheels include it
+RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
+        pip install "nvidia-cudnn-cu${CUDA_VERSION%.*.*}==${CUDNN_VERSION}" ; \
     fi
 
 COPY requirements/ requirements/
