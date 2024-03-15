@@ -6044,7 +6044,10 @@ def _call_dispatch(
                 return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
     # (2) Handles lookasides
-    lookaside_fn: None | Callable = compilectx.lookaside(fn, *args, **kwargs)
+    lookaside_fn: INTERPRETER_SIGNALS | None | Callable = compilectx.lookaside(fn, *args, **kwargs)
+    if lookaside_fn is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        # Happens with sharp edges, for example
+        return lookaside_fn
     if lookaside_fn:
         runtimectx.record_lookaside(lookaside_fn)
         res = lookaside_fn(*args, **kwargs)

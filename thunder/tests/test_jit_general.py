@@ -23,6 +23,7 @@ import thunder.torch as ltorch
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
+from thunder.core.jit_ext import JITSharpEdgeError
 
 
 #
@@ -47,6 +48,25 @@ def skipif_not_pytorch_2_1(f):
         compare_version("torch", operator.lt, "2.1.0", use_base_version=True),
         reason=f"requires PyTorch >= 2.1, got {torch.__version__=}",
     )(f)
+
+
+def test_jitting_through_opaque_torch_symbols_sharp_edge():
+    def no_sharp_edge(x):
+        # randn_like is in ltorch
+        return torch.randn_like(x)
+
+    def sharp_edge(x):
+        # rand_like is not yet in ltroch
+        return torch.rand_like(x)
+
+    x = torch.rand(1)
+
+    jno_sharp_edge = thunder.jit(no_sharp_edge, sharp_edges="error")
+    jno_sharp_edge(x)
+
+    jsharp_edge = thunder.jit(sharp_edge, sharp_edges="error")
+    with pytest.raises(JITSharpEdgeError):
+        jsharp_edge(x)
 
 
 def test_binary_add_tensors():

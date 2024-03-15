@@ -884,13 +884,19 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         lookaside = default_lookaside(fn, *args, **kwargs)
 
     if lookaside is None:
-        if is_opaque(fn) and fn not in _safe_functions:
+
+        def is_from_torch(fn):
+            return hasattr(fn, "__module__") and fn.__module__ and fn.__module__.startswith("torch")
+
+        if is_opaque(fn) and is_from_torch(fn):
+            # Torch functions have __name__ defined
+            fn_name = f"{fn.__module__}.{fn.__name__}"
+
+            # For now, only torch-like opaque functions are sharp edges
             return _general_jit_sharp_edge(
-                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting.",
+                f"Trying to call function {fn_name}, but it's unsupported. Please file an issue requesting support.",
                 None,
             )
-
-        return None
 
     return lookaside
 
@@ -975,24 +981,7 @@ def _apply_trace_proxy_rename(
 def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     _maybe_update_proxy_name(orig_value, name)
 
-    # Allows loading the torch module
-    value = orig_value
-    if (
-        value is torch
-        or (value is torch.nn.modules.module._global_backward_pre_hooks)
-        or (value is torch.nn.modules.module._global_backward_hooks)
-        or (value is torch.nn.modules.module._global_forward_hooks)
-        or (value is torch.nn.modules.module._global_forward_pre_hooks)
-        or (value is torch.nn.functional)
-        or (value is thunder.core.proxies.get_langctx)
-        or (value is prop_lookaside_helper)
-    ):
-        return value
-
-    return _general_jit_sharp_edge(
-        f"Tried to loading global {name}. Global support is limited.",
-        value,
-    )
+    return orig_value
 
 
 _safe_provenance_inst = {
