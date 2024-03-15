@@ -1237,6 +1237,11 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 
 
 def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
+    # If executor specific `aug_fwd_rule` exists then we will use that,
+    # so we return `None` here.
+    if get_executor_specific_aug_fwd_rule(bsym):
+        return None
+
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -3317,11 +3322,11 @@ def uniform_backward(primal, minval, maxval, g):
 nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
 
 
-def get_executor_specific_aug_fwd_rule(symbol) -> RuleInfo | None:
+def get_executor_specific_aug_fwd_rule(symbol: BoundSymbol) -> RuleInfo | None:
     """Get executor specific augmented forward rule.
 
     Args:
-        symbol (prims.Symbol): Symbol to get the rule for.
+        symbol (BoundSymbol): BoundSymbol to get the rule for.
 
     Returns:
         RuleInfo: Rule info for the symbol.
