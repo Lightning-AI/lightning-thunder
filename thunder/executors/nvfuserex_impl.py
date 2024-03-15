@@ -1091,7 +1091,7 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    if nv_version < LooseVersion("0.1.3"):
+    if nv_version < LooseVersion("0.1.7"):
         return False
 
     # Validates tensors and concatenated dimension lengths

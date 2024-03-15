@@ -2802,12 +2802,9 @@ cat_opinfo = OpInfo(
             active_if=(LooseVersion(torch.__version__) < "2.2.0"),
             executors=("torchcompile",),
         ),
-        # cat op was introduced in nvFuser 0.0.5, but was disabled because of
-        # this failing test
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1071
         DecorateInfo(
             pytest.mark.xfail(strict=True),
-            active_if=(nvfuser_version < "0.1.3"),
+            active_if=(nvfuser_version < "0.1.7"),
             executors=("nvFuser",),
         ),
     ),
