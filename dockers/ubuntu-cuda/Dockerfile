@@ -98,6 +98,7 @@ ENV \
     CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
 ARG TORCH_INSTALL="wheel"
+ENV TORCH_USE_CUDA_DSA=1
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
