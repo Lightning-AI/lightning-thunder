@@ -15,6 +15,7 @@ from looseversion import LooseVersion
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
     resolve_interpretation_option,
+    resolve_sharp_edges_option,
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
 )
@@ -342,6 +343,10 @@ def jit(
 
     if additional_transforms is None:
         additional_transforms = []
+
+    # Make sharp_edges == warn default if not supplied and if in the general jit
+    if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
+        sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(

@@ -170,16 +170,16 @@ def resolve_sharp_edges_option(x: Any, /) -> SHARP_EDGES_OPTIONS:
     elif isinstance(x, str):
         seo = _str_to_sharp_edges_option(x)
 
-    if seo is None:
-        _unknown_option("sharp edges", _str_to_sharp_edges_options_map.keys(), "allow", x)
+        if seo is None:
+            _unknown_option("sharp edges", _str_to_sharp_edges_options_map.keys(), "allow", x)
 
-    if seo is SHARP_EDGES_OPTIONS.WARN:
-        warnings.warn(
-            f"The 'warn' sharp edges option is experimental and still in development. It may not work as expected."
-        )
-    if seo is SHARP_EDGES_OPTIONS.ERROR:
-        warnings.warn(
-            f"The 'error' sharp edges option is experimental and still in development. It may not work as expected."
-        )
+        if seo is SHARP_EDGES_OPTIONS.WARN:
+            warnings.warn(
+                f"The 'warn' sharp edges option is experimental and still in development. It may not work as expected."
+            )
+        if seo is SHARP_EDGES_OPTIONS.ERROR:
+            warnings.warn(
+                f"The 'error' sharp edges option is experimental and still in development. It may not work as expected."
+            )
 
     return seo

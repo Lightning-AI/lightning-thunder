@@ -889,6 +889,9 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             return hasattr(fn, "__module__") and fn.__module__ and fn.__module__.startswith("torch")
 
         if is_opaque(fn) and is_from_torch(fn):
+            if fn.__module__.startswith("torch._C"):
+                return lookaside
+
             # Torch functions have __name__ defined
             fn_name = f"{fn.__module__}.{fn.__name__}"
 
