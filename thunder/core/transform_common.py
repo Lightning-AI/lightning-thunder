@@ -134,9 +134,9 @@ def replace_redundant_inputs(
     return new_bsyms
 
 
-# TODO(crcrpar): Implement a mechanism to keep track of supported ops that cannot be CSE'd.
-# For example, `uniform`, `dropout`, and `scaled_dot_product_attention`.
-# See: https://github.com/Lightning-AI/lightning-thunder/issues/671
+# These are ops that are not referentially transparent. We need to treat such
+# ops specially when optimizing; for example, CSE cannot coalesce two calls
+# into one for ops in this set.
 NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
     prims.PrimIDs.UNIFORM,
     "torch.uniform",  # this doesn't exist as of the PR

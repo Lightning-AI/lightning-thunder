@@ -315,7 +315,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_rematerialization(executor, device, _):
-    # Unit test for https://github.com/Lightning-AI/lightning-thunder/issues/2046
+    # Unit test for "llama2.c example failed with bookend disabled."
     from thunder.tests.llama2_model import Transformer, ModelArgs
     from thunder.core.pytree import tree_flatten
 
@@ -614,8 +614,7 @@ def test_cse_issue1789(executor, device, _):
     dtypes=NOTHING,
     executors=(
         nvFuserExecutor,
-        # NOTE torch executor does not have bookend optimization.
-        # See comment: https://github.com/Lightning-AI/lightning-thunder/issues/571#issuecomment-1610778432
+        # NOTE We might want to do transpose bookend optimization for other executors than nvFuser.
     ),
 )
 def test_bookend_meta_optimization(executor, device, _):

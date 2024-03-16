@@ -3597,7 +3597,7 @@ def _check_exc_match_handler(inst: dis.Instruction, /, stack: InterpreterStack, 
     stack.append(isinstance(left, right))
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1523
+# TODO See issue "Fix COMPARE_OP handler"
 # https://docs.python.org/3.10/library/dis.html#opcode-COMPARE_OP
 @register_opcode_handler("COMPARE_OP")
 def _compare_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
@@ -4212,8 +4212,6 @@ def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_BACKWARD_NO_INTERRUPT
-# TODO: we currently ignore the NO_INTERRUPT part,
-#       https://github.com/Lightning-AI/lightning-thunder/issues/1631
 @register_opcode_handler("JUMP_BACKWARD_NO_INTERRUPT", min_ver=(3, 11))
 def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     assert type(inst.arg) is int
@@ -4490,7 +4488,6 @@ def _load_global_handler(
     return check_and_append(stack, obj)
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1525
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_METHOD
 @register_opcode_handler("LOAD_METHOD")
 def _load_method_handler(
@@ -4524,7 +4521,6 @@ def _load_method_handler(
         stack.append(meth)
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1661
 # https://docs.python.org/3.11/library/dis.html#opcode-LOAD_NAME
 @register_opcode_handler("LOAD_NAME")
 def _load_name_handler(
@@ -4567,7 +4563,6 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwar
     frame.localsplus[i] = c
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1526
 # https://docs.python.org/3.10/library/dis.html#opcode-MAKE_FUNCTION
 @register_opcode_handler("MAKE_FUNCTION")
 def _make_function_handler(
@@ -5077,7 +5072,6 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
     return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1660
 # https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
 @register_opcode_handler("PRINT_EXPR")
 def _print_expr_handler(
@@ -5350,7 +5344,6 @@ def _store_attr_handler(
         return res
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/1552
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_DEREF
 @register_opcode_handler("STORE_DEREF")
 def _store_deref_handler(
@@ -5651,7 +5644,7 @@ def _send_handler(
 ) -> None | int | INTERPRETER_SIGNALS:
     # SEND(delta)
     # Equivalent to STACK[-1] = STACK[-2].send(STACK[-1]). Used in yield from and await statements.
-    # If the call raises StopIteration, pop the top value from the stack, push the exception’s value attribute, and increment the bytecode counter by delta.
+    # If the call raises StopIteration, pop the top value from the stack, push the exception's value attribute, and increment the bytecode counter by delta.
     assert isinstance(inst.arg, int)
     send_value = stack.pop()
     generator = stack[-1]
@@ -6333,7 +6326,7 @@ def _run_frame(
                             assert len(frame.interpreter_stack) >= try_block.level + 3
                             with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 del frame.interpreter_stack[try_block.level + 3 :]
-                                exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
+                                exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
                                 exc_value = frame.interpreter_stack.pop()
                                 exc_traceback = frame.interpreter_stack.pop()
                             if exc_value != None:

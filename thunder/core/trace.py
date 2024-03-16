@@ -19,7 +19,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.codeutils import ContextObject
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/327
+# TODO see issue "Improve TraceProvenance"
 #   Make this more interesting / printer better -- maybe let
 #   practitioners acquire the pass callable so they can replicate the pass?
 # This class is intended to describe how the trace was constructed
@@ -36,7 +36,7 @@ class TraceProvenance:
 
 
 # TODO Should traces be BoundSymbols?
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/323
+# TODO issue "Create a mechanism for freezing TraceCtx objects"
 #   Add validation that a constant is never assigned to / reassigned
 #   Possibly separate the ideas of a trace -- a series of scopes containing bound symbols --
 #   and a TraceCtx, which can produce new traces
@@ -303,7 +303,7 @@ class TraceCtx:
         return import_ctx
 
     # TODO Account for multi-line signatures
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/324
+    # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
     def python(self, *, print_depth: int = 1) -> str:
@@ -395,7 +395,7 @@ class TraceCtx:
             reset_tracectx(token)
 
     # Returns a Python callable that executes the trace
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/323
+    # TODO issue "Create a mechanism for freezing TraceCtx objects"
     #   Create a mechanism for freezing traces and cache the compilation
     def python_callable(self, *, global_dicts: None | dict = None) -> Callable:
         python_str: str

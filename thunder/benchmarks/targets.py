@@ -289,7 +289,9 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
-# To compare with PyTorch and torchcompile
+# To compare with PyTorch and raw torch.compile (i.e. not through thunder). The
+# latter can help us isolate whether it's something we need to fix ourself or
+# report upstream.
 torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
 torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
 
@@ -432,7 +434,8 @@ def test_nanogpt_gelu_grad(benchmark, executor: Callable):
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
+#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
+#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     fwd_executors,
@@ -454,7 +457,8 @@ def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
+#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
+#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     (grad_executors + apex_grad_executors),
@@ -476,7 +480,8 @@ def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
+#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
+#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     (fwd_executors + cudnn_layernorm_fwd_executors),

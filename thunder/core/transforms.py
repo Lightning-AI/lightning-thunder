@@ -540,7 +540,7 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
 #
 
 #
-# Functions related to functionalizing TOMs
+# Functions related to functionalizing ThunderOptimizedModules
 #
 
 
@@ -1583,7 +1583,7 @@ def grad(
 
         return gradtrc
 
-    # NOTE This is a kludge to indicate that we shouldn't support PyTorch's autograd because
+    # NOTE This is a kludge to indicate that we shouldn't use PyTorch's autograd because
     #   we're using our own autograd transform
     cfn._using_grad_transform = True
 
@@ -1850,7 +1850,6 @@ def broadcast_in_dim_vmap(
 ) -> BatchedValue:
     bdim = a.batch_dim
     # TODO: remove this when shape and broadcast_dimensions become mandatory kwargs
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/181
     shape, _ = safe_zip(*shape)
     if len(broadcast_dimensions) > 0:
         broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
@@ -2167,7 +2166,6 @@ def broadcast_in_dim_jvp(a: JVPDual, shape: tuple[JVPDual, ...], broadcast_dimen
     x, xd = a
     # TODO: shape and broadcast_dimensions should be tuples of ints
     # but for now it's a tuple of JVPDuals
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/181
     if len(shape) > 0 and isinstance(shape[0], JVPDual):
         shape, _ = safe_zip(*shape)
     if len(broadcast_dimensions) > 0 and isinstance(broadcast_dimensions[0], JVPDual):
@@ -3563,7 +3561,6 @@ def backward_pass(forward_env, trace, init_cotangents):
         if symbol.sym.id == "torch.nn.functional.dropout" and not symbol.subsymbols:
             # We can skip the pullback if the dropout probability is 0.0
             # Assuming that the dropout symbol has the same output and argument
-            # https://github.com/Lightning-AI/lightning-thunder/issues/906
             assert symbol.output.name == symbol.args[0].name, "Dropout symbol has a different output and argument"
             if symbol.args[1] == 0.0 or symbol.args[2] is False:
                 continue
@@ -3642,7 +3639,7 @@ def backward_pass(forward_env, trace, init_cotangents):
 
             result = tuple(next(iter_result) if is_differentiable(arg) else None for arg in symbol.args)
 
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
+        # See "Backward impl for ops of the type Sequence[TensorProxy], ... -> ... results in None grads."
         # This is a temporary workaround.
         if symbol.sym.id in (prims.PrimIDs.CAT, "torch.cat", "torch.stack"):
             safe_map_flat(put_grad, symbol.args, result)
@@ -3679,7 +3676,8 @@ def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwarg
 
 
 # TODO: Can't use a Symbol here because mixed executor sybsymbols seem to be
-# unsupported. See https://github.com/Lightning-AI/lightning-thunder/issues/1308
+# unsupported. See issue "Could not find an executor for bound symbol when its subsymbols
+# are not fully supported by a single executor"
 vjp_call = partial(
     vjp_call_metafunc, False
 )  # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
@@ -3804,7 +3802,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
 
 # NOTE: Returning namedtuples from compiled functions doesn't work. See:
-# https://github.com/Lightning-AI/lightning-thunder/issues/881
+# "Allow returning namedtuples from compiled functions"
 # Note [Grad forward output spec]
 # If it did work it would be nice to use this namedtuple
 # instead of the plain tuple or dict that we're using now.

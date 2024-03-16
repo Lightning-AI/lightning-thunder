@@ -29,7 +29,8 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     from thunder.tests.opinfos import SampleInput
 
     # TODO: cudnnex seems to produce large mismatches against reference when tensor initialized from the wider default range of [-9,9]
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1871
+    # See issue "cuDNN SDPA backward might return NaNs for inputs with absolute
+    # value more than certain threshold"
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-0.5, high=0.5)
 
     n_head = 2
@@ -87,10 +88,6 @@ grad_sdpa_cudnn_opinfo = OpInfo(
 )
 
 
-# WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
-# Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880
-# NOTE This test modifies the global executor map, so it technically should not
-# be run in parallel with other tests
 @requiresCUDA
 def test_cudnn_sdpa():
     # expect sdpa to fail for 8.9.2 and below
@@ -157,8 +154,6 @@ def snippet_torch_consistency(op, torch_op, sample):
     assert_close(thunder_result, torch_result, equal_nan=True, atol=0.0625, rtol=5e-2)
 
 
-# WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
-# Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880
 # TODO Make it easier for executors to write tests like this, including writing them out-of-tree
 # TODO The executor passed below is just a "dummy" that actually gets ignored -- we should provide
 #   a way to use decorators like @ops without a particular executor

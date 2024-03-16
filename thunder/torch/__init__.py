@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import opt_einsum
 
-# Initialies the language context
+# Initializes the language context
 from thunder.torch.langctx import register_method
 
 import thunder.clang as clang
@@ -225,8 +225,9 @@ def _parse_to_device_and_dtype(
         dtype = to_dtype(dtype)
     # Case 1 -- tensor first
     else:
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/317
-        #   It'd be nice to write torch.Tensor here instead of TensorProxy
+        # It'd be nice to write torch.Tensor here instead of TensorProxy.
+        # See issue "Translate isinstance(a, torch.Tensor) calls so that
+        # TensorProxies can pass as torch.Tensors"
         utils.check_type(tensor_dtype_or_device, TensorProxy)
         device_ = tensor_dtype_or_device.device if device is None else to_device(device)
         dtype_ = tensor_dtype_or_device.true_dtype if dtype is None else to_dtype(dtype)
@@ -414,7 +415,8 @@ def multinomial(
 ) -> TensorLike:
     utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
 
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/2258
+    # See issue "randomness: enable PyTorch generators for operations like
+    # multinomial"
     utils.check(
         generator is None, lambda: f"multinomial does not yet support specifying a generator", NotImplementedError
     )
@@ -431,7 +433,7 @@ def multinomial(
 
 
 # TODO Maybe update this to return an offset of how far to advance the seed to acquire new values
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1360
+# See issue "Maybe return offset from thunder.torch.uniform_philox"
 @torchsymbol(is_method=False, id="torch.uniform_philox")
 def uniform_philox(
     shape: Sequence[int],
@@ -1390,9 +1392,9 @@ def zeta(a, b, /):
 
 # For calculate op1(a, op2(value, op2(b, c))) by promoting all input tensors at once
 # NOTE use this explicit type promotion because a direct combination of add/mul will have a redundant cast,
-# which may lead to accuracy problems, see:
-# https://github.com/Lightning-AI/lightning-thunder/pull/1155#discussion_r1342653591 for details
-# TODO remove this when the optimization pass is ready: https://github.com/Lightning-AI/lightning-thunder/issues/1178
+# which may lead to accuracy problems.
+# TODO remove after issue "Redundant cast removal could be performed through metadata-only
+# operations, like broadcasting" is resolved
 def addcmul_addcdiv_helper(
     a, b, c, op1, op2, *, value=None, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
 ):
@@ -2868,8 +2870,9 @@ def _avg_pool_helper(
     # Dimensionality of the kernel.
     kernel_numel = reduce(operator.mul, kernel_size, 1)
 
-    # nn.functional.avg_pool does not have `divisor_override` for some reason.
-    # TODO: seems like an oversight from PyTorch and/or 1d case is very niche.
+    # nn.functional.avg_pool does not have `divisor_override`.
+    # TODO: look into PyTorch side; is this behavior deliberate? Could be that
+    # 1D case is niche.
     # If needed, handle it with checks and transforms. For now unconditionally
     # override value with kernel_numel.
     if divisor_override is None or dim == 1:
@@ -3031,7 +3034,8 @@ def _dropout_helper(a, p):
 # TODO Add annotations, make not a prim
 # The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward
 # primitive. Executors can override the primitive using internal implementations.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/660
+# See issue "Cross_entropy is decomposed for backward but the decomposition is
+# not fusible currently"
 @torchsymbol("cross_entropy_backward", id="cross_entropy_backward", is_prim=True)
 def cross_entropy_backward(g, a, /, target, weight, reduction, ignore_index, label_smoothing):
     return TensorProxy(like=g, shape=a.shape)
@@ -3599,7 +3603,8 @@ def log_softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -
 # TODO Update annotations and consider moving to torchex
 # We improve the efficiency of cross_entropy backward decomposition by adding the log_softmax_backward
 # and nll_loss_backward primitives. Executors can override the primitives using internal implementations.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/660
+# See issue "Cross_entropy is decomposed for backward but the decomposition is
+# not fusible currently"
 @torchsymbol("log_softmax_backward", id="log_softmax_backward")
 def log_softmax_backward(g: TensorProxy, /, output: TensorProxy, dim: int, dtype: dtypeLike) -> TensorLike:
     dtype: dtypes.dtype = to_dtype(dtype)
@@ -3845,7 +3850,7 @@ def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> Te
 if torch.distributed.is_available():
     DistributedReduceOpLike = str | torch.distributed.ReduceOp | dist_prims.DistributedReduceOps
 
-    # string name, PyTorch enum value, lightning.compile enum value
+    # string name, PyTorch enum value, thunder.jit enum value
     _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),)
 
     def to_thunder_distributed_reduce_op(op: DistributedReduceOpLike | None):

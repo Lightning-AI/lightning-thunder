@@ -26,7 +26,7 @@ from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/226
+    # See issue "Support closures of torch.Tensor"
     # TODO: AttributeError: 'Tensor' object has no attribute 'true_dtype'
     "masked_fill",
     # TODO: RuntimeError: Expected index=tensor([2, 3, 2, 0, 3, 1, 0, 2],
@@ -635,7 +635,8 @@ def test_requires_grad(executor, device, dtype):
     dtypes=NOTHING,
 )
 def test_convert_element_type_with_float(executor, device, _):
-    # Verifies a fix for https://github.com/Lightning-AI/lightning-thunder/issues/537
+    # Verifies the fix for "grad transform hits error: AttributeError: 'float'
+    # object has no attribute 'dtype'"
     from thunder.core.transforms import value_and_grad
 
     a = make_tensor([5], dtype=torch.float32, device=device)
@@ -708,7 +709,9 @@ def test_multiple_output_vjp(executor, device, _):
     assert trace.output[0] == trace.bound_symbols[4].output
 
 
-# TODO: Fix flaky test https://github.com/Lightning-AI/lightning-thunder/issues/1919
+# TODO: see issue
+# "thunder/tests/test_grad.py::test_torch_autograd_saved_tensors_memory_release
+# is flaky"
 @pytest.mark.xfail(strict=False, reason="This test is flaky")
 @requiresCUDA
 def test_torch_autograd_saved_tensors_memory_release():
@@ -906,8 +909,7 @@ def test_torch_autograd_function_single_input(executor, device, _):
 def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
     from thunder.executors.torch_autograd import thunder_backward
 
-    # Borrowed from
-    # https://github.com/Lightning-AI/lightning-thunder/blob/3401475ee47d5a732b6b4d5dcbd88afcd9bed81d/thunder/tests/test_core.py#L117
+    # Borrowed from `test_crazy_collections_in_and_out`.
     def foo(a, b, c, *, ka, kb, kc):
         d = {
             5: 2,

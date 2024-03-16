@@ -350,7 +350,7 @@ def test_add_numbers():
     jfoo = thunder.jit(foo)
 
     # TODO Add test for bool
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1990
+    # see issue "Binary addition on booleans should promote to an integer"
     cases = (
         (2, 3),
         (2.1, 3.4),
@@ -397,7 +397,7 @@ def test_binary_add_numbers():
     jfoo = thunder.jit(foo)
 
     # TODO Add test for bool
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1990
+    # see issue "Binary addition on booleans should promote to an integer"
     cases = (
         (2, 3),
         (2.1, 3.4),
@@ -414,7 +414,7 @@ def test_binary_add_numbers():
 _test_add_global_global = 2
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1935", raises=BaseException)
+@pytest.mark.xfail(reason='"disallow global reads and writes (temporarily)"', raises=BaseException)
 def test_global_fails():
     def foo():
         return _test_add_global_global
@@ -425,7 +425,10 @@ def test_global_fails():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1936", raises=BaseException)
+@pytest.mark.xfail(
+    reason='"Raise an error when a program attempts to write to a nonlocal that was captured from outside the interpreter"',
+    raises=BaseException,
+)
 def test_nonlocal_outside_interpreter_fails():
     def foo():
         x = 3

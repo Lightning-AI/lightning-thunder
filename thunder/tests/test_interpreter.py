@@ -1010,7 +1010,8 @@ def test_reduce(jit):
     # }
 
 
-# See https://github.com/Lightning-AI/lightning-thunder/issues/2078
+# Test for issue "jit: passing jitted functions as arguments to jitted
+# functions fails."
 def test_reduce_jitted_reduce_fn(jit):
     import functools
 
@@ -1482,7 +1483,7 @@ def test_match_fallthrough(jit):
     assert jfoo() is True
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/1824")
+@pytest.mark.xfail(reason='"exec() and eval() lookaside ignores locals()"')
 def test_exec_import_star(jit):
     # Assert that we can actually generate the instruction
     to_exec = "from itertools import *"
@@ -2606,8 +2607,8 @@ def test_displayhook(jit):
     import io
     import code
 
-    # TODO: Implement the lookaside for exec(). Under he hood, `code.InteractiveInterpreter().runsource('5;6;7')``
-    # just compiles the string and calls exec(), plus a little bit of irrelevant error handling.
+    # TODO: Implement the lookaside for exec(). Under the hood, `code.InteractiveInterpreter().runsource('5;6;7')``
+    # just compiles the string and calls exec(), plus a little bit of error handling.
     # I'm not entirely convinced that the PRINT_EVAL is going through our system at the moment, but
     # it for sure would with an exec() lookaside. I'm also not sure what makes InteractiveInterpreter
     # interactive. It isn't *actually* in interactive mode. So, why is PRINT_EXPR in the interpreted
@@ -2616,7 +2617,7 @@ def test_displayhook(jit):
     py_redirect = io.StringIO()
     with redirect_stdout(py_redirect):
         # Avoid clobbering this interpreter's display hook, and ensure it's interactive.
-        # Why is this necessary? I'm not sure.
+        # Why is this necessary?
         interpreter = code.InteractiveInterpreter()
 
         def smt(s):

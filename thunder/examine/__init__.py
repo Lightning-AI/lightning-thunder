@@ -43,7 +43,7 @@ _method_name_remap_map = {
 
 
 # TODO Maybe have this print additional information and return more metadata?
-# TODO Accept kwargs for compile (like langctx)
+# TODO Accept kwargs for jit (like langctx)
 # TODO Add profiling (or profiling option) to determine if we have a slowdown
 # TODO If an error occurs, try to minify the program to produce a smaller sample to reproduce the error
 def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
@@ -141,7 +141,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
 
         return
 
-    # Step 3 Attempts to compile the function using lightning.compile
+    # Step 3 Attempts to compile the function using thunder.jit
     try:
         cfn = thunder.jit(fn)
     except Exception as e:
@@ -151,7 +151,7 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
         )
         raise e
 
-    # Step 4 Attemps to execute the function using lightning.compile
+    # Step 4 Attempt to execute the function using thunder.jit
     lc_result: Any
     try:
         lc_result = cfn(*args, **kwargs)

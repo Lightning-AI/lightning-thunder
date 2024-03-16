@@ -49,7 +49,8 @@ def apex_available() -> bool:
 
 
 # TODO Consider performing the reduction as part of a traceable epilogue
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1357
+#   See "Update the apex cross entropy executor to put its reduction in a
+#        traceable epilogue"
 # NOTE Apex's cross entropy doesn't accept ignore_index >= 0, or the weight, size_average, or reduce parameters
 def _apex_cross_entropy_impl(
     a: torch.Tensor,
@@ -196,12 +197,10 @@ def _cross_entropy_checker(
     return True
 
 
-# Check out
-# https://github.com/Lightning-AI/lightning-thunder/blob/main/dev_tutorials/thunder-add-vjp-rule.md
-# for a tutorial on how to add a VJP rule for any Symbol. We use our new
-# primitives to register a VJP rule for torch.nn.functional.cross_entropy. This
-# function is registered as the augmented forward rule for
-# torch.nn.functional.cross_entropy below
+# Check out the 'add vjp rule' dev tutorial on how to add a VJP rule for any
+# Symbol. We use our new primitives to register a VJP rule for
+# torch.nn.functional.cross_entropy. This function is registered as the
+# augmented forward rule for torch.nn.functional.cross_entropy below
 def apex_cross_entropy_forward_rule(
     a,
     target,

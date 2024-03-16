@@ -52,7 +52,6 @@ def sort_data_parallel_syncs(primal_trace):
 
 
 # TODO: Currently prefer the most memory-efficient way for ZeRO3,
-# https://github.com/Lightning-AI/lightning-thunder/issues/1925
 # Need a strategy to balance the efficiency
 # and memory usage in the future
 def sort_waits_for_zero3(execution_trace):

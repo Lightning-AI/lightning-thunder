@@ -118,7 +118,6 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    :caption: Experimental dev tutorials
 
    notebooks/dev_tutorials/extend
-   notebooks/dev_tutorials/patterns
 
 ..
    TODO RC1: update notebooks

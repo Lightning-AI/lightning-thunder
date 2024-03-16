@@ -46,10 +46,8 @@ def _prepare_extras(
 about = _load_py_module("__about__.py")
 
 # https://packaging.python.org/discussions/install-requires-vs-requirements /
-# keep the meta-data here for simplicity in reading this file... it's not obvious
-# what happens and to non-engineers they won't know to look in init ...
-# the goal of the project is simplicity for researchers, don't want to add too much
-# engineer specific practices
+# keep the meta-data here for simplicity in reading this file. it's not obvious
+# what happens and to non-engineers they won't know to look in init.
 setup(
     name="lightning-thunder",
     version=about.__version__,

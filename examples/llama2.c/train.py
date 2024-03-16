@@ -70,7 +70,6 @@ decay_lr = True  # whether to decay the learning rate
 warmup_iters = 1000  # how many steps to warm up for
 # system
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
-# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
 # dtype = "bfloat16"  # float32|bfloat16|float16
 compile = "thunder"  # eager|torch|thunder
 # -----------------------------------------------------------------------------
@@ -118,12 +117,11 @@ if master_process:
 
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
-torch.manual_seed(1337 + seed_offset)
+torch.manual_seed(42 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
 device_type = "cuda" if "cuda" in device else "cpu"  # for later use in torch.autocast
 # note: float16 data type will automatically use a GradScaler
-# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
 # ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
 ctx = nullcontext() # torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
@@ -313,7 +311,7 @@ while True:
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but
-            # I really dislike that this bloats the code and forces us to repeat code
+            # this forces us to repeat code.
             # looking at the source of that context manager, it just toggles this variable
             train_model.require_backward_grad_sync = micro_step == gradient_accumulation_steps - 1
         with ctx:

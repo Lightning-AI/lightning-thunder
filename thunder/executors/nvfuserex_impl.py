@@ -206,7 +206,7 @@ def create_fd(
     # NOTE nvFuser's default max length is 1024 operations at the time of this writing
     #   This arbitrarily increases it to 9999
     # TODO Review splititng very large fusions or removing the max length restriction completely
-    #   See https://github.com/Lightning-AI/lightning-thunder/issues/901
+    #   See "Very large nvFuser fusions hit max_length"
     fd = FusionDefinition(max_length=9999)
     with fd:
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
@@ -524,8 +524,7 @@ class nvFuserExecutor(FusionExecutor):
     def __init__(self):
         super().__init__("nvfuser", version=nvfuser.version())
 
-        # TODO: Replace this with a query to current CompileData after
-        # https://github.com/Lightning-AI/lightning-thunder/pull/1517 is merged
+        # TODO: Replace this with a query to a compile option
         self._use_rematerialization = True
 
         fuel_str = os.getenv("NVFUSER_OPTIMIZATION_FUEL")
@@ -762,8 +761,6 @@ class nvFuserExecutor(FusionExecutor):
         # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
         # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
         #   ex. device_put to a CPU device from a CUDA device
-        #   (mruberry) I don't know if nvFuser even attempts to fuse any operation that can go
-        #       cross-device today
         def _should_fuse(a: Node, b: Node):
             def _can_fuse_node(n: Node):
                 # if already merged, then node can be fused
@@ -842,8 +839,7 @@ instantiated) this heuristic actually leads to worse code.
 
         # Some of the operations might be better placed with its consumers (for
         # example residual connection in transformer block). This pass moves
-        # them to the consumer. See
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1520
+        # them to the consumer.
         if self._use_rematerialization:
             fusedtrace = rematerialize(fusedtrace)
 
@@ -1091,8 +1087,8 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    # nvFuser cat fusion is currently disabled due to
-    #   https://github.com/Lightning-AI/lightning-thunder/issues/1071
+    # nvFuser cat fusion is currently disabled due to issue:
+    #   "nvFuser doesn't support cating with an empty tensor"
     return False
 
     # Validates tensors and concatenated dimension lengths
@@ -1156,7 +1152,7 @@ def _pad_check(a: TensorProxy, padding_value: Number, padding_config: tuple[int,
 #   nvFuser's pad op requires pad_widths to be a sequence of Python numbers
 #   (lo_n, hi_n, lo_{n-1}, hi_{n-1}, ...) where dimensions are counted in reverse
 #   as shown, and dilation is not supported.
-#   This is in constrant to lightning.compile's pad primitive, which specifies padding
+#   This is in constrast to thunder.jit's pad primitive, which specifies padding
 #   and dilation as an  ndim-length list of (lo, hi, dilation) triples.
 # NOTE padding_value must be an nvConstant (or nvScalar?)
 def pad(
@@ -1262,7 +1258,8 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 # register_supported(PrimIDs.TAKE, take, _take_check)
 
 # TAKE_ALONG_AXIS is currently disabled
-# See https://github.com/NVIDIA/Fuser/issues/458
+# There was an nvFuser bug that prevented this which is now fixed; we should
+# investigate re-enabling take_along_axis.
 # # TODO Check that the nvFuser version is >= 0.0.10 when this operator was added
 # def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 #     nv_a = getnv(a, fd, lc_to_nv_map)
@@ -1714,12 +1711,6 @@ register_supported(PrimIDs.BITWISE_XOR, bitwise_xor, _elementwise_binary_check)
 def div(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
-
-    # TODO nvFuser sometimes generates an innacurate result when dividing by a number
-    #   Remove this workaround once the issue is fixed
-    #   See: https://github.com/NVIDIA/Fuser/issues/160
-    if isinstance(b, Number):
-        return fd.ops.mul(nva, fd.ops.reciprocal(nvb))
 
     # NOTE It's currently significantly faster for nvFuser to multiply the reciprocal than divide
     # return fd.ops.div(nva, nvb)

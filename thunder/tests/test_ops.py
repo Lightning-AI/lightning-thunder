@@ -37,7 +37,7 @@ def snippet_torch_consistency(op, torch_op, sample, comp):
     thunder_result = op(*sample.args, **sample.kwargs)
     torch_result = torch_op(*sample.args, **sample.kwargs)
 
-    # TODO Review how lightning.compile returns Exception information
+    # TODO Review how thunder.jit returns Exception information
     if isinstance(thunder_result, Exception):
         raise thunder_result
 

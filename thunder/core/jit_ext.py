@@ -193,7 +193,8 @@ def is_uncopyable(val: Any, /) -> bool:
 #   - calling a function with a side effect (e.g. randn, print)
 # TODO RC1 What kind of error should a sharp edge raise?
 # TODO RC1 Improve sharp edges warnings and errors to show the source line
-#   https://github.com/Lightning-AI/lightning-thunder/issues/2099
+#   See issue "jit: Improve "sharp edges" errors and warnings to show the sharp
+#       edge's source location"
 
 
 # Context for the minimal interpreter
@@ -643,7 +644,6 @@ def register_general_jit_callback(key: INTERPRETER_CALLBACKS) -> Callable:
 # general_jit lookasides
 #
 
-# TODO Add all general_jit operation translations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
 _general_jit_lookaside_map = {}
 
 

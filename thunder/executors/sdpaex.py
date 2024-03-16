@@ -50,8 +50,8 @@ def ceil_div(a: int, b: int) -> int:
 
 def _sdpa_pad_head_dimension(a: torch.Tensor) -> torch.Tensor:
     head_size = a.shape[-1]
-    # NOTE short-circuit path when we already have compatible head_size
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1505
+    # If the head is already a multiple of 8, then we don't need to pad. The
+    # pad op can be quite expensive in some cases.
     if head_size % 8 == 0:
         return a
     padding_size = ceil_div(head_size, 8) * 8 - head_size
@@ -59,8 +59,7 @@ def _sdpa_pad_head_dimension(a: torch.Tensor) -> torch.Tensor:
 
 
 def _sdpa_slice_head_dimension(a: torch.Tensor, head_size: int) -> torch.Tensor:
-    # NOTE short-circuit path when we already have compatible head_size
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1505
+    # ditto pad_head_dimension: the slice can be expensive, so skip if possible.
     if head_size % 8 == 0:
         return a
     return a[:, :, :, 0:head_size]
@@ -491,8 +490,8 @@ def _scaled_dot_product_attention_fused(
     *,
     scale: None | float = None,
 ):
-    # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    # Figure out which SDPA to use. There are performance cliffs to the various
+    # implementations, and this makes the decision cognizant of those cliffs.
     backend = _fused_sdp_choice(query, key, value, attn_mask, dropout_p, is_causal, scale)
 
     utils.check(
@@ -530,8 +529,8 @@ def _scaled_dot_product_attention_grad(
     *,
     scale: None | float = None,
 ):
-    # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    # Figure out which SDPA to use. There are performance cliffs to the various
+    # implementations, and this makes the decision cognizant of those cliffs.
     backend = _fused_sdp_choice(query, key, value, attn_mask, dropout_p, is_causal, scale)
 
     utils.check(
@@ -640,8 +639,9 @@ def _fused_sdp_choice(
         is_causal = is_causal.value
 
     if LooseVersion(torch.__version__) < LooseVersion("2.2.0"):
-        # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+        # Figure out which SDPA to use. There are performance cliffs to the
+        # various implementations, and this makes the decision cognizant of
+        # those cliffs.
         backend = torch._fused_sdp_choice(
             fake_query,
             fake_key,

@@ -157,7 +157,7 @@ class CompileData:
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
-        #   but some components are still designed to work with older architectures for
+        #   but some components are still designed to work with the older entrypoint
         #   and are being temporarily maintained to facilitate their development.
         self.using_jit = using_jit
 
@@ -244,7 +244,7 @@ class CompileData:
 def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool):
     tracectx.unpacking()
 
-    # Translates tensors, arrays, and dtypes to lightning.compile types
+    # Translates tensors, arrays, and dtypes to thunder.jit types
     # TODO Translate NumPy dtypes
     def translate(x: Any, *, name: str | None = None) -> Any:
         # NOTE Unpacking proxies
@@ -628,7 +628,7 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    # TODO RC1 Remove this option (by modeling torch.compile as another executor)
+    # TODO RC1 Remove this option (by using the torch.compile executor)
     if compile_data.use_torch_compile:
         c = torch.compile(c)
 
@@ -647,7 +647,7 @@ def _execute_trace(
 # TODO review functions which compute large objects unrelated to tensors and how
 #   they're handled
 # TODO can the language context be detected from the inputs?
-# TODO  https://github.com/Lightning-AI/lightning-thunder/issues/316
+# TODO:
 #   Today all tensor outputs will be torch tensors, even if the input was NumPy arrays
 #   provided in the NumPy language ctx -- what should the outputs be?  Should we provide
 #   a helper to convert torch tensors to NumPy arrays on output?
@@ -766,7 +766,7 @@ def _create_callable(
                     cs.last_trace_host_stop = time.time_ns()
                     return result
 
-            # TODO Revisit compile() behavior when hit in a trace ctx
+            # TODO Revisit jit() behavior when hit in a trace ctx
             #   This will inline the invocation of compile into the current
             #   trace (UNLESS there was a cache hit, per above)
             #   This interaction between the cache and tracing seems odd

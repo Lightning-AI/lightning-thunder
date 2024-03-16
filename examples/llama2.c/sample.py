@@ -20,11 +20,10 @@ max_new_tokens = 100 # number of tokens generated in each sample
 temperature = 1.0 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
 top_k = 300 # retain only the top_k most likely tokens, clamp others to have 0 probability
 tokenizer = "" # override the tokenizer model path
-seed = 1337
+seed = 42
 device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
-# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
 # dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
-compile = True # Use lightning.compile to compile the model to be faster
+compile = True # Use thunder.jit to compile the model to be faster
 exec(open('configurator.py').read()) # overrides from command line or config file
 # -----------------------------------------------------------------------------
 
@@ -33,7 +32,6 @@ torch.cuda.manual_seed(seed)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
 device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
-# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
 # ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() # torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
@@ -57,10 +55,10 @@ if compile:
     from thunder.executors.sdpaex import sdpa_ex
 
     executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
-    cmodel = thunder.compile(model, disable_torch_autograd_support=True, executors_list=executors)
+    cmodel = thunder.jit(model, disable_torch_autograd_support=True, executors_list=executors)
     # the generate implementation is not compile friendly, so bind the compiled model to the generate implementation
     generate = partial(Transformer.generate, cmodel)
-    # workaround for https://github.com/Lightning-AI/lightning-thunder/issues/954
+    # workaround for "Foward nn.Module attributes through the ThunderOptimizedModule"
     cmodel.params = model.params
 else:
     generate = model.generate

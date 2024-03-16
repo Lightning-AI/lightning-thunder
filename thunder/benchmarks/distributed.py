@@ -211,7 +211,7 @@ def parse_args() -> argparse.Namespace:
 
 
 # TODO Port these benchmarks to pytest (and targets.py)
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1404
+# See issue "Create distributed pytest benchmarks"
 if __name__ == "__main__":
     args = parse_args()
 

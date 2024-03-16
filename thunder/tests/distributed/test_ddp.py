@@ -134,7 +134,7 @@ class DataParallelTestCase(common_distributed.MultiProcessTestCase):
     "DDP test requires CUDA and NCCL `torch.distributed` backend",
 )
 class CompileDDPTest(DataParallelTestCase):
-    # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/646
+    # Reference issue "Add an example of DDP(compile(model)) to tests"
     def test_ddp_compile_module(self):
         model = ToyModel().to(self.rank)
         ddp_model = DDP(thunder.jit(model, device_ids=[self.rank]))
@@ -157,7 +157,7 @@ class CompileDDPTest(DataParallelTestCase):
                 last_loss = loss.detach().item()
         assert init_loss > last_loss
 
-    # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/599
+    # Reference issue "[tracker] Support DistributedDataParallel"
     def test_compile_ddp_module(self):
         model = ToyModel().to(self.rank)
         with self.assertRaisesRegex(
@@ -652,7 +652,7 @@ class CompileDDPTest(DataParallelTestCase):
             else:
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
-    # TODO(crcrpar): Add torch compile to executors_list once it's available.
+    # TODO(crcrpar): Add torch compile to executors_list
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(

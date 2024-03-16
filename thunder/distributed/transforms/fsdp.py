@@ -198,7 +198,7 @@ class FSDPCommBucketingTransformVisitor:
                 lambda: f"{variableify(param)} not found in param set: {(variableify(p) for p in self.original_params)}",
             )
             if param not in self.param_to_bucket:
-                # This path is hihly likely to be backward reduce-scatter bucketing:
+                # This path is highly likely to be backward reduce-scatter bucketing:
                 # when a param does not require grad, a trace could still have reduce-scatter
                 # and wait in its trace while the grad in the return statement is already
                 # replaced with `None`.

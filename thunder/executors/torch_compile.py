@@ -72,7 +72,8 @@ def make_compiled(
     # _transform_for_operator_executor_execution implementation that need to be
     # fixed first. One issue is that it doesn't maintain the ssa form of the
     # trace, which is needed for all the passes to work correctly.
-    # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1767
+    # TODO: issue "Try using _transform_for_operator_executor_execution for
+    # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
     compiled_func = torch.compile(torch_trace.python_callable())
 
@@ -84,13 +85,13 @@ def make_compiled(
         orig = getattr(torch._dynamo.eval_frame.guarded_backend_cache, "skip_backend_check_for_run_only_mode", None)
         try:
             # TODO: Remove this hack
-            # This is a hack to get around the fact that for some reason Dynamo
-            # doesn't recreate a guard for the compiled function called from the
-            # backward thread. This is a problem because the guard is created
-            # with the forward thread id, and the guard is not valid for the
-            # backward thread. I couldn't come up with a small repro to file an
-            # issue to PyTorch.
-            # https://github.com/pytorch/pytorch/issues/114674
+            # Dynamo doesn't recreate a guard for the compiled function called
+            # from the backward thread. This is a problem because the guard is
+            # created with the forward thread ID, and the guard is not valid
+            # for the backward thread.
+            # Issue filed: https://github.com/pytorch/pytorch/issues/114674
+            # We should be able to remove this hack once we're sure that the
+            # above fix has propagated to all supported PyTorch releases.
             torch._dynamo.eval_frame.guarded_backend_cache.skip_backend_check_for_run_only_mode = True
             return compiled_func(*args)
         finally:

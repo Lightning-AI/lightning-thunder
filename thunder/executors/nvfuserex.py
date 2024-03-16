@@ -33,7 +33,6 @@ def required_nvfuser_version() -> LooseVersion:
     return LooseVersion("0.0.1")
 
 
-# NOTE We require nvFuser version 0.0.1 or greater
 def nvfuser_available() -> bool:
     v = nvfuser_version()
     return v is not None and v >= required_nvfuser_version()

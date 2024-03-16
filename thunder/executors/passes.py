@@ -162,8 +162,8 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     return extrace
 
 
-# NOTE: See more details for motivation in the following issue:
-# https://github.com/Lightning-AI/lightning-thunder/issues/515
+# This is needed to ensure that subsymbol changes are reflected in the Python
+# code generator.
 def _update_fusion_call_ctx(bsym: BoundSymbol) -> BoundSymbol:
     """Update the call_ctx information of the fusion BoundSymbol object.
 

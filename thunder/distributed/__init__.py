@@ -234,7 +234,7 @@ def ddp(
     # Starts broadcasts
     # TODO Make these broadcast asyncs
     # TODO Perform up to two broadcasts at a time
-    # https://github.com/Lightning-AI/lightning-thunder/issues/727
+    # See issue "Update ddp to use async broadcasts"
     # TODO "Bucket" small tensors together before broadcasting
     with torch.no_grad():
         for param in model.parameters():

@@ -15,7 +15,7 @@ max_iters = 50
 def main(compile: str = "eager", dynamic: bool = False) -> None:
     fabric = L.Fabric(devices=1, precision="bf16-true")
 
-    fabric.seed_everything(1337, workers=True)  # same seed for every process to init model (FSDP)
+    fabric.seed_everything(42, workers=True)  # same seed for every process to init model (FSDP)
 
     config = Config.from_name(model_name)
     print(f"Loading model with {config.__dict__}")
