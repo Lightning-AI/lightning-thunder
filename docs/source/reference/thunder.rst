@@ -25,6 +25,7 @@ Querying information on compiled functions and modules
     compile_data
     compile_stats
     last_traces
+    last_backward_traces
     last_prologue_traces
     cache_option
     cache_hits

@@ -452,7 +452,7 @@ class CompileDDPTest(DataParallelTestCase):
         x = torch.ones((2, 12)).to(device)
         cm(x).mean().backward()
 
-        bwd_extrace = thunder.last_traces(cm)[1][-1]
+        bwd_extrace = thunder.last_backward_traces(cm)[-1]
         bsym_sym_id_list = [bsym.sym.id for bsym in bwd_extrace.bound_symbols]
         pack_syms = tuple(filter(lambda a: a == pack_prim_impl.id, bsym_sym_id_list))
         unpack_syms = tuple(filter(lambda a: a == unpack_prim_impl.id, bsym_sym_id_list))
@@ -476,13 +476,14 @@ class CompileDDPTest(DataParallelTestCase):
         m = ToyModel().to(device)
         cm = thunder.jit(
             fsdp(m, device=device, broadcast_from=0),
-            interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
         )
         x = torch.ones((2, 12), device=device)
         cm(x).mean().backward()
 
-        fwd_trc = thunder.last_traces(cm)[0][0]
-        bwd_trc = thunder.last_traces(cm)[1][0]
+        (fwd_trc,) = (
+            t for t in thunder.last_traces(cm) if getattr(t.get_provenance(), "pss", "") == "Augmented forward pass"
+        )
+        bwd_trc = thunder.last_backward_traces(cm)[0]
         from thunder.core.rematerialization import rematerialize_all_gather
 
         result_fwd_trc, result_bwd_trc = rematerialize_all_gather(fwd_trc, bwd_trc)
@@ -829,8 +830,8 @@ class CompileDDPTest(DataParallelTestCase):
         loss.backward()
 
         # get the trace before sorting
-        fwd_trc = thunder.last_traces(cm)[0][-2]
-        bwd_trc = thunder.last_traces(cm)[1][-2]
+        fwd_trc = thunder.last_traces(cm)[-2]
+        bwd_trc = thunder.last_backward_traces(cm)[-2]
 
         from thunder.distributed.utils import limit_in_flight_allgathers
 
@@ -1104,7 +1105,7 @@ def _test_native_ddp_helper(input_data):
     tdist.destroy_process_group(pg)
 
     if rank == 0:
-        bwd_extrace_sym_ids = [bsym.sym.id for bsym in thunder.last_traces(cmodel)[1][-1].bound_symbols]
+        bwd_extrace_sym_ids = [bsym.sym.id for bsym in thunder.last_backward_traces(cmodel)[-1].bound_symbols]
         pack_unpack_update_bucket_view_found = (
             "torch_pack_prim_impl" in bwd_extrace_sym_ids
             and "torch_unpack_prim_impl" in bwd_extrace_sym_ids

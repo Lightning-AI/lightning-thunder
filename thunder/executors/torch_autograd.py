@@ -205,6 +205,9 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     primal_trace = make_trace(func)(*args, **kwargs)
     primal_trace = sort_data_parallel_syncs(primal_trace)
 
+    if compile_stats is not None:
+        compile_stats.last_traces.append(primal_trace)
+
     # torch.autograd.Function doesn't support non-flat outputs, the
     # grads wouldn't be propagated and backward receives None for each
     # non-flat non-tensor output. The output must also be a flat tuple,
@@ -329,8 +332,7 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     bw_traces.append(bw_extrace)
 
     if compile_stats is not None:
-        compile_stats.primal_trace = primal_trace
-        compile_stats.forward_last_traces = fw_traces
-        compile_stats.backward_last_traces = bw_traces
+        compile_stats.last_traces += fw_traces
+        compile_stats.last_backward_traces += bw_traces
 
     return fw_extrace, bw_extrace

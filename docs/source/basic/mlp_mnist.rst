@@ -90,7 +90,8 @@ Here's the code::
   # The training model has both "forward" and "backward" traces, corresponding
   # to its forward and backward computations.
   # The evaluation model has only one set of traces.
-  fwd_traces, bwd_traces = thunder.last_traces(jitted_train_model)
+  fwd_traces = thunder.last_traces(jitted_train_model)
+  bwd_traces = thunder.last_backward_traces(jitted_train_model)
   eval_traces = thunder.last_traces(jitted_eval_model)
 
   print("This is the trace that thunder executed for training's forward computation:")

@@ -62,9 +62,7 @@ class CompileStats:
         self.last_interpreted_history = None
 
         # torch.autograd.Function specific data
-        self.primal_trace = None
-        self.forward_last_traces = None
-        self.backward_last_traces = None
+        self.last_backward_traces = None
 
         # Timing stats
         self.last_trace_host_start: int = -1
@@ -653,7 +651,6 @@ def _execute_trace(
 #   Today all tensor outputs will be torch tensors, even if the input was NumPy arrays
 #   provided in the NumPy language ctx -- what should the outputs be?  Should we provide
 #   a helper to convert torch tensors to NumPy arrays on output?
-# TODO Provide an option to not preprocess (for debugging)
 
 
 def _create_callable(
@@ -736,6 +733,9 @@ def _create_callable(
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
         with compile_data_and_stats(cd, cs):
+            traces: list[TraceCtx] = []
+            cs.last_traces = traces
+            cs.last_backward_traces = []
             # Determines whether to use autograd.Function or not
             # autograd.Function (which supports calling .backward() in PyTorch) is used when:
             #   1) The grad() transform is not applied
@@ -794,7 +794,7 @@ def _create_callable(
 
             # Starts recording a sequence of traces (this is not inlined)
             trc: TraceCtx = trc_or_result
-            traces: list[TraceCtx] = [trc]
+            traces.append(trc)
 
             # Applies transforms
             for transform in transforms:

@@ -176,7 +176,7 @@ def test_register_implementation_custom_op():
 
     res = cfn(a, b)
 
-    s = str(thunder.last_traces(cfn)[0][-1])
+    s = str(thunder.last_traces(cfn)[-1])
     assert "myadd2" in s and "myadd1" not in s
 
     a.requires_grad_()

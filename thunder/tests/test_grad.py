@@ -1007,19 +1007,16 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     out.backward(g)
 
     compile_stats = compile_stats(lc)
-    primal_trace = compile_stats.primal_trace
-    forward_traces = compile_stats.forward_last_traces
-    backward_traces = compile_stats.backward_last_traces
+    forward_traces = compile_stats.last_traces
+    backward_traces = compile_stats.last_backward_traces
     assert isinstance(forward_traces, list)
     assert len(forward_traces) >= 1
     assert isinstance(backward_traces, list)
     assert len(backward_traces) >= 1
-    assert isinstance(primal_trace, TraceCtx)
-    fw_bw_traces = thunder.last_traces(lc)
-    assert isinstance(fw_bw_traces, tuple)
-    assert len(fw_bw_traces) == 2
-    assert fw_bw_traces[0] == forward_traces
-    assert fw_bw_traces[1] == backward_traces
+    fw_traces = thunder.last_traces(lc)
+    bw_traces = thunder.last_backward_traces(lc)
+    assert fw_traces == forward_traces
+    assert bw_traces == backward_traces
 
 
 @instantiate(

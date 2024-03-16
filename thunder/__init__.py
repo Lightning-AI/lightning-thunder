@@ -527,6 +527,9 @@ def jit(
             cs.last_prologue_execution_stop = time.time_ns()
 
             computation_traces = [computation_trc]
+            cs.last_traces = computation_traces
+            backward_traces = []
+            cs.last_backward_traces = backward_traces
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -549,7 +552,8 @@ def jit(
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
-                    computation_traces.append(computation_trc)
+                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
+                    # by split_forward_backward
 
             cs.last_computation_transformation_start = time.time_ns()
 
@@ -569,10 +573,8 @@ def jit(
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
-                backward_traces = [backward_trc]
             else:
                 backward_fn = None
-                backward_traces = []
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -582,7 +584,7 @@ def jit(
                 cs.interpreter_cache.append(cache_entry)
 
             cs.last_computation_transformation_stop = time.time_ns()
-            cs.last_traces = [computation_trc] + extraces
+            cs.last_traces += extraces
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
 
@@ -697,23 +699,29 @@ def compile_stats(fn) -> CompileStats | None:
     return getattr(fn, "_lc_cs", None)
 
 
-# TODO We should remove compiledata.last_traces in favor of forward_last_traces and backward_last_traces
-# TODO: should we return fw and bw from separate functions. The return type (list or tuple of lists) is not so nice
-def last_traces(fn) -> list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
+def last_traces(fn) -> list[TraceCtx]:
     """Obtains the list of computation traces that have been produced for the last run of the function. This is a list
     of traces mirroring the progression of transformations being applied to the trace (at index 0) that has
     been acquired from interpreting the user program.
 
-    If the function has forward and backward, a tuple of them is returned.
+    If the function has forward and backward, the forward is returned.
     """
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.forward_last_traces is not None and cs.backward_last_traces is not None:
-        return cs.forward_last_traces, cs.backward_last_traces
     if cs.last_traces is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_traces
+
+
+def last_backward_traces(fn) -> TraceCtx:
+    """Obtains the list of backward traces that have been produced for the last run of the function and the selected prologue."""
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_backward_traces is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
+    return cs.last_backward_traces
 
 
 def last_prologue_traces(fn) -> TraceCtx:

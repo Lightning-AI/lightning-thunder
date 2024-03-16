@@ -63,12 +63,13 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     with runtime_allocated_memory(device):
         cbar(a, b)
 
-    traces = thunder.last_traces(cbar)
-    fwd_extrace = traces[0][-1]
+    fw_traces = thunder.last_traces(cbar)
+    fwd_extrace = fw_traces[-1]
     max_mem_fwd = get_alloc_memory(fwd_extrace)
     assert max_mem_fwd[0] == 144
     assert sum(max_mem_fwd[1].values()) == get_return_memory(fwd_extrace.bound_symbols[-1])  # 144
-    bw_extrace = traces[1][-1]
+    bw_traces = thunder.last_backward_traces(cbar)
+    bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
     assert max_mem_bw[0] == 144
     assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
@@ -137,9 +138,8 @@ def test_nanogpt_block(executor, device, dtype):
         result = cblock(inp)
     with runtime_allocated_memory(device):
         result.backward(torch.ones_like(result))
-    traces = thunder.last_traces(cblock)
-    fw_extrace = traces[0][-1]
-    bw_extrace = traces[1][-1]
+    fw_extrace = thunder.last_traces(cblock)[-1]
+    bw_extrace = thunder.last_backward_traces(cblock)[-1]
     fw_alloc_mem = get_alloc_memory(fw_extrace)
     bw_alloc_mem = get_alloc_memory(bw_extrace)
 
