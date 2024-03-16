@@ -344,9 +344,10 @@ def jit(
     if additional_transforms is None:
         additional_transforms = []
 
-    # Make sharp_edges == warn default if not supplied and if in the general jit
-    if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
-        sharp_edges = SHARP_EDGES_OPTIONS.WARN
+    # TODO: verify that tutorials don't have false positives and enable warning by default
+    # # Make sharp_edges == warn default if not supplied and if in the general jit
+    # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
+    #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
