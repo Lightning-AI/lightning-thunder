@@ -110,7 +110,6 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Extending thunder <advanced/extending>
    notebooks/adding_custom_operator
    notebooks/adding_custom_operator_backward
-   notebooks/adding_operator_executor
 
 .. toctree::
    :maxdepth: 1
