@@ -56,11 +56,11 @@ Thunder can easily integrate OpenAI Triton kernels. You can install Triton using
 Install Thunder
 ===============
 
-You can now install Thunder
+You can now install Thunder::
 
   pip install git+https://github.com/Lightning-AI/lightning-thunder.git
 
-Alternatively you can clone the Thunder repository and install locally
+Alternatively you can clone the Thunder repository and install locally::
 
   git clone https://github.com/Lightning-AI/lightning-thunder.git
   cd lightning-thunder
