@@ -1,0 +1,37 @@
+name: General checks
+
+on:
+  push:
+    branches: [main, "release/*"]
+  pull_request:
+    branches: [main, "release/*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  cancel-in-progress: ${{ ! (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
+
+jobs:
+  check-code:
+    uses: ./.github/workflows/check-code.yml
+
+  check-schema:
+    uses: Lightning-AI/utilities/.github/workflows/check-schema.yml@v0.4.1
+    with:
+      azure-dir: ""
+
+  check-package:
+    uses: Lightning-AI/utilities/.github/workflows/check-package.yml@v0.4.1
+    with:
+      import-name: "thunder"
+      pypi-name: "lightning-thunder"
+      strategy-matrix: |
+        {
+          "os": ["ubuntu-20.04", "macos-11", "windows-2022"],
+          "python-version": ["3.8", "3.10"]
+        }
+
+# TODO: use also this after resolving bug with actions: https://github.com/Lightning-AI/utilities/pull/51
+#  check-docs:
+#    uses: Lightning-AI/utilities/.github/workflows/check-docs.yml@main
+#    with:
+#      requirements-file: "docs/requirements.txt"
