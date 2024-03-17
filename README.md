@@ -78,23 +78,23 @@ See [README.md](examples/lit-gpt/README.md) for details on running LitGPT with T
 
 ## What's in the box
 
-Given a program, Thunder can generate an optimized program that:
+Given a python callable or PyTorch module, Thunder can generate an optimized program that:
 
-- computes its forward and backward passes
-- coalesces operations into efficient fusion regions
-- dispatches computations to optimized kernels
-- distributes computations optimally across machines
+- Computes its forward and backward passes
+- Coalesces operations into efficient fusion regions
+- Dispatches computations to optimized kernels
+- Distributes computations optimally across machines
 
 To do so, Thunder ships with:
 
-- a JIT for acquiring Python programs targeting PyTorch and custom operations
-- a multi-level IR to represent them as a trace of a reduced op-set
-- an extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
-- a way to dispatch operations to an extensible collection of executors
+- A JIT for acquiring Python programs targeting PyTorch and custom operations
+- A multi-level IR to represent operations as a trace of a reduced op-set
+- An extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
+- A way to dispatch operations to an extensible collection of executors
 
 Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
 
-Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
+Thunder doesn't generate code for accelerators directly. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
 
 - [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
 - [nvFuser](https://github.com/NVIDIA/Fuser)
