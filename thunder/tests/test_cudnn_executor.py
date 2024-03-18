@@ -48,11 +48,10 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=True)
 
-    # TODO: cudnnex seems to have a few mismatches. Will be enabled in a later PR.
     # Non-contiguous input tensor case
-    nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
+    nq = make(N, n_head, E, L).permute(0, 1, 3, 2)
+    nk = make(N, n_head, E, L).permute(0, 1, 3, 2)
+    nv = make(N, n_head, E, L).permute(0, 1, 3, 2)
     yield SampleInput(nq, nk, nv, None, dropout_p=0.0, is_causal=False)
 
     # Test the scale factor which was added in torch 2.1
