@@ -208,11 +208,13 @@ def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
 
         # query, key, value
         grad_inputs = list(contiguous_args[:3])
-        if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
-            grad_inputs.append(attn_mask)
-            pytest.xfail(
-                "#2470. RuntimeError with cudnn frontend 1.1 and A100: [cudnn_frontend] Error: No execution plans built successfully."
-            )
+        if (attn_mask := sample.args[3]) is not None:
+            if attn_mask.requires_grad:
+                grad_inputs.append(attn_mask)
+            # TODO(#2470): With cudnn frontend 1.1 and A100, this test hits
+            # RuntimeError when `attn_mask` is provided: `[cudnn_frontend]
+            # Error: No execution plans built successfully`.
+            continue
 
         # Compute vjp result using PyTorch
         expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
