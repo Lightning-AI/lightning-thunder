@@ -322,16 +322,15 @@ def _cudnn_sdpa_forward_checker(
     if cudnn is None:
         return False
 
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-
-    try:
-        _make_cudnn_sdpa_forward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-    except Exception as e:
+    if len(query.size()) != 4:
         return False
+    _, _, _, d_q = query.size()
+
+    if len(value.size()) != 4:
+        return False
+    _, _, _, d_kv = value.size()
 
     # Bug in cudnn 8.9.5 and earlier where embedding dim support is missing
-    _, _, _, d_q = query.size()
-    _, _, _, d_kv = value.size()
     for d in [d_q, d_kv]:
         if d % 8 != 0 or d > 128:
             return False
@@ -354,17 +353,7 @@ def _cudnn_sdpa_backward_checker(
     *,
     scale: float | None = None,
 ) -> bool:
-    if cudnn is None:
-        return False
-
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-
-    try:
-        _make_cudnn_sdpa_backward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-    except Exception as e:
-        return False
-
-    return True
+    return cudnn is not None
 
 
 cudnn_sdpa_fwd = cudnn_ex.register_operator(
