@@ -210,11 +210,16 @@ def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
         grad_inputs = list(contiguous_args[:3])
         if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
             grad_inputs.append(attn_mask)
+            pytest.xfail(
+                "#2470. RuntimeError with cudnn frontend 1.1 and A100: [cudnn_frontend] Error: No execution plans built successfully."
+            )
 
         # Compute vjp result using PyTorch
         expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
         v = make_tensor_like(expect_out)
         expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
+        print([t.shape for t in grad_inputs])
+        # import pdb; pdb.set_trace()
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
