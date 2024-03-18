@@ -218,8 +218,6 @@ def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
         expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
         v = make_tensor_like(expect_out)
         expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
-        print([t.shape for t in grad_inputs])
-        # import pdb; pdb.set_trace()
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
