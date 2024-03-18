@@ -1,4 +1,4 @@
-sphinx ==5.3.0
+sphinx ==7.2.6
 myst-parser ==2.0.0
 nbsphinx ==0.9.3
 ipython[all] ==8.22.1
@@ -8,7 +8,7 @@ sphinxcontrib-fulltoc ==1.2.0
 sphinxcontrib-mockautodoc
 
 pt-lightning-sphinx-theme @ https://github.com/Lightning-AI/lightning_sphinx_theme/archive/master.zip
-sphinx-autodoc-typehints ==1.23.0
+sphinx-autodoc-typehints ==2.0.0
 sphinx-paramlinks ==0.6.0
 sphinx-togglebutton ==0.3.2
 sphinx-copybutton ==0.5.2
