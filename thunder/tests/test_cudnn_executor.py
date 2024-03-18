@@ -34,13 +34,10 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
 
     n_head = 2
     N = 8  # batch size
-
     L = 640  # query's sequence length
-
-    alignment_factor = 8
-    S = 10 * alignment_factor  # key/value's sequence length
-    E = 16 * alignment_factor  # query/key's embedding size
-    Ev = 16 * alignment_factor  # value's embedding size
+    S = 80  # key/value's sequence length
+    E = 128  # query/key's embedding size
+    Ev = 64  # value's embedding size
 
     # 4-dim (multiheaded) causal cases
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
