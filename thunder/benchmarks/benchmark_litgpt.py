@@ -108,15 +108,17 @@ class Benchmark_litGPT:
         if n_layers is not None:
             self.config.n_layer = n_layers
 
-        # Initialize the model and the optimizer
+        # Initialize the model
         self.model = self.init_model()
-        self.optimizer = configure_optimizers(
-            self.model, weight_decay, learning_rate, (beta1, beta2), device_type="cuda"
-        )
 
         # Setup the distributed algorithm choices
         if self.distributed_mode != "none":
             self.model = self.setup_distributed()
+
+        # Initialize the optimizer after the model is sharded if using FSDP
+        self.optimizer = configure_optimizers(
+            self.model, weight_decay, learning_rate, (beta1, beta2), device_type="cuda"
+        )
 
         # Compile the model
         if self.compile not in ["eager", None]:
@@ -137,8 +139,9 @@ class Benchmark_litGPT:
 
     def init_model(self):
         print(f"Loading model with {self.config.__dict__}")
+        init_device = torch.device("meta") if self.distributed_mode == "fsdp" else self.device
         t0 = time.perf_counter()
-        with self.device:
+        with init_device:
             model = GPT(self.config)
             model.to(dtype=torch.bfloat16)
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
