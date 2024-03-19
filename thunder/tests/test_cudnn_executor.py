@@ -202,17 +202,19 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
-    ran_atleast_one = False
     for sample in op.reference_inputs(device, dtype, requires_grad=True):
-        from thunder.executors.cudnnex import cudnn_ex
-
         # Enforce tensor arguments are contiguous for torch reference
         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
 
         # query, key, value
         grad_inputs = list(contiguous_args[:3])
-        if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
-            grad_inputs.append(attn_mask)
+        if (attn_mask := sample.args[3]) is not None:
+            if attn_mask.requires_grad:
+                grad_inputs.append(attn_mask)
+            # TODO(#2470): With cudnn frontend 1.1 and A100, this test hits
+            # RuntimeError when `attn_mask` is provided: `[cudnn_frontend]
+            # Error: No execution plans built successfully`.
+            continue
 
         # Compute vjp result using PyTorch
         expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
@@ -230,17 +232,10 @@ def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
             executors_list=executor.executors_list() + [cudnn_ex],
         )
 
-        try:
-            actual_out, actual_grad = cfoo(filtered_args, (v,))
-        except Exception as e:
-            continue
+        actual_out, actual_grad = cfoo(filtered_args, (v,))
 
         comp(actual_out, expect_out, atol=1e-2, rtol=1e-2)
 
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
             comp(eg, ag, atol=2e-1, rtol=2e-2)
-
-        ran_atleast_one = True
-
-    assert ran_atleast_one == True
