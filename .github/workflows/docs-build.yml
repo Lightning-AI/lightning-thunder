@@ -15,7 +15,7 @@ defaults:
 
 jobs:
   build-docs:
-    uses: Lightning-AI/utilities/.github/workflows/check-docs.yml@v0.10.1
+    uses: Lightning-AI/utilities/.github/workflows/check-docs.yml@v0.11.0
     with:
       python-version: "3.10"
       requirements-file: "requirements/docs.txt"
@@ -32,7 +32,7 @@ jobs:
         with:
           # If you're using actions/checkout@v4 you must set persist-credentials to false in most cases for the deployment to work correctly.
           persist-credentials: false
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: docs-html-${{ github.sha }}
           path: docs/build/
