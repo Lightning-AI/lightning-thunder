@@ -62,11 +62,10 @@ class Runner:
         if self.output_format not in ('none', 'print'):
             output_ext = {'xlsx': '.xlsx', }[self.output_format]
             if not is_teardown:
-                filename = 'examples/lit-gpt/mid_output_parameterized_results' + str(output_ext)
+                filename = 'mid_output_parameterized_results' + str(output_ext)
             else:
                 current_time = datetime.now().strftime('%Y-%m-%d_%H-%M')
                 filename = f"{current_time}_litgpt_benchmark" + str(output_ext)
-                filename = 'examples/lit-gpt/' + str(filename)
 
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 self.iter_time_df.to_excel(writer, sheet_name='Average Iter Time (ms)')

@@ -88,19 +88,7 @@ Thunder is in its early stages, it should not be used for production runs yet.
 
 However, it can already deliver outstanding performance on models supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama2, Gemma, Falcon, and derivatives.
 
-Run training loop for Llama, single-GPU:
-
-```bash
-python examples/lit-gpt/train.py
-```
-
-Run training loop for Llama, multi-GPU, using FSDP:
-
-```bash
-python examples/lit-gpt/train_fsdp.py
-```
-
-See [README.md](examples/lit-gpt/README.md) for details on running LitGPT with Thunder.
+See [README.md](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) for details on running LitGPT with Thunder and results.
 
 ## What's in the box
 

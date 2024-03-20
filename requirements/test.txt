@@ -12,10 +12,10 @@ hypothesis ==6.98.15  # for test_ddp.py
 numpy  # for test_ops.py
 einops  # for test_einops.py
 lit_gpt @ git+https://github.com/Lightning-AI/lit-gpt@f241d94df59d82b2017bfdcd3800ac8779eb45f5
-absl-py # for test_parametrized.py in examples/lit-gpt
-pandas # for test_parametrized.py in examples/lit-gpt
-xlsxwriter # for test_parametrized.py in examples/lit-gpt
-jsonargparse # for benchmarking_litgpt.py in thunder/benchmarks
+absl-py # thunder/benchmarks/test_benchmark_litgpt.py
+pandas # thunder/benchmarks/test_benchmark_litgpt.py
+xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
+jsonargparse # thunder/benchmarks/benchmark_litgpt.py
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
