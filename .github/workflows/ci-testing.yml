@@ -79,7 +79,8 @@ jobs:
     - name: Install package & dependencies
       run: |
         pip --version
-        pip install -e '.[test]' -U \
+        pip install -e . -U \
+          -r requirements/test.txt \
           --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
         pip list
       shell: bash
