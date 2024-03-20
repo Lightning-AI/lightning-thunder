@@ -1,14 +1,30 @@
+![](docs/source/_static/images/lightning_thunder_lightmode_nobyline.png)
+
 # Welcome to ⚡ Lightning Thunder
 
-Lightning Thunder is a deep learning compiler for PyTorch. It makes PyTorch programs faster both on single accelerators or in distributed settings.
+Lightning Thunder is a source-to-source compiler for PyTorch.
 
-The main goal for Lightning Thunder is to allow optimizing user programs in the most extensible and expressive way possible.
+It makes PyTorch programs faster both on single accelerators or in distributed settings.
 
-**NOTE: Lightning Thunder is alpha and not ready for production runs.** Feel free to get involved, expect a few bumps along the way.
+Thunder aims to be usable, understandable, and extensible.
+
+## Performance
+
+Thunder can achieve significant speedups over standard PyTorch eager code, through the compounding effects of optimizations and the use of best in class executors. Here is an example of the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
+
+![](docs/source/_static/images/training_throughput_single.png)
+
+We achieve a 40% speedup in training throughput compared to eager code on H100 using a combination of executors including nvFuser, torch.compile, cuDNN, and TransformerEngine FP8.
+
+Thunder supports distributed strategies like DDP and FSDP (ZeRO2 and ZeRO3). Here is the normalized throughput measured for Llama 2 7B (this time without FP8 mixed precision, support for FSDP is underway).
+
+![](docs/source/_static/images/normalized_training_throughput_zero2.png)
+
+**NOTE: Lightning Thunder is alpha.** Feel free to get involved, expect a few bumps along the way.
 
 ## Install Thunder
 
-Install the nvFuser nightly, which will also install the matching PyTorch nightly:
+Install [nvFuser](https://github.com/NVIDIA/Fuser) nightly, which will also install the matching PyTorch nightly:
 
 ```bash
 pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
