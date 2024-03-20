@@ -28,9 +28,9 @@ The code is configured to run with Thunder by default.
 
 Results with 1 GPU:
 
-- ~339 ms/iter (torch.compile 'inductor')
-- ~347 ms/iter (thunder nvfuser)
-- ~431 ms/iter (eager)
+- ~215 ms/iter (torch.compile 'inductor')
+- ~239 ms/iter (thunder nvfuser)
+- ~339 ms/iter (eager)
 
 CUDAGraphs are not used as the results were worse with them.
 
@@ -46,15 +46,14 @@ nanoGPT doesn't implement KV caching so this is expectedly slow. Please checkout
 ## Setup
 
 ```text
-Python version: 3.10.12 (main, Jun 11 2023, 05:26:28) [GCC 11.4.0] (64-bit runtime)
+Python version: 3.10.12 (main, Nov 20 2023, 15:14:05) [GCC 11.4.0] (64-bit runtime)
 Is debug build: False
-CUDA used to build PyTorch: 12.1
-CUDA runtime version: 12.1.105
+CUDA used to build PyTorch: 12.4
+CUDA runtime version: 12.4.99
 GPU 0: NVIDIA A100-SXM4-40GB
-Nvidia driver version: 525.125.06
+Nvidia driver version: 550.54.14
 
-pytorch-triton @ https://download.pytorch.org/whl/nightly/pytorch_triton-3.0.0%2B901819d2b6-cp310-cp310-linux_x86_64.whl
-torch @ https://download.pytorch.org/whl/nightly/cu121/torch-2.3.0.dev20240130%2Bcu121-cp310-cp310-linux_x86_64.whl
-lightning-thunder==8b107c6fe531c94c6705dbf39700863685ba5b65
-nvfuser_cu121==0.1.5.dev20240131
+triton == 3.0.0
+torch == 2.4.0a0+git685ace3
+nvfuser @ 0.2.0+git70101da
 ```
