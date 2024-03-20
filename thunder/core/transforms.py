@@ -3984,10 +3984,13 @@ def register_autocast_rule(op):
 
 def maybe_downcast_to(dtype, args):
     allowed_downcast_types = (dtypes.float16, dtypes.bfloat16, dtypes.float32)
-    if all(tree_map(lambda a: a.dtype in allowed_downcast_types, args)):
-        return tree_map(lambda a: maybe_convert_to_dtype(a, dtype), args)
-    else:
-        return args
+
+    def map_fn(a):
+        if isinstance(a, TensorProxy) and a.dtype in allowed_downcast_types:
+            return maybe_convert_to_dtype(a, dtype)
+        return a
+
+    return tree_map(map_fn, args)
 
 
 @register_autocast_rule("torch.matmul")

@@ -55,7 +55,7 @@ if compile:
     from thunder.executors.sdpaex import sdpa_ex
 
     executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
-    cmodel = thunder.jit(model, disable_torch_autograd_support=True, executors_list=executors)
+    cmodel = thunder.jit(model, disable_torch_autograd_support=True, executors=executors)
     # the generate implementation is not compile friendly, so bind the compiled model to the generate implementation
     generate = partial(Transformer.generate, cmodel)
     # workaround for "Foward nn.Module attributes through the ThunderOptimizedModule"
