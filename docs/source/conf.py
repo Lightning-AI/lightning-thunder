@@ -49,7 +49,10 @@ release = about.__version__
 github_user = "Lightning-AI"
 github_repo = project
 
-linkcheck_ignore = [rf"https://github.com/Lightning-AI/lightning-thunder(/.*|\.git)"]
+linkcheck_ignore = [
+    rf"https://github.com/Lightning-AI/lightning-thunder(/.*|\.git)",
+    rf"https://github.com/Lightning-AI/.*/blob/.*#.*",  # github anchors are tricky
+]
 
 # -- Project documents -------------------------------------------------------
 

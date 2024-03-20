@@ -22,6 +22,10 @@ Thunder supports distributed strategies like DDP and FSDP (ZeRO2 and ZeRO3). Her
 
 **NOTE: Lightning Thunder is alpha.** Feel free to get involved, expect a few bumps along the way.
 
+## Start with Thunder
+
+Try Thunder without installing by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder-tutorial).
+
 ## Install Thunder
 
 Install [nvFuser](https://github.com/NVIDIA/Fuser) nightly, which will also install the matching PyTorch nightly:
