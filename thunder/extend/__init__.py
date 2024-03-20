@@ -25,6 +25,7 @@ __all__ = [
     "add_always_executor",
     "remove_default_executor",
     "remove_always_executor",
+    "register_lookaside",
 ]
 
 
@@ -208,6 +209,7 @@ class OperatorExecutor(Executor):
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
         bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
         assert (like is None) ^ (meta is None), "Expected one and only one of 'like' and 'meta' to be specified"
@@ -236,6 +238,9 @@ class OperatorExecutor(Executor):
             python_printer=python_printer,
         )
         self.opmap[name] = sym
+
+        if replaces is not None:
+            register_lookaside(replaces, sym)
 
         return sym
 
@@ -381,3 +386,10 @@ def deregister_executor(ex: Hashable | Executor) -> None:
 
     remove_always_executor(id)
     remove_default_executor(id)
+
+
+def register_lookaside(function, symbol) -> None:
+    """register `symbol` as a lookaside for `function`"""
+    import thunder.core.jit_ext
+
+    thunder.core.jit_ext._general_jit_lookaside_map[function] = thunder.core.jit_ext.interpreter_needs_wrap(symbol)

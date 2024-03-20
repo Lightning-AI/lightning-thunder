@@ -137,14 +137,17 @@ def test_register_implementation_custom_op():
     myex = OperatorExecutor("myex", version="0.1")
     register_executor(myex)
 
+    def official_add(a, b):
+        return a + b
+
     def _myadd(a, b):
         return a + b
 
-    myadd1 = myex.register_operator("myadd1", like=_myadd, fn=_myadd)
+    myadd1 = myex.register_operator("myadd1", like=_myadd, fn=_myadd, replaces=official_add)
     myadd2 = myex.register_operator("myadd2", like=_myadd, fn=_myadd)
 
     def fn(a, b):
-        return myadd1(a, b)
+        return official_add(a, b)
 
     cfn = thunder.jit(fn, executors=[myex])
 
