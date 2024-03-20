@@ -17,8 +17,6 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
     put_grads,
-    register_augmented_forward_with_checker,
-    register_backward,
 )
 from thunder.extend import OperatorExecutor, register_executor
 
