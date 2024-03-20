@@ -37,13 +37,19 @@ pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.c
 Install Thunder:
 
 ```bash
+pip install lightning-thunder
+```
+
+It's actually not a bad idea to install directly from `main`:
+
+```bash
 pip install git+https://github.com/Lightning-AI/lightning-thunder.git
 ```
 
-or install from the local repo:
+or from the local repo if you want to tinker with the internals:
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 ## Hello World
