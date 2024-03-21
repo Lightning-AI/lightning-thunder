@@ -1,1 +1,1 @@
-ipython[all] ==8.22.1
+ipython[all] ==8.22.2
