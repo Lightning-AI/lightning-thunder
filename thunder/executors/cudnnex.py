@@ -477,9 +477,9 @@ def _cudnn_sdpa_bwd_meta(
     philox_offset: TensorLike,
     *,
     scale: None | float = None,
-    preformat_grad_qkv: bool,
+    preallocate_grad_qkv: bool,
 ) -> tuple[TensorProxy, ...]:
-    if preformat_grad_qkv:
+    if preallocate_grad_qkv:
         grad_qkv = TensorProxy(
             like=query, shape=_replace_dim_with(query.size(), 1, query.size(1) + key.size(1) + value.size(1))
         )
@@ -533,10 +533,10 @@ def _cudnn_sdpa_bwd_impl(
     philox_offset: torch.Tensor,
     *,
     scale: None | float = None,
-    preformat_grad_qkv: bool,
+    preallocate_grad_qkv: bool,
 ) -> tuple[torch.Tensor, ...]:
     grad_qkv: None | torch.Tensor = None
-    if preformat_grad_qkv:
+    if preallocate_grad_qkv:
         grad_qkv = _preallocate_grad_qkv(query, key, value)
 
     query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
@@ -570,7 +570,7 @@ def _cudnn_sdpa_bwd_impl(
     key = _sdpa_enforce_input_tensor_contiguity(key)
     value = _sdpa_enforce_input_tensor_contiguity(value)
 
-    if preformat_grad_qkv:
+    if preallocate_grad_qkv:
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:
         grad_query = torch.empty_like(query)
@@ -611,7 +611,7 @@ def _cudnn_sdpa_bwd_impl(
 
     graph.execute(cudnn_to_torch_tensor, workspace)
 
-    if preformat_grad_qkv:
+    if preallocate_grad_qkv:
         grads = (grad_qkv,)
     else:
         grads = (grad_query, grad_key, grad_value)
@@ -659,7 +659,7 @@ def _cudnn_sdpa_bwd_wrapper(
         query, key, value, attn_mask, dropout_p, is_causal, scale=scale
     )
 
-    preformat_grad_qkv = _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+    preallocate_grad_qkv = _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
     grads = cudnn_sdpa_bwd(
         get_grad(primal),
         query,
@@ -673,7 +673,7 @@ def _cudnn_sdpa_bwd_wrapper(
         seed,
         offset,
         scale=scale,
-        preformat_grad_qkv=preformat_grad_qkv,
+        preallocate_grad_qkv=preallocate_grad_qkv,
     )
 
     if attn_mask is not None:
@@ -681,7 +681,7 @@ def _cudnn_sdpa_bwd_wrapper(
         grads = grads[:-1]
         put_grad(attn_mask, grad_attn_mask)
 
-    if preformat_grad_qkv:
+    if preallocate_grad_qkv:
         (grad_qkv,) = grads
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:
