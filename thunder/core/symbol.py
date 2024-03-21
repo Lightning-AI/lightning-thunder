@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
+from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
@@ -213,6 +213,14 @@ class Symbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
 
+        trace = get_tracectx()
+        if trace is not None:
+            source_filename = trace._current_source_filename
+            source_positions = trace._current_source_positions
+        else:
+            source_filename = None
+            source_positions = None
+
         b = BoundSymbol(
             self,
             args=args,
@@ -220,6 +228,8 @@ class Symbol:
             output=output,
             subsymbols=subsymbols,
             header=_bsym_header.get(),
+            source_filename=source_filename,
+            source_positions=source_positions,
             _call_ctx=_call_ctx,
         )
         if self._bind_postprocess:
@@ -294,6 +304,8 @@ class BoundSymbol(BoundSymbolInterface):
 
     # Header is a string that may be printed before the symbol
     header: str | list[str] = ""
+    source_filename: str | None = None
+    source_positions: Positions | None = None
 
     _call_ctx: None | dict[str, Any] = None
 
@@ -324,6 +336,8 @@ class BoundSymbol(BoundSymbolInterface):
             "output": self.output,
             "subsymbols": self.subsymbols,
             "header": self.header,
+            "source_filename": self.source_filename,
+            "source_positions": self.source_positions,
             "_call_ctx": self._call_ctx,
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,

@@ -16,7 +16,7 @@ import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.codeutils import ContextObject
+from thunder.core.codeutils import ContextObject, get_source_line, Positions
 
 
 # TODO see issue "Improve TraceProvenance"
@@ -61,6 +61,9 @@ class TraceCtx:
         self.names = set()
 
         self._object_ctx: dict[int, ContextObject] = {}
+
+        self._current_source_filename: str | None = None
+        self._current_source_positions: Positions | None = None
 
         self._provenance: TraceProvenance | None = None
 
@@ -306,6 +309,10 @@ class TraceCtx:
 
         return import_ctx
 
+    def set_current_source_location(self, filename: str | None, positions: Positions | None):
+        self._current_source_filename = filename
+        self._current_source_positions = positions
+
     # TODO Account for multi-line signatures
     # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
@@ -336,6 +343,7 @@ class TraceCtx:
             import torch
 
             import_ctx["torch"] = torch
+            import_ctx["thunder.source_location"] = thunder.source_location
 
             # Prints imports, sorted by name
 
@@ -406,7 +414,24 @@ class TraceCtx:
             #     program.append("")
 
             # Prints operations
-            for bsym in self.bound_symbols:
+
+            filename = None
+            lineno = None
+            for i, bsym in enumerate(self.bound_symbols):
+                if (
+                    bsym.source_filename is not None
+                    and bsym.source_positions is not None
+                    and bsym.source_positions.lineno is not None
+                ) and (filename != bsym.source_filename or lineno != bsym.source_positions.lineno):
+                    if i > 0:
+                        program.append("")
+                    src_line = get_source_line(bsym.source_filename, bsym.source_positions.lineno)
+                    program.append(
+                        f"""  source_location("{bsym.source_filename}:{bsym.source_positions.lineno}", \t{repr(src_line)})"""
+                    )
+                filename = bsym.source_filename
+                lineno = bsym.source_positions and bsym.source_positions.lineno
+
                 lines = bsym.python(indent=1, print_depth=print_depth)
                 program.extend(lines)
 

@@ -24,6 +24,7 @@ from thunder.core.trace import (
     TraceResults,
     TraceCtx,
     from_trace,
+    get_tracectx,
     set_tracectx,
     reset_tracectx,
     is_tracing,
@@ -47,6 +48,7 @@ from thunder.core.compile_data import compile_data_and_stats, get_compile_data
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
 from thunder.core.baseutils import run_once, check
+from thunder.core.codeutils import Positions
 from thunder.core.proxies import (
     Proxy,
     TensorProxy,
@@ -669,6 +671,7 @@ def jit(
         cd._thunder_module_map[id(fn)] = fn_
 
     # Sets compile options and statistics attributes
+    cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
     fn_._lc_early_transforms = early_transforms[:]  ## transforms
@@ -886,6 +889,15 @@ def last_compile_options(fn: Callable, /) -> None:
 
     for option in unused:
         print(f"\t{option}")
+
+
+def source_location(filename_and_line: str, src: str):
+    tracectx = get_tracectx()
+    if tracectx is not None:
+        filename, linestr = filename_and_line.rsplit(":", 1)
+        line = int(linestr)
+        positions = Positions(line, 0, line, 999)
+        tracectx.set_current_source_location(filename, positions)
 
 
 # TODO (mruberry) Update this
