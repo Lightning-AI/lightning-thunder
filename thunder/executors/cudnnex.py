@@ -208,6 +208,11 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 # And when registering for sdpa, cudnn assumes NHWC layout. (See _transform_sdpa_inputs())
 def _sdpa_enforce_input_tensor_contiguity(a: torch.Tensor) -> torch.Tensor:
     if a.stride(-1) == 1:
+        # TODO(vedaanta-nvidia): there's an inconsistency between
+        # _transform_sdpa_inputs and this function, leading to a potential bug.
+        # _transform_sdpa_inputs always creates contiguous strides, but code
+        # here creates a partially contiguous stride when the last dimension is
+        # contiguous but other dimensions are not.
         return a
     else:
         return a.contiguous()
@@ -346,7 +351,7 @@ cudnn_sdpa_fwd = cudnn_ex.register_operator(
 
 
 def _make_cudnn_sdpa_backward_graph(
-    query, key, value, attn_mask, dropout_p, is_causal, grad_qkv_stride: None | tuple[int, ...]
+    query, key, value, attn_mask, dropout_p, is_causal, grad_query_stride, grad_key_stride, grad_value_stride
 ):
     b, h, s_q, _ = query.size
     _, _, _, d_v = value.size
@@ -417,13 +422,11 @@ def _make_cudnn_sdpa_backward_graph(
         dropout=dropout_tuple,
     )
 
-    dQ.set_output(True).set_dim(query.size).set_stride(grad_qkv_stride or query.stride).set_data_type(
+    dQ.set_output(True).set_dim(query.size).set_stride(grad_query_stride).set_data_type(
         torch_to_cudnn_dtype(query.dtype)
     )
-    dK.set_output(True).set_dim(key.size).set_stride(grad_qkv_stride or key.stride).set_data_type(
-        torch_to_cudnn_dtype(key.dtype)
-    )
-    dV.set_output(True).set_dim(value.size).set_stride(grad_qkv_stride or value.stride).set_data_type(
+    dK.set_output(True).set_dim(key.size).set_stride(grad_key_stride).set_data_type(torch_to_cudnn_dtype(key.dtype))
+    dV.set_output(True).set_dim(value.size).set_stride(grad_value_stride).set_data_type(
         torch_to_cudnn_dtype(value.dtype)
     )
 
@@ -535,11 +538,22 @@ def _cudnn_sdpa_bwd_impl(
     scale: None | float = None,
     preallocate_grad_qkv: bool,
 ) -> tuple[torch.Tensor, ...]:
+    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
+    query = _sdpa_enforce_input_tensor_contiguity(query)
+    key = _sdpa_enforce_input_tensor_contiguity(key)
+    value = _sdpa_enforce_input_tensor_contiguity(value)
+
+    # When preallocate_grad_qkv is on, allocate dQKV and make dQ, dK, and dV
+    # slices of that. Otherwise, allocate them individually.
     grad_qkv: None | torch.Tensor = None
     if preallocate_grad_qkv:
         grad_qkv = _preallocate_grad_qkv(query, key, value)
+        grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
+    else:
+        grad_query = torch.empty_like(query)
+        grad_key = torch.empty_like(key)
+        grad_value = torch.empty_like(value)
 
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
     (
         Q,
         K,
@@ -563,19 +577,10 @@ def _cudnn_sdpa_bwd_impl(
         attn_mask_4d,
         dropout_p,
         is_causal,
-        None if grad_qkv is None else grad_qkv.stride(),
+        grad_query.stride(),
+        grad_key.stride(),
+        grad_value.stride(),
     )
-
-    query = _sdpa_enforce_input_tensor_contiguity(query)
-    key = _sdpa_enforce_input_tensor_contiguity(key)
-    value = _sdpa_enforce_input_tensor_contiguity(value)
-
-    if preallocate_grad_qkv:
-        grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
-    else:
-        grad_query = torch.empty_like(query)
-        grad_key = torch.empty_like(key)
-        grad_value = torch.empty_like(value)
 
     # Default value of scale, if not provided, in all torch versions
     if scale is None:
