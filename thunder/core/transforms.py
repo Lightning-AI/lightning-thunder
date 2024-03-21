@@ -2496,21 +2496,6 @@ def register_augmented_forward(op):
     return decorator
 
 
-def deregister_augmented_forward_and_backward(op):
-    """Deregisters an augmented forward implementation and a backward
-    implementation for a symbol.
-
-    Args:
-        op (Ops): Symbol for which to deregister the augmented forward
-        implementation and the backward implementation.
-
-    Returns:
-        None
-    """
-    del augmented_forward_impls[op]
-    del backward_impls[op]
-
-
 def register_backward(op):
     """Decorator to register a backward implementation for a symbol.
 
