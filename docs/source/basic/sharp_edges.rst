@@ -10,12 +10,6 @@ Inplace operations
 
 Inplace PyTorch operations like `t.add_(1.0)` are not supported in Thunder yet. Support for inplace operations is coming soon.
 
-Complex control flow
---------------------
-
-Control flow is supported in Thunder, but certain constructs might still be unsupported.
-
-In particular, attributes need to be resolved at tracing time for control flow to work. Data-dependent control flow, that is, when a condition depends on the value of tensors rather than its meta-data like shape or type, is currently not supported.
 
 Tensor subclasses
 -----------------
@@ -24,13 +18,14 @@ Thunder currently supports Python data types and PyTorch tensors as inputs of fu
 
 Subclasses of these types, e.g. lazy tensors, nested tensors, or sparse tensors are not supported today.
 
+
 Tracing Python builtins, standard library operations and functions that call other languages
 --------------------------------------------------------------------------------------------
 
 Calling a Python builtin, standard library operation, or a function that calls into another language is safe to trace, so long as the following rules are observed:
 
-1. The function must not have side effects. For example, calling ``print()`` will execute the ``print()`` function while tracing, but since it's not a Thunder operation it will not appear in a trace, and so future cached executions will not execute the ``print()`` statement.
-2. The function must not manipulate tensor metadata or data. Since the operation won't appear in a trace, these manipulations won't be repeated by Thunder, and may even cause a crash while tracing.
+1. The function should not have side effects. For example, calling ``print()`` will execute the ``print()`` function while tracing, but since it's not a Thunder operation it will not appear in a trace, and so future cached executions will not execute the ``print()`` statement.
+2. The function must not manipulate tensor data or metadata. Since the operation won't appear in a trace, these manipulations won't be repeated by Thunder, and may even cause a crash while tracing. To implement such operations, see :doc:`Adding Custom Operators <../notebooks/adding_custom_operator>`
 3. The function must not produce different results across invocations. Again, since the operation won't appear in traces, Thunder cannot replicate an operation that produces different results when it's invoked, like ``random.random()`` will.
 
 ..
