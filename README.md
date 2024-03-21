@@ -36,7 +36,7 @@ Thunder aims to be usable, understandable, and extensible.
 
 ## Performance
 
-Thunder can achieve significant speedups over standard PyTorch eager code, through the compounding effects of optimizations and the use of best in class executors. Here is an example of the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
+Thunder can achieve significant speedups over standard PyTorch eager code, through the compounding effects of optimizations and the use of best-in-class executors. Here is an example of the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
 
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/training_throughput_single.png" width="800px" style="max-width: 100%;">
@@ -121,15 +121,15 @@ The compiled function `jfoo` takes and returns PyTorch tensors, just like the or
 
 ## Train models
 
-Thunder is in its early stages, it should not be used for production runs yet.
+Thunder is in its early stages and should not be used for production runs yet.
 
-However, it can already deliver outstanding performance on models supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama2, Gemma, Falcon, and derivatives.
+However, it can already deliver outstanding performance on LLM model supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama 2, Gemma, Falcon, and others.
 
 Check out [the LitGPT integration](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) to learn about running LitGPT and Thunder together.
 
 ## Features
 
-Given a python callable or PyTorch module, Thunder can generate an optimized program that:
+Given a Python callable or PyTorch module, Thunder can generate an optimized program that:
 
 - Computes its forward and backward passes
 - Coalesces operations into efficient fusion regions
@@ -192,4 +192,4 @@ Thunder is very thoroughly tested, so expect this to take a while.
 ## License
 
 Lightning Thunder is released under the [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) license.
-See LICENSE file for details.
+See the [LICENSE](LICENSE) file for details.
