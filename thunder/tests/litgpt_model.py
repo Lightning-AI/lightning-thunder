@@ -1,4 +1,4 @@
-"""Taken from https://github.com/Lightning-AI/lit-gpt/blob/main/lit_gpt/model.py"""
+"""Taken from https://github.com/Lightning-AI/litgpt/blob/main/litgpt/model.py"""
 import torch
 import torch.nn as nn
 
@@ -150,21 +150,20 @@ class OverridenKVCache(nn.Module):
         torch.nn.init.zeros_(self.v)
 
 
-import lit_gpt
-import lit_gpt.rmsnorm
+import litgpt
 
 # override for operator workarounds
-lit_gpt.model.KVCache = OverridenKVCache
+litgpt.model.KVCache = OverridenKVCache
 # add the testing configurations
-lit_gpt.config.name_to_config.update(name_to_config)
-name_to_config.update(lit_gpt.config.name_to_config)
+litgpt.config.name_to_config.update(name_to_config)
+name_to_config.update(litgpt.config.name_to_config)
 
 # manually expose for backwards compatibility
-Config = lit_gpt.Config
-GPT = lit_gpt.GPT
-RMSNorm = lit_gpt.rmsnorm.RMSNorm
-CausalSelfAttention = lit_gpt.model.CausalSelfAttention
-LLaMAMLP = lit_gpt.model.LLaMAMLP
-build_rope_cache = lit_gpt.model.build_rope_cache
-apply_rope = lit_gpt.model.apply_rope
-Block = lit_gpt.model.Block
+Config = litgpt.Config
+GPT = litgpt.GPT
+RMSNorm = litgpt.model.RMSNorm
+CausalSelfAttention = litgpt.model.CausalSelfAttention
+LLaMAMLP = litgpt.model.LLaMAMLP
+build_rope_cache = litgpt.model.build_rope_cache
+apply_rope = litgpt.model.apply_rope
+Block = litgpt.model.Block
