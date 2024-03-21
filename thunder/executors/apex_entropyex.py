@@ -11,10 +11,6 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol
 from thunder.core.utils import check, same_shape
 from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, restore_reduced_dims
-from thunder.core.transforms import (
-    register_augmented_forward_with_checker,
-    register_backward,
-)
 
 from thunder.extend import OperatorExecutor, register_executor
 
@@ -195,76 +191,6 @@ def _cross_entropy_checker(
         return False
 
     return True
-
-
-# Check out the 'add vjp rule' dev tutorial on how to add a VJP rule for any
-# Symbol. We use our new primitives to register a VJP rule for
-# torch.nn.functional.cross_entropy. This function is registered as the
-# augmented forward rule for torch.nn.functional.cross_entropy below
-def apex_cross_entropy_forward_rule(
-    a,
-    target,
-    weight=None,
-    size_average=None,
-    ignore_index=-100,
-    reduce=None,
-    reduction="mean",
-    label_smoothing=0.0,
-):
-    loss, max_log_sum_exp = apex_xentropy(
-        a,
-        target=target,
-        reduction=reduction,
-        label_smoothing=label_smoothing,
-    )
-    primal = loss
-    saved_for_backward = (a, target, max_log_sum_exp, reduction, label_smoothing)
-    return primal, saved_for_backward
-
-
-register_augmented_forward_with_checker(
-    apex_ex,
-    ltorch.cross_entropy.id,
-    _cross_entropy_checker,
-    apex_cross_entropy_forward_rule,
-)
-
-
-# This function is the backward rule for torch.nn.functional.cross_entropy. It
-# accepts the primal output and saved_for_backward from the forward pass and
-# returns the backward output. The backward output is a tuple of the backward
-# output for each differentiable Tensor input to the forward pass. In this case,
-# the forward pass has 1 such input, so the backward output is a single Tensor.
-# This function is registered as the backward rule for
-# torch.nn.functional.cross_entropy
-@register_backward((apex_ex, ltorch.cross_entropy.id))
-def apex_cross_entropy_backward_rule(
-    logits,
-    labels,
-    max_log_sum_exp,
-    reduction,
-    smoothing,
-    grad,
-):
-    from thunder.core.transforms import mean_backward, sum_backward
-
-    if reduction == "mean":
-        grad = mean_backward(max_log_sum_exp.ndim, max_log_sum_exp.shape, (0,), grad)
-    elif reduction == "sum":
-        grad = sum_backward(max_log_sum_exp.shape, (0,), grad)
-    elif reduction == "none":
-        pass
-    else:
-        raise ValueError(f"Invalid reduction: {reduction}")
-
-    grad_logits = apex_xentropy_bwd(
-        grad,
-        logits,
-        target=labels,
-        max_log_sum_exp=max_log_sum_exp,
-        label_smoothing=smoothing,
-    )
-    return grad_logits
 
 
 # Translate calls from torch.nn.functional.cross_entropy to apex_xentropy (when the checker above returns True)
