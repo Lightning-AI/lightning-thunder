@@ -99,7 +99,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Additional executors <intermediate/additional_executors>
    Distributed Data Parallel <intermediate/ddp>
    What's next <intermediate/whats_next>
-   FSDP Tutorial <notebooks/fsdp_tutorial>
+   FSDP Under the Hood Tutorial <notebooks/dev_tutorials/fsdp_tutorial>
 
 .. toctree::
    :maxdepth: 1
@@ -110,7 +110,6 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Extending thunder <advanced/extending>
    notebooks/adding_custom_operator
    notebooks/adding_custom_operator_backward
-   notebooks/adding_operator_executor
 
 .. toctree::
    :maxdepth: 1
@@ -118,7 +117,6 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    :caption: Experimental dev tutorials
 
    notebooks/dev_tutorials/extend
-   notebooks/dev_tutorials/patterns
 
 ..
    TODO RC1: update notebooks

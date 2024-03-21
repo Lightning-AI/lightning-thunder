@@ -1,6 +1,6 @@
 from functools import wraps
 from typing import Any
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from collections.abc import Callable
 from collections.abc import Sequence
 from contextlib import contextmanager
@@ -15,6 +15,7 @@ from looseversion import LooseVersion
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
     resolve_interpretation_option,
+    resolve_sharp_edges_option,
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
 )
@@ -277,6 +278,21 @@ def _recursive_jit_call_warning() -> None:
     )
 
 
+CacheEntry = namedtuple(
+    "CacheEntry",
+    [
+        "prologue_fn",
+        "prologue_traces",
+        "computation_fn",
+        "computation_traces",
+        "epilogue_fn",
+        "epilogue_traces",
+        "backward_fn",
+        "backward_traces",
+    ],
+)
+
+
 # This function will replace compile() (below) before RC1
 # TODO RC1 Consider adding a debug_log parameter to control debug printing
 # TODO RC1 Consider renaming compile_options to additional_compile_options
@@ -327,6 +343,11 @@ def jit(
 
     if additional_transforms is None:
         additional_transforms = []
+
+    # TODO: verify that tutorials don't have false positives and enable warning by default
+    # # Make sharp_edges == warn default if not supplied and if in the general jit
+    # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
+    #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
@@ -386,9 +407,17 @@ def jit(
         # Checks cache
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
-            for pro, pro_traces, comp, comp_traces, epilogue, epilogue_traces, backward_fn, backward_traces in reversed(
-                cs.interpreter_cache
-            ):
+            for cache_entry in reversed(cs.interpreter_cache):
+                (
+                    pro,
+                    pro_traces,
+                    comp,
+                    comp_traces,
+                    epilogue,
+                    epilogue_traces,
+                    backward_fn,
+                    backward_traces,
+                ) = cache_entry
                 try:
                     cs.last_prologue_execution_start = time.time_ns()
                     if epilogue:
@@ -415,10 +444,11 @@ def jit(
                 cs.last_computation_transformation_start = 0
                 cs.last_computation_transformation_stop = 0
 
-                return inps, pro_to_epi, comp, epilogue, backward_fn
+                return cache_entry, inps, pro_to_epi
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
+                cache_entry = cs.interpreter_cache[0]
                 (
                     pro,
                     pro_traces,
@@ -428,7 +458,7 @@ def jit(
                     epilogue_traces,
                     backward_fn,
                     backward_traces,
-                ) = cs.interpreter_cache[0]
+                ) = cache_entry
 
                 cs.last_prologue_execution_start = time.time_ns()
                 if epilogue:
@@ -449,7 +479,7 @@ def jit(
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
 
-                return inps, pro_to_epi, comp, epilogue, backward_fn
+                return cache_entry, inps, pro_to_epi
 
         cs.cache_misses += 1
         cs.last_trace_cache_stop = time.time_ns()
@@ -503,6 +533,9 @@ def jit(
             cs.last_prologue_execution_stop = time.time_ns()
 
             computation_traces = [computation_trc]
+            cs.last_traces = computation_traces
+            backward_traces = []
+            cs.last_backward_traces = backward_traces
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -524,10 +557,9 @@ def jit(
                     # thunder_backward may recursively call compile and wraps the result in a
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
-                    computation_trc, backward_trc = split_forward_backward(
-                        computation_trc.python_callable(), cd, cs, *inps
-                    )
-                    computation_traces.append(computation_trc)
+                    computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
+                    # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
+                    # by split_forward_backward
 
             cs.last_computation_transformation_start = time.time_ns()
 
@@ -547,23 +579,24 @@ def jit(
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
-                backward_traces = [backward_trc]
             else:
                 backward_fn = None
-                backward_traces = []
 
             # TODO RC1 Update the cache
+            cache_entry = CacheEntry(
+                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+            )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-                cs.interpreter_cache.append(
-                    (pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces)
-                )
+                cs.interpreter_cache.append(cache_entry)
 
             cs.last_computation_transformation_stop = time.time_ns()
-            cs.last_traces = [computation_trc] + extraces
+            cs.last_traces += extraces
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
 
-        return inps, pro_to_epi, comp, epilogue, backward_fn
+        return cache_entry, inps, pro_to_epi
+
+    cd.get_computation_and_inputs = get_computation_and_inputs
 
     @wraps(fn)
     def fn_(*args, **kwargs) -> Any:
@@ -575,18 +608,18 @@ def jit(
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
 
-        inps, pro_to_epi, comp, epilogue, backward_fn = get_computation_and_inputs(*args, **kwargs)
+        cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
         cs.last_trace_host_execution_start = time.time_ns()
 
-        result = comp(*inps)
+        result = cache_entry.computation_fn(*inps)
 
-        if backward_fn:
+        if cache_entry.backward_fn:
             # Run the compiled forward function
             data_for_autograd, (saved_tensors, saved_other) = result
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
-                backward_fn,
+                cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
                 data_for_autograd["flat_output"],
@@ -594,19 +627,15 @@ def jit(
             )
             result = data_for_autograd["output"]
 
-        if epilogue:
+        if cache_entry.epilogue_fn:
             result, comp_to_epi = result
-            epilogue(*pro_to_epi, *comp_to_epi)
+            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
         cs.last_trace_host_execution_stop = time.time_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
-        cs.last_executed = comp
+        cs.last_executed = cache_entry.computation_fn
         cs.last_trace_cache_stop = time.time_ns()
-        cs.last_trace_host_stop = time.time_ns()
-
-        # Updates statistics
-        cs.last_executed = comp
         cs.last_trace_host_stop = time.time_ns()
 
         return result
@@ -676,23 +705,29 @@ def compile_stats(fn) -> CompileStats | None:
     return getattr(fn, "_lc_cs", None)
 
 
-# TODO We should remove compiledata.last_traces in favor of forward_last_traces and backward_last_traces
-# TODO: should we return fw and bw from separate functions. The return type (list or tuple of lists) is not so nice
-def last_traces(fn) -> list[TraceCtx] | tuple[list[TraceCtx], list[TraceCtx]]:
+def last_traces(fn) -> list[TraceCtx]:
     """Obtains the list of computation traces that have been produced for the last run of the function. This is a list
     of traces mirroring the progression of transformations being applied to the trace (at index 0) that has
     been acquired from interpreting the user program.
 
-    If the function has forward and backward, a tuple of them is returned.
+    If the function has forward and backward, the forward is returned.
     """
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.forward_last_traces is not None and cs.backward_last_traces is not None:
-        return cs.forward_last_traces, cs.backward_last_traces
     if cs.last_traces is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_traces
+
+
+def last_backward_traces(fn) -> TraceCtx:
+    """Obtains the list of backward traces that have been produced for the last run of the function and the selected prologue."""
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_backward_traces is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
+    return cs.last_backward_traces
 
 
 def last_prologue_traces(fn) -> TraceCtx:

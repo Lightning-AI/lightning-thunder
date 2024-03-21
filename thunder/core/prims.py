@@ -2841,7 +2841,7 @@ def slice_meta(
 
 
 # NOTE: slice is named "slice_prim" and not "slice" because it conflicts with Python's "slice" builtin
-slice_prim = make_prim(PrimIDs.SLICE, "slice", meta=slice_meta, tags=(OpTags.SHAPE_OP,))
+slice_prim = make_prim(PrimIDs.SLICE, "slice_prim", meta=slice_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def squeeze_meta(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:

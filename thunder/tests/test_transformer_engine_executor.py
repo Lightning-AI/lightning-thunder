@@ -70,7 +70,8 @@ def test_te_linear_forward_backward():
     assert_close(w2.grad, te_linear2.weight.grad)
 
     # Verifies te_linear was called
-    forward_trace, backward_trace = thunder.last_traces(cfn)
+    forward_trace = thunder.last_traces(cfn)
+    backward_trace = thunder.last_backward_traces(cfn)
     assert any(bsym.sym.name.startswith("te_linear") for bsym in forward_trace[-1].bound_symbols)
     assert any(bsym.sym.name.startswith("te_functional_linear_backward") for bsym in backward_trace[-1].bound_symbols)
 
@@ -180,6 +181,6 @@ def test_te_with_autocast():
     )
     cfunc(x, w)
 
-    fwd_traces, _ = thunder.last_traces(cfunc)
+    fwd_traces = thunder.last_traces(cfunc)
     # Verify that we have replaced `prims.linear` with `te_linear`
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)

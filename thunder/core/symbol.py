@@ -109,10 +109,10 @@ def default_python_printer(
 # A symbol represents a function and how it can be transformed
 
 # name is a string name for the operation
-# meta should use lightning.compile functions to evaluate the function;
-#   it will be called with lightning.compile proxies
+# meta should use thunder.jit functions to evaluate the function;
+#   it will be called with thunder.jit proxies
 # id is an optional value to use when translating the function to executors
-# is_prim should be True if the Symbol represents a lightning.compile primitive
+# is_prim should be True if the Symbol represents a thunder.jit primitive
 # python_printer is a function that will produce valid Python for calling the
 #   operation; this can usually be set to None, in which case the default python
 #   printer will be used for the Symbol. Symbols that control their own printing
@@ -195,14 +195,6 @@ class Symbol:
                     fn_ = fn_.__wrapped__
             result = inspect.getmodule(fn_)
         return result
-
-        # Properties used in transforms (defined later)
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/326
-        #   Remove this from here (think how symbols could be extended with transforms)
-        # self.grad_defined = False
-        # self.grad_ignored = False
-        # self.grad_fwd = None
-        # self.grad_bwd = None
 
     def __repr__(self) -> str:
         return f"[Symbol name={self.name}]"
@@ -313,7 +305,6 @@ class BoundSymbol(BoundSymbolInterface):
 
     # Constructs a new BoundSymbol with default values taken from this BoundSymbol
     #   Override values can be specified as kwargs
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/680
     # Issue -- Provide a pattern for updating subsymbols when swapping outputs
     #   Maybe this can also just swap one set of symbols for another?
     #   Consider adding verification that the new and old output have the same metadata

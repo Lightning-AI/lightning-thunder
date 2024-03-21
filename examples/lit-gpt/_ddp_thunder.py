@@ -199,8 +199,8 @@ class _DDPBackwardSyncControl(_BackwardSyncControl):
                 f" Got: {module.__class__.__name__}."
             )
 
-        # see https://github.com/Lightning-AI/lightning-thunder/issues/2085
-        # for why we cannot just return `module.no_sync()`
+        # issue "Limitations of the current DDP no_sync implementation" has
+        # details on why we cannot just return `module.no_sync()`
         from thunder.distributed import skip_data_parallel_grad_sync
 
         previous, self._enabled = self._enabled, enabled

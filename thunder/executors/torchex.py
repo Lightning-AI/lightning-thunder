@@ -633,7 +633,7 @@ torch_round = _register_torch_operation("round")
 rsqrt = _register_torch_operation("rsqrt")
 # # NOTE That PyTorch's "sgn" corresponds with the "sign" primitive
 sgn = _register_torch_operation("sgn", like=ltorch.sign)
-# # NOTE torch.sign isn't bound here because lightning.compile always uses sgn
+# # NOTE torch.sign isn't bound here because thunder always uses sgn
 # sign =  _register_torch_operation("sign")
 signbit = _register_torch_operation("signbit")
 sin = _register_torch_operation("sin")
@@ -1095,8 +1095,8 @@ def _index_put_prim_transform(
     return index_put(a, indices, values, accumulate)
 
 
-# NOTE torch.compile currently fails to compile scatter add in bfloat16
-# TODO RC1 Separate this into a torch.compile executor
+# NOTE torch.compile has a compilation issue with scatter add in bfloat16,
+#      hence the special case here.
 # NOTE The scatter add transforms must set the torch language context explicitly so the .to() method
 #   on tensors is resolved (alternatively they could explicitly call thunder.torch.to)
 @langctx(Languages.TORCH)
@@ -1109,7 +1109,8 @@ def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: Te
     return scatter_add(a, dim, index, value)
 
 
-# NOTE torch.compile currently fails to compile scatter add in bfloat16
+# NOTE torch.compile has a compilation issue with scatter add in bfloat16,
+#      hence the special case here.
 @langctx(Languages.TORCH)
 def _scatter_add_transform(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     # NOTE scatter_add does not participate in type promotion, so if a has the bfloat16 dtype, then so does src
@@ -1243,7 +1244,7 @@ def _cross_entropy_backward_impl(
     )
 
     # TODO Add support nll_loss_nd, weight tensor, and label_smoothing options.
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/704
+    # See issue "Add support for remaining cross_entropy_loss arguments."
     utils.check(a.ndim <= 2 and target.ndim <= 1, lambda: f"multi-dimension cross-entropy is not supported.")
 
     utils.check(weight is None, lambda: f"weight tensor argument is not supported.")
@@ -1601,7 +1602,7 @@ if torch.distributed.is_available():
     ) -> list[torch.Tensor]:
         return torch._utils._unflatten_dense_tensors(buffer, tensors)
 
-    # TODO(crcrpar): Make this compatible with the coming torch_compile executor as it's doing really well for cat and reshape.
+    # TODO(crcrpar): Make this compatible with the torch.compile executor as it's doing really well for cat and reshape.
     # NOTE(crcrpar): why no caching/resue of buffer?
     # This prim is only used by fsdp backward for now.
     # Bucketing of reduce-scatter, i.e., creating a buffer for
@@ -1621,7 +1622,6 @@ if torch.distributed.is_available():
     # To support individual copies from gradient to its bucket requires a mask or an arrayy of indices to achieve correct behavior.
     # In PyTorch, the op for this is [`Tensor.index_copy_`](https://pytorch.org/docs/stable/generated/torch.Tensor.index_copy_.html) where even the index tensor needs to be on the same device as ``self`` and ``tensor``.
     # So caching of the bucketing for fsdp backward would bloat up the memory consumption, which is the main reason this doesn't do any caching.
-    # See https://github.com/Lightning-AI/lightning-thunder/pull/1669/commits/a942b87e88738ce94f874c21d4adc38749ff10d7#diff-c2fd275781ba0c4aa7eec811bebb7bf0b6ca52a236b510ce7dfbb831d4d9bb40R197-R233 for the potential implementation's clumisiness.
     #
     # example of two unsharded gradients of [4, 2] and [4], world size of 4:
     # --------  ------

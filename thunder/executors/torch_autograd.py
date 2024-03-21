@@ -161,7 +161,7 @@ def thunder_backward(*, compile_data, compile_stats=None):
     return decorator
 
 
-def split_forward_backward(func, compile_data, compile_stats, /, *args, **kwargs):
+def split_forward_backward(computation_trc, compile_data, compile_stats, /, *args, **kwargs):
     from thunder import trace
     from thunder.executors.passes import transform_for_execution
     from thunder.executors.passes import del_last_used
@@ -170,6 +170,17 @@ def split_forward_backward(func, compile_data, compile_stats, /, *args, **kwargs
     from thunder.cudagraphs import CUDAGraphExecutor
     from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
     from thunder.distributed.transforms import FSDPCommBucketing
+    from thunder.core.transforms import eval_trace
+
+    # TODO: the trace->func->trace could likely be simplified (and look nicer)
+    #       we cannot use python_callable() here, see the old repos 2458
+    if not isinstance(computation_trc, TraceCtx):
+        # for the legacy codepath
+        func = computation_trc
+    else:
+
+        def func(*args):
+            return eval_trace(computation_trc, *args)
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
 
@@ -178,6 +189,7 @@ def split_forward_backward(func, compile_data, compile_stats, /, *args, **kwargs
             trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
         )
 
+    computation_trc.kwargs = {}
     # NOTE: This function is rather slow, so it's intended to be used
     # behind a cache.
     ba = signature(func).bind(*args, **kwargs)
@@ -192,6 +204,9 @@ def split_forward_backward(func, compile_data, compile_stats, /, *args, **kwargs
 
     primal_trace = make_trace(func)(*args, **kwargs)
     primal_trace = sort_data_parallel_syncs(primal_trace)
+
+    if compile_stats is not None:
+        compile_stats.last_traces.append(primal_trace)
 
     # torch.autograd.Function doesn't support non-flat outputs, the
     # grads wouldn't be propagated and backward receives None for each
@@ -317,8 +332,7 @@ def split_forward_backward(func, compile_data, compile_stats, /, *args, **kwargs
     bw_traces.append(bw_extrace)
 
     if compile_stats is not None:
-        compile_stats.primal_trace = primal_trace
-        compile_stats.forward_last_traces = fw_traces
-        compile_stats.backward_last_traces = bw_traces
+        compile_stats.last_traces += fw_traces
+        compile_stats.last_backward_traces += bw_traces
 
     return fw_extrace, bw_extrace

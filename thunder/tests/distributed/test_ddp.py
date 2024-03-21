@@ -134,7 +134,7 @@ class DataParallelTestCase(common_distributed.MultiProcessTestCase):
     "DDP test requires CUDA and NCCL `torch.distributed` backend",
 )
 class CompileDDPTest(DataParallelTestCase):
-    # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/646
+    # Reference issue "Add an example of DDP(compile(model)) to tests"
     def test_ddp_compile_module(self):
         model = ToyModel().to(self.rank)
         ddp_model = DDP(thunder.jit(model, device_ids=[self.rank]))
@@ -157,7 +157,7 @@ class CompileDDPTest(DataParallelTestCase):
                 last_loss = loss.detach().item()
         assert init_loss > last_loss
 
-    # Ref: https://github.com/Lightning-AI/lightning-thunder/issues/599
+    # Reference issue "[tracker] Support DistributedDataParallel"
     def test_compile_ddp_module(self):
         model = ToyModel().to(self.rank)
         with self.assertRaisesRegex(
@@ -452,7 +452,7 @@ class CompileDDPTest(DataParallelTestCase):
         x = torch.ones((2, 12)).to(device)
         cm(x).mean().backward()
 
-        bwd_extrace = thunder.last_traces(cm)[1][-1]
+        bwd_extrace = thunder.last_backward_traces(cm)[-1]
         bsym_sym_id_list = [bsym.sym.id for bsym in bwd_extrace.bound_symbols]
         pack_syms = tuple(filter(lambda a: a == pack_prim_impl.id, bsym_sym_id_list))
         unpack_syms = tuple(filter(lambda a: a == unpack_prim_impl.id, bsym_sym_id_list))
@@ -476,20 +476,24 @@ class CompileDDPTest(DataParallelTestCase):
         m = ToyModel().to(device)
         cm = thunder.jit(
             fsdp(m, device=device, broadcast_from=0),
-            interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
         )
         x = torch.ones((2, 12), device=device)
         cm(x).mean().backward()
 
-        fwd_trc = thunder.last_traces(cm)[0][0]
-        bwd_trc = thunder.last_traces(cm)[1][0]
+        (fwd_trc,) = (
+            t for t in thunder.last_traces(cm) if getattr(t.get_provenance(), "pss", "") == "Augmented forward pass"
+        )
+        bwd_trc = thunder.last_backward_traces(cm)[0]
         from thunder.core.rematerialization import rematerialize_all_gather
 
         result_fwd_trc, result_bwd_trc = rematerialize_all_gather(fwd_trc, bwd_trc)
 
         # check the return statement in forward trace is updated
-        sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        unshard_param_names = ("t5", "t16")
+        # TODO: this is not stable w.r.t. details of the processing, the sharded correspond to ("t_net1_weight", "t_net2_weight")
+        #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
+        #       If you fix this to be dynamically discerned, you'll be my hero.
+        sharded_param_names = ("t3", "t4")
+        unshard_param_names = ("t10", "t21")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
@@ -648,7 +652,7 @@ class CompileDDPTest(DataParallelTestCase):
             else:
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
-    # TODO(crcrpar): Add torch compile to executors_list once it's available.
+    # TODO(crcrpar): Add torch compile to executors_list
     @common_utils.parametrize(
         "executor,bucketing_strategy,fsdptype",
         product(
@@ -826,8 +830,8 @@ class CompileDDPTest(DataParallelTestCase):
         loss.backward()
 
         # get the trace before sorting
-        fwd_trc = thunder.last_traces(cm)[0][-2]
-        bwd_trc = thunder.last_traces(cm)[1][-2]
+        fwd_trc = thunder.last_traces(cm)[-2]
+        bwd_trc = thunder.last_backward_traces(cm)[-2]
 
         from thunder.distributed.utils import limit_in_flight_allgathers
 
@@ -1101,7 +1105,7 @@ def _test_native_ddp_helper(input_data):
     tdist.destroy_process_group(pg)
 
     if rank == 0:
-        bwd_extrace_sym_ids = [bsym.sym.id for bsym in thunder.last_traces(cmodel)[1][-1].bound_symbols]
+        bwd_extrace_sym_ids = [bsym.sym.id for bsym in thunder.last_backward_traces(cmodel)[-1].bound_symbols]
         pack_unpack_update_bucket_view_found = (
             "torch_pack_prim_impl" in bwd_extrace_sym_ids
             and "torch_unpack_prim_impl" in bwd_extrace_sym_ids

@@ -292,7 +292,7 @@ def test_binary_ops_compare_numbers():
 
 
 def test_binary_ops_int_numbers():
-    # Issue https://github.com/Lightning-AI/lightning-thunder/issues/594 for more ops
+    # TODO: see issue "Implement logical and arithmetic left and right shifts"
     # "<<", ">>",
     int_ops = ["+", "&", "//", "*", "%", "|", "**", "-", "/", "^"]
 
@@ -1574,7 +1574,7 @@ def test_return_list_with_intermediates():
     assert_close(expected, actual)
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2191")
+@pytest.mark.xfail(reason='issue: "jit-eager: allow sets as a return value"')
 def test_return_set():
     def foo(a, b):
         return {a, b}
@@ -2453,7 +2453,7 @@ def test_calling_input_sharp_edge():
         jfoo()
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2184")
+@pytest.mark.xfail(reason='issue: "sharp edges: loading closures"')
 def test_input_closure_sharp_edge():
     x = 5
 
@@ -2486,7 +2486,7 @@ def _test_fn_global_no_sharp_edge_fn():
     return 7
 
 
-@pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2189")
+@pytest.mark.xfail(reason='issue: "sharp edge: allow function and module loads"')
 def test_fn_global_no_sharp_edge():
     def foo(x):
         return x + _test_fn_global_no_sharp_edge_fn()

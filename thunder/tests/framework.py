@@ -133,25 +133,11 @@ class TestExecutor:
 
     @singledispatchmethod
     def make_callable_legacy(self, fn, **kwargs):
-        # TODO: an error is thrown for many functions because __code__ and
-        # inspect.signature for wrapped functions is not matching.
-        # KeyError: 'args'
-        # thunder/core/script/frontend.py:125: KeyError
-        # with disable_preprocessing=False
-        # See: https://github.com/Lightning-AI/lightning-thunder/issues/386
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(
-            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
-        )
+        assert kwargs.pop("disable_preprocessing", True)
+        return thunder.compile(fn, executors_list=self.executors_list(), disable_preprocessing=True, **kwargs)
 
     @singledispatchmethod
     def make_callable(self, fn, **kwargs):
-        # TODO: an error is thrown for many functions because __code__ and
-        # inspect.signature for wrapped functions is not matching.
-        # KeyError: 'args'
-        # thunder/core/script/frontend.py:125: KeyError
-        # with disable_preprocessing=False
-        # See: https://github.com/Lightning-AI/lightning-thunder/issues/386
         return thunder.jit(fn, executors=self.executors_list(), **kwargs)
 
     @make_callable.register

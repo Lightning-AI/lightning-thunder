@@ -793,7 +793,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
     # Shift operations
     #
-    # Issue https://github.com/Lightning-AI/lightning-thunder/issues/594
+    # Issue "Implement logical and arithmetic left and right shifts"
     #   tracks implementing these
 
     def __lshift__(self, other):
@@ -1460,6 +1460,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
     # Transposes
     #
+
+    @property
+    def T(self):
+        method = resolve_method("T", self)
+        return method(self)
 
     @property
     def mT(self):

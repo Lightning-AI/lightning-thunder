@@ -25,7 +25,7 @@ def test_elementwise_dunder_operations_on_numbers(executor, device, dtype):
         # (math.floor, (bool, int, float)),
         # (operator.inv, (bool, int)),
         # (operator.neg, (bool, int, float, complex)),
-        # # TODO https://github.com/Lightning-AI/lightning-thunder/issues/713
+        # # TODO see issue "Implement positive operations"
         # # operator.pos,
         # (builtins.round, (bool, int, float)),
         # (math.trunc, (bool, int, float)),
@@ -65,8 +65,8 @@ def test_elementwise_dunder_operations_on_numbers(executor, device, dtype):
             assert_close(actual, expected)
 
 
-# TODO Test operator and method variants using OpInfos
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/710
+# TODO: see issue "Test operator and method variants of operations using
+# OpInfos"
 @instantiate(dtypes=(thunder.float32,))
 def test_core_tensor_methods(executor, device, dtype):
     def foo(a, b, c, d):
@@ -126,7 +126,8 @@ def test_where(executor, device, dtype):
     torch_result = torch_fn(pred, i64, -2.3)
     assert_close(thunder_result, torch_result)
 
-    # TODO Fix https://github.com/Lightning-AI/lightning-thunder/issues/711
+    # TODO fix issue "Currently nvFuser tensor x float operations result in
+    # float64 results"
     # float x int
     # thunder_result = thunder_fn(pred, 3., 5)
     # torch_result = torch_fn(pred, 3., 5)

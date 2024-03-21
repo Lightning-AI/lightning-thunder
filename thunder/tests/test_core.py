@@ -532,7 +532,7 @@ def test_consistent_boundsymbol_collection_hard_printing():
 @instantiate(dtypes=NOTHING)
 def test_type_promotion_tensors(executor, device, _):
     if executor == TorchExecutor:
-        pytest.xfail("https://github.com/Lightning-AI/lightning-thunder/issues/406")
+        pytest.xfail('see issue "vmap of sum doesn\'t work when dims are passed as a keyword argument"')
 
     def foo(a, b):
         return a + b
@@ -590,7 +590,7 @@ def test_type_promotion_tensors(executor, device, _):
 @instantiate(dtypes=NOTHING)
 def test_type_promotion_numbers_and_tensors(executor, device, _):
     if executor == TorchExecutor:
-        pytest.xfail("https://github.com/Lightning-AI/lightning-thunder/issues/406")
+        pytest.xfail('See issue "Type promotion with the torchexecutor and elementwise operations is incorrect"')
 
     def foo(a, b, c):
         return a + b + c
@@ -1130,7 +1130,8 @@ def test_detached_trace(executor, device: str, _):
 def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
     # This test verifies that the recorded trace for a call to prims.sum
     # has its positional and keyword arguments normalized to the same form.
-    # See: https://github.com/Lightning-AI/lightning-thunder/issues/195
+    # See issue "vmap of sum doesn't work when dims are passed as a keyword
+    # argument"
     a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
 
     def func_dim_posarg(x):
@@ -1221,7 +1222,8 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     assert str(trace).count("Testing") == 1
 
 
-# Check for https://github.com/Lightning-AI/lightning-thunder/issues/471
+# Check to verify the issue in "KeyError thrown in thunder.executor.utils.Region
+# when None is passed in as input".
 @instantiate(dtypes=(thunder.float32,))
 def test_argument_of_none(executor, device, dtype):
     from thunder.executors.utils import Region
@@ -1683,7 +1685,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
-    decorators=(pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2118"),),
+    decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
 )
 def test_transforms_vjp_1_2(executor, device, _):
     from thunder.core.transforms import vjp
@@ -1790,7 +1792,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
-    decorators=(pytest.mark.xfail(reason="https://github.com/Lightning-AI/lightning-thunder/issues/2118"),),
+    decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
 )
 def test_transforms_vjp_2_1(executor, device, _):
     from thunder.core.transforms import vjp
@@ -1830,7 +1832,8 @@ def test_transforms_vjp_2_1(executor, device, _):
 #     executors=(
 #         nvFuserExecutor,
 #         # TODO: Enable Torch executor once the issue with sum is fixed
-#         # See: https://github.com/Lightning-AI/lightning-thunder/issues/438
+#         # See issue "Different behavior of sum(tensor, ()) for nvFuser and
+#         # Torch executor"
 #     ),
 # )
 # def test_transforms_vmap_inline_value_and_grad(executor, device, _):
@@ -1950,8 +1953,8 @@ def test_traceback():
     assert "thunder.computation" in excinfo.traceback[-1].path
 
 
-# TODO Add nvFuser support (https://github.com/Lightning-AI/lightning-thunder/issues/809)
-# TODO Make these OpInfo tests (https://github.com/Lightning-AI/lightning-thunder/issues/810)
+# TODO See issue "Add contiguous and clang.stride_order OpInfos that check stride
+# consistency with PyTorch"
 @instantiate(
     dtypes=NOTHING,
     executors=(TorchExecutor,),
@@ -2191,7 +2194,8 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
 @instantiate(dtypes=NOTHING)
 def test_no_passthrough_symbol(executor, device, _):
     # A test case for the situation reported in
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1131
+    # "backward trace contains symbols not present in forward that cause
+    # NotImplementedError"
     # When an operation simply passes through its input, we should not
     # add it to the trace.
 

@@ -38,7 +38,7 @@ def main(
     fabric = L.Fabric(devices=devices, strategy=strategy, precision="bf16-true")
     fabric.launch()
 
-    fabric.seed_everything(1337, workers=True)  # same seed for every process to init model (FSDP)
+    fabric.seed_everything(42, workers=True)  # same seed for every process to init model (FSDP)
 
     config = Config.from_name(model_name)
     fabric.print(f"Loading model with {config.__dict__}")

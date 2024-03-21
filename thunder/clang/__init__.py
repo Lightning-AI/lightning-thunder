@@ -19,9 +19,8 @@ from thunder.core import utils
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
-from thunder.core.script.noinline import noinline
 
-# This file defines the operations in lightning.compile's "core" language.
+# This file defines the operations in thunder.jit's "core" language.
 #
 # These operators are intended to be used when defining user-facing languages, like the torch or NumPy
 # languages.
@@ -34,7 +33,6 @@ DeviceLike = Union[str, devices.Device]
 _clang_fn_set: set = set()
 
 
-# TODO RC1 Remove noinline
 # Decorator that sets the core language context and registers the function
 class clangop:
     def __init__(self, *, method_name: None | str = None):
@@ -42,7 +40,6 @@ class clangop:
 
     def __call__(self, fn: Callable) -> Callable:
         _fn = langctx(Languages.CLANG)(fn)
-        _fn = noinline(_fn)
         _clang_fn_set.add(_fn)
 
         if self.method_name is not None:
@@ -1005,7 +1002,7 @@ def stride_order(a: TensorLike, order: None | Sequence[int] = None) -> TensorLik
 
     .. note::
 
-        No other lightning.compile operations specify how their outputs are represented in memory, and lightning.compile
+        No other thunder.jit operations specify how their outputs are represented in memory, and thunder.jit
         does not model strides. This operation is an explicit directive to construct a dense, non-overlapping and
         strided tensor, but operations on that tensor do not have to preserve those properties.
     """

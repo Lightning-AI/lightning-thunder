@@ -68,9 +68,11 @@ def skip_data_parallel_grad_sync() -> None:
 
 
 def _sync_grads(module: torch.nn.Module) -> None:
+    import thunder
+
     params_with_grad = [p for p in module.parameters() if p.grad is not None]
     grads = [p.grad for p in params_with_grad]
-    process_group = module._lc_cd.process_group_for_ddp
+    process_group = thunder.compile_data(module).process_group_for_ddp
     torch._foreach_div_(grads, process_group.size())
     with tdist.distributed_c10d._coalescing_manager(group=process_group, async_ops=True) as cm:
         for g in grads:
@@ -234,7 +236,7 @@ def ddp(
     # Starts broadcasts
     # TODO Make these broadcast asyncs
     # TODO Perform up to two broadcasts at a time
-    # https://github.com/Lightning-AI/lightning-thunder/issues/727
+    # See issue "Update ddp to use async broadcasts"
     # TODO "Bucket" small tensors together before broadcasting
     with torch.no_grad():
         for param in model.parameters():

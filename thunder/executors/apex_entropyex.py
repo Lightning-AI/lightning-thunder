@@ -10,11 +10,7 @@ import thunder.torch as ltorch
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol
 from thunder.core.utils import check, same_shape
-from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, sum_backward
-from thunder.core.transforms import (
-    register_augmented_forward_with_checker,
-    register_backward,
-)
+from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, restore_reduced_dims
 
 from thunder.extend import OperatorExecutor, register_executor
 
@@ -49,7 +45,8 @@ def apex_available() -> bool:
 
 
 # TODO Consider performing the reduction as part of a traceable epilogue
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1357
+#   See "Update the apex cross entropy executor to put its reduction in a
+#        traceable epilogue"
 # NOTE Apex's cross entropy doesn't accept ignore_index >= 0, or the weight, size_average, or reduce parameters
 def _apex_cross_entropy_impl(
     a: torch.Tensor,
@@ -196,78 +193,6 @@ def _cross_entropy_checker(
     return True
 
 
-# Check out
-# https://github.com/Lightning-AI/lightning-thunder/blob/main/dev_tutorials/thunder-add-vjp-rule.md
-# for a tutorial on how to add a VJP rule for any Symbol. We use our new
-# primitives to register a VJP rule for torch.nn.functional.cross_entropy. This
-# function is registered as the augmented forward rule for
-# torch.nn.functional.cross_entropy below
-def apex_cross_entropy_forward_rule(
-    a,
-    target,
-    weight=None,
-    size_average=None,
-    ignore_index=-100,
-    reduce=None,
-    reduction="mean",
-    label_smoothing=0.0,
-):
-    loss, max_log_sum_exp = apex_xentropy(
-        a,
-        target=target,
-        reduction=reduction,
-        label_smoothing=label_smoothing,
-    )
-    primal = loss
-    saved_for_backward = (a, target, max_log_sum_exp, reduction, label_smoothing)
-    return primal, saved_for_backward
-
-
-register_augmented_forward_with_checker(
-    apex_ex,
-    ltorch.cross_entropy.id,
-    _cross_entropy_checker,
-    apex_cross_entropy_forward_rule,
-)
-
-
-# This function is the backward rule for torch.nn.functional.cross_entropy. It
-# accepts the primal output and saved_for_backward from the forward pass and
-# returns the backward output. The backward output is a tuple of the backward
-# output for each differentiable Tensor input to the forward pass. In this case,
-# the forward pass has 1 such input, so the backward output is a single Tensor.
-# This function is registered as the backward rule for
-# torch.nn.functional.cross_entropy
-@register_backward((apex_ex, ltorch.cross_entropy.id))
-def apex_cross_entropy_backward_rule(
-    logits,
-    labels,
-    max_log_sum_exp,
-    reduction,
-    smoothing,
-    grad,
-):
-    from thunder.core.transforms import mean_backward, sum_backward
-
-    if reduction == "mean":
-        grad = mean_backward(max_log_sum_exp.ndim, max_log_sum_exp.shape, (0,), grad)
-    elif reduction == "sum":
-        grad = sum_backward(max_log_sum_exp.shape, (0,), grad)
-    elif reduction == "none":
-        pass
-    else:
-        raise ValueError(f"Invalid reduction: {reduction}")
-
-    grad_logits = apex_xentropy_bwd(
-        grad,
-        logits,
-        target=labels,
-        max_log_sum_exp=max_log_sum_exp,
-        label_smoothing=smoothing,
-    )
-    return grad_logits
-
-
 # Translate calls from torch.nn.functional.cross_entropy to apex_xentropy (when the checker above returns True)
 def _cross_entropy_transform(
     a: TensorProxy,
@@ -304,7 +229,7 @@ def _apex_cross_entropy_grad(
     if reduction == "mean":
         g = mean_backward(max_log_sum_exp.ndim, max_log_sum_exp.shape, (0,), g)
     elif reduction == "sum":
-        g, _ = sum_backward(max_log_sum_exp.shape, (0,), g)
+        g = restore_reduced_dims(g, (0,), max_log_sum_exp.shape)
 
     # NOTE Apex's xentropy bwd requires the grad computation to be performed in fp32
     a_ = a.contiguous()

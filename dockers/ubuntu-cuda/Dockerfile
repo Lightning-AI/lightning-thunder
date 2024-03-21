@@ -74,7 +74,7 @@ RUN \
 RUN \
     echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    # there is missing cudnn for 12.1 so use 12.2 instead
+    # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2.
     CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
     CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
     CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \

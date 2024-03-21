@@ -24,6 +24,7 @@ from thunder.core.proxies import (
     NumberProxy,
     Proxy,
     TensorProxy,
+    FloatProxy,
     variableify,
     unvariableify,
     CollectionProxy,
@@ -59,6 +60,7 @@ from thunder.clang import (
     convolution,
 )
 from thunder.core.transform_common import dce
+from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
 
@@ -538,24 +540,29 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
 #
 
 #
-# Functions related to functionalizing TOMs
+# Functions related to functionalizing ThunderOptimizedModules
 #
 
 
 # TODO Test with buffers
 def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None, args=None, kwargs=None) -> None:
     idx: int = 0
-    from thunder.common import ThunderOptimizedModule
+    from thunder import ThunderModule, compile_data
 
-    if tom is not None and isinstance(tom, ThunderOptimizedModule) and tom._additional_param_values is not None:
-        for p in tom._additional_param_values:
-            if p.requires_grad:
+    if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
+        assert args is not None, "populate grad needs args (and possibly kwargs) to work with ThunderModules"
+        if kwargs is None:
+            kwargs = {}
+        _, computation_inputs, _ = compile_data(tom).get_computation_and_inputs(*args, **kwargs)
+        for p in computation_inputs:
+            if isinstance(p, torch.Tensor) and p.requires_grad:
                 # Supports grad accumulation (like when weight tying)
                 if p.grad is not None:
                     p.grad += grads[idx]
                 else:
                     p.grad = grads[idx]
                 idx += 1
+        return
 
     # Short-circuits if there are no args or kwargs
     if args is None and kwargs is None:
@@ -587,7 +594,6 @@ def clear_grads(module: torch.nn.Module) -> None:
         b.grad = None
 
 
-from thunder.core.script.noinline import noinline
 from thunder.core.interpreter import make_opaque
 from thunder.core.langctxs import langctx, Languages
 
@@ -595,7 +601,7 @@ from thunder.core.langctxs import langctx, Languages
 # TODO RC1 Replace with langctx
 def torchctx(fn):
     _fn = langctx(Languages.TORCH)(fn)
-    return make_opaque(noinline(_fn))
+    return make_opaque(_fn)
 
 
 _grad_fn_map: dict[Any, Callable] = {}
@@ -664,8 +670,16 @@ register_grad(pids.FULL, prims.full)
 # NOTE prims.iota creates no grad associations
 register_grad(pids.IOTA, prims.iota)
 
-# NOTE prims.uniform creates no grad associations
-register_grad(pids.UNIFORM, prims.uniform)
+
+def _uniform_grad(shape, minval, maxval, *, device, dtype):
+    fwd, saved = uniform_aug_fwd(shape, minval, maxval, device=device, dtype=dtype)
+    g = get_grad(fwd)
+    _, gminval, gmaxval = uniform_backward(*saved, g)
+    put_grads((minval, maxval), (gminval, gmaxval))
+    return fwd
+
+
+register_grad(pids.UNIFORM, _uniform_grad)
 
 #
 # Reshaping and permuting operator grads
@@ -863,12 +877,11 @@ def _abs_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.ABS, _abs_prim_grad)
 
 
-@torchctx
 def _cos_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
-    fwd = prims.abs(a)
+    fwd = prims.cos(a)
 
     g = get_grad(fwd)
-    put_grad(a, g * (-ltorch.sin(a)))
+    put_grad(a, g * (-prims.sin(a)))
 
     return fwd
 
@@ -948,12 +961,11 @@ def _rsqrt_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
 register_grad(pids.RSQRT, _rsqrt_prim_grad)
 
 
-@torchctx
 def _sin_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
-    fwd = prims.abs(a)
+    fwd = prims.sin(a)
 
     g = get_grad(fwd)
-    put_grad(a, g * ltorch.cos(a))
+    put_grad(a, g * prims.cos(a))
 
     return fwd
 
@@ -1224,7 +1236,9 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 #
 
 
-def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any]) -> None | Callable:
+def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
+    cd = get_compile_data()
+    executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
     for ex in executors_list:
         if ex.can_execute_or_fuse(bsym):
@@ -1564,7 +1578,7 @@ def grad(
 
         return gradtrc
 
-    # NOTE This is a kludge to indicate that we shouldn't support PyTorch's autograd because
+    # NOTE This is a kludge to indicate that we shouldn't use PyTorch's autograd because
     #   we're using our own autograd transform
     cfn._using_grad_transform = True
 
@@ -1831,7 +1845,6 @@ def broadcast_in_dim_vmap(
 ) -> BatchedValue:
     bdim = a.batch_dim
     # TODO: remove this when shape and broadcast_dimensions become mandatory kwargs
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/181
     shape, _ = safe_zip(*shape)
     if len(broadcast_dimensions) > 0:
         broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
@@ -2148,7 +2161,6 @@ def broadcast_in_dim_jvp(a: JVPDual, shape: tuple[JVPDual, ...], broadcast_dimen
     x, xd = a
     # TODO: shape and broadcast_dimensions should be tuples of ints
     # but for now it's a tuple of JVPDuals
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/181
     if len(shape) > 0 and isinstance(shape[0], JVPDual):
         shape, _ = safe_zip(*shape)
     if len(broadcast_dimensions) > 0 and isinstance(broadcast_dimensions[0], JVPDual):
@@ -2408,43 +2420,30 @@ class ZeroBackward:
 # The augmented_primal function takes the primal values and returns the primal
 # result and the residuals (saved values for the backward).
 augmented_forward_impls = {
-    prims.PrimIDs.ABS: lambda x: (prims.abs(x), (x,)),
     prims.PrimIDs.ACOS: lambda x: (prims.acos(x), (x,)),
     prims.PrimIDs.ACOSH: lambda x: (prims.acosh(x), (x,)),
-    prims.PrimIDs.ADD: lambda x, y: (prims.add(x, y), tuple()),
     prims.PrimIDs.ASIN: lambda x: (prims.asin(x), (x,)),
     prims.PrimIDs.ASINH: lambda x: (prims.asinh(x), (x,)),
     prims.PrimIDs.ATAN: lambda x: (prims.atan(x), (x,)),
     prims.PrimIDs.ATANH: lambda x: (prims.atanh(x), (x,)),
     prims.PrimIDs.ATAN2: lambda x, y: (prims.atan2(x, y), (x, y)),
-    prims.PrimIDs.COS: lambda x: (prims.cos(x), (x,)),
     prims.PrimIDs.COSH: lambda x: (prims.cosh(x), (x,)),
     prims.PrimIDs.DIGAMMA: lambda x: (prims.digamma(x), (x,)),
-    prims.PrimIDs.DIV: lambda x, y: (prims.div(x, y), (x, y)),
-    prims.PrimIDs.ERF: lambda x: (prims.erf(x), (x,)),
     prims.PrimIDs.ERFC: lambda x: (prims.erfc(x), (x,)),
     prims.PrimIDs.ERFINV: lambda x: (prims.erfinv(x), (prims.erfinv(x),)),
     prims.PrimIDs.ERFCINV: lambda x: (prims.erfcinv(x), (prims.erfcinv(x),)),
     prims.PrimIDs.EXP2: lambda x: (prims.exp2(x), (prims.exp2(x),)),
     prims.PrimIDs.EXPM1: lambda x: (prims.expm1(x), (prims.expm1(x),)),
     prims.PrimIDs.LGAMMA: lambda x: (prims.lgamma(x), (x,)),
-    prims.PrimIDs.MUL: lambda x, y: (prims.mul(x, y), (x, y)),
     prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
-    prims.PrimIDs.SIN: lambda x: (prims.sin(x), (x,)),
     prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
-    prims.PrimIDs.SUB: lambda x, y: (prims.sub(x, y), tuple()),
     prims.PrimIDs.SQRT: lambda x: (prims.sqrt(x), (prims.sqrt(x),)),
-    prims.PrimIDs.EQ: lambda x, y: (prims.eq(x, y), (x, y)),
     prims.PrimIDs.NE: lambda x, y: (prims.ne(x, y), (x, y)),
-    prims.PrimIDs.GE: lambda x, y: (prims.ge(x, y), (x, y)),
     prims.PrimIDs.GT: lambda x, y: (prims.gt(x, y), (x, y)),
     prims.PrimIDs.LE: lambda x, y: (prims.le(x, y), (x, y)),
-    prims.PrimIDs.LT: lambda x, y: (prims.lt(x, y), (x, y)),
-    prims.PrimIDs.LOG: lambda x: (prims.log(x), (x,)),
     prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),
     prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
-    prims.PrimIDs.NEG: lambda x: (prims.neg(x), tuple()),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
 }
@@ -2454,53 +2453,30 @@ augmented_forward_impls = {
 # The backward function takes the residuals and cotangents and returns the
 # vector-Jacobian products for each argument.
 backward_impls = {
-    prims.PrimIDs.ABS: lambda x, g: g * prims.sign(x),
     prims.PrimIDs.ACOS: lambda x, g: -g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ACOSH: lambda x, g: g * prims.rsqrt(x * x - 1.0),
-    prims.PrimIDs.ADD: lambda g: (g, g),
     prims.PrimIDs.ASIN: lambda x, g: g / prims.sqrt(1.0 - x * x),
     prims.PrimIDs.ASINH: lambda x, g: g * prims.rsqrt(1.0 + x * x),
     prims.PrimIDs.ATAN: lambda x, g: g / (1.0 + x * x),
     prims.PrimIDs.ATANH: lambda x, g: g / (1.0 - x * x),
-    prims.PrimIDs.COS: lambda x, g: prims.mul(g, -prims.sin(x)),
     prims.PrimIDs.COSH: lambda x, g: prims.mul(g, prims.sinh(x)),
-    prims.PrimIDs.DIV: lambda x, y, g: (g / y, -g * x / (y**2)),
-    prims.PrimIDs.ERF: lambda x, g: g * 2.0 / math.sqrt(math.pi) * prims.exp(-x * x),
     prims.PrimIDs.ERFC: lambda x, g: -g * 2.0 / math.sqrt(math.pi) * prims.exp(-x * x),
     prims.PrimIDs.ERFINV: lambda result, g: g * 0.5 * math.sqrt(math.pi) * prims.exp(result**2),
     prims.PrimIDs.ERFCINV: lambda result, g: -g * 0.5 * math.sqrt(math.pi) * prims.exp(result**2),
     prims.PrimIDs.EXP2: lambda result, g: g * result * math.log(2.0),
     prims.PrimIDs.EXPM1: lambda result, g: g * (result + 1.0),
     prims.PrimIDs.LGAMMA: lambda x, g: g * prims.digamma(x),
-    prims.PrimIDs.MUL: lambda x, y, g: (g * y, g * x),
     prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * math.sqrt(2.0 * math.pi),
-    prims.PrimIDs.SIN: lambda x, g: prims.mul(g, prims.cos(x)),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
-    prims.PrimIDs.SUB: lambda g: (g, -g),
     prims.PrimIDs.SQRT: lambda result, g: g / (2.0 * result),
-    prims.PrimIDs.FULL: NoPullback(num_args=2),
-    prims.PrimIDs.EQ: ZeroBackward(num_args=2),
     prims.PrimIDs.NE: ZeroBackward(num_args=2),
-    prims.PrimIDs.GE: ZeroBackward(num_args=2),
     prims.PrimIDs.GT: ZeroBackward(num_args=2),
     prims.PrimIDs.LE: ZeroBackward(num_args=2),
-    prims.PrimIDs.LT: ZeroBackward(num_args=2),
-    prims.PrimIDs.LOG: lambda x, g: g / x,
     prims.PrimIDs.LOG10: lambda x, g: g / (x * 2.302585092994046),
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
-    prims.PrimIDs.NEG: lambda g: -g,
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
 }
-
-
-@dataclass(**default_dataclass_params)
-class RuleInfo:
-    checker: Callable
-    rule: Callable
-    fw_fallback: Callable
-    bw_fallback: Callable
-    executor: Executor
 
 
 def register_augmented_forward(op):
@@ -2518,40 +2494,6 @@ def register_augmented_forward(op):
         return func
 
     return decorator
-
-
-def register_augmented_forward_with_checker(executor, op, checker, rule):
-    """Decorator to register an augmented forward implementation for a symbol.
-
-    Args:
-        executor (Executor): Executor to which the rule applies.
-        op (Ops): Symbol for which to register the augmented forward implementation.
-        checker (Callable): Function that checks if the rule should be applied.
-        rule (Callable): Function that applies the rule.
-    """
-    fw_fallback = augmented_forward_impls.get(op, None)
-    bw_fallback = backward_impls.get(op, None)
-    augmented_forward_impls[executor, op] = RuleInfo(checker, rule, fw_fallback, bw_fallback, executor)
-
-
-def deregister_augmented_forward_and_backward(op):
-    """Deregisters an augmented forward implementation and a backward
-    implementation for a symbol.
-
-    Args:
-        op (Ops): Symbol for which to deregister the augmented forward
-        implementation and the backward implementation.
-
-    Returns:
-        None
-    """
-    # Restore the fallback implementation if it exists
-    if isinstance(augmented_forward_impls[op], RuleInfo):
-        backward_impls[op] = augmented_forward_impls[op].bw_fallback
-        augmented_forward_impls[op] = augmented_forward_impls[op].fw_fallback
-    else:
-        del augmented_forward_impls[op]
-        del backward_impls[op]
 
 
 def register_backward(op):
@@ -2623,61 +2565,12 @@ def polygamma_backward(n: int, a: Proxy, g):
     return None, g * polygamma(n + 1, a)
 
 
-@register_augmented_forward(prims.PrimIDs.RSQRT)
-def rsqrt_augmented(x):
-    """Augmented rsqrt operation.
-
-    Args:
-        x (Variable): input tensor.
-
-    Returns:
-        VJPDual: Primal and residuals.
-    """
-    primal = prims.rsqrt(x)
-    residuals = (primal,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.RSQRT)
-def rsqrt_backward(result, g):
-    # An alternative derivation used by JAX is -0.5 * g * rsqrt(x) / x
-    # where rsqrt(x) and x are saved for the backwards pass.
-    # This derivation was selected because it avoids saving the input tensor.
-    return -0.5 * g * result**3.0
-
-
 @register_backward(prims.PrimIDs.ATAN2)
 def atan2_backward(x, y, g):
     alpha = 1.0 / (x * x + y * y)
     grad_x = g * y * alpha
     grad_y = g * -x * alpha
     return grad_x, grad_y
-
-
-@register_augmented_forward(prims.PrimIDs.SUM)
-def sum_aug_fwd(x, dims):
-    """Augmented sum operation.
-
-    Args:
-        x (Variable): Tensor to be summed.
-        dims (Tuple[int, ...]): Dimensions to be summed.
-
-    Returns:
-        VJPDual: Primal and residuals.
-    """
-    primal = prims.sum(x, dims)
-    residuals = (
-        x.shape,
-        dims,
-    )
-
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.SUM)
-def sum_backward(x_shape, reduced_dims, g):
-    # One return per positional argument of prims.sum
-    return restore_reduced_dims(g, reduced_dims, x_shape), None
 
 
 @register_augmented_forward(prims.PrimIDs.VAR)
@@ -2701,13 +2594,6 @@ def var_backward(a, dim, correction, v, g):
     return (2 * g * (a - mean)) / normalization_scalar
 
 
-@register_augmented_forward(prims.PrimIDs.VAR_MEAN)
-def _var_mean_aug_fwd(a, dim, *, correction):
-    v, m = prims.var_mean(a, dim, correction=correction)
-
-    return (v, m), (a, dim, correction, m)
-
-
 def n_elem_reduced(a_ndim, a_shape, dims):
     dims = utils.canonicalize_dims(a_ndim, dims)
     reduction_size = 1
@@ -2720,27 +2606,6 @@ def n_elem_reduced(a_ndim, a_shape, dims):
 def mean_backward(a_ndim, a_shape, dims, grad):
     mean_local_grad = 1.0 / n_elem_reduced(a_ndim, a_shape, dims)
     return restore_reduced_dims(grad, dims, a_shape) * mean_local_grad
-
-
-# TODO: fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
-# by returning zeros_like(a) or similar.
-# TODO: fix grad when correction > n_elem_reduced.
-@register_backward(prims.PrimIDs.VAR_MEAN)
-def _var_mean_bwd(a, dim, correction, mean, grad_v, grad_m):
-    n_elem_reduced = a.numel // mean.numel if a.numel != 0 else 1
-
-    def mean_backward(a, dims, grad):
-        mean_scale = 1.0 / n_elem_reduced
-        grad = restore_reduced_dims(grad, dims, a.shape)
-        return mean_scale * grad
-
-    def var_backward(a, dims, correction, mean, grad):
-        normalization_scalar = n_elem_reduced - correction
-        grad = restore_reduced_dims(grad, dims, a.shape)
-        mean = restore_reduced_dims(mean, dims, a.shape)
-        return (2.0 * grad * (a - mean)) / normalization_scalar
-
-    return var_backward(a, dim, correction, mean, grad_v) + mean_backward(a, dim, grad_m)
 
 
 @register_augmented_forward(prims.PrimIDs.PAD)
@@ -2812,42 +2677,15 @@ def grad_chooser_backward(primal, x, x_shape, reduced_dims, g):
     return out
 
 
-register_backward(prims.PrimIDs.AMAX)(grad_chooser_backward)
 register_backward(prims.PrimIDs.AMIN)(grad_chooser_backward)
-
-
-# TODO: exact same for amin, argmax, argmin
-@register_augmented_forward(prims.PrimIDs.AMAX)
-def amax_aug_fwd(x, dims):
-    """Augmented amax operation.
-
-    Args:
-        x (Variable): Tensor to compute amax on.
-        dims (Tuple[int, ...]): Dimensions to compute amax over.
-
-    Returns:
-        VJPDual: Primal and residuals.
-    """
-    primal = prims.amax(x, dims)
-
-    residuals = (
-        primal,
-        x,
-        x.shape,
-        dims,
-    )
-
-    return VJPDual(primal, residuals)
 
 
 @register_augmented_forward(prims.PrimIDs.AMIN)
 def amin_aug_fwd(x, dims):
     """Augmented amin operation.
-
     Args:
         x (Variable): Tensor to compute amin on.
         dims (Tuple[int, ...]): Dimensions to compute amin over.
-
     Returns:
         VJPDual: Primal and residuals.
     """
@@ -2861,26 +2699,6 @@ def amin_aug_fwd(x, dims):
     )
 
     return VJPDual(primal, residuals)
-
-
-@register_augmented_forward(prims.PrimIDs.EXP)
-def exp_aug_fwd(x):
-    """Augmented exp operation.
-
-    Args:
-        x (Variable): Tensor to be exponentiated.
-
-    Returns:
-        VJPDual: Primal and residuals.
-    """
-    primal = prims.exp(x)
-    residuals = (primal,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.EXP)
-def exp_backward(result, g):
-    return g * result
 
 
 @register_augmented_forward(prims.PrimIDs.POW)
@@ -2927,104 +2745,9 @@ def tan_backward(result, g):
     return g * (1 + result * result)
 
 
-@register_augmented_forward(prims.PrimIDs.TANH)
-def tanh_aug_fwd(x):
-    """Augmented tanh operation.
-
-    Args:
-        x (Variable): Tensor to be passed to tanh.
-
-    Returns:
-        VJPDual: Primal and residuals.
-    """
-    primal = prims.tanh(x)
-    residuals = (primal,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.TANH)
-def tanh_backward(result, g):
-    return g * (1.0 - result * result)
-
-
 # NOTE: Jax uses np.argsort in its transpose vjp computation
 def _argsort(seq):
     return sorted(range(len(seq)), key=seq.__getitem__)
-
-
-@register_augmented_forward(prims.PrimIDs.TRANSPOSE)
-def transpose_aug_fwd(a, permutation):
-    primal = prims.transpose(a, tuple(permutation))
-    residuals = (permutation,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.TRANSPOSE)
-def transpose_backward(permutation, g):
-    undo = _argsort(permutation)
-    return prims.transpose(g, tuple(undo))
-
-
-@register_augmented_forward(prims.PrimIDs.RESHAPE)
-def reshape_aug_fwd(a, shape):
-    primal = prims.reshape(a, shape)
-    residuals = (a.shape,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.RESHAPE)
-def reshape_backward(orig_shape, g):
-    return prims.reshape(g, orig_shape)
-
-
-@register_augmented_forward(prims.PrimIDs.SLICE)
-def slice_aug_fwd(a, start_indices, end_indices, strides):
-    primal = prims.slice_prim(a, start_indices, end_indices, strides)
-    residuals = (a.shape, start_indices, end_indices, strides)
-    return VJPDual(primal, residuals)
-
-
-# Adapted from https://github.com/google/jax/blob/main/jax/_src/lax/slicing.py#L768
-@register_backward(prims.PrimIDs.SLICE)
-def slice_backward(shape, start_indices, end_indices, strides, g):
-    padding = None
-    if strides is None or np.all(np.equal(strides, 1)):
-        padding = tuple(zip(start_indices, np.subtract(shape, end_indices), (0,) * len(start_indices)))
-    else:
-        real_limits = np.add(
-            start_indices,
-            np.where(np.equal(g.shape, 0), 0, np.add(1, np.multiply(np.subtract(g.shape, 1), strides))),
-        )
-        padding = tuple(zip(start_indices, np.subtract(shape, real_limits), np.subtract(strides, 1)))
-
-    # We used NumPy arithmetics above, but the current infra expects Python ints.
-    padding = tree_map(int, padding)
-    result = prims.pad(g, const_as(0, g.dtype), padding)
-
-    return result
-
-
-@register_augmented_forward(prims.PrimIDs.BROADCAST_IN_DIM)
-def broadcast_in_dim_aug_fwd(a: Proxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]) -> VJPDual:
-    primal = prims.broadcast_in_dim(a, shape, broadcast_dimensions)
-    residuals = (a, shape, broadcast_dimensions)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.BROADCAST_IN_DIM)
-def broadcast_in_dim_backward(a, shape, broadcast_dimensions, g):
-    from thunder.torch import sum
-
-    # If g is None, then the primal was a constant and the pullback is zero.
-    # TODO: implement None propagation in the VJP infrastructure so that we don't need to do this.
-    if g is None:
-        return None, None, None
-    unit_dims = tuple(i for i, s in enumerate(a.shape) if s == 1)
-    bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
-    reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
-    g = sum(g, reduce_dims)
-    g = unsqueeze(g, unit_dims)
-    return g
 
 
 @register_augmented_forward(prims.PrimIDs.DEVICE_PUT)
@@ -3037,19 +2760,6 @@ def device_put_aug_fwd(a: TensorProxy, device: Device) -> TensorProxy:
 @register_backward(prims.PrimIDs.DEVICE_PUT)
 def device_put_backward(orig_device, g):
     return prims.device_put(g, orig_device), None
-
-
-@register_augmented_forward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
-def convert_element_type_aug_fwd(a: Proxy, dtype: dtypes.dtype) -> VJPDual:
-    primal = prims.convert_element_type(a, dtype)
-    residuals = (a.dtype if isinstance(a, TensorProxy) else (a.python_type if isinstance(a, NumberProxy) else type(a)),)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.CONVERT_ELEMENT_TYPE)
-def convert_element_type_backward(a_dtype, g):
-    # perform cast back to input type during backward
-    return prims.convert_element_type(g, a_dtype), None
 
 
 @register_augmented_forward(prims.PrimIDs.CONVOLUTION)
@@ -3253,32 +2963,6 @@ def convolution_backward(
     return (input_grad, weight_grad, bias_grad)
 
 
-@register_augmented_forward("torch.nn.functional.cross_entropy")
-def cross_entropy_aug_fwd(
-    input: Proxy,
-    target: Proxy,
-    weight=None,
-    size_average=None,
-    ignore_index=-100,
-    reduce=None,
-    reduction="mean",
-    label_smoothing=0.0,
-) -> VJPDual:
-    from thunder.torch import cross_entropy
-
-    primal = cross_entropy(input, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing)
-    residuals = (input, target, weight, reduction, ignore_index, label_smoothing)
-    return VJPDual(primal, residuals)
-
-
-@register_backward("torch.nn.functional.cross_entropy")
-def cross_entropy_backward(input, target, weight, reduction, ignore_index, label_smoothing, g):
-    from thunder.torch import cross_entropy_backward
-
-    ginput = cross_entropy_backward(g, input, target, weight, reduction, ignore_index, label_smoothing)
-    return ginput
-
-
 @register_augmented_forward("torch.log_softmax")
 def log_softmax_aug_fwd(input: TensorProxy, dim: int, *, dtype=None) -> VJPDual:
     from thunder.torch import log_softmax
@@ -3408,64 +3092,6 @@ def softmax_backward(primal, dim, g):
     return primal * (g - (primal * g).sum(dim, keepdim=True))
 
 
-@register_augmented_forward(prims.PrimIDs.MATMUL)
-def matmul_aug_fwd(a: TensorProxy, b: TensorProxy) -> VJPDual:
-    primal = prims.matmul(a, b)
-    residuals = (a, b)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.MATMUL)
-def matmul_backward(a, b, g):
-    from thunder.torch import sum
-
-    last_dim = (-1,)
-    first_dim = (-2,)
-    if a.ndim == 1 and b.ndim == 1:
-        return g * b, g * a
-
-    if b.ndim == 1:
-        ga = unsqueeze(g, last_dim) @ unsqueeze(b, last_dim).mT
-        gb = a.mT @ unsqueeze(g, last_dim)
-        if g.ndim > 1:
-            gb = squeeze(gb, last_dim)
-            gb = sum(gb, tuple(range(gb.ndim - 1)))
-        return ga, gb
-
-    if a.ndim == 1:
-        ga = unsqueeze(g, first_dim) @ b.mT
-        if g.ndim > 1:
-            ga = sum(ga, tuple(range(ga.ndim - 1)))
-        gb = unsqueeze(a, first_dim).mT @ unsqueeze(g, first_dim)
-        return ga, gb
-
-    return g @ b.mT, a.mT @ g
-
-
-@register_augmented_forward(prims.PrimIDs.LINEAR)
-def linear_aug_fwd(a: TensorProxy, b: TensorProxy, c: TensorProxy | None) -> VJPDual:
-    primal = prims.linear(a, b, c)
-    residuals = (a, b, c)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.LINEAR)
-def linear_backward(a, b, c, g):
-    from thunder.torch import matmul, sum
-
-    first_dim = (-2,)
-    ga = matmul(g.reshape(-1, g.shape[-1]), b).reshape(a.shape)
-    if a.ndim == 1:
-        gb = matmul(unsqueeze(g, first_dim).mT, unsqueeze(a, first_dim))
-    else:
-        gb = matmul(g.reshape(-1, g.shape[-1]).mT, a.reshape(-1, a.shape[-1]))
-        assert list(gb.shape) == list(b.shape), f"linear_backward: {gb.shape} != {b.shape}"
-    if c is None:
-        return ga, gb, None
-    gc = sum(g, tuple(range(g.ndim - 1))) if g.ndim > 1 else g
-    return ga, gb, gc
-
-
 def iter_bound_symbols(bound_symbols):
     """Iterate over bound symbols, skipping symbols that are not supported by
     the transforms infrastructure.
@@ -3558,31 +3184,6 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     return result
 
 
-@register_augmented_forward(prims.PrimIDs.CAT)
-def cat_aug_fwd(tensors: list[TensorProxy], dim: int) -> VJPDual:
-    primal = prims.cat(tensors, dim)
-    residuals = (
-        type(tensors),
-        [t.shape[dim] for t in tensors],
-        dim,
-    )
-
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.CAT)
-def cat_backward(
-    tensors_seq_type: type, tensor_dim_lens: list[int], dim: int, g: TensorProxy
-) -> tuple[Sequence[TensorProxy]]:
-    grads = []
-
-    slice_start = 0
-    for dim_len in tensor_dim_lens:
-        grads.append(slice_in_dim(g, slice_start, slice_start + dim_len, dim=dim))
-        slice_start += dim_len
-    return (tensors_seq_type(grads),)
-
-
 @register_augmented_forward("torch.Tensor.contiguous")
 @register_augmented_forward("torch.contiguous")
 def contiguous_aug_fwd(x: TensorProxy, /, *, memory_format: torch.memory_format = torch.contiguous_format) -> VJPDual:
@@ -3599,25 +3200,11 @@ def contiguous_backward(*residuals_and_grad) -> TensorProxy:
     return g
 
 
-@register_augmented_forward(prims.PrimIDs.WHERE)
-def where_aug_fwd(condition: TensorProxy, x: TensorProxy, y: TensorProxy) -> VJPDual:
-    primal = prims.where(condition, x, y)
-    residuals = (condition,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.WHERE)
-def where_backward(condition, g):
-    return prims.where(condition, g, 0.0), prims.where(condition, 0.0, g)
-
-
-@register_augmented_forward(prims.PrimIDs.RECIPROCAL)
 def reciprocal_aug_fwd(a: TensorProxy) -> VJPDual:
     primal = reciprocal(a)
     return VJPDual(primal, (primal,))
 
 
-@register_backward(prims.PrimIDs.RECIPROCAL)
 def reciprocal_backward(primal, g):
     return -g * primal * primal
 
@@ -3629,38 +3216,6 @@ def reciprocal_joint_forward_backward_rule(a: TensorProxy) -> TensorProxy:
     ga = reciprocal_backward(*saved, g)
     put_grad(a, ga)
     return result
-
-
-@register_augmented_forward(prims.PrimIDs.SQUEEZE)
-def squeeze_aug_fwd(a: TensorProxy, dims: Sequence[int]) -> VJPDual:
-    primal = squeeze(a, dims)
-    residuals = (dims,)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.SQUEEZE)
-def squeeze_backward(dims: Sequence[int], g: TensorProxy) -> TensorProxy:
-    return unsqueeze(g, dims)
-
-
-@register_augmented_forward(prims.PrimIDs.TAKE)
-def take_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
-    primal = prims.take(x, index, dim)
-    residuals = (
-        x.shape,
-        x.device,
-        x.dtype,
-        index,
-        dim,
-    )
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.TAKE)
-def take_backward(
-    shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy
-):
-    return prims.index_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim)
 
 
 @register_augmented_forward("torch.index_put")
@@ -3701,33 +3256,11 @@ def index_put_backward(indices: Sequence[TensorProxy], values: TensorProxy, accu
     return clang.index_put(g, indices, ltorch.zeros_like(values), False), g_values
 
 
-@register_augmented_forward(prims.PrimIDs.TAKE_ALONG_AXIS)
-def take_along_axis_aug_fwd(x: TensorProxy, index: TensorProxy, dim: int) -> VJPDual:
-    primal = prims.take_along_axis(x, index, dim)
-    residuals = (
-        x.shape,
-        x.device,
-        x.dtype,
-        index,
-        dim,
-    )
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.TAKE_ALONG_AXIS)
-def take_along_axis_backward(
-    shape: Sequence[int], device: Device, dtype: dtypes.dtype, index: TensorProxy, dim: int, g: TensorProxy
-):
-    return prims.scatter_add(prims.full(shape, fill_value=0, device=device, dtype=dtype), index, g, dim)
-
-
-@register_augmented_forward(prims.PrimIDs.UNIFORM)
 def uniform_aug_fwd(shape, minval, maxval, *, device, dtype):
     primal = prims.uniform(shape, minval, maxval, device=device, dtype=dtype)
     return VJPDual(primal, (primal, minval, maxval))
 
 
-@register_backward(prims.PrimIDs.UNIFORM)
 def uniform_backward(primal, minval, maxval, g):
     # uniform is implemented as (maxval - minval) * uniform(shape, 0, 1) + minval
     unscaled_primal = (primal - minval) / (maxval - minval)
@@ -3739,29 +3272,21 @@ def uniform_backward(primal, minval, maxval, g):
 nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
 
 
-def get_executor_specific_aug_fwd_rule(symbol) -> RuleInfo | None:
-    """Get executor specific augmented forward rule.
+def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
+    """Check if a symbol is constant for the VJP transform.
 
     Args:
-        symbol (prims.Symbol): Symbol to get the rule for.
+        symbol (prims.Symbol): Symbol to check.
 
     Returns:
-        RuleInfo: Rule info for the symbol.
+        bool: True if the symbol is constant, False otherwise.
     """
-    cd = get_compile_data()
-    if cd is None:
-        return None
-
-    # Search for the executor specific rules. When there are multiple rules
-    # for the same symbol, we use the left-most executor in the list (i.e.
-    # the one with the highest priority) and we fallback to the next one if
-    # the checker returns False.
-    for executor in cd.executors_list:
-        candidate = augmented_forward_impls.get((executor, symbol.sym.id))
-        if isinstance(candidate, RuleInfo) and candidate.checker(*symbol.args, **symbol.kwargs):
-            return candidate
-
-    return None
+    are_all_args_non_differentiable = not any(isinstance(arg, (FloatProxy, TensorProxy)) for arg in symbol.flat_args)
+    return (
+        are_all_args_non_differentiable
+        or symbol.are_all_args_constant
+        or symbol.sym.id in nondifferentiable_vjp_symbols
+    )
 
 
 def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
@@ -3776,7 +3301,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
         Callable: A function that computes the VJP of the symbol.
     """
     # Constant case
-    if symbol.are_all_args_constant or symbol.sym.id in nondifferentiable_vjp_symbols:
+    if is_constant_for_vjp(symbol):
 
         def vjp_impl_const(symbol, *args, **kwargs):
             args, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
@@ -3790,15 +3315,8 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
 
-    vjp_impl = get_executor_specific_aug_fwd_rule(symbol) or vjp_impl
-
-    if isinstance(vjp_impl, RuleInfo):
-        # We should use this rule only if checker returns True for the current
-        # symbol's arguments
-        if vjp_impl.checker(*symbol.args, **symbol.kwargs):
-            vjp_impl = vjp_impl.rule
-        else:
-            vjp_impl = vjp_impl.fw_fallback
+    if _get_gradfn(symbol) is not None:
+        vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
 
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
@@ -3809,6 +3327,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             # It could be a torch.dropout with 0.0 probability, so we skip it
             if symbol.sym.id == "torch.nn.functional.dropout":
                 return None
+            print(f"VJP for {symbol} is not implemented")
             raise NotImplementedError(f"VJP for {symbol.sym.id} is not implemented")
 
     def _vjp_impl(*args, **kwargs):
@@ -3840,6 +3359,9 @@ def check_bsym_for_vjp(bsym):
         return True
 
     if bsym.sym.id in backward_impls and bsym.sym.id in augmented_forward_impls:
+        return True
+
+    if bsym.sym.id in _grad_fn_map:
         return True
 
     # We could not find a VJP for this symbol, so we try to decompose it
@@ -3925,6 +3447,8 @@ def backward_pass(forward_env, trace, init_cotangents):
         elif isinstance(v, Sequence) and val is None:
             # broadcast None to the right shape
             safe_map(put_grad, v, [None] * len(v))
+        elif isinstance(v, Sequence) and isinstance(val, Sequence):
+            safe_map_flat(put_grad, v, val)
         else:
             # Skip writing to constants
             pass
@@ -3943,7 +3467,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
         residuals = forward_env[symbol_output[0].name].residuals
-        if symbol.are_all_args_constant or symbol.sym.id in nondifferentiable_vjp_symbols:
+        if is_constant_for_vjp(symbol):
             # We can skip the pullback if all the arguments are constant
             continue
 
@@ -3955,17 +3479,15 @@ def backward_pass(forward_env, trace, init_cotangents):
         if symbol.sym.id == "torch.nn.functional.dropout" and not symbol.subsymbols:
             # We can skip the pullback if the dropout probability is 0.0
             # Assuming that the dropout symbol has the same output and argument
-            # https://github.com/Lightning-AI/lightning-thunder/issues/906
             assert symbol.output.name == symbol.args[0].name, "Dropout symbol has a different output and argument"
             if symbol.args[1] == 0.0 or symbol.args[2] is False:
                 continue
 
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
-        aug_forward = get_executor_specific_aug_fwd_rule(symbol) or aug_forward
 
-        if isinstance(aug_forward, RuleInfo):
-            backward = backward_impls[aug_forward.executor, symbol.sym.id]
+        if _get_gradfn(symbol) is not None:
+            aug_forward, backward = make_aug_forward_and_backward(symbol)
 
         if backward is None:
             if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
@@ -3980,9 +3502,11 @@ def backward_pass(forward_env, trace, init_cotangents):
             # If the backward returns a dict, we assume that it is a dict of
             # forward arguments to the corresponding
             # gradients/cotangents/adjoints/sensitivities.
+            used_names = set()
             for i, (k, v) in enumerate(inspect.signature(aug_forward).parameters.items()):
                 if v.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
                     put_grad(symbol.args[i], result.get(k, None))
+                    used_names.add(k)
 
             # For developer convenience, we allow using the name from the
             # forward meta in addition to the name from the augmented forward
@@ -3991,7 +3515,8 @@ def backward_pass(forward_env, trace, init_cotangents):
             # precedence.
             for i, (k, v) in enumerate(inspect.signature(symbol.sym.meta).parameters.items()):
                 if v.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-                    put_grad(symbol.args[i], result.get(k, None))
+                    if k not in used_names:
+                        put_grad(symbol.args[i], result.get(k, None))
             continue
 
         if not isinstance(result, Sequence):
@@ -4028,7 +3553,7 @@ def backward_pass(forward_env, trace, init_cotangents):
 
             result = tuple(next(iter_result) if is_differentiable(arg) else None for arg in symbol.args)
 
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/977.
+        # See "Backward impl for ops of the type Sequence[TensorProxy], ... -> ... results in None grads."
         # This is a temporary workaround.
         if symbol.sym.id in (prims.PrimIDs.CAT, "torch.cat", "torch.stack"):
             safe_map_flat(put_grad, symbol.args, result)
@@ -4065,7 +3590,8 @@ def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwarg
 
 
 # TODO: Can't use a Symbol here because mixed executor sybsymbols seem to be
-# unsupported. See https://github.com/Lightning-AI/lightning-thunder/issues/1308
+# unsupported. See issue "Could not find an executor for bound symbol when its subsymbols
+# are not fully supported by a single executor"
 vjp_call = partial(
     vjp_call_metafunc, False
 )  # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
@@ -4190,7 +3716,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
 
 # NOTE: Returning namedtuples from compiled functions doesn't work. See:
-# https://github.com/Lightning-AI/lightning-thunder/issues/881
+# "Allow returning namedtuples from compiled functions"
 # Note [Grad forward output spec]
 # If it did work it would be nice to use this namedtuple
 # instead of the plain tuple or dict that we're using now.
@@ -4372,10 +3898,13 @@ def register_autocast_rule(op):
 
 def maybe_downcast_to(dtype, args):
     allowed_downcast_types = (dtypes.float16, dtypes.bfloat16, dtypes.float32)
-    if all(tree_map(lambda a: a.dtype in allowed_downcast_types, args)):
-        return tree_map(lambda a: maybe_convert_to_dtype(a, dtype), args)
-    else:
-        return args
+
+    def map_fn(a):
+        if isinstance(a, TensorProxy) and a.dtype in allowed_downcast_types:
+            return maybe_convert_to_dtype(a, dtype)
+        return a
+
+    return tree_map(map_fn, args)
 
 
 @register_autocast_rule("torch.matmul")

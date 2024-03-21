@@ -41,7 +41,7 @@ def test_nanogpt_complete(executor, device, dtype):
 # TODO Investigate grad inconsistency
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
-# https://github.com/Lightning-AI/lightning-thunder/issues/907
+# See issue "Add half precision dtype tests to test_networks.py"
 @instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)

@@ -62,9 +62,7 @@ class CompileStats:
         self.last_interpreted_history = None
 
         # torch.autograd.Function specific data
-        self.primal_trace = None
-        self.forward_last_traces = None
-        self.backward_last_traces = None
+        self.last_backward_traces = None
 
         # Timing stats
         self.last_trace_host_start: int = -1
@@ -133,40 +131,6 @@ class CompileStats:
         return self._time_template(start, stop, "computation execution")
 
 
-import thunder.core.script.frontend as script_frontend
-import thunder.core.script.instrumentation as script_instrumentation
-import thunder.core.script.passes as passes
-import thunder.core.script.python_ir as python_ir
-
-
-# Preprocesses function
-# Currently tries to map torch.foo lookups to thunder.torch.foo lookups
-@script_instrumentation.record
-def preprocess(fn, is_module):
-    gr = script_frontend.acquire_method(fn.forward if is_module else fn)
-    passes.unroll_for_loops_and_inline_modules(gr)
-    if is_module:
-        (
-            additional_param_names,
-            additional_param_values,
-            additional_return_names,
-        ) = passes.module_to_function(gr)
-    passes.strongly_inline_functions(gr)
-    passes.torch_to_thunder(gr)
-
-    thunder_fn = python_ir.generate_function(gr)
-    if is_module:
-        thunder_fn._additional_param_names = additional_param_names
-        thunder_fn._additional_param_values = additional_param_values
-        thunder_fn._additional_return_names = additional_return_names
-    else:
-        thunder_fn._additional_param_names = None
-        thunder_fn._additional_param_values = None
-        thunder_fn._additional_return_names = None
-
-    return thunder_fn
-
-
 # A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
 #   like additional_param_names
@@ -189,12 +153,16 @@ class CompileData:
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
+        get_computation_and_inputs: Callable | None = None,
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
-        #   but some components are still designed to work with older architectures for
+        #   but some components are still designed to work with the older entrypoint
         #   and are being temporarily maintained to facilitate their development.
         self.using_jit = using_jit
+
+        # runs prologues to get the compute/backward/epilogue function and inputs
+        self.get_computation_and_inputs = get_computation_and_inputs
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
@@ -262,20 +230,9 @@ class CompileData:
         self.num_constant_args = 0
 
         self._processed_function: Callable
-        if disable_preprocessing:
-            self._processed_function = fn
-        else:
-            warnings.warn(
-                "please use thunder.jit if possible and upgrade and use thunder.jit if it is not yet possible"
-            )
-            self._processed_function = preprocess(fn, is_module=self.is_module)
 
-            # TODO Revisit assuming parameters are const
-            if self.is_module:
-                self.additional_param_names = self.processed_function._additional_param_names
-                self.additional_param_values = self.processed_function._additional_param_values
-                self.additional_return_names = self.processed_function._additional_return_names
-                self.num_constant_args = len(self.additional_param_values)
+        assert disable_preprocessing, "please use thunder.jit if you need preprocessing"
+        self._processed_function = fn
 
     # Disallows overwriting processed_function
     @property
@@ -287,7 +244,7 @@ class CompileData:
 def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool):
     tracectx.unpacking()
 
-    # Translates tensors, arrays, and dtypes to lightning.compile types
+    # Translates tensors, arrays, and dtypes to thunder.jit types
     # TODO Translate NumPy dtypes
     def translate(x: Any, *, name: str | None = None) -> Any:
         # NOTE Unpacking proxies
@@ -371,85 +328,6 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
     return proxyargs, proxykwargs
 
 
-class ThunderOptimizedModule(torch.nn.Module):  # TOM
-    # todo: subclass nn.Module or forward things like .state_dict() to the
-    #       model
-    def __init__(self, model, fn, tfn, additional_param_names, additional_param_values, additional_return_names):
-        super().__init__()
-        self._model = model
-        self._forward_fn = fn
-        self._tfn = tfn
-
-        self._additional_param_values = additional_param_values
-        self._additional_param_names = additional_param_names
-        self._additional_return_names = additional_return_names
-        d = {k: i for i, k in enumerate(additional_param_names)}
-        self._additional_return_param_idxes = [d[k] for k in additional_return_names]
-
-    def __call__(self, *args, **kwargs):
-        all_args = (*self._additional_param_values, *args)
-        res = self._forward_fn(*all_args, **kwargs)
-        if self._additional_return_names:
-            res, *additional_returns = res
-            assert len(self._additional_return_names) == len(
-                additional_returns
-            ), f"Number of expected additional return args {len(self._additional_return_names)=} does not match the actual number {len(additional_returns)=}"
-            for k, v, idx in zip(
-                self._additional_return_names, additional_returns, self._additional_return_param_idxes
-            ):
-                m = self._model
-                parts = k.split(".")
-                for p in parts[:-1]:
-                    m = getattr(m, p)
-                setattr(m, parts[-1], v)
-                self._additional_param_values[idx] = v
-        return res
-
-    @contextmanager
-    def no_sync(self):
-        """Context manager to disable gradient synchronization in data parallel mode.
-
-        This context manager is intended to be used in conjunction with
-        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
-        synchronization in the backward pass. It will not have any effect when
-        used with other modules.
-
-        .. note::
-
-            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
-            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
-            In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
-
-        .. warning::
-
-            You must reuse this context manager in each group of gradient accumulation iterations since gradients will get synchronized
-            on context manager exit. For example:
-
-            .. code-block:: python
-
-                with model.no_sync():
-                    for _ in range(len(gradient_accumulation_iters)):
-                        loss(model(x)).backward()  # uses no-sync-backward trace
-                loss(model(x)).backward()  # uses the regular backward trace
-                optimizer.step()
-
-        """
-        from thunder.distributed import (
-            set_skip_data_parallel_grad_sync,
-            reset_skip_data_parallel_grad_sync,
-            _sync_grads,
-        )
-
-        token = set_skip_data_parallel_grad_sync(True)
-        try:
-            yield
-        finally:
-            reset_skip_data_parallel_grad_sync(token)
-            _sync_grads(self)
-
-
 #
 # Caching objects and functions
 #
@@ -458,8 +336,8 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
 
 # TODO Update cacheable types
 def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
-    if isinstance(x, torch.Tensor):
-        return True, (torch.Tensor, x.shape, x.device, x.dtype, x.requires_grad)
+    if isinstance(x, (torch.Tensor, TensorProxy)):
+        return True, (type(x), x.shape, x.device, x.dtype, x.requires_grad)
 
     # TODO Add NumPy ndarray support
     if isinstance(x, np.ndarray):
@@ -750,7 +628,7 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    # TODO RC1 Remove this option (by modeling torch.compile as another executor)
+    # TODO RC1 Remove this option (by using the torch.compile executor)
     if compile_data.use_torch_compile:
         c = torch.compile(c)
 
@@ -769,11 +647,10 @@ def _execute_trace(
 # TODO review functions which compute large objects unrelated to tensors and how
 #   they're handled
 # TODO can the language context be detected from the inputs?
-# TODO  https://github.com/Lightning-AI/lightning-thunder/issues/316
+# TODO:
 #   Today all tensor outputs will be torch tensors, even if the input was NumPy arrays
 #   provided in the NumPy language ctx -- what should the outputs be?  Should we provide
 #   a helper to convert torch tensors to NumPy arrays on output?
-# TODO Provide an option to not preprocess (for debugging)
 
 
 def _create_callable(
@@ -856,6 +733,9 @@ def _create_callable(
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
         with compile_data_and_stats(cd, cs):
+            traces: list[TraceCtx] = []
+            cs.last_traces = traces
+            cs.last_backward_traces = []
             # Determines whether to use autograd.Function or not
             # autograd.Function (which supports calling .backward() in PyTorch) is used when:
             #   1) The grad() transform is not applied
@@ -886,7 +766,7 @@ def _create_callable(
                     cs.last_trace_host_stop = time.time_ns()
                     return result
 
-            # TODO Revisit compile() behavior when hit in a trace ctx
+            # TODO Revisit jit() behavior when hit in a trace ctx
             #   This will inline the invocation of compile into the current
             #   trace (UNLESS there was a cache hit, per above)
             #   This interaction between the cache and tracing seems odd
@@ -914,7 +794,7 @@ def _create_callable(
 
             # Starts recording a sequence of traces (this is not inlined)
             trc: TraceCtx = trc_or_result
-            traces: list[TraceCtx] = [trc]
+            traces.append(trc)
 
             # Applies transforms
             for transform in transforms:
@@ -953,16 +833,6 @@ def _create_callable(
 
             cs.last_trace_host_stop = time.time_ns()
             return result
-
-    if cd.is_module:
-        _fn = ThunderOptimizedModule(
-            cd.fn,
-            _fn,
-            cd.processed_function,
-            cd.additional_param_names,
-            cd.additional_param_values,
-            cd.additional_return_names,
-        )
 
     # NOTE is_module is False
     _fn._pfn = cd.processed_function

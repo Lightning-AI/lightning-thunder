@@ -8,9 +8,9 @@ Bytecode interpretation
 
 Thunder's interpreter works by:
 
-1. disassembling the PyTorch module or function into CPython bytecode
-2. interpreting the bytecode using an extended Python interpreter
-3. generating a sequential trace of operations on tensors and numbers
+1. Disassembling the PyTorch module or function into CPython bytecode
+2. Interpreting the bytecode using an extended Python interpreter
+3. Generating a sequential trace of operations on tensors and numbers
 
 Representing Operations
 =======================

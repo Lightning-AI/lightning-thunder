@@ -11,9 +11,6 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import Symbol
 import thunder.clang as clang
 
-# TODO RC1 Remove this
-from thunder.core.script.noinline import noinline
-
 
 #
 # NumPy operator definitions
@@ -28,7 +25,7 @@ class npsymbol:
 
     def __call__(self, fn: Callable) -> Symbol:
         _fn = langctx(Languages.NUMPY)(fn)
-        _fn = noinline(_fn)
+        # TODO: register _fn as opaque with the interpreter or do this in jit_ext?
         sym = Symbol(name=fn.__name__, meta=_fn)
 
         if self.method_name is not None:

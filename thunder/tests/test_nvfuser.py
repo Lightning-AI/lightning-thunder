@@ -315,7 +315,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_rematerialization(executor, device, _):
-    # Unit test for https://github.com/Lightning-AI/lightning-thunder/issues/2046
+    # Unit test for "llama2.c example failed with bookend disabled."
     from thunder.tests.llama2_model import Transformer, ModelArgs
     from thunder.core.pytree import tree_flatten
 
@@ -338,10 +338,10 @@ def test_cse_rematerialization(executor, device, _):
 
     x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    compiled_func = thunder.compile(
+    compiled_func = thunder.jit(
         model.eval(),
-        disable_torch_autograd_support=True,
-        executors_list=executor.executors_list(),
+        disable_torch_autograd=True,
+        executors=executor.executors_list(),
         nv_enable_bookend=False,
     )
     compiled_func(x, y)
@@ -356,11 +356,11 @@ def test_cse_rematerialization(executor, device, _):
     assert len(fusion_bsyms) == 11
     # fusion groups 1 and 6 correspond with the apply_rotary_emb function
     # Nvfuser with recomputation should use precomputed cos and sin values.
-    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
-    assert fusion_bsyms[1].args[0].name == "freqs_cos"
-    assert fusion_bsyms[1].args[1].name == "freqs_sin"
-    assert fusion_bsyms[6].args[0].name == "freqs_cos"
-    assert fusion_bsyms[6].args[1].name == "freqs_sin"
+    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[7].args)
+    assert fusion_bsyms[1].subsymbols[0].output.name == "freqs_cos"
+    assert fusion_bsyms[1].subsymbols[1].output.name == "freqs_sin"
+    assert fusion_bsyms[7].subsymbols[0].output.name == "freqs_cos"
+    assert fusion_bsyms[7].subsymbols[1].output.name == "freqs_sin"
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
@@ -614,8 +614,7 @@ def test_cse_issue1789(executor, device, _):
     dtypes=NOTHING,
     executors=(
         nvFuserExecutor,
-        # NOTE torch executor does not have bookend optimization.
-        # See comment: https://github.com/Lightning-AI/lightning-thunder/issues/571#issuecomment-1610778432
+        # NOTE We might want to do transpose bookend optimization for other executors than nvFuser.
     ),
 )
 def test_bookend_meta_optimization(executor, device, _):

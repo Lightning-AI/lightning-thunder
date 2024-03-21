@@ -1,4 +1,3 @@
-import copy
 import inspect
 from inspect import Parameter, Signature
 from itertools import chain
@@ -11,6 +10,9 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, TraceCtx
 from thunder.core.transform_common import dce
+
+
+_cache = {}
 
 
 def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable]:
@@ -33,13 +35,20 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         A pair of forward and backward functions.
     """
     import thunder
-    from thunder.core.transforms import _grad_fn_map
+    from thunder.common import _make_cache_key
+    from thunder.core.transforms import _get_gradfn, eval_trace
 
-    joint_forward_backward = _grad_fn_map.get(bsym.sym.id, None)
+    joint_forward_backward = _get_gradfn(bsym)
     utils.check(
         joint_forward_backward is not None,
         lambda: f"Cannot generate forward and backward functions for {bsym.sym.name}",
     )
+
+    key = (bsym.sym, subkey := _make_cache_key(bsym.args, bsym.kwargs))
+    cached_result = _cache.get(key, None) if subkey is not None else None
+    if cached_result is not None:
+        return cached_result
+
     joint_trace = thunder.trace(inline_trace=False, use_dce=False)(joint_forward_backward, *bsym.args, **bsym.kwargs)
     consumers = utils.consumers(joint_trace)
 
@@ -67,19 +76,30 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     bw_outputs_args = tree_map(find_backward_output, joint_trace.args)
     bw_outputs_kwargs = tree_map(find_backward_output, joint_trace.kwargs)
     meta_parameters = inspect.signature(bsym.sym.meta).parameters
+    meta_parameters = {
+        name: param
+        for name, param in meta_parameters.items()
+        if param.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.POSITIONAL_ONLY)
+    }
     bw_outputs = {name: bw_output for name, bw_output in utils.safe_zip(meta_parameters, bw_outputs_args)}
     bw_outputs = bw_outputs | bw_outputs_kwargs
     flat_bw_outputs, _ = tree_flatten(bw_outputs)
 
-    backward_bsyms = utils.find_producer_symbols(joint_trace, flat_bw_outputs, bw_inputs)
-    unpacking_ops = (
+    backward_bsyms = utils.find_producer_symbols(joint_trace, flat_bw_outputs, tree_flatten(bw_inputs)[0])
+    skip = (
         prims.PrimIDs.UNPACK_EMPTY_DICT,
         prims.PrimIDs.UNPACK_KEY,
         prims.PrimIDs.UNPACK_SEQUENCE,
         prims.PrimIDs.UNPACK_TRIVIAL,
+        prims.PrimIDs.GET_GRAD,
     )
-    backward_bsyms = [bsym for bsym in backward_bsyms if bsym.sym.id not in unpacking_ops]
+    backward_bsyms = [bsym for bsym in backward_bsyms if bsym.sym.id not in skip]
     backward_bsyms.append(prims.python_return.bind(bw_outputs, output=()))
+
+    forward_input_proxies = tree_flatten((joint_trace.args, joint_trace.kwargs))[0]
+    forward_input_proxies = [arg for arg in forward_input_proxies if isinstance(arg, Proxy)]
+    forward_bsyms = utils.find_producer_symbols(joint_trace, tree_flatten(joint_trace.output)[0], forward_input_proxies)
+    backward_bsyms = [bsym for bsym in backward_bsyms if bsym not in forward_bsyms]
 
     # Find required info from forward trace for backward trace
     backward_producers = utils.producers(backward_bsyms)
@@ -91,7 +111,37 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
             if arg not in backward_producers and variableify(arg) not in map(variableify, tree_flatten(bw_inputs)[0]):
                 saved_for_backward.append(arg)
 
-    backward_params = [Parameter(x.name, Parameter.POSITIONAL_OR_KEYWORD) for x in chain(saved_for_backward, bw_inputs)]
+    saved_for_backward = list({variableify(arg): arg for arg in saved_for_backward}.values())
+
+    # Augment forward trace to include saved_for_backward as output
+    augmented_forward_trace = from_trace(joint_trace)
+    augmented_forward_trace.bound_symbols = [
+        b for b in joint_trace.bound_symbols if b.sym.id not in (PrimIDs.PUT_GRAD, PrimIDs.GET_GRAD)
+    ]
+    return_bsym = augmented_forward_trace.bound_symbols[-1]
+    assert return_bsym.sym.id == PrimIDs.RETURN
+    augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
+        (joint_trace.output, saved_for_backward), output=()
+    )
+    # Remove put/get grad and backward symbols from augmented forward trace
+    augmented_forward_trace = dce(augmented_forward_trace)
+
+    # Check if any of the bound symbols in the backward trace are also in the
+    # augmented forward trace
+    # If so, remove them from the backward trace
+    same_bsyms = set(augmented_forward_trace.bound_symbols) & set(backward_bsyms)
+    if same_bsyms:
+        backward_bsyms = [bsym for bsym in backward_bsyms if bsym not in same_bsyms]
+        additional_saved = [o for bsym in same_bsyms for o in bsym.flat_proxy_outs]
+        saved_for_backward += list({variableify(arg): arg for arg in additional_saved}.values())
+        augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
+            (joint_trace.output, saved_for_backward), output=()
+        )
+
+    backward_params = [
+        Parameter(getattr(x, "name", f"arg{i}"), Parameter.POSITIONAL_OR_KEYWORD)
+        for i, x in enumerate(chain(saved_for_backward, bw_inputs))
+    ]
     backward_signature = Signature(backward_params)
 
     def backward_fn():
@@ -106,15 +156,15 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     backward_trace.kwargs = {}
     backward_trace.bound_symbols = backward_bsyms
 
-    # Augment forward trace to include saved_for_backward as output
-    augmented_forward_trace = from_trace(joint_trace)
-    augmented_forward_trace.bound_symbols = copy.copy(joint_trace.bound_symbols)
-    return_bsym = augmented_forward_trace.bound_symbols[-1]
-    assert return_bsym.sym.id == PrimIDs.RETURN
-    augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
-        (joint_trace.output, saved_for_backward), output=()
-    )
-    # Remove put/get grad from augmented forward trace
-    augmented_forward_trace = dce(augmented_forward_trace)
+    # Creating new functions instead of using partial to avoid limitations in
+    # codeutils.get_siginfo
+    # https://github.com/Lightning-AI/lightning-thunder/blob/main/thunder/core/codeutils.py#L349-L353
+    def fw_fn(*args, **kwargs):
+        return eval_trace(augmented_forward_trace, *args, **kwargs)
 
-    return augmented_forward_trace.python_callable(), backward_trace.python_callable()
+    def bw_fn(*args, **kwargs):
+        return eval_trace(backward_trace, *args, **kwargs)
+
+    _cache[key] = fw_fn, bw_fn
+
+    return fw_fn, bw_fn

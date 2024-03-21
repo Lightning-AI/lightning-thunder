@@ -139,7 +139,7 @@ class OverridenKVCache(nn.Module):
             k = self.k.index_copy_(2, input_pos, k)
             v = self.v.index_copy_(2, input_pos, v)
             return k, v
-        # THUNDER unsupported: https://github.com/Lightning-AI/lightning-thunder/issues/1145
+        # See issue: "Support more indexing operators (index_copy and index_add)"
         k = self.k = torch.index_add(self.k, 2, input_pos, k)
         v = self.v = torch.index_add(self.v, 2, input_pos, v)
         # THUNDER bug: cannot return self.k, self.v here (may be cuda graphs related - no minimum repro)

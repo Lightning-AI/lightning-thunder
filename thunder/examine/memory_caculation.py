@@ -22,7 +22,7 @@ thunder_alias_operator_list = (
     "torch_wait_prim_impl",
 )
 
-# A whitelist registry of symbols that require special memory calculation;
+# A registry of symbols that require special memory calculation;
 # if not registered, the default memory calculation function is used.
 memory_calculate_impls: dict[Symbol, Callable] = dict()
 
