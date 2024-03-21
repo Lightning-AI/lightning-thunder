@@ -459,7 +459,7 @@ def _make_cudnn_sdpa_backward_graph(
     return _cudnnex_cache[cache_key]
 
 
-def cudnn_sdpa_bwd_meta(
+def _cudnn_sdpa_bwd_meta(
     grad_out: TensorLike,
     query: TensorLike,
     key: TensorLike,
@@ -511,7 +511,7 @@ def _preallocate_grad_qkv(
     return torch.empty(b, s, h_qkv, d, dtype=query.dtype, device=query.device).permute(0, 2, 1, 3)
 
 
-def cudnn_sdpa_bwd_impl(
+def _cudnn_sdpa_bwd_impl(
     grad_out: torch.Tensor,
     query: torch.Tensor,
     key: torch.Tensor,
@@ -613,15 +613,14 @@ def cudnn_sdpa_bwd_impl(
     return grads
 
 
-# TODO: can meta and fn be made private?
 cudnn_sdpa_bwd = cudnn_ex.register_operator(
     "cudnn_sdpa_bwd",
-    meta=cudnn_sdpa_bwd_meta,
-    fn=functools.partial(cudnn_sdpa_bwd_impl, preformat_grad_qkv=False),
+    meta=_cudnn_sdpa_bwd_meta,
+    fn=functools.partial(_cudnn_sdpa_bwd_impl, preformat_grad_qkv=False),
 )
 
 
-def cudnn_sdpa_bwd_preformatted_meta(
+def _cudnn_sdpa_bwd_preformatted_meta(
     grad_out: TensorLike,
     query: TensorLike,
     key: TensorLike,
@@ -649,8 +648,8 @@ def cudnn_sdpa_bwd_preformatted_meta(
 
 cudnn_sdpa_bwd_preformatted = cudnn_ex.register_operator(
     "cudnn_sdpa_bwd_preformatted",
-    meta=cudnn_sdpa_bwd_preformatted_meta,
-    fn=functools.partial(cudnn_sdpa_bwd_impl, preformat_grad_qkv=True),
+    meta=_cudnn_sdpa_bwd_preformatted_meta,
+    fn=functools.partial(_cudnn_sdpa_bwd_impl, preformat_grad_qkv=True),
 )
 
 
