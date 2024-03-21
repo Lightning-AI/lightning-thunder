@@ -17,7 +17,6 @@ from enum import Enum, auto
 from io import StringIO
 import inspect
 import time
-import itertools
 
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
 import thunder.clang as clang
