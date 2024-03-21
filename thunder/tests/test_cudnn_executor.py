@@ -75,9 +75,8 @@ grad_sdpa_cudnn_opinfo = OpInfo(
     sample_input_generator=None,
     reference_input_generator=grad_scaled_dot_product_attention_reference_generator,
     torch_reference=torch.nn.functional.scaled_dot_product_attention,
-    # RuntimeError: Only fp32, half & bf16 supported at the moment
+    # RuntimeError: Only half & bf16 supported at the moment
     dtypes=(
-        thunder.dtypes.float32,
         thunder.dtypes.float16,
         thunder.dtypes.bfloat16,
     ),
@@ -189,15 +188,10 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
-# NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
-# RuntimeError: Only fp32, half & bf16 supported at the moment
-@ops(
-    (grad_sdpa_cudnn_opinfo,),
-    supported_dtypes=(dtypes.float16, dtypes.bfloat16),
-    supported_devicetypes=(devices.DeviceType.CUDA,),
-)
-def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
-    for sample in op.reference_inputs(device, dtype, requires_grad=True):
+@pytest.mark.parametrize("may_preallocate", (True, False), ids=("may-preallocate", "never-preallocate"))
+@pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
+def test_vjp_correctness_cudnn_sdpa(dtype, may_preallocate):
+    for sample in grad_sdpa_cudnn_opinfo.reference_inputs("cuda", dtype, requires_grad=True):
         # Enforce tensor arguments are contiguous for torch reference
         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
 
@@ -212,25 +206,25 @@ def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
             continue
 
         # Compute vjp result using PyTorch
-        expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
+        expect_out = grad_sdpa_cudnn_opinfo.torch_reference(*contiguous_args, **sample.kwargs)
         v = make_tensor_like(expect_out)
         expected_grad = torch.autograd.grad(expect_out, grad_inputs, v)
 
         # Compute vjp result using Thunder
-        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        flat_op, flat_args, spec = flatten_func(grad_sdpa_cudnn_opinfo.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
 
         cfoo = thunder.compile(
             vjp(filtered_op),
             disable_torch_autograd_support=True,
             disable_preprocessing=True,
-            executors_list=executor.executors_list() + [cudnn_ex],
+            executors_list=[cudnn_ex],
+            cudnn_sdpa_bwd_may_preallocate=may_preallocate,
         )
 
         actual_out, actual_grad = cfoo(filtered_args, (v,))
 
-        comp(actual_out, expect_out, atol=1e-2, rtol=1e-2)
-
+        torch.testing.assert_close(actual_out, expect_out, atol=1e-2, rtol=1e-2)
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
-            comp(eg, ag, atol=2e-1, rtol=2e-2)
+            torch.testing.assert_close(eg, ag, atol=2e-1, rtol=2e-2)
