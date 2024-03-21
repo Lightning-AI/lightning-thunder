@@ -29,6 +29,7 @@ from typing import Union, Dict
 from thunder.core.langctxs import langctx
 import thunder.core.dtypes as dtypes
 from thunder.torch import TensorLike
+from thunder.core.compile_data import get_compile_option
 from thunder.core.proxies import Proxy, TensorProxy
 
 
@@ -659,7 +660,19 @@ def _cudnn_sdpa_bwd_wrapper(
         query, key, value, attn_mask, dropout_p, is_causal, scale=scale
     )
 
-    preallocate_grad_qkv = _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+    description = """\
+This flag is for enabling nvFuser's zipping optimization that seeks to avoid
+expensive concatenation.
+https://github.com/NVIDIA/Fuser/issues/1502#issuecomment-1870837878 has more
+details. When this flag is true, cudnn_sdpa_bwd may preallocate dQ, dK and dV
+in **one** tensor and return them as slices of that tensor.
+"""
+    may_preallocate: None | bool = get_compile_option("cudnn_sdpa_bwd_may_preallocate", description)
+    if may_preallocate is None:
+        may_preallocate = False
+    assert isinstance(may_preallocate, bool)
+    preallocate = may_preallocate and _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+
     grads = cudnn_sdpa_bwd(
         get_grad(primal),
         query,
@@ -673,7 +686,7 @@ def _cudnn_sdpa_bwd_wrapper(
         seed,
         offset,
         scale=scale,
-        preallocate_grad_qkv=preallocate_grad_qkv,
+        preallocate_grad_qkv=preallocate,
     )
 
     if attn_mask is not None:
@@ -681,7 +694,7 @@ def _cudnn_sdpa_bwd_wrapper(
         grads = grads[:-1]
         put_grad(attn_mask, grad_attn_mask)
 
-    if preallocate_grad_qkv:
+    if preallocate:
         (grad_qkv,) = grads
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:

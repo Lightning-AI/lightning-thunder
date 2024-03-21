@@ -787,7 +787,7 @@ class nvFuserExecutor(FusionExecutor):
             region = Region(producers, consumers, bsyms)
 
             # Acquires the nv_enable_bookend compile option, which defaults to True
-            bookend_help = """
+            bookend_help = """\
 nvFuser's 'bookending' heuristic tries to gather metadata operations---such as
 transpose, reshape, or view---into the beginning and ends of blocks that utilize
 nvFuser. By pushing these ops to the edges, they will get dropped by the nvFuser
