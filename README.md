@@ -119,7 +119,7 @@ print(result)
 
 The compiled function `jfoo` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by Thunder can be used as part of larger PyTorch programs.
 
-## Model training with Thunder
+## Train models
 
 Thunder is in its early stages and should not be used for production runs yet.
 
