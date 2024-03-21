@@ -2479,15 +2479,6 @@ backward_impls = {
 }
 
 
-@dataclass(**default_dataclass_params)
-class RuleInfo:
-    checker: Callable
-    rule: Callable
-    fw_fallback: Callable
-    bw_fallback: Callable
-    executor: Executor
-
-
 def register_augmented_forward(op):
     """Decorator to register an augmented forward implementation for a symbol.
 
@@ -2516,13 +2507,8 @@ def deregister_augmented_forward_and_backward(op):
     Returns:
         None
     """
-    # Restore the fallback implementation if it exists
-    if isinstance(augmented_forward_impls[op], RuleInfo):
-        backward_impls[op] = augmented_forward_impls[op].bw_fallback
-        augmented_forward_impls[op] = augmented_forward_impls[op].fw_fallback
-    else:
-        del augmented_forward_impls[op]
-        del backward_impls[op]
+    del augmented_forward_impls[op]
+    del backward_impls[op]
 
 
 def register_backward(op):
@@ -3347,14 +3333,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     if _get_gradfn(symbol) is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
 
-    if isinstance(vjp_impl, RuleInfo):
-        # We should use this rule only if checker returns True for the current
-        # symbol's arguments
-        if vjp_impl.checker(*symbol.args, **symbol.kwargs):
-            vjp_impl = vjp_impl.rule
-        else:
-            vjp_impl = vjp_impl.fw_fallback
-
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
         if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
@@ -3525,9 +3503,6 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         if _get_gradfn(symbol) is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
-
-        if isinstance(aug_forward, RuleInfo):
-            backward = backward_impls[aug_forward.executor, symbol.sym.id]
 
         if backward is None:
             if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
