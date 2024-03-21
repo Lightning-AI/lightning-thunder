@@ -2806,9 +2806,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         model = (
-            litgpt_model.Block(self.config)
-            .to(device=self.device, dtype=self.tdtype)
-            .requires_grad_(self.requires_grad)
+            litgpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return model
 
