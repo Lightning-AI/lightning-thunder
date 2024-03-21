@@ -459,6 +459,10 @@ def _make_cudnn_sdpa_backward_graph(
     return _cudnnex_cache[cache_key]
 
 
+def _replace_dim_with(size: torch.Size, dim: int, dim_size: int) -> torch.Size:
+    return torch.Size(size[:dim] + (dim_size,) + size[dim + 1 :])
+
+
 def _cudnn_sdpa_bwd_meta(
     grad_out: TensorLike,
     query: TensorLike,
@@ -473,20 +477,24 @@ def _cudnn_sdpa_bwd_meta(
     philox_offset: TensorLike,
     *,
     scale: None | float = None,
-) -> (TensorProxy, TensorProxy, TensorProxy):
-    grad_query = TensorProxy(like=query)
-    grad_key = TensorProxy(like=key)
-    grad_value = TensorProxy(like=value)
+    preformat_grad_qkv: bool,
+) -> tuple[TensorProxy, ...]:
+    if preformat_grad_qkv:
+        grad_qkv = TensorProxy(
+            like=query, shape=_replace_dim_with(query.size(), 1, query.size(1) + key.size(1) + value.size(1))
+        )
+        grads = (grad_qkv,)
+    else:
+        grad_query = TensorProxy(like=query)
+        grad_key = TensorProxy(like=key)
+        grad_value = TensorProxy(like=value)
+        grads = (grad_query, grad_key, grad_value)
 
     if attn_mask is not None:
         grad_attn_mask = TensorProxy(like=attn_mask)
-        return (grad_query, grad_key, grad_value, grad_attn_mask)
-    else:
-        return (grad_query, grad_key, grad_value)
+        grads = grads + (grad_attn_mask,)
 
-
-def _replace_dim_with(size: torch.Size, dim: int, dim_size: int) -> torch.Size:
-    return torch.Size(size[:dim] + (dim_size,) + size[dim + 1 :])
+    return grads
 
 
 def _same_size_except(*args, except_dim: int) -> bool:
@@ -616,40 +624,7 @@ def _cudnn_sdpa_bwd_impl(
 cudnn_sdpa_bwd = cudnn_ex.register_operator(
     "cudnn_sdpa_bwd",
     meta=_cudnn_sdpa_bwd_meta,
-    fn=functools.partial(_cudnn_sdpa_bwd_impl, preformat_grad_qkv=False),
-)
-
-
-def _cudnn_sdpa_bwd_preformatted_meta(
-    grad_out: TensorLike,
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: None | TensorProxy,
-    dropout_p: float,
-    is_causal: bool,
-    out: TensorLike,
-    softmax_stats: TensorLike,
-    philox_seed: TensorLike,
-    philox_offset: TensorLike,
-    *,
-    scale: None | float = None,
-) -> tuple[TensorProxy, ...]:
-    grad_qkv = TensorProxy(
-        like=query, shape=_replace_dim_with(query.size(), 1, query.size(1) + key.size(1) + value.size(1))
-    )
-
-    if attn_mask is not None:
-        grad_attn_mask = TensorProxy(like=attn_mask)
-        return (grad_qkv, grad_attn_mask)
-    else:
-        return (grad_qkv,)
-
-
-cudnn_sdpa_bwd_preformatted = cudnn_ex.register_operator(
-    "cudnn_sdpa_bwd_preformatted",
-    meta=_cudnn_sdpa_bwd_preformatted_meta,
-    fn=functools.partial(_cudnn_sdpa_bwd_impl, preformat_grad_qkv=True),
+    fn=_cudnn_sdpa_bwd_impl,
 )
 
 
@@ -684,12 +659,8 @@ def _cudnn_sdpa_bwd_wrapper(
         query, key, value, attn_mask, dropout_p, is_causal, scale=scale
     )
 
-    bwd_op = (
-        cudnn_sdpa_bwd_preformatted
-        if _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
-        else cudnn_sdpa_bwd
-    )
-    grads = bwd_op(
+    preformat_grad_qkv = _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+    grads = cudnn_sdpa_bwd(
         get_grad(primal),
         query,
         key,
@@ -702,6 +673,7 @@ def _cudnn_sdpa_bwd_wrapper(
         seed,
         offset,
         scale=scale,
+        preformat_grad_qkv=preformat_grad_qkv,
     )
 
     if attn_mask is not None:
@@ -709,11 +681,11 @@ def _cudnn_sdpa_bwd_wrapper(
         grads = grads[:-1]
         put_grad(attn_mask, grad_attn_mask)
 
-    if bwd_op == cudnn_sdpa_bwd:
-        grad_query, grad_key, grad_value = grads
-    else:
+    if preformat_grad_qkv:
         (grad_qkv,) = grads
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
+    else:
+        grad_query, grad_key, grad_value = grads
     put_grads((query, key, value), (grad_query, grad_key, grad_value))
 
     return primal
