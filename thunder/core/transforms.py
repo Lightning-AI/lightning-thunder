@@ -2510,20 +2510,6 @@ def register_augmented_forward(op):
     return decorator
 
 
-def register_augmented_forward_with_checker(executor, op, checker, rule):
-    """Decorator to register an augmented forward implementation for a symbol.
-
-    Args:
-        executor (Executor): Executor to which the rule applies.
-        op (Ops): Symbol for which to register the augmented forward implementation.
-        checker (Callable): Function that checks if the rule should be applied.
-        rule (Callable): Function that applies the rule.
-    """
-    fw_fallback = augmented_forward_impls.get(op, None)
-    bw_fallback = backward_impls.get(op, None)
-    augmented_forward_impls[executor, op] = RuleInfo(checker, rule, fw_fallback, bw_fallback, executor)
-
-
 def deregister_augmented_forward_and_backward(op):
     """Deregisters an augmented forward implementation and a backward
     implementation for a symbol.
