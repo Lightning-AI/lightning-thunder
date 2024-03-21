@@ -37,13 +37,19 @@ pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.c
 Install Thunder:
 
 ```bash
+pip install lightning-thunder
+```
+
+It's actually not a bad idea to install directly from `main`:
+
+```bash
 pip install git+https://github.com/Lightning-AI/lightning-thunder.git
 ```
 
-or install from the local repo:
+or from the local repo if you want to tinker with the internals:
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 ## Hello World
@@ -166,4 +172,4 @@ See LICENSE file for details.
 [![CI testing](https://github.com/Lightning-AI/lightning-thunder/actions/workflows/ci-testing.yml/badge.svg?event=push)](https://github.com/Lightning-AI/lightning-thunder/actions/workflows/ci-testing.yml)
 [![General checks](https://github.com/Lightning-AI/lightning-thunder/actions/workflows/ci-checks.yml/badge.svg?event=push)](https://github.com/Lightning-AI/lightning-thunder/actions/workflows/ci-checks.yml)
 [![Documentation Status](https://readthedocs.org/projects/lightning-thunder/badge/?version=latest)](https://lightning-thunder.readthedocs.io/en/latest/?badge=latest)
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/Lightning-AI/lightning-thunder/main.svg?badge_token=mqheL1-cTn-280Vx4cJUdg)](https://results.pre-commit.ci/latest/github/Lightning-AI/lightning-thunder/main?badge_token=mqheL1-cTn-280Vx4cJUdg)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/Lightning-AI/lightning-thunder/main.svg)](https://results.pre-commit.ci/latest/github/Lightning-AI/lightning-thunder/main)
