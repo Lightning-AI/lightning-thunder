@@ -709,3 +709,44 @@ def test_litgpt_variants_kvcache(name, device):
 
     assert_close(logits_1, thunder_logits_1)
     assert_close(logits_2[:, -1:], thunder_logits_2)
+
+
+def test_jit_checker_fn_with_langctx():
+    # Here we want to test that `_my_checker` is called
+    # under langctx for both input requires_grad=True/False paths
+    test_exec = thunder.extend.OperatorExecutor("test_exec")
+    thunder.extend.register_executor(test_exec)
+
+    def _my_checker(x, y):
+        def do_something_with_view(x):
+            shape = x.shape
+            return x.view((-1, shape[-1]))
+
+        do_something_with_view(x)
+        return True
+
+    test_exec.register_implementation(
+        thunder.torch.mul,
+        checker=_my_checker,
+        execution_transform=lambda x, y: x * y,
+    )
+
+    def foo(x, y):
+        return x * y
+
+    try:
+        # input 1
+        x = torch.randn(4, 4, requires_grad=True)
+        cfunc = thunder.jit(foo, executors=[test_exec])
+        out = cfunc(x, x)
+        torch.testing.assert_close(out, x * x)
+
+        # input 2
+        # use input with different dims so that we don't
+        # trigger using a cached trace.
+        x = torch.randn(3, requires_grad=True)
+        out = cfunc(x, x)
+    finally:
+        # Safer to clean-up and deregister the executor,
+        # cause some test may try `get_all_executors`.
+        thunder.extend.deregister_executor(test_exec)
