@@ -88,7 +88,7 @@ Thunder is in its early stages, it should not be used for production runs yet.
 
 However, it can already deliver outstanding performance on models supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama2, Gemma, Falcon, and derivatives.
 
-See [README.md](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) for details on running LitGPT with Thunder and results.
+Check out [the LitGPT integration](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) to learn about running LitGPT and Thunder together.
 
 ## What's in the box
 
