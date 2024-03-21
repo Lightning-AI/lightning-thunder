@@ -16,14 +16,14 @@ jobs:
   #    actions-ref: main
 
   check-schema:
-    uses: Lightning-AI/utilities/.github/workflows/check-schema.yml@v0.10.1
+    uses: Lightning-AI/utilities/.github/workflows/check-schema.yml@v0.11.0
     with:
       azure-dir: ".azure"
 
   check-package:
-    uses: Lightning-AI/utilities/.github/workflows/check-package.yml@v0.10.1
+    uses: Lightning-AI/utilities/.github/workflows/check-package.yml@v0.11.0
     with:
-      actions-ref: v0.10.1
+      actions-ref: v0.11.0
       import-name: "thunder"
       artifact-name: dist-packages-${{ github.sha }}
       testing-matrix: |
