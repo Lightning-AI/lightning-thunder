@@ -19,10 +19,6 @@ import thunder.core.devices as devices
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import (
-    register_augmented_forward_with_checker,
-    register_backward,
-)
 from thunder.extend import OperatorExecutor, register_executor
 
 __all__ = [
@@ -411,15 +407,6 @@ def linear_forward_rule_checker(a: TensorProxy, w: TensorProxy, bias: None | Ten
     return False
 
 
-register_augmented_forward_with_checker(
-    transformer_engine_ex,
-    prims.linear.id,
-    linear_forward_rule_checker,
-    linear_forwad_rule,
-)
-
-
-@register_backward((transformer_engine_ex, prims.linear.id))
 def linear_backward_rule(a_shape, w_shape, b_shape, ctx_idx, grad):
     return te_functional_linear_backward(grad, a_shape, w_shape, b_shape, ctx_idx)
 
@@ -429,9 +416,21 @@ def _linear_transform(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> torch.T
     return _create_fp8_linear_bound_symbol(a, w, b, is_grad_enabled=False)
 
 
+def _linear_grad(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> TensorProxy:
+    out, saved_for_backward = linear_forwad_rule(a, w, b)
+    g = prims.get_grad(out)
+    ga, gw, gb = linear_backward_rule(*saved_for_backward, g)
+    prims.put_grad(a, ga)
+    prims.put_grad(w, gw)
+    if b is not None:
+        prims.put_grad(b, gb)
+    return out
+
+
 # Registers the implementation for torch.nn.functional.linear
 transformer_engine_ex.register_implementation(
     prims.linear,
     checker=_linear_checker,
     execution_transform=_linear_transform,
+    grad_transform=_linear_grad,
 )
