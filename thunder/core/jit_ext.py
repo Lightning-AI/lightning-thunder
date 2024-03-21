@@ -17,6 +17,7 @@ from enum import Enum, auto
 from io import StringIO
 import inspect
 import time
+import itertools
 
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
 import thunder.clang as clang
@@ -1347,6 +1348,18 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
+def _get_process_group_from(*fn_and_args):
+    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
+    # on the Module that they wrap. This module could be passed to `thunder.jit`
+    # as the function to be jitted or as an argument of the function to be jitted.
+    # NOTE: `ddp` and `fsdp` use default process group. So finding the first
+    #       occurence is sufficient.
+    for fn_or_arg in fn_and_args:
+        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
+        if pg is not None:
+            return pg
+
+
 def thunder_general_jit(
     fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> tuple[TraceCtx, TraceCtx]:
@@ -1369,7 +1382,7 @@ def thunder_general_jit(
     si.varkwargs = ("kwargs", None)
     prologue_trace._siginfo = si
 
-    process_group_for_ddp = getattr(fn, "process_group_for_ddp", None)
+    process_group_for_ddp = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: GeneralJitCtx = GeneralJitCtx(
         prologue_trace, computation_trace, sharp_edges=sharp_edges, process_group_for_ddp=process_group_for_ddp
     )
