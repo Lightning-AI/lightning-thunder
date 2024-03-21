@@ -1,6 +1,5 @@
 from typing import Any
 
-import functools
 import torch
 import numpy as np
 import random
