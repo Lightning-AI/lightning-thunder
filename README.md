@@ -25,15 +25,13 @@ ______________________________________________________________________
 
 </div>
 
-
-
 # Welcome to ⚡ Lightning Thunder
 
-**Thunder makes PyTorch models Lightning fast.**   
+**Thunder makes PyTorch models Lightning fast.**
 
-Thunder is a source-to-source compiler for PyTorch. It makes PyTorch programs faster by combining and using different hardware executors at once (ie: nvFuser, torch.compile, cuDNN, and TransformerEngine FP8). 
+Thunder is a source-to-source compiler for PyTorch. It makes PyTorch programs faster by combining and using different hardware executors at once (ie: nvFuser, torch.compile, cuDNN, and TransformerEngine FP8).
 
-Works on single accelerators and in multi-GPU settings.   
+Works on single accelerators and in multi-GPU settings.
 Thunder aims to be usable, understandable, and extensible.
 
 ## Performance
@@ -69,6 +67,7 @@ pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.c
 # install thunder
 pip install lightning-thunder
 ```
+
 <details>
   <summary>Advanced install options</summary>
     <!-- following section will be skipped from PyPI description -->
@@ -80,11 +79,13 @@ pip install git+https://github.com/Lightning-AI/lightning-thunder.git
 ```
 
 ### Install to tinker and contribute
+
 Install this way to tinker with the internals and contribute:
 
 ```bash
 pip install -e .
 ```
+
 </details>
 <!-- end skipping PyPI description -->
 
