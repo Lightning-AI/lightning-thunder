@@ -7,12 +7,13 @@ BENCHMARK_FILE - use this env variable to control the benchmarking script that i
 MID_BENCHMARK_OUT - use this env variable to control whether you want to see the combined results
                     between each test.
 BENCHMARK_OUT_FORMAT - use this env variable to control the format in which the results are presented.
-                    Uses 'xlsx' by default. More format support to come soon.
+                    Uses 'xlsx' by default. Supported: 'none', 'print', 'xlsx'.
 '''
 
 import torch
 from absl.testing import parameterized
 from absl.testing import absltest
+from collections import defaultdict
 import os
 import subprocess
 import json
@@ -48,6 +49,9 @@ class Runner:
             self.dataframe_data.append(self.perf_metrics_dict)
 
     def complete_dataframe(self, is_teardown):
+        if not self.dataframe_data:
+            # The benchmark probably failed
+            return
         #Called when tearing down the parametrized test
         #This generates a summarized dataframe for each perf metric and saves as a xlsx file
         df = pd.DataFrame(self.dataframe_data)
@@ -59,7 +63,7 @@ class Runner:
         self.tokens_per_sec_per_gpu_df   = df.pivot_table(index=index_list, columns='compiler', values='tokens_per_sec_per_gpu', aggfunc='first').reset_index()
         self.memory_used_GB_df           = df.pivot_table(index=index_list, columns='compiler', values='memory_used_GB', aggfunc='first').reset_index()
 
-        if self.output_format not in ('none', 'print'):
+        if self.output_format == "xlsx":
             output_ext = {'xlsx': '.xlsx', }[self.output_format]
             if not is_teardown:
                 filename = 'mid_output_parameterized_results' + str(output_ext)
@@ -83,7 +87,6 @@ class Runner:
             print(self.memory_used_GB_df)
 
     def run_benchmark(self, kwargs):
-        # benchmark_file = 'thunder/benchmarks/benchmark_litgpt.py'
         command_list = []
         for key, val in kwargs.items():
             command_list.append("--" + str(key) + "=" + str(val))
@@ -97,32 +100,26 @@ class Runner:
 
         print(f'Running {" ".join(subprocess_cmd)!r}')
         proc_output = subprocess.run(subprocess_cmd, capture_output=True, text=True)
+
+        self.perf_metrics_dict = {}
+        if os.path.exists(self.json_file_path):
+            with open(self.json_file_path, 'r') as file:
+                self.perf_metrics_dict = json.load(file)
+            # Cleanup after the benchmark finishes. It might have failed before creating this
+            os.remove(self.json_file_path)
+
         if proc_output.returncode:
-            print(proc_output.stdout)
-            print(proc_output.stderr)
-            proc_output.check_returncode()
-
-        with open(self.json_file_path, 'r') as file:
-            self.perf_metrics_dict = json.load(file)
-        os.remove(self.json_file_path) #cleanup after test finishes
-
-        if self.perf_metrics_dict['average_iter_time'] is None:
-            if 'CUDA out of memory' in proc_output.stdout:
-                self.perf_metrics_dict['average_iter_time'] = 'OOM'
-                self.perf_metrics_dict['model_flops'] = 'OOM'
-                self.perf_metrics_dict['model_flop_per_sec'] = 'OOM'
-                self.perf_metrics_dict['tokens_per_sec'] = 'OOM'
-                self.perf_metrics_dict['tokens_per_sec_per_gpu'] = 'OOM'
-                self.perf_metrics_dict['memory_used_GB'] = 'OOM'
+            if 'CUDA out of memory' in proc_output.stdout or "CUDA error: out of memory" in proc_output.stderr:
+                defaultdict_oom = defaultdict(lambda: "OOM")
+                defaultdict_oom.update(self.perf_metrics_dict)
+                self.perf_metrics_dict = defaultdict_oom
                 pass_str = "TestCase did not finish reporting metrics due to CUDA out of memory error. Reporting OOM and triggering test success."
                 return True, pass_str
-            else:
-                print(proc_output.stdout)
-                print(proc_output.stderr)
-                fail_str = "Testcase did not finish reporting metrics due to an unknown error. Triggering test failure."
-                return False, fail_str
-        else:
-            return True, "Test passed successfully."
+            print(proc_output.stdout)
+            print(proc_output.stderr)
+            fail_str = "TestCase did not finish reporting metrics due to an unknown error. Triggering test failure."
+            return False, fail_str
+        return True, "Test passed successfully."
 
 
 class Test(parameterized.TestCase):
