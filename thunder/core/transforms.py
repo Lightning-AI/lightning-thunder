@@ -1237,11 +1237,6 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 
 
 def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
-    # If executor specific `aug_fwd_rule` exists then we will use that,
-    # so we return `None` here.
-    if get_executor_specific_aug_fwd_rule(bsym):
-        return None
-
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -3306,31 +3301,6 @@ def uniform_backward(primal, minval, maxval, g):
 nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
 
 
-def get_executor_specific_aug_fwd_rule(symbol: BoundSymbol) -> RuleInfo | None:
-    """Get executor specific augmented forward rule.
-
-    Args:
-        symbol (BoundSymbol): BoundSymbol to get the rule for.
-
-    Returns:
-        RuleInfo: Rule info for the symbol.
-    """
-    cd = get_compile_data()
-    if cd is None:
-        return None
-
-    # Search for the executor specific rules. When there are multiple rules
-    # for the same symbol, we use the left-most executor in the list (i.e.
-    # the one with the highest priority) and we fallback to the next one if
-    # the checker returns False.
-    for executor in cd.executors_list:
-        candidate = augmented_forward_impls.get((executor, symbol.sym.id))
-        if isinstance(candidate, RuleInfo) and candidate.checker(*symbol.args, **symbol.kwargs):
-            return candidate
-
-    return None
-
-
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
     """Check if a symbol is constant for the VJP transform.
 
@@ -3373,7 +3343,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
-    vjp_impl = get_executor_specific_aug_fwd_rule(symbol) or vjp_impl
 
     if _get_gradfn(symbol) is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
@@ -3553,7 +3522,6 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
-        aug_forward = get_executor_specific_aug_fwd_rule(symbol) or aug_forward
 
         if _get_gradfn(symbol) is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
