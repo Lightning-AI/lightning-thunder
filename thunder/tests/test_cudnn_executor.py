@@ -110,10 +110,8 @@ def test_cudnn_sdpa():
         query = 1 * (torch.randn(shape_Q, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
         key = 2 * (torch.randn(shape_K, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
         value = 3 * (torch.randn(shape_V, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
-        is_causal = False
-        attn_mask = torch.randn(
-            s_q, s_kv, requires_grad=False, device="cuda", dtype=thunder.torch.to_torch_dtype(dtype)
-        )
+        is_causal = True
+        attn_mask = None
 
         expected = torch.nn.functional.scaled_dot_product_attention(
             query, key, value, is_causal=is_causal, attn_mask=attn_mask
