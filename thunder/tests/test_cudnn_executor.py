@@ -188,9 +188,9 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
-@pytest.mark.parametrize("may_preallocate", (True, False), ids=("may-preallocate", "never-preallocate"))
+@pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
-def test_vjp_correctness_cudnn_sdpa(dtype, may_preallocate):
+def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
     for sample in grad_sdpa_cudnn_opinfo.reference_inputs("cuda", dtype, requires_grad=True):
         # Enforce tensor arguments are contiguous for torch reference
         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
@@ -219,7 +219,7 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_preallocate):
             disable_torch_autograd_support=True,
             disable_preprocessing=True,
             executors_list=[cudnn_ex],
-            cudnn_sdpa_bwd_may_preallocate=may_preallocate,
+            cudnn_sdpa_bwd_may_cat_grad_qkv=may_cat_grad_qkv,
         )
 
         actual_out, actual_grad = cfoo(filtered_args, (v,))

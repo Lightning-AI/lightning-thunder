@@ -480,9 +480,9 @@ def _cudnn_sdpa_bwd_meta(
     philox_offset: TensorLike,
     *,
     scale: None | float = None,
-    preallocate_grad_qkv: bool,
+    cat_grad_qkv: bool,
 ) -> tuple[TensorProxy, ...]:
-    if preallocate_grad_qkv:
+    if cat_grad_qkv:
         grad_qkv = TensorProxy(
             like=query, shape=_replace_dim_with(query.size(), 1, query.size(1) + key.size(1) + value.size(1))
         )
@@ -505,7 +505,7 @@ def _same_size_except(*args, except_dim: int) -> bool:
     return all(shape == shapes[0] for shape in shapes)
 
 
-def _preallocate_grad_qkv(
+def _cat_grad_qkv(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -536,18 +536,18 @@ def _cudnn_sdpa_bwd_impl(
     philox_offset: torch.Tensor,
     *,
     scale: None | float = None,
-    preallocate_grad_qkv: bool,
+    cat_grad_qkv: bool,
 ) -> tuple[torch.Tensor, ...]:
     query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
     query = _sdpa_enforce_input_tensor_contiguity(query)
     key = _sdpa_enforce_input_tensor_contiguity(key)
     value = _sdpa_enforce_input_tensor_contiguity(value)
 
-    # When preallocate_grad_qkv is on, allocate dQKV and make dQ, dK, and dV
+    # When cat_grad_qkv is on, allocate dQKV and make dQ, dK, and dV
     # slices of that. Otherwise, allocate them individually.
     grad_qkv: None | torch.Tensor = None
-    if preallocate_grad_qkv:
-        grad_qkv = _preallocate_grad_qkv(query, key, value)
+    if cat_grad_qkv:
+        grad_qkv = _cat_grad_qkv(query, key, value)
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:
         grad_query = torch.empty_like(query)
@@ -616,7 +616,7 @@ def _cudnn_sdpa_bwd_impl(
 
     graph.execute(cudnn_to_torch_tensor, workspace)
 
-    if preallocate_grad_qkv:
+    if cat_grad_qkv:
         grads = (grad_qkv,)
     else:
         grads = (grad_query, grad_key, grad_value)
@@ -668,14 +668,14 @@ def _cudnn_sdpa_bwd_wrapper(
 This flag is for enabling nvFuser's zipping optimization that seeks to avoid
 expensive concatenation.
 https://github.com/NVIDIA/Fuser/issues/1502#issuecomment-1870837878 has more
-details. When this flag is true, cudnn_sdpa_bwd may preallocate dQ, dK and dV
-in **one** tensor and return them as slices of that tensor.
+details. When this flag is true, cudnn_sdpa_bwd may cat dQ, dK and dV
+as **one** tensor and return them as slices of that tensor.
 """
-    may_preallocate: None | bool = get_compile_option("cudnn_sdpa_bwd_may_preallocate", description)
-    if may_preallocate is None:
-        may_preallocate = False
-    assert isinstance(may_preallocate, bool)
-    preallocate = may_preallocate and _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+    may_cast_grad_qkv: None | bool = get_compile_option("cudnn_sdpa_bwd_may_cat_grad_qkv", description)
+    if may_cast_grad_qkv is None:
+        may_cast_grad_qkv = False
+    assert isinstance(may_cast_grad_qkv, bool)
+    cat_grad_qkv = may_cast_grad_qkv and _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
 
     grads = cudnn_sdpa_bwd(
         get_grad(primal),
@@ -690,7 +690,7 @@ in **one** tensor and return them as slices of that tensor.
         seed,
         offset,
         scale=scale,
-        preallocate_grad_qkv=preallocate,
+        cat_grad_qkv=cat_grad_qkv,
     )
 
     if attn_mask is not None:
@@ -698,7 +698,7 @@ in **one** tensor and return them as slices of that tensor.
         grads = grads[:-1]
         put_grad(attn_mask, grad_attn_mask)
 
-    if preallocate:
+    if cat_grad_qkv:
         (grad_qkv,) = grads
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:
