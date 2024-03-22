@@ -14,7 +14,7 @@ from thunder.benchmarks import (
     LitGPTBenchmark,
     LitGPTConfig,
 )
-from thunder.tests.lit_gpt_model import name_to_config
+from thunder.tests.litgpt_model import name_to_config
 from thunder.distributed import FSDPBucketingStrategy
 from thunder.distributed import FSDPType
 
@@ -299,7 +299,7 @@ if __name__ == "__main__":
                 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
                 from thunder.benchmarks import get_default_torch_fsdp_executor
                 from thunder.tests.nanogpt_model import Block as NanoGPTBlock
-                from thunder.tests.lit_gpt_model import Block as GPTBlock
+                from thunder.tests.litgpt_model import Block as GPTBlock
 
                 sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
                 auto_wrap_policies = (
