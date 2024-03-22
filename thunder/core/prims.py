@@ -730,6 +730,24 @@ def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
     return list(_collectify(y) for y in x)
 
 
+def _make_parts_into_line_or_lines(parts: list[str], out: list[str] | None = None) -> list[str]:
+    if out is None:
+        lines = []
+    else:
+        lines = out
+    line_parts = []
+    pos = 0
+    for p in parts:
+        if pos and pos + len(p) > 80:
+            lines.append("".join(line_parts) + "\\")
+            line_parts = []
+        line_parts.append(p)
+        pos += len(p)
+
+    lines.append("".join(line_parts))
+    return lines
+
+
 # TODO Review using multi-line unpacks more cleverly
 # TODO Possibly put the length in the code to show the requirement
 def unpack_sequence_printer(
@@ -757,17 +775,7 @@ def unpack_sequence_printer(
     parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
     parts.append(f"= {call_str}")
 
-    lines = []
-    line_parts = []
-    pos = 0
-    for p in parts:
-        if pos and pos + len(p) > 80:
-            lines.append("".join(line_parts) + " \\")
-            line_parts = []
-        line_parts.append(p)
-        pos += len(p)
-
-    lines.append("".join(line_parts))
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
@@ -823,18 +831,7 @@ def _unpack_tuple_printer(
     parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
     parts.append(f"= {call_str}")
 
-    lines = []
-    line_parts = []
-    pos = 0
-    for p in parts:
-        if pos and pos + len(p) > 80:
-            lines.append("".join(line_parts) + " \\")
-            line_parts = []
-        line_parts.append(p)
-        pos += len(p)
-
-    lines.append("".join(line_parts))
-
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
@@ -882,12 +879,10 @@ def _unpack_list_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty list)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
