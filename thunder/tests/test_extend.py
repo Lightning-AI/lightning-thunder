@@ -184,4 +184,11 @@ def test_register_implementation_custom_op():
 
     a.requires_grad_()
 
+    # without the executor, we just (should and do) jit through official_add
+    cfn = thunder.jit(fn)
+    res = cfn(a, b)
+
+    s = str(thunder.last_traces(cfn)[-1])
+    assert "myadd2" not in s and "myadd1" not in s
+
     deregister_executor(myex)

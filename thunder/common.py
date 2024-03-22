@@ -154,6 +154,7 @@ class CompileData:
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
         get_computation_and_inputs: Callable | None = None,
+        executor_lookasides: dict[Callable, Callable] | None = None,
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
@@ -163,6 +164,9 @@ class CompileData:
 
         # runs prologues to get the compute/backward/epilogue function and inputs
         self.get_computation_and_inputs = get_computation_and_inputs
+
+        # lookasides provided by the executors
+        self.executor_lookasides = executor_lookasides
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
