@@ -1117,6 +1117,12 @@ def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
 @clangop()
 def cat(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
+
+    if tensors:
+        _, result_dtype = utils.elementwise_type_promotion(
+            *tensors, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
+        )
+        tensors = tuple(maybe_convert_to_dtype(a, result_dtype) for a in tensors)
     return prims.cat(tensors, dim)
 
 
@@ -1129,7 +1135,14 @@ def stack(tensors: list[TensorProxy], dim: int):
         utils.check(
             s == shapes[0], lambda: f"tensors must be of the same shape, tensor at {i} is {s} instead of {shapes[0]}"
         )
-    tensors_ = [unsqueeze(t, dim) for t in tensors]
+
+    tensors_ = tuple(unsqueeze(t, dim) for t in tensors)
+    if tensors:
+        _, result_dtype = utils.elementwise_type_promotion(
+            *tensors, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
+        )
+        tensors = tuple(maybe_convert_to_dtype(a, result_dtype) for a in tensors)
+
     return prims.cat(tensors_, dim)
 
 

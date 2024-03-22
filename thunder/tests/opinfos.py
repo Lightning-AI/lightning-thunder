@@ -2764,6 +2764,11 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shapes, dim in cases:
         yield SampleInput([make(s) for s in shapes], dim)
 
+    # test upcasting (in case the dtype is not float16). PyTorch has upcasting logic in cat.
+    if dtype != torch.float16:
+        for shapes, dim in cases:
+            yield SampleInput([make(s) if i != 1 else make(s, dtype=torch.float16) for i, s in enumerate(shapes)], dim)
+
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
     b = make((1,)).expand((5,))
