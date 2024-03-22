@@ -7,7 +7,8 @@ from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
 import random
-from functools import partial, wraps
+from functools import partial, wraps, reduce
+import operator
 import copy
 import contextvars
 from contextlib import contextmanager
@@ -1351,13 +1352,17 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
     # on the Module that they wrap. This module could be passed to `thunder.jit`
     # as the function to be jitted or as an argument of the function to be jitted.
-    # NOTE: `ddp` and `fsdp` use default process group. So finding the first
-    #       occurence is sufficient.
+    pgs = []
     for fn_or_arg in fn_and_args:
-        if (pg := getattr(fn_or_arg, "process_group_for_ddp", None)) is not None:
-            return pg
+        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
+        if pg is not None:
+            pgs.append(pg)
 
-    return None
+    # check all pgs are equal
+    if not reduce(operator.eq, pgs):
+        raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
+
+    return pgs[0] if pgs is not [] else None
 
 
 def thunder_general_jit(
