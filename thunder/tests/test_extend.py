@@ -126,8 +126,8 @@ def test_get_all_executors_includes_all_native_executors():
         "torchcompile",
         "python",
         "transformer_engine",
+        "triton",
     }
-    actual.discard("triton")  # remove when triton can always be imported
     if torch.cuda.is_available():
         expected.update({"nvfuser"})
     assert actual == expected
