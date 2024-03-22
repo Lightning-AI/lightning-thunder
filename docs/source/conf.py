@@ -11,15 +11,13 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 
-import glob
 import inspect
 import os
-import re
 import shutil
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 
-import pt_lightning_sphinx_theme
+import lai_sphinx_theme
 
 _PATH_HERE = os.path.abspath(os.path.dirname(__file__))
 _PATH_ROOT = os.path.realpath(os.path.join(_PATH_HERE, "..", ".."))
@@ -99,6 +97,7 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_paramlinks",
     "sphinx_togglebutton",
+    "lai_sphinx_theme.extensions.lightning",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -152,8 +151,8 @@ pygments_style = None
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "pt_lightning_sphinx_theme"
-html_theme_path = [pt_lightning_sphinx_theme.get_html_theme_path()]
+html_theme = "lai_sphinx_theme"
+html_theme_path = [lai_sphinx_theme.get_html_theme_path()]
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
