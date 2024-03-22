@@ -126,10 +126,10 @@ def test_get_all_executors_includes_all_native_executors():
         "torchcompile",
         "python",
         "transformer_engine",
-        "triton",
     }
     if torch.cuda.is_available():
         expected.update({"nvfuser"})
+        expected.update({"triton"})
     assert actual == expected
 
 
