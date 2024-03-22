@@ -2446,7 +2446,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
-    prims.PrimIDs.INPUT_AS_OUTPUT: lambda x, y: (prims.input_as_output(x,y), tuple()),
+    prims.PrimIDs.INPUT_AS_OUTPUT: lambda x, y: (prims.input_as_output(x, y), tuple()),
 }
 
 
@@ -3160,7 +3160,9 @@ def deconstruct_forward_env_for_backward(trace, env):
     # arguments. See test_grad.py:test_torch_autograd_function for an example
     # where this is tested.
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols if symbol.output is not None)
+    saved_for_backward = tuple(
+        env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols if symbol.output is not None
+    )
     return saved_for_backward
 
 

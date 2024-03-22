@@ -19,25 +19,26 @@ def test_input_as_output_prim(executor, device, dtype):
         x.copy_(z)
         # y = y*y
         return y
+
     def foo(x, y):
-        z = torch.mul(x,y)
-        z = torch.mul(z,z)
-        thunder.core.prims.input_as_output(z,x)
+        z = torch.mul(x, y)
+        z = torch.mul(z, z)
+        thunder.core.prims.input_as_output(z, x)
         # TODO error
         # thunder/core/transforms.py:3923: in backward_fn
         #    env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
         # IndexError: tuple index out of range
-        # y = y*y  
+        # y = y*y
         return y
-    
+
     traced_nvfuser_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
     # inplace updated input can not require grad(RuntimeError: a leaf Variable that requires grad is being used in an in-place operation)
     a = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
     b = torch.testing.make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
-    a1=a.detach().clone()
-    b1=b.detach().clone()
+    a1 = a.detach().clone()
+    b1 = b.detach().clone()
     b1.requires_grad_()
 
     thunder_result = traced_nvfuser_foo(a, b)
