@@ -22,6 +22,7 @@ from thunder.core.options import (
 from thunder.core.trace import (
     TraceCtx,
     from_trace,
+    get_tracectx,
     set_tracectx,
     reset_tracectx,
     is_tracing,
@@ -45,6 +46,7 @@ from thunder.core.compile_data import compile_data_and_stats
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
 from thunder.core.baseutils import run_once
+from thunder.core.codeutils import Positions
 from thunder.core.proxies import (
     Proxy,
     TensorProxy,
@@ -173,6 +175,15 @@ set_execution_callback_file = _set_execution_file
 # Translates the Python function to a thunder program using the thunder interpreter
 def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> tuple[TraceCtx, TraceCtx]:
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
+
+
+def source_location(filename_and_line: str, src: str):
+    tracectx = get_tracectx()
+    if tracectx is not None:
+        filename, linestr = filename_and_line.rsplit(":", 1)
+        line = int(linestr)
+        positions = Positions(line, 0, line, 999)
+        tracectx.set_current_source_location(filename, positions)
 
 
 class ThunderModule(pytorch.nn.Module):
@@ -576,6 +587,7 @@ def jit(
                 )
             extrace = extraces[-1]
             comp = extrace.python_callable()
+            computation_traces += extraces
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
@@ -584,7 +596,7 @@ def jit(
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+                pro, protraces, comp, computation_traces, epilogue, epilogue_traces, backward_fn, backward_traces
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
@@ -644,6 +656,7 @@ def jit(
         fn_ = ThunderModule(fn, fn_)
 
     # Sets compile options and statistics attributes
+    cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
     fn_._lc_transforms = additional_transforms[:]  ## transforms
