@@ -50,7 +50,7 @@ jobs:
 
       # Uploading docs to GCS, so they can be served on lightning.ai
       - name: Upload docs/thunder/latest to GCS 🪣
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         run: gsutil -m rsync -d -R docs/build/html/ ${GCP_TARGET}/latest
 
       # Uploading docs to GCS, so they can be served on lightning.ai
