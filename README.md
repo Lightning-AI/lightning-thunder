@@ -1,5 +1,6 @@
 <div align="center">
-<img alt="Thunder" src="docs/source/_static/images/lightning_thunder_lightmode_nobyline.png" width="400px" style="max-width: 100%;">
+<img alt="Thunder" src="docs/source/_static/images/LightningThunderLightModewByline.png#gh-light-mode-only" width="400px" style="max-width: 100%;">
+<img alt="Thunder" src="docs/source/_static/images/LightningThunderDarkModewByline.png#gh-dark-mode-only" width="400px" style="max-width: 100%;">
     <br/>
 <br/>
 
