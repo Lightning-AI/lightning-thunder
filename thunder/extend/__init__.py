@@ -306,12 +306,8 @@ def get_all_executors() -> tuple[Executor]:
         torch_compile,
         torchex,
         transformer_engineex,
+        triton_crossentropy,
     )
-
-    if torch.cuda.is_available():
-        # raise an error when a dependency is not available at import time
-        # TODO: this should only happen at runtime
-        from thunder.executors import triton_crossentropy
 
     return tuple(_executor_map.values())
 
