@@ -754,12 +754,20 @@ def unpack_sequence_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty sequence)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = []
+    line_parts = []
+    pos = 0
+    for p in parts:
+        if pos and pos + len(p) > 80:
+            lines.append("".join(line_parts) + " \\")
+            line_parts = []
+        line_parts.append(p)
+        pos += len(p)
+
+    lines.append("".join(line_parts))
     return lines
 
 
@@ -812,12 +820,21 @@ def _unpack_tuple_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty tuple)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = []
+    line_parts = []
+    pos = 0
+    for p in parts:
+        if pos and pos + len(p) > 80:
+            lines.append("".join(line_parts) + " \\")
+            line_parts = []
+        line_parts.append(p)
+        pos += len(p)
+
+    lines.append("".join(line_parts))
+
     return lines
 
 
