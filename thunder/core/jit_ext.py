@@ -7,7 +7,8 @@ from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
 import random
-from functools import partial, wraps
+from functools import partial, wraps, reduce
+import operator
 import copy
 import contextvars
 from contextlib import contextmanager
@@ -1347,6 +1348,20 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
+def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
+    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
+    # on the Module that they wrap. This module could be passed to `thunder.jit`
+    # as the function to be jitted or as an argument of the function to be jitted.
+    found_pg = None
+    for fn_or_arg in fn_and_args:
+        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
+        if pg is not None and found_pg is None:
+            found_pg = pg
+        elif pg is not None and pg != found_pg:
+            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
+    return found_pg
+
+
 def thunder_general_jit(
     fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> tuple[TraceCtx, TraceCtx]:
@@ -1369,7 +1384,7 @@ def thunder_general_jit(
     si.varkwargs = ("kwargs", None)
     prologue_trace._siginfo = si
 
-    process_group_for_ddp = getattr(fn, "process_group_for_ddp", None)
+    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: GeneralJitCtx = GeneralJitCtx(
         prologue_trace, computation_trace, sharp_edges=sharp_edges, process_group_for_ddp=process_group_for_ddp
     )
