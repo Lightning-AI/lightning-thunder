@@ -1,1 +1,3 @@
 ipython[all] ==8.22.2
+
+litgpt @ git+https://github.com/Lightning-AI/lit-gpt@24d5eba1724c953b7506edc041a7da1ce226c129
