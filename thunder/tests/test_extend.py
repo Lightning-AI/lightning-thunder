@@ -10,6 +10,7 @@ from thunder.core.langctxs import langctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import grad, get_grad, put_grads
 from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors
+from lightning_utilities.core.imports import package_available
 
 
 def test_extend_core():
@@ -127,9 +128,11 @@ def test_get_all_executors_includes_all_native_executors():
         "python",
         "transformer_engine",
     }
+    if package_available("triton"):
+        # `triton` maybe installed on a system without GPU.
+        expected.update({"triton"})
     if torch.cuda.is_available():
         expected.update({"nvfuser"})
-        expected.update({"triton"})
     assert actual == expected
 
 
