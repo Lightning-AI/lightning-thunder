@@ -748,7 +748,6 @@ def _make_parts_into_line_or_lines(parts: list[str], out: list[str] | None = Non
     return lines
 
 
-# TODO Review using multi-line unpacks more cleverly
 # TODO Possibly put the length in the code to show the requirement
 def unpack_sequence_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
