@@ -1354,8 +1354,7 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     # NOTE: `ddp` and `fsdp` use default process group. So finding the first
     #       occurence is sufficient.
     for fn_or_arg in fn_and_args:
-        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
-        if pg is not None:
+        if (pg := getattr(fn_or_arg, "process_group_for_ddp", None)) is not None:
             return pg
 
     return None
