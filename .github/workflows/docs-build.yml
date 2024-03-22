@@ -45,7 +45,7 @@ jobs:
         run: pip install . -U -r requirements/docs.txt
 
       - name: Make ${{ matrix.target }}
-        working-directory: docs/source/
+        working-directory: docs/
         # allow failing link check and doctest if you run with dispatch
         continue-on-error: ${{ matrix.target == 'doctest' || matrix.target == 'linkcheck' }}
         run: make ${{ matrix.target }} --debug --jobs $(nproc) SPHINXOPTS="-W --keep-going"
