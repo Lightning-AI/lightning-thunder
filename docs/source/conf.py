@@ -92,7 +92,7 @@ extensions = [
     "sphinx.ext.linkcode",
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
-    'sphinx.ext.mathjax',
+    "sphinx.ext.mathjax",
     "myst_parser",
     "nbsphinx",
     "sphinx_autodoc_typehints",
@@ -211,9 +211,7 @@ latex_documents = [
 
 # MathJax configuration
 mathjax3_config = {
-    'tex': {
-        'packages': {'[+]': ['ams', 'newcommand', 'configMacros']}
-    },
+    "tex": {"packages": {"[+]": ["ams", "newcommand", "configMacros"]}},
 }
 
 # -- Options for manual page output ------------------------------------------
