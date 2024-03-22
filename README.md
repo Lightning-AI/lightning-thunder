@@ -1,5 +1,6 @@
 <div align="center">
-<img alt="Thunder" src="docs/source/_static/images/lightning_thunder_lightmode_nobyline.png" width="400px" style="max-width: 100%;">
+<img alt="Thunder" src="docs/source/_static/images/LightningThunderLightModewByline.png#gh-light-mode-only" width="400px" style="max-width: 100%;">
+<img alt="Thunder" src="docs/source/_static/images/LightningThunderDarkModewByline.png#gh-dark-mode-only" width="400px" style="max-width: 100%;">
     <br/>
 <br/>
 
@@ -125,19 +126,7 @@ Thunder is in its early stages and should not be used for production runs yet.
 
 However, it can already deliver outstanding performance on LLM model supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama 2, Gemma, Falcon, and others.
 
-Run training loop for Llama, single-GPU:
-
-```bash
-python examples/lit-gpt/train.py
-```
-
-Run training loop for Llama, multi-GPU, using FSDP:
-
-```bash
-python examples/lit-gpt/train_fsdp.py
-```
-
-See [README.md](examples/lit-gpt/README.md) for details on running LitGPT with Thunder.
+Check out [the LitGPT integration](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) to learn about running LitGPT and Thunder together.
 
 ## Features
 
