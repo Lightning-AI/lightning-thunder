@@ -843,6 +843,20 @@ class CompileDDPTest(DataParallelTestCase):
             aft_trc = limit_in_flight_allgathers(bwd_trc, i, is_bucketing)
             check_inflight_allgather_number(aft_trc, i, is_bucketing)
 
+    def test_ddp_model_as_argument(self):
+        # Sanity test to make sure passing model as argument to
+        # thunder.jit with `ddp` compiles.
+        device = torch.device("cuda", self.rank)
+        model = torch.nn.Linear(5, 10, bias=False, device=device)
+        x = torch.randn(2, 5, device=device)
+
+        def fwd_loss(m, x):
+            return m(x).sum()
+
+        model = thunder.distributed.ddp(model)
+        fwd_loss = thunder.jit(fwd_loss)
+        fwd_loss(model, x)
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 
