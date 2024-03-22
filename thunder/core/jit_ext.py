@@ -1358,11 +1358,14 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
         if pg is not None:
             pgs.append(pg)
 
+    # attribute wasn't found, return None.
+    if pg == []:
+        return None
+
     # check all pgs are equal
     if not reduce(operator.eq, pgs):
         raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
-
-    return pgs[0] if pgs is not [] else None
+    return pgs[0]
 
 
 def thunder_general_jit(
