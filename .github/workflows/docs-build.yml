@@ -14,7 +14,7 @@ defaults:
     shell: bash
 
 jobs:
-  build-docs:
+  docs-make:
     uses: Lightning-AI/utilities/.github/workflows/check-docs.yml@v0.11.0
     with:
       python-version: "3.10"
@@ -28,7 +28,7 @@ jobs:
     env:
       GCP_TARGET: "gs://lightning-docs-thunder"
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v3
         with:
           name: docs-html-${{ github.sha }}
           path: docs/build/
@@ -50,7 +50,7 @@ jobs:
 
       # Uploading docs to GCS, so they can be served on lightning.ai
       - name: Upload docs/thunder/latest to GCS 🪣
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         run: gsutil -m rsync -d -R docs/build/html/ ${GCP_TARGET}/latest
 
       # Uploading docs to GCS, so they can be served on lightning.ai

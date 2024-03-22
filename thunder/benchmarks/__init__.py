@@ -24,9 +24,9 @@ import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
 from thunder.core.transforms import grad, clear_grads, populate_grads
 import thunder.executors as executors
-from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_gpt_model
+from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.lit_gpt_model import Config as LitGPTConfig
+from thunder.tests.litgpt_model import Config as LitGPTConfig
 
 # List of all benchmarks
 benchmarks: list = []
@@ -1875,7 +1875,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -1935,7 +1935,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         module = (
-            lit_gpt_model.LLaMAMLP(self.config)
+            litgpt_model.LLaMAMLP(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -1946,7 +1946,7 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
     _args = (
         BenchmarkArg(
             name="config",
-            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -2005,7 +2005,7 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
 
     def fn(self) -> Callable:
         module = (
-            lit_gpt_model.CausalSelfAttention(self.config)
+            litgpt_model.CausalSelfAttention(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2086,7 +2086,7 @@ class LlamaRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         module = (
-            lit_gpt_model.RMSNorm(self.size, self.dim, self.eps)
+            litgpt_model.RMSNorm(self.size, self.dim, self.eps)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2168,7 +2168,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         gpt = (
-            lit_gpt_model.GPT(self.config)
+            litgpt_model.GPT(self.config)
             .to(device=self.device, dtype=self.model_tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2199,7 +2199,7 @@ class QKVSplitRope(nn.Module):
 
         super().__init__()
         self.config = config
-        self.apply_rope = lit_gpt_model.apply_rope
+        self.apply_rope = litgpt_model.apply_rope
         self.use_apex = use_apex
 
     def forward(
@@ -2254,7 +2254,7 @@ class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -2610,7 +2610,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
-        from thunder.tests.lit_gpt_model import Config
+        from thunder.tests.litgpt_model import Config
 
         litgptconfig = Config.from_name(config) if not isinstance(config, Config) else config
         nanogptconfig = NanoGPTConfig(
@@ -2793,7 +2793,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
-        self.cos, self.sin = lit_gpt_model.build_rope_cache(
+        self.cos, self.sin = litgpt_model.build_rope_cache(
             seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
         )
 
@@ -2806,9 +2806,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         model = (
-            lit_gpt_model.Block(self.config)
-            .to(device=self.device, dtype=self.tdtype)
-            .requires_grad_(self.requires_grad)
+            litgpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return model
 
