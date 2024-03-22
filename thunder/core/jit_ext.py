@@ -1352,20 +1352,14 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
     # on the Module that they wrap. This module could be passed to `thunder.jit`
     # as the function to be jitted or as an argument of the function to be jitted.
-    pgs = []
+    found_pg = None
     for fn_or_arg in fn_and_args:
         pg = getattr(fn_or_arg, "process_group_for_ddp", None)
-        if pg is not None:
-            pgs.append(pg)
-
-    # attribute wasn't found, return None.
-    if pgs == []:
-        return None
-
-    # check all pgs are equal
-    if not reduce(operator.eq, pgs):
-        raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
-    return pgs[0]
+        if pg is not None and found_pg is None:
+            found_pg = pg
+        elif pg is not None and pg != found_pg:
+            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
+    return found_pg
 
 
 def thunder_general_jit(
