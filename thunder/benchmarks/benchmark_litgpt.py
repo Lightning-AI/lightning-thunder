@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
 
 import thunder
-from thunder.tests.lit_gpt_model import Config, GPT, Block
+from thunder.tests.litgpt_model import Config, GPT, Block
 
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput

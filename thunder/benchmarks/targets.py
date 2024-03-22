@@ -39,7 +39,7 @@ from thunder.benchmarks import (
     thunder_sdpa_torch_compile_nvfuser_executor,
 )
 
-from thunder.tests.lit_gpt_model import Config as LitGPTConfig
+from thunder.tests.litgpt_model import Config as LitGPTConfig
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")

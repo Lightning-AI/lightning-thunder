@@ -92,7 +92,7 @@ extensions = [
     "sphinx.ext.linkcode",
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
-    "sphinx.ext.imgmath",
+    "sphinx.ext.mathjax",
     "myst_parser",
     "nbsphinx",
     "sphinx_autodoc_typehints",
@@ -208,6 +208,11 @@ latex_elements = {
 latex_documents = [
     (master_doc, project + ".tex", project + " Documentation", author, "manual"),
 ]
+
+# MathJax configuration
+mathjax3_config = {
+    "tex": {"packages": {"[+]": ["ams", "newcommand", "configMacros"]}},
+}
 
 # -- Options for manual page output ------------------------------------------
 
