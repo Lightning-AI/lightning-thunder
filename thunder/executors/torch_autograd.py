@@ -335,4 +335,9 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
         compile_stats.last_traces += fw_traces
         compile_stats.last_backward_traces += bw_traces
 
+    # Enable wrapping with `te.fp8_autocast`.
+    fw_extrace._include_te_fp8_autocast = True
+    # We only want the forward function to be called with `te.fp8_autocast` manager.
+    bw_extrace._include_te_fp8_autocast = False
+
     return fw_extrace, bw_extrace

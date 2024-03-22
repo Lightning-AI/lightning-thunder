@@ -18,12 +18,15 @@ is_supported, msg = te.fp8.check_fp8_support()
 if not is_supported:
     pytest.skip(msg, allow_module_level=True)
 
-# Create an FP8 recipe.
-fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
+hybrid_fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
+
+# `None` is used to test the default recipe.
+recipes = (None, hybrid_fp8_recipe)
 
 
 @requiresCUDA
-def test_te_linear_forward_backward():
+@pytest.mark.parametrize("fp8_recipe", recipes)
+def test_te_linear_forward_backward(fp8_recipe):
     # Test Description:
     # Verify that `torch.nn.functional.linear` is replaced with `te_linear_*`
     # and the output as well as the gradients match for thunder compiled code.
@@ -47,11 +50,11 @@ def test_te_linear_forward_backward():
         o = torch.nn.functional.linear(x, w1)
         return torch.nn.functional.linear(o + x, w2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_ex])
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex], fp8_recipe=fp8_recipe)
 
     # Enable autocasting for the forward pass
-    with te.fp8_autocast(fp8_recipe=fp8_recipe):
-        thunder_result = cfn(x, w1, w2)
+    # with te.fp8_autocast(fp8_recipe=fp8_recipe):
+    thunder_result = cfn(x, w1, w2)
 
     # Enable autocasting for the forward pass
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
@@ -77,7 +80,8 @@ def test_te_linear_forward_backward():
 
 
 @requiresCUDA
-def test_te_linear_forward_backward_multiple_iteration():
+@pytest.mark.parametrize("fp8_recipe", recipes)
+def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # Test Description:
     # In this test, we verify whether a model using TransformerEngine Linear
     # and transformer_engine executor converge to same state.

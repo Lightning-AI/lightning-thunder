@@ -20,6 +20,7 @@ import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
 from thunder.extend import OperatorExecutor, register_executor
+from thunder.core.compile_data import get_compile_option
 
 __all__ = [
     "transformer_engine_ex",
@@ -37,6 +38,8 @@ TE_VERSION_1_3_PLUS: bool = False
 te: None | Any = None
 if TE_AVAILABLE:
     try:
+        import transformer_engine.pytorch as te
+        from transformer_engine.common import recipe
         from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
@@ -75,6 +78,7 @@ if not TE_AVAILABLE:
 #
 # @torch.no_grad()
 # @no_autocast()
+# @te.fp8_autocast(fp8_recipe=fp8_recipe)
 # def func(a, b, d):
 #   # a: "cuda:0 bf16[16, 32]"
 #   # b: "cuda:0 bf16[64, 32]"
@@ -330,6 +334,9 @@ te_functional_linear_backward = transformer_engine_ex.register_operator(
 
 LINEAR_CALLS_COUNTER = 0
 
+if TE_AVAILABLE:
+    _DEFAULT_RECIPE = recipe.DelayedScaling()
+
 
 # Creates a new stateful operator for each invocation of `linear`.
 def _create_fp8_linear_bound_symbol(
@@ -339,10 +346,16 @@ def _create_fp8_linear_bound_symbol(
     global LINEAR_CALLS_COUNTER
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
 
+    desc = "transformer_engine_ex: Optional fp8_recipe for `fp8_autocast` context manager."
+    if (fp8_recipe := get_compile_option("fp8_recipe", desc)) is None:
+        fp8_recipe = _DEFAULT_RECIPE
+
     def bind_postprocess(bsym: BoundSymbol) -> None:
         # This dict is then used by trace.python_ctx() to resolve the
         # BoundSymbol to the actual function.
         bsym._call_ctx: dict[str, Callable] = {name: linear_fn}
+        bsym._import_ctx: dict[str, Any] = {"te": te}
+        bsym._object_ctx: dict[str, Any] = {"fp8_recipe": fp8_recipe}
 
     meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled)
     sym = Symbol(
