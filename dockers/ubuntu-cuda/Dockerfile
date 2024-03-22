@@ -112,15 +112,26 @@ RUN \
           --index-url="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}"; \
     fi
 
+ARG TORCH_INSTALL
+
 RUN \
-    # building nvFuser from source
-    git clone https://github.com/NVIDIA/Fuser.git && \
-    cd Fuser && \
-    git submodule update --init --recursive && \
-    pip install -r requirements.txt && \
-    python setup.py install --no-test --no-benchmark && \
-    cd .. && \
-    rm -rf Fuser
+    if [ "${TORCH_INSTALL}" == "source" ]; then \
+        # building nvFuser from source
+        git clone https://github.com/NVIDIA/Fuser.git && \
+        cd Fuser && \
+        git submodule update --init --recursive && \
+        pip install -r requirements.txt && \
+        python setup.py install --no-test --no-benchmark && \
+        cd .. && \
+        rm -rf Fuser ; \
+    elif [ "${TORCH_INSTALL}" == "test" ]; then \
+        echo "Not supported option" ; \
+    else \
+        # installing pytorch from wheels \
+        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+        TORCH_VERSION_MM=${TORCH_VERSION%.*} && \
+        pip install -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
+    fi
 
 RUN \
     # building cudnn-frontend from source
