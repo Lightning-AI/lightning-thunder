@@ -1347,7 +1347,7 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
-def _get_process_group_from(*fn_and_args):
+def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
     # on the Module that they wrap. This module could be passed to `thunder.jit`
     # as the function to be jitted or as an argument of the function to be jitted.
@@ -1357,6 +1357,8 @@ def _get_process_group_from(*fn_and_args):
         pg = getattr(fn_or_arg, "process_group_for_ddp", None)
         if pg is not None:
             return pg
+
+    return None
 
 
 def thunder_general_jit(
@@ -1381,7 +1383,7 @@ def thunder_general_jit(
     si.varkwargs = ("kwargs", None)
     prologue_trace._siginfo = si
 
-    process_group_for_ddp = _get_process_group_from(fn, *args, *kwargs.values())
+    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: GeneralJitCtx = GeneralJitCtx(
         prologue_trace, computation_trace, sharp_edges=sharp_edges, process_group_for_ddp=process_group_for_ddp
     )
