@@ -1359,7 +1359,7 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
             pgs.append(pg)
 
     # attribute wasn't found, return None.
-    if pg == []:
+    if pgs == []:
         return None
 
     # check all pgs are equal
