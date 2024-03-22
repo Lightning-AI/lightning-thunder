@@ -2446,6 +2446,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
+    prims.PrimIDs.INPUT_AS_OUTPUT: lambda x, y: (prims.input_as_output(x,y), tuple()),
 }
 
 
@@ -2476,6 +2477,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
+    prims.PrimIDs.INPUT_AS_OUTPUT: lambda g: (None, None),
 }
 
 
@@ -3158,7 +3160,7 @@ def deconstruct_forward_env_for_backward(trace, env):
     # arguments. See test_grad.py:test_torch_autograd_function for an example
     # where this is tested.
     bound_symbols = iter_bound_symbols(trace.bound_symbols)
-    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols)
+    saved_for_backward = tuple(env[sequencify(symbol.output)[0].name].residuals for symbol in bound_symbols if symbol.output is not None)
     return saved_for_backward
 
 
@@ -3168,6 +3170,8 @@ def reconstruct_forward_env_for_backward(trace, saved_for_backward):
     reconstructed_env = {}
 
     for idx, sym in enumerate(bound_symbols):
+        if sym.output is None:
+            continue
         k = sequencify(sym.output)[0].name
         v = VJPDual(None, saved_for_backward[idx])
         reconstructed_env[k] = v
@@ -3503,7 +3507,8 @@ def backward_pass(forward_env, trace, init_cotangents):
         # Having a single cotangent is a common case, so we flatten it
         # Otherwise, we will need to rewrite the pullback functions
         cotangents = tree_flatten(cotangents)[0]
-        residuals = forward_env[symbol_output[0].name].residuals
+        residuals = [] if symbol_output[0] is None else forward_env[symbol_output[0].name].residuals
+        # residuals = forward_env[symbol_output[0].name].residuals
         if is_constant_for_vjp(symbol):
             # We can skip the pullback if all the arguments are constant
             continue

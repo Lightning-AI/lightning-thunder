@@ -249,6 +249,7 @@ class PrimIDs(Enum):
     BATCH_NORM = auto()
     # Memory access methods
     ITEM = auto()
+    INPUT_AS_OUTPUT = auto()
 
 
 class OpTags(Enum):
@@ -3586,3 +3587,15 @@ def batch_norm_meta(
 
 
 batch_norm = make_prim(PrimIDs.BATCH_NORM, "batch_norm", meta=batch_norm_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def input_as_output_meta(out: TensorProxy, input_alias: TensorProxy,):
+    utils.check_type(out, TensorProxy)
+    utils.check_type(input_alias, TensorProxy)
+    utils.check_same_device(out, input_alias)
+    utils.check_same_shape(out, input_alias)
+    utils.check_same_dtype(out, input_alias)
+    return None
+
+
+input_as_output = make_prim(PrimIDs.INPUT_AS_OUTPUT, "input_as_output", meta=input_as_output_meta, tags=(OpTags.DONT_DCE,))
