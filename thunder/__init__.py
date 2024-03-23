@@ -349,6 +349,11 @@ def jit(
     # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
     #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
+    executor_lookasides = {}
+    for ex in executors or []:
+        # TODO: sharp edge if lookasides are shadowed?
+        executor_lookasides.update(ex._lookasides)
+
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
         fn=fn,
@@ -364,6 +369,7 @@ def jit(
         only_execute_prims=False,
         disable_preprocessing=True,
         compile_options=compile_options,
+        executor_lookasides=executor_lookasides,
     )
     cs = CompileStats()
 
