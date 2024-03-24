@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set -ex
 pip list
 python -c "import torch ; assert torch.cuda.is_available(), 'missing GPU support!'"
 python -c "import torch ; v = torch.__version__ ; assert str(v).startswith('2'), v"
