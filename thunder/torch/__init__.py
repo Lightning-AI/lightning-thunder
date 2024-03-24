@@ -1868,7 +1868,7 @@ def einsum(equation: str, *operands: TensorLike | Sequence[TensorLike]) -> Tenso
     utils.check_types(operands, TensorProxy)
 
     orig_eq = equation
-    # Removes spaces and replaces ... with . to faciliate parsing later
+    # Removes spaces and replaces ... with . to facilitate parsing later
     equation = re.sub(r"\s", "", equation)
     equation = re.sub(r"\.\.\.", ".", equation)
 
