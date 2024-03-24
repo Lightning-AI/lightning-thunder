@@ -666,10 +666,9 @@ def _cudnn_sdpa_bwd_wrapper(
 
     description = """\
 This flag is for enabling nvFuser's zipping optimization that seeks to avoid
-expensive concatenation.
-https://github.com/NVIDIA/Fuser/issues/1502#issuecomment-1870837878 has more
-details. When this flag is true, cudnn_sdpa_bwd may cat dQ, dK and dV
-as **one** tensor and return them as slices of that tensor.
+expensive concatenation. https://github.com/NVIDIA/Fuser/issues/1768 has more
+details. When this flag is true, cudnn_sdpa_bwd may cat dQ, dK and dV as one
+tensor and return them as slices of that tensor.
 """
     may_cast_grad_qkv: None | bool = get_compile_option("cudnn_sdpa_bwd_may_cat_grad_qkv", description)
     if may_cast_grad_qkv is None:
