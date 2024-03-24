@@ -2101,8 +2101,9 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(cls.value())
 
     def __init__(self, iterable=()):
-        SequenceWrapperMethods.__init__(self, iterable)
-        return wrap_const(None)
+        # We need to propagate the return value because it could be JIT_SIGNALS
+        res = SequenceWrapperMethods.__init__(self, iterable)
+        return res
 
     def __setitem__(self, key, value, /):
         self.track_items()
