@@ -7,7 +7,8 @@ from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
 import random
-from functools import partial, wraps
+from functools import partial, wraps, reduce
+import operator
 import copy
 import contextvars
 from contextlib import contextmanager
@@ -519,7 +520,13 @@ def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
 
 class GeneralJitCtx(MinimalCtx):
     def __init__(
-        self, prologue_trace, computation_trace, *, sharp_edges: SHARP_EDGES_OPTIONS, process_group_for_ddp=None
+        self,
+        prologue_trace,
+        computation_trace,
+        *,
+        sharp_edges: SHARP_EDGES_OPTIONS,
+        process_group_for_ddp=None,
+        executor_lookasides,
     ):
         super().__init__(sharp_edges=sharp_edges)
 
@@ -529,6 +536,7 @@ class GeneralJitCtx(MinimalCtx):
         self._process_group_for_ddp = process_group_for_ddp
         self._additional_outputs = collections.defaultdict(list)
         self._proxy_swapmap: dict[Variable, Proxy] = {}
+        self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -871,7 +879,12 @@ def recursively_proxy(*args, **kwargs):
 def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
-    if isinstance(fn, Symbol) or fn in _clang_fn_set:
+
+    ctx: GeneralJitCtx = get_general_jit_ctx()
+
+    if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
+        lookaside = executor_lookaside
+    elif isinstance(fn, Symbol) or fn in _clang_fn_set:
         # Performs symbol lookasides
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
@@ -1347,6 +1360,20 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
+def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
+    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
+    # on the Module that they wrap. This module could be passed to `thunder.jit`
+    # as the function to be jitted or as an argument of the function to be jitted.
+    found_pg = None
+    for fn_or_arg in fn_and_args:
+        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
+        if pg is not None and found_pg is None:
+            found_pg = pg
+        elif pg is not None and pg != found_pg:
+            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
+    return found_pg
+
+
 def thunder_general_jit(
     fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> tuple[TraceCtx, TraceCtx]:
@@ -1369,9 +1396,16 @@ def thunder_general_jit(
     si.varkwargs = ("kwargs", None)
     prologue_trace._siginfo = si
 
-    process_group_for_ddp = getattr(fn, "process_group_for_ddp", None)
+    compile_data = get_compile_data()
+    executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
+
+    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: GeneralJitCtx = GeneralJitCtx(
-        prologue_trace, computation_trace, sharp_edges=sharp_edges, process_group_for_ddp=process_group_for_ddp
+        prologue_trace,
+        computation_trace,
+        sharp_edges=sharp_edges,
+        process_group_for_ddp=process_group_for_ddp,
+        executor_lookasides=executor_lookasides,
     )
     jfn = interpret(
         fn,

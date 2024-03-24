@@ -25,7 +25,6 @@ __all__ = [
     "add_always_executor",
     "remove_default_executor",
     "remove_always_executor",
-    "register_lookaside",
 ]
 
 
@@ -50,6 +49,7 @@ class Executor:
         self._version = version
 
         self._implmap: dict[Hashable, ImplInfo] = {}
+        self._lookasides: dict[Callable, Callable] = {}
 
     @property
     def name(self) -> Hashable:
@@ -240,7 +240,7 @@ class OperatorExecutor(Executor):
         self.opmap[name] = sym
 
         if replaces is not None:
-            register_lookaside(replaces, sym)
+            self._lookasides[replaces] = sym
 
         return sym
 
@@ -306,12 +306,8 @@ def get_all_executors() -> tuple[Executor]:
         torch_compile,
         torchex,
         transformer_engineex,
+        triton_crossentropy,
     )
-
-    if torch.cuda.is_available():
-        # raise an error when a dependency is not available at import time
-        # TODO: this should only happen at runtime
-        from thunder.executors import triton_crossentropy
 
     return tuple(_executor_map.values())
 
@@ -386,10 +382,3 @@ def deregister_executor(ex: Hashable | Executor) -> None:
 
     remove_always_executor(id)
     remove_default_executor(id)
-
-
-def register_lookaside(function, symbol) -> None:
-    """register `symbol` as a lookaside for `function`"""
-    import thunder.core.jit_ext
-
-    thunder.core.jit_ext._general_jit_lookaside_map[function] = thunder.core.jit_ext.interpreter_needs_wrap(symbol)
