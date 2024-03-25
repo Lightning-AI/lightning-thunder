@@ -571,7 +571,7 @@ def jit(
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
-                    extraces = []
+                    extraces = cs.last_traces
                     check(
                         not additional_transforms,
                         lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
