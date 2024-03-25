@@ -456,8 +456,16 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"Distributed Mode: {benchmark.distributed_mode}")
             if benchmark.distributed_mode == "fsdp":
                 print(
-                    f"Sharding Mode: {benchmark.shard_mode}\nSharding Size: {benchmark.sharding_size}\nBucketing: {benchmark.bucketing_mode}"
+                    f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}"
                 )
+                if benchmark.sharding_size is not None:
+                    print(
+                        f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
+                    )
+                if benchmark.bucketing_mode == "size":
+                    print(f"Bucketing Number Params: {self.fsdp_bucket_params}")
+            elif benchmark.distributed_mode == "ddp":
+                print(f"DDP Bucketing Size: {self.ddp_bucket_size} MB")
             print(f"Compiler: {benchmark.compile}")
             print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
             print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
