@@ -467,9 +467,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             )
             print(f"Distributed Mode: {benchmark.distributed_mode}")
             if benchmark.distributed_mode == "fsdp":
-                print(
-                    f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}"
-                )
+                print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
                 if benchmark.sharding_size is not None:
                     print(
                         f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
