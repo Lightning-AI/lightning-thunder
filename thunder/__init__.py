@@ -571,13 +571,13 @@ def jit(
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
-                    extrace = computation_trc
                     extraces = []
                     check(
                         additional_transforms,
                         lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
                     )
-            else:
+
+            if backward_trc is None:
                 cs.last_computation_transformation_start = time.time_ns()
 
                 ## EPILOGUE and TRANSFORMS should not mix...
@@ -591,10 +591,10 @@ def jit(
                         computation_trc,
                         executors_list=cd.executors_list,
                     )
-                extrace = extraces[-1]
+                computation_trc = extraces[-1]
                 cs.last_computation_transformation_stop = time.time_ns()
 
-            comp = extrace.python_callable()
+            comp = computation_trc.python_callable()
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
