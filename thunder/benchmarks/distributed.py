@@ -322,9 +322,11 @@ if __name__ == "__main__":
                         ResultFormatter(
                             model_name=args.model,
                             base_name="torch_fsdp",
-                            suffix=str(sharding_strategy).lower() + "-bucketing_" + "block"
-                            if auto_wrap_policy is not None
-                            else "none",
+                            suffix=(
+                                str(sharding_strategy).lower() + "-bucketing_" + "block"
+                                if auto_wrap_policy is not None
+                                else "none"
+                            ),
                             dtype=args.dtype,
                             world_size=world_size,
                             total_callable_construction_time=total_cct,
@@ -352,9 +354,11 @@ if __name__ == "__main__":
                             ResultFormatter(
                                 model_name=args.model,
                                 base_name="torch_compile_fsdp",
-                                suffix=str(sharding_strategy).lower() + "-bucketing_" + "block"
-                                if auto_wrap_policy is not None
-                                else "none",
+                                suffix=(
+                                    str(sharding_strategy).lower() + "-bucketing_" + "block"
+                                    if auto_wrap_policy is not None
+                                    else "none"
+                                ),
                                 dtype=args.dtype,
                                 world_size=world_size,
                                 total_callable_construction_time=total_cct,
