@@ -505,7 +505,10 @@ def _same_size_except(*args, except_dim: int) -> bool:
     return all(shape == shapes[0] for shape in shapes)
 
 
-def _cat_grad_qkv(
+# Allocates an empty tensor that will hold dQ, dK, and dV, concatenated.
+# `query`, `key` and `value` merely provide necessary metadata such as sizes
+# and dtypes. They don't have to be passed in as `torch.Tensor`s.
+def _allocate_catted_grad_qkv(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -518,7 +521,8 @@ def _cat_grad_qkv(
     h_q, h_k, h_v = query.size(1), key.size(1), value.size(1)
     h_qkv = h_q + h_k + h_v
 
-    # Create grad_qkv as a tensor of size [b,h_qkv,s,d] and allocation order [0,2,1,3] from major to minor.
+    # Create grad_qkv as a tensor of size [b,h_qkv,s,d] and allocation order
+    # [0,2,1,3] from major to minor.
     return torch.empty(b, s, h_qkv, d, dtype=query.dtype, device=query.device).permute(0, 2, 1, 3)
 
 
@@ -547,7 +551,7 @@ def _cudnn_sdpa_bwd_impl(
     # slices of that. Otherwise, allocate them individually.
     grad_qkv: None | torch.Tensor = None
     if cat_grad_qkv:
-        grad_qkv = _cat_grad_qkv(query, key, value)
+        grad_qkv = _allocate_catted_grad_qkv(query, key, value)
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:
         grad_query = torch.empty_like(query)
@@ -670,11 +674,11 @@ expensive concatenation. https://github.com/NVIDIA/Fuser/issues/1768 has more
 details. When this flag is true, cudnn_sdpa_bwd may cat dQ, dK and dV as one
 tensor and return them as slices of that tensor.
 """
-    may_cast_grad_qkv: None | bool = get_compile_option("cudnn_sdpa_bwd_may_cat_grad_qkv", description)
-    if may_cast_grad_qkv is None:
-        may_cast_grad_qkv = False
-    assert isinstance(may_cast_grad_qkv, bool)
-    cat_grad_qkv = may_cast_grad_qkv and _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+    may_cat_grad_qkv: None | bool = get_compile_option("cudnn_sdpa_bwd_may_cat_grad_qkv", description)
+    if may_cat_grad_qkv is None:
+        may_cat_grad_qkv = False
+    assert isinstance(may_cat_grad_qkv, bool)
+    cat_grad_qkv = may_cat_grad_qkv and _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
 
     grads = cudnn_sdpa_bwd(
         get_grad(primal),
@@ -698,6 +702,8 @@ tensor and return them as slices of that tensor.
         put_grad(attn_mask, grad_attn_mask)
 
     if cat_grad_qkv:
+        # The `split` is done outside `cudnn_sdpa_bwd` so it can be picked up
+        # by nvfuserex.
         (grad_qkv,) = grads
         grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
     else:
