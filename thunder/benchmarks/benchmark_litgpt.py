@@ -49,7 +49,7 @@ class Benchmark_litGPT:
         bucketing_mode: str = "none",
         sharding_size: int | None = None,
         ddp_bucket_size: float = 256.0,
-        fsdp_bucket_params: float | None = None, 
+        fsdp_bucket_params: float | None = None,
         n_layers: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
@@ -81,30 +81,40 @@ class Benchmark_litGPT:
         self.fsdp_bucket_params = fsdp_bucket_params
         self.micro_batch_size = micro_batch_size
 
-        #Clarify benchmark assumptions
+        # Clarify benchmark assumptions
         if self.sharding_size is not None:
-            assert "thunder" not in self.compile, \
-             "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
+            assert (
+                "thunder" not in self.compile
+            ), "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
 
-            assert self.shard_mode == "hybrid_dp", \
-             "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
+            assert (
+                self.shard_mode == "hybrid_dp"
+            ), "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
 
-            assert world_size % self.sharding_size == 0, \
-             f"World size {world_size} is not divisible by Hybrid Sharding Size {self.sharding_size}"
+            assert (
+                world_size % self.sharding_size == 0
+            ), f"World size {world_size} is not divisible by Hybrid Sharding Size {self.sharding_size}"
 
         if self.bucketing_mode != "none" and self.distributed_mode != "fsdp":
-            print(f"[WARNING] --bucketing_mode {self.bucketing_mode} will be ignored as \
-             it is only used for FSDP style parallelism but running {self.distributed_mode}")
+            print(
+                f"[WARNING] --bucketing_mode {self.bucketing_mode} will be ignored as \
+             it is only used for FSDP style parallelism but running {self.distributed_mode}"
+            )
 
-        assert not ("thunder" in self.compile and self.bucketing_mode == "size"), \
-         "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
+        assert not (
+            "thunder" in self.compile and self.bucketing_mode == "size"
+        ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
 
         if self.fsdp_bucket_params is not None:
             if self.distributed_mode != "fsdp":
-                print(f"[WARNING] Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignnored")
+                print(
+                    f"[WARNING] Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignnored"
+                )
 
             if self.bucketing_mode != "size":
-                print(f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignoted.")
+                print(
+                    f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignoted."
+                )
 
         if global_batch_size is not None:
             self.global_batch_size = global_batch_size
@@ -212,10 +222,12 @@ class Benchmark_litGPT:
 
                 mesh = None
                 if self.sharding_size is not None:
-                    mesh = init_device_mesh("cuda", (int(world_size/self.sharding_size), self.sharding_size))
+                    mesh = init_device_mesh("cuda", (int(world_size / self.sharding_size), self.sharding_size))
 
                 litgpt_auto_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
-                size_auto_wrap_policy = functools.partial(size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params)
+                size_auto_wrap_policy = functools.partial(
+                    size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params
+                )
                 zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
 
                 custom_wrap_policy = {
@@ -223,13 +235,13 @@ class Benchmark_litGPT:
                     "size": size_auto_wrap_policy,
                     "none": zero_bucket_wrap_policy,
                 }[self.bucketing_mode]
-                
+
                 sharding_strategy: ShardingStrategy = {
                     "zero2": ShardingStrategy.SHARD_GRAD_OP,
                     "zero3": ShardingStrategy.FULL_SHARD,
                     "hybrid_dp": ShardingStrategy.HYBRID_SHARD,
                 }[self.shard_mode]
-                
+
                 # AssertionError: Dynamo only supports FSDP with use_orig_params=True
                 torch.cuda.set_device(local_rank)
                 model = FSDP(
