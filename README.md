@@ -1,5 +1,6 @@
 <div align="center">
-<img alt="Thunder" src="docs/source/_static/images/lightning_thunder_lightmode_nobyline.png" width="400px" style="max-width: 100%;">
+<img alt="Thunder" src="docs/source/_static/images/LightningThunderLightModewByline.png#gh-light-mode-only" width="400px" style="max-width: 100%;">
+<img alt="Thunder" src="docs/source/_static/images/LightningThunderDarkModewByline.png#gh-dark-mode-only" width="400px" style="max-width: 100%;">
     <br/>
 <br/>
 
@@ -153,7 +154,8 @@ Thunder doesn't generate code for accelerators directly. It acquires and transfo
 - [Apex](https://github.com/NVIDIA/apex)
 - [TransformerEngine](https://github.com/NVIDIA/TransformerEngine)
 - [PyTorch eager](https://github.com/pytorch/pytorch)
-- custom kernels, including those written with [OpenAI Triton](https://github.com/openai/triton)
+- Custom CUDA kernels through [PyCUDA](https://documen.tician.de/pycuda/tutorial.html#interoperability-with-other-libraries-using-the-cuda-array-interface), [Numba](https://numba.readthedocs.io/en/stable/cuda/kernels.html), [CuPy](https://docs.cupy.dev/en/stable/user_guide/kernel.html)
+- Custom kernels written in [OpenAI Triton](https://github.com/openai/triton)
 
 Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
 
