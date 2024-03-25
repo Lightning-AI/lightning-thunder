@@ -9,7 +9,9 @@ import operator
 from types import EllipsisType, NoneType
 import copy
 import time
+import warnings
 
+from thunder.core.baseutils import run_once
 from thunder.core.compile_data import using_symbolic_values
 from thunder.clang.langctx import register_method
 from thunder.core.langctxs import langctx, Languages
@@ -1160,6 +1162,14 @@ def compute_broadcast_shape(*_shapes):
     return tuple(common_shape)
 
 
+@run_once
+def mT_scalar_warning():
+    warnings.warn(
+        "Tensor.mT is deprecated on 0-D tensors. This function is the identity in these cases.",
+        UserWarning,
+    )
+
+
 @clangop(method_name="mT")
 def matrix_transpose(a: TensorProxy) -> TensorProxy:
     """Transposes the last two dimensions of a tensor.
@@ -1181,6 +1191,13 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
                 [2, 5],
                 [3, 6]])
     """
+
+    if a.ndim == 0:
+        mT_scalar_warning()
+        return a
+    elif a.ndim == 1:
+        raise RuntimeError(f"tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor.")
+
     dim0, dim1 = -2, -1
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
     permutation = list(range(a.ndim))
