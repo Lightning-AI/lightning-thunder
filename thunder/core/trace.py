@@ -89,6 +89,10 @@ class TraceCtx:
 
         self._any_future_tensors = False
 
+        # This is a detail for enabling transformer_engine's autocast manager.
+        # We only want the forward function to be called with ctx manager.
+        self._include_te_fp8_autocast = False
+
     @property
     def prologue(self):
         return self._prologue
@@ -367,6 +371,25 @@ class TraceCtx:
             program.append("@torch.no_grad()")
             # Prints the signature and the no_autocast context
             program.append("@no_autocast()")
+
+            # NOTE: For TransformerEngine executor, we want to wrap the generated
+            # forward function in fp8_autocast ctx manager.
+            # In future, if other executor has similar requirements, we should
+            # add a new extension point for executors
+            def is_transformer_engine_enabled():
+                # We only want the forward function to be called with ctx manager.
+                # TODO: Nicer way to detect forward or backward trace.
+                if not self._include_te_fp8_autocast:
+                    return False
+
+                # This symbols are in import_ctx and object_ctx only if
+                # we actually replaced a linear call with a new TE operator.
+                is_te_exec_enabled = "te" in import_ctx and "fp8_recipe" in object_ctx
+                return is_te_exec_enabled
+
+            if is_transformer_engine_enabled():
+                program.append("@te.fp8_autocast(fp8_recipe=fp8_recipe)")
+
             program.append(signature_str)
 
             # TODO Print objects from context
