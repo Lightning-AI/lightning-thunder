@@ -89,6 +89,9 @@ class Benchmark_litGPT:
             assert self.shard_mode == "hybrid_dp", \
              "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
 
+            assert world_size % self.sharding_size == 0, \
+             f"World size {world_size} is not divisible by Hybrid Sharding Size {self.sharding_size}"
+
         if self.bucketing_mode != "none" and self.distributed_mode != "fsdp":
             print(f"[WARNING] --bucketing_mode {self.bucketing_mode} will be ignored as \
              it is only used for FSDP style parallelism but running {self.distributed_mode}")
