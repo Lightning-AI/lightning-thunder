@@ -573,7 +573,7 @@ def jit(
                     # by split_forward_backward
                     extraces = []
                     check(
-                        additional_transforms,
+                        not additional_transforms,
                         lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
                     )
 
