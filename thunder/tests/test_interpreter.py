@@ -1337,7 +1337,7 @@ def test_import(jit):
 
     def foo():
         # test relative import
-        from .lit_gpt_model import Config
+        from .litgpt_model import Config
 
         return Config
 
@@ -1345,18 +1345,18 @@ def test_import(jit):
 
     def foo():
         # test relative import
-        from . import lit_gpt_model
+        from . import litgpt_model
 
-        return lit_gpt_model.Config
+        return litgpt_model.Config
 
     assert jit(foo)() is foo()
 
     # reload is implemented using exec of the module
-    from . import lit_gpt_model
+    from . import litgpt_model
     import importlib
 
-    importlib.reload(lit_gpt_model)
-    assert hasattr(lit_gpt_model, "GPT")
+    importlib.reload(litgpt_model)
+    assert hasattr(litgpt_model, "GPT")
 
 
 def test_locals_lookaside(jit):
@@ -3001,6 +3001,21 @@ def test_is_jitting_opaque(jit):
     assert foo() == jit(foo)()
 
 
+def test_exception_in_list_init(jit):
+    def foo(l):
+        for i in l:
+            yield i
+
+    def bar():
+        return list(foo(2))
+
+    with pytest.raises(TypeError):
+        bar()
+
+    with pytest.raises(TypeError):
+        jit(bar)()
+
+
 #
 # Network tests
 #
@@ -3071,7 +3086,7 @@ def test_nanogpt(jit):
 
 def test_litgpt(jit):
     from thunder.benchmarks import LitGPTBenchmark
-    from thunder.tests.lit_gpt_model import Config
+    from thunder.tests.litgpt_model import Config
 
     cfg: Config = Config.from_name("gpt-neox-like")
     bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)

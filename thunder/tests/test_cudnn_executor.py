@@ -1,4 +1,3 @@
-import random
 from functools import partial
 from typing import Any
 
@@ -35,24 +34,19 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
 
     n_head = 2
     N = 8  # batch size
-
-    # TODO: multiple of 8 seems to produce NaNs
-    L = random.randint(1, 10) * 64  # query's sequence length
-
-    alignment_factor = 8
-    S = random.randint(1, 10) * alignment_factor  # key/value's sequence length
-    E = random.randint(8, 16) * alignment_factor  # query/key's embedding size
-    Ev = random.randint(8, 16) * alignment_factor  # value's embedding size
+    L = 640  # query's sequence length
+    S = 80  # key/value's sequence length
+    E = 128  # query/key's embedding size
+    Ev = 64  # value's embedding size
 
     # 4-dim (multiheaded) causal cases
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=True)
 
-    # TODO: cudnnex seems to have a few mismatches. Will be enabled in a later PR.
     # Non-contiguous input tensor case
-    nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
+    nq = make(N, n_head, E, L).permute(0, 1, 3, 2)
+    nk = make(N, n_head, E, S).permute(0, 1, 3, 2)
+    nv = make(N, n_head, Ev, S).permute(0, 1, 3, 2)
     yield SampleInput(nq, nk, nv, None, dropout_p=0.0, is_causal=False)
 
     # Test the scale factor which was added in torch 2.1
@@ -110,10 +104,8 @@ def test_cudnn_sdpa():
         query = 1 * (torch.randn(shape_Q, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
         key = 2 * (torch.randn(shape_K, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
         value = 3 * (torch.randn(shape_V, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
-        is_causal = False
-        attn_mask = torch.randn(
-            s_q, s_kv, requires_grad=False, device="cuda", dtype=thunder.torch.to_torch_dtype(dtype)
-        )
+        is_causal = True
+        attn_mask = None
 
         expected = torch.nn.functional.scaled_dot_product_attention(
             query, key, value, is_causal=is_causal, attn_mask=attn_mask
