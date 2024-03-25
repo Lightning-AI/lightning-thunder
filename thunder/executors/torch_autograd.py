@@ -120,6 +120,8 @@ def thunder_backward(*, compile_data, compile_stats=None):
     >>> print(f"b.grad: {b.grad}")
     """
 
+    is_fsdp = getattr(compile_data.fn, "use_fsdp", False)
+
     def decorator(thunder_func):
         from thunder import compile
 
@@ -159,8 +161,11 @@ def thunder_backward(*, compile_data, compile_stats=None):
             # Run the compiled forward function
             data_for_autograd, (saved_tensors, saved_other) = compiled_forward(*args, **kwargs)
 
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
+                get_skip_data_parallel_grad_sync() and is_fsdp,
                 compiled_backward,
                 saved_tensors,
                 saved_other,
