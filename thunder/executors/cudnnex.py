@@ -35,8 +35,6 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
     put_grads,
-    register_augmented_forward_with_checker,
-    register_backward,
 )
 from thunder.extend import OperatorExecutor, register_executor
 import thunder.torch as ltorch
@@ -309,9 +307,7 @@ def _cudnn_sdpa_fwd_impl(
     return O_actual, softmax_stats_actual, seed_tensor, offset_tensor
 
 
-# NOTE Uses the torch language context to resolve .size calls
-@langctx("torch")
-def _cudnn_sdpa_forward_checker(
+def _cudnn_sdpa_checker(
     query: TensorLike,
     key: TensorLike,
     value: TensorLike,
@@ -321,46 +317,22 @@ def _cudnn_sdpa_forward_checker(
     *,
     scale: float | None = None,
 ) -> bool:
+    # TODO(#58): make the checker more conservative.
     if cudnn is None:
         return False
 
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-
-    try:
-        _make_cudnn_sdpa_forward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-    except Exception as e:
+    if len(query.size()) != 4:
         return False
+    _, _, _, d_q = query.size()
+
+    if len(value.size()) != 4:
+        return False
+    _, _, _, d_kv = value.size()
 
     # Bug in cudnn 8.9.5 and earlier where embedding dim support is missing
-    _, _, _, d_q = query.size()
-    _, _, _, d_kv = value.size()
     for d in [d_q, d_kv]:
         if d % 8 != 0 or d > 128:
             return False
-
-    return True
-
-
-@langctx("torch")
-def _cudnn_sdpa_backward_checker(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: TensorLike | None = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    *,
-    scale: float | None = None,
-) -> bool:
-    if cudnn is None:
-        return False
-
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-
-    try:
-        _make_cudnn_sdpa_backward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-    except Exception as e:
-        return False
 
     return True
 
@@ -602,99 +574,6 @@ cudnn_sdpa_bwd = cudnn_ex.register_operator(
 
 
 @langctx("torch")
-def cudnn_sdpa_aug_fw_rule_checker(
-    query: TensorProxy,
-    key: TensorProxy,
-    value: TensorProxy,
-    attn_mask: None | TensorProxy,
-    dropout_p: float,
-    is_causal: bool,
-    *,
-    scale: None | float,
-) -> bool:
-    from thunder.core.compile_data import get_compile_data
-
-    cd = get_compile_data()
-    if cudnn_ex in cd.executors_list:
-        is_forward_supported = _cudnn_sdpa_forward_checker(
-            query, key, value, attn_mask, dropout_p, is_causal, scale=scale
-        )
-        is_backward_supported = _cudnn_sdpa_backward_checker(
-            query, key, value, attn_mask, dropout_p, is_causal, scale=scale
-        )
-        return is_forward_supported and is_backward_supported
-    return False
-
-
-def cudnn_sdpa_aug_fw_rule(
-    query,
-    key,
-    value,
-    attn_mask=None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    *,
-    scale: float | None = None,
-):
-    output, softmax_stats, seed, offset = cudnn_sdpa_fwd(
-        query, key, value, attn_mask, dropout_p, is_causal, scale=scale
-    )
-    saved_for_backward = (
-        query,
-        key,
-        value,
-        attn_mask,
-        dropout_p,
-        is_causal,
-        scale,
-        output,
-        softmax_stats,
-        seed,
-        offset,
-    )
-    return output, saved_for_backward
-
-
-register_augmented_forward_with_checker(
-    cudnn_ex,
-    "torch.nn.functional.scaled_dot_product_attention",
-    cudnn_sdpa_aug_fw_rule_checker,
-    cudnn_sdpa_aug_fw_rule,
-)
-
-
-@register_backward((cudnn_ex, "torch.nn.functional.scaled_dot_product_attention"))
-def cudnn_sdpa_backward_rule(
-    query: Proxy,
-    key: Proxy,
-    value: Proxy,
-    attn_mask: None | Proxy,
-    dropout_p: float,
-    is_causal: bool,
-    scale: None | float,
-    out: Proxy,
-    softmax_stats: Proxy,
-    seed: Proxy,
-    offset: Proxy,
-    grad_out: Proxy,
-):
-    return cudnn_sdpa_bwd(
-        grad_out,
-        query,
-        key,
-        value,
-        attn_mask,
-        dropout_p,
-        is_causal,
-        out,
-        softmax_stats,
-        seed,
-        offset,
-        scale=scale,
-    )
-
-
-@langctx("torch")
 def _cudnn_sdpa_transform(
     query: TensorProxy,
     key: TensorProxy,
@@ -726,7 +605,7 @@ def _cudnn_sdpa_grad(
     )
 
     g = get_grad(primal)
-    grad_query, grad_key, grad_val, grad_attn_mask = cudnn_sdpa_bwd(
+    grads = cudnn_sdpa_bwd(
         g,
         query,
         key,
@@ -740,6 +619,11 @@ def _cudnn_sdpa_grad(
         offset,
         scale=scale,
     )
+    if attn_mask is None:
+        grad_query, grad_key, grad_val = grads
+    else:
+        grad_query, grad_key, grad_val, grad_attn_mask = grads
+
     put_grads((query, key, value), (grad_query, grad_key, grad_val))
     if attn_mask is not None:
         put_grad(attn_mask, grad_attn_mask)
@@ -750,7 +634,7 @@ def _cudnn_sdpa_grad(
 # Registers the implementation for torch.nn.functional.scaled_dot_product_attention
 cudnn_ex.register_implementation(
     ltorch.scaled_dot_product_attention,
-    checker=_cudnn_sdpa_forward_checker,
+    checker=_cudnn_sdpa_checker,
     execution_transform=_cudnn_sdpa_transform,
     grad_transform=_cudnn_sdpa_grad,
 )
