@@ -171,7 +171,6 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
     from thunder.distributed.transforms import FSDPCommBucketing
     from thunder.core.transforms import eval_trace
-    import thunder.core.langctxs as langctxs
 
     # TODO: the trace->func->trace could likely be simplified (and look nicer)
     #       we cannot use python_callable() here, see the old repos 2458
@@ -247,11 +246,10 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
-    with langctxs.langctx(compile_data.langctx):
-        fw_extrace = transform_for_execution(
-            fw_trace,
-            executors_list=compile_data.executors_list,
-        )
+    fw_extrace = transform_for_execution(
+        fw_trace,
+        executors_list=compile_data.executors_list,
+    )
     fw_traces.append(fw_extrace)
 
     # Some of the optimization passes change proxies in the trace and
@@ -288,11 +286,10 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
 
     # Now we can run the optimization passes on the backward trace
     # TODO Restore request for no rematerialization
-    with langctxs.langctx(compile_data.langctx):
-        bw_extrace = transform_for_execution(
-            bw_trace,
-            executors_list=compile_data.executors_list,
-        )
+    bw_extrace = transform_for_execution(
+        bw_trace,
+        executors_list=compile_data.executors_list,
+    )
     bw_traces.append(bw_extrace)
 
     fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
