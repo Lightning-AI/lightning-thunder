@@ -53,6 +53,7 @@ class ThunderFunction(torch.autograd.Function):
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
+        # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         return (
             (None, None, None, None, None, *grads)
             if not ctx.return_none_instead_of_grads
