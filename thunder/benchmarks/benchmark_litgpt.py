@@ -17,7 +17,6 @@ from lightning.fabric.utilities import Throughput
 world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 global_rank = int(os.environ.get("RANK", 0))
-nnodes = int(os.environ.get("NNODES", 1))
 if world_size > 1:
     torch_dist.init_process_group(backend="nccl")
     pg = torch_dist.distributed_c10d._get_default_group()
@@ -94,7 +93,7 @@ class Benchmark_litGPT:
             print(f"[WARNING] --bucketing_mode {self.bucketing_mode} will be ignored as \
              it is only used for FSDP style parallelism but running {self.distributed_mode}")
 
-        assert not "thunder" in self.compile and self.bucketing_mode == "size", \
+        assert not ("thunder" in self.compile and self.bucketing_mode == "size"), \
          "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
 
         if self.fsdp_bucket_params is not None:
@@ -210,7 +209,7 @@ class Benchmark_litGPT:
 
                 mesh = None
                 if self.sharding_size is not None:
-                    mesh = init_device_mesh("cuda", (nnodes, self.sharding_size))
+                    mesh = init_device_mesh("cuda", (int(world_size/self.sharding_size), self.sharding_size))
 
                 litgpt_auto_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
                 size_auto_wrap_policy = functools.partial(size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params)
