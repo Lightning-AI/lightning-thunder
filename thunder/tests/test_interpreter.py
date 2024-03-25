@@ -1034,7 +1034,7 @@ def test_namedtuple_lookaside(jit):
     from collections import namedtuple
 
     typename = "MyNamedTuple"
-    field_names = ('a', 'b', 'c')
+    field_names = ("a", "b", "c")
 
     # Test returnign just the type {
     def f():
@@ -1049,6 +1049,7 @@ def test_namedtuple_lookaside(jit):
 
     # Check module name
     import inspect
+
     assert jtype.__module__ == inspect.currentframe().f_globals["__name__"]
     # }
 
@@ -1063,7 +1064,7 @@ def test_namedtuple_lookaside(jit):
         return obj[0]
 
     jf = jit(f)
-    
+
     assert f(a, b, c) is a
     assert jf(a, b, c) is a
 
@@ -1073,7 +1074,7 @@ def test_namedtuple_lookaside(jit):
         return obj.a
 
     jf = jit(f)
-    
+
     assert f(a, b, c) is a
     assert jf(a, b, c) is a
     # }
