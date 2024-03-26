@@ -307,9 +307,7 @@ def _cudnn_sdpa_fwd_impl(
     return O_actual, softmax_stats_actual, seed_tensor, offset_tensor
 
 
-# NOTE Uses the torch language context to resolve .size calls
-@langctx("torch")
-def _cudnn_sdpa_forward_checker(
+def _cudnn_sdpa_checker(
     query: TensorLike,
     key: TensorLike,
     value: TensorLike,
@@ -319,50 +317,22 @@ def _cudnn_sdpa_forward_checker(
     *,
     scale: float | None = None,
 ) -> bool:
+    # TODO(#58): make the checker more conservative.
     if cudnn is None:
         return False
 
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-
-    try:
-        _make_cudnn_sdpa_forward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-    except Exception as e:
+    if len(query.size()) != 4:
         return False
+    _, _, _, d_q = query.size()
+
+    if len(value.size()) != 4:
+        return False
+    _, _, _, d_kv = value.size()
 
     # Bug in cudnn 8.9.5 and earlier where embedding dim support is missing
-    _, _, _, d_q = query.size()
-    _, _, _, d_kv = value.size()
     for d in [d_q, d_kv]:
         if d % 8 != 0 or d > 128:
             return False
-
-    is_backward_supported = _cudnn_sdpa_backward_checker(
-        query, key, value, attn_mask, dropout_p, is_causal, scale=scale
-    )
-
-    return True and is_backward_supported
-
-
-@langctx("torch")
-def _cudnn_sdpa_backward_checker(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: TensorLike | None = None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    *,
-    scale: float | None = None,
-) -> bool:
-    if cudnn is None:
-        return False
-
-    query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
-
-    try:
-        _make_cudnn_sdpa_backward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-    except Exception as e:
-        return False
 
     return True
 
@@ -664,7 +634,7 @@ def _cudnn_sdpa_grad(
 # Registers the implementation for torch.nn.functional.scaled_dot_product_attention
 cudnn_ex.register_implementation(
     ltorch.scaled_dot_product_attention,
-    checker=_cudnn_sdpa_forward_checker,
+    checker=_cudnn_sdpa_checker,
     execution_transform=_cudnn_sdpa_transform,
     grad_transform=_cudnn_sdpa_grad,
 )

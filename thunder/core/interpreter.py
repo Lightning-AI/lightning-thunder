@@ -404,6 +404,10 @@ class InterpreterCompileCtx:
 
         self._uncacheable_classes = uncacheable_classes
 
+    @property
+    def with_provenance_tracking(self):
+        return self._with_provenance_tracking
+
     def interpret(self, inst: dis.Instruction, /, **interpreter_state) -> None | int | INTERPRETER_SIGNALS:
         return self._opcode_interpreter(inst, **interpreter_state)
 
@@ -887,6 +891,7 @@ class PseudoInst(str, enum.Enum):
     BINARY_SUBSCR = "BINARY_SUBSCR"
     BUILD_DICT = "BUILD_DICT"
     BUILD_TUPLE = "BUILD_TUPLE"
+    BUILD_NAMEDTUPLE = "BUILD_NAMEDTUPLE"
     CONSTANT = "CONSTANT"
     EXCEPTION_HANDLER = "EXCEPTION_HANDLER"
     INPUT_ARGS = "INPUT_ARGS"
@@ -2101,8 +2106,9 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(cls.value())
 
     def __init__(self, iterable=()):
-        SequenceWrapperMethods.__init__(self, iterable)
-        return wrap_const(None)
+        # We need to propagate the return value because it could be JIT_SIGNALS
+        res = SequenceWrapperMethods.__init__(self, iterable)
+        return res
 
     def __setitem__(self, key, value, /):
         self.track_items()
@@ -2588,6 +2594,55 @@ class MutMappingWrapperMethods(WrappedValue):
         return _interpret_call(impl, self, other)
 
 
+def _collections_namedtuple_lookaside(
+    typename: str,
+    field_names: Iterable[str],
+    *,
+    rename: bool = False,
+    defaults: None | Iterable[Any] = None,
+    module: None | str = None,
+):
+    # Type checks {
+    assert wrapped_isinstance(typename, str)
+    assert wrapped_isinstance(field_names, Iterable)
+    assert wrapped_isinstance(rename, bool)
+    if defaults is not None:
+        assert wrapped_isinstance(defaults, Iterable)
+    if module is not None:
+        assert wrapped_isinstance(module, str)
+    # }
+
+    # Wrap defaults {
+    if not isinstance(rename, WrappedValue):
+        rename = wrap_const(rename)
+
+    if defaults is None:
+        defaults = wrap_const(defaults)
+
+    if module is None:
+        # To prevent taking module from the direct caller,
+        # we use the module's name from the active frame
+        curr_frame = get_interpreterruntimectx().frame_stack[-1]
+        module = unwrap(curr_frame.globals).get("__name__", None)
+        module = wrap_const(module)
+    # }
+
+    # Run opaque namedtuple {
+    @interpreter_needs_wrap
+    def create_namedtuple(typename: str, field_names: str, **kwargs):
+        namedtuple_type = collections.namedtuple(typename, field_names, **kwargs)
+        return namedtuple_type
+
+    namedtuple_type = create_namedtuple(typename, field_names, rename=rename, defaults=defaults, module=module)
+    if namedtuple_type is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return namedtuple_type
+
+    assert wrapped_isinstance(namedtuple_type, type)
+    # }
+
+    return namedtuple_type
+
+
 _default_lookaside_map: dict[Callable, Callable] = {
     # Jit lookasides
     is_jitting: _is_jitting_lookaside,
@@ -2611,6 +2666,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     isinstance: _isinstance_lookaside,
     functools.reduce: _functools_reduce_lookaside,
     operator.getitem: _getitem_lookaside,
+    collections.namedtuple: _collections_namedtuple_lookaside,
 }
 
 
@@ -2618,9 +2674,11 @@ _default_lookaside_map: dict[Callable, Callable] = {
 # immutuable sequences (tuples) are created with contents in __new__ and __init__ is a nop
 # (object.__init__, actually).
 def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
+    new_tuple_type = cls.value
+    assert issubclass(new_tuple_type, tuple)
+
     if iterable == ():
         iterable = wrap_const(())
-    assert cls.value is tuple
 
     if isinstance(iterable.value, (list, tuple)):
         # special case to avoid infinite recursion
@@ -2647,8 +2705,39 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
             else:
                 item_wrappers.append(wv)
 
-    ures = tuple(w.value for w in item_wrappers)
-    pr = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[w.provenance for w in item_wrappers])
+    def is_likely_from_collections_namedtuple(tuple_type):
+        from collections import namedtuple
+
+        # Check if tuple_type code object is coming from namedtuple
+        return (
+            hasattr(tuple_type, "__repr__")
+            and hasattr(tuple_type.__repr__, "__code__")
+            and tuple_type.__repr__.__code__ in namedtuple.__code__.co_consts
+        )
+
+    # Construction of namedtuples may raise
+    try:
+        ures = tuple(w.value for w in item_wrappers)
+        # Named tuples expect varargs, not iterables at new/init
+        if is_likely_from_collections_namedtuple(new_tuple_type):
+            if hasattr(new_tuple_type, "__bases__") and new_tuple_type.__bases__ == (tuple,):
+                ures = new_tuple_type(*ures)
+                build_inst = PseudoInst.BUILD_NAMEDTUPLE
+            else:
+                return do_raise(
+                    NotImplementedError(
+                        f"The type {new_tuple_type} is likely a subclassed named tuple. "
+                        "Subclassing the types returned by `collections.namedtuple` "
+                        "is currently not supported! Please, file an issue requesting this support."
+                    )
+                )
+        else:
+            ures = new_tuple_type(ures)
+            build_inst = PseudoInst.BUILD_TUPLE
+    except Exception as e:
+        return do_raise(e)
+
+    pr = ProvenanceRecord(build_inst, inputs=[w.provenance for w in item_wrappers])
     res = wrap(ures, provenance=pr)
     res.item_wrappers = item_wrappers
 

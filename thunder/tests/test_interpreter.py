@@ -1030,6 +1030,56 @@ def test_reduce_jitted_reduce_fn(jit):
     assert jfoo((1, 2, 3), jadd) == 6
 
 
+def test_namedtuple_lookaside(jit):
+    from collections import namedtuple
+
+    typename = "MyNamedTuple"
+    field_names = ("a", "b", "c")
+
+    # Test returnign just the type {
+    def f():
+        return namedtuple(typename, field_names)
+
+    jf = jit(f)
+
+    jtype = jf()
+    assert isinstance(jtype, type)
+    assert jtype.__name__ == typename
+    assert all(hasattr(jtype, field) for field in field_names)
+
+    # Check module name
+    import inspect
+
+    assert jtype.__module__ == inspect.currentframe().f_globals["__name__"]
+    # }
+
+    # Test accessing elements {
+    a = torch.rand(1)
+    b = torch.rand(1)
+    c = torch.rand(1)
+
+    def f(a, b, c):
+        nt = namedtuple(typename, field_names)
+        obj = nt(a, b, c)
+        return obj[0]
+
+    jf = jit(f)
+
+    assert f(a, b, c) is a
+    assert jf(a, b, c) is a
+
+    def f(a, b, c):
+        nt = namedtuple(typename, field_names)
+        obj = nt(a, b, c)
+        return obj.a
+
+    jf = jit(f)
+
+    assert f(a, b, c) is a
+    assert jf(a, b, c) is a
+    # }
+
+
 def test_calling_methods(jit):
     jitting = False
 
@@ -2999,6 +3049,21 @@ def test_is_jitting_opaque(jit):
         return 1
 
     assert foo() == jit(foo)()
+
+
+def test_exception_in_list_init(jit):
+    def foo(l):
+        for i in l:
+            yield i
+
+    def bar():
+        return list(foo(2))
+
+    with pytest.raises(TypeError):
+        bar()
+
+    with pytest.raises(TypeError):
+        jit(bar)()
 
 
 #
