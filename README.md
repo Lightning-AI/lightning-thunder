@@ -14,8 +14,9 @@ ______________________________________________________________________
   <a href="#get-started">Get started</a> •
   <a href="#install-thunder">Install</a> •
   <a href="#hello-world">Examples</a> •
-  <a href="#features">Features</a> •
-  <a href="#documentation">Documentation</a> •
+  <a href="#inside-thunder-a-brief-look-at-the-core-features">Inside Thunder</a> •
+  <a href="#get-involved">Get involved!</a> •
+  <a href="#documentation">Documentation</a>
 </p>
 
 [![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/Lightning-AI/lightning-thunder/blob/main/LICENSE)
@@ -30,36 +31,52 @@ ______________________________________________________________________
 
 **Thunder makes PyTorch models Lightning fast.**
 
-Thunder is a source-to-source compiler for PyTorch. It makes PyTorch programs faster by combining and using different hardware executors at once (ie: nvFuser, torch.compile, cuDNN, and TransformerEngine FP8).
+Thunder is a source-to-source compiler for PyTorch. It makes PyTorch programs faster by combining and using different hardware executors at once (for instance, [nvFuser](https://github.com/NVIDIA/Fuser), [torch.compile](https://pytorch.org/docs/stable/torch.compiler.html), [cuDNN](https://developer.nvidia.com/cudnn), and [TransformerEngine FP8](https://github.com/NVIDIA/TransformerEngine)).
 
-Works on single accelerators and in multi-GPU settings.
+It supports single accelerators (such as GPUs and TPUs) and also works in multi-GPU settings. 
+
 Thunder aims to be usable, understandable, and extensible.
 
-## Performance
 
-Thunder can achieve significant speedups over standard PyTorch eager code, through the compounding effects of optimizations and the use of best-in-class executors. Here is an example of the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
+&nbsp;
+
+> [!Note]
+> Lightning Thunder is in alpha. Feel free to get involved, but expect a few bumps along the way.
+
+&nbsp;
+## Single-accelerator performance
+
+Thunder can achieve significant speedups over standard non-compiled PyTorch code ("PyTorch eager"), through the compounding effects of optimizations and the use of best-in-class executors. The figure below shows the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
 
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/training_throughput_single.png" width="800px" style="max-width: 100%;">
 </div>
 
-Thunder achieves a 40% speedup in training throughput compared to eager code on H100 using a combination of executors including nvFuser, torch.compile, cuDNN, and TransformerEngine FP8.
+As shown in the plot above, Thunder achieves a 40% speedup in training throughput compared to eager code on H100 using a combination of executors including nvFuser, torch.compile, cuDNN, and TransformerEngine FP8.
 
-Thunder supports distributed strategies like DDP and FSDP (ZeRO2 and ZeRO3). Here is the normalized throughput measured for Llama 2 7B (this time without FP8 mixed precision, support for FSDP is underway).
+
+&nbsp;
+## Multi-GPU performance
+
+Thunder also supports distributed strategies such as DDP, FSDP, and DeepSpeed (ZeRO2 and ZeRO3) for training models on multiple GPUs. The following plot displays the normalized throughput measured for Llama 2 7B without FP8 mixed precision; support for FSDP is in progress.
 
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/normalized_training_throughput_zero2.png" width="800px" style="max-width: 100%;">
 </div>
 
-**NOTE: Lightning Thunder is alpha.** Feel free to get involved, expect a few bumps along the way.
 
+
+
+&nbsp;
 ## Get started
 
-Try Thunder without installing by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder-tutorial).
+The easiest way to get started with Thunder, requiring no extra installations or setups, is by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder-tutorial).
 
+
+&nbsp;
 ## Install Thunder
 
-Install [nvFuser](https://github.com/NVIDIA/Fuser) nightly, and Thunder together
+To use Thunder on your local machine, install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and Thunder together as follows:
 
 ```bash
 # install nvFuser which installs the matching nightly PyTorch
@@ -73,26 +90,53 @@ pip install lightning-thunder
   <summary>Advanced install options</summary>
     <!-- following section will be skipped from PyPI description -->
 
+
+&nbsp;
 ### Install from main
+
+Alternatively, you can install the latest version of Thunder directly from this GitHub repository as follows:
 
 ```bash
 pip install git+https://github.com/Lightning-AI/lightning-thunder.git
 ```
 
+&nbsp;
 ### Install to tinker and contribute
 
-Install this way to tinker with the internals and contribute:
+If you are interested in tinkering with and contributing to Thunder, we recommend cloning the Thunder repository and installing it in pip's editable mode:
 
 ```bash
+git clone https://github.com/Lightning-AI/lightning-thunder.git
+cd lightning-thunder
 pip install -e .
 ```
+
+&nbsp;
+### Develop and run tests
+
+After cloning the lightning-thunder repository and installing it as an editable package as explained above, ou can set up your environment for developing Thunder by installing the development requirements:
+
+```bash
+pip install -r requirements/devel.txt
+```
+
+Now you run tests:
+
+```bash
+pytest thunder/tests
+```
+
+Thunder is very thoroughly tested, so expect this to take a while.
+
 
 </details>
 <!-- end skipping PyPI description -->
 
+
+&nbsp;
 ## Hello World
 
-Here is a simple example of how Thunder lets you compile and run PyTorch code:
+Below is a simple example of how Thunder allows you to compile and run PyTorch code:
 
 ```python
 import torch
@@ -120,15 +164,17 @@ print(result)
 
 The compiled function `jfoo` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by Thunder can be used as part of larger PyTorch programs.
 
+&nbsp;
 ## Train models
 
 Thunder is in its early stages and should not be used for production runs yet.
 
-However, it can already deliver outstanding performance on LLM model supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama 2, Gemma, Falcon, and others.
+However, it can already deliver outstanding performance for pretraining and finetuning LLMs supported by [LitGPT](https://github.com/Lightning-AI/lit-gpt), such as Mistral, Llama 2, Gemma, Falcon, and others.
 
 Check out [the LitGPT integration](https://github.com/Lightning-AI/litgpt/tree/main/extensions/thunder) to learn about running LitGPT and Thunder together.
 
-## Features
+&nbsp;
+## Inside Thunder: A brief look at the core features
 
 Given a Python callable or PyTorch module, Thunder can generate an optimized program that:
 
@@ -140,8 +186,8 @@ Given a Python callable or PyTorch module, Thunder can generate an optimized pro
 To do so, Thunder ships with:
 
 - A JIT for acquiring Python programs targeting PyTorch and custom operations
-- A multi-level IR to represent operations as a trace of a reduced op-set
-- An extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
+- A multi-level intermediate representation (IR) to represent operations as a trace of a reduced operation set
+- An extensible set of transformations on the trace of a computational graph, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
 - A way to dispatch operations to an extensible collection of executors
 
 Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
@@ -159,6 +205,7 @@ Thunder doesn't generate code for accelerators directly. It acquires and transfo
 
 Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
 
+&nbsp;
 ## Documentation
 
 Docs are currently not hosted publicly. However you can build them locally really quickly:
@@ -169,27 +216,21 @@ make docs
 
 and point your browser to the generated docs at `docs/build/index.html`.
 
-## Develop and run tests
 
-You can set up your environment for developing Thunder by installing the development requirements:
 
-```bash
-pip install -r requirements/devel.txt
-```
 
-Install Thunder as an editable package (optional):
 
-```bash
-pip install -e .
-```
 
-Now you run tests:
+&nbsp;
+## Get involved!
 
-```bash
-pytest thunder/tests
-```
+We appreciate your feedback and contributions. If you have feature requests, questions, or want to contribute code or config files, please don't hesitate to use the [GitHub Issue](https://github.com/Lightning-AI/lightning-thunder/issues) tracker.
 
-Thunder is very thoroughly tested, so expect this to take a while.
+We welcome all individual contributors, regardless of their level of experience or hardware. Your contributions are valuable, and we are excited to see what you can accomplish in this collaborative and supportive environment.
+
+
+
+&nbsp;
 
 ## License
 
