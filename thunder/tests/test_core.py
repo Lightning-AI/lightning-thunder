@@ -2265,6 +2265,34 @@ def test_symbol_flat_args():
     assert bsym.flat_args == [1, 2, 3]
 
 
+@instantiate(dtypes=NOTHING)
+def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
+    import inspect
+
+    class MLP(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = torch.nn.Linear(3, 4)
+            self.fc2 = torch.nn.Linear(4, 5)
+
+        def forward(self, x):
+            x = self.fc1(x)
+            x = self.fc2(x)
+            return x
+
+    model = MLP().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
+    x = torch.randn(2, 3, device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    compiled = thunder.jit(model, executors=executor.executors_list())
+    compiled(x)
+    traces = thunder.last_traces(compiled)
+    sig = inspect.signature(traces[-1].python_callable())
+    assert "t_fc1_bias" in sig.parameters
+    assert "t_fc1_weight" in sig.parameters
+    assert "t_fc2_bias" in sig.parameters
+    assert "t_fc2_weight" in sig.parameters
+
+
 # @instantiate(
 #     dtypes=NOTHING,
 # )
