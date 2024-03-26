@@ -79,7 +79,11 @@ To use Thunder on your local machine, first install [nvFuser](https://github.com
 ```bash
 # install nvFuser which installs the matching nightly PyTorch
 pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
+```
 
+Then, install Thunder as follows:
+
+```
 # install thunder
 pip install lightning-thunder
 ```
@@ -94,7 +98,13 @@ pip install lightning-thunder
 
 Alternatively, you can install the latest version of Thunder directly from this GitHub repository as follows:
 
+```
+# 1) Install nvFuser and PyTorch nightly dependencies:
+pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
+```
+
 ```bash
+# 2) Install Thunder itself
 pip install git+https://github.com/Lightning-AI/lightning-thunder.git
 ```
 
