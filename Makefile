@@ -10,7 +10,13 @@ test: clean
 	python -m coverage run --source thunder -m pytest thunder tests -v
 	python -m coverage report
 
-docs: clean
+sphinx-theme:
+	pip install -q awscli
+	mkdir -p dist/
+	aws s3 sync --no-sign-request s3://sphinx-packages/ dist/
+	pip install lai-sphinx-theme -f dist/
+
+docs: clean sphinx-theme
 	pip install -e . --quiet -r requirements/docs.txt -f https://download.pytorch.org/whl/cpu/torch_stable.html
 	cd docs ; python -m sphinx -b html -W --keep-going source build
 

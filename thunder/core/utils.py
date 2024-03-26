@@ -743,16 +743,13 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
     """
 
     @overload
-    def __init__(self, data: Mapping[T, T1]) -> None:
-        ...
+    def __init__(self, data: Mapping[T, T1]) -> None: ...
 
     @overload
-    def __init__(self, data: Iterable[T, T1]) -> None:
-        ...
+    def __init__(self, data: Iterable[T, T1]) -> None: ...
 
     @overload
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        ...
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -834,8 +831,7 @@ def _safe_zip_gen(*args):
 
 
 @overload
-def safe_zip(x: Iterable[T], y: Iterable[T1], /) -> Iterable[tuple[T, T1]]:
-    ...
+def safe_zip(x: Iterable[T], y: Iterable[T1], /) -> Iterable[tuple[T, T1]]: ...
 
 
 def safe_zip(*args):
