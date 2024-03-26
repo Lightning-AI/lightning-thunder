@@ -87,9 +87,10 @@ class Benchmark_litGPT:
                 "thunder" not in self.compile
             ), "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
 
-            assert (
-                self.shard_mode in ["hybrid_zero2", "hybrid_zero3"]
-            ), "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
+            assert self.shard_mode in [
+                "hybrid_zero2",
+                "hybrid_zero3",
+            ], "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
 
             assert (
                 world_size % self.sharding_size == 0
