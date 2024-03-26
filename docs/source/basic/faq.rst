@@ -44,7 +44,7 @@ Instead, register the executor like so:::
 3. I have a CUDA, Triton, CUDNN, or other gpu kernel. How can I use it with thunder?
 ====================================================================================
 
-Why, yes! You can register it as a custom operator. See :doc:`extending thunder <../advanced/extending_thunder>` page for more information.
+Why, yes! You can register it as an operator for a custom executor. See :doc:`extending thunder <../intermediate/additional_executors>` for more information.
 
 
 ========================================================================
