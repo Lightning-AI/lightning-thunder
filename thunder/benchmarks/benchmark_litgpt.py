@@ -88,7 +88,7 @@ class Benchmark_litGPT:
             ), "Hybrid Sharding (FSDP/DP) using --sharding_size is not yet supported for Thunder. Coming soon."
 
             assert (
-                self.shard_mode == "hybrid_dp"
+                self.shard_mode in ["hybrid_zero2", "hybrid_zero3"]
             ), "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
 
             assert (
@@ -239,7 +239,8 @@ class Benchmark_litGPT:
                 sharding_strategy: ShardingStrategy = {
                     "zero2": ShardingStrategy.SHARD_GRAD_OP,
                     "zero3": ShardingStrategy.FULL_SHARD,
-                    "hybrid_dp": ShardingStrategy.HYBRID_SHARD,
+                    "hybrid_zero2": ShardingStrategy._HYBRID_SHARD_ZERO2,
+                    "hybrid_zero3": ShardingStrategy.HYBRID_SHARD,
                 }[self.shard_mode]
 
                 # AssertionError: Dynamo only supports FSDP with use_orig_params=True
