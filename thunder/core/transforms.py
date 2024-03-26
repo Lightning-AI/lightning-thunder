@@ -3802,7 +3802,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     # Copy the signature of the original function so that the arguments are
     # named correctly in the augmented forward pass instead of being named
     # "args" and "kwargs".
-    augmented_forward_fn.__signature__ = inspect.signature(trace.fn)
+    augmented_forward_fn.__signature__ = inspect.signature(trace.fn or trace.python_callable())
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
