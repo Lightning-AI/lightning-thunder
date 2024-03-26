@@ -19,17 +19,10 @@ As such, the two are not necessarily comparable. Or, they are, but you would be 
 
 The correct way to use ``torch.compile`` with Thunder is as an executor. This gives you finer grained control over which parts of your model are handled by which
 
-The following is not what you want. It doesn't give a good error message right now, but it should not work.::
-    import torch
-    import thunder
-    
-    def model(x, y):
-        return x + y
+Calling ``torch.compile()`` and then ``thunder.jit()`` is not what you want. It doesn't give a good error message right now, but it should not work.
 
-    tcmodel = torch.compile(model)
-    tmodel = thunder.jit(tcmodel)
+Instead, register the executor like so::
 
-Instead, register the executor like so:::
     import torch
     import thunder
 
