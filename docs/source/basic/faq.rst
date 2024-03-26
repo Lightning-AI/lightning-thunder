@@ -78,4 +78,3 @@ The common solution is to represent programs in `SSA form <https://en.wikipedia.
 There also exists the problem that some backends, like Triton and nvfuser, or a potential Jax backend, are not actually good at handling inplace operations either. They, like Thunder, expect functional programs, and if we simply decide to forward these operations to the executor, not every executor would be able to implement every operator. For a simple torch operator like ``x.add_(y)``, this is unsatisfactory to us. We would ideally like to be able to convert instances of ``add_()`` to ``add()`` for executors. But every trace needs to be executable.
 
 We want to support inplace operations eventually, but we are attached to traces as our program representation of choice for optimization passes. Much like with dynamic shapes, if you have any ideas on how to best incorporate inplace operations, please let us know.
-
