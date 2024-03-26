@@ -58,7 +58,7 @@ As shown in the plot above, Thunder achieves a 40% speedup in training throughpu
 
 ## Multi-GPU performance
 
-Thunder also supports distributed strategies such as DDP, FSDP, and DeepSpeed (ZeRO2 and ZeRO3) for training models on multiple GPUs. The following plot displays the normalized throughput measured for Llama 2 7B without FP8 mixed precision; support for FSDP is in progress.
+Thunder also supports distributed strategies such as DDP and FSDP for training models on multiple GPUs. The following plot displays the normalized throughput measured for Llama 2 7B without FP8 mixed precision; support for FSDP is in progress.
 
 <div align="center">
 <img alt="Thunder" src="docs/source/_static/images/normalized_training_throughput_zero2.png" width="800px" style="max-width: 100%;">
