@@ -29,7 +29,7 @@ Instead, register the executor like so::
     def model(x, y):
         return x + y
 
-    exc_list = [thunder.extend.get_executor('torchcompile'), \*thunder.get_always_executors()]
+    exc_list = [thunder.extend.get_executor('torchcompile'), *thunder.get_always_executors()]
     jmodel = thunder.jit(model, executors=exc_list)
 
 
