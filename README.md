@@ -74,7 +74,7 @@ The easiest way to get started with Thunder, requiring no extra installations or
 
 ## Install Thunder
 
-To use Thunder on your local machine, install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and Thunder together as follows:
+To use Thunder on your local machine, first install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and PyTorch nightly together as follows:
 
 ```bash
 # install nvFuser which installs the matching nightly PyTorch
