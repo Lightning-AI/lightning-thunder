@@ -19,6 +19,7 @@ import thunder.core.devices as devices
 import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
+from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.langctxs import langctx, Languages
 
@@ -412,6 +413,7 @@ def _linear_transform(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> torch.T
     return _create_fp8_linear_bound_symbol(a, w, b, is_grad_enabled=False)
 
 
+@disable_caching_split_forward_and_backward
 def _linear_grad(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> TensorProxy:
     out, saved_for_backward = linear_forwad_rule(a, w, b)
     g = prims.get_grad(out)
