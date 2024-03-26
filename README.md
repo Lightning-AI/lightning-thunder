@@ -33,8 +33,7 @@ ______________________________________________________________________
 
 Thunder is a source-to-source compiler for PyTorch. It makes PyTorch programs faster by combining and using different hardware executors at once (for instance, [nvFuser](https://github.com/NVIDIA/Fuser), [torch.compile](https://pytorch.org/docs/stable/torch.compiler.html), [cuDNN](https://developer.nvidia.com/cudnn), and [TransformerEngine FP8](https://github.com/NVIDIA/TransformerEngine)).
 
-It supports single accelerators (such as GPUs and TPUs) and also works in multi-GPU settings.
-
+It supports both single and multi-GPU configurations.
 Thunder aims to be usable, understandable, and extensible.
 
 &#160;
@@ -44,7 +43,7 @@ Thunder aims to be usable, understandable, and extensible.
 
 &#160;
 
-## Single-accelerator performance
+## Single-GPU performance
 
 Thunder can achieve significant speedups over standard non-compiled PyTorch code ("PyTorch eager"), through the compounding effects of optimizations and the use of best-in-class executors. The figure below shows the pretraining throughput for Llama 2 7B as implemented in [LitGPT](https://github.com/Lightning-AI/litgpt).
 
@@ -203,7 +202,7 @@ To do so, Thunder ships with:
 
 Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
 
-Thunder doesn't generate code for accelerators directly. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
+Thunder doesn't generate code for accelerators, such as GPUs, directly. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
 
 - [torch.compile](https://pytorch.org/get-started/pytorch-2.0/)
 - [nvFuser](https://github.com/NVIDIA/Fuser)
