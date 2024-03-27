@@ -3028,7 +3028,9 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
 
 
-def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy) -> (TensorProxy, TensorProxy):
+def topk_meta(
+    a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy
+) -> (TensorProxy, TensorProxy):
     utils.check(
         out is None,
         lambda: "Only `out` which is None is currently supported",
@@ -3040,10 +3042,7 @@ def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Numb
     utils.check(pytype(largest) is bool, lambda: f"Expected {largest=} to be a boolean value")
     utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean value")
 
-    utils.check(
-        k >= 0 and k <= (a.shape[dim] if a.ndim > 0 else 1),
-        lambda: f"selected index {k=} is out of range"
-    )
+    utils.check(k >= 0 and k <= (a.shape[dim] if a.ndim > 0 else 1), lambda: f"selected index {k=} is out of range")
 
     new_shape = a.shape
     if a.ndim > 0:

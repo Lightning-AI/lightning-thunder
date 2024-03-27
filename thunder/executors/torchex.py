@@ -1053,17 +1053,11 @@ def _argmax_transform(a: TensorProxy, /, dim: int):
 def _argmin_transform(a: TensorProxy, /, dim: int):
     return argmin(a, dim)
 
+
 # NOTE This transform translates number proxies to boolean values
 # and handles dim = None
 def _topk_transform(
-    a: TensorProxy,
-    /,
-    k: int,
-    dim: int | None = None,
-    largest: Number = 1,
-    sorted: Number = 1,
-    *,
-    out = None
+    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *, out=None
 ):
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
