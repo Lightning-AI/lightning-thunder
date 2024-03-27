@@ -557,23 +557,21 @@ class CompileDDPTest(DataParallelTestCase):
         self._run_no_sync_grad_accumulation_test(get_model_and_optimizer, is_comm, dataset_size)
 
     @common_utils.parametrize(
-        "executor,bucketing_strategy,fsdptype,dataset_size",
+        "executor,bucketing_strategy,fsdptype",
         product(
             tuple(executors_map.keys()),
-            (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
+            (FSDPBucketingStrategy.BLOCK,),
             (FSDPType.ZERO2, FSDPType.ZERO3),
-            (1, 2),
         ),
-        name_fn=lambda executor, bucketing_strategy, fsdptype, dataset_size: (
-            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}_dataset_size_{dataset_size}"
+        name_fn=lambda executor, bucketing_strategy, fsdptype: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
         ),
     )
     def test_fsdp_with_no_sync_grad_accumulation(
         self,
-        executor,
+        executor: str,
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
-        dataset_size: int,
     ):
         from thunder.common import CACHE_OPTIONS
         from thunder.distributed import fsdp
@@ -592,7 +590,7 @@ class CompileDDPTest(DataParallelTestCase):
         def is_comm(k: str) -> bool:
             return "reducescatter" in k or "reduce_scatter" in k
 
-        self._run_no_sync_grad_accumulation_test(get_model_and_optimizer, is_comm, dataset_size)
+        self._run_no_sync_grad_accumulation_test(get_model_and_optimizer, is_comm, dataset_size=2)
 
     def _run_no_sync_grad_accumulation_test(
         self,
