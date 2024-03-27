@@ -33,9 +33,11 @@ from thunder.executors.cudnnex import CudnnTensorAttributes, torch_to_cudnn_dtyp
 def make_cacheable_cudnn_graph_inputs(func):
     def wrapper(*args, **kwargs):
         cudnn_input_args = [
-            CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype, args.device_index)
-            if isinstance(arg, torch.Tensor)
-            else arg
+            (
+                CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype, args.device_index)
+                if isinstance(arg, torch.Tensor)
+                else arg
+            )
             for arg in args
         ]
         return func(*cudnn_input_args, **kwargs)
