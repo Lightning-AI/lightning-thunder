@@ -19,7 +19,7 @@ ARG IMAGE_TYPE="devel"
 
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
-ARG CUDNN_VERSION="8.9.7.29-1"
+ARG CUDNN_VERSION="8.9.7.29"
 ARG CUDNN_FRONTEND_CHECKOUT="v1.2.1"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
@@ -72,23 +72,12 @@ RUN \
     rm -rf /root/.cache && \
     rm -rf /var/lib/apt/lists/* \
 
-RUN \
-    echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
-    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2.
-    CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
-    CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
-    CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \
-    apt update -qq --fix-missing && \
-    apt upgrade -y --allow-change-held-packages \
-      libcudnn${CUDNN_BASE_VER}=${CUDNN_PACKAGE_VER} \
-      libcudnn${CUDNN_BASE_VER}-dev=${CUDNN_PACKAGE_VER} \
-    && \
-    rm -rf /root/.cache && \
-    rm -rf /var/lib/apt/lists/* && \
-    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
-    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
-    rm -rf cudnn-frontend
+ARG TORCH_INSTALL
+
+# This may be needed only for building from source, otherwise PyTorch wheels include it
+RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
+        pip install "nvidia-cudnn-cu${CUDA_VERSION%.*.*}==${CUDNN_VERSION}" ; \
+    fi
 
 COPY requirements/ requirements/
 
@@ -101,6 +90,7 @@ ARG TORCH_INSTALL
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
+        export USE_CUDNN=1 && \
         # building pytorch from source
         git clone --recursive https://github.com/pytorch/pytorch && \
         cd pytorch && \
@@ -143,6 +133,12 @@ RUN \
         TORCH_VERSION_MM=${TORCH_VERSION%.*} && \
         pip install -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
     fi
+
+RUN \
+    # building cudnn-frontend from source
+    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
+    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
+    rm -rf cudnn-frontend
 
 RUN \
     ls -lh requirements/ && \
