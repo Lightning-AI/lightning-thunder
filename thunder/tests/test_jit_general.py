@@ -50,23 +50,23 @@ def skipif_not_pytorch_2_1(f):
     )(f)
 
 
-def test_jitting_through_opaque_torch_symbols_sharp_edge():
-    def no_sharp_edge(x):
+def test_jitting_through_opaque_torch_symbols_error():
+    def no_error(x):
         # randn_like is in ltorch
         return torch.randn_like(x)
 
-    def sharp_edge(x):
+    def should_error(x):
         # rand_like is not yet in ltroch
         return torch.rand_like(x)
 
     x = torch.rand(1)
 
-    jno_sharp_edge = thunder.jit(no_sharp_edge, sharp_edges="error")
-    jno_sharp_edge(x)
+    jno_error = thunder.jit(no_error)
+    jno_error(x)
 
-    jsharp_edge = thunder.jit(sharp_edge, sharp_edges="error")
-    with pytest.raises(JITSharpEdgeError):
-        jsharp_edge(x)
+    jshould_error = thunder.jit(should_error)
+    with pytest.raises(NotImplementedError):
+        jshould_error(x)
 
 
 def test_binary_add_tensors():
@@ -613,7 +613,7 @@ def test_nanogpt():
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=NotImplementedError, reason="topk", strict=True)),
     ),
 )
 @pytest.mark.parametrize(
@@ -662,7 +662,7 @@ def test_litgpt_variants(name, device):
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=NotImplementedError, reason="topk", strict=True)),
     ),
 )
 @pytest.mark.parametrize(
