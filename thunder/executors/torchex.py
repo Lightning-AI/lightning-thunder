@@ -1009,6 +1009,7 @@ var = _register_torch_operation("var")
 var_mean = _register_torch_operation("var_mean")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
+topk = _register_torch_operation("topk")
 
 
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
@@ -1052,6 +1053,23 @@ def _argmax_transform(a: TensorProxy, /, dim: int):
 def _argmin_transform(a: TensorProxy, /, dim: int):
     return argmin(a, dim)
 
+# NOTE This transform translates number proxies to boolean values
+# and handles dim = None
+def _topk_transform(
+    a: TensorProxy,
+    /,
+    k: int,
+    dim: int | None = None,
+    largest: Number = 1,
+    sorted: Number = 1,
+    *,
+    out = None
+):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+
+    return topk(a, k, dim, bool(largest), bool(sorted), out=out)
+
 
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
 _register_implementation(prims.amin, checker=_always_executable, execution_transform=_amin_prim_transform)
@@ -1061,6 +1079,7 @@ _register_implementation(prims.var, checker=_always_executable, execution_transf
 _register_implementation(prims.var_mean, checker=_always_executable, execution_transform=_var_mean_prim_transform)
 _register_implementation(prims.argmax, checker=_always_executable, execution_transform=_argmax_transform)
 _register_implementation(prims.argmin, checker=_always_executable, execution_transform=_argmin_transform)
+_register_implementation(prims.topk, checker=_always_executable, execution_transform=_topk_transform)
 
 _register_implementation(ltorch.amax, amax, checker=_always_executable)
 _register_implementation(ltorch.amin, amin, checker=_always_executable)
@@ -1072,6 +1091,7 @@ _register_implementation(ltorch.var, var, checker=_always_executable)
 _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
+_register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
 
 #
 # Scatter and gather operations

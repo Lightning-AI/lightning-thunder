@@ -1914,3 +1914,12 @@ def argmax(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = Fal
 @clangop()
 def argmin(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = False):
     return _argmaxmin_helper(prims.argmin, a, dim, keepdim)
+
+
+@clangop()
+def topk(a: TensorLike, /, k: int, dim: int | None = None, largest: bool = True, sorted: bool = True, *, out = None) -> (TensorProxy, TensorProxy):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    return prims.topk(a, k, dim, bool(largest), bool(sorted), out=out)

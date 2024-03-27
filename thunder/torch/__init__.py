@@ -1797,6 +1797,11 @@ def argmin(a: TensorLike, /, dim: int | None = None, keepdim: bool | None = Fals
     return clang.argmin(a, dim, keepdim)
 
 
+@torchsymbol(torch.topk, is_method=True)
+def topk(a: TensorLike, /,  k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out = None) -> (TensorLike, TensorLike):
+    return clang.topk(a, k, dim, largest, sorted, out=out)
+
+
 #
 # Scatter and gather-related operations
 #

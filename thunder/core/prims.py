@@ -231,6 +231,7 @@ class PrimIDs(Enum):
     VAR_MEAN = auto()
     ARGMAX = auto()
     ARGMIN = auto()
+    TOPK = auto()
     # Scatter and gather prims (Experimental!)
     INDEX_ADD = auto()
     INDEX_PUT = auto()
@@ -3025,6 +3026,34 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 
 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
+
+
+def topk_meta(a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy) -> (TensorProxy, TensorProxy):
+    utils.check(
+        out is None,
+        lambda: "Only `out` which is None is currently supported",
+    )
+
+    utils.check_type(a, TensorProxy)
+    utils.check_type(k, int)
+    utils.check_type(dim, int)
+    utils.check(pytype(largest) is bool, lambda: f"Expected {largest=} to be a boolean value")
+    utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean value")
+
+    utils.check(
+        k >= 0 and k <= (a.shape[dim] if a.ndim > 0 else 1),
+        lambda: f"selected index {k=} is out of range"
+    )
+
+    new_shape = a.shape
+    if a.ndim > 0:
+        new_shape = list(new_shape)
+        new_shape[dim] = k
+
+    return TensorProxy(like=a, shape=new_shape), TensorProxy(like=a, shape=new_shape, dtype=dtypes.int64)
+
+
+topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
 
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
