@@ -94,7 +94,7 @@ class Benchmark_litGPT:
 
             assert (
                 world_size % self.sharding_size == 0
-            ), f"World size {world_size} is not divisible by Hybrid Sharding Size {self.sharding_size}"
+            ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
 
         if self.bucketing_mode != "none" and self.distributed_mode != "fsdp":
             print(
@@ -109,12 +109,12 @@ class Benchmark_litGPT:
         if self.fsdp_bucket_params is not None:
             if self.distributed_mode != "fsdp":
                 print(
-                    f"[WARNING] Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignnored"
+                    f"[WARNING] Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignored"
                 )
 
             if self.bucketing_mode != "size":
                 print(
-                    f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignoted."
+                    f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
                 )
 
         if global_batch_size is not None:
