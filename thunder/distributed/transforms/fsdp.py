@@ -120,19 +120,22 @@ def create_map_of_before_after_comm(
 def stash_unsharded_grads_and_return_none_as_grads(
     fsdp_bwd_trace: TraceCtx,
     compile_data: CompileData,
-    computation_trc_flat_args: list[Proxy],
-    proxy_name_to_fqn: dict[str, str],
+    index_to_fqn: dict[int, str],
 ) -> TraceCtx:
     """Set or accumulate unsharded grads to ``param._thunder_fsdp_unsharded_grad``
+
     This function removes :func:`~thunder.distributed.prims.reduce_scatter`s and following :func:`~thunder.distributed.prims.wait`
     and inserts :func:`~thunder.distributed.prims.stash_grad_for_fsdp` so that the unsharded gradients are stored and accumulated
     when :class:`~thunder.ThunderModule` is called in the context of :func:`~thunder.ThunderModule.no_sync`.
+
     Args:
         fsdp_bwd_trace:
         compile_data:
-        computation_trc_flat_args:
+        index_to_fqn: A dictionary from index to :class:`~torch.nn.Module`'s :class:`~torch.nn.Parameter`'s name given by :func:`~torch.nn.Module.named_parameters`.
+
     Returns:
         - TraceCtx
+
     """
     producers, consumers = utils.producers_and_consumers(fsdp_bwd_trace)
     bsyms_of_unsharded_grad_to_index_and_fqn_of_param: dict[BoundSymbol, tuple[int, str]] = {}
@@ -154,9 +157,7 @@ def stash_unsharded_grads_and_return_none_as_grads(
             bsyms_to_skip[preaverage_bsym] = preaverage_bsym
             bsyms_to_skip[wait_bsym] = wait_bsym
 
-            param = computation_trc_flat_args[index]
-            utils.check_type(param, TensorProxy)
-            param_fqn = proxy_name_to_fqn[param.name]
+            param_fqn = index_to_fqn[index]
             bsyms_of_unsharded_grad_to_index_and_fqn_of_param[prod_of_unsharded_grad] = (index, param_fqn)
 
     index_to_new_grad = {}
@@ -180,7 +181,7 @@ def stash_unsharded_grads_and_return_none_as_grads(
     return visitor_transform(
         fsdp_bwd_trace,
         visit,
-        provenance="Trace without grad sync",
+        provenance="Remove grad sync of fsdp",
     )
 
 
@@ -466,7 +467,7 @@ class FSDPCommBucketing:
 
         self.requires_bwd_bucketing_allgather = compile_data.fn.sharding_strategy == FSDPType.ZERO3
 
-        # Information for no_sync transform
+        # Information for no_sync transform: `index_to_fqn`.
         self.computation_trc = computation_trc
         if not isinstance(self.computation_trc, TraceCtx):
             import warnings
@@ -474,7 +475,7 @@ class FSDPCommBucketing:
             warnings.warn("`computation_trc` is not `TraceCtx`")
             self.computation_trc_flat_args = []
             self.computation_trc_flat_args_spec = None
-            self.proxy_name_to_fqn = {}
+            self.index_to_fqn: dict[int, str] = {}
         else:
             self.computation_trc_flat_args, self._computation_trc_flat_args_spec = tree_flatten(
                 (self.computation_trc.args, self.computation_trc.kwargs)
@@ -485,17 +486,19 @@ class FSDPCommBucketing:
                 proxy_name = fqn.replace(".", "_")
                 rev_fqn_to_proxy_name[proxy_name] = fqn
 
-            orig_proxy_name_to_fqn: dict[str, str] = {}
-            for proxy_name in tuple(
-                p.name for p in filter(lambda p: isinstance(p, TensorProxy), self.computation_trc_flat_args)
-            ):
+            index_to_fqn: dict[int, str] = {}
+            for index, proxy in enumerate(self.computation_trc_flat_args):
+                if not isinstance(proxy, TensorProxy):
+                    continue
+                proxy_name = proxy.name
+                fqn: str
                 if proxy_name in rev_fqn_to_proxy_name:
-                    orig_proxy_name_to_fqn[proxy_name] = rev_fqn_to_proxy_name[proxy_name]
+                    index_to_fqn[index] = rev_fqn_to_proxy_name[proxy_name]
                 elif proxy_name.startswith("t_"):
                     tmp_name = proxy_name[2:]
                     if tmp_name in rev_fqn_to_proxy_name:
-                        orig_proxy_name_to_fqn[proxy_name] = rev_fqn_to_proxy_name[tmp_name]
-            self.proxy_name_to_fqn = orig_proxy_name_to_fqn
+                        index_to_fqn[index] = rev_fqn_to_proxy_name[tmp_name]
+            self.index_to_fqn = index_to_fqn
 
     def update_name_set(self, backward_trace: TraceCtx) -> TraceCtx:
         if not self.apply_bucketing:
@@ -724,7 +727,7 @@ class FSDPCommBucketing:
 
         if get_skip_data_parallel_grad_sync():
             utils.check(
-                self.proxy_name_to_fqn,
+                self.index_to_fqn,
                 lambda: f"`computation_trc` passed to the dunder init expected to be a `TraceCtx`",
             )
             if self.requires_bwd_bucketing_allgather:
@@ -732,8 +735,7 @@ class FSDPCommBucketing:
             return stash_unsharded_grads_and_return_none_as_grads(
                 fsdp_bwd_trace,
                 self.compile_data,
-                self.computation_trc_flat_args,
-                self.proxy_name_to_fqn,
+                self.index_to_fqn,
             )
 
         if not self.apply_bucketing:
