@@ -246,6 +246,7 @@ class PrimIDs(Enum):
     EMBEDDING_BACKWARD = auto()
     LINEAR = auto()
     PAD = auto()
+    BATCH_NORM = auto()
     # Memory access methods
     ITEM = auto()
 
@@ -3532,3 +3533,56 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
+
+
+def batch_norm_meta(
+    a: TensorProxy,
+    /,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> tuple[TensorProxy, None | TensorProxy, None | TensorProxy]:
+    # Checks types
+    utils.check_type(a, TensorProxy)
+    utils.check_type(momentum, Number)
+    utils.check_type(eps, Number)
+
+    utils.check(a.ndim >= 2, lambda: f"Input tensor must have at least batch and channel dimensions!")
+    if not training:
+        utils.check(
+            running_mean is not None and running_var is not None,
+            lambda: f"running_mean and running_var must be defined in evaluation mode",
+        )
+
+    num_features = a.shape[1]
+
+    def check_type_device_shape(param, param_name):
+        utils.check_type(param, TensorProxy)
+        utils.check_same_device(a, param)
+        utils.check(
+            param.shape == (num_features,),
+            lambda: f"Expected {param_name}.shape={param.shape} to be {(num_features,)}!",
+        )
+
+    if weight is not None:
+        check_type_device_shape(weight, "weight")
+        utils.check_same_dtype(a, weight)
+    if bias is not None:
+        check_type_device_shape(bias, "bias")
+        utils.check_same_dtype(a, bias)
+    if running_mean is not None:
+        check_type_device_shape(running_mean, "running_mean")
+    if running_var is not None:
+        check_type_device_shape(running_var, "running_var")
+    return (
+        TensorProxy(like=a),
+        (TensorProxy(like=a, shape=(num_features,)) if running_mean is None else TensorProxy(like=running_mean)),
+        (TensorProxy(like=a, shape=(num_features,)) if running_var is None else TensorProxy(like=running_var)),
+    )
+
+
+batch_norm = make_prim(PrimIDs.BATCH_NORM, "batch_norm", meta=batch_norm_meta, tags=(OpTags.REDUCTION_OP,))

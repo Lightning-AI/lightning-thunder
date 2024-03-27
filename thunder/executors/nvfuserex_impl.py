@@ -2000,6 +2000,46 @@ def var_mean(
 register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 
 
+def _batch_norm_check(
+    a: TensorProxy,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> bool:
+    return are_supported_tensors(*(x for x in (a, weight, bias, running_mean, running_var) if x is not None))
+
+
+def batch_norm(
+    a: TensorProxy,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvweight = None if weight is None else getnv(weight, fd, lc_to_nv_map)
+    nvbias = None if bias is None else getnv(bias, fd, lc_to_nv_map)
+    nvrunning_mean = None if running_mean is None else getnv(running_mean, fd, lc_to_nv_map)
+    nvrunning_var = None if running_var is None else getnv(running_var, fd, lc_to_nv_map)
+    nvmomentum = getnv(momentum, fd, lc_to_nv_map)
+    nveps = getnv(eps, fd, lc_to_nv_map)
+
+    return fd.ops.batch_norm(nva, nvweight, nvbias, nvrunning_mean, nvrunning_var, nvmomentum, nveps, training)
+
+
+register_supported(PrimIDs.BATCH_NORM, batch_norm, _batch_norm_check)
+
+
 # Removes excessive float casts, like those that occur when autocasting
 # NOTE This passes actually changes a program's semantics, because it will take a sequence like
 #   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can
