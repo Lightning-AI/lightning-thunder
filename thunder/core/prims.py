@@ -625,7 +625,7 @@ def unpack_trivial_printer(
     )
 
     result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
-    s = f"# {result_str} {'(unused)' if bsym.output is None else ''}"
+    s = f"# {result_str}{' (unused)' if bsym.output is None else ''}"
     return s
 
 
@@ -741,6 +741,7 @@ def _make_parts_into_line_or_lines(parts: list[str], out: list[str] | None = Non
         if pos and pos + len(p) > 80:
             lines.append("".join(line_parts) + "\\")
             line_parts = []
+            pos = 0
         line_parts.append(p)
         pos += len(p)
 

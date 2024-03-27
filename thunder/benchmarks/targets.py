@@ -873,8 +873,8 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
     ids=(
         "torch",
         "torch.compile",
-        "thunder-fwd-bwd",
-        "thunder+nvfuser+torch.compile-fwd-bwd",
+        "thunder",
+        "thunder+nvfuser+torch.compile",
         "torch+apex",
         "torch.compile+apex",
     ),

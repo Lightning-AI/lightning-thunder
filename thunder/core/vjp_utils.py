@@ -1,11 +1,12 @@
 import inspect
+from collections.abc import Callable
+from functools import wraps
 from inspect import Parameter, Signature
 from itertools import chain
-from collections.abc import Callable
 
 from thunder.core import prims, utils
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import variableify, Proxy
+from thunder.core.proxies import Proxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, TraceCtx
@@ -13,6 +14,16 @@ from thunder.core.transform_common import dce
 
 
 _cache = {}
+
+
+def disable_caching_split_forward_and_backward(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    wrapper._disable_caching = True
+
+    return wrapper
 
 
 def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable]:
@@ -46,7 +57,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
 
     key = (bsym.sym, subkey := _make_cache_key(bsym.args, bsym.kwargs))
     cached_result = _cache.get(key, None) if subkey is not None else None
-    if cached_result is not None:
+    if cached_result is not None and not getattr(joint_forward_backward, "_disable_caching", False):
         return cached_result
 
     joint_trace = thunder.trace(inline_trace=False, use_dce=False)(joint_forward_backward, *bsym.args, **bsym.kwargs)

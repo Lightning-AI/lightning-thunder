@@ -3975,17 +3975,30 @@ def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs
 
     # shape
     cases = (
-        (4, 7, 8),
-        (4, 7),
+        (),
+        (2, 3),
+        (2, 3, 4),
+        (2, 3, 4, 2),
     )
 
     for shape in cases:
         yield SampleInput(make(shape))
 
 
+def matrix_transpose_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, error type, error message
+    cases = (((3), RuntimeError, "tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor."),)
+
+    for shape, err_type, err_msg in cases:
+        yield SampleInput(make(shape)), err_type, err_msg
+
+
 transpose_opinfo = OpInfo(
     clang.matrix_transpose,
     sample_input_generator=matrix_transpose_sample_generator,
+    error_input_generator=matrix_transpose_error_generator,
     torch_reference=lambda x: x.mT,
 )
 shape_ops.append(transpose_opinfo)
@@ -6824,9 +6837,11 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-            if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
             weight=make(C) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
@@ -6870,9 +6885,11 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-            if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
             weight=make(C) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
