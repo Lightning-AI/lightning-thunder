@@ -136,7 +136,14 @@ RUN \
         cd .. && \
         rm -rf Fuser ; \
     elif [ "${TORCH_INSTALL}" == "test" ]; then \
-        echo "Not supported option" ; \
+        # building nvFuser from source
+        git clone https://github.com/NVIDIA/Fuser.git && \
+        cd Fuser && \
+        git submodule update --init --recursive && \
+        pip install -r requirements.txt && \
+        python setup.py install --no-test --no-benchmark && \
+        cd .. && \
+        rm -rf Fuser ; \
     else \
         # installing pytorch from wheels \
         CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
