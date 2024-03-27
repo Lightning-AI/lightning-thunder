@@ -2000,6 +2000,28 @@ def var_mean(
 register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 
 
+def _input_as_output_check(
+    out: TensorProxy,
+    input_alias: TensorProxy,
+) -> bool:
+    return are_supported_tensors(out, input_alias)
+
+
+def input_as_output(
+    out: TensorProxy,
+    input_alias: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nvout = getnv(out, fd, lc_to_nv_map)
+    nvinput_alias = getnv(input_alias, fd, lc_to_nv_map)
+    fd.add_output(nvout, alias_input=nvinput_alias)
+
+
+register_supported(PrimIDs.INPUT_AS_OUTPUT, input_as_output, _input_as_output_check)
+
+
 # Removes excessive float casts, like those that occur when autocasting
 # NOTE This passes actually changes a program's semantics, because it will take a sequence like
 #   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can

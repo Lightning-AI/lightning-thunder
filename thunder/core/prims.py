@@ -248,6 +248,7 @@ class PrimIDs(Enum):
     PAD = auto()
     # Memory access methods
     ITEM = auto()
+    INPUT_AS_OUTPUT = auto()
 
 
 class OpTags(Enum):
@@ -3532,3 +3533,20 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
+
+
+def input_as_output_meta(
+    out: TensorProxy,
+    input_alias: TensorProxy,
+):
+    utils.check_type(out, TensorProxy)
+    utils.check_type(input_alias, TensorProxy)
+    utils.check_same_device(out, input_alias)
+    utils.check_same_shape(out, input_alias)
+    utils.check_same_dtype(out, input_alias)
+    return None
+
+
+input_as_output = make_prim(
+    PrimIDs.INPUT_AS_OUTPUT, "input_as_output", meta=input_as_output_meta, tags=(OpTags.DONT_DCE,)
+)
