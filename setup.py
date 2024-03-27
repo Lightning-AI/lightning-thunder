@@ -21,7 +21,7 @@ def _load_py_module(fname, pkg="thunder"):
 
 def _load_requirements(path_dir: str, file_name: str = "requirements.txt") -> list:
     reqs = parse_requirements(open(os.path.join(path_dir, file_name)).readlines())
-    return list(map(str, reqs))
+    return [r for r in list(map(str, reqs)) if "@" not in r]
 
 
 def _prepare_extras(
@@ -43,13 +43,24 @@ def _prepare_extras(
     return extras
 
 
+def _load_readme_description(path_dir: str, homepage: str, version: str) -> str:
+    """Load readme as decribtion."""
+    path_readme = os.path.join(path_dir, "README.md")
+    with open(path_readme, encoding="utf-8") as fp:
+        text = fp.read()
+    # https://github.com/Lightning-AI/lightning-thunder/raw/master/docs/source/_static/images/lightning_module/pt_to_pl.png
+    github_source_url = os.path.join(homepage, "raw", version)
+    # replace relative repository path to absolute link to the release
+    #  do not replace all "docs" as in the readme we replace some other sources with particular path to docs
+    text = text.replace("docs/source/_static/", f"{os.path.join(github_source_url, 'docs/source/_static/')}")
+    return text
+
+
 about = _load_py_module("__about__.py")
 
 # https://packaging.python.org/discussions/install-requires-vs-requirements /
-# keep the meta-data here for simplicity in reading this file... it's not obvious
-# what happens and to non-engineers they won't know to look in init ...
-# the goal of the project is simplicity for researchers, don't want to add too much
-# engineer specific practices
+# keep the meta-data here for simplicity in reading this file. it's not obvious
+# what happens and to non-engineers they won't know to look in init.
 setup(
     name="lightning-thunder",
     version=about.__version__,
@@ -60,7 +71,9 @@ setup(
     download_url="https://github.com/Lightning-AI/lightning-thunder",
     license=about.__license__,
     packages=find_packages(exclude=["thunder/tests", "docs"]),
-    long_description=about.__long_doc__,
+    long_description=_load_readme_description(
+        path_dir=_PATH_ROOT, homepage=about.__homepage__, version=about.__version__
+    ),
     long_description_content_type="text/markdown",
     include_package_data=True,
     zip_safe=False,

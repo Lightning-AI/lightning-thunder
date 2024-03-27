@@ -3,16 +3,21 @@ from __future__ import annotations
 from enum import auto, Enum
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
+from collections.abc import Callable
 from collections.abc import Sequence
 from functools import reduce, partial
 import operator
 import builtins
 import math
 
-from thunder.core.trace import VariableInterface, get_tracectx
+import torch
+
+from thunder.core.compile_data import using_symbolic_values, using_jit
+from thunder.core.interpreter import is_jitting
+from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctx import langctx_for, get_langctx, get_numberctx
+from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -53,13 +58,31 @@ def unvariableify(x: Any) -> Any:
     return x
 
 
-def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
+# Tries to register a proxy name and returns a boolean indicating success
+def register_proxy_name(name: None | str = None):
     trc = get_tracectx()
 
     if name is not None and not trc.has_name(name):
         trc.add_name(name)
+        return True
+
+    return False
+
+
+def is_proxy_name_available(name: None | str = None):
+    trc = get_tracectx()
+
+    if name is not None and not trc.has_name(name):
+        return True
+
+    return False
+
+
+def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
+    if register_proxy_name(name):
         return name
 
+    trc = get_tracectx()
     return trc.make_name(prefix=prefix)
 
 
@@ -82,10 +105,18 @@ class Proxy(VariableInterface, ProxyInterface):
                     baseutils.check(False, lambda x=self: f"Unexpected python type for IntegerProxy {x.python_type}")
             elif isinstance(self, NumberProxy):
                 prefix = "n"
+            elif isinstance(self, StringProxy):
+                prefix = "s"
             elif isinstance(self, TensorProxy):
                 prefix = "t"
             elif isinstance(self, CollectionProxy):
                 prefix = "C"
+            elif isinstance(self, TupleProxy):
+                prefix = "tup"
+            elif isinstance(self, ListProxy):
+                prefix = "lst"
+            elif isinstance(self, DictProxy):
+                prefix = "d"
             else:
                 prefix = "p"
 
@@ -102,80 +133,282 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f"{self._name}"
+        return f"{self.name}"
 
     def type_string(self) -> str:
         return "Any"
 
+    # Disables dunder methods
+
     #
-    # Inplace Operations
+    # Unary dunders
+    #
+
+    def __abs__(self):
+        raise NotImplementedError(f"__abs__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__ceil__
+    def __ceil__(self):
+        raise NotImplementedError(f"__ceil__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__floor__
+    def __floor__(self):
+        raise NotImplementedError(f"__floor__ is not implemented for {type(self)}")
+
+    def __invert__(self):
+        raise NotImplementedError(f"__invert__ is not implemented for {type(self)}")
+
+    def __neg__(self):
+        raise NotImplementedError(f"__neg__ is not implemented for {type(self)}")
+
+    def __pos__(self):
+        raise NotImplementedError(f"__pos__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__round__
+    def __round__(self):
+        raise NotImplementedError(f"__round__ is not implemented for {type(self)}")
+
+    # See https://docs.python.org/3/reference/datamodel.html#object.__trunc__
+    def __trunc__(self):
+        raise NotImplementedError(f"__trunc__ is not implemented for {type(self)}")
+
+    #
+    # Binary dunders
+    #
+
+    def __add__(self, other):
+        raise NotImplementedError(f"__add__ is not implemented for {type(self)}")
+
+    def __radd__(self, other):
+        raise NotImplementedError(f"__radd__ is not implemented for {type(self)}")
+
+    def __divmod__(self, other):
+        raise NotImplementedError(f"__divmod__ is not implemented for {type(self)}")
+
+    def __rdivmod__(self, other):
+        raise NotImplementedError(f"__rdivmod__ is not implemented for {type(self)}")
+
+    def __floordiv__(self, other):
+        raise NotImplementedError(f"__floordiv__ is not implemented for {type(self)}")
+
+    def __rfloordiv__(self, other):
+        raise NotImplementedError(f"__rfloordiv__ is not implemented for {type(self)}")
+
+    def __mod__(self, other):
+        raise NotImplementedError(f"__mod__ is not implemented for {type(self)}")
+
+    def __rmod__(self, other):
+        raise NotImplementedError(f"__rmod__ is not implemented for {type(self)}")
+
+    def __mul__(self, other):
+        raise NotImplementedError(f"__mul__ is not implemented for {type(self)}")
+
+    def __rmul__(self, other):
+        raise NotImplementedError(f"__rmul__ is not implemented for {type(self)}")
+
+    def __pow__(self, other):
+        raise NotImplementedError(f"__pow__ is not implemented for {type(self)}")
+
+    def __rpow__(self, other):
+        raise NotImplementedError(f"__rpow__ is not implemented for {type(self)}")
+
+    def __sub__(self, other):
+        raise NotImplementedError(f"__sub__ is not implemented for {type(self)}")
+
+    def __rsub__(self, other):
+        raise NotImplementedError(f"__rsub__ is not implemented for {type(self)}")
+
+    def __truediv__(self, other):
+        raise NotImplementedError(f"__truediv__ is not implemented for {type(self)}")
+
+    def __rtruediv__(self, other):
+        raise NotImplementedError(f"__rtruediv__ is not implemented for {type(self)}")
+
+    #
+    # Logical operations
+    #
+    def __and__(self, other):
+        raise NotImplementedError(f"__and__ is not implemented for {type(self)}")
+
+    def __rand__(self, other):
+        raise NotImplementedError(f"__rand__ is not implemented for {type(self)}")
+
+    def __eq__(self, other):
+        raise NotImplementedError(f"__eq__ is not implemented for {type(self)}")
+
+    def __ge__(self, other):
+        raise NotImplementedError(f"__ge__ is not implemented for {type(self)}")
+
+    def __gt__(self, other):
+        raise NotImplementedError(f"__gt__ is not implemented for {type(self)}")
+
+    def __le__(self, other):
+        raise NotImplementedError(f"__le__ is not implemented for {type(self)}")
+
+    def __lt__(self, other):
+        raise NotImplementedError(f"__lt__ is not implemented for {type(self)}")
+
+    def __ne__(self, other):
+        raise NotImplementedError(f"__ne__ is not implemented for {type(self)}")
+
+    # NOTE This is a bitwise or triggered by the | operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__or__
+    def __or__(self, other):
+        raise NotImplementedError(f"__or__ is not implemented for {type(self)}")
+
+    def __ror__(self, other):
+        raise NotImplementedError(f"__ror__ is not implemented for {type(self)}")
+
+    # The ^ operator
+    # See https://docs.python.org/3/reference/datamodel.html#object.__xor__
+    def __xor__(self, other):
+        raise NotImplementedError(f"__xor__ is not implemented for {type(self)}")
+
+    def __rxor__(self, other):
+        raise NotImplementedError(f"__rxor__ is not implemented for {type(self)}")
+
+    #
+    # Shift operations
+    #
+
+    def __lshift__(self, other):
+        raise NotImplementedError(f"__lshift__ is not implemented for {type(self)}")
+
+    def __rlshift__(self, other):
+        raise NotImplementedError(f"__rlshift__ is not implemented for {type(self)}")
+
+    def __rshift__(self, other):
+        raise NotImplementedError(f"__rshift__ is not implemented for {type(self)}")
+
+    def __rrshift__(self, other):
+        raise NotImplementedError(f"__rrshift__ is not implemented for {type(self)}")
+
+    #
+    # Casts to Python numbers
+    #
+
+    def __complex__(self):
+        raise NotImplementedError(f"__complex__ is not implemented for {type(self)}")
+
+    def __float__(self):
+        raise NotImplementedError(f"__float__ is not implemented for {type(self)}")
+
+    def __int__(self):
+        raise NotImplementedError(f"__int__ is not implemented for {type(self)}")
+
+    def __bool__(self):
+        raise NotImplementedError(f"__bool__ is not implemented for {type(self)}")
+
+    #
+    # Matmul operators (not implemented for numbers)
+    #
+
+    def __matmul__(self, other):
+        raise NotImplementedError(f"__matmul__ is not implemented for {type(self)}")
+
+    def __rmatmul__(self, other):
+        raise NotImplementedError(f"__rmatmul__ is not implemented for {type(self)}")
+
+    #
+    # Inplace dunders
     #
 
     def __iadd__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __iadd__ are not supported.")
 
     def __iand__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __iand__ are not supported.")
 
     def __iconcat__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __iconcat__ are not supported.")
 
     def __ifloordiv__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ifloordiv__ are not supported.")
 
     def __ilshift__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ilshift__ are not supported.")
 
     def __imatmul__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __imatmul__ are not supported.")
 
     def __imod__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __imod__ are not supported.")
 
     def __imul__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __imul__ are not supported.")
 
     def __ior__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ior__ are not supported.")
 
     def __ipow__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ipow__ are not supported.")
 
     def __irshift__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __irshift__ are not supported.")
 
     def __isub__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __isub__ are not supported.")
 
     def __itruediv__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __itruediv__ are not supported.")
 
     def __ixor__(self, other):
-        raise RuntimeError("Inplace operators are not supported.")
+        raise RuntimeError("Inplace operators like __ixor__ are not supported.")
 
 
-# This is a proxy for anything not covered by more type-specific proxies.
-# We do need this within the litjit to track history but differs from the other
-# proxies in that we do not try as much to mimick the proxied object as
-# for the other proxies.
+# A generic "anything" proxy
+# Unlike many other proxies, this does not mimic the type of the object it wraps
+# TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
     def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
         super().__init__(name=name, history=history)
         self._o = o
 
+    def __repr__(self) -> str:
+        return f"<AnyProxy '{self._o}>'"
 
-class StringProxy(str, Proxy):
+    def type_string(self) -> str:
+        return str(type(self._o))
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return AnyProxy(self._o, name=name, history=self.history)
+
+
+class StringProxy(Proxy, str):
     def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
         return str.__new__(cls, s)
 
     def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None):
         Proxy.__init__(self, name=name, history=history)
-        self._s: str = s
+        self.value: str = s
 
     def __str__(self) -> str:
-        return self._s
+        return self.value
+
+    def __repr__(self) -> str:
+        return f"<StringProxy '{self.value}'>"
+
+    def type_string(self) -> str:
+        return "str"
+
+    def __hash__(self) -> str:
+        return hash(self.value)
+
+    def __eq__(self, other):
+        if not isinstance(other, str):
+            # important: *StringProxies* are isintance str
+            return False
+        return str(self) == str(other)
 
 
+#
+# Collection proxies
+#
+
+
+# The following class is DEPRECATED, and is only preserved her for experimental feature development
+#   that relies upon it.
 class CollectionProxy(Proxy):
     def __init__(self, coll: Any, *, name: str | None = None):
         Proxy.__init__(self, name=name)
@@ -186,6 +419,147 @@ class CollectionProxy(Proxy):
 
     def type_string(self) -> str:
         return "Collection"
+
+
+class TupleProxy(Proxy, tuple):
+    def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None):
+        return tuple.__new__(cls, tup)
+
+    def __init__(self, tup: tuple, *, name: None | str = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._value = tup
+
+    def type_string(self) -> str:
+        return "tuple"
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return TupleProxy(self._value, name=name, history=self.history)
+
+    def __add__(self, other):
+        if not isinstance(other, tuple):
+            raise TypeError(f"can only concatenate tuple (not '{type(other)}') to tuple")
+
+        return self._value + other
+
+    def __bool__(self, /) -> bool:
+        return bool(self._value)
+
+    def __eq__(self, other, /) -> bool:
+        return self._value == other
+
+    def __setitem__(self, *args):
+        raise TypeError("'tuple' object does not support item assignment")
+
+
+class ListProxy(Proxy, list):
+    def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None):
+        l = list.__new__(cls, lst)
+
+        # NOTE This intentionally does not call the ListProxy.extend() method
+        list.extend(l, lst)
+        return l
+
+    def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._value = lst
+
+    def type_string(self, /) -> str:
+        return "list"
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return ListProxy(self._value, name=name, history=self.history)
+
+    def __add__(self, other, /):
+        if not isinstance(other, list):
+            raise TypeError(f"can only concatenate list (not '{type(other)}') to list")
+
+        return self._value + other
+
+    def __bool__(self, /) -> bool:
+        return bool(self._value)
+
+    def __eq__(self, other, /) -> bool:
+        return self._value == other
+
+    def __setitem__(self, *args):
+        raise NotImplementedError("Assigning to elements of an input list is not yet supported")
+
+    def append(self, arg, /):
+        raise NotImplementedError("Appending to an input list is not yet supported")
+
+    def clear(self, /):
+        raise NotImplementedError("Clearing an input list is not yet supported")
+
+    def extend(self, arg, /):
+        raise NotImplementedError("Extending an input list is not yet supported")
+
+    def insert(self, *args):
+        raise NotImplementedError("Inserting into an input list is not yet supported")
+
+    def pop(self):
+        raise NotImplementedError("Popping from an input list is not yet supported")
+
+    def remove(self, arg, /):
+        raise NotImplementedError("Removing from an input list is not yet supported")
+
+
+class DictProxy(Proxy, dict):
+    def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None):
+        nd = dict.__new__(cls, d)
+        dict.update(nd, d)
+        return nd
+
+    def __init__(self, d: dict, *, name: None | str = None, history: None | tuple = None):
+        Proxy.__init__(self, name=name, history=history)
+        self._value = d
+
+    def type_string(self, /) -> str:
+        return "dict"
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return DictProxy(self._value, name=name, history=self.history)
+
+    def __add__(self, other, /):
+        return self._value + other
+
+    def __bool__(self, /) -> bool:
+        return bool(self._value)
+
+    def __delitem__(self, key: Any):
+        raise NotImplementedError("Deleting keys of an input dict is not yet supported")
+
+    def __eq__(self, other, /) -> bool:
+        return self._value == other
+
+    def __ior__(self, other, /):
+        raise NotImplementedError("Modifying an input dict inplace is not yet supported")
+
+    def __or__(self, other, /) -> bool:
+        return self._value | other
+
+    def __setitem__(self, *args):
+        raise NotImplementedError("Assigning to keys of an input dict is not yet supported")
+
+    def clear(self, /):
+        raise NotImplementedError("Clearning an input dict is not yet supported")
+
+    def items(self, /):
+        return self._value.items()
+
+    def pop(self, key, /):
+        raise NotImplementedError("Popping an input dict is not yet supported")
+
+    def popitem(self, /):
+        raise NotImplementedError("Popping an input dict is not yet supported")
+
+    def update(self, other, /):
+        raise NotImplementedError("Updating an input dict is not yet supported")
+
+    def setdefault(self, *args):
+        raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
 # NOTE NumberProxies are NOT Numbers
@@ -203,7 +577,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __hash__(self) -> int:
         return hash(self.value)
 
-    def replace_name(self, name):
+    def replace_name(self, name: str, /):
         """Return a copy of this proxy with the given name."""
         return self.__class__(name=name, value=self.value, python_type=self.python_type)
 
@@ -218,37 +592,44 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn):
-        trace = get_tracectx()
-        using_interpreter: bool = trace.using_interpreter if trace is not None else False
+        trace: None | TraceCtx = get_tracectx()
 
-        # TODO Remove the check for using_interpreter once development has progressed enough
-        if using_interpreter:
+        langctx: None | LanguageContext
+        try:
             langctx = get_langctx()
+        except LookupError as le:
+            langctx = None
 
-            fn = getattr(langctx, name)
-            return fn(a)
-
-        # NOTE not using_interpreter on this path
         vala = pyval(a)
-        baseutils.check(
-            vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
-        )
 
-        # TODO Make it so failing to find the operation is a failure
-        # Records the operation (on a number) if in a language context
-        langctx = get_langctx()
-        if langctx is not None:
-            numberctx = get_numberctx()
-            fn = getattr(numberctx, name, None)
-            if fn is not None:
-                return fn(a)
+        if trace is None:
+            # Outside of a trace context, operations on NumberProxies are executed by the
+            #   Python interpreter
 
-        # NOTE langctx is None
-        # In this case the operation is (conceptually) run eagerly
-        return fn(vala)
+            baseutils.check(
+                vala is not None,
+                lambda: f"Trying to {name} a number with an unknown value",
+                exception_type=AssertionError,
+            )
+            return fn(vala)
+
+        if using_jit():
+            method: Callable = resolve_method(name, a)
+            return method(a)
+
+        # NOTE not using_jit
+        #   This is a legacy path to temporarily support developing older components, and will be removed
+        #   in the near future. It fallsback to executing the operation using the Python interpreter
+        #   if no method can be found.
+        try:
+            method = resolve_method(name, a)
+        except Exception as e:
+            return fn(vala)
+
+        return method(a)
 
     def __abs__(self):
-        return self._elementwise_unary_helper(self, "py_abs", builtins.abs)
+        return self._elementwise_unary_helper(self, "abs", builtins.abs)
 
     # See https://docs.python.org/3/reference/datamodel.html#object.__ceil__
     def __ceil__(self):
@@ -283,45 +664,26 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def _elementwise_binary_helper(a, b, name, fn):
         baseutils.check_type(b, (Number, TensorProxy))
 
-        trace = get_tracectx()
-        using_interpreter: bool = trace.using_interpreter if trace is not None else False
+        vala = pyval(a)
+        valb = pyval(b) if isinstance(b, NumberProxy) else b
 
-        # TODO Remove the check for using_interpreter once development has progressed enough
-        if using_interpreter:
-            langctx = get_langctx()
+        trace: None | TraceCtx = get_tracectx()
+        if trace is None:
+            # Outside of a trace or language context, binary operations on NumberProxies are
+            #   executed by the Python interpreter
+            return fn(vala, valb)
 
-            fn = getattr(langctx, name)
+        if is_jitting():
+            fn: Callable = resolve_method(name, a, b)
             return fn(a, b)
 
-        # NOTE not using_interpreter on this path
-        vala = pyval(a)
-        baseutils.check(
-            vala is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
-        )
-
-        langctx = get_langctx()
+        # NOTE not using_jit
+        #   This is a legacy path to temporarily support developing older components, and will be removed
+        #   in the near future
         if isinstance(b, TensorProxy):
-            baseutils.check(
-                langctx is not None,
-                lambda: f"Cannot use an operator to {name} a number and a tensor outside of a language context",
-            )
-            tensor_fn = getattr(langctx, name)
+            tensor_fn = resolve_method(name, a, b)
             return tensor_fn(a, b)
 
-        # NOTE isinstance(b, Number)
-        valb = pyval(b)
-        baseutils.check(
-            valb is not None, lambda: f"Trying to {name} a number with an unknown value", exception_type=AssertionError
-        )
-
-        # TODO Enable this
-        # Records the operation (on two numbers) if in a language context
-        # if langctx is not None:
-        #     fn = getattr(langctx, name)
-        #     return fn(a, b)
-
-        # NOTE langctx is None
-        # In this case the operation is (conceptually) run eagerly
         return fn(vala, valb)
 
     def __add__(self, other):
@@ -431,7 +793,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
     # Shift operations
     #
-    # Issue https://github.com/Lightning-AI/lightning-thunder/issues/594
+    # Issue "Implement logical and arithmetic left and right shifts"
     #   tracks implementing these
 
     def __lshift__(self, other):
@@ -462,6 +824,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return int(self.value)
 
     def __bool__(self):
+        if is_jitting():
+            method = resolve_method("check_bool_conversion", self)
+            method(self, bool(self.value))
         return bool(self.value)
 
     #
@@ -519,26 +884,43 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return NotImplemented
 
 
-def pyval(x: NumberProxy | Number) -> Number:
-    baseutils.check_type(x, (NumberProxy, Number))
+def pyval(x: Number | str | AnyProxy) -> Number | str | any:
+    baseutils.check_type(x, (Number, str, AnyProxy))
 
-    # NOTE This has to query NumberProxy, not Number, because NumberProxies are Numbers
-    #   (but not all Numbers are NumberProxies)
-    if isinstance(x, NumberProxy):
+    if isinstance(x, AnyProxy):
+        return x._o
+
+    if isinstance(x, (NumberProxy, StringProxy)):
         return x.value
 
     return x
 
 
-def pytype(x: NumberProxy | Number) -> type:
-    baseutils.check_type(x, (NumberProxy, Number))
+def pytype(x: Proxy) -> type:
+    if isinstance(x, AnyProxy):
+        return type(x._o)
 
-    if isinstance(x, NumberProxy):
-        return x.python_type
+    if isinstance(x, complex):
+        return complex
+    if isinstance(x, float):
+        return float
+    if isinstance(x, bool):
+        return bool
+    if isinstance(x, IntegerProxy) and x.python_type is bool:
+        return bool
+    if isinstance(x, int):
+        return int
+    if isinstance(x, str):
+        return str
+    if isinstance(x, tuple):
+        return tuple
+    if isinstance(x, list):
+        return list
+    if isinstance(x, dict):
+        return dict
 
-    return type(x)
 
-
+# TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy, complex):
     def __new__(cls, *, name=None, value, history: None | tuple = None):
         if value is None:
@@ -650,7 +1032,12 @@ def _infer_tensor_properties(
     _ddp_type = ddp_type if ddp_type is not None else _ddp_type
 
     # Extracts actual values for shape
-    # TODO This will need to be revisited when we add support for dynamic constraints
+    # TODO RC1 Enable this
+    if using_symbolic_values():
+        raise NotImplementedError(
+            f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
+        )
+
     _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
@@ -674,7 +1061,7 @@ def _infer_tensor_properties(
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
-class FutureTensorProxy(Proxy):
+class FutureTensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
         name: str | None = None,
@@ -683,8 +1070,10 @@ class FutureTensorProxy(Proxy):
         shape: ShapeLike | None = None,
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
+        prefix: None | str = None,
+        history: None | tuple = None,
     ):
-        super().__init__(name)
+        super().__init__(name, prefix=prefix, history=history)
 
         # NOTE FutureTensorProxies never require grad
         (
@@ -740,17 +1129,21 @@ class FutureTensorProxy(Proxy):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
     @property
-    def size(self):
-        langctx = get_langctx()
-        return langctx.size(self)
+    def size(self, /) -> Any:
+        fn = resolve_method("size", self)
+        return fn(self)
 
     def wait(self) -> TensorProxy:
         from thunder.distributed.prims import wait
 
         return wait(self)
 
+    def replace_name(self, name: str):
+        """Return a copy of this proxy with the given name."""
+        return futuretensorproxy(self, name=name, history=self.history)
 
-# TODO Review dunders -- any remaining?
+
+# TODO RC1 Review dunders -- any remaining?
 class TensorProxy(Proxy, TensorProxyInterface):
     def __init__(
         self,
@@ -778,6 +1171,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._ddp_type,
         ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type)
 
+    # NOTE The following properties DO NOT depend on the language context or record
+    #   themselves into the trace, so they can be used when working with tensor proxies
+    #   outside of a trace or language context
     @property
     def shape(self):
         return self._shape
@@ -811,9 +1207,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._ddp_type
 
     @property
-    def size(self):
-        langctx = get_langctx()
-        return langctx.size(self)
+    def size(self, /) -> Any:
+        fn = resolve_method("size", self)
+        return fn(self)
 
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
@@ -822,79 +1218,74 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # > even of the object’s metaclass
     # Ref: https://docs.python.org/3/reference/datamodel.html#special-method-lookup
     def __len__(self):
-        langctx = get_langctx()
-        return langctx.compute_len(self)
+        fn = resolve_method("len", self)
+        return fn(self)
 
-    def replace_name(self, name):
+    # TODO RC1 Review this with other changes
+    def replace_name(self, name: str):
         """Return a copy of this proxy with the given name."""
-        langctx = get_langctx()
-        return langctx.tensorproxy(name, self)
+        return tensorproxy(self, name=name, history=self.history)
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
-    def __getattr__(self, attr):
-        langctx = get_langctx()
-        method = langctx.method_lookup(attr)
+    def __getattr__(self, attr: str, /):
+        method: None | Callable = resolve_method(attr, self)
         baseutils.check(method is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
         return partial(method, self)
 
     #
     # Datatype conversion shorthands
     #
-    # NOTE This don't map the names directly because we want to avoid defining
-    #   functions named "float" that clobber the builtin "float" wherever possible
-    #   That's why these functions are defined directly (instead of automatically
-    #   being translated using the language context)
-    # TODO Implement additional shorthands
 
     def float(self):
-        langctx = get_langctx()
-        return langctx.to_float(self)
+        method = resolve_method("float", self)
+        return method(self)
 
     #
     # Indexing operators
     #
 
     def __getitem__(self, key):
-        ctx = get_langctx()
-        return ctx.getitem(self, key)
+        method = resolve_method("getitem", self, key)
+        return method(self, key)
 
     #
     # Elementwise unary operators
     #
 
     def __abs__(self):
-        langctx = get_langctx()
-        return langctx.abs(self)
+        method = resolve_method("abs", self)
+        return method(self)
 
     def __ceil__(self):
-        langctx = get_langctx()
-        return langctx.ceil(self)
+        method = resolve_method("ceil", self)
+        return method(self)
 
     def __floor__(self):
-        langctx = get_langctx()
-        return langctx.floor(self)
+        method = resolve_method("floor", self)
+        return method(self)
 
     def __invert__(self):
-        langctx = get_langctx()
-        return langctx.bitwise_not(self)
+        method = resolve_method("bitwise_not", self)
+        return method(self)
 
     def __neg__(self):
-        langctx = get_langctx()
-        return langctx.neg(self)
+        method = resolve_method("neg", self)
+        return method(self)
 
     def __pos__(self):
-        return self
+        method = resolve_method("pos", self)
+        return method(self)
 
     def __round__(self):
-        langctx = get_langctx()
-        return langctx.round(self)
+        method = resolve_method("round", self)
+        return method(self)
 
     def __trunc__(self):
-        langctx = get_langctx()
-        return langctx.trunc(self)
+        method = resolve_method("trunc", self)
+        return method(self)
 
     #
     # dtype conversion operators
@@ -917,72 +1308,72 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #
 
     def __add__(self, other):
-        langctx = get_langctx()
-        return langctx.add(self, other)
+        method = resolve_method("add", self, other)
+        return method(self, other)
 
     def __radd__(self, other):
-        langctx = get_langctx()
-        return langctx.add(other, self)
+        method = resolve_method("add", other, self)
+        return method(other, self)
 
     def __divmod__(self, other):
-        langctx = get_langctx()
-        return langctx.divmod(self, other)
+        method = resolve_method("divmod", self, other)
+        return method(self, other)
 
     def __rdivmod__(self, other):
-        langctx = get_langctx()
-        return langctx.divmod(other, self)
+        method = resolve_method("divmod", other, self)
+        return method(other, self)
 
     def __eq__(self, other):
-        langctx = get_langctx()
-        return langctx.eq(self, other)
+        method = resolve_method("eq", self, other)
+        return method(self, other)
 
     def __floordiv__(self, other):
-        langctx = get_langctx()
-        return langctx.floor_divide(self, other)
+        method = resolve_method("floor_divide", self, other)
+        return method(self, other)
 
     def __rfloordiv__(self, other):
-        langctx = get_langctx()
-        return langctx.floor_divide(other, self)
+        method = resolve_method("floor_divide", other, self)
+        return method(other, self)
 
     def __mod__(self, other):
-        langctx = get_langctx()
-        return langctx.mod(self, other)
+        method = resolve_method("mod", self, other)
+        return method(self, other)
 
     def __rmod__(self, other):
-        langctx = get_langctx()
-        return langctx.mod(other, self)
+        method = resolve_method("mod", other, self)
+        return method(other, self)
 
     def __mul__(self, other):
-        langctx = get_langctx()
-        return langctx.mul(self, other)
+        method = resolve_method("mul", self, other)
+        return method(self, other)
 
     def __rmul__(self, other):
-        langctx = get_langctx()
-        return langctx.mul(other, self)
+        method = resolve_method("mul", other, self)
+        return method(other, self)
 
     def __pow__(self, other):
-        langctx = get_langctx()
-        return langctx.pow(self, other)
+        method = resolve_method("pow", self, other)
+        return method(self, other)
 
     def __rpow__(self, other):
-        langctx = get_langctx()
-        return langctx.pow(other, self)
+        method = resolve_method("pow", other, self)
+        return method(other, self)
 
     def __sub__(self, other):
-        langctx = get_langctx()
-        return langctx.sub(self, other)
+        method = resolve_method("sub", self, other)
+        return method(self, other)
 
     def __rsub__(self, other):
-        langctx = get_langctx()
-        return langctx.sub(other, self)
+        method = resolve_method("sub", other, self)
+        return method(other, self)
 
     def __truediv__(self, other):
-        langctx = get_langctx()
-        return langctx.true_divide(self, other)
+        method = resolve_method("true_divide", self, other)
+        return method(self, other)
 
     def __rtruediv__(self, other):
-        langctx = get_langctx()
-        return langctx.true_divide(other, self)
+        method = resolve_method("true_divide", other, self)
+        return method(other, self)
 
     #
     # Logical operations
@@ -990,90 +1381,95 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     # TODO Review logical vs bitwise dispatch
     def __and__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_and(self, other)
+        method = resolve_method("bitwise_and", self, other)
+        return method(self, other)
 
     def __rand__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_and(other, self)
+        method = resolve_method("bitwise_and", other, self)
+        return method(other, self)
 
     def __ge__(self, other):
-        langctx = get_langctx()
-        return langctx.ge(self, other)
+        method = resolve_method("ge", self, other)
+        return method(self, other)
 
     def __gt__(self, other):
-        langctx = get_langctx()
-        return langctx.gt(self, other)
+        method = resolve_method("gt", self, other)
+        return method(self, other)
 
     def __le__(self, other):
-        langctx = get_langctx()
-        return langctx.le(self, other)
+        method = resolve_method("le", self, other)
+        return method(self, other)
 
     def __lt__(self, other):
-        langctx = get_langctx()
-        return langctx.lt(self, other)
+        method = resolve_method("lt", self, other)
+        return method(self, other)
 
     def __ne__(self, other):
-        langctx = get_langctx()
-        return langctx.ne(self, other)
+        method = resolve_method("ne", self, other)
+        return method(self, other)
 
     # TODO Review logical vs bitwise dispatch
     def __or__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_or(self, other)
+        method = resolve_method("bitwise_or", self, other)
+        return method(self, other)
 
     def __ror__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_or(other, self)
+        method = resolve_method("bitwise_or", other, self)
+        return method(other, self)
 
     def __xor__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_xor(self, other)
+        method = resolve_method("bitwise_xor", self, other)
+        return method(self, other)
 
     def __rxor__(self, other):
-        langctx = get_langctx()
-        return langctx.bitwise_xor(other, self)
+        method = resolve_method("bitwise_xor", other, self)
+        return method(other, self)
 
     #
     # Shift operations
     #
 
     def __lshift__(self, other):
-        langctx = get_langctx()
-        return langctx.lshift(self, other)
+        method = resolve_method("lshift", self, other)
+        return method(self, other)
 
     def __rlshift__(self, other):
-        langctx = get_langctx()
-        return langctx.lshift(other, self)
+        method = resolve_method("lshift", other, self)
+        return method(other, self)
 
     def __rshift__(self, other):
-        langctx = get_langctx()
-        return langctx.rshift(self, other)
+        method = resolve_method("rshift", self, other)
+        return method(self, other)
 
     def __rrshift__(self, other):
-        langctx = get_langctx()
-        return langctx.rshift(other, self)
+        method = resolve_method("rshift", other, self)
+        return method(other, self)
 
     #
     # Matmul
     #
 
     def __matmul__(self, other):
-        langctx = get_langctx()
-        return langctx.matmul(self, other)
+        method = resolve_method("matmul", self, other)
+        return method(self, other)
 
     def __rmatmul__(self, other):
-        langctx = get_langctx()
-        return langctx.matmul(other, self)
+        method = resolve_method("matmul", other, self)
+        return method(other, self)
 
     #
-    # Transpose
+    # Transposes
     #
 
     @property
+    def T(self):
+        method = resolve_method("T", self)
+        return method(self)
+
+    @property
     def mT(self):
-        langctx = get_langctx()
-        return langctx.matrix_transpose(self)
+        method = resolve_method("mT", self)
+        return method(self)
 
     #
     # Real
@@ -1081,8 +1477,8 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     @property
     def real(self):
-        langctx = get_langctx()
-        return langctx.real(self)
+        method = resolve_method("real", self)
+        return method(self)
 
 
 #
@@ -1097,47 +1493,85 @@ _cls_to_number_proxy_map = {
 }
 
 
+def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    device = devices.device_from_string(str(t.device))
+    dtype = dtypes.to_dtype(t.dtype)
+    # See Note [DistributedDataParallel and ddp_type]
+    ddp_type = getattr(t, "ddp_type", None)
+    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
+    return TensorProxy(
+        name,
+        shape=tuple(t.shape),
+        device=device,
+        dtype=dtype,
+        requires_grad=t.requires_grad,
+        ddp_type=ddp_type,
+        history=history,
+    )
+
+
+def futuretensorproxy(
+    t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
+) -> FutureTensorProxy:
+    device = devices.device_from_string(str(t.device))
+    dtype = dtypes.to_dtype(t.dtype)
+    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
+    return FutureTensorProxy(
+        name,
+        shape=tuple(t.shape),
+        device=device,
+        dtype=dtype,
+        history=history,
+    )
+
+
 def numberproxy(cls: type, value: Number | None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
     return pcls(value=value)
 
 
-def is_proxyable(x: Any) -> bool:
-    if isinstance(x, Number) and not isinstance(x, NumberProxy):
-        return True
-
-    # NOTE The langctx may not have defined the tensor_cls attribute
-    #   (the core language context has no associated tensor_cls)
-    langctx = langctx_for(x)
-    try:
-        tensor_cls = langctx.tensor_cls
-        return isinstance(x, tensor_cls)
-    except AttributeError:
+# TODO RC1 Remove this function
+def is_proxyable(x: Any, /) -> bool:
+    if isinstance(x, Proxy):
         return False
 
+    return isinstance(x, (Number, torch.Tensor))
 
-# TODO Improve type annotation to return type of X or Proxy
-# TODO defer to langctx for tensor type -- consider all possible langctxs
-# TODO maybe consider what happens when a proxy is passed to this
-# TODO handle complex number type
-def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any:
-    langctx = langctx_for(x)
 
-    tensor_cls = langctx.tensor_cls
-    if isinstance(x, tensor_cls):
-        return langctx.tensorproxy(name, x, history=history)
+def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any | Proxy:
+    if x is None:
+        return AnyProxy(None, name=name, history=history)
+    if type(x) is slice:
+        return AnyProxy(x, name=name, history=history)
+    if x is ...:
+        return AnyProxy(x, name=name, history=history)
+
+    if isinstance(x, torch.Tensor):
+        return tensorproxy(x, name=name, history=history)
 
     if isinstance(x, str):
         return StringProxy(x, name=name, history=history)
 
     if isinstance(x, Number):
         if isinstance(x, complex):
-            return ComplexProxy(name=name, value=x)
+            return ComplexProxy(name=name, value=x, history=history)
         if isinstance(x, float):
-            return FloatProxy(name=name, value=x)
+            return FloatProxy(name=name, value=x, history=history)
         if isinstance(x, int):
             return IntegerProxy(name=name, value=x, history=history)
 
         raise NotImplementedError
+
+    if isinstance(x, tuple):
+        return TupleProxy(x, name=name, history=history)
+    if isinstance(x, list):
+        return ListProxy(x, name=name, history=history)
+    if isinstance(x, dict):
+        return DictProxy(x, name=name, history=history)
+
+    if isinstance(x, torch.dtype):
+        return AnyProxy(x, name=name, history=history)
+    if isinstance(x, torch.device):
+        return AnyProxy(x, name=name, history=history)
 
     return x

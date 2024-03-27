@@ -9,7 +9,6 @@ from collections.abc import Sequence
 
 import torch
 import thunder.core.baseutils as baseutils
-from thunder.core.langctx import get_default_langctx
 
 
 class DeviceType(Enum):
@@ -32,7 +31,7 @@ def devicetype_string(devicetype: DeviceType) -> str:
 
 def _parse_device_info(
     string_or_devicetype: str | DeviceType, index: None | int = None, /
-) -> tuple(DeviceType, None | int):
+) -> tuple[DeviceType, None | int]:
     _index = None
 
     if isinstance(string_or_devicetype, str):
@@ -127,11 +126,22 @@ class Device(metaclass=DeviceMeta):
         return self is other
 
 
-def available_devices() -> Sequence[Device]:
-    return get_default_langctx().available_devices()
-
-
 cpu = Device(DeviceType.CPU, None)
+
+
+# Returns a tuple of available devices
+def available_devices() -> tuple[Device]:
+    available_devices = [cpu]
+
+    # Short-circuits if there are no CUDA devices
+    if not torch.cuda.is_available:
+        return available_devices
+
+    # NOTE torch.cuda.is_available, extends with CUDA devices
+    cuda_devices = tuple(Device(DeviceType.CUDA, idx) for idx in range(torch.cuda.device_count()))
+    available_devices.extend(cuda_devices)
+
+    return tuple(available_devices)
 
 
 def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
@@ -158,10 +168,17 @@ def device_from_string(devicestr: str) -> Device:
 
 
 # TODO Maybe allow acquiring a tensor's device this way, too
-def to_device(device_or_string: Device | str) -> Device:
-    baseutils.check_type(device_or_string, (Device, str))
+def to_device(x: None | str | torch.device | Device, /) -> None | Device:
+    if x is None or isinstance(x, Device):
+        return x
 
-    if isinstance(device_or_string, str):
-        return device_from_string(device_or_string)
+    baseutils.check_type(x, (str, torch.device))
+    return device_from_string(str(x))
 
-    return device_or_string
+
+def to_torch_device(x: None | str | torch.device | Device, /) -> None | torch.device:
+    if x is None or isinstance(x, torch.device):
+        return x
+
+    baseutils.check_type(x, (Device, str))
+    return torch.device(str(x))

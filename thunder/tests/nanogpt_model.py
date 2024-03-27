@@ -69,8 +69,8 @@ class CausalSelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         # NOTE: The original Karpathy's script hides bias registration behind a flag
-        # but we don't do that here. We always register bias, because of preprocessing bug:
-        # https://github.com/Lightning-AI/lightning-thunder/issues/605
+        # but we don't do that here. We always register bias due to a now-fixed
+        # bug in thunder.
         # TODO: Move the bias registration to be happening `if not self.flash` once the bug is fixed.
         # if not self.flash:
         # print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
@@ -173,8 +173,8 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        # This behavior is deprecated and will be an error in future versions".
+        # So far this seems to be harmless. TODO investigate
         self.transformer.wte.weight = self.lm_head.weight  # https://paperswithcode.com/method/weight-tying
 
         # init all weights
@@ -236,7 +236,6 @@ class GPT(nn.Module):
             # NOTE: Advanced indexing is not yet supported in Thunder
             # RuntimeError: Advanced indexing currently only supports tensors as sequence elements
             # inference-time mini-optimization: only forward the lm_head on the very last position
-            # See https://github.com/Lightning-AI/lightning-thunder/issues/894
             # logits = self.lm_head(x[:, [-1], :])  # note: using list [-1] to preserve the time dim
             logits = self.lm_head(x)
             loss = None

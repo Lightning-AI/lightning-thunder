@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 import functools
 import os
+import dis
 
 import sys
 import collections.abc
@@ -12,14 +13,18 @@ from numbers import Number
 from typing import Any, Type, Union, Optional, Tuple, List
 from collections.abc import Callable
 from collections.abc import Sequence
-from types import MappingProxyType, ModuleType, CodeType
+from types import MappingProxyType, ModuleType, CodeType, EllipsisType, FunctionType, MethodType
 import re
 import inspect
 
+import torch
+import numpy as np
+
+
 #
-# Common utils importable by any other file
+# Common utilities importable by any other file
 #
-# TODO: make all of these callable through utils (the idea is that this can be imported even if utils cannot)
+
 
 # Python 3.10 introduces a new dataclass parameter, `slots`, which we'd like to use
 # by default. However, we still want to support Python 3.9, so we need to
@@ -120,17 +125,25 @@ def check_types(xs: Sequence[Any], types: type | Sequence[type]):
         )
 
 
+def check_valid_length(length: int):
+    """Validates that an object represents a valid dimension length."""
+
+    check_type(length, int)
+    check(length >= 0, lambda: f"Found invalid length {length}!")
+
+
+def check_valid_shape(shape: tuple[int, ...] | list[int]):
+    """Validates that a sequence represents a valid shape."""
+
+    check_type(shape, (tuple, list))
+
+    for l in shape:
+        check_valid_length(l)
+
+
 #
 # Functions related to Python object queries and manipulation
 #
-
-
-# TODO Review these imports -- not a big deal since we depend on both
-#   But if we want to be extensible in the future we probably need to use langctx_for here
-#   Which means that this function needs to move to codeutils (probably fine) or
-#   this needs to take a dependency on langctx.py (probably not great)
-import torch
-import numpy as np
 
 
 # A somewhat hacky way to check if an object is a collection but not a string or
@@ -150,27 +163,6 @@ def sequencify(x: Any) -> Sequence:
 
 def get_module(name: str) -> Any:
     return sys.modules[name]
-
-
-#
-# Functions related to common checks
-#
-
-
-def check_valid_length(length: int):
-    """Validates that an object represents a valid dimension length."""
-
-    check_type(length, int)
-    check(length >= 0, lambda: f"Found invalid length {length}!")
-
-
-def check_valid_shape(shape: tuple[int, ...] | list[int]):
-    """Validates that a sequence represents a valid shape."""
-
-    check_type(shape, (tuple, list))
-
-    for l in shape:
-        check_valid_length(l)
 
 
 #
@@ -194,6 +186,104 @@ def extract_callable_name(fn: Callable | CodeType) -> str:
         return f"<callable of type {type(fn).__name__}>"
 
 
+# Function objects have a lot of stuff in them, that may not be relevant when we
+# just want to preview bytecode. Here, we make a list of the things we don't need to see.
+fnprint_exclude_attrs = {
+    "__class__",
+    "__doc__",
+    "co_code",
+    "co_lnotab",
+    "co_name",
+    "co_firstlineno",
+    "co_filename",
+    "co_kwonlyargcount",
+    "co_stacksize",
+    "co_flags",
+    "co_nlocals",
+    "co_linetable",
+}
+
+
+# View the bytecode and code object of a function or code object and any nested functions.
+# This is meant to be useful for figuring out what's going on in a function.
+# Example:
+#     @fnprint
+#     def foo(a, b):
+#         return a + b
+def fnprint(fn: FunctionType | MethodType | CodeType, first=True) -> Callable:
+    if isinstance(fn, FunctionType):
+        x = fn.__code__
+    elif isinstance(fn, MethodType):
+        x = fn.__func__.__code__  # type: ignore
+    else:
+        x = fn
+
+    if first:
+        try:
+            source = inspect.getsource(x)
+        except:
+            source = "Source could not be found."
+    else:
+        source = f"SUBFUNCTION {x.co_name}:"
+
+    print(source)
+    for k in dir(x):
+        v = getattr(x, k)
+        if hasattr(v, "__call__"):
+            continue
+        if k in fnprint_exclude_attrs:
+            continue
+        print(f"{k}: {v}")
+
+    print("co_code:")
+    dis.dis(x, depth=0)
+    print()
+
+    # Recurse for nested functions
+    for f in x.co_consts:
+        if f.__class__ == x.__class__:
+            fnprint(f, False)
+            print()
+
+    if first:
+        print("=" * 50)
+        print()
+
+    def error_fn(*args, **kwargs):
+        raise ValueError("A code object was passed to fnprint(). Cannot return a callable of it.")
+
+    return fn if isinstance(fn, Callable) else error_fn
+
+
+def _print_float_number(f: float) -> str:
+    if f != f:
+        return "float('NaN')"
+
+    if f == float("inf"):
+        return "float('inf')"
+
+    if f == -float("inf"):
+        return "-float('inf')"
+
+    return str(f)
+
+
+def _print_complex_number(c: complex) -> str:
+    real_str: str = _print_float_number(c.real)
+    imag_str: str = _print_float_number(c.imag)
+
+    return f"complex({real_str}, {imag_str})"
+
+
+def print_number(n: Number) -> str:
+    if isinstance(n, complex):
+        return _print_complex_number(n)
+    if isinstance(n, float):
+        return _print_float_number(n)
+
+    return str(n)
+
+
 #
 # Functions related to printing code
 #
@@ -205,37 +295,139 @@ def indent(level):
     return f"{tab * level}"
 
 
+_torch_dtype_to_str_map = {
+    torch.bool: "torch.bool",
+    torch.uint8: "torch.uint8",
+    torch.int8: "torch.int8",
+    torch.int16: "torch.int16",
+    torch.int32: "torch.int32",
+    torch.int64: "torch.int64",
+    torch.bfloat16: "torch.bfloat16",
+    torch.float16: "torch.float16",
+    torch.float32: "torch.float32",
+    torch.float64: "torch.float64",
+    torch.complex32: "torch.complex32",
+    torch.complex64: "torch.complex64",
+    torch.complex128: "torch.complex128",
+}
+
 _type_to_str_map = {
     bool: "bool",
     int: "int",
     float: "float",
     complex: "complex",
     str: "str",
+    tuple: "tuple",
+    list: "list",
+    dict: "dict",
+    slice: "slice",
+    EllipsisType: "ellipsis",
+    torch.Size: "torch.Size",
+    torch.strided: "torch.strided",
+    torch.device: "torch.device",
+    torch.dtype: "torch.dtype",
 }
 
 
-def is_printable_type(typ: type) -> bool:
-    return typ in _type_to_str_map
+def is_base_printable_type(typ: type, /) -> bool:
+    try:
+        return typ in _type_to_str_map
+    except:
+        return False
+
+
+def print_base_type(typ: type, /) -> str:
+    return _type_to_str_map[typ]
 
 
 # TODO Document this function and ensure it's used consistently
 # TODO Add more basic Python types
-def print_type(typ: type, with_quotes: bool = True) -> str:
+def print_type(typ: type, /, *, with_quotes: bool = True) -> str:
     # Special cases basic Python types
+    s: str
+    if is_base_printable_type(typ):
+        s = print_base_type(typ)
 
-    if typ in _type_to_str_map:
-        return _type_to_str_map[typ]
+        if with_quotes:
+            return f"'{s}'"
+        return s
 
+    # NOTE not is_base_printable_type(typ)
     # Handles the general case of where types are printed like
     #   <class 'float'>
     #   Does this by capturing the name in quotes with a regex
     s = str(typ)
     result = re.search(".+'(.+)'.*", s)
+
     if with_quotes:
         return f"'{result.group(1)}'"
 
-    s = result.group(1).replace(".", "_")
-    return s
+    return result.group(1).replace(".", "_")
+
+
+_printable_literals = {
+    None: "None",
+    Ellipsis: "...",
+    torch.strided: "torch.strided",
+}
+
+_printable_value_types = {
+    str: lambda s: f'"{s}"',
+    torch.device: lambda d: f'torch.device("{str(d)}")',
+    torch.dtype: lambda d: _torch_dtype_to_str_map[d],
+    bool: lambda b: str(b),
+    int: lambda b: str(b),
+    float: _print_float_number,
+    complex: _print_complex_number,
+    slice: lambda slc: str(slc),
+}
+
+
+def is_base_printable_literal(x: Any, /) -> bool:
+    try:
+        return x in _printable_literals
+    except:
+        return False
+
+
+def is_base_printable_value(x: Any, /) -> bool:
+    return type(x) in _printable_value_types
+
+
+# True if the object can be printed by print_base_printable; False o.w.
+def is_base_printable(x: Any, /) -> bool:
+    if isinstance(x, ProxyInterface):
+        return True
+
+    if is_base_printable_type(x):
+        return True
+
+    if is_base_printable_literal(x):
+        return True
+
+    if is_base_printable_value(x):
+        return True
+
+    return False
+
+
+# Returns a string representing the value. Throws a ValueError if the object
+#   cannot be converted to a string.
+def print_base_printable(x: Any, /) -> str:
+    if isinstance(x, ProxyInterface):
+        return x.name
+
+    if is_base_printable_type(x):
+        return print_base_type(x)
+
+    if is_base_printable_literal(x):
+        return _printable_literals[x]
+
+    fn: None | Callable = _printable_value_types.get(type(x), None)
+    if fn is not None:
+        return fn(x)
+
+    raise ValueError(f"print_base_printable was called with type {type(x)} that it doesn't know how to print")
 
 
 #
@@ -269,20 +461,8 @@ def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict
 
 
 #
-# Other utility functions without dependencies on the rest of the codebase
+# Functions related to printing with colors
 #
-
-
-class TermColors(Enum):
-    BLACK = "\033[90m"
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    MAGENTA = "\033[95m"
-    CYAN = "\033[96m"
-    WHITE = "\033[97m"
-    RESET = "\033[0m"
 
 
 def run_once(f: Callable[[], Any]) -> Callable[[], Any]:
@@ -325,6 +505,18 @@ def warn_term_variable_once() -> None:
 def init_windows_terminal() -> None:
     """Initializes the Windows terminal to support ANSI colors by calling the command processor."""
     os.system("")
+
+
+class TermColors(Enum):
+    BLACK = "\033[30m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+    RESET = "\033[0m"
 
 
 @functools.cache

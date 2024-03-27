@@ -4,17 +4,24 @@ from enum import Enum, auto
 from collections import deque, defaultdict
 from contextlib import contextmanager
 import time
+import warnings
 from collections.abc import Hashable, Sequence
 from functools import wraps
 import os
 from io import StringIO
 
-
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    resolve_cache_option,
+    SHARP_EDGES_OPTIONS,
+    resolve_sharp_edges_option,
+)
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.core.compile_data import compile_data_and_stats
-from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx, get_langctx
+import thunder.core.langctxs as langctxs
+from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
 from thunder.core.codeutils import get_siginfo
 from thunder.core.trace import (
     TraceCtx,
@@ -31,71 +38,10 @@ from thunder.extend import Executor, get_default_executors, get_always_executors
 import thunder.executors as executors
 from thunder.executors.torch_autograd import thunder_backward
 from thunder.core.transforms import autocast
+from thunder.core.dtypes import to_dtype
 
 import torch as torch
 import numpy as np
-
-#
-# Compilation options
-#
-
-# Sharp edges options
-# A "sharp edge" is part of the original program which may not be captured
-#   in the generated thunder program.
-# ALLOW means that sharp edges are unchecked. (Sharp edges are allowed.)
-# WARN means that when a sharp edge is identified a warning is thrown.
-# ERROR means that when a sharp edge is identified an error is thrown.
-
-
-class SHARP_EDGES_OPTIONS(Enum):
-    ALLOW = auto()
-    WARN = auto()
-    ERROR = auto()
-
-
-_str_to_sharp_edges_options_map: dict[str, SHARP_EDGES_OPTIONS] = {
-    "allow": SHARP_EDGES_OPTIONS.ALLOW,
-    "warn": SHARP_EDGES_OPTIONS.WARN,
-    "error": SHARP_EDGES_OPTIONS.ERROR,
-}
-
-
-def _str_to_sharp_edges_option(s: str, /) -> SHARP_EDGES_OPTIONS:
-    sharp_edges_option: None | SHARP_EDGES_OPTIONS = _str_to_sharp_edges_options_map.get(s.lower(), None)
-
-    if sharp_edges_option is None:
-        raise ValueError(f"Unknown sharp edges option {s}. Allowed modes are 'allow', 'warn', and 'error'.")
-
-    return sharp_edges_option
-
-
-# Cache options
-# TODO GTC Document the options (like above)
-
-
-class CACHE_OPTIONS(Enum):
-    NO_CACHING = auto()
-    ASSUME_SAME_INPUTS = auto()
-    DYNAMIC_STRIDES = auto()
-
-
-_string_to_cache_option_map = {
-    "no caching": CACHE_OPTIONS.NO_CACHING,
-    "assume same inputs": CACHE_OPTIONS.ASSUME_SAME_INPUTS,
-    "dynamic strides": CACHE_OPTIONS.DYNAMIC_STRIDES,
-}
-
-
-def _string_to_cache_option(s: str, /) -> CACHE_OPTIONS:
-    cache_option: None | CACHE_OPTIONS = _string_to_cache_option_map.get(s.lower(), None)
-
-    if cache_option is None:
-        raise ValueError(
-            f"Unknown cache option {s}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
-        )
-
-    return cache_option
-
 
 #
 # Datastructures for compiled functions
@@ -103,19 +49,20 @@ def _string_to_cache_option(s: str, /) -> CACHE_OPTIONS:
 
 
 # Holds statistics and caches for a compiled function
+# TODO RC1 Update last_executed to last_computation
+# TODO RC1 Review how autograd traces are presented
 class CompileStats:
     def __init__(self):
         # Callables and traces
         self.last_executed = None
         self.last_traces = None
+        self.last_prologue = None
+        self.last_prologue_traces = None
         self.last_interpreted_instructions = None
         self.last_interpreted_history = None
-        self.last_prologue = None
 
         # torch.autograd.Function specific data
-        self.primal_trace = None
-        self.forward_last_traces = None
-        self.backward_last_traces = None
+        self.last_backward_traces = None
 
         # Timing stats
         self.last_trace_host_start: int = -1
@@ -127,6 +74,15 @@ class CompileStats:
         self.last_trace_host_execution_start: int = -1
         self.last_trace_host_execution_stop: int = -1
 
+        self.last_prologue_transformation_start: int = -1
+        self.last_prologue_transformation_stop: int = -1
+        self.last_prologue_execution_start: int = -1
+        self.last_prologue_execution_stop: int = -1
+        self.last_computation_transformation_start: int = -1
+        self.last_computation_transformation_stop: int = -1
+        self.last_computation_execution_start: int = -1
+        self.last_computation_execution_stop: int = -1
+
         # Cache stats
         self.cache = {}
         self.interpreter_cache: list = []
@@ -137,53 +93,58 @@ class CompileStats:
         # Compiler option stats
         self.last_compile_reasons: dict = defaultdict(list)
 
+    def _time_template(self, start: int, stop: int, desc: str, /) -> int:
+        if start < 0 or stop < 0 or stop < start:
+            if start == -1 and stop == -1:
+                raise AssertionError(f"Querying for {desc} time, but it seems that the function hasn't been called")
+            raise AssertionError(f"The {desc} times {start=} and {stop=} were not recorded correctly")
+        return stop - start
 
-import thunder.core.script.frontend as script_frontend
-import thunder.core.script.instrumentation as script_instrumentation
-import thunder.core.script.passes as passes
-import thunder.core.script.python_ir as python_ir
+    def last_cache_lookup_time(self, /) -> int:
+        start: int = self.last_trace_cache_start
+        stop: int = self.last_trace_cache_stop
+        return self._time_template(start, stop, "cache lookup")
 
+    def last_trace_construction_time(self, /) -> int:
+        start: int = self.last_trace_host_start
+        stop: int = self.last_trace_host_stop
+        return self._time_template(start, stop, "trace construction")
 
-# Preprocesses function
-# Currently tries to map torch.foo lookups to thunder.torch.foo lookups
-@script_instrumentation.record
-def preprocess(fn, is_module):
-    gr = script_frontend.acquire_method(fn.forward if is_module else fn)
-    passes.unroll_for_loops_and_inline_modules(gr)
-    if is_module:
-        (
-            additional_param_names,
-            additional_param_values,
-            additional_return_names,
-        ) = passes.module_to_function(gr)
-    passes.strongly_inline_functions(gr)
-    passes.torch_to_thunder(gr)
+    def last_prologue_transformation_time(self, /) -> int:
+        start: int = self.last_prologue_transformation_start
+        stop: int = self.last_prologue_transformation_stop
+        return self._time_template(start, stop, "prologue construction")
 
-    thunder_fn = python_ir.generate_function(gr)
-    if is_module:
-        thunder_fn._additional_param_names = additional_param_names
-        thunder_fn._additional_param_values = additional_param_values
-        thunder_fn._additional_return_names = additional_return_names
-    else:
-        thunder_fn._additional_param_names = None
-        thunder_fn._additional_param_values = None
-        thunder_fn._additional_return_names = None
+    def last_prologue_execution_time(self, /) -> int:
+        start: int = self.last_prologue_execution_start
+        stop: int = self.last_prologue_execution_stop
+        return self._time_template(start, stop, "prologue execution")
 
-    return thunder_fn
+    def last_computation_transformation_time(self, /) -> int:
+        start: int = self.last_computation_transformation_start
+        stop: int = self.last_computation_transformation_stop
+        return self._time_template(start, stop, "computation transformation")
+
+    def last_computation_execution_time(self, /) -> int:
+        start: int = self.last_computation_execution_start
+        stop: int = self.last_computation_execution_stop
+        return self._time_template(start, stop, "computation execution")
 
 
 # A class that holds data about the compiled object, including statistics about how it's been called
 # TODO Better document the module-related data the preprocessing harvests,
 #   like additional_param_names
-# TODO GTC Rename this to CompileOptions
+# TODO RC1 Rename this to CompileOptions
 class CompileData:
     def __init__(
         self,
         *,
         fn: Callable,
-        langctx: None | Any = None,
+        langctx: None | LanguageContext = None,
         executors_list: None | tuple[Executor, ...] = None,
         cache_option: None | str | CACHE_OPTIONS = None,
+        sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
+        using_jit: bool = False,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
@@ -192,21 +153,23 @@ class CompileData:
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
+        get_computation_and_inputs: Callable | None = None,
+        executor_lookasides: dict[Callable, Callable] | None = None,
     ):
-        #
+        # Records whether we're using the thunder.jit() entrypoint or not
+        #   The thunder.jit() entrypoint introduces important architectural updates,
+        #   but some components are still designed to work with the older entrypoint
+        #   and are being temporarily maintained to facilitate their development.
+        self.using_jit = using_jit
+
+        # runs prologues to get the compute/backward/epilogue function and inputs
+        self.get_computation_and_inputs = get_computation_and_inputs
+
+        # lookasides provided by the executors
+        self.executor_lookasides = executor_lookasides
+
         # Resolves cache option
-        #
-
-        if cache_option is None:
-            cache_option = CACHE_OPTIONS.DYNAMIC_STRIDES
-        if isinstance(cache_option, str):
-            cache_option = _string_to_cache_option(cache_option)
-        if not isinstance(cache_option, CACHE_OPTIONS):
-            raise ValueError(
-                f"Unknown cache option {cache_option}. Allowed options are 'no caching', 'assume same inputs', and 'dynamic strides'."
-            )
-
-        self.cache_option: CACHE_OPTIONS = cache_option
+        self.cache_option = resolve_cache_option(cache_option)
 
         #
         # Gathers additional metadata
@@ -214,10 +177,19 @@ class CompileData:
 
         # Constructs executors list
         # NOTE The executors list is fixed at compile time
+        always_executors: tuple[Executor] = get_always_executors()
         if executors_list is None:
-            self.executors_list = tuple(get_default_executors() + get_always_executors())
+            self.executors_list = get_default_executors() + always_executors
         else:
-            self.executors_list = tuple(executors_list) + tuple(get_always_executors())
+            # Validates executors list
+            for ex in executors_list:
+                if not isinstance(ex, Executor):
+                    raise ValueError(f"{ex} was not an executor")
+
+            self.executors_list = tuple(executors_list)
+            # Adds always executors (if not present)
+            if self.executors_list[-len(always_executors) :] != always_executors:
+                self.executors_list = self.executors_list + always_executors
 
         # Validates executors list
         for ex in self.executors_list:
@@ -225,8 +197,17 @@ class CompileData:
                 ex, Executor
             ), f"Expected all elements of the executors list to be executors, but found {ex}"
 
+        # Resolves language context (defaulting to the torch language)
+        self.langctx = langctx if langctx is not None else resolve_language(Languages.TORCH)
+        if not isinstance(self.langctx, LanguageContext):
+            raise ValueError(
+                f"Attempting to construct a CompileData object with an invalid language context type {type(self.langctx)}"
+            )
+
+        # Resolves sharp edges option
+        self.sharp_edges = resolve_sharp_edges_option(sharp_edges)
+
         self.fn = fn
-        self.langctx = langctx
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
@@ -253,17 +234,9 @@ class CompileData:
         self.num_constant_args = 0
 
         self._processed_function: Callable
-        if disable_preprocessing:
-            self._processed_function = fn
-        else:
-            self._processed_function = preprocess(fn, is_module=self.is_module)
 
-            # TODO Revisit assuming parameters are const
-            if self.is_module:
-                self.additional_param_names = self.processed_function._additional_param_names
-                self.additional_param_values = self.processed_function._additional_param_values
-                self.additional_return_names = self.processed_function._additional_return_names
-                self.num_constant_args = len(self.additional_param_values)
+        assert disable_preprocessing, "please use thunder.jit if you need preprocessing"
+        self._processed_function = fn
 
     # Disallows overwriting processed_function
     @property
@@ -275,7 +248,7 @@ class CompileData:
 def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool):
     tracectx.unpacking()
 
-    # Translates tensors, arrays, and dtypes to lightning.compile types
+    # Translates tensors, arrays, and dtypes to thunder.jit types
     # TODO Translate NumPy dtypes
     def translate(x: Any, *, name: str | None = None) -> Any:
         # NOTE Unpacking proxies
@@ -296,7 +269,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
                 return x
             return x.replace_name(name)
         if isinstance(x, torch.dtype):
-            return ltorch.to_thunder_dtype(x)
+            return to_dtype(x)
         if is_collection(x):
             return tree_map(translate, x)
 
@@ -359,101 +332,6 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
     return proxyargs, proxykwargs
 
 
-class ThunderOptimizedModule(torch.nn.Module):  # TOM
-    # todo: subclass nn.Module or forward things like .state_dict() to the
-    #       model
-    def __init__(self, model, fn, tfn, additional_param_names, additional_param_values, additional_return_names):
-        super().__init__()
-        self._model = model
-        self._forward_fn = fn
-        self._tfn = tfn
-
-        # Note [DistributedDataParallel and ddp_type]
-        # If model was wrapped with thunder.distributed.ddp it would have a
-        # .use_ddp attribute set to True and all parameters would be already
-        # broadcasted to all other processes. So that our tracing is aware of
-        # this we need to mark the ddp_type of model's parameters as
-        # thunder.proxies.DDPType.REPLICATED
-        if getattr(model, "use_ddp", False):
-            for v in additional_param_values:
-                v.ddp_type = DDPType.REPLICATED
-
-        # If model was wrapped with thunder.distributed.fsdp it would have a
-        # .use_fsdp attribute set to True and all parameters would be already
-        # sharded across all other processes. So that our tracing is aware of
-        # this we need to mark the ddp_type of model's parameters as
-        # thunder.proxies.DDPType.FULLY_SHARDED
-        if getattr(model, "use_fsdp", False):
-            for v in additional_param_values:
-                v.ddp_type = DDPType.FULLY_SHARDED
-
-        self._additional_param_values = additional_param_values
-        self._additional_param_names = additional_param_names
-        self._additional_return_names = additional_return_names
-        d = {k: i for i, k in enumerate(additional_param_names)}
-        self._additional_return_param_idxes = [d[k] for k in additional_return_names]
-
-    def __call__(self, *args, **kwargs):
-        all_args = (*self._additional_param_values, *args)
-        res = self._forward_fn(*all_args, **kwargs)
-        if self._additional_return_names:
-            res, *additional_returns = res
-            assert len(self._additional_return_names) == len(
-                additional_returns
-            ), f"Number of expected additional return args {len(self._additional_return_names)=} does not match the actual number {len(additional_returns)=}"
-            for k, v, idx in zip(
-                self._additional_return_names, additional_returns, self._additional_return_param_idxes
-            ):
-                m = self._model
-                parts = k.split(".")
-                for p in parts[:-1]:
-                    m = getattr(m, p)
-                setattr(m, parts[-1], v)
-                self._additional_param_values[idx] = v
-        return res
-
-    @contextmanager
-    def no_sync(self):
-        """Context manager to disable gradient synchronization in data parallel mode.
-
-        This context manager is intended to be used in conjunction with
-        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
-        synchronization in the backward pass. It will not have any effect when
-        used with other modules.
-
-        .. note::
-
-            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
-            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
-            In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \\left( \\sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
-
-        """
-        from torch.distributed import distributed_c10d as c10d
-
-        from thunder.distributed import set_skip_data_parallel_grad_sync
-        from thunder.distributed import reset_skip_data_parallel_grad_sync
-
-        token = set_skip_data_parallel_grad_sync(True)
-        try:
-            yield
-        finally:
-            reset_skip_data_parallel_grad_sync(token)
-
-            params_with_grad = list(filter(lambda p: p.grad is not None, self.parameters()))
-            grads = [p.grad for p in params_with_grad]
-            process_group = self._lc_cd.process_group_for_ddp
-            torch._foreach_div_(grads, process_group.size())
-            with c10d._coalescing_manager(
-                group=process_group,
-                async_ops=True,
-            ) as cm:
-                for p in params_with_grad:
-                    c10d.all_reduce(p.grad)
-            cm.wait()
-
-
 #
 # Caching objects and functions
 #
@@ -462,8 +340,8 @@ class ThunderOptimizedModule(torch.nn.Module):  # TOM
 
 # TODO Update cacheable types
 def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
-    if isinstance(x, torch.Tensor):
-        return True, (torch.Tensor, x.shape, x.device, x.dtype, x.requires_grad)
+    if isinstance(x, (torch.Tensor, TensorProxy)):
+        return True, (type(x), x.shape, x.device, x.dtype, x.requires_grad)
 
     # TODO Add NumPy ndarray support
     if isinstance(x, np.ndarray):
@@ -594,8 +472,9 @@ def cache_get(
 # If include_return_statement is True then the trace will terminate with a RETURN operation
 # If include_return_statement is False then the trace will end without an explicit RETURN
 # TODO Consider modeling additional calls to trace()
-# TODO Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
+# TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
+from thunder.core.interpreter import make_opaque
 
 
 def trace(
@@ -606,14 +485,17 @@ def trace(
     use_dce: bool = True,
     insert_ddp_syncs: bool = False,
 ) -> Callable:
+    @make_opaque
     def _trace(
         fn,
         *args,
         **kwargs,
     ) -> Any | TraceCtx:
-        langctx_ = (
-            compile_data.langctx if compile_data is not None and compile_data.langctx is not None else get_langctx()
-        )
+        # Resolves language context
+        # TODO RC1 Don't require the isinstance check here -- compile data should do this (and make langctx a property)
+        langctx_: LanguageContext = resolve_language(Languages.TORCH)
+        if compile_data is not None and isinstance(compile_data.langctx, LanguageContext):
+            langctx_ = compile_data.langctx
 
         try:
             langctx_tok = set_langctx(langctx_)
@@ -733,12 +615,13 @@ def _execute_trace(
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
 
-    extraces = transform_for_execution(
-        trc,
-        executors_list=compile_data.executors_list,
-        only_execute_prims=compile_data.only_execute_prims,
-        use_rematerialization=compile_data.use_rematerialization,
-    )
+    with langctxs.langctx(compile_data.langctx):
+        extraces = transform_for_execution(
+            trc,
+            executors_list=compile_data.executors_list,
+            only_execute_prims=compile_data.only_execute_prims,
+            use_rematerialization=compile_data.use_rematerialization,
+        )
     extrace = extraces[-1]
 
     # Applies post-optimization transforms
@@ -749,11 +632,11 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    # TODO GTC Remove this option (by modeling torch.compile as another executor)
+    # TODO RC1 Remove this option (by using the torch.compile executor)
     if compile_data.use_torch_compile:
         c = torch.compile(c)
 
-    # TODO GTC Mark this option as experimental
+    # TODO RC1 Mark this option as experimental
     if compile_data.use_cudagraphs:
         c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 
@@ -768,11 +651,10 @@ def _execute_trace(
 # TODO review functions which compute large objects unrelated to tensors and how
 #   they're handled
 # TODO can the language context be detected from the inputs?
-# TODO  https://github.com/Lightning-AI/lightning-thunder/issues/316
+# TODO:
 #   Today all tensor outputs will be torch tensors, even if the input was NumPy arrays
 #   provided in the NumPy language ctx -- what should the outputs be?  Should we provide
 #   a helper to convert torch tensors to NumPy arrays on output?
-# TODO Provide an option to not preprocess (for debugging)
 
 
 def _create_callable(
@@ -797,8 +679,8 @@ def _create_callable(
                     "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
                 )
             is_autocast_enabled = True
-            autocast_gpu_dtype = ltorch.to_thunder_dtype(torch.get_autocast_gpu_dtype())
-            autocast_cpu_dtype = ltorch.to_thunder_dtype(torch.get_autocast_cpu_dtype())
+            autocast_gpu_dtype = to_dtype(torch.get_autocast_gpu_dtype())
+            autocast_cpu_dtype = to_dtype(torch.get_autocast_cpu_dtype())
             autocast_key = _make_autocast_cache_key(
                 torch.is_autocast_enabled(), torch.is_autocast_cpu_enabled(), autocast_gpu_dtype, autocast_cpu_dtype
             )
@@ -816,7 +698,7 @@ def _create_callable(
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
         cs.last_trace_cache_start = time.time_ns()
-        if cd.cache_option is CACHE_OPTIONS.ASSUME_SAME_INPUTS and cs.last_executed is not None:
+        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT and cs.last_executed is not None:
             # TODO Update _last_traces?
             # Updates statistics before early termination
             cs.cache_hits += 1
@@ -828,7 +710,7 @@ def _create_callable(
             cs.last_trace_host_execution_stop = time.time_ns()
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
-        if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
+        if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
             c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key, distributed_key)
             if c is not None:
                 # Updates statistics before early termination
@@ -855,6 +737,9 @@ def _create_callable(
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
         with compile_data_and_stats(cd, cs):
+            traces: list[TraceCtx] = []
+            cs.last_traces = traces
+            cs.last_backward_traces = []
             # Determines whether to use autograd.Function or not
             # autograd.Function (which supports calling .backward() in PyTorch) is used when:
             #   1) The grad() transform is not applied
@@ -864,25 +749,15 @@ def _create_callable(
                 tensor_cls = (torch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
                 if not cd.disable_torch_autograd_support and requires_grad:
-                    compile_config = {
-                        "langctx": cd.langctx,
-                        "executors_list": cd.executors_list,
-                        "only_execute_prims": cd.only_execute_prims,
-                        "cache_option": cd.cache_option,
-                        "use_rematerialization": cd.use_rematerialization,
-                        "use_cudagraphs": cd.use_cudagraphs,
-                        **cd.compile_options,
-                    }
-
                     # thunder_backward may recursively call compile and wraps the result in a
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
                     cs.last_trace_host_execution_start = time.time_ns()
-                    c = thunder_backward(compile_data=cd, compile_stats=cs, **compile_config)(processed_function)
+                    c = thunder_backward(compile_data=cd, compile_stats=cs)(processed_function)
                     result = c(*args, **kwargs)
                     cs.last_trace_host_execution_stop = time.time_ns()
                     cs.last_executed = c
-                    if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
+                    if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
                         cache_put(
                             cs.cache,
                             c,
@@ -895,7 +770,7 @@ def _create_callable(
                     cs.last_trace_host_stop = time.time_ns()
                     return result
 
-            # TODO Revisit compile() behavior when hit in a trace ctx
+            # TODO Revisit jit() behavior when hit in a trace ctx
             #   This will inline the invocation of compile into the current
             #   trace (UNLESS there was a cache hit, per above)
             #   This interaction between the cache and tracing seems odd
@@ -923,7 +798,7 @@ def _create_callable(
 
             # Starts recording a sequence of traces (this is not inlined)
             trc: TraceCtx = trc_or_result
-            traces: list[TraceCtx] = [trc]
+            traces.append(trc)
 
             # Applies transforms
             for transform in transforms:
@@ -949,7 +824,7 @@ def _create_callable(
             cs.last_executed = c
 
             # (Possibly) Updates the cache
-            if cd.cache_option is CACHE_OPTIONS.DYNAMIC_STRIDES:
+            if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
                 cache_put(
                     cs.cache,
                     c,
@@ -962,16 +837,6 @@ def _create_callable(
 
             cs.last_trace_host_stop = time.time_ns()
             return result
-
-    if cd.is_module:
-        _fn = ThunderOptimizedModule(
-            cd.fn,
-            _fn,
-            cd.processed_function,
-            cd.additional_param_names,
-            cd.additional_param_values,
-            cd.additional_return_names,
-        )
 
     # NOTE is_module is False
     _fn._pfn = cd.processed_function

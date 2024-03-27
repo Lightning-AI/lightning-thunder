@@ -6,26 +6,41 @@
 Welcome to ⚡ Lightning Thunder
 ###############################
 
-``lightning.compile``, codenamed *thunder*, is a deep learning compiler for PyTorch. It makes PyTorch programs faster on single accelerators or in distributed settings.
+Lightning Thunder is a deep learning compiler for PyTorch. It makes PyTorch programs faster both on single accelerators or in distributed settings.
 
-..
-   which intercepts natively written PyTorch programs, translates them into a program representation, applies optimizations, and executes the program. Intercepting the PyTorch program allows thunder to apply optimizations that the PyTorch otherwise can’t apply and would be difficult for users and developers to implement in a network by hand resulting in faster training.
+The main goal for Lightning Thunder is to allow optimizing user programs in the most extensible and expressive way possible.
 
-*thunder* is intended to be fast, expressive, extensible, and easy to inspect.
-It's written entirely in Python, and it runs PyTorch modules and functions using PyTorch plus fast executors like nvFuser, cuDNN Fusion Python API, Apex, and custom kernels (including those written with OpenAI Triton).
+**NOTE: Lightning Thunder is alpha and not ready for production runs.** Feel free to get involved, expect a few bumps along the way.
 
-Modules and functions compiled with *thunder* also interoperate with vanilla PyTorch and support PyTorch's autograd.
+What's in the box
+-----------------
 
-*thunder* will be released publicly as a part of Lightning when it is in Beta.
+Given a program, Thunder can generate an optimized program that:
 
+- computes its forward and backward passes
+- coalesces operations into efficient fusion regions
+- dispatches computations to optimized kernels
+- distributes computations optimally across machines
 
-Install Thunder
----------------
+To do so, Thunder ships with:
 
-If you qualify as an NVIDIA employee, hit the ground running through the :doc:`pre-built container <fundamentals/container>`.
+- a JIT for acquiring Python programs targeting PyTorch and custom operations
+- a multi-level IR to represent them as a trace of a reduced op-set
+- an extensible set of transformations on the trace, such as `grad`, fusions, distributed (like `ddp`, `fsdp`), functional (like `vmap`, `vjp`, `jvp`)
+- a way to dispatch operations to an extensible collection of executors
 
-If not, follow the :doc:`install instructions <fundamentals/installation>`.
+Thunder is written entirely in Python. Even its trace is represented as valid Python at all stages of transformation. This allows unprecedented levels of introspection and extensibility.
 
+Thunder doesn't generate device code. It acquires and transforms user programs so that it's possible to optimally select or generate device code using fast executors like:
+
+- `torch.compile <https://pytorch.org/get-started/pytorch-2.0/>`_
+- `nvFuser <https://github.com/NVIDIA/Fuser>`_
+- `cuDNN <https://developer.nvidia.com/cudnn>`_
+- `Apex <https://github.com/NVIDIA/apex>`_
+- `PyTorch eager <https://github.com/pytorch/pytorch>`_ operations
+- custom kernels, including those written with `OpenAI Triton <https://github.com/openai/triton>`_
+
+Modules and functions compiled with Thunder fully interoperate with vanilla PyTorch and support PyTorch's autograd. Also, Thunder works alongside torch.compile to leverage its state-of-the-art optimizations.
 
 Hello World
 -----------
@@ -38,47 +53,21 @@ Here is a simple example of how *thunder* lets you compile and run PyTorch modul
   def foo(a, b):
     return a + b
 
-  cfoo = thunder.compile(foo)
+  jitted_foo = thunder.jit(foo)
 
   a = torch.full((2, 2), 1)
   b = torch.full((2, 2), 3)
 
-  result = cfoo(a, b)
+  result = jitted_foo(a, b)
 
-  print(f"{result=}")
+  print(result)
 
   # prints
-  # result=tensor(
+  # tensor(
   #  [[4, 4],
   #   [4, 4]])
 
-The compiled function ``cfoo`` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by *thunder* can be used as part of bigger PyTorch programs.
-
-
-FAQ
----
-
-**Does *thunder* have any benchmarks?**
-
-Yes! See ``thunder/benchmarks`` and the ``litgpt-targets.py`` and ``nanogpt-targets.py`` files for how to import and run them.
-
-**How is *thunder* different from ``torch.compile``?**
-
-``torch.compile`` is PyTorch’s native deep learning compiler. There are two principal differences
-between ``torch.compile`` and *thunder*:
-
-1. ``thunder`` is written entirely in Python
-2. ``thunder`` has a multi-level IR that can reduce every operation to HLO-like primitives
-
-These traits make ``thunder`` easy to debug, optimize and extend, enabling developers to quickly target optimized kernels or distributed strategies.
-
-**How is thunder different from JAX?**
-
-JAX is a deep learning compiler designed to work with XLA. There are two principal differences between JAX and thunder:
-
-1. JAX exclusively traces functions, and does not have the equivalent of thunder's preprocessing to convert from PyTorch modules to traceable functions
-2. *thunder* has a multi-level IR that makes it easy to reason about PyTorch operations, their decompositions and execution
-
+The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just like the original function, so modules and functions compiled by Thunder can be used as part of bigger PyTorch programs.
 
 .. toctree::
    :maxdepth: 1
@@ -86,11 +75,9 @@ JAX is a deep learning compiler designed to work with XLA. There are two princip
    :caption: Home
 
    self
-   Get thunder (NVIDIA only) <fundamentals/container>
    Install <fundamentals/installation>
    Hello World <fundamentals/hello_world>
    Using examine <fundamentals/examine>
-   Get Involved <fundamentals/get_involved>
 
 .. toctree::
    :maxdepth: 1
@@ -98,19 +85,21 @@ JAX is a deep learning compiler designed to work with XLA. There are two princip
    :caption: Basic
 
    Overview <basic/overview>
+   Zero to Thunder <notebooks/zero_to_thunder>
    Thunder step by step <basic/inspecting_traces>
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
+   Functional jit <notebooks/functional_jit>
 
 .. toctree::
    :maxdepth: 1
    :name: intermediate
    :caption: Intermediate
 
-   Compile options <intermediate/compile_options>
    Additional executors <intermediate/additional_executors>
    Distributed Data Parallel <intermediate/ddp>
    What's next <intermediate/whats_next>
+   FSDP Under the Hood Tutorial <notebooks/dev_tutorials/fsdp_tutorial>
 
 .. toctree::
    :maxdepth: 1
@@ -119,9 +108,18 @@ JAX is a deep learning compiler designed to work with XLA. There are two princip
 
    Inside thunder <advanced/inside_thunder>
    Extending thunder <advanced/extending>
-   notebooks/adding-custom-operator
-   notebooks/adding-custom-operator-backward
-   notebooks/adding-operator-executor
+   notebooks/adding_custom_operator
+   notebooks/adding_custom_operator_backward
+
+.. toctree::
+   :maxdepth: 1
+   :name: experimental_dev_tutorials
+   :caption: Experimental dev tutorials
+
+   notebooks/dev_tutorials/extend
+
+..
+   TODO RC1: update notebooks
 
 API reference
 =============

@@ -1,18 +1,27 @@
+import os
+from itertools import chain
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import auto, Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from collections.abc import Generator
+from functools import partial
+
 
 import torch
 import torch.distributed as tdist
 
 import thunder.core.utils as utils
+from thunder.core.proxies import DDPType
 
+if TYPE_CHECKING:
+    from torch.distributed import ProcessGroup
 
 __all__ = [
     "ddp",
     "fsdp",
     "FSDPBucketingStrategy",
+    "FSDPType",
 ]
 
 
@@ -50,7 +59,7 @@ def get_skip_data_parallel_grad_sync() -> bool:
 
 
 @contextmanager
-def skip_data_parallel_grad_sync() -> None:
+def skip_data_parallel_grad_sync() -> Generator[Any, Any, Any]:
     """A context manager to skip data parallel grad sync."""
     token = set_skip_data_parallel_grad_sync(True)
     try:
@@ -59,30 +68,44 @@ def skip_data_parallel_grad_sync() -> None:
         reset_skip_data_parallel_grad_sync(token)
 
 
+def _sync_grads(module: torch.nn.Module) -> None:
+    import thunder
+
+    params_with_grad = [p for p in module.parameters() if p.grad is not None]
+    grads = [p.grad for p in params_with_grad]
+    process_group = thunder.compile_data(module).process_group_for_ddp
+    torch._foreach_div_(grads, process_group.size())
+    with tdist.distributed_c10d._coalescing_manager(group=process_group, async_ops=True) as cm:
+        for g in grads:
+            tdist.distributed_c10d.all_reduce(g)
+    cm.wait()
+
+
 # TODO Verify parameters are not partially initialized
 # TODO Handle buffers
 # TODO Improve initial broadcast logic
 # Syncs a module's parameters across multiple processes
-#   broadcast_from, if specified, is the rank to broadcast tensors from
+#   broadcast_from is the rank to broadcast tensors from
 def ddp(
     model: torch.nn.Module,
     *,
-    broadcast_from: int | None = None,
+    broadcast_from: int | None = 0,
     bucket_size_in_mb: float = 25.0,
 ) -> torch.nn.Module:
     """Thunder's Distributed Data Parallel.
 
     This function does two things. One is to broadcast the parameters hosted on the rank specified
     by ``broadcast_from`` to all the other ranks belonging to default process_group. The other is to
-    updates the behavior of backward trace generation and optimization of it so that each gradient
-    gets pre-averaged, i.e., divided by world size, and asynchronously allreduced.
+    update the behavior of backward trace generation and optimization of it so that each gradient
+    gets pre-averaged, i.e., divided by world size, and asynchronously all-reduced.
 
     Args:
-        model: A model before ``thunder.compile`` applied
+        model: A model before ``thunder.jit`` applied
 
     Keyword Args:
-        broadcast_from: The rank of the device hosting the parameters to broadcast. The lowest rank
-            will be used if none specified.
+        broadcast_from: The rank of the device hosting the parameters to broadcast. If None is passed,
+            broadcasting will be skipped. Skipping can be useful for models whose weights have been loaded
+            from a checkpoint. Defaults to 0.
         bucket_size_in_mb: Size of a gradient bucket.
 
 
@@ -135,8 +158,8 @@ def ddp(
             tdist.init_process_group(backend="nccl")
 
             model = MyModel().to(LOCAL_RANK)
-            ddp_model = dist.ddp(model, LOCAL_RANK, broadcast_from=0)
-            compiled = thunder.compile(ddp_model)
+            ddp_model = dist.ddp(model)
+            compiled = thunder.jit(ddp_model)
             optimizer = torch.optim.AdamW(compiled.parameters())
             losses = []
             loss_all_reduce_workers = []
@@ -187,28 +210,37 @@ def ddp(
             param.device.type == devicetype,
             lambda: (
                 "Trying to ddp a model with parameters on devices with different device types, "
-                f"including {devicetype} and {param.device.type}"
+                f"including {devicetype} and {param.device.type} for {name!r}"
             ),
         )
         utils.check(
             deviceindex == param.device.index,
             lambda: (
                 "Trying to ddp a model with parameters on multiple devices, including devices "
-                f"{deviceindex} and {param.device.index}, but currently only models with all their "
+                f"{deviceindex} and {param.device.index} for {name!r}, but currently only models with all their "
                 "parameters on one device are supported"
             ),
         )
 
-    # Identifies which process to broadcast from
-    broadcast_from = broadcast_from if broadcast_from is not None else 0
+    # Note [DistributedDataParallel and ddp_type]
+    # If model was wrapped with thunder.distributed.ddp it would have a
+    # .use_ddp attribute set to True and all parameters would be already
+    # broadcasted to all other processes. So that our tracing is aware of
+    # this we need to mark the ddp_type of model's parameters as
+    # thunder.proxies.DDPType.REPLICATED
+    for p in model.parameters():
+        p.ddp_type = DDPType.REPLICATED
+
+    if broadcast_from is None:
+        return model
 
     # Starts broadcasts
     # TODO Make these broadcast asyncs
     # TODO Perform up to two broadcasts at a time
-    # https://github.com/Lightning-AI/lightning-thunder/issues/727
+    # See issue "Update ddp to use async broadcasts"
     # TODO "Bucket" small tensors together before broadcasting
     with torch.no_grad():
-        for name, param in model.named_parameters():
+        for param in model.parameters():
             tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
 
     return model
@@ -216,11 +248,11 @@ def ddp(
 
 class FSDPType(Enum):
     """
-    This specifies the sharding strategy to be used for FSDP in Thunder.
+    Specifies the sharding strategy to be used for FSDP in Thunder.
 
     Attributes:
-        ZERO2: Similar to torch.distributed.fsdp.ShardingStrategy.SHARD_GRAD_OP
-        ZERO3: Similar to torch.distributed.fsdp.ShardingStrategy.FULL_SHARD
+        ZERO2: Similar to :attr:`torch.distributed.fsdp.ShardingStrategy.SHARD_GRAD_OP`.
+        ZERO3: Similar to :attr:`torch.distributed.fsdp.ShardingStrategy.FULL_SHARD`.
     """
 
     ZERO2 = auto()
@@ -228,14 +260,19 @@ class FSDPType(Enum):
 
 
 class FSDPBucketingStrategy(Enum):
-    """Enum class to specify how we group parameters into a bucket for collective communication in fsdp."""
+    """
+    Specify how we group parameters into a bucket for collective communication in fsdp.
+
+
+    Attributes:
+        NONE: Disables bucketing.
+        LAYER: Creates buckets per layer such as :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
+        BLOCK: Creates buckets per block such as Transformer block.
+    """
 
     NONE = auto()
-    """Disables Bucketing."""
     LAYER = auto()
-    """Creates buckets per layer such as :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`."""
     BLOCK = auto()
-    """Creates buckets per block such as Transformer block."""
 
 
 def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy):
@@ -267,6 +304,7 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
 def fsdp(
     model: torch.nn.Module,
     *,
+    device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
@@ -277,7 +315,7 @@ def fsdp(
     then has rank-``i`` host ``i``-th chunks of them.
     This means the implementation is different from :class:`torch.distributed.fsdp.FullyShardedDataParallel`
     which creates what's called :class:`torch.distributed.fsdp._flat_param.FlatParameter` as of
-    https://github.com/pytorch/pytorch/blob/647f14e70baffa383515c28c2ac219b7084c41c2. PyTorch however
+    https://github.com/pytorch/pytorch/tree/647f14e7. PyTorch however
     seems to be interested in per-parameter sharding as per https://github.com/pytorch/pytorch/issues/114299.
 
     To apply bucketing of collective communications, specify either
@@ -288,10 +326,13 @@ def fsdp(
     :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
 
      Args:
-        model:
+        model: The model to convert.
 
     Keyword Args:
-        broadcast_from:
+        device: The corresponding model shard will be moved to this device. We recommend setting this to ``torch.cuda.current_device()``.
+        broadcast_from: The rank of the device hosting the parameters to broadcast. If None is passed,
+            broadcasting will be skipped (default). Enabling can be useful for models whose weights have been loaded
+            from a checkpoint in a single rank.
         sharding_strategy:
         bucketing_strategy:
 
@@ -300,36 +341,107 @@ def fsdp(
 
     """
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
+    utils.check(
+        tdist.is_available(),
+        lambda: "fsdp requires torch distributed to be available (but it's not)",
+    )
 
-    # We are going to use DDP to broadcast the parameters
-    distributed_params_module = ddp(model, broadcast_from=broadcast_from)
-    distributed_params_module.use_ddp = False
-    distributed_params_module.use_fsdp = True
-    distributed_params_module.sharding_strategy = sharding_strategy
-    distributed_params_module.bucketing_strategy = bucketing_strategy
-    process_group = distributed_params_module.process_group_for_ddp
+    process_group = tdist.distributed_c10d._get_default_group()
+    utils.check(process_group is not None, lambda: "The default process group is None")
+    model.use_fsdp = True
+    model.process_group_for_ddp = process_group
+    model.sharding_strategy = sharding_strategy
+    model.bucketing_strategy = bucketing_strategy
 
-    current_rank = tdist.get_rank(group=process_group)
+    # Shard the parameters
+    _shard_params(model, process_group, device, broadcast_from)
+
+    # See Note [DistributedDataParallel and ddp_type]
+    # If model was wrapped with thunder.distributed.fsdp it would have a
+    # .use_fsdp attribute set to True and all parameters would be already
+    # sharded across all other processes. So that our tracing is aware of
+    # this we need to mark the ddp_type of model's parameters as
+    # thunder.proxies.DDPType.FULLY_SHARDED
+    for p in model.parameters():
+        p.ddp_type = DDPType.FULLY_SHARDED
+
+    return model
+
+
+@torch.no_grad()
+def _shard_params(
+    module: torch.nn.Module, process_group: "ProcessGroup", device: torch.device | None, broadcast_from: int | None
+) -> None:
+    """Shards the parameters on the first dimension."""
+    global_rank = tdist.get_rank(group=process_group)
     world_size = tdist.get_world_size(group=process_group)
+    if device is None:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device("cuda", local_rank)
 
-    # Now we need to shard the parameters
     # We will definitely change the sharding logic in the future
-    for name, param in distributed_params_module.named_parameters():
-        # Note [FSDP Sharding]
-        # Here we shard the parameters on the first
-        # dimension and all internal code will assume that the parameters are
-        # sharded on the first dimension
+    for module_name, submodule in module.named_modules():
+        # Materialize meta-parameters on-device if necessary.
+        # This is done before sharding in case the materialization logic depends on the tensor shape.
+        # The tradeoff is that all of a module's direct parameters need to fit in device.
+        # Each module only initializes its own parameters and not those of its children (recurse=False)
+        if any(t.is_meta for t in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False))):
+            # TODO: we could also support calling a "param_init_fn" argument like PyTorch
+            _materialize(submodule, device)
+        else:
+            # Move leftover params and buffers to device. This is at least required to broadcast.
+            # Cannot `submodule.to(device)` because we don't want it to recurse
+            submodule._apply(partial(torch.Tensor.to, device=device), recurse=False)
 
-        # narrow the param to the current rank on the first dimension
-        utils.check(
-            param.shape[0] % world_size == 0,
-            lambda: (
-                f"Current sharding requires the first dimension of the parameter to be divisible by the world size, "
-                f"but got {param.shape[0]} and {world_size}"
-            ),
+        # Broadcast parameters if requested
+        if broadcast_from is not None:
+            for tensor in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False)):
+                tdist.broadcast(tensor, src=broadcast_from, group=process_group, async_op=False)
+
+        # Note [FSDP Sharding]
+        # All internal code will assume that the parameters are sharded on the first dimension
+        for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
+            _shard_param(param, global_rank, world_size, param_name)
+
+
+def _shard_param(param: torch.Tensor, rank: int, world_size: int, name: str) -> None:
+    utils.check(
+        param.shape[0] % world_size == 0,
+        lambda: (
+            f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+            f" to be divisible by the world size ({world_size})"
+        ),
+    )
+    chunk_size = param.shape[0] // world_size
+    # NOTE This could be a ShardTensor to indicate other parts of the code
+    # that it's sharded and should be treated differently
+    shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+    param.data = shard
+
+
+@torch.no_grad()
+def _unshard_params(module: torch.nn.Module, process_group: "ProcessGroup", cpu_offload: bool = False) -> None:
+    """Unshard a module's parameters.
+
+    This supports CPU offloading of parameters.
+    """
+    from thunder.executors.torchex import _all_gather_prim_impl
+
+    cpu = torch.device("cpu")
+    for param in module.parameters():
+        out = _all_gather_prim_impl(param.data, group=process_group, do_async=0)
+        if cpu_offload:
+            out = out.to(device=cpu)
+        param.data = out
+    # TODO(@carmocca): this should cpu-offload buffers or persistent buffers
+
+
+def _materialize(module: torch.nn.Module, device: torch.device) -> None:
+    """Materialize a module's direct children parameters by calling ``module.reset_parameters()``."""
+    module.to_empty(device=device, recurse=False)
+    if not hasattr(module, "reset_parameters"):
+        raise TypeError(
+            f"Materialization requires that the `{type(module).__name__}.reset_parameters` method is implemented."
+            " This method is used to initialize any children parameters or buffers in this module."
         )
-        chunk_size = param.shape[0] // world_size
-        # NOTE This could be a ShardTensor to indicate other parts of the code
-        # that it's sharded and should be treated differently
-        param.data = param.data.narrow(0, chunk_size * current_rank, chunk_size).clone()
-    return distributed_params_module
+    module.reset_parameters()

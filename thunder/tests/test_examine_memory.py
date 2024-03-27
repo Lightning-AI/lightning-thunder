@@ -63,12 +63,13 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     with runtime_allocated_memory(device):
         cbar(a, b)
 
-    traces = thunder.last_traces(cbar)
-    fwd_extrace = traces[0][-1]
+    fw_traces = thunder.last_traces(cbar)
+    fwd_extrace = fw_traces[-1]
     max_mem_fwd = get_alloc_memory(fwd_extrace)
     assert max_mem_fwd[0] == 144
     assert sum(max_mem_fwd[1].values()) == get_return_memory(fwd_extrace.bound_symbols[-1])  # 144
-    bw_extrace = traces[1][-1]
+    bw_traces = thunder.last_backward_traces(cbar)
+    bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
     assert max_mem_bw[0] == 144
     assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
@@ -130,21 +131,20 @@ def test_nanogpt_block(executor, device, dtype):
 
     config = nanogpt_model.GPTConfig(dropout=0)
     block = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-    cblock = executor.make_callable(block, disable_preprocessing=False)
+    cblock = executor.make_callable(block)
 
     with runtime_allocated_memory(device):
         inp = make((2, config.block_size, config.n_embd))
         result = cblock(inp)
     with runtime_allocated_memory(device):
         result.backward(torch.ones_like(result))
-    traces = thunder.last_traces(cblock)
-    fw_extrace = traces[0][-1]
-    bw_extrace = traces[1][-1]
+    fw_extrace = thunder.last_traces(cblock)[-1]
+    bw_extrace = thunder.last_backward_traces(cblock)[-1]
     fw_alloc_mem = get_alloc_memory(fw_extrace)
     bw_alloc_mem = get_alloc_memory(bw_extrace)
 
     if isinstance(executor, nvFuserTestExecutor):
-        assert fw_alloc_mem[0] == 271621120
+        assert fw_alloc_mem[0] == 267426816
         # t67 is the expand result of ln_2_weight, and they are both return values in trace
         # but for calculation we assume they share memory, so expect to subtract the size of t67
         expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1]) - 4 * 2 * 1024 * 768
@@ -153,7 +153,7 @@ def test_nanogpt_block(executor, device, dtype):
         assert bw_alloc_mem[0] == 361783296
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
     if isinstance(executor, TorchTestExecutor):
-        assert fw_alloc_mem[0] == 367057920
+        assert fw_alloc_mem[0] == 362863616
         # same reason as above, expect to -t38+t37-t65-t67
         expected_return_calculated_mem = (
             get_return_memory(fw_extrace.bound_symbols[-1]) - 23 * 1024 * 1024 - 4 * 2 * 1024 * 768 * 2

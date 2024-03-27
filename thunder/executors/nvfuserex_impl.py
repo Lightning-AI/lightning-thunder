@@ -18,10 +18,19 @@ import thunder.torch as ltorch
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify, unvariableify, Variable, pyval
+from thunder.core.proxies import (
+    NumberProxy,
+    Proxy,
+    TupleProxy,
+    TensorProxy,
+    variableify,
+    unvariableify,
+    Variable,
+    pyval,
+)
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check
+from thunder.core.utils import OrderedSet, check, check_same_dtype
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
 from thunder.core.devices import Device, DeviceType
@@ -197,7 +206,7 @@ def create_fd(
     # NOTE nvFuser's default max length is 1024 operations at the time of this writing
     #   This arbitrarily increases it to 9999
     # TODO Review splititng very large fusions or removing the max length restriction completely
-    #   See https://github.com/Lightning-AI/lightning-thunder/issues/901
+    #   See "Very large nvFuser fusions hit max_length"
     fd = FusionDefinition(max_length=9999)
     with fd:
         # NOTE Adding constants is disabled for the moment in favor of definining them inline
@@ -220,7 +229,7 @@ def create_fd(
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
-                nvdtype = lcdtype_to_nvdtype(ltorch.to_thunder_dtype(dtype))
+                nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
                 if nv_version >= LooseVersion("0.1.3"):
                     nv = fd.define_tensor(
                         shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
@@ -231,8 +240,13 @@ def create_fd(
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
                 else:
                     nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguous=contiguity, dtype=nvdtype)
+            elif isinstance(x, TupleProxy):
+                # TODO: discuss the contract here on baked in number from a tuple
+                # TODO: validate x is a tuple of int
+                utils.check_type(y, type)
+                nv = fd.define_vector(len(x._value))
             elif isinstance(x, Proxy):
-                utils.check(False, lambda: f"Unsupported proxy type {x} in fusion", exception_type=AssertionError)
+                utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
                 nv = x
 
@@ -348,11 +362,26 @@ def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool,
     return compute_tensor_descriptor(t.shape, t.stride())
 
 
-# NOTE Currently assumes that only numbers and tensors are passed in
-# TODO Add check that only numbers and tensors are passed in
 # TODO Inline the get_tensor_descriptor call
-def to_descriptors(args):
-    return tuple(type(arg) if isinstance(arg, Number) else (*get_tensor_descriptor(arg), arg.dtype) for arg in args)
+def to_descriptors(args) -> tuple:
+    def to_descriptor(arg):
+        if isinstance(arg, Number):
+            return type(arg)
+        elif isinstance(arg, tuple):
+            if len(arg) != 0:
+                numbertype, _ = check_same_dtype(*arg)
+                check(
+                    numbertype == int,
+                    lambda: f"tuple in nvfuser only supports int, but found {numbertype}",
+                    exception_type=AssertionError,
+                )
+            return type(arg)
+        elif isinstance(arg, torch.Tensor):
+            return (*get_tensor_descriptor(arg), arg.dtype)
+
+        raise ValueError(f"unrecognized type in arguments: {type(arg)}")
+
+    return tuple(to_descriptor(arg) for arg in args)
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -495,8 +524,7 @@ class nvFuserExecutor(FusionExecutor):
     def __init__(self):
         super().__init__("nvfuser", version=nvfuser.version())
 
-        # TODO: Replace this with a query to current CompileData after
-        # https://github.com/Lightning-AI/lightning-thunder/pull/1517 is merged
+        # TODO: Replace this with a query to a compile option
         self._use_rematerialization = True
 
         fuel_str = os.getenv("NVFUSER_OPTIMIZATION_FUEL")
@@ -504,6 +532,43 @@ class nvFuserExecutor(FusionExecutor):
             self.set_fuel(int(fuel_str))
         else:
             self.set_fuel(FUEL_LEVEL.UNLIMITED)
+
+        env_var_save_serde = os.getenv("ENABLE_NVFUSER_SERIALIZATION", None)
+        save_serde: bool = env_var_save_serde in ("true", "1")
+        self.write_cache_on_exit(save_serde)
+
+    def write_cache_on_exit(self, save_cache: bool = False):
+        """
+        Selects whether nvFuser writes its cache when the program exits.
+
+        Args:
+            save_cache (bool): A flag that enables saving nvFuser cache.
+            Defaults to False.
+
+        nvFuser's serialization will save the FusionCache data structure and any
+        CUDA cubins into a FlatBuffer binary upon exiting the python program.
+        The binary is stored in /tmp/nvfuser_kernel_db/ with the filename
+        nvf_serde_[local_rank]_[cuda_major]_[cuda_minor]_[nvrtc_major]_[nvrtc_minor].
+
+        Details:
+         * If the common workspace is exists, nvFuser will load it automatically
+         when the FusionCache is constructed.
+         * When this function is enabled, then when the program exits NvFuser
+         will save the FusionCache, overwritting the previous common workspace.
+         * If this function is disabled, then when the program exits NvFuser
+         does nothing. The previous common workspace is preserved if it exists.
+         * If there are any issues when loading the serialized binary, it is
+         deleted and the FusionCache is created with its default constructor.
+         * When the LOCAL_RANK environment variable is set for ddp or fsdp, a
+         separate fusion cache is saved for each device.
+        """
+        if nv_version >= LooseVersion("0.1.4"):
+            from nvfuser import enable_automatic_serialization, disable_automatic_serialization
+
+            if save_cache:
+                enable_automatic_serialization()
+            else:
+                disable_automatic_serialization()
 
     def get_fuel(self, amount: int = 1, /) -> bool:
         if self._optimization_fuel is FUEL_LEVEL.UNLIMITED:
@@ -696,8 +761,6 @@ class nvFuserExecutor(FusionExecutor):
         # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
         # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
         #   ex. device_put to a CPU device from a CUDA device
-        #   (mruberry) I don't know if nvFuser even attempts to fuse any operation that can go
-        #       cross-device today
         def _should_fuse(a: Node, b: Node):
             def _can_fuse_node(n: Node):
                 # if already merged, then node can be fused
@@ -710,7 +773,7 @@ class nvFuserExecutor(FusionExecutor):
 
             return _can_fuse_node(a) and _can_fuse_node(b)
 
-        bound_symbol_groups = fuse_bound_symbols(producers, consumers, trace.bound_symbols, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
@@ -776,8 +839,7 @@ instantiated) this heuristic actually leads to worse code.
 
         # Some of the operations might be better placed with its consumers (for
         # example residual connection in transformer block). This pass moves
-        # them to the consumer. See
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1520
+        # them to the consumer.
         if self._use_rematerialization:
             fusedtrace = rematerialize(fusedtrace)
 
@@ -1025,18 +1087,12 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    # nvFuser cat fusion is currently disabled due to
-    #   https://github.com/Lightning-AI/lightning-thunder/issues/1071
-    return False
+    if nv_version < LooseVersion("0.1.7"):
+        return False
 
     # Validates tensors and concatenated dimension lengths
     for t in tensors:
         if not is_supported_tensor(t):
-            return False
-
-        # See https://github.com/NVIDIA/Fuser/issues/21
-        #   nvFuser cannot concatenate dimensions of length 1
-        if t.shape[dim] == 1:
             return False
 
     return True
@@ -1090,7 +1146,7 @@ def _pad_check(a: TensorProxy, padding_value: Number, padding_config: tuple[int,
 #   nvFuser's pad op requires pad_widths to be a sequence of Python numbers
 #   (lo_n, hi_n, lo_{n-1}, hi_{n-1}, ...) where dimensions are counted in reverse
 #   as shown, and dilation is not supported.
-#   This is in constrant to lightning.compile's pad primitive, which specifies padding
+#   This is in constrast to thunder.jit's pad primitive, which specifies padding
 #   and dilation as an  ndim-length list of (lo, hi, dilation) triples.
 # NOTE padding_value must be an nvConstant (or nvScalar?)
 def pad(
@@ -1196,7 +1252,8 @@ register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
 # register_supported(PrimIDs.TAKE, take, _take_check)
 
 # TAKE_ALONG_AXIS is currently disabled
-# See https://github.com/NVIDIA/Fuser/issues/458
+# There was an nvFuser bug that prevented this which is now fixed; we should
+# investigate re-enabling take_along_axis.
 # # TODO Check that the nvFuser version is >= 0.0.10 when this operator was added
 # def take_along_axis(a: TensorProxy, /, index: TensorProxy, dim: int, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
 #     nv_a = getnv(a, fd, lc_to_nv_map)
@@ -1648,12 +1705,6 @@ register_supported(PrimIDs.BITWISE_XOR, bitwise_xor, _elementwise_binary_check)
 def div(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
-
-    # TODO nvFuser sometimes generates an innacurate result when dividing by a number
-    #   Remove this workaround once the issue is fixed
-    #   See: https://github.com/NVIDIA/Fuser/issues/160
-    if isinstance(b, Number):
-        return fd.ops.mul(nva, fd.ops.reciprocal(nvb))
 
     # NOTE It's currently significantly faster for nvFuser to multiply the reciprocal than divide
     # return fd.ops.div(nva, nvb)

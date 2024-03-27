@@ -70,9 +70,8 @@ decay_lr = True  # whether to decay the learning rate
 warmup_iters = 1000  # how many steps to warm up for
 # system
 device = "cuda"  # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
-# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
-# dtype = "bfloat16"  # float32|bfloat16|float16
-compile = "thunder"  # eager|torch|thunder
+dtype = "bfloat16"  # float32|bfloat16|float16
+compile = "thunder" # thunder|torch|eager
 # -----------------------------------------------------------------------------
 config_keys = [
     k
@@ -118,14 +117,20 @@ if master_process:
 
 if master_process:
     os.makedirs(out_dir, exist_ok=True)
-torch.manual_seed(1337 + seed_offset)
+torch.manual_seed(42 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
 device_type = "cuda" if "cuda" in device else "cpu"  # for later use in torch.autocast
 # note: float16 data type will automatically use a GradScaler
-# thunder does not support autocast: https://github.com/Lightning-AI/lightning-thunder/issues/491
-# ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
-ctx = nullcontext() # torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
+ctx = (
+    nullcontext()
+    if device_type == "cpu"
+    else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+)
+# Disable other than FlashAttention backends for SDPA
+torch.backends.cuda.enable_math_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
 
 # task-specific setup
 iter_batches = partial(
@@ -181,10 +186,11 @@ elif init_from == "resume":
     model.load_state_dict(state_dict)
     iter_num = checkpoint["iter_num"]
     best_val_loss = checkpoint["best_val_loss"]
+
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(False))  # dtype == "float16"))
+scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -192,19 +198,19 @@ if init_from == "resume" and "optimizer" in checkpoint:
     optimizer.load_state_dict(checkpoint["optimizer"])
 checkpoint = None  # free up memory
 
-raw_model = eval_model = train_model = model
+raw_model = model
 
 # wrap model into DDP container
 if ddp:
     if compile == "thunder":
         from thunder.distributed import ddp
 
-        train_model = ddp(train_model, broadcast_from=0)
+        model = ddp(model)
     else:
         # Ignore the `freqs_cis` buffer so that DDP does not broadcast it at
         # construction time since NCCL does not support `ComplexFloat`
-        train_model._ddp_params_and_buffers_to_ignore = {"freqs_cis"}
-        train_model = DDP(train_model, device_ids=[ddp_local_rank])
+        model._ddp_params_and_buffers_to_ignore = {"freqs_cis"}
+        model = DDP(model, device_ids=[ddp_local_rank])
 
 # compile the model
 if compile == "thunder":
@@ -214,31 +220,29 @@ if compile == "thunder":
     from thunder.executors.sdpaex import sdpa_ex
     executors = [sdpa_ex, thunder.nvfuser_executor, thunder.pytorch_executor]
 
-    eval_model = thunder.compile(eval_model.eval(), disable_torch_autograd_support=True, executors_list=executors)
-    train_model = thunder.compile(train_model.train(), executors_list=executors)
+    model = thunder.jit(model, executors=executors)
 elif compile == "torch":
     print("compiling the model with torch... (takes a ~minute)")
-    eval_model = torch.compile(eval_model)
-    train_model = torch.compile(train_model)
+    model = torch.compile(model)
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
 def estimate_loss():
     out = {}
     if compile != "thunder":
-        eval_model.eval()
+        model.eval()
     for split in ["train", "val"]:
         batch_iter = iter_batches(split=split)
         losses = torch.zeros(eval_iters)  # keep on CPU
         for k in range(eval_iters):
             X, Y = next(batch_iter)
             with ctx:
-                logits = eval_model(X, Y)
+                logits = model(X, Y)
                 loss = F.cross_entropy(logits.view(-1, logits.size(-1)), Y.view(-1), ignore_index=-1)
             losses[k] = loss.item()
         out[split] = losses.mean()
     if compile != "thunder":
-        train_model.train()
+        model.train()
     return out
 
 # learning rate decay scheduler (cosine with warmup)
@@ -313,11 +317,11 @@ while True:
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but
-            # I really dislike that this bloats the code and forces us to repeat code
+            # this forces us to repeat code.
             # looking at the source of that context manager, it just toggles this variable
-            train_model.require_backward_grad_sync = micro_step == gradient_accumulation_steps - 1
+            model.require_backward_grad_sync = micro_step == gradient_accumulation_steps - 1
         with ctx:
-            logits = train_model(X, Y)
+            logits = model(X, Y)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), Y.view(-1), ignore_index=-1)
             loss = loss / gradient_accumulation_steps
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
@@ -327,7 +331,7 @@ while True:
     # clip the gradient
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(train_model.parameters(), grad_clip)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
     # step the optimizer and scaler if training in fp16
     scaler.step(optimizer)
     scaler.update()

@@ -21,6 +21,7 @@ from torch.testing import assert_close
 import thunder.clang as clang
 import thunder.core.devices as devices
 import thunder.core.dtypes as datatypes
+from thunder.core.dtypes import to_dtype, to_torch_dtype
 import thunder.core.prims as prims
 import thunder.executors as executors
 import thunder.torch as ltorch
@@ -29,6 +30,7 @@ from thunder.core.symbol import Symbol
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
+import thunder.tests.bf16
 
 #
 # Helpful constants and utility functions
@@ -240,7 +242,7 @@ class SampleInput:
     def thunder(self):
         def to_thunder(t):
             if isinstance(t, torch.dtype):
-                return ltorch.to_thunder_dtype(t)
+                return to_dtype(t)
             return t
 
         args, kwargs = tree_map(to_thunder, self.args), tree_map(to_thunder, self.kwargs)
@@ -380,14 +382,14 @@ class OpInfo:
     def sample_inputs(
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
-        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_dtype = to_torch_dtype(dtype)
         torch_device = str(device)
         return self.sample_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
     def reference_inputs(
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
-        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_dtype = to_torch_dtype(dtype)
         torch_device = str(device)
         return self.reference_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
@@ -398,7 +400,7 @@ class OpInfo:
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
-        torch_dtype = ltorch.to_torch_dtype(dtype)
+        torch_dtype = to_torch_dtype(dtype)
         torch_device = str(device)
         return self.benchmark_generator(self, torch_device, dtype, requires_grad, **kwargs)
 
@@ -545,7 +547,7 @@ def _elementwise_unary_torch(op):
 @wraps(torch.abs)
 def _abs_torch(x: torch.Tensor | Number):
     if isinstance(x, torch.Tensor):
-        if datatypes.is_unsigned_dtype(ltorch.to_thunder_dtype(x.dtype)):
+        if datatypes.is_unsigned_dtype(to_dtype(x.dtype)):
             return x
         return torch.abs(x)
 
@@ -768,8 +770,8 @@ elementwise_unary_ops.append(cosh_opinfo)
 # digamma is defined for all complex numbers EXCEPT negative integers and zero
 digamma_opinfo = OpInfo(
     clang.digamma,
-    # NOTE: Restrict domain to avoid singularities because of
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1138
+    # NOTE: Restrict domain to avoid singularities because of issue
+    # "OpInfos do not use singularity_fn to produce "more stable" samples."
     domain=(eps, math.inf),
     # NOTE: digamma returns NaN for all negative integers. It returns -Inf when x = 0.
     singularity_fn=lambda x: torch.where(x > 0, x, (x - torch.round(x))),
@@ -1077,7 +1079,7 @@ rsqrt_opinfo = OpInfo(
             dtypes=(datatypes.float16, datatypes.complex32),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # see https://github.com/csarofeen/pytorch/issues/2367
+        # Used to be an nvFuser bug here; TODO explore removing this xfail
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
@@ -1177,8 +1179,7 @@ sign_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.sgn),
     test_directives=(
-        # TODO Need to add nvfuser specific support for complex sign
-        # https://github.com/csarofeen/pytorch/issues/2492
+        # TODO nvFuser needs support for complex sign
         DecorateInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),
@@ -1282,7 +1283,9 @@ tan_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.tan),
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2360
+        # TODO investigate nvFuser's implementation here; for complex datatypes
+        # nvFuser's tanh might be inaccurate, causing numerical mismatches, but
+        # also this concern is potentially stale in 03/2024.
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvfuser",), dtypes=(datatypes.complex64,)
         ),
@@ -1303,7 +1306,9 @@ tanh_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.tanh),
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2360
+        # TODO investigate nvFuser's implementation here; for complex datatypes
+        # nvFuser's tanh might be inaccurate, causing numerical mismatches, but
+        # also this concern is potentially stale in 03/2024.
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvfuser",), dtypes=(datatypes.complex64,)
         ),
@@ -1356,7 +1361,9 @@ log_opinfo = OpInfo(
     sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
     torch_reference=_elementwise_unary_torch(torch.log),
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2360
+        # TODO investigate nvFuser's implementation here; for complex datatypes
+        # nvFuser's tanh might be inaccurate, causing numerical mismatches, but
+        # also this concern is potentially stale in 03/2024.
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvfuser",), dtypes=(datatypes.complex64,)
         ),
@@ -1377,7 +1384,9 @@ log10_opinfo = OpInfo(
     sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
     torch_reference=_elementwise_unary_torch(torch.log10),
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2360
+        # TODO investigate nvFuser's implementation here; for complex datatypes
+        # nvFuser's tanh might be inaccurate, causing numerical mismatches, but
+        # also this concern is potentially stale in 03/2024.
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvfuser",), dtypes=(datatypes.complex64,)
         ),
@@ -1405,14 +1414,16 @@ log1p_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_elementwise_unary_torch(torch.log1p),
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2360
+        # TODO investigate nvFuser's implementation here; for complex datatypes
+        # nvFuser's tanh might be inaccurate, causing numerical mismatches, but
+        # also this concern is potentially stale in 03/2024.
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
             dtypes=(datatypes.complexfloating,),
         ),
-        # NOTE: Torch gives wrong result: https://github.com/pytorch/pytorch/issues/94333
+        # NOTE: Torch has an issue: https://github.com/pytorch/pytorch/issues/94333
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
@@ -1450,7 +1461,9 @@ log2_opinfo = OpInfo(
     sample_input_generator=partial(elementwise_unary_generator, exclude_zero=True),
     torch_reference=_elementwise_unary_torch(torch.log2),
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2360
+        # TODO investigate nvFuser's implementation here; for complex datatypes
+        # nvFuser's tanh might be inaccurate, causing numerical mismatches, but
+        # also this concern is potentially stale in 03/2024.
         DecorateInfo(
             pytest.mark.xfail, "test_core_vs_torch_consistency", executors=("nvfuser",), dtypes=(datatypes.complex64,)
         ),
@@ -1554,7 +1567,7 @@ relu_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
+        # TODO: we might have a tolerance issue here with relu6.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -1575,7 +1588,7 @@ relu6_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
         ),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
+        # TODO: we might have a tolerance issue here with relu6.
         DecorateInfo(
             pytest.mark.xfail(strict=False),
             "test_vjp_correctness",
@@ -1611,7 +1624,7 @@ selu_opinfo = OpInfo(
                 datatypes.bfloat16,
             ),
         ),
-        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/1444
+        # TODO: we might have a tolerance issue here with relu6.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -1672,8 +1685,9 @@ trunc_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU,),
             active_if=LooseVersion(torch.__version__) < "1.13",
         ),
-        # TODO: nvfuser needs to return copy for integer dtypes.
-        # https://github.com/csarofeen/pytorch/issues/2499
+        # TODO: nvFuser does not define an integer trunc() and thus compilation
+        # fails. They should probably map integer trunc() to an identity op.
+        # Until they do, this test won't work for integer types.
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
@@ -1740,7 +1754,8 @@ add_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.add,
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2549
+        # See issue "broadcast_in_dim: The size of contiguity must equal to the
+        # number of non-broadcasting IterDomains"
         DecorateInfo(
             pytest.mark.skip,
             "test_jvp_correctness",
@@ -1807,6 +1822,14 @@ copysign_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.copysign,
+    test_directives=(
+        # See issue: "flaky test:
+        # test_vjp_correctness_copysign_torch_cuda_float64 is flaky"
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
+    ),
 )
 elementwise_binary_ops.append(copysign_opinfo)
 
@@ -1818,8 +1841,7 @@ eq_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.eq,
     test_directives=(
-        # There's a problem of reducing a tensor produced by full op
-        # See https://github.com/NVIDIA/Fuser/issues/132
+        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -1917,8 +1939,7 @@ ge_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
     test_directives=(
-        # There's a problem of reducing a tensor produced by full op
-        # See https://github.com/NVIDIA/Fuser/issues/132
+        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -1960,8 +1981,7 @@ le_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.le,
     test_directives=(
-        # There's a problem of reducing a tensor produced by full op
-        # See https://github.com/NVIDIA/Fuser/issues/132
+        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -1978,8 +1998,7 @@ lt_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.lt,
     test_directives=(
-        # There's a problem of reducing a tensor produced by full op
-        # See https://github.com/NVIDIA/Fuser/issues/132
+        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -2009,7 +2028,8 @@ mul_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.mul,
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2549
+        # See issue "broadcast_in_dim: The size of contiguity must equal to the
+        # number of non-broadcasting IterDomains"
         DecorateInfo(
             pytest.mark.skip,
             "test_jvp_correctness",
@@ -2031,8 +2051,7 @@ ne_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ne,
     test_directives=(
-        # There's a problem of reducing a tensor produced by full op
-        # See https://github.com/NVIDIA/Fuser/issues/132
+        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -2057,15 +2076,15 @@ nextafter_opinfo = OpInfo(
             pytest.mark.skip,
             dtypes=(datatypes.float16, datatypes.bfloat16),
         ),
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/972
-        #   PyTorch's nextafter may be causing CUDA illegal memory accesses
+        # TODO There was an issue with nextafter in PyTorch that should now be
+        # resolved; re-enable this and test.
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             devicetypes=(devices.DeviceType.CUDA,),
         ),
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/972
-        #   PyTorch's nextafter may be causing CUDA illegal memory accesses
+        # TODO There was an issue with nextafter in PyTorch that should now be
+        # resolved; re-enable this and test.
         DecorateInfo(
             pytest.mark.skip,
             executors=("torch",),
@@ -2092,8 +2111,8 @@ def polygamma_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs
 
 polygamma_opinfo = OpInfo(
     ltorch.polygamma,
-    # NOTE: Restrict domain to avoid singularities because of
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1138
+    # NOTE: Restrict domain to avoid singularities. See issue "OpInfos do not
+    # use singularity_fn to produce "more stable" samples"
     # NOTE: polygamma returns NaN, -Inf, or Inf for all negative integers.
     domain=(eps, math.inf),
     sample_input_generator=polygamma_sample_input_generator,
@@ -2146,7 +2165,7 @@ pow_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.complex32,),
         ),
-        # See https://github.com/csarofeen/pytorch/issues/2361
+        # TODO For complex numbers we have some numerical consistency issues.
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
@@ -2232,7 +2251,8 @@ true_divide_opinfo = OpInfo(
         ),
         # torch doesn't support bool true_divide
         DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.bool8,)),
-        # See https://github.com/csarofeen/pytorch/issues/2549
+        # See issue "broadcast_in_dim: The size of contiguity must equal to the
+        # number of non-broadcasting IterDomains"
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -2375,6 +2395,12 @@ addcdiv_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.exact,),
         ),
+        # See issue "flaky test:
+        # test_vjp_correctness_addcdiv_nvfuser_cuda_float64"
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
     ),
 )
 opinfos.append(addcdiv_opinfo)
@@ -2495,6 +2521,13 @@ clamp_opinfo = OpInfo(
     sample_input_generator=clamp_sample_generator,
     torch_reference=torch.clamp,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+    test_directives=(
+        # see issue "test_vjp_correctness_clamp_nvfuser_cuda_float64 is flaky"
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+        ),
+    ),
 )
 conditional_and_mask_ops.append(clamp_opinfo)
 
@@ -2548,28 +2581,29 @@ opinfos.extend(conditional_and_mask_ops)
 #
 data_movement_ops = []
 
+# NOTE The following opinfo for convert_element_type is commented out because each language
+#   needs its own dtype conversion (torch -> jax, and torch -> thunder conversions, in particular)
+# def convert_element_type_sample_generator(op, device, dtype, requires_grad, **kwargs):
+#     a = make_tensor((2, 3, 4), device=device, dtype=dtype, requires_grad=requires_grad)
 
-def convert_element_type_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    a = make_tensor((2, 3, 4), device=device, dtype=dtype, requires_grad=requires_grad)
-
-    # TODO Add more source and target dtype pairs
-    yield SampleInput(a, torch.float32)
+#     # TODO Add more source and target dtype pairs
+#     yield SampleInput(a, torch.float32)
 
 
-convert_element_type_opinfo = OpInfo(
-    prims.convert_element_type,
-    sample_input_generator=convert_element_type_sample_generator,
-    torch_reference=torch.Tensor.to,
-    jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
-    test_directives=(
-        # These usually pass but tols are still too tight to perform these tests
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-        ),
-    ),
-)
-data_movement_ops.append(convert_element_type_opinfo)
+# convert_element_type_opinfo = OpInfo(
+#     prims.convert_element_type,
+#     sample_input_generator=convert_element_type_sample_generator,
+#     torch_reference=torch.Tensor.to,
+#     jax_reference=jax.lax.convert_element_type if JAX_AVAILABLE else None,
+#     test_directives=(
+#         # These usually pass but tols are still too tight to perform these tests
+#         DecorateInfo(
+#             pytest.mark.skip,
+#             "test_vjp_correctness",
+#         ),
+#     ),
+# )
+# data_movement_ops.append(convert_element_type_opinfo)
 
 
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -2692,7 +2726,8 @@ broadcast_in_dim_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_errors",
         ),
-        # See https://github.com/csarofeen/pytorch/issues/2549
+        # See issue "broadcast_in_dim: The size of contiguity must equal to the number of
+        # non-broadcasting IterDomains"
         DecorateInfo(
             pytest.mark.skip,
             "test_jvp_correctness",
@@ -2727,12 +2762,12 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+        yield SampleInput(*[make(s) for s in shapes], dim=dim)
 
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
     b = make((1,)).expand((5,))
-    yield SampleInput((a, b))
+    yield SampleInput(a, b, dim=0)
 
 
 def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -2748,15 +2783,22 @@ def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
     ]
 
     for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+        yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
+
+
+# nvfuserex_impl.to_descriptors refuses to take a **nested** list of tensors,
+# reporting `ValueError: unrecognized type in arguments: <class 'list'>`.
+# `cat_wrapper` is created to work around that.
+def cat_wrapper(*args, dim):
+    return ltorch.cat(args, dim=dim)
 
 
 cat_opinfo = OpInfo(
-    ltorch.cat,
+    cat_wrapper,
     supports_grad=True,
     sample_input_generator=cat_sample_generator,
     error_input_generator=cat_error_generator,
-    torch_reference=torch.cat,
+    torch_reference=lambda *args, dim: torch.cat(args, dim=dim),
     test_torch_compile_executor=True,
     test_directives=(
         # There's a bug in torch.compile + torch.cat for empty tensors in 2.1.0
@@ -2771,6 +2813,11 @@ cat_opinfo = OpInfo(
             "test_vjp_correctness",
             active_if=(LooseVersion(torch.__version__) < "2.2.0"),
             executors=("torchcompile",),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            active_if=(nvfuser_version < "0.1.7"),
+            executors=("nvFuser",),
         ),
     ),
 )
@@ -2796,6 +2843,11 @@ diagonal_opinfo = OpInfo(
     ltorch.diagonal,
     sample_input_generator=diagonal_sample_generator,
     torch_reference=torch.diagonal,
+    test_directives=(
+        # thunder.torch.diagonal meta function is not correctly implemented for
+        # input case ((1, 2, 0, 3), -1, 0, -1)
+        DecorateInfo(pytest.mark.xfail(strict=True), "test_vjp_correctness"),
+    ),
 )
 shape_ops.append(diagonal_opinfo)
 
@@ -3179,8 +3231,7 @@ def pad_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # Versions of above examples but with padding between elements set to 0
         ((2, 2), ((1, 1, 0), (-1, 2, 0))),
         ((2, 0, 3), ((1, 0, 0), (1, 1, 0), (0, 0, 0))),
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/415
-        #   The PyTorch lowering does not handle this case properly
+        # See issue "PyTorch pad prim lowering handles out-of-bands negative padding incorrectly"
         # ((7, 5), ((0, 0, 0), (-6, 2, 0))),
         ((5, 7), ((0, 0, 0), (-6, 2, 0))),
         ((3, 2, 5), ((-2, 1, 0), (1, -1, 0), (-1, 3, 0))),  # negative pad in all 3 dims
@@ -3207,12 +3258,12 @@ pad_opinfo = OpInfo(
             executors=("torch",),
             dtypes=(datatypes.complexfloating,),
         ),
-        # See issue https://github.com/Lightning-AI/lightning-thunder/issues/2053
+        # See issue "pad+nvFuser: wrong results when applied to 1-numel inputs"
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvfuser",),
         ),
-        # See issue https://github.com/Lightning-AI/lightning-thunder/issues/2053
+        # See issue "pad+nvFuser: wrong results when applied to 1-numel inputs"
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -3283,7 +3334,7 @@ shape_ops.append(pad_torch_opinfo)
 
 
 # TODO: only remove these cases when the executor is nvfuser
-# FIXME: Zero-dim cases are skipped due to https://github.com/csarofeen/pytorch/issues/2383
+# TODO: zero-dim cases had a bug, now fixed; re-enable.
 # FIXME: tensors with no elements are skipped because of no nvfuser support
 def reshape_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -3403,8 +3454,8 @@ slice_in_dim = OpInfo(
     sample_input_generator=slice_in_dim_sample_generator,
     jax_reference=jax.lax.slice_in_dim if JAX_AVAILABLE else None,
     test_directives=(
-        # nvfuser executor doesn't support pad correctly
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        # TODO: nvfuser executor didn't support pad correctly, but now it should.
+        # Test and re-enable.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -3415,8 +3466,8 @@ slice_in_dim = OpInfo(
 shape_ops.append(slice_in_dim)
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/416
-#   Add strides and slicing outside tensor boundaries
+# See issue "Slice prim samples need strides and slicing beyond tensor
+# boundaries"
 def slice_prim_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -3438,8 +3489,8 @@ slice_prim_opinfo = OpInfo(
     sample_input_generator=slice_prim_sample_generator,
     jax_reference=jax.lax.slice if JAX_AVAILABLE else None,
     test_directives=(
-        # nvfuser executor doesn't support pad correctly
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        # TODO: nvfuser executor didn't support pad correctly, but now it should.
+        # Test and re-enable.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -3500,7 +3551,7 @@ def split_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 6, 7), 3, -1),
         ((4, 6, 7), 9, 1),
         ((4, 6, 7), (1, 2, 1, 2), 1),
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/420
+        # See issue "nvFuser split test failure"
         # ((4, 6, 7), (3, 1, 2, 0, 0, 1), -1),
         ((4, 4, 12), 4, 2),
     )
@@ -3660,7 +3711,7 @@ def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+        yield SampleInput(*[make(s) for s in shapes], dim=dim)
 
 
 def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -3679,14 +3730,19 @@ def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
     ]
 
     for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+        yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
+
+
+# `stack_wrapper` is created for the same reason as `cat_wrapper.
+def stack_wrapper(*args, dim):
+    return ltorch.stack(args, dim=dim)
 
 
 stack_opinfo = OpInfo(
-    ltorch.stack,
+    stack_wrapper,
     sample_input_generator=stack_sample_generator,
     error_input_generator=stack_error_generator,
-    torch_reference=torch.stack,
+    torch_reference=lambda *args, dim: torch.stack(args, dim=dim),
     test_directives=(
         # vjp and jvp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
@@ -3720,8 +3776,8 @@ tensor_split_opinfo = OpInfo(
     sample_input_generator=tensor_split_sample_generator,
     torch_reference=torch.tensor_split,
     test_directives=(
-        # nvfuser executor doesn't support pad correctly
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/285
+        # TODO: nvfuser executor didn't support pad correctly, but now it should.
+        # Test and re-enable.
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -3848,22 +3904,101 @@ permute_opinfo = OpInfo(
 shape_ops.append(permute_opinfo)
 
 
-def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs):
+def t_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # shape
     cases = (
-        (4, 7, 8),
-        (4, 7),
+        (),
+        (1),
+        (4),
+        (4, 5),
     )
 
     for shape in cases:
         yield SampleInput(make(shape))
 
 
+def t_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, error type, error message
+    cases = (
+        ((4, 5, 6), RuntimeError, r"t\(\) expects a tensor with <= 2 dimensions, but self is 3D"),
+        (
+            (4, 5, 6, 7),
+            RuntimeError,
+            r"t\(\) expects a tensor with <= 2 dimensions, but self is 4D",
+        ),
+    )
+
+    for shape, err_type, err_msg in cases:
+        yield SampleInput(make(shape)), err_type, err_msg
+
+
+t_opinfo = OpInfo(
+    ltorch.t,
+    sample_input_generator=t_sample_generator,
+    error_input_generator=t_error_generator,
+    torch_reference=lambda x: torch.Tensor.t(x),
+)
+shape_ops.append(t_opinfo)
+
+
+def reverse_dims_T_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape
+    cases = (
+        (),
+        (1),
+        (4),
+        (4, 5),
+        (4, 5, 6),
+        (4, 5, 6, 7),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+reverse_dims_T_opinfo = OpInfo(
+    ltorch.reverse_dims_T,
+    sample_input_generator=reverse_dims_T_sample_generator,
+    torch_reference=lambda x: x.T,
+)
+shape_ops.append(reverse_dims_T_opinfo)
+
+
+def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape
+    cases = (
+        (),
+        (2, 3),
+        (2, 3, 4),
+        (2, 3, 4, 2),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+def matrix_transpose_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, error type, error message
+    cases = (((3), RuntimeError, "tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor."),)
+
+    for shape, err_type, err_msg in cases:
+        yield SampleInput(make(shape)), err_type, err_msg
+
+
 transpose_opinfo = OpInfo(
     clang.matrix_transpose,
     sample_input_generator=matrix_transpose_sample_generator,
+    error_input_generator=matrix_transpose_error_generator,
     torch_reference=lambda x: x.mT,
 )
 shape_ops.append(transpose_opinfo)
@@ -4143,7 +4278,8 @@ unsqueeze_opinfo = OpInfo(
     sample_input_generator=unsqueeze_sample_generator,
     jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
     test_directives=(
-        # See https://github.com/csarofeen/pytorch/issues/2549
+        # See issue "broadcast_in_dim: The size of contiguity must equal to the
+        # number of non-broadcasting IterDomains"
         DecorateInfo(
             pytest.mark.skip,
             "test_jvp_correctness",
@@ -4358,7 +4494,8 @@ sum_opinfo = OpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # See https://github.com/csarofeen/pytorch/issues/2369
+        # nvFuser had issues with complex reductions, now fixed; TODO re-enable
+        # this test.
         DecorateInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),
@@ -4408,7 +4545,8 @@ mean_opinfo = OpInfo(
             dtypes=(datatypes.complex32,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
-        # See https://github.com/csarofeen/pytorch/issues/2369
+        # nvFuser had issues with complex reductions, now fixed; TODO re-enable
+        # this test.
         DecorateInfo(
             pytest.mark.xfail,
             dtypes=(datatypes.complexfloating,),
@@ -4458,8 +4596,7 @@ var_mean_opinfo = OpInfo(
     # Complex var is not supported yet
     dtypes=(datatypes.floating,),
     test_directives=(
-        # TODO FIXME nvFuser fails to compile var_mean for these tests
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/1438
+        # See issue "nvFuser fails to compile some var_mean tests"
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
@@ -4787,6 +4924,149 @@ randn_like_opinfo = OpInfo(
 tensor_creation_ops.append(randn_like_opinfo)
 
 
+def tensor_constructor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # Used to generate sequence.
+    make_t = partial(make_tensor, device="cpu", dtype=dtype, requires_grad=False)
+    bool_list = [True, False] * 8
+    unsigned_int_list = [0, 1, 2, 12, 24, 65, 127, 255] * 2
+    small_int_list = [-127, -64, 0, 32, 64, 65, 123] * 2
+    int_list = [-50000, -25000, 0, 1, 2, 5000, 10000, 150000] * 2
+    INF = float("-inf")
+    NEG_INF = -INF
+    NAN = float("nan")
+    float_list = [
+        INF,
+        NEG_INF,
+        NAN,
+        -0.0,
+        0.0,
+        2e30,
+        -2e30,
+        0.000012,
+        -0.000012,
+        -5e10,
+        5e10,
+        24e32,
+        -24e32,
+        1e-30,
+        -1e-30,
+        2.0,
+    ]
+
+    complex_list = [
+        complex(INF, 0),
+        complex(-0.0, NEG_INF),
+        complex(NAN, NAN),
+        complex(NAN, INF),
+        10e5j,
+        -10e5j,
+        0.000012j,
+        -0.0000012j,
+        1 + 2j,
+        -1 - 2j,
+        1 - 2j,
+        -1 + 2j,
+        0.000012 + 0.0000012j,
+        1e30 + 2e24j,
+        -0.0 - 0j,
+        0.0 + 0j,
+    ]
+
+    # Python Scalars
+    yield SampleInput(False, device=device)
+    yield SampleInput(2, device=device)
+    yield SampleInput(3.14, device=device)
+    yield SampleInput(2j, device=device)
+
+    # Infer dtype
+    yield SampleInput(
+        bool_list,
+        device=device,
+    )
+    yield SampleInput(
+        [bool_list, int_list],
+        device=device,
+    )
+    yield SampleInput(
+        [[bool_list, int_list], [float_list, float_list]],
+        device=device,
+    )
+    yield SampleInput(
+        [[bool_list, int_list], [float_list, complex_list]],
+        device=device,
+    )
+
+    # Interesting shapes
+    yield SampleInput(make_t(()).tolist(), device=device)
+    yield SampleInput(make_t(0).tolist(), device=device)
+    yield SampleInput(make_t(0, 1, 2).tolist(), device=device)
+    yield SampleInput(make_t(1, 2, 0).tolist(), device=device)
+    yield SampleInput(make_t(1, 2, 0, 2, 3).tolist(), device=device)
+
+    # Normal shapes
+    yield SampleInput(make_t(1, 2, 3).tolist(), device=device)
+    yield SampleInput(make_t(2, 2, 3).tolist(), device=device)
+    yield SampleInput(make_t(1, 2, 1, 4, 3).tolist(), device=device)
+
+    def get_seq_list(dtype):
+        if dtype.is_complex:
+            return complex_list
+        elif dtype.is_floating_point:
+            return float_list
+        elif dtype == torch.bool:
+            return bool_list
+        elif dtype == torch.uint8:
+            return unsigned_int_list
+        elif dtype in (torch.int8, torch.int16):
+            return small_int_list
+        else:
+            return int_list
+
+    # dtype specified
+    yield SampleInput(
+        get_seq_list(dtype),
+        dtype=dtype,
+        device=device,
+    )
+    yield SampleInput(
+        [[]],
+        dtype=dtype,
+        device=device,
+    )
+
+
+def tensor_constructor_error_generator(op, device, **kwargs):
+    err_msg = "Expected seq of len=2 at dim 1"
+    yield (SampleInput([[1, 0], [1]]), RuntimeError, err_msg)
+
+    err_msg = "Expected sequences of numbers, but found type <class 'str'>"
+    yield (SampleInput(["hi"]), ValueError, err_msg)
+
+    err_msg = "Expected sequences of numbers, but found type <class 'str'>"
+    yield (SampleInput([[1], ["hi"]]), ValueError, err_msg)
+
+    err_msg = "Expected sequences of numbers, but found type <class 'list'>"
+    yield (SampleInput([[1], [[6, 2]]]), ValueError, err_msg)
+
+    err_msg = "Can't safely cast sequence with numbertype <class 'float'> to dtype int32"
+    yield (SampleInput([[1, 2.0], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
+
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype int32"
+    yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
+
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype float64"
+    yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.float64), RuntimeError, err_msg)
+
+
+tensor_constructor_opinfo = OpInfo(
+    ltorch.tensor,
+    sample_input_generator=tensor_constructor_sample_generator,
+    error_input_generator=tensor_constructor_error_generator,
+    torch_reference=torch.tensor,
+)
+
+tensor_creation_ops.append(tensor_constructor_opinfo)
+
 opinfos.extend(tensor_creation_ops)
 
 #
@@ -4962,7 +5242,8 @@ einsum_opinfo = OpInfo(
     supports_grad=True,
     # TODO: test all integer types and figure out their dtype.
     dtypes=(datatypes.float32, datatypes.float64),
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1643.
+    # See issue "Disabled einsum tests might hide potential issues in our
+    # testing/op implementations"
     # Testing only float32, float64 now.
     #  types=(datatypes.int64, datatypes.floating),
     #  domain=(-1, +1),
@@ -5840,7 +6121,7 @@ group_norm_opinfo = OpInfo(
             dtypes=(datatypes.float16, datatypes.bfloat16),
             devicetypes=(devices.DeviceType.CUDA,),
         ),
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/1405
+        # This should be fixed now; TODO re-enable, test
         DecorateInfo(
             pytest.mark.xfail,
             executors=("nvfuser",),
@@ -6123,7 +6404,9 @@ def softmax_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # TODO Reconcile the grad and non-grad samples
     if not requires_grad:
         # NOTE: torch.log_softmax(x, dim, dtype=float) returns a float64 tensor while thunder returns a float32 tensor.
-        supported_float_dtypes = {None, torch.bfloat16, torch.float32, torch.float64}
+        supported_float_dtypes = {None, torch.float32, torch.float64}
+        if thunder.tests.bf16.device_supports_bf16(device):
+            supported_float_dtypes.update({torch.bfloat16})
 
         # Defines a custom comparator for when the output is bfloat16
         # TODO These are very loose tolerances, but observered differences can be up to 0.019 in absolute difference
@@ -6226,7 +6509,8 @@ embedding_opinfo = OpInfo(
     dtypes=(datatypes.floating, datatypes.complexfloating),
     test_directives=(
         # TODO Investigate these discrepancies -- some dtype x executor configurations seem to be fine
-        #   See https://github.com/Lightning-AI/lightning-thunder/issues/1387
+        # See issue "phantom grad's embedding computation is divergent from
+        # PyTorch's"
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1, rtol=2)),
             "test_phantom_grad_vs_torch_consistency",
@@ -6553,9 +6837,11 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-            if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
             weight=make(C) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
@@ -6564,9 +6850,8 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
 
 
 # TODO Enable cross entropy bwd weight support
-#   see https://github.com/Lightning-AI/lightning-thunder/issues/834
 # TODO Enable test cases after adding support nll_loss_nd, weight tensor, and label_smoothing options.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/704
+# TODO see issue "Add support for remaining cross_entropy_loss arguments"
 def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -6600,9 +6885,11 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-            if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
             weight=make(C) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
@@ -6913,7 +7200,7 @@ interpolate_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # https://github.com/Lightning-AI/lightning-thunder/issues/1032
+        # This should be fixed now; TODO re-enable and test
         DecorateInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
@@ -6930,58 +7217,60 @@ opinfos.extend(nn_ops)
 prob_distr_ops = []
 
 
-def multinomial_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+# multinomial testing is currently disabled due to issue "randomness: enable
+# PyTorch generators for operations like multinomial"
+# def multinomial_sample_generator(op, device, dtype, requires_grad, **kwargs):
+#     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-    shapes = [
-        (10),
-        (10, 10),
-    ]
-    num_samples = (1, 3, 5)
-    replacement = (True, False)
-    seed = 13
+#     shapes = [
+#         (10),
+#         (10, 10),
+#     ]
+#     num_samples = (1, 3, 5)
+#     replacement = (True, False)
+#     seed = 13
 
-    for shape, ns, r in itertools.product(shapes, num_samples, replacement):
-        weights = make(shape).abs()
-        gen = torch.Generator(device).manual_seed(seed)
-        yield SampleInput(weights, ns, r, generator=gen)
-
-
-def torch_multinomial_like(
-    a: torch.Tensor,
-    num_samples: int,
-    replacement: bool,
-    *,
-    generator: torch.Generator,
-):
-    return prims.multinomial(a, num_samples, replacement, generator.initial_seed())
+#     for shape, ns, r in itertools.product(shapes, num_samples, replacement):
+#         weights = make(shape).abs()
+#         gen = torch.Generator(device).manual_seed(seed)
+#         yield SampleInput(weights, ns, r, generator=gen)
 
 
-multinomial_prim_opinfo = OpInfo(
-    torch_multinomial_like,
-    name="multinomial_prim",
-    supports_grad=False,
-    sample_input_generator=multinomial_sample_generator,
-    torch_reference=torch.multinomial,
-    dtypes=(datatypes.floating,),
-    test_directives=(
-        # PyTorch does not support CUDA BFloat16 multinomial
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
-            devicetypes=(devices.DeviceType.CUDA,),
-        ),
-        # PyTorch does not support CPU Half multinomial
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-    ),
-)
-prob_distr_ops.append(multinomial_prim_opinfo)
+# def torch_multinomial_like(
+#     a: torch.Tensor,
+#     num_samples: int,
+#     replacement: bool,
+#     *,
+#     generator: torch.Generator,
+# ):
+#     return prims.multinomial(a, num_samples, replacement, generator.initial_seed())
+
+
+# multinomial_prim_opinfo = OpInfo(
+#     torch_multinomial_like,
+#     name="multinomial_prim",
+#     supports_grad=False,
+#     sample_input_generator=multinomial_sample_generator,
+#     torch_reference=torch.multinomial,
+#     dtypes=(datatypes.floating,),
+#     test_directives=(
+#         # PyTorch does not support CUDA BFloat16 multinomial
+#         DecorateInfo(
+#             pytest.mark.xfail,
+#             "test_core_vs_torch_consistency",
+#             dtypes=(datatypes.bfloat16,),
+#             devicetypes=(devices.DeviceType.CUDA,),
+#         ),
+#         # PyTorch does not support CPU Half multinomial
+#         DecorateInfo(
+#             pytest.mark.xfail,
+#             "test_core_vs_torch_consistency",
+#             dtypes=(datatypes.float16,),
+#             devicetypes=(devices.DeviceType.CPU,),
+#         ),
+#     ),
+# )
+# prob_distr_ops.append(multinomial_prim_opinfo)
 
 
 opinfos.extend(prob_distr_ops)

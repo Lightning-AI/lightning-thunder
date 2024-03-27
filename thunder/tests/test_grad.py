@@ -16,18 +16,17 @@ import thunder.core.devices as devices
 import thunder.clang as clang
 
 from thunder import torch as ltorch
-from thunder.core.dtypes import is_exact_dtype
+from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
-from thunder.torch import to_thunder_dtype as thunder_dtype
 from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/226
+    # See issue "Support closures of torch.Tensor"
     # TODO: AttributeError: 'Tensor' object has no attribute 'true_dtype'
     "masked_fill",
     # TODO: RuntimeError: Expected index=tensor([2, 3, 2, 0, 3, 1, 0, 2],
@@ -223,8 +222,8 @@ def check_jvp(f, *primals, executor, atol=None, rtol=None):
         AssertionError: If the Jacobian-vector product is not correct.
     """
     tangents = tree_map(make_tensor_like, primals)
-    actual_p, actual_t = executor.make_callable(jvp(f))(primals, tangents)
-    expected_p, expected_t = numerical_jvp(executor.make_callable(f))(primals, tangents)
+    actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
+    expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
     torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
     torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
 
@@ -297,12 +296,12 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     make = partial(make_tensor_like, low=0, high=1)
 
     u = tree_map(make, primals)
-    outs_p, J_u = numerical_jvp(executor.make_callable(f, disable_torch_autograd_support=True))(primals, u)
+    outs_p, J_u = numerical_jvp(executor.make_callable_legacy(f, disable_torch_autograd_support=True))(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    _, J_star_v = executor.make_callable(vjp(f), disable_torch_autograd_support=True)(primals, v)
+    _, J_star_v = executor.make_callable_legacy(vjp(f), disable_torch_autograd_support=True)(primals, v)
 
     if not multiple_results:
         v = (v,)
@@ -450,9 +449,9 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, (gindices, gweight) = executor.make_callable(vjp(filtered_op), disable_torch_autograd_support=True)(
-            filtered_args, (v,)
-        )
+        actual_out, (gindices, gweight) = executor.make_callable_legacy(
+            vjp(filtered_op), disable_torch_autograd_support=True
+        )(filtered_args, (v,))
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
@@ -476,7 +475,7 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, actual_grad = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
+        actual_out, actual_grad = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
             flat_args, (v,)
         )
         comp(actual_out, out)
@@ -515,7 +514,7 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
             vjp(filtered_op),
             disable_torch_autograd_support=True,
             disable_preprocessing=True,
-            executors_list=executor.executors_list() + [sdpa_ex],
+            executors_list=[sdpa_ex, *executor.executors_list()],
         )(filtered_args, (v,))
         comp(actual_out, expect_out)
 
@@ -534,9 +533,9 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
-            flat_args, (v,)
-        )
+        actual_out, (grad_lhs, grad_rhs) = executor.make_callable_legacy(
+            vjp(flat_op), disable_torch_autograd_support=True
+        )(flat_args, (v,))
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
         comp(grad_rhs, expected_grad[0], equal_nan=True)
@@ -556,7 +555,7 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, grad_out = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
+        actual_out, grad_out = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
             flat_args, (v,)
         )
 
@@ -579,7 +578,7 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, grads_out = executor.make_callable(vjp(flat_op), disable_torch_autograd_support=True)(
+        actual_out, grads_out = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
             flat_args, (v,)
         )
 
@@ -589,7 +588,7 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
             comp(torch_grad, thunder_grad)
 
 
-# TODO Extend requires_grad so that tensors produced from lightning.compile functions requires_grad
+# TODO Extend requires_grad so that tensors produced from thunder.jit functions requires_grad
 #   and have their autograd functions set properly
 # Tests that we track the requires_grad property properly
 @instantiate(dtypes=(dtypes.float32,))
@@ -636,7 +635,8 @@ def test_requires_grad(executor, device, dtype):
     dtypes=NOTHING,
 )
 def test_convert_element_type_with_float(executor, device, _):
-    # Verifies a fix for https://github.com/Lightning-AI/lightning-thunder/issues/537
+    # Verifies the fix for "grad transform hits error: AttributeError: 'float'
+    # object has no attribute 'dtype'"
     from thunder.core.transforms import value_and_grad
 
     a = make_tensor([5], dtype=torch.float32, device=device)
@@ -645,7 +645,7 @@ def test_convert_element_type_with_float(executor, device, _):
     def fn(t0):
         return t0 / 2
 
-    out, (grad,) = executor.make_callable(fn)(a)
+    out, (grad,) = executor.make_callable_legacy(fn)(a)
     torch.testing.assert_close(out, a / 2)
     torch.testing.assert_close(grad, torch.ones_like(a) / 2)
 
@@ -680,11 +680,11 @@ def test_multiple_output_vjp(executor, device, _):
 
     # Let's check that we get the correct error if we don't pass the right number of cotangents
     with pytest.raises(RuntimeError, match="Expected cotangents to be a sequence of length 2"):
-        out, (g,) = executor.make_callable(vjp(func))((x,), (v,))
+        out, (g,) = executor.make_callable_legacy(vjp(func))((x,), (v,))
 
     # The "vjp" function defined above is incorrect, let's check that we get the correct error
     with pytest.raises(RuntimeError, match="Backward for sincos returned 2 values, but expected at most 1"):
-        out, (g,) = executor.make_callable(vjp(func))((x,), (v, v))
+        out, (g,) = executor.make_callable_legacy(vjp(func))((x,), (v, v))
 
     # Let's define a correct sincos_backward function
     @register_backward("sincos")
@@ -709,7 +709,9 @@ def test_multiple_output_vjp(executor, device, _):
     assert trace.output[0] == trace.bound_symbols[4].output
 
 
-# TODO: Fix flaky test https://github.com/Lightning-AI/lightning-thunder/issues/1919
+# TODO: see issue
+# "thunder/tests/test_grad.py::test_torch_autograd_saved_tensors_memory_release
+# is flaky"
 @pytest.mark.xfail(strict=False, reason="This test is flaky")
 @requiresCUDA
 def test_torch_autograd_saved_tensors_memory_release():
@@ -768,7 +770,7 @@ def test_torch_autograd_saved_tensors_memory_release():
             x = noop(x)
         return x
 
-    cfunc = thunder.compile(func, disable_preprocessing=True, executors_list=[thunder.executors.torchex.ex])
+    cfunc = thunder.jit(func, executors=[thunder.executors.torchex.ex])
 
     initial_allocated = torch.cuda.memory_allocated()
 
@@ -826,16 +828,55 @@ def test_make_aug_forward_and_backward(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_make_aug_forward_and_backward_var_mean(executor, device, _):
+    # This test checks that the split of the joint forward/backward function for
+    # var_mean correctly puts the forward part into the augmented forward
+    # function and the backward part into the backward function without
+    # overlapping symbols.
+    from thunder.core.vjp_utils import make_aug_forward_and_backward
+    from thunder.core.prims import var_mean
+
+    def fun(a):
+        return var_mean(a, (0,), correction=1)
+
+    x = torch.tensor((2, 2), device=device, dtype=torch.float32)
+
+    trace = thunder.trace()(fun, x)
+    var_mean_bsym = trace.bound_symbols[-2]
+    assert var_mean_bsym.sym.name == "var_mean"
+
+    aug_fw, bw = make_aug_forward_and_backward(var_mean_bsym)
+    aug_fw = executor.make_callable(aug_fw)
+    out, saved = aug_fw(x, (0,), correction=1)
+    bw = executor.make_callable(bw)
+    _ = bw(*saved, *out)
+    bw_trace = thunder.last_traces(bw)[0]
+    assert "var_mean" not in (s.sym.name for s in bw_trace.bound_symbols)
+
+
+def test_no_duplicate_backward_registered():
+    from thunder.core.transforms import backward_impls, _grad_fn_map
+
+    same_keys = set(_grad_fn_map.keys()).intersection(set(backward_impls.keys()))
+    assert not same_keys, f"Duplicate keys: {same_keys}"
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_torch_autograd_function(executor, device, _):
-    from thunder.clang import cos, sin
     from thunder.executors.torch_autograd import thunder_backward
+    from thunder.common import CompileData
+    from thunder.clang import cos, sin
     import thunder.torch as ltorch
 
-    @thunder_backward(executors_list=executor.executors_list())
     def func(a, b, *, c):
         d = a + b + c
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
+
+    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
+    func = thunder_backward(compile_data=compile_data)(func)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -850,10 +891,13 @@ def test_torch_autograd_function(executor, device, _):
 def test_torch_autograd_function_single_input(executor, device, _):
     from thunder.clang import sin
     from thunder.executors.torch_autograd import thunder_backward
+    from thunder.common import CompileData
 
-    @thunder_backward(executors_list=executor.executors_list())
     def func(a):
         return sin(a)
+
+    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
+    func = thunder_backward(compile_data=compile_data)(func)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     assert torch.autograd.gradcheck(func, (a,))
@@ -865,8 +909,7 @@ def test_torch_autograd_function_single_input(executor, device, _):
 def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
     from thunder.executors.torch_autograd import thunder_backward
 
-    # Borrowed from
-    # https://github.com/Lightning-AI/lightning-thunder/blob/3401475ee47d5a732b6b4d5dcbd88afcd9bed81d/thunder/tests/test_core.py#L117
+    # Borrowed from `test_crazy_collections_in_and_out`.
     def foo(a, b, c, *, ka, kb, kc):
         d = {
             5: 2,
@@ -903,7 +946,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
             {},
         )
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
     a = make_tensor((2,), device=device, dtype=tdtype, requires_grad=True)
@@ -931,11 +974,10 @@ def test_torch_autograd_module(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    for cache_mode in ("dynamic strides", "assume same inputs"):
+    for cache_mode in ("constant values", "same input"):
         lc = executor.make_callable(
             l,
-            disable_preprocessing=False,
-            disable_torch_autograd_support=False,
+            disable_torch_autograd=False,
             cache_mode=cache_mode,
         )
         lc.zero_grad()
@@ -958,10 +1000,8 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
-    lc = executor.make_callable(
+    lc = thunder.jit(
         l,
-        disable_preprocessing=False,
-        disable_torch_autograd_support=False,
     )
     lc.zero_grad()
     a.grad = None
@@ -969,19 +1009,16 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     out.backward(g)
 
     compile_stats = compile_stats(lc)
-    primal_trace = compile_stats.primal_trace
-    forward_traces = compile_stats.forward_last_traces
-    backward_traces = compile_stats.backward_last_traces
+    forward_traces = compile_stats.last_traces
+    backward_traces = compile_stats.last_backward_traces
     assert isinstance(forward_traces, list)
     assert len(forward_traces) >= 1
     assert isinstance(backward_traces, list)
     assert len(backward_traces) >= 1
-    assert isinstance(primal_trace, TraceCtx)
-    fw_bw_traces = thunder.last_traces(lc)
-    assert isinstance(fw_bw_traces, tuple)
-    assert len(fw_bw_traces) == 2
-    assert fw_bw_traces[0] == forward_traces
-    assert fw_bw_traces[1] == backward_traces
+    fw_traces = thunder.last_traces(lc)
+    bw_traces = thunder.last_backward_traces(lc)
+    assert fw_traces == forward_traces
+    assert bw_traces == backward_traces
 
 
 @instantiate(
@@ -989,12 +1026,13 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
 )
 def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _):
     from thunder.executors.torch_autograd import thunder_backward
+    from thunder.common import CompileData
 
-    @thunder_backward(
-        executors_list=executor.executors_list(),
-    )
     def func(a, b):
         return a - b
+
+    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
+    func = thunder_backward(compile_data=compile_data)(func)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -1020,7 +1058,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
-    expected_vjp_func = executor.make_callable(value_and_grad(func))
+    expected_vjp_func = executor.make_callable_legacy(value_and_grad(func))
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -1047,13 +1085,16 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # we don't regress.
     from thunder.core.prims import convert_element_type
     from thunder.executors.torch_autograd import thunder_backward
+    from thunder.common import CompileData
     import thunder.torch as ltorch
 
-    @thunder_backward(executors_list=executor.executors_list())
     def func(a, b, c):
         d = a + b + c
         e = d * a + d * b + d * c
         return ltorch.sin(e) + ltorch.cos(e)
+
+    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
+    func = thunder_backward(compile_data=compile_data)(func)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
@@ -1088,7 +1129,7 @@ def test_backward_none_propagation(executor, device, _):
     import thunder.torch as ltorch
     from thunder.core.transforms import vjp
 
-    @executor.make_callable
+    @executor.make_callable_legacy
     @vjp
     def func(a):
         return ltorch.split(a, 1)
@@ -1176,7 +1217,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op,
             device,
             dtype,
-            executor.make_callable(op.op),
+            executor.make_callable_legacy(op.op),
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
@@ -1197,7 +1238,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = tup
         return a * b
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.compile(foo, disable_preprocessing=True)
     cfoo_grad = grad(cfoo)
 
     a = torch.randn((2, 2), requires_grad=True)
@@ -1213,7 +1254,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = d["a"], d["b"]
         return a * b
 
-    cbar = thunder.compile(bar)
+    cbar = thunder.compile(bar, disable_preprocessing=True)
     cbar_grad = grad(cbar)
 
     a_grad, b_grad = cbar_grad({"a": a, "b": b})
@@ -1244,11 +1285,11 @@ def test_populate_grads_mlp(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
     tom_grad = grad(tom)
     thunder_grads = tom_grad(x)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=(x,))
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-3, rtol=1e-5)
@@ -1271,11 +1312,11 @@ def test_populate_grads_csa(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
     tom_grad = grad(tom)
     thunder_grads = tom_grad(x)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=[x])
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
@@ -1298,11 +1339,11 @@ def test_populate_grads_block(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
     tom_grad = grad(tom)
     thunder_grads = tom_grad(x)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=[x])
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
@@ -1334,7 +1375,7 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     clear_grads(model)
 
-    tom = executor.make_callable(model, disable_preprocessing=False)
+    tom = executor.make_callable(model)
 
     def grad_specifier(out) -> None:
         logits, loss = out
@@ -1343,7 +1384,54 @@ def test_populate_grads_nanogpt(executor, device, dtype):
     tom_grad = grad(tom, grad_specifier=grad_specifier)
     thunder_grads = tom_grad(x, targets)
 
-    populate_grads(thunder_grads, tom)
+    populate_grads(thunder_grads, tom, args=[x, targets])
     thunder_grads = extract_grads(tom)
 
     assert_close(torch_grads, thunder_grads, atol=1e-2, rtol=1e-2)
+
+
+def test_too_few_results_from_backward():
+    # this tests the error message, previously we checked the condition too late and hit an
+    # opaque error
+
+    global myadd
+    from thunder.core.prims import make_prim
+    from thunder.core.transforms import register_augmented_forward, register_backward
+    from thunder.core.proxies import TensorProxy
+    from thunder.core import codeutils
+
+    def myadd_meta(a, b):
+        return TensorProxy(like=a)
+
+    myadd = make_prim(
+        "myadd",
+        "myadd",
+        meta=myadd_meta,
+    )
+
+    myex = thunder.extend.OperatorExecutor("myex", version="0.1")
+    thunder.extend.register_executor(myex)
+    myadd_op = myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
+
+    @register_augmented_forward("myadd")
+    def myadd_augmented_fw(a, b):
+        out = myadd(a, b)
+        saved = (out,)
+        return out, saved
+
+    @register_backward("myadd")
+    def myadd_backward(out, g):
+        return g
+
+    def func(a, b):
+        return myadd(a, b)
+
+    cfunc = thunder.jit(func, executors=[myex, thunder.executors.torchex.ex])
+
+    a = torch.tensor(1.0, requires_grad=False)
+    b = torch.tensor(1.0, requires_grad=True)
+
+    with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
+        fw_out = cfunc(a, b)
+
+    thunder.extend.deregister_executor(myex)

@@ -155,7 +155,7 @@ def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -
             unsharded_shape = a.shape[0] * group.size(), *a.shape[1:]
             return TensorProxy(shape=unsharded_shape, like=a, ddp_type=DDPType.REPLICATED)
         case _:
-            utils.check(False, lambda: f"Unexpected {a.ddp_type=}")
+            utils.check(False, lambda: f"Proxy {a} has unexpected {a.ddp_type=}")
 
 
 def pack_meta(
@@ -280,7 +280,7 @@ def synchronize_augmented_forward_rule(
                 group,
             )
         case _:
-            utils.check(False, lambda: f"Unexpected {a.ddp_type=}")
+            utils.check(False, lambda: f"Proxy {a} has unexpected {a.ddp_type=}")
 
 
 @register_backward(PrimIDs.SYNCHRONIZE)
@@ -294,5 +294,5 @@ def synchronize_backward_rule(
         case DDPType.FULLY_SHARDED:
             synced_grad = reduce_scatter(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
         case _:
-            utils.check(False, lambda: f"Unexpected {ddp_type=}")
+            utils.check(False, lambda: f"synchronize with unexpected {ddp_type=}")
     return synced_grad, None

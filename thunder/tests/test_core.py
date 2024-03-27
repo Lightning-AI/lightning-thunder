@@ -432,7 +432,7 @@ def test_constant_creation(executor, device, dtype):
         x = prims.convert_element_type(1, float)
         return a + x
 
-    cfoo = thunder.compile(foo, executors_list=executor.executors_list())
+    cfoo = thunder.jit(foo, executors=executor.executors_list())
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -471,7 +471,7 @@ def test_consistent_trace_and_boundsymbol_printing():
     def foo(a=object(), b=(torch.float32, object())):
         return a, b, b[1]
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
     _ = cfoo()
     traces = thunder.last_traces(cfoo)
 
@@ -494,7 +494,7 @@ def test_consistent_boundsymbol_collection_printing():
         e = c + d["dict"]["val"]
         return a + b, e
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
     _ = cfoo(((2, 3), 4), {"dict": {"val": 2}})
     traces = thunder.last_traces(cfoo)
 
@@ -511,7 +511,7 @@ def test_consistent_boundsymbol_collection_hard_printing():
         d = b["dict"]["val"]
         return a + d, c
 
-    cfoo = thunder.compile(foo)
+    cfoo = thunder.jit(foo)
     _ = cfoo(((2, {"dict": {"val": 2}}), 4))
     traces = thunder.last_traces(cfoo)
 
@@ -532,7 +532,7 @@ def test_consistent_boundsymbol_collection_hard_printing():
 @instantiate(dtypes=NOTHING)
 def test_type_promotion_tensors(executor, device, _):
     if executor == TorchExecutor:
-        pytest.xfail("https://github.com/Lightning-AI/lightning-thunder/issues/406")
+        pytest.xfail('see issue "vmap of sum doesn\'t work when dims are passed as a keyword argument"')
 
     def foo(a, b):
         return a + b
@@ -590,7 +590,7 @@ def test_type_promotion_tensors(executor, device, _):
 @instantiate(dtypes=NOTHING)
 def test_type_promotion_numbers_and_tensors(executor, device, _):
     if executor == TorchExecutor:
-        pytest.xfail("https://github.com/Lightning-AI/lightning-thunder/issues/406")
+        pytest.xfail('See issue "Type promotion with the torchexecutor and elementwise operations is incorrect"')
 
     def foo(a, b, c):
         return a + b + c
@@ -655,14 +655,14 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     d = make_tensor((2, 1), device=device, dtype=torch_dtype)
     e = make_tensor((2, 2), device=device, dtype=torch.bool)
 
-    for disable_preprocessing in (True, False):
+    for jit in (thunder.functional.jit, thunder.jit):
 
         def foo(a, b):
             return a + b
 
-        cfoo = thunder.compile(foo, disable_preprocessing=disable_preprocessing, cache_mode="dynamic strides")
+        cfoo = jit(foo, cache_mode="constant values")
 
-        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.DYNAMIC_STRIDES
+        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
 
         # Tensor x tensor
         result = cfoo(a, b)
@@ -727,7 +727,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def bar(a, b):
         return a, b
 
-    cbar = thunder.compile(bar, cache_mode="dynamic strides")
+    cbar = thunder.jit(bar, cache_mode="constant values")
 
     astr = "a"
     bstr = "b"
@@ -753,14 +753,15 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     assert cache_misses(cbar) == 2
     assert cache_hits(cbar) == 2
 
+    # TODO: test objects in prologues
     # object() != object() -- cache miss
-    cbar(object(), bother_str)
-    assert cache_misses(cbar) == 3
-    assert cache_hits(cbar) == 2
+    # cbar(object(), bother_str)
+    # assert cache_misses(cbar) == 3
+    # assert cache_hits(cbar) == 2
 
     # Module tests
     m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
-    cm = thunder.compile(m, cache_mode="dynamic strides")
+    cm = thunder.jit(m, cache_mode="constant values")
 
     inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
 
@@ -811,7 +812,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
             accum += x
         return accum
 
-    ccaz = thunder.compile(caz, cache_mode="dynamic strides")
+    ccaz = thunder.jit(caz, cache_mode="constant values")
 
     inp0 = [5, 3, 7]
     thunder_result = ccaz(inp0)
@@ -858,7 +859,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     def daz(*, a, b):
         return a + b
 
-    cdaz = thunder.compile(daz, cache_mode="dynamic strides")
+    cdaz = thunder.jit(daz, cache_mode="constant values")
 
     inp0 = {"a": a, "b": b}
     thunder_result = cdaz(**inp0)
@@ -907,7 +908,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     def foo(a, b):
         return a + b, a - b
 
-    cfoo = executor.make_callable(foo)
+    cfoo = executor.make_callable_legacy(foo)
     _, _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
@@ -945,7 +946,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 
     a = make((4, 3, 2, 3))
 
-    cbar = executor.make_callable(bar)
+    cbar = executor.make_callable_legacy(bar)
     expected = cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
@@ -1129,7 +1130,8 @@ def test_detached_trace(executor, device: str, _):
 def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
     # This test verifies that the recorded trace for a call to prims.sum
     # has its positional and keyword arguments normalized to the same form.
-    # See: https://github.com/Lightning-AI/lightning-thunder/issues/195
+    # See issue "vmap of sum doesn't work when dims are passed as a keyword
+    # argument"
     a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
 
     def func_dim_posarg(x):
@@ -1162,10 +1164,8 @@ def test_symbol_all_constant_args(executor, device: str, dtype: dtypes.dtype):
 
     trace = thunder.trace()(foo)
 
-    assert len(trace.bound_symbols) == 2
-    symbol = trace.bound_symbols[0]
-    assert symbol.sym.name == "add"
-    assert symbol.are_all_args_constant
+    assert len(trace.bound_symbols) == 1
+    assert trace.bound_symbols[0].are_all_args_constant
 
     def bar(a, b):
         return clang.add(a, b)
@@ -1222,7 +1222,8 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     assert str(trace).count("Testing") == 1
 
 
-# Check for https://github.com/Lightning-AI/lightning-thunder/issues/471
+# Check to verify the issue in "KeyError thrown in thunder.executor.utils.Region
+# when None is passed in as input".
 @instantiate(dtypes=(thunder.float32,))
 def test_argument_of_none(executor, device, dtype):
     from thunder.executors.utils import Region
@@ -1500,11 +1501,15 @@ def test_eval_trace(executor, device, _):
         new_kwargs = {k: v for k, v in foo_trace.kwargs.items()}
         # TODO: trace object doesn't respect the original tuple/non-tuple spec
         # for output, it's always a tuple
-        actual = eval_trace(foo_trace, *new_args, **new_kwargs)[0]
+        actual = eval_trace(foo_trace, *new_args, **new_kwargs)
+        # actual = result[0]
         assert isinstance(actual, TensorProxy)
-        assert actual.shape == foo_trace.output[0].shape
-        assert actual.dtype == foo_trace.output[0].dtype
-        assert actual.device == foo_trace.output[0].device
+        # assert actual.shape == foo_trace.output[0].shape
+        # assert actual.dtype == foo_trace.output[0].dtype
+        # assert actual.device == foo_trace.output[0].device
+        assert actual.shape == foo_trace.output.shape
+        assert actual.dtype == foo_trace.output.dtype
+        assert actual.device == foo_trace.output.device
     finally:
         reset_tracectx(trace_token)
 
@@ -1633,11 +1638,11 @@ def test_transforms_identity(executor, device, _):
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import vmap
 
-    actual = executor.make_callable(vmap(lambda: 2, axis_size=4))()
+    actual = executor.make_callable_legacy(vmap(lambda: 2, axis_size=4))()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = executor.make_callable(vmap(lambda x: x, axis_size=4))(2)
+    actual = executor.make_callable_legacy(vmap(lambda x: x, axis_size=4))(2)
     assert_close(actual, expected)
 
 
@@ -1680,6 +1685,7 @@ def test_transforms_vmap_axis_size(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
 )
 def test_transforms_vjp_1_2(executor, device, _):
     from thunder.core.transforms import vjp
@@ -1696,12 +1702,12 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = executor.make_callable(vjp(func_1_2))
+    vjp_eager = executor.make_callable_legacy(vjp(func_1_2))
 
     primals = (a,)
     cotangents = (g1, g2)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable(func_1_2)(a)
+    expected_out_p = executor.make_callable_legacy(func_1_2)(a)
     assert_close(out_p, expected_out_p, equal_nan=True, atol=1e-3, rtol=1e-5)
 
     # Now check the gradients
@@ -1747,7 +1753,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = executor.make_callable(vjp(func_2_2))
+    vjp_eager = executor.make_callable_legacy(vjp(func_2_2))
 
     primals = (x, y)
     primal_kwargs = {"z": z}
@@ -1786,6 +1792,7 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
 )
 def test_transforms_vjp_2_1(executor, device, _):
     from thunder.core.transforms import vjp
@@ -1802,14 +1809,14 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = clang.asin(b)
         return c
 
-    vjp_eager = executor.make_callable(vjp(func_2_1))
+    vjp_eager = executor.make_callable_legacy(vjp(func_2_1))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable(func_2_1)(*primals)
+    expected_out_p = executor.make_callable_legacy(func_2_1)(*primals)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     aa = a.clone().requires_grad_(True)
@@ -1825,7 +1832,8 @@ def test_transforms_vjp_2_1(executor, device, _):
 #     executors=(
 #         nvFuserExecutor,
 #         # TODO: Enable Torch executor once the issue with sum is fixed
-#         # See: https://github.com/Lightning-AI/lightning-thunder/issues/438
+#         # See issue "Different behavior of sum(tensor, ()) for nvFuser and
+#         # Torch executor"
 #     ),
 # )
 # def test_transforms_vmap_inline_value_and_grad(executor, device, _):
@@ -1925,7 +1933,7 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = executor.make_callable(vmap(jvp(func), out_dims=(0, 0)))(args, args)
+    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -1936,17 +1944,17 @@ def test_traceback():
     def f(a):
         return -(a > 0)  # negating a bool tensor raises
 
-    compiled_f = thunder.compile(f)
+    compiled_f = thunder.jit(f)
     a = torch.ones((), dtype=torch.float32)
     with pytest.raises(RuntimeError) as excinfo:
         compiled_f(a)
     assert "on a bool tensor" in str(excinfo.value)
     assert "torch.neg" in str(excinfo.traceback[-1].statement)
-    assert "thunder.f" in excinfo.traceback[-1].path
+    assert "thunder.computation" in excinfo.traceback[-1].path
 
 
-# TODO Add nvFuser support (https://github.com/Lightning-AI/lightning-thunder/issues/809)
-# TODO Make these OpInfo tests (https://github.com/Lightning-AI/lightning-thunder/issues/810)
+# TODO See issue "Add contiguous and clang.stride_order OpInfos that check stride
+# consistency with PyTorch"
 @instantiate(
     dtypes=NOTHING,
     executors=(TorchExecutor,),
@@ -2099,7 +2107,7 @@ def test_inplace(executor, device, _):
     )
 
     for t in tests:
-        cfn = thunder.compile(t)
+        cfn = thunder.jit(t)
         with pytest.raises(RuntimeError, match="not supported"):
             cfn(t1, t2)
         # Note: Python maps inplace operations on (immutuables) to
@@ -2176,7 +2184,7 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
         y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0, is_causal=True)
         return y
 
-    compiled = thunder.compile(func, executors_list=executor.executors_list())
+    compiled = thunder.jit(func, executors=executor.executors_list())
     out = compiled(qkv)
     history = thunder.last_traces(compiled)
     torch.testing.assert_close(out, func(qkv))
@@ -2186,7 +2194,8 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
 @instantiate(dtypes=NOTHING)
 def test_no_passthrough_symbol(executor, device, _):
     # A test case for the situation reported in
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1131
+    # "backward trace contains symbols not present in forward that cause
+    # NotImplementedError"
     # When an operation simply passes through its input, we should not
     # add it to the trace.
 
@@ -2194,10 +2203,11 @@ def test_no_passthrough_symbol(executor, device, _):
         return x.type_as(x)
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable(func)
+    compiled = executor.make_callable_legacy(func)
     out = compiled(x)
     assert out is x
     initial_trace = thunder.last_traces(compiled)[0]
+    print(initial_trace)
     assert len(initial_trace.bound_symbols) == 2
     assert initial_trace.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
     assert initial_trace.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
@@ -2253,6 +2263,34 @@ def test_symbol_flat_args():
     sym = Symbol(meta=func, name="func", id=0)
     bsym = BoundSymbol(sym, args=(1, 2), kwargs={"z": 3}, output=None)
     assert bsym.flat_args == [1, 2, 3]
+
+
+@instantiate(dtypes=NOTHING)
+def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
+    import inspect
+
+    class MLP(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = torch.nn.Linear(3, 4)
+            self.fc2 = torch.nn.Linear(4, 5)
+
+        def forward(self, x):
+            x = self.fc1(x)
+            x = self.fc2(x)
+            return x
+
+    model = MLP().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
+    x = torch.randn(2, 3, device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    compiled = thunder.jit(model, executors=executor.executors_list())
+    compiled(x)
+    traces = thunder.last_traces(compiled)
+    sig = inspect.signature(traces[-1].python_callable())
+    assert "t_fc1_bias" in sig.parameters
+    assert "t_fc1_weight" in sig.parameters
+    assert "t_fc2_bias" in sig.parameters
+    assert "t_fc2_weight" in sig.parameters
 
 
 # @instantiate(

@@ -14,7 +14,7 @@ from thunder.benchmarks import (
     LitGPTBenchmark,
     LitGPTConfig,
 )
-from thunder.tests.lit_gpt_model import name_to_config
+from thunder.tests.litgpt_model import name_to_config
 from thunder.distributed import FSDPBucketingStrategy
 from thunder.distributed import FSDPType
 
@@ -211,7 +211,7 @@ def parse_args() -> argparse.Namespace:
 
 
 # TODO Port these benchmarks to pytest (and targets.py)
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1404
+# See issue "Create distributed pytest benchmarks"
 if __name__ == "__main__":
     args = parse_args()
 
@@ -299,7 +299,7 @@ if __name__ == "__main__":
                 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
                 from thunder.benchmarks import get_default_torch_fsdp_executor
                 from thunder.tests.nanogpt_model import Block as NanoGPTBlock
-                from thunder.tests.lit_gpt_model import Block as GPTBlock
+                from thunder.tests.litgpt_model import Block as GPTBlock
 
                 sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
                 auto_wrap_policies = (
@@ -322,9 +322,11 @@ if __name__ == "__main__":
                         ResultFormatter(
                             model_name=args.model,
                             base_name="torch_fsdp",
-                            suffix=str(sharding_strategy).lower() + "-bucketing_" + "block"
-                            if auto_wrap_policy is not None
-                            else "none",
+                            suffix=(
+                                str(sharding_strategy).lower() + "-bucketing_" + "block"
+                                if auto_wrap_policy is not None
+                                else "none"
+                            ),
                             dtype=args.dtype,
                             world_size=world_size,
                             total_callable_construction_time=total_cct,
@@ -352,9 +354,11 @@ if __name__ == "__main__":
                             ResultFormatter(
                                 model_name=args.model,
                                 base_name="torch_compile_fsdp",
-                                suffix=str(sharding_strategy).lower() + "-bucketing_" + "block"
-                                if auto_wrap_policy is not None
-                                else "none",
+                                suffix=(
+                                    str(sharding_strategy).lower() + "-bucketing_" + "block"
+                                    if auto_wrap_policy is not None
+                                    else "none"
+                                ),
                                 dtype=args.dtype,
                                 world_size=world_size,
                                 total_callable_construction_time=total_cct,

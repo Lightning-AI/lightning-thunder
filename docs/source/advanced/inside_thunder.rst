@@ -3,25 +3,22 @@ Inside Thunder
 
 This section elaborates on the design of some of *thunder*'s internals.
 
-Preprocessing
-=============
+Bytecode interpretation
+=======================
 
-Preprocessing converts a PyTorch module or function into a traceable module or function, making it easy for practitioners to write natural Python and convert existing PyTorch programs to *thunder*.
+Thunder's interpreter works by:
 
-Preprocessing works by:
-
-1. disassembling the PyTorch module or function into CPython bytecode
-2. transforming the bytecode into an internal representation that's better suited for analysis
-3. verifying that the original PyTorch module or function can be made traceable
-4. assembling the transformed bytecode into a traceable module or function.
-
-Preprocessing, like the rest of *thunder*, is being actively developed, and many Python constructs are not yet supported. See the :doc:`Sharp Edges <../basic/sharp_edges>` section for some examples.
+1. Disassembling the PyTorch module or function into CPython bytecode
+2. Interpreting the bytecode using an extended Python interpreter
+3. Generating a sequential trace of operations on tensors and numbers
 
 Representing Operations
 =======================
 
-*thunder* supports a subset of PyTorch's operators (see ``thunder.torch.__init__.py`` for which operators are supported).
-*thunder* has to define its own versions of PyTorch operators so it knows how to compile and trace them properly. This section details how *thunder* represents operations. Let's start by looking at how torch.nn.functional.softmax appears in a trace of the nanoGPT (https://github.com/karpathy/nanoGPT) model::
+Thunder supports a subset of PyTorch's operators (see ``thunder.torch.__init__.py`` for which operators are supported).
+Thunder has to define its own versions of PyTorch operators so it knows how to compile and trace them properly. This section details how Thunder represents operations.
+
+Let's start by looking at how ``torch.nn.functional.softmax`` appears in a trace of the nanoGPT (https://github.com/karpathy/nanoGPT) model::
 
   t63 = ltorch.softmax(t52, dim=-1)  # t63: "cuda:0 f16[8, 12, 64, 64]"
     # t53 = prims.convert_element_type(t52, dtypes.float32)  # t53: "cuda:0 f32[8, 12, 64, 64]"
@@ -43,15 +40,15 @@ Representing Operations
 
 Instead of the original operation we see a call to the corresponding ``thunder.torch`` operation, then a comment that describes the decomposition of this operation into other ``thunder.torch`` calls (identified by ``ltorch`` in the snippet above) and ``thunder.core.prims`` calls, with the calls to the *primitives* defined in ``thunder.core.prims`` being “terminal” — they decompose into nothing.
 
-Every *thunder* operation can be decomposed into one or more primitives, and these decompositions are essential to trace, transform, and optimize them. For example, every primitive operation defines a “meta function” that maps proxy inputs to proxy outputs. When tracing, some inputs, like PyTorch tensors, are replaced with proxies. We know what the proxy output of operations like ``torch.softmax`` would be by decomposing it into primitives, essentially giving it an implicit meta function. If operations weren't defined in terms of primitives, then each operation would require its own meta function, and its own rule for transforms like autograd, and executors would have to reason about every Pytorch operator.
+Every Thunder operation can be decomposed into one or more primitives, and these decompositions are essential to trace, transform, and optimize them. For example, every primitive operation defines a “meta function” that maps proxy inputs to proxy outputs. When tracing, some inputs, like PyTorch tensors, are replaced with proxies. We know what the proxy output of operations like ``torch.softmax`` would be by decomposing it into primitives, essentially giving it an implicit meta function. If operations weren't defined in terms of primitives, then each operation would require its own meta function, and its own rule for transforms like autograd, and executors would have to reason about every Pytorch operator.
 
-Primitives are what let *thunder* define operations without dramatically increasing its complexity, but the set of primitives must also be carefully chosen. Primitives serve two purposes:
+Primitives are what let Thunder define operations without dramatically increasing its complexity, but the set of primitives must also be carefully chosen. Primitives serve two purposes:
 
 - They must be as simple and few in number as possible. A small set of simple operations is easier to analyze, transform, optimize, and execute than a large set of complicated operations.
 - They must be expressive enough to describe and facilitate the execution of deep learning and scientific computations.
 
-Since primitives are as simple as possible, they do not broadcast or type promote, and they typically do not have default arguments. For example, in the above trace the call to ltorch.sub decomposes into a broadcast and then the primitive for subtraction because broadcast is its own primitive.
+Since primitives are as simple as possible, they do not broadcast or type promote, and they typically do not have default arguments. For example, in the above trace the call to ``ltorch.sub`` decomposes into a broadcast and then the primitive for subtraction because broadcast is its own primitive.
 
-*thunder*'s primitives are similar to the operations in JAX's ``jax.lax`` module, which is a wrapper around XLA's HLO operations.
+Thunder primitives are similar to the operations in JAX's ``jax.lax`` module, which is a wrapper around XLA's HLO operations.
 
-Because the prims are so simple and few, writing the decompositions of PyTorch operations directly in terms of primitives would be painstaking. Instead, *thunder* has a “core language” of common deep learning operations, and *thunder*'s PyTorch decompositions typically call these core language operations or other PyTorch operations. Note that core language operations don't appear in traces for simplicity (they have no other use except producing decompositions and can't be executed directly).
+Because the prims are so simple and few, writing the decompositions of PyTorch operations directly in terms of primitives would be painstaking. Instead, Thunder has a “core language” of common deep learning operations, and Thunder's PyTorch decompositions typically call these core language operations or other PyTorch operations. Note that core language operations don't appear in traces for simplicity (they have no other use except producing decompositions and can't be executed directly).

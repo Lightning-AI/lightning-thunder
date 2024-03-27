@@ -24,9 +24,9 @@ import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
 from thunder.core.transforms import grad, clear_grads, populate_grads
 import thunder.executors as executors
-from thunder.tests import nanogpt_model, hf_bart_self_attn, lit_gpt_model
+from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.lit_gpt_model import Config as LitGPTConfig
+from thunder.tests.litgpt_model import Config as LitGPTConfig
 
 # List of all benchmarks
 benchmarks: list = []
@@ -593,6 +593,10 @@ def ddp_runner(args):
     benchmark.device = f"cuda:{rank}"
     torch.cuda.set_device(rank)
 
+    import os
+
+    os.environ["LOCAL_RANK"] = str(rank)
+
     stats = _run_benchmark(benchmark, ddp_constructor(rank), warmup_iters=warmup_iters, benchmark_iters=benchmark_iters)
     return rank, stats
 
@@ -705,14 +709,12 @@ def torch_compile_executor(fn: Callable) -> Callable:
 
 def thunder_torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor])
+    return thunder.jit(fn, executors=[thunder.pytorch_executor])
 
 
 def thunder_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(
-        fn, cache_mode="dynamic strides", executors_list=[thunder.pytorch_executor], use_torch_compile=True
-    )
+    return thunder.jit(fn, exec[thunder.pytorch_executor], use_torch_compile=True)
 
 
 from thunder.executors.apex_entropyex import apex_ex, apex_available
@@ -723,11 +725,11 @@ if apex_available():
 
     def thunder_apex_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[apex_ex])
+        return thunder.jit(fn, executors=[apex_ex])
 
     def thunder_apex_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[apex_ex, thunder.nvfuser_executor])
+        return thunder.jit(fn, executors=[apex_ex, thunder.nvfuser_executor])
 
 
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
@@ -741,21 +743,19 @@ if cudnn_available():
 
     def thunder_cudnn_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_ex])
+        return thunder.jit(fn, executors=[cudnn_ex])
 
     def thunder_cudnn_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_ex, thunder.nvfuser_executor])
+        return thunder.jit(fn, executors=[cudnn_ex, thunder.nvfuser_executor])
 
     def thunder_cudnn_layer_norm_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[cudnn_layernorm_ex])
+        return thunder.jit(fn, executors=[cudnn_layernorm_ex])
 
     def thunder_cudnn_layer_norm_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
-        return thunder.compile(
-            fn, cache_mode="dynamic strides", executors_list=[cudnn_layernorm_ex, thunder.nvfuser_executor]
-        )
+        return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
 
 
 from thunder.executors.sdpaex import sdpa_ex
@@ -763,7 +763,7 @@ from thunder.executors.sdpaex import sdpa_ex
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[sdpa_ex])
+    return thunder.jit(fn, executors=[sdpa_ex])
 
 
 from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
@@ -771,9 +771,7 @@ from thunder.executors.torch_compile import torch_compile_executor as torch_comp
 
 def thunder_sdpa_torch_compile_nvfuser_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(
-        fn, cache_mode="dynamic strides", executors_list=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor]
-    )
+    return thunder.jit(fn, executors=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor])
 
 
 def default_torch_ddp_executor(_) -> Callable:
@@ -825,17 +823,17 @@ def default_thunder_torch_executor(fn: Callable) -> Callable:
     from thunder.executors import TORCH
 
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides", executors_list=[TORCH])
+    return thunder.jit(fn, executors=[TORCH])
 
 
 def default_thunder_always_trace_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="always trace")
+    return thunder.jit(fn, cache="always trace")
 
 
 def default_thunder_dynamic_strides_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="dynamic strides")
+    return thunder.jit(fn)
 
 
 thunder_executor = default_thunder_dynamic_strides_executor
@@ -852,10 +850,9 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
-            return thunder.compile(
-                ddp(fn, broadcast_from=0, bucket_size_in_mb=self.bucket_size_in_mb),
-                cache_mode="dynamic strides",
-                executors_list=[
+            return thunder.jit(
+                ddp(fn, bucket_size_in_mb=self.bucket_size_in_mb),
+                executors=[
                     sdpa_ex,
                     torch_compile_executor,
                     thunder.nvfuser_executor,
@@ -880,15 +877,13 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
-            return thunder.compile(
+            return thunder.jit(
                 fsdp(
                     fn,
-                    broadcast_from=0,
                     bucketing_strategy=self.bucketing_strategy,
                     sharding_strategy=self.sharding_strategy,
                 ),
-                cache_mode="dynamic strides",
-                executors_list=[
+                executors=[
                     sdpa_ex,
                     torch_compile_executor,
                     thunder.nvfuser_executor,
@@ -900,12 +895,12 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
 def default_thunder_dynamic_strides_executor_no_grad(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, disable_torch_autograd_support=True)
+    return thunder.jit(fn)
 
 
 def default_thunder_fixed_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.compile(fn, cache_mode="fixed")
+    return thunder.jit(fn, cache="same input")
 
 
 # TODO Add grad support
@@ -921,7 +916,7 @@ def default_thunder_triton_executor(fn: Callable) -> Callable:
 
     executors_list = ("triton_crossentropy", executors.NVFUSER, executors.TORCH)
 
-    return thunder.compile(fn, executors_list=executors_list, disable_torch_autograd_support=True)
+    return thunder.jit(fn, executors=executors_list, disable_torch_autograd=True)
 
 
 # TODO Add grad support
@@ -936,7 +931,7 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
     register_apex_entropyex(add_to_default_executors=False)
 
     executors_list = ("apex_xentropy", executors.NVFUSER, executors.TORCH)
-    return thunder.compile(fn, executors_list=executors_list, disable_torch_autograd_support=True)
+    return thunder.jit(fn, executors=executors_list, disable_torch_autograd=True)
 
 
 # TODO Add grad support
@@ -951,7 +946,7 @@ def default_thunder_cudnn_executor(fn: Callable) -> Callable:
     register_cudnnex(add_to_default_executors=False)
 
     executors_list = ("cudnn", executors.NVFUSER, executors.TORCH)
-    return thunder.compile(fn, executors_list=executors_list, disable_torch_autograd_support=True)
+    return thunder.jit(fn, executors=executors, disable_torch_autograd=True)
 
 
 # TODO Add grad support
@@ -969,12 +964,7 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
         executors_list.append("apex_xentropy")
 
     executors_list.extend((executors.NVFUSER, executors.TORCH))
-    return thunder.compile(
-        fn,
-        executors_list=executors_list,
-        use_cudagraphs=True,
-        disable_torch_autograd_support=True,
-    )
+    return thunder.jit(fn, executors=executors_list, use_cudagraphs=True, disable_torch_autograd=True)
 
 
 #
@@ -1885,7 +1875,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -1945,7 +1935,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         module = (
-            lit_gpt_model.LLaMAMLP(self.config)
+            litgpt_model.LLaMAMLP(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -1956,7 +1946,7 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
     _args = (
         BenchmarkArg(
             name="config",
-            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -2015,7 +2005,7 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
 
     def fn(self) -> Callable:
         module = (
-            lit_gpt_model.CausalSelfAttention(self.config)
+            litgpt_model.CausalSelfAttention(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2096,7 +2086,7 @@ class LlamaRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         module = (
-            lit_gpt_model.RMSNorm(self.size, self.dim, self.eps)
+            litgpt_model.RMSNorm(self.size, self.dim, self.eps)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2178,7 +2168,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         gpt = (
-            lit_gpt_model.GPT(self.config)
+            litgpt_model.GPT(self.config)
             .to(device=self.device, dtype=self.model_tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2209,7 +2199,7 @@ class QKVSplitRope(nn.Module):
 
         super().__init__()
         self.config = config
-        self.apply_rope = lit_gpt_model.apply_rope
+        self.apply_rope = litgpt_model.apply_rope
         self.use_apex = use_apex
 
     def forward(
@@ -2264,7 +2254,7 @@ class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the lit_gpt_model.py for details.",
+            description="The Lit-GPT config to use. Default is 'Llama-2-7b-hf'. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -2620,7 +2610,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
-        from thunder.tests.lit_gpt_model import Config
+        from thunder.tests.litgpt_model import Config
 
         litgptconfig = Config.from_name(config) if not isinstance(config, Config) else config
         nanogptconfig = NanoGPTConfig(
@@ -2803,7 +2793,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
-        self.cos, self.sin = lit_gpt_model.build_rope_cache(
+        self.cos, self.sin = litgpt_model.build_rope_cache(
             seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
         )
 
@@ -2816,9 +2806,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         model = (
-            lit_gpt_model.Block(self.config)
-            .to(device=self.device, dtype=self.tdtype)
-            .requires_grad_(self.requires_grad)
+            litgpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return model
 

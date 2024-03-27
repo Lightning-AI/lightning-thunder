@@ -29,14 +29,12 @@ jobs:
       matrix:
         os: ["ubuntu-22.04", "macOS-12", "windows-2022"]
         python-version: ['3.10']
-        requires: ['latest', 'oldest']
+        requires: ['latest', 'nightly'] # , 'oldest'
         include:
           - { os: "ubuntu-22.04", python-version: '3.11', requires: 'latest' }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
-    env:
-      TORCH_URL: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
 
     steps:
     - uses: actions/checkout@v4
@@ -69,12 +67,21 @@ jobs:
         key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements/*.txt') }}
         restore-keys: |
           ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
+    - name: switch Torch source
+      run: |
+        if [[ "${{ matrix.requires }}" == "nightly" ]]; then
+          echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
+          echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
+        else
+          echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
+        fi
 
     - name: Install package & dependencies
       run: |
         pip --version
-        pip install -e '.[test]' -U --pre \
-          --find-links=${TORCH_URL_STABLE} --find-links=${TORCH_URL_RC}
+        pip install -e . -U \
+          -r requirements/test.txt \
+          --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
         pip list
       shell: bash
 
@@ -100,22 +107,22 @@ jobs:
         python -m pytest \
           thunder/tests/test_interpreter.py \
           -v --durations=50 --cov=thunder
-        python -m pytest thunder/tests/test_literpreter.py -v --durations=50 --cov=thunder
+        python -m pytest thunder/tests/test_jit_general.py -v --durations=50 --cov=thunder
 
     - name: Statistics
       run: |
         coverage report
         coverage xml
 
-    #- name: Upload coverage to Codecov
-    #  uses: codecov/codecov-action@v3
-    #  with:
-    #    token: ${{ secrets.CODECOV_TOKEN }}
-    #    file: ./coverage.xml
-    #    flags: unittests
-    #    env_vars: OS,PYTHON
-    #    name: codecov-umbrella
-    #    fail_ci_if_error: false
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        file: ./coverage.xml
+        flags: unittests
+        env_vars: OS,PYTHON
+        name: codecov-umbrella
+        fail_ci_if_error: false
 
 
   testing-guardian:

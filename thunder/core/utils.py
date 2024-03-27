@@ -743,16 +743,13 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
     """
 
     @overload
-    def __init__(self, data: Mapping[T, T1]) -> None:
-        ...
+    def __init__(self, data: Mapping[T, T1]) -> None: ...
 
     @overload
-    def __init__(self, data: Iterable[T, T1]) -> None:
-        ...
+    def __init__(self, data: Iterable[T, T1]) -> None: ...
 
     @overload
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        ...
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -812,8 +809,8 @@ def safe_map(f, *args):
 
 def safe_map_flat(f, *args):
     def convert_sequences_to_tuple(x):
-        if isinstance(x, Sequence):
-            return tuple(x)
+        if not isinstance(x, str) and isinstance(x, Sequence) and not isinstance(x, Proxy):
+            return tuple(convert_sequences_to_tuple(y) for y in x)
         return x
 
     args_flat_spec = safe_map(lambda x: tree_flatten(convert_sequences_to_tuple(x)), args)
@@ -834,8 +831,7 @@ def _safe_zip_gen(*args):
 
 
 @overload
-def safe_zip(x: Iterable[T], y: Iterable[T1], /) -> Iterable[tuple[T, T1]]:
-    ...
+def safe_zip(x: Iterable[T], y: Iterable[T1], /) -> Iterable[tuple[T, T1]]: ...
 
 
 def safe_zip(*args):
@@ -1042,7 +1038,7 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         >>> y = torch.randn(3, 4)
         >>> def f(x, y):
         ...     return (x + y) * (x - y)
-        >>> compiled_f = thunder.compile(f)
+        >>> compiled_f = thunder.jit(f)
         >>> _ = compiled_f(x, y)
         >>> trace = thunder.last_traces(compiled_f)[0]
         >>> x_proxy = trace.args[0]

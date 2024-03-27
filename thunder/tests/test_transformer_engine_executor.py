@@ -12,6 +12,12 @@ from thunder.executors.transformer_engineex import transformer_engine_ex
 from transformer_engine.common import recipe
 import transformer_engine.pytorch as te
 
+# FP8 is supported on compute arch 8.9 onwards.
+# Skip the tests if current hardware is not supported.
+is_supported, msg = te.fp8.check_fp8_support()
+if not is_supported:
+    pytest.skip(msg, allow_module_level=True)
+
 # Create an FP8 recipe.
 fp8_recipe = recipe.DelayedScaling(fp8_format=recipe.Format.HYBRID)
 
@@ -27,7 +33,7 @@ def test_te_linear_forward_backward():
     # TE inputs (3D input)
     x_te = torch.randn(3, 768, 4096, device=device, dtype=dtype, requires_grad=True)
     te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
-    te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
+    te_linear2 = te.Linear(4096, 4096, params_dtype=dtype)
 
     # thunder inputs
     x = x_te.detach().clone()
@@ -41,7 +47,7 @@ def test_te_linear_forward_backward():
         o = torch.nn.functional.linear(x, w1)
         return torch.nn.functional.linear(o + x, w2)
 
-    cfn = thunder.compile(fn, executors_list=[transformer_engine_ex])
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex])
 
     # Enable autocasting for the forward pass
     with te.fp8_autocast(fp8_recipe=fp8_recipe):
@@ -64,7 +70,8 @@ def test_te_linear_forward_backward():
     assert_close(w2.grad, te_linear2.weight.grad)
 
     # Verifies te_linear was called
-    forward_trace, backward_trace = thunder.last_traces(cfn)
+    forward_trace = thunder.last_traces(cfn)
+    backward_trace = thunder.last_backward_traces(cfn)
     assert any(bsym.sym.name.startswith("te_linear") for bsym in forward_trace[-1].bound_symbols)
     assert any(bsym.sym.name.startswith("te_functional_linear_backward") for bsym in backward_trace[-1].bound_symbols)
 
@@ -116,7 +123,7 @@ def test_te_linear_forward_backward_multiple_iteration():
         o = torch.nn.functional.linear(x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
-    cfn = thunder.compile(fn, executors_list=[transformer_engine_ex])
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex])
 
     # Enable grad on thunder params.
     list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
@@ -140,7 +147,7 @@ def test_te_linear_invalid_inputs():
         def fn(x, w):
             return torch.nn.functional.linear(x, w)
 
-        cfn = thunder.compile(fn, executors_list=[transformer_engine_ex])
+        cfn = thunder.jit(fn, executors=[transformer_engine_ex])
         cfn(x, w)
         trace = thunder.last_traces(cfn)[-1]
         assert not any(bsym.sym.name.startswith("te_linear") for bsym in trace.bound_symbols)
@@ -156,3 +163,24 @@ def test_te_linear_invalid_inputs():
     x = torch.randn(16, 4, device=device)
     w = torch.randn(16, 4, device=device)
     assert_not_transformed(x, w)
+
+
+@requiresCUDA
+def test_te_with_autocast():
+    def foo(x, w):
+        return thunder.torch.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(16, 16, device=device, requires_grad=True)
+    w = torch.randn(16, 16, device=device, requires_grad=True)
+
+    cfunc = thunder.compile(
+        thunder.core.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
+        executors_list=[transformer_engine_ex],
+        disable_preprocessing=True,
+    )
+    cfunc(x, w)
+
+    fwd_traces = thunder.last_traces(cfunc)
+    # Verify that we have replaced `prims.linear` with `te_linear`
+    assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)

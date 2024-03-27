@@ -19,9 +19,7 @@ def cudnn_available() -> bool:
     return CUDNN_AVAILABLE
 
 
-# WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
-# Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
-
+# WARNING: cudnn layernorm executor is experimental. Tests that use cudnn might fail.
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Union, Dict

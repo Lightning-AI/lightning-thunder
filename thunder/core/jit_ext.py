@@ -1,17 +1,27 @@
 import thunder
-from typing import Any
+import math
+from typing import Any, Optional, Dict, Tuple, Literal
+import builtins
+import collections
 from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
 import random
-from functools import partial, wraps
+from functools import partial, wraps, reduce
+import operator
 import copy
 import contextvars
+from contextlib import contextmanager
 import dis
 import warnings
 from enum import Enum, auto
 from io import StringIO
+import inspect
 import time
+
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
+import thunder.clang as clang
+import thunder.core.transforms
 
 from types import (
     CellType,
@@ -37,51 +47,53 @@ from types import (
     FunctionType,
     MethodType,
     GetSetDescriptorType,
+    UnionType,
 )
 
 import torch
 from thunder.core.proxies import (
+    DDPType,
     proxy,
     Proxy,
     NumberProxy,
     StringProxy,
     TensorProxy,
+    FutureTensorProxy,
     make_proxy_name,
+    Variable,
     variableify,
     unvariableify,
+    is_proxy_name_available,
 )
-from thunder.core.trace import set_tracectx, reset_tracectx, tracectx
-from thunder.core.jit import (
-    jit,
-    _jit,
-    _jit_no_unwrap,
+from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
+from thunder.core.interpreter import (
+    interpret,
+    _interpret_call,
     CapsuleType,
     default_callbacks,
-    JIT_CALLBACKS,
-    JIT_SIGNALS,
+    INTERPRETER_CALLBACKS,
+    INTERPRETER_SIGNALS,
     default_opcode_interpreter,
     _default_lookaside_map,
     default_lookaside,
-    JITFrame,
     do_raise,
-    get_jitcompilectx,
-    JitCompileCtx,
     is_opaque,
     Py_NULL,
     member_descriptor,
     WrappedValue,
-    WRAPPED_VALUE_TYPE,
     unwrap,
     wrap,
     wrap_const,
     PseudoInst,
     ProvenanceRecord,
+    interpreter_needs_wrap,
 )
-from thunder.core.langctx import set_langctx, reset_langctx, get_default_langctx
+from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
 from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution, CACHE_OPTIONS, SHARP_EDGES_OPTIONS
+from thunder.common import transform_for_execution
+from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS
 from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
@@ -89,12 +101,23 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.proxies import proxy, Variable
 from thunder.core.pytree import tree_map
+from thunder.core.compile_data import compile_data_and_stats
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
 #
+
+
+EXT_FLAG_IS_PROXY_DERIVED = 1
+EXT_FLAG_IS_TENSOR_PROXY = 2
+EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
+MODULE_MEMBER_DICT_ATTRS = {
+    "_parameters",
+    "_modules",
+    "_buffers",
+    "__dict__",
+}
 
 
 #
@@ -163,15 +186,16 @@ def is_uncopyable(val: Any, /) -> bool:
 # This extension supports detecting and warning or erroring on "sharp edges" -- behavior in the
 #   original Python program that cannot be translated to the thunder program
 
-# TODO GTC Add all symbols + methods
-# TODO GTC Reuse minimal objects in other executors
-# TODO GTC Detect additional sharp edges
+# TODO RC1 Add all symbols + methods
+# TODO RC1 Reuse minimal objects in other executors
+# TODO RC1 Detect additional sharp edges
 #   - inputs that are not function arguments (or their derivatives)
 #   - modifying an input
 #   - calling a function with a side effect (e.g. randn, print)
-# TODO GTC What kind of error should a sharp edge raise?
-# TODO GTC Improve sharp edges warnings and errors to show the source line
-#   https://github.com/Lightning-AI/lightning-thunder/issues/2099
+# TODO RC1 What kind of error should a sharp edge raise?
+# TODO RC1 Improve sharp edges warnings and errors to show the source line
+#   See issue "jit: Improve "sharp edges" errors and warnings to show the sharp
+#       edge's source location"
 
 
 # Context for the minimal interpreter
@@ -201,10 +225,121 @@ def reset_minimal_ctx(token) -> None:
 
 # Minimal lookasides
 
-_minimal_lookaside_map = {}
+
+def _lookaside_sharp_edge(lookaside: Callable, lookaside_name: str):
+    def wrapped_lookaside(*args, **kwargs):
+        res = _sharp_edge(f"Calling {lookaside_name}()", lookaside)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return res
+        else:
+            return res(*args, **kwargs)
+
+    return wrapped_lookaside
+
+
+# Accessing these attributes for these specific types are sharp edges
+_attr_sharp_edge_map = {
+    "__globals__": (FunctionType,),
+}
+
+
+def _getattr_lookaside_sharp_edge(obj: Any, attr_name: str, *default):
+    default_getattr_lookaside = default_lookaside(getattr)
+    getattr_res = default_getattr_lookaside(obj, attr_name, *default)
+
+    types_with_name_attr = _attr_sharp_edge_map.get(unwrap(attr_name), ())
+    for py_type in types_with_name_attr:
+        if isinstance(unwrap(obj), py_type):
+            return _sharp_edge(f"Accessing attribute '{attr_name}' of type {py_type}", getattr_res)
+
+    return getattr_res
+
+
+_minimal_lookaside_map = {
+    globals: _lookaside_sharp_edge(globals, "globals"),
+    locals: _lookaside_sharp_edge(locals, "locals"),
+    vars: _lookaside_sharp_edge(vars, "vars"),
+    input: _lookaside_sharp_edge(input, "input"),
+    print: _lookaside_sharp_edge(print, "print"),
+    getattr: _getattr_lookaside_sharp_edge,
+    open: _lookaside_sharp_edge(open, "open"),
+}
 
 # Translates actual torch functions to their corresponding thunder functions
 _minimal_lookaside_map.update(_torch_to_thunder_function_map)
+
+
+# NOTE: [SharpEdge - random]
+# We want to mark functions from `random` module as Sharp Edges.
+# These functions are actually method of a hidden/global `random.Random` object
+# which manages the required state. Also, note that we want to allow these methods
+# on an user instantiated `random.Random` object.
+# So, we need to know the method being called and the object it is bound to, to figure out
+# if that call is valid or not (within SharpEdge context).
+#
+# By the time, we get the function to lookaside in `_minimal_lookaside`,
+# we get the function and `self` is passed as the first argument.
+# We check if `self` is same as the id of the hidden/global object, in which case,
+# we wrap it as a SharpEdge otherwise it is from a user's instance which is ok.
+#
+# Reference:
+# 1. Defintion of random.Random : https://github.com/python/cpython/blob/418e72041349dccdd2bf6ad58643fec3314b1691/Lib/random.py#L110
+# 2. Instantiation of global random.Random: https://github.com/python/cpython/blob/418e72041349dccdd2bf6ad58643fec3314b1691/Lib/random.py#L913-L920
+_RANDOM_MODULE_DETAILS: dict[str, Any] = {}
+
+
+# Populate the functions present in `random` module and also get reference to the hidden/global `random.Random`
+# object.
+# See NOTE: [SharpEdge - random] for more information
+def _populate_random_module_details() -> None:
+    random_classes_and_members = filter(lambda x: not x.startswith("_"), dir(random))
+    random_functions = []
+    random_global_obj = None
+    for attr in random_classes_and_members:
+        random_attr = getattr(random, attr)
+        if hasattr(random_attr, "__func__"):
+            random_functions.append(random_attr.__func__)
+
+            # `__self__` on method points to bound object.
+            if hasattr(random_attr, "__self__"):
+                if random_global_obj is None:
+                    random_global_obj = random_attr.__self__
+                assert random_global_obj == random_attr.__self__
+
+    _RANDOM_MODULE_DETAILS["random_global_obj"] = random_global_obj
+    _RANDOM_MODULE_DETAILS["random_functions"] = frozenset(random_functions)
+
+
+_populate_random_module_details()
+
+
+# Calling functions from random is a sharp edge.
+# See NOTE: [SharpEdge - random] for more information
+def _random_module_lookaside(
+    lookaside: Callable, args: tuple[Any, ...]
+) -> Callable | None | Literal[INTERPRETER_SIGNALS.EXCEPTION_RAISED]:
+    # Calls for `random` function will always have the global object or
+    # user's `random.Random` object passed as first argument
+    # (except for something like `random.Random.__init__` which is ok)
+    if len(args) == 0:
+        return None
+
+    # These methods are resolved to method of parent `_random.Random` class
+    SPECIAL_METHODS = ["getrandbits", "random"]
+
+    # grab the bound object for the passed method.
+    bound_obj = args[0]
+    # if we can match the bound object to be the global object
+    # then any calls to it's method is a sharp edge.
+    # NOTE: Use `is` for checking the global object, if we use `==` and bound_obj is a Proxy
+    #       then we take a path where `random.Random` global object shouldn't
+    #       show up and it errors with found `random.Random` but expected
+    #       `TensorProxy` or `NumberProxy`.
+    if bound_obj is _RANDOM_MODULE_DETAILS["random_global_obj"]:
+        # Sanity assertion.
+        if not (lookaside in _RANDOM_MODULE_DETAILS["random_functions"] or lookaside.__name__ in SPECIAL_METHODS):
+            return do_raise(AssertionError(f"Found an unexpected function {lookaside} in random."))
+        return _lookaside_sharp_edge(lookaside, lookaside_name=f"random.{lookaside.__qualname__}")
 
 
 def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
@@ -217,6 +352,8 @@ def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
         lookaside = fn
     elif (minimal_lookaside := _minimal_lookaside_map.get(fn, None)) is not None:
         lookaside = minimal_lookaside
+    elif (random_lookaside := _random_module_lookaside(fn, args)) is not None:
+        lookaside = random_lookaside
     else:
         # Falls through to the interpreter's default lookaside
         lookaside = default_lookaside(fn, *args, **kwargs)
@@ -227,44 +364,84 @@ def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
 # Minimal callbacks (necessary for sharp edges)
 
 
-def _sharp_edge(desc: str, /) -> None:
+class ThunderSharpEdgeError(RuntimeError):
+    """
+    Thrown when the user program cannot be safely translated to a thunder program,
+    unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON.
+    Such cases are referred to as "sharp edges".
+    """
+
+    pass
+
+
+def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_EVERYTHING."
+    s: str = (
+        f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
+    )
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
-        raise AssertionError(s)
+        return do_raise(ThunderSharpEdgeError(s))
 
+    # Warn and return value anyway
     if sharp_edges is SHARP_EDGES_OPTIONS.WARN:
         warnings.warn(s)
-
-
-def _minimal_global_callback(globals_dict: dict, name: str) -> Any:
-    value: Any = globals_dict[name]
-
-    # Allows loading global modules.
-    #   Some global loads, like these, are so essential that they have to be part of any Python program
-    #   translation scheme.
-    # TODO GTC Review this check. There may be other types we want to allow. This essentially assumes that
-    #   the module is captured at interpretation time, or that global module names will not change for
-    #   the lifetime of the program.
-    #   We could consider adding a check that the name refers to the same module as it did previously.
-    if not isinstance(value, ModuleType):
-        _sharp_edge("Loading a global that is not a module")
 
     return value
 
 
-_minimal_callbacks: dict[JIT_CALLBACKS, Callable] = {
-    JIT_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
+def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
+    return _sharp_edge(f"Storing a global variable `{name}`", orig_value)
+
+
+def _minimal_store_deref_callback(orig_value: Any, name: str, co_cellsvars: tuple[str], co_freevars: tuple[str]) -> Any:
+    # ShapeEdge Description: Writing a non-local outside of current scope is a SharpEdge.
+    # code_obj.co_freevars contains the names of free variables in a function.
+    # Free variables are non-local variables defined in an outer function
+    # and used in an inner function.
+    # So if the STORE_DEREF is updating a variable in `co_freevars`,
+    # it means we are mutating a captured variable.
+    if name in co_freevars:
+        return _sharp_edge(f"Storing into a nonlocal variable `{name}`", orig_value)
+    return orig_value
+
+
+# TODO: we need the builtins for impl functions...
+safe_builtins = {id(bi): bi for bi in builtins.__dict__.values()}
+
+
+def _minimal_global_callback(orig_value: Any, name: str) -> Any:
+    value: Any = orig_value
+
+    # Allows loading global modules.
+    #   Some global loads, like these, are so essential that they have to be part of any Python program
+    #   translation scheme.
+    # TODO RC1 Review this check. There may be other types we want to allow. This essentially assumes that
+    #   the module is captured at interpretation time, or that global module names will not change for
+    #   the lifetime of the program.
+    #   We could consider adding a check that the name refers to the same module as it did previously.
+    if id(value) in safe_builtins:
+        return value
+
+    if not isinstance(value, ModuleType):
+        return _sharp_edge("Loading a global that is not a module", value)
+
+    return value
+
+
+_minimal_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
+    INTERPRETER_CALLBACKS.STORE_GLOBAL_CALLBACK: _minimal_store_global_callback,
+    INTERPRETER_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
+    INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK: _minimal_store_deref_callback,
 }
 _minimal_callbacks = default_callbacks | _minimal_callbacks
 
 
-# TODO GTC Add debug_log
+# TODO RC1 Add debug_log
 def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
     ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
-    jfn = jit(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
+    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
 
     def fn_(*args, **kwargs):
         try:
@@ -277,178 +454,374 @@ def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) ->
 
 
 #
-# Objects and functions related to the literpreter context
+# Objects and functions related to the general thunder jit
 #
 
 
-class LitCtx:
-    def __init__(self, fn: Callable, *args, **kwargs):
-        super().__init__()
+class JITSharpEdgeError(RuntimeError):
+    """
+    Thrown when the program cannot be safely translated to a thunder program,
+    even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON.
+    Such cases are referred to as JIT "sharp edges".
+    """
 
-        def fn_(*args, **kwargs):
-            self.fn(*args, **kwargs)
+    pass
 
-        self.fn = fn
 
-        self._prologue_trc: TraceCtx = TraceCtx(fn, using_interpreter=True)
-        self._prologue_trc._siginfo = get_siginfo(fn_, args, kwargs)
-        self._prologue_trc.args = args
-        self._prologue_trc.kwargs = kwargs
+def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
+    sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
+
+    s: str = (
+        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
+    )
+
+    if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
+        return do_raise(JITSharpEdgeError(s))
+
+    # Warn and return value anyway
+    if sharp_edges is SHARP_EDGES_OPTIONS.WARN:
+        warnings.warn(s)
+
+    return value
+
+
+def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
+    # Instructions that are considered terminal for recursions below
+    terminal_instructions = {PseudoInst.INPUT_ARGS, PseudoInst.INPUT_FN}
+
+    def get_postfix(pr: ProvenanceRecord):
+        if pr.inst in terminal_instructions:
+            return [""]
+        elif pr.inst == PseudoInst.BINARY_SUBSCR or pr.inst == PseudoInst.LOAD_ATTR:
+            # These we recurse over
+            assert len(pr.inputs) == 2
+            lhs, rhs = pr.inputs
+            postfix = get_postfix(lhs)
+
+            if rhs.inst == PseudoInst.CONSTANT:
+                rhs_postfix = str(rhs.value)
+
+                if pr.inst == PseudoInst.BINARY_SUBSCR:
+                    maybe_module_pr = lhs
+                else:
+                    # LOAD_ATTR
+                    maybe_module_pr = pr
+
+                if maybe_module_pr.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+                    if rhs_postfix not in MODULE_MEMBER_DICT_ATTRS:
+                        postfix.append(rhs_postfix)
+                else:
+                    postfix.append(rhs_postfix)
+
+            return postfix
+        else:
+            # Skip as if terminal for now
+            # TODO: improve this later
+            return [""]
+
+    return "_".join(get_postfix(pr))
+
+
+class GeneralJitCtx(MinimalCtx):
+    def __init__(
+        self,
+        prologue_trace,
+        computation_trace,
+        *,
+        sharp_edges: SHARP_EDGES_OPTIONS,
+        process_group_for_ddp=None,
+        executor_lookasides,
+    ):
+        super().__init__(sharp_edges=sharp_edges)
+
+        self._prologue_trace = prologue_trace
+        self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
-
-        self._computation_trc: TraceCtx = TraceCtx(using_interpreter=True)
+        self._process_group_for_ddp = process_group_for_ddp
+        self._additional_outputs = collections.defaultdict(list)
+        self._proxy_swapmap: dict[Variable, Proxy] = {}
+        self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
 
     @property
     def prologue_trace(self) -> TraceCtx:
-        return self._prologue_trc
+        return self._prologue_trace
 
     @property
     def computation_trace(self) -> TraceCtx:
-        return self._computation_trc
+        return self._computation_trace
 
-    def add_comparison_constraint(self, lhs, typ, rhs):
-        self._constraints.append((typ, lhs, rhs))
+    def add_constraint(self, constraint):
+        self._constraints.append(constraint)
 
-    @property
-    def comparison_constraints(self) -> list:
-        return self._constraints
+    def proxify(self, value: WrappedValue) -> Any:
+        assert isinstance(value, WrappedValue)
+        uvalue = value.value
+        if isinstance(uvalue, Proxy):
+            return p
+        elif isinstance(uvalue, torch.Tensor):
+            # we always want to proxy torch.Tensor, even const
 
-    # NOTE All proxies are constructed in the context of the computation trace, and their
-    #   names must be added to the prologue trace (this is done when constructing the prologue trace)
-    def proxify(self, val: Any, /, *, name: None | str = None, history: tuple, **kwargs) -> Any:
-        # NOTE This marker indicates that the local has not yet been created, and so this skips them
-        if val is Py_NULL():
-            return val
+            name_postfix = _infer_name_postfix_from_provenance(value.provenance)
+            if name_postfix:
+                name = f"t{name_postfix}"
+            else:
+                name = None
 
-        # Short-circuits if the val is a WrappedValue (in which case it's a constant that doesn't need to be proxied)
-        if isinstance(val, WrappedValue) and val.typ == WRAPPED_VALUE_TYPE.CONSTANT:
-            return val
+            p = proxy(uvalue, name=name, history=value.provenance)
 
-        # Short-circuits if val is already a proxy
-        # TODO Check for distinct provenances for types that care about that (mutable collections)
-        if isinstance(val, Proxy):
-            return val
+            # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
+            value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-        if isinstance(val, str):
-            return proxy(val, name=name, history=history)
+            from thunder.core import utils
+            from thunder.distributed import get_skip_data_parallel_grad_sync
 
-        # TODO Add history
-        if isinstance(val, torch.Tensor):
-            return proxy(val, name=name, history=history)
+            no_sync = get_skip_data_parallel_grad_sync()
+            compile_data = get_compile_data()
+            utils.check(
+                not (no_sync and getattr(compile_data, "use_fsdp", False)),
+                lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
+            )
 
-        return proxy(val, name=name, history=history)
+            if not no_sync and isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+                p_new = thunder.distributed.prims.synchronize(p, self._process_group_for_ddp)
+                p_orig = p
+                p = p_new
+            else:
+                p_orig = p
+            if p is not uvalue:
+                value.register_proxy(p)
+            # TODO: other caching modes
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            return p
+
+        elif isinstance(uvalue, (float, int, complex, str)):
+            assert should_register_for_prologue(value.provenance)
+            value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
+            # we follow the caching mechanisms of the eager_unpack_interpreter
+            p = proxy(uvalue, history=value.provenance)
+            assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
+
+            co: CACHE_OPTIONS = get_cache_option()
+            if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                if isinstance(uvalue, str):
+                    self.add_constraint((clang.check_string_value, p, uvalue))
+                else:
+                    self.add_constraint((clang.check_number_type_and_value, p, uvalue))
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            return p
+        elif isinstance(uvalue, dict):
+            value.track_items()
+            proxy_d = type(uvalue)((k, i.value) for k, i in value.item_wrappers.items())
+            value.register_proxy(proxy_d)
+            for an, av in value.attribute_wrappers.items():
+                if callable(av.value):
+                    av.register_proxy(getattr(proxy_d, an))
+                else:
+                    raise NotImplementedError(
+                        f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
+                    )
+        elif isinstance(uvalue, Sequence):
+            value.track_items()
+            proxy_s = type(uvalue)(i.value for i in value.item_wrappers)
+            value.register_proxy(proxy_s)
+            for an, av in value.attribute_wrappers.items():
+                if callable(av.value):
+                    av.register_proxy(getattr(proxy_s, an))
+                else:
+                    raise NotImplementedError(
+                        f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
+                    )
+        else:
+            raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
 
-_litctx = contextvars.ContextVar("litctx")
+general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {}
 
 
-def set_litctx(ctx: LitCtx) -> Any:
-    return _litctx.set(ctx)
-
-
-def get_litctx() -> LitCtx:
-    return _litctx.get()
-
-
-def reset_litctx(token) -> None:
-    _litctx.reset(token)
-
-
-lit_callbacks: dict[JIT_CALLBACKS, Callable] = {}
-
-
-def register_lit_callback(key: JIT_CALLBACKS) -> Callable:
+def register_general_jit_callback(key: INTERPRETER_CALLBACKS) -> Callable:
     def decorator(fn: Callable):
-        assert key not in lit_callbacks
-        lit_callbacks[key] = fn
+        assert key not in general_jit_callbacks
+        general_jit_callbacks[key] = fn
         return fn
 
     return decorator
 
 
 #
-# lit lookasides
+# general_jit lookasides
 #
 
-# TODO Add all lit operation translations (see https://github.com/Lightning-AI/lightning-thunder/issues/1804)
-_lit_lookaside_map = {}
-_lit_lookaside_map.update(_torch_to_thunder_function_map)
+_general_jit_lookaside_map = {}
+
+
+def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        recursively_proxy(*args, **kwargs)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+_general_jit_lookaside_map.update(
+    {k: ensure_recursive_proxies(interpreter_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
+)
+
+
+def general_jit_lookaside(diverted_fn):
+    def lookaside_wrapper(lookaside):
+        _general_jit_lookaside_map[diverted_fn] = lookaside
+        return lookaside
+
+    return lookaside_wrapper
 
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
-# rely on the default JIT getattr lookaside (as returned from default_lookaside).
-def _lit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
+# rely on the default JIT getattr lookaside (as returned from default_lookaside)
+@general_jit_lookaside(getattr)
+def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
 
-    res = getattr_lookaside(obj, name, *maybe_default)
-    if res is JIT_SIGNALS.EXCEPTION_RAISED:
+    value = getattr_lookaside(obj, name, *maybe_default)
+    if value is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return value
+
+    assert isinstance(value, WrappedValue)
+    assert isinstance(name, WrappedValue)
+
+    if (not maybe_default) and (value is not INTERPRETER_SIGNALS.EXCEPTION_RAISED):
+        if isinstance(unwrap(obj), torch.nn.Module) and (unwrap(name) in MODULE_MEMBER_DICT_ATTRS):
+            value.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
+
+    return value
+
+
+@general_jit_lookaside(isinstance)
+def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[type | UnionType]):
+    uobj = unwrap(obj)
+    ucls = unwrap(cls)
+    if isinstance(uobj, TensorProxy):
+        res = issubclass(torch.Tensor, ucls)
+    else:
+        res = isinstance(uobj, ucls)
+
+    pr = ProvenanceRecord(
+        PseudoInst.LOOKASIDE, inputs=[wrap_const(isinstance).provenance, obj.provenance, cls.provenance]
+    )
+    return wrap(res, provenance=pr)
+
+
+@general_jit_lookaside(collections.OrderedDict.__setitem__)
+def _general_jit_dict_setitem(d, key, value):
+    dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
+    assert dict_setitem_lookaside is not None
+
+    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        if d.original_value is d.nothing:
+            ctx.proxify(d)
+        ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
+
+    return dict_setitem_lookaside(d, key, value)
+
+
+@general_jit_lookaside(setattr)
+def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
+    setattr_lookaside = default_lookaside(setattr)
+    assert setattr_lookaside is not None
+
+    uobj = unwrap(obj)
+    uname = unwrap(name)
+    if isinstance(uobj, torch.nn.Module):
+        # 1) modify the inner thing
+        # 2) divert the actual setattr...
+        for n in MODULE_MEMBER_DICT_ATTRS:
+            member_dict = _interpret_call(getattr, obj, wrap_const(n))
+            member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
+
+    # check if it is an "outside value"?
+    res = setattr_lookaside(obj, name, value)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
-
-    assert isinstance(res, WrappedValue)
-
-    if not isinstance(res.value, Proxy):
-        ctx: LitCtx = get_litctx()
-        return ctx.proxify(res, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, res.provenance))
-
     return res
 
 
-_lit_getattr_lookaside.__jit_needs_wrap = False
-_lit_lookaside_map[getattr] = _lit_getattr_lookaside
-
-
 # TODO Expand on this
-def _lit_hasattr_lookaside(obj: Any, name: str):
+@interpreter_needs_wrap
+def _general_jit_hasattr_lookaside(obj: Any, name: str):
     hasattr_lookaside = default_lookaside(hasattr) or hasattr
     return hasattr_lookaside(obj, name)
 
 
-_lit_lookaside_map[hasattr] = _lit_hasattr_lookaside
+_general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 
 
 # We want to record a constraint when we go from proxy -> value here.
 # At the same time Python expects to (but we might think to loosen the requirement
 # to return a bool for the JIT, return a proxy with origin informaiton and postpone
 # recording the constraint to conditional jumps and such.
-def _lit_bool_lookaside(wrapped_x: Any) -> bool | JIT_SIGNALS:
+def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
-    x = unwrap(wrapped_x)
-    if isinstance(x, NumberProxy) and (x.value is True or x.value is False):
-        # TODO: what if x is from the computational trace?
-        lit_ctx = get_litctx()
-        lit_ctx.add_comparison_constraint(x, "==", x.value)
-        return wrap_const(x.value)
-
-    if isinstance(x, NumberProxy):
-        lit_ctx = get_litctx()
-        res = x.value != 0
-        lit_ctx.add_comparison_constraint(x, "!=" if res else "==", 0)
-        return wrap_const(res)
-
     bool_lookaside = default_lookaside(bool) or bool
-    return bool_lookaside(x)
+    return bool_lookaside(wrapped_x)
 
 
-_lit_bool_lookaside.__jit_needs_wrap = False
-_lit_lookaside_map[bool] = _lit_bool_lookaside
+_general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
 
 # Adds proxy methods
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
 #   This is OK because these methods are written in a tracing-safe manner, and trying to
 #   interpreter their internals is unnecessary and would just add complexity at this time
-_lit_lookaside_map.update(
+
+
+@interpreter_needs_wrap
+def prop_lookaside_helper(meth, /, *args, **kwargs):
+    res = meth(*args, **kwargs)
+    return res
+
+
+def prop_lookaside_wrap(attr_getter):
+    def fn(obj, /, *args, **kwargs):
+        attr = attr_getter(obj)
+
+        if callable(attr):
+
+            def fn_(*args, **kwargs):
+                return prop_lookaside_helper(attr, *args, **kwargs)
+
+        else:
+            return attr
+
+        return fn_
+
+    return fn
+
+
+def get_methods_properties(typ):
+    for meth_name in dir(typ):
+        meth = getattr(typ, meth_name)
+        if isinstance(meth, (MethodType, BuiltinMethodType, MethodDescriptorType, WrapperDescriptorType)) and (
+            getattr(meth, "__objclass__", None) == typ or (getattr(meth, "__self__", None) == typ)
+        ):
+            yield meth, meth
+        elif isinstance(meth, FunctionType):
+            yield meth, meth  # __getattr__
+        elif isinstance(meth, property):
+            if meth.fget is not None:
+                yield meth.fget, prop_lookaside_wrap(meth.fget)
+
+
+_general_jit_lookaside_map.update(
     {
-        NumberProxy.__add__: NumberProxy.__add__,
-        NumberProxy.__bool__: NumberProxy.__bool__,  # TODO Review returning a BoolProxy from this
-        NumberProxy.__neg__: NumberProxy.__neg__,
-        NumberProxy.__sub__: NumberProxy.__sub__,
-        NumberProxy.__floordiv__: NumberProxy.__floordiv__,
-        NumberProxy.__le__: NumberProxy.__ge__,
-        NumberProxy.__ge__: NumberProxy.__le__,
-        TensorProxy.__add__: TensorProxy.__add__,
-        TensorProxy.__mul__: TensorProxy.__mul__,
-        TensorProxy.__sub__: TensorProxy.__sub__,
+        **{fn: interpreter_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
+        **{fn: ensure_recursive_proxies(interpreter_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
+        prop_lookaside_helper: prop_lookaside_helper,
     }
 )
 
@@ -475,432 +848,645 @@ _safe_functions: set = {
     type.__or__,
     list.__new__,
     list.__init__,
+    list.__getitem__,
+    reversed.__new__,
     CellType.__new__,
     GetSetDescriptorType.__get__,
+    Exception.__new__,
+    StopIteration.__init__,
 }
 
 
+# when we pass containers to the computation trace, we want these to be using the proxies
+def recursively_proxy(*args, **kwargs):
+    def proxy_recursion(v):
+        if isinstance(v.value, str):
+            need_proxy = False
+        elif isinstance(v.value, (Sequence, dict)):
+            v.track_items()
+            need_proxy = any(proxy_recursion(i) for i in v.item_wrappers)
+        else:
+            need_proxy = isinstance(v.value, torch.Tensor)
+        if need_proxy:
+            ctx: GeneralJitCtx = get_general_jit_ctx()
+            ctx.proxify(v)
+        is_proxied = v.original_value is not v.nothing
+        return is_proxied
+
+    for a in args:
+        proxy_recursion(a)
+    for v in kwargs.values():
+        proxy_recursion(v)
+
+
 # TODO Document this function (with steps)
-def lit_lookaside(fn, *args, **kwargs) -> None | Callable:
+def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
-    if isinstance(fn, Symbol) or fn in _clang_fn_set:
+
+    ctx: GeneralJitCtx = get_general_jit_ctx()
+
+    if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
+        lookaside = executor_lookaside
+    elif isinstance(fn, Symbol) or fn in _clang_fn_set:
         # Performs symbol lookasides
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
-        lookaside = fn
-    elif (lit_lookaside := _lit_lookaside_map.get(fn, None)) is not None:
-        lookaside = lit_lookaside
+        recursively_proxy(*args, **kwargs)
+        lookaside = interpreter_needs_wrap(fn)
+    elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
+        lookaside = general_jit_lookaside
     else:
         # Falls through to the interpreter's default lookaside
         lookaside = default_lookaside(fn, *args, **kwargs)
 
     if lookaside is None:
-        if is_opaque(fn) and fn not in _safe_functions:
-            raise NotImplementedError(
-                f"Trying to call opaque function {extract_callable_name(fn)}, but it's unsupported. Please file an issue requesting supporting."
+
+        def is_from_torch(fn):
+            return hasattr(fn, "__module__") and fn.__module__ and fn.__module__.startswith("torch")
+
+        if is_opaque(fn) and is_from_torch(fn):
+            if fn.__module__.startswith("torch._C"):
+                return lookaside
+
+            # Torch functions have __name__ defined
+            fn_name = f"{fn.__module__}.{fn.__name__}"
+
+            # Probably merge with sharp edges
+            calling_opaque_torch_msg = (
+                f"Trying to call function {fn_name}, but it is not yet supported. "
+                "Please file an issue requesting support. "
+                "To find out which operations are not yet recongnized by `thunder.jit`, "
+                "please run `examine` as per:\n\n"
+                "from thunder.examine import examine\n"
+                "examine(<your thunder.jit callable argument>, ...)\n"
             )
-        return None
 
-    # NOTE lookaside is not None
-    # Wraps the lookaside to unwrap WrappedValues
-    @wraps(lookaside)
-    def unwrapper(*args, **kwargs):
-        needs_wrap = getattr(lookaside, "__jit_needs_wrap", True)
-        if needs_wrap:
-            args, kwargs = tree_map(unwrap, (args, kwargs))
-        return lookaside(*args, **kwargs)
+            return do_raise(NotImplementedError(calling_opaque_torch_msg))
 
-    return unwrapper
+    return lookaside
 
 
 #
-# lit callbacks
+# general_jit callbacks and callback utilities
 #
 
-
-# TODO: remove this field from history and just use provenance records?
-class UNPACK_ACTION(Enum):
-    FROM_PROVENANCE = auto()
+get_general_jit_ctx = get_minimal_ctx
 
 
-def _lit_const_callback(value: Any) -> WrappedValue:
+@contextmanager
+def general_jit_ctx(ctx: MinimalCtx):
+    token = set_minimal_ctx(ctx)
+    try:
+        yield
+    finally:
+        reset_minimal_ctx(token)
+
+
+def _general_jit_const_callback(value: Any) -> WrappedValue:
     return value
 
 
-def _lit_freevar_callback(name: str, wrapped_cell: Any, /, *, fn: Callable, idx: int) -> Any:
-    assert isinstance(wrapped_cell, WrappedValue)
-    cell = wrapped_cell.value
+# TODO(nikitaved): maybe call it upon Frame creation
+def _maybe_update_proxy_name(orig_value: Any, name: str):
+    # Names that we do not re-name proxies into as these are reserved
+    proxy_rename_ignore_names = {
+        "fn",  # For example, `fn = globals()['__function_obj']` in prologue
+        "obj",  # For example, `obj = fn.forward` in prologue
+    }
 
-    if cell == CellType():
-        return wrapped_cell
+    uvalue = unwrap(orig_value)
 
-    contents = cell.cell_contents
-    if isinstance(contents, Proxy):
-        return wrapped_cell
-
-    ctx: LitCtx = get_litctx()
-
-    provenance = ProvenanceRecord(
-        PseudoInst.LOAD_ATTR, inputs=[wrapped_cell.provenance, wrap_const("cell_contents").provenance]
-    )
-    proxy = ctx.proxify(contents, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, provenance))
-
-    if proxy is not contents:
-        # TODO replacing cells is EVIL!, but we do not want to leak proxy, so we would need a cell proxy that diverts the write.
-        wrapped_cell.value = CellType(wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance))
-        # this would leak proxies:
-        # cell.cell_contents = wrap(proxy, typ=WRAPPED_VALUE_TYPE.INTERMEDIATE, provenance=provenance)
-
-    return wrapped_cell
+    if isinstance(uvalue, Proxy) and (name not in proxy_rename_ignore_names) and is_proxy_name_available(name):
+        uvalue_var = variableify(uvalue)
+        rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
+        if uvalue_var not in rename_proxy_swapmap:
+            uvalue_renamed = uvalue.replace_name(name)
+            rename_proxy_swapmap[uvalue_var] = uvalue_renamed
 
 
-# TODO Support additional global loads
-def _lit_global_callback(globals_dict: dict, name: str) -> Any:
-    # Allows loading the torch module
-    value = globals_dict[name]
-    if (
-        value is torch
-        or (value is torch.nn.modules.module._global_backward_pre_hooks)
-        or (value is torch.nn.modules.module._global_backward_hooks)
-        or (value is torch.nn.modules.module._global_forward_hooks)
-        or (value is torch.nn.modules.module._global_forward_pre_hooks)
-        or (value is torch.nn.functional)
-        or (value is thunder.core.proxies.get_langctx)
-        or (value is thunder.core.langctx._langctx)
-    ):
-        return value
+def _apply_trace_proxy_rename(
+    trace: TraceCtx, rename_proxy_swapmap: None | dict[Variable, Proxy] = None, name: str | None = None
+) -> TraceCtx:
+    if rename_proxy_swapmap is None:
+        rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
 
-    raise NotImplementedError(f"Tried to load global {name}, but global loads are currently unsupported")
+    new_trace = from_trace(trace)
+
+    # Rename args/kwargs {
+    def proxy_name_replacer(arg: Any):
+        if isinstance(arg, Proxy):
+            return rename_proxy_swapmap.get(variableify(arg), arg)
+        else:
+            return arg
+
+    new_trace.args = tree_map(proxy_name_replacer, new_trace.args)
+    new_trace.kwargs = tree_map(proxy_name_replacer, new_trace.kwargs)
+    # }
+
+    # Rename proxies in bound symbols {
+    new_bsyms = []
+    for bsym in trace.bound_symbols:
+        new_bsym = bsym.from_bsym_swap_proxies(rename_proxy_swapmap)
+        new_bsyms.append(new_bsym)
+
+    new_trace.bound_symbols = new_bsyms
+    # }
+
+    # Update signature {
+    if name is not None:
+        si = SigInfo(name)
+        si.args = [(p.name, None) for p in new_trace.args]
+        new_trace._siginfo = si
+    # }
+
+    return new_trace
 
 
-def _lit_local_callback(name: str, value: Any, /) -> Any:
-    ctx: LitCtx = get_litctx()
-    if isinstance(value, WrappedValue) and value.typ == WRAPPED_VALUE_TYPE.CONSTANT:
-        return value
+# TODO Do we need to warn here? It would find its way in the wrap callback
+def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
 
-    if not isinstance(value, WrappedValue):
-        # TODO: consider making the an error once we wrap everything
-        value = wrap_const(value)
-
-    assert isinstance(value, WrappedValue)
-    provenance = value.provenance
-    return wrap(
-        ctx.proxify(value.value, name=name, history=(UNPACK_ACTION.FROM_PROVENANCE, provenance)),
-        provenance=provenance,
-        typ=value.typ,
-    )
+    return orig_value
 
 
-lit_callbacks: dict[JIT_CALLBACKS, Callable] = {
-    JIT_CALLBACKS.CONST_CALLBACK: _lit_const_callback,
-    JIT_CALLBACKS.FREEVAR_CALLBACK: _lit_freevar_callback,
-    JIT_CALLBACKS.GLOBAL_CALLBACK: _lit_global_callback,
-    JIT_CALLBACKS.LOCAL_CALLBACK: _lit_local_callback,
+_safe_provenance_inst = {
+    "INPUT_ARGS",
+    "INPUT_KWARGS",
+    "INPUT_FN",
+    "LOAD_ATTR",
+    "CONSTANT",
+    "BINARY_SUBSCR",
 }
-lit_callbacks = default_callbacks | lit_callbacks
 
 
-# TODO Add support for transforms
-# TODO Introduce caching
-# TODO Support other langctx
-def _create_callable(cd: CompileData, cs: CompileStats) -> Callable:
-    @wraps(cd.fn)
-    def fn_(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
-        cs.last_trace_host_start = time.time_ns()
-        cs.calls += 1
+def should_register_for_prologue(pr):
+    inst = pr.inst
+    if pr.ext_flag & EXT_FLAG_IS_TENSOR_PROXY:
+        return False
+    if isinstance(inst, dis.Instruction):
+        inst = inst.opname
+    else:
+        inst = inst.value
+    if inst not in _safe_provenance_inst:
+        return False
+    if inst == "CONSTANT" and callable(pr.value):
+        if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
+            return False
+    return all(should_register_for_prologue(i) for i in pr.inputs)
 
-        # TODO Implement distinct cache modes
-        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-            for prologue, computation in cs.interpreter_cache:
-                try:
-                    inps = prologue(*args, **kwargs)
-                    cs.cache_hits += 1
-                    return computation(*inps)
-                except Exception as ex:
-                    pass
-            cs.cache_misses += 1
 
-        # Currently executes the program eagerly as a placeholder
-        jfn: Callable
-        lit_ctx = LitCtx(cd.fn, *args, **kwargs)
-        set_litctx(lit_ctx)
-        lang = get_default_langctx()
-        try:
-            lang_tok = set_langctx(lang)
-            trace_tok = set_tracectx(lit_ctx.computation_trace)
-            cs.last_trace_tracing_start = time.time_ns()
-            jfn = jit(
-                cd.fn,
-                fn_lookaside=lit_lookaside,
-                callbacks=lit_callbacks,
-                debug_log=cd.debug_log,
-                with_provenance_tracking=True,
-                uncacheable_classes=(torch.Tensor, int, float, str),
+def _general_jit_wrap_callback(value):
+    ctx: GeneralJitCtx = get_general_jit_ctx()
+
+    uvalue = value.value
+    if isinstance(uvalue, torch.Tensor):
+        # we always want to proxy torch.Tensor, even const
+        p = ctx.proxify(value)
+    elif value.provenance.inst is PseudoInst.CONSTANT:
+        value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
+    elif callable(uvalue):
+        pass  # we only care if it is called
+    elif type(uvalue) in (tuple, list, dict, CellType, ModuleType, set):
+        pass  # basic containers are OK, too, subclasses?
+    elif isinstance(uvalue, Proxy):
+        value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
+    elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
+        if value.provenance.ext_flag & EXT_FLAG_IS_PROXY_DERIVED:  # we already have seen this
+            pass
+        elif should_register_for_prologue(value.provenance):
+            value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
+            # we follow the caching mechanisms of the eager_unpack_interpreter
+            p = ctx.proxify(value)
+        else:
+            return _general_jit_sharp_edge(
+                f"We are using a (non-const) value of type {type(uvalue).__name__}, which is not identified as an input.",
+                value,
             )
-            result = jfn(*args, **kwargs)
-
-            # Translates wrapped values to actual values
-            # TODO Review this with collections
-            result = tree_map(unwrap, result)
-
-            prims.python_return(result)
-            cs.last_trace_tracing_stop = time.time_ns()
-        finally:
-            reset_tracectx(trace_tok)
-            reset_langctx(lang_tok)
-            cs.last_interpreted_instructions = jfn._last_interpreted_instructions
-            cs.last_interpreted_history = jfn._last_interpreted_history
-
-        # Constructs the prologue
-        #   The prologue ...
-        #   - Accepts the original function's parameters
-        #   - Acquires all inputs to the computation, including closures and globals
-        #   - Unpacks all inputs
-        #   - Validates that the input is valid for the computational trace it's associated with
-        #   - Returns the flattened inputs
-        # TODO Validate the inputs in the prologue, currently it just unpacks
-        prologue_trc = lit_ctx.prologue_trace
-        computation_trc = lit_ctx.computation_trace
-        already_unpacked: dict[int, Proxy] = {}
-        inps: set[Variable] = set()
-
-        # Identifies inputs to computation trace (by looking for proxies with history)
-        bsym: BoundSymbol
-        for bsym in lit_ctx.computation_trace.bound_symbols:
-            v: Variable
-            for v in bsym.flat_variableified_proxy_args:
-                if v.proxy.history is not None:
-                    inps.add(v)
-
-        # Unpacks the inputs in the prologue trace
-        # TODO Generate unpacking constraints
-        def unpack(v: Variable | Proxy) -> Proxy:
-            p: Proxy
-            if isinstance(v, Proxy):
-                p = v
-            else:
-                p = v.proxy
-
-            assert p.history is not None
-            if id(p) in already_unpacked:
-                return p
-
-            # Adds the name to the prologue trace
-            if not prologue_trc.has_name(p.name):
-                prologue_trc.add_name(p.name)
-
-            def from_input(provenance, *, new_output=False):
-                if new_output:
-                    if provenance.output_idx == 0:
-                        name = "args"
-                    elif provenance.output_idx == -1:
-                        name = "fn"
-                    else:
-                        name = f"inp{provenance.output_idx}"
-
-                    output = Proxy(name=name)
-                    provenance.proxy = output
-                else:
-                    output = p
-                    provenance.proxy = output
-                if provenance.output_idx == -1:
-                    bsym = prims.unpack_function_obj.bind(output, output=output)
-                else:
-                    bsym = prims.unpack_trivial.bind(output, output=output)
-                prologue_trc.bound_symbols.append(bsym)
-                return output
-
-            def from_load_attr(provenance, *, new_output=False):
-                inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
-                if new_output:
-                    output = Proxy("obj")
-                else:
-                    output = p
-                bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
-                prologue_trc.bound_symbols.append(bsym)
-                return output
-
-            def from_constant(provenance, *, new_output=False):
-                if isinstance(provenance.value, (int, str)):
-                    return provenance.value
-                else:
-                    raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
-
-            def from_binary_subscr(provenance, *, new_output=False):
-                inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
-                idx, obj = inputs
-                if new_output:
-                    output = Proxy("subscr")  # name? collectify?
-                else:
-                    output = p
-                if isinstance(idx, int):
-                    idx = int(idx)
-                    bsym = prims.unpack_getitem.bind(obj, idx, output=output)
-                    prologue_trc.bound_symbols.append(bsym)
-                else:
-                    raise NotImplementedError(
-                        f"Unpacking from BINARY_SUBSCR with elaborate inputs {inputs=} {provenance}"
-                    )
-                return output
-
-            def from_opaque(provenance, *, new_output=False):
-                fn = provenance.inputs[0]
-                args = provenance.inputs[1]
-                if fn.inst != PseudoInst.CONSTANT:
-                    raise NotImplementedError(f"unpacking from nonconstant opaque function")
-                if fn.value.__name__ == "__getitem__":
-                    idx, obj = args.inputs
-                    return from_provenance(ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[idx, obj]))
-                elif fn.value == GetSetDescriptorType.__get__:
-                    # todo: find a more elegant way?
-                    # Arg 1 is the object we want to get the attribute from
-                    # Arg 2 is the GetSetDescriptor, which contains the arrgument name as .__name__
-                    assert len(args.inputs) == 3
-                    assert args.inputs[2].inst == PseudoInst.CONSTANT and isinstance(
-                        args.inputs[2].value, GetSetDescriptorType
-                    )
-                    return from_provenance(
-                        ProvenanceRecord(
-                            PseudoInst.LOAD_ATTR,
-                            inputs=[
-                                args.inputs[1],
-                                ProvenanceRecord(PseudoInst.CONSTANT, inputs=[], value=args.inputs[2].value.__name__),
-                            ],
-                        )
-                    )
-                raise NotImplementedError(f"unpacking from OPAQUE {fn.value}")
-
-            def from_provenance(provenance, *, new_output=False):
-                if hasattr(provenance, "proxy"):
-                    return provenance.proxy  # bind?
-
-                inst = provenance.inst
-                if isinstance(inst, dis.Instruction):
-                    inst = inst.opname
-                print(inst)
-                d = {
-                    "INPUT": from_input,
-                    "LOAD_ATTR": from_load_attr,
-                    "CONSTANT": from_constant,
-                    "BINARY_SUBSCR": from_binary_subscr,
-                    "OPAQUE": from_opaque,
-                }
-
-                unpack_fn = d.get(inst)
-                if unpack_fn is None:
-                    raise NotImplementedError(f"Unpacking from {inst} {provenance}")
-                res = unpack_fn(provenance, new_output=new_output)
-                provenance.proxy = res
-                return res
-
-            action, *args = p.history
-            assert action is UNPACK_ACTION.FROM_PROVENANCE
-            with tracectx(prologue_trc):
-                from_provenance(*args)
-            already_unpacked[id(p)] = p
-
-            # Adds cache constraints
-            # TODO Consider refactoring these contraints
-            # TODO Constrain on rank, device, and dtype
-            if isinstance(p, TensorProxy):
-                with tracectx(prologue_trc):
-                    prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
-
-            return p
-
-        v: Variable
-        for v in inps:
-            unpack(v)
-        for typ, lhs, rhs in lit_ctx.comparison_constraints:
-            unpack(lhs)
-            with tracectx(prologue_trc):
-                prims.assert_compare(lhs, typ, rhs)
-
-        # Returns the inputs from the prologue trace
-        prologue_rvals: tuple[Proxy]
-        with tracectx(prologue_trc):
-            prologue_rvals = tuple(unvariableify(x) for x in inps)
-            prims.python_return(prologue_rvals)
-
-        # Constructs the computation trace's signature
-        # TODO Only handles args at the moment
-        si = SigInfo("computation")
-        si.args = list((p.name, None) for p in prologue_rvals)
-        computation_trc._siginfo = si
-        computation_trc.args = prologue_rvals
-
-        # Unpacks inputs into the computation trace
-        # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
-        #   almost certainly a more elegant way to do this
-        with tracectx(computation_trc):
-            p: Proxy
-            for p in prologue_rvals:
-                prims.unpack_trivial(p)
-
-        bsyms = computation_trc.bound_symbols
-        computation_trc.bound_symbols = bsyms[-len(prologue_rvals) :] + bsyms[: -len(prologue_rvals)]
-
-        # TODO Apply transforms like grad
-
-        extraces = transform_for_execution(
-            computation_trc,
-            executors_list=cd.executors_list,
+    else:
+        return _general_jit_sharp_edge(
+            f"We are using a (non-const) value of unknown type {type(uvalue).__name__}, which may or may not be safe.",
+            value,
         )
 
-        extrace = extraces[-1]
 
-        pro = prologue_trc.python_callable()
-        c = extrace.python_callable()
+def _general_jit_load_fast_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
 
-        # Executes the traced program
-        cs.last_trace_host_execution_start = time.time_ns()
-        computation_result = c(*pro(*args, **kwargs))
-        cs.last_trace_host_execution_stop = time.time_ns()
-
-        # Updates the cache
-        if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
-            cs.interpreter_cache.append((pro, c))
-
-        # Updates metadata
-        # TODO What should the last_traces be in this case?
-        cs.last_traces = extraces
-        # TODO What should the last executed be in this case?
-        cs.last_executed = c
-        cs.last_prologue = prologue_trc
-
-        cs.last_trace_host_stop = time.time_ns()
-        return computation_result
-
-    fn_._lc_cd = cd
-    fn_._lc_cs = cs
-    return fn_
+    return orig_value
 
 
-# TODO Support recursive litjiting
-# NOTE This is an analogue to lit.compile, because how it handles trace generation
-#   is sufficiently distinct that merging the two would be quite tricky
-def litjit(
-    fn: Callable,
-    /,
-    executors_list: None | Sequence[Executor] = None,
-    debug_log: None | StringIO = None,
-    cache_option: None | str | CACHE_OPTIONS = None,
-) -> Callable:
-    cd = CompileData(
-        fn=fn,
-        langctx=None,
-        executors_list=executors_list,
-        cache_option=cache_option,
-        use_cudagraphs=False,
-        use_torch_compile=False,
-        disable_torch_autograd_support=True,
-        use_rematerialization=False,
-        only_execute_prims=False,
-        disable_preprocessing=True,
-        debug_log=debug_log,
+def _general_jit_load_deref_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
+    return orig_value
+
+
+def _general_jit_store_deref_callback(
+    orig_value: Any, name: str, co_cellsvars: tuple[str], co_freevars: tuple[str]
+) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
+    return orig_value
+
+
+general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
+    INTERPRETER_CALLBACKS.CONST_CALLBACK: _general_jit_const_callback,
+    INTERPRETER_CALLBACKS.GLOBAL_CALLBACK: _general_jit_global_callback,
+    INTERPRETER_CALLBACKS.WRAP_CALLBACK: _general_jit_wrap_callback,
+    INTERPRETER_CALLBACKS.LOAD_FAST_CALLBACK: _general_jit_load_fast_callback,
+    INTERPRETER_CALLBACKS.LOAD_DEREF_CALLBACK: _general_jit_load_deref_callback,
+    INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK: _general_jit_store_deref_callback,
+}
+general_jit_callbacks = default_callbacks | general_jit_callbacks
+
+
+def get_computation_inputs_and_intermediates(computation_trace):
+    inputs_list = []
+    inputs_set = set()
+    intermediates_set = set()
+
+    for bsym in computation_trace.bound_symbols:
+        v: Variable
+        for v in bsym.flat_variableified_proxy_args:
+            if v not in inputs_set and v not in intermediates_set:
+                inputs_list.append(v)
+                inputs_set.add(v)
+        for v in bsym.flat_variableified_proxy_outs:
+            intermediates_set.add(v)
+
+    return inputs_list, intermediates_set
+
+
+def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
+    already_unpacked: dict[int, Proxy] = {}
+    is_pure = True
+
+    # param_ordering[id(proxy] is a list that contains either finite numbers or (strings preceded by math.inf)
+    param_ordering: dict[int, list] = {}
+
+    # Unpacks the inputs in the prologue trace
+    # TODO Generate unpacking constraints
+    def unpack(v: Variable | Proxy) -> Proxy:
+        p: Proxy
+        if isinstance(v, Proxy):
+            p = v
+        else:
+            p = v.proxy
+
+        assert p.history is not None, f"{p} has history None"
+        if id(p) in already_unpacked:
+            return p
+
+        # Adds the name to the prologue trace
+        if not prologue_trace.has_name(p.name):
+            prologue_trace.add_name(p.name)
+
+        def from_input(provenance, *, new_output=False):
+            assert new_output
+            if provenance.inst == PseudoInst.INPUT_ARGS:
+                param_ordering[id(p)][1].insert(0, 0)
+                return pro_args_proxy
+            elif provenance.inst == PseudoInst.INPUT_KWARGS:
+                param_ordering[id(p)][1].insert(0, 1)
+                is_pure = False
+                return pro_kwargs_proxy
+            elif provenance.inst == PseudoInst.INPUT_FN:
+                param_ordering[id(p)][1].insert(0, 3)
+                is_pure = False
+                name = "fn"
+                output = Proxy(name=name)
+                provenance.proxy = output
+                bsym = prims.unpack_function_obj.bind(output, output=output)
+                prologue_trace.bound_symbols.append(bsym)
+                return output
+            assert False
+
+        def from_load_attr(provenance, *, new_output=False):
+            is_pure = False
+            inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
+            if new_output:
+                output = Proxy("obj")
+            else:
+                output = p
+            param_ordering[id(p)][1][:0] = [math.inf, "." + str(inputs[1])]
+            bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
+            prologue_trace.bound_symbols.append(bsym)
+            return output
+
+        def from_constant(provenance, *, new_output=False):
+            if isinstance(provenance.value, (int, str)):
+                return provenance.value
+            else:
+                raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
+
+        def from_binary_subscr(provenance, *, new_output=False):
+            inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
+            obj, idx = inputs
+            if new_output:
+                output = Proxy("subscr")  # name? collectify?
+            else:
+                output = p
+            if isinstance(idx, (int, str)):
+                if isinstance(idx, int):
+                    idx = int(idx)
+                elif isinstance(idx, str):
+                    idx = str(idx)
+                param_ordering[id(p)][1][:0] = [math.inf, "[" + str(idx) + "]"]
+                bsym = prims.unpack_getitem.bind(obj, idx, output=output)
+                prologue_trace.bound_symbols.append(bsym)
+            else:
+                raise NotImplementedError(f"Unpacking from BINARY_SUBSCR with elaborate inputs {inputs=} {provenance}")
+            return output
+
+        def from_opaque(provenance, *, new_output=False):
+            fn = provenance.inputs[0]
+            args = provenance.inputs[1]
+            if fn.inst != PseudoInst.CONSTANT:
+                raise NotImplementedError(f"unpacking from nonconstant opaque function")
+            if fn.value.__name__ == "__getitem__":
+                idx, obj = args.inputs
+                # This should be solved in the JIT...
+                return from_provenance(
+                    ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[obj, idx]), new_output=new_output
+                )
+            elif fn.value == GetSetDescriptorType.__get__:
+                # todo: find a more elegant way?
+                # Arg 1 is the object we want to get the attribute from
+                # Arg 2 is the GetSetDescriptor, which contains the arrgument name as .__name__
+                assert len(args.inputs) == 3
+                assert args.inputs[2].inst == PseudoInst.CONSTANT and isinstance(
+                    args.inputs[2].value, GetSetDescriptorType
+                )
+                return from_provenance(
+                    ProvenanceRecord(
+                        PseudoInst.LOAD_ATTR,
+                        inputs=[
+                            args.inputs[1],
+                            ProvenanceRecord(PseudoInst.CONSTANT, inputs=[], value=args.inputs[2].value.__name__),
+                        ],
+                    )
+                )
+            raise NotImplementedError(f"unpacking from OPAQUE {fn.value} {provenance}")
+
+        def from_provenance(provenance, *, new_output=False):
+            if hasattr(provenance, "proxy"):
+                return provenance.proxy  # bind?
+
+            inst = provenance.inst
+            if isinstance(inst, dis.Instruction):
+                inst = inst.opname
+
+            d = {
+                "INPUT_ARGS": from_input,
+                "INPUT_KWARGS": from_input,
+                "INPUT_FN": from_input,
+                "LOAD_ATTR": from_load_attr,
+                "CONSTANT": from_constant,
+                "BINARY_SUBSCR": from_binary_subscr,
+                "OPAQUE": from_opaque,
+            }
+
+            unpack_fn = d.get(inst)
+            if unpack_fn is None:
+                raise NotImplementedError(f"Unpacking from {inst} {provenance}")
+            res = unpack_fn(provenance, new_output=new_output)
+            provenance.proxy = res
+            return res
+
+        assert isinstance(p.history, ProvenanceRecord), p.history
+        param_ordering[id(p)] = (p, [])
+        with tracectx(prologue_trace):
+            try:
+                from_provenance(p.history)
+            except Exception as e:
+                raise NotImplementedError(f"Exception occured unpacking object from {p.history}") from e
+
+        already_unpacked[id(p)] = p
+
+        # Adds cache constraints
+        # TODO Consider refactoring these contraints
+        # TODO Constrain on rank, device, and dtype
+        if isinstance(p, TensorProxy):
+            with tracectx(prologue_trace):
+                prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
+
+        return p
+
+    with tracectx(prologue_trace):
+        for n, l in (("args", len(args)), ("kwargs", len(kwargs))):
+            output = Proxy(name=n)
+            bsym = prims.unpack_trivial.bind(output, output=output)
+            prologue_trace.bound_symbols.append(bsym)
+            bsym = prims.check_len.bind(output, l, output=None)
+            prologue_trace.bound_symbols.append(bsym)
+            if n == "args":
+                pro_args_proxy = output
+            else:
+                assert n == "kwargs"
+                pro_kwargs_proxy = output
+
+    pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
+    pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
+
+    with tracectx(prologue_trace):
+        for prim, *args in ctx._constraints:
+            for a in args:
+                if isinstance(a, Proxy):
+                    unpack(a)
+            prim(*args)
+
+        cache_info = thunder._get_cache_info()
+        # assert len of cache info to ensure that we're not missing anything?
+        if cache_info:
+            cache_info_p = Proxy(name="cache_info")
+            bsym = prims.unpack_cache_info.bind(cache_info_p, output=cache_info_p)
+            prologue_trace.bound_symbols.append(bsym)
+            for k, v in cache_info.items():
+                p = proxy(v, name=f"cache_info_{k}", history=None)
+                bsym = prims.unpack_getitem.bind(cache_info_p, k, output=p)
+                prologue_trace.bound_symbols.append(bsym)
+
+                if isinstance(v, str):
+                    clang.check_string_value(p, v)
+                elif isinstance(v, (int, bool, float)):
+                    clang.check_number_type_and_value(p, v)
+                else:
+                    raise NotImplementedError(f"cache info of type {type(v).__name__}")
+
+        if has_epilogue:
+            prims.python_return((pro_to_comp, pro_to_epi))
+        else:
+            prims.python_return(pro_to_comp)
+
+    return pro_to_comp, pro_to_epi
+
+
+def process_recorded_modifications(ctx, epilogue_trace):
+    for modified_object, modifications in ctx._additional_outputs.items():
+        umodified_object = modified_object.value
+        ## we want this to created in the compute trace context for namespace...
+        modified_object_proxy = Proxy(history=modified_object.provenance)
+        epilogue_trace.add_name(modified_object_proxy.name)
+
+        if isinstance(umodified_object, dict):
+            last_modification = {}
+            for inst, *args in modifications:
+                if inst == PseudoInst.STORE_SUBSCR:
+                    _, key, value = args
+                    # should we warn if we have multiple assignments?
+                    last_modification[key.value] = (inst, value)
+                else:
+                    raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
+            for k, (inst, *args) in last_modification.items():
+                if inst == PseudoInst.STORE_SUBSCR:
+                    (value,) = args
+                    assert isinstance(value.value, Proxy)
+
+                    with tracectx(epilogue_trace):
+                        bsym = prims.pack_setitem.bind(modified_object_proxy, k, value.value, output=None)
+                        epilogue_trace.bound_symbols.append(bsym)
+                else:
+                    raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
+        else:
+            raise NotImplementedError(f"Modifications of {type(uvalue).__name__} objects are not supported")
+
+
+def bind_inputs(name, trace, input_vars, input_proxies):
+    # Unpacks inputs into the computation trace
+    # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
+    #   almost certainly a more elegant way to do this
+    with tracectx(trace):
+        p: Proxy
+        for p in input_proxies:
+            prims.unpack_trivial(p)
+
+    bsyms = trace.bound_symbols
+    trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]
+
+    si = SigInfo(name)
+    si.args = [(v.proxy.name, None) for v in input_vars]
+    trace._siginfo = si
+    trace.args = input_proxies
+
+
+def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
+    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
+    # on the Module that they wrap. This module could be passed to `thunder.jit`
+    # as the function to be jitted or as an argument of the function to be jitted.
+    found_pg = None
+    for fn_or_arg in fn_and_args:
+        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
+        if pg is not None and found_pg is None:
+            found_pg = pg
+        elif pg is not None and pg != found_pg:
+            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
+    return found_pg
+
+
+def thunder_general_jit(
+    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
+) -> tuple[TraceCtx, TraceCtx]:
+    # TODO: move into wrap_callback or so
+    if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
+        raise NotImplementedError(
+            f"jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
+        )
+
+    co: CACHE_OPTIONS = get_cache_option()
+    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING}:
+        raise NotImplementedError(f"Only constant constraints is supported")
+
+    prologue_trace: TraceCtx = TraceCtx(fn)
+    computation_trace: TraceCtx = TraceCtx()
+    epilogue_trace: TraceCtx = TraceCtx()
+
+    si = SigInfo("prologue")
+    si.varargs = ("args", None)
+    si.varkwargs = ("kwargs", None)
+    prologue_trace._siginfo = si
+
+    compile_data = get_compile_data()
+    executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
+
+    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
+    ctx: GeneralJitCtx = GeneralJitCtx(
+        prologue_trace,
+        computation_trace,
+        sharp_edges=sharp_edges,
+        process_group_for_ddp=process_group_for_ddp,
+        executor_lookasides=executor_lookasides,
+    )
+    jfn = interpret(
+        fn,
+        fn_lookaside=general_jit_lookaside,
+        callbacks=general_jit_callbacks,
+        with_provenance_tracking=True,
+        uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
     )
 
-    cs = CompileStats()
-    fn_ = _create_callable(cd, cs)
-    return fn_
+    with general_jit_ctx(ctx):
+        with tracectx(computation_trace):
+            result = jfn(*args, **kwargs)
+            prims.python_return(result)
+            process_recorded_modifications(ctx, epilogue_trace)
+
+    pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
+
+    epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
+
+    comp_to_epi = []
+    pro_to_epi = []
+
+    for i in epilogue_inputs:
+        if i in computation_intermediates:
+            comp_to_epi.append(i)
+        else:
+            pro_to_epi.append(i)
+    comp_to_epi = tuple(comp_to_epi)
+    comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
+    pro_to_epi = tuple(pro_to_epi)
+
+    if epilogue_trace.bound_symbols:
+        with tracectx(computation_trace):
+            last = computation_trace.bound_symbols.pop(-1)
+            assert last.sym.id == prims.PrimIDs.RETURN
+            prims.python_return((result, comp_to_epi_proxies))
+
+        with tracectx(epilogue_trace):
+            prims.python_return(None)
+    else:
+        epilogue_trace = None
+
+    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(
+        ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs, has_epilogue=epilogue_trace is not None
+    )
+
+    proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
+    pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
+
+    bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
+    if epilogue_trace:
+        bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+
+    # Returns a new swapmap dictionary which has the keys (ctx._proxy_swapmap.key() & variableify(proxies))
+    def restrict_proxy_swapmap(proxies: tuple[Proxy]) -> dict[Variable, Proxy]:
+        proxy_swapmap = ctx._proxy_swapmap
+        proxy_vars = {variableify(p) for p in proxies}
+        common_vars = proxy_swapmap.keys() & proxy_vars
+        restricted_proxy_swapmap = {v: proxy_swapmap[v] for v in common_vars}
+        return restricted_proxy_swapmap
+
+    # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
+    prologue_trace = _apply_trace_proxy_rename(prologue_trace, restrict_proxy_swapmap(pro_to_comp_proxies))
+
+    # Update computation trace by renaming proxies which are in the ctx._proxy_swapmap
+    computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")
+
+    # Update epilogue trace by renaming proxies which are passed to the epilogue trace from prologue and computation traces
+    if epilogue_trace:
+        epilogue_trace = _apply_trace_proxy_rename(
+            epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
+        )
+
+    return prologue_trace, computation_trace, epilogue_trace

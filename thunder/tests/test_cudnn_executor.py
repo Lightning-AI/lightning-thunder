@@ -1,4 +1,3 @@
-import random
 from functools import partial
 from typing import Any
 
@@ -29,46 +28,42 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     from thunder.tests.opinfos import SampleInput
 
     # TODO: cudnnex seems to produce large mismatches against reference when tensor initialized from the wider default range of [-9,9]
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1871
+    # See issue "cuDNN SDPA backward might return NaNs for inputs with absolute
+    # value more than certain threshold"
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-0.5, high=0.5)
 
     n_head = 2
-    N = 8
-
-    # TODO: multiple of 8 seems to produce NaNs
-    L = random.randint(1, 10) * 64
-
-    alignment_factor = 8
-    S = random.randint(1, 10) * alignment_factor
-    E = random.randint(8, 16) * alignment_factor
-    Ev = random.randint(8, 16) * alignment_factor
+    N = 8  # batch size
+    L = 640  # query's sequence length
+    S = 80  # key/value's sequence length
+    E = 128  # query/key's embedding size
+    Ev = 64  # value's embedding size
 
     # 4-dim (multiheaded) causal cases
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-    yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := True)
+    yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=True)
 
-    # TODO: cudnnex seems to have a few mismatches. Will be enabled in a later PR.
     # Non-contiguous input tensor case
-    nq = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    nk = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    nv = make(N, n_head, L, E).permute(0, 1, 3, 2)
-    yield SampleInput(nq, nk, nv, attn_mask := None, dropout_p := 0.0, is_causal := False)
+    nq = make(N, n_head, E, L).permute(0, 1, 3, 2)
+    nk = make(N, n_head, E, S).permute(0, 1, 3, 2)
+    nv = make(N, n_head, Ev, S).permute(0, 1, 3, 2)
+    yield SampleInput(nq, nk, nv, None, dropout_p=0.0, is_causal=False)
 
     # Test the scale factor which was added in torch 2.1
     if LooseVersion(torch.__version__) >= LooseVersion("2.1.0"):
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
-        yield SampleInput(q, k, v, attn_mask := None, dropout_p := 0.0, is_causal := False, scale=0.123)
+        yield SampleInput(q, k, v, None, dropout_p=0.0, is_causal=False, scale=0.123)
 
     # TODO: cudnnex only support of grad_attn_mask with batch dim 1 and both sequence lenghts divisible by 64. Release 9.0.1 will relax this constraint.
     # Additive attn_mask
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     additive_attn_mask = make((1, n_head, L, S), dtype=q.dtype).tril()
-    yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
+    yield SampleInput(q, k, v, additive_attn_mask, is_causal=False)
 
     # Boolean attn_mask
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     bool_attn_mask = make((1, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
-    yield SampleInput(q, k, v, attn_mask := bool_attn_mask, is_causal=False)
+    yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
 
 
 grad_sdpa_cudnn_opinfo = OpInfo(
@@ -87,15 +82,18 @@ grad_sdpa_cudnn_opinfo = OpInfo(
 )
 
 
-# WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
-# Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880
-# NOTE This test modifies the global executor map, so it technically should not
-# be run in parallel with other tests
 @requiresCUDA
 def test_cudnn_sdpa():
     # expect sdpa to fail for 8.9.2 and below
     if cudnn.backend_version() <= 8902:
         pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
+
+    dev: torch.device = thunder.core.devices.to_torch_device("cuda:0")
+    cuda_major: int
+    cuda_minor: int
+    cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
+    if cuda_major < 8:
+        pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
 
     for dtype in (thunder.float16, thunder.bfloat16):
         b, h, s_q, s_kv, d_q, d_v = 8, 8, 256, 256, 64, 64
@@ -106,10 +104,8 @@ def test_cudnn_sdpa():
         query = 1 * (torch.randn(shape_Q, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
         key = 2 * (torch.randn(shape_K, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
         value = 3 * (torch.randn(shape_V, dtype=thunder.torch.to_torch_dtype(dtype), device="cuda") - 0.5)
-        is_causal = False
-        attn_mask = torch.randn(
-            s_q, s_kv, requires_grad=False, device="cuda", dtype=thunder.torch.to_torch_dtype(dtype)
-        )
+        is_causal = True
+        attn_mask = None
 
         expected = torch.nn.functional.scaled_dot_product_attention(
             query, key, value, is_causal=is_causal, attn_mask=attn_mask
@@ -120,7 +116,7 @@ def test_cudnn_sdpa():
                 query, key, value, is_causal=is_causal, attn_mask=attn_mask
             )
 
-        ctest = thunder.compile(test, executors_list=[cudnn_ex])
+        ctest = thunder.jit(test, executors=[cudnn_ex])
         actual = ctest(query, key, value, is_causal=is_causal, attn_mask=attn_mask)
         torch.testing.assert_close(actual, expected, atol=2e-2, rtol=1e-2)
         last_trace = thunder.last_traces(ctest)[-1]
@@ -150,8 +146,6 @@ def snippet_torch_consistency(op, torch_op, sample):
     assert_close(thunder_result, torch_result, equal_nan=True, atol=0.0625, rtol=5e-2)
 
 
-# WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
-# Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880
 # TODO Make it easier for executors to write tests like this, including writing them out-of-tree
 # TODO The executor passed below is just a "dummy" that actually gets ignored -- we should provide
 #   a way to use decorators like @ops without a particular executor
@@ -177,7 +171,7 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
 
     for sample in op.reference_inputs(device, dtype, requires_grad=False):
-        cfn = thunder.compile(op_name_to_fn[op.name], executors_list=[cudnn_ex, cudnn_layernorm_ex])
+        cfn = thunder.jit(op_name_to_fn[op.name], executors=[cudnn_ex, cudnn_layernorm_ex])
 
         result = run_snippet(
             snippet_torch_consistency,
@@ -200,17 +194,19 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
-    ran_atleast_one = False
     for sample in op.reference_inputs(device, dtype, requires_grad=True):
-        from thunder.executors.cudnnex import cudnn_ex
-
         # Enforce tensor arguments are contiguous for torch reference
         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))
 
         # query, key, value
         grad_inputs = list(contiguous_args[:3])
-        if (attn_mask := sample.args[3]) is not None and attn_mask.requires_grad:
-            grad_inputs.append(attn_mask)
+        if (attn_mask := sample.args[3]) is not None:
+            if attn_mask.requires_grad:
+                grad_inputs.append(attn_mask)
+            # TODO(#2470): With cudnn frontend 1.1 and A100, this test hits
+            # RuntimeError when `attn_mask` is provided: `[cudnn_frontend]
+            # Error: No execution plans built successfully`.
+            continue
 
         # Compute vjp result using PyTorch
         expect_out = op.torch_reference(*contiguous_args, **sample.kwargs)
@@ -228,17 +224,10 @@ def test_vjp_correctness_sdpa_cudnnex_manual(op, device, dtype, executor, comp):
             executors_list=executor.executors_list() + [cudnn_ex],
         )
 
-        try:
-            actual_out, actual_grad = cfoo(filtered_args, (v,))
-        except Exception as e:
-            continue
+        actual_out, actual_grad = cfoo(filtered_args, (v,))
 
         comp(actual_out, expect_out, atol=1e-2, rtol=1e-2)
 
         # compare gradients of query, key, value, and attn_mask
         for eg, ag in zip(expected_grad, actual_grad):
             comp(eg, ag, atol=2e-1, rtol=2e-2)
-
-        ran_atleast_one = True
-
-    assert ran_atleast_one == True

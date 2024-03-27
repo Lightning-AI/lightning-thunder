@@ -17,8 +17,6 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
     put_grads,
-    register_augmented_forward_with_checker,
-    register_backward,
 )
 from thunder.extend import OperatorExecutor, register_executor
 
@@ -50,8 +48,8 @@ def ceil_div(a: int, b: int) -> int:
 
 def _sdpa_pad_head_dimension(a: torch.Tensor) -> torch.Tensor:
     head_size = a.shape[-1]
-    # NOTE short-circuit path when we already have compatible head_size
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1505
+    # If the head is already a multiple of 8, then we don't need to pad. The
+    # pad op can be quite expensive in some cases.
     if head_size % 8 == 0:
         return a
     padding_size = ceil_div(head_size, 8) * 8 - head_size
@@ -59,8 +57,7 @@ def _sdpa_pad_head_dimension(a: torch.Tensor) -> torch.Tensor:
 
 
 def _sdpa_slice_head_dimension(a: torch.Tensor, head_size: int) -> torch.Tensor:
-    # NOTE short-circuit path when we already have compatible head_size
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1505
+    # ditto pad_head_dimension: the slice can be expensive, so skip if possible.
     if head_size % 8 == 0:
         return a
     return a[:, :, :, 0:head_size]
@@ -491,8 +488,8 @@ def _scaled_dot_product_attention_fused(
     *,
     scale: None | float = None,
 ):
-    # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    # Figure out which SDPA to use. There are performance cliffs to the various
+    # implementations, and this makes the decision cognizant of those cliffs.
     backend = _fused_sdp_choice(query, key, value, attn_mask, dropout_p, is_causal, scale)
 
     utils.check(
@@ -530,8 +527,8 @@ def _scaled_dot_product_attention_grad(
     *,
     scale: None | float = None,
 ):
-    # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+    # Figure out which SDPA to use. There are performance cliffs to the various
+    # implementations, and this makes the decision cognizant of those cliffs.
     backend = _fused_sdp_choice(query, key, value, attn_mask, dropout_p, is_causal, scale)
 
     utils.check(
@@ -640,8 +637,9 @@ def _fused_sdp_choice(
         is_causal = is_causal.value
 
     if LooseVersion(torch.__version__) < LooseVersion("2.2.0"):
-        # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-        # See https://github.com/Lightning-AI/lightning-thunder/issues/622
+        # Figure out which SDPA to use. There are performance cliffs to the
+        # various implementations, and this makes the decision cognizant of
+        # those cliffs.
         backend = torch._fused_sdp_choice(
             fake_query,
             fake_key,
@@ -707,112 +705,3 @@ sdpa_ex.register_implementation(
     execution_transform=_scaled_dot_product_attention_fused,
     grad_transform=_scaled_dot_product_attention_grad,
 )
-
-
-def scaled_dot_product_attention_aug_fw(
-    query: TensorProxy,
-    key: TensorProxy,
-    value: TensorProxy,
-    attn_mask: TensorProxy | None,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    *,
-    scale: float | None = None,
-):
-    # NOTE Select fused sdpa using PyTorch eager mode selection behavior
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/622
-    backend = _fused_sdp_choice(query, key, value, attn_mask, dropout_p, is_causal, scale)
-
-    utils.check(
-        backend != SpdaBackend.ERROR,
-        lambda: "Unable to find valid backend for scaled_dot_product_attention.",
-    )
-    utils.check(
-        backend != SpdaBackend.MATH,
-        lambda: "The fallback to sdpa thunder reference is not implemented.",
-        exception_type=NotImplementedError,
-    )
-
-    tensor_args = (query, key, value)
-    scalar_args = (dropout_p, is_causal)
-    input_args = (*tensor_args, attn_mask, *scalar_args, scale)
-    if backend == SpdaBackend.FLASH_ATTENTION:
-        # Use flash attention kernel
-        (primal, *remaining_results, debug_attn_mask) = sdpfa_gradfwd(*tensor_args, *scalar_args, scale=scale)
-        # NOTE Remaining results contains [logsumexp, *flash_attn_only_residuals, *philox_residuals]
-        residuals = (*input_args, primal, *remaining_results)
-        return primal, residuals
-    elif backend == SpdaBackend.MEMORY_EFFICIENT:
-        # Use memory efficient kernel, which supports fp32 and attention mask arguments
-        (primal, logsumexp, *philox_residuals) = sdpea_gradfwd(*tensor_args, attn_mask, *scalar_args, scale=scale)
-        flash_attn_only_residuals = (None,) * 4
-        residuals = (*input_args, primal, logsumexp, *flash_attn_only_residuals, *philox_residuals)
-        return primal, residuals
-
-
-register_augmented_forward_with_checker(
-    sdpa_ex,
-    "torch.nn.functional.scaled_dot_product_attention",
-    _scaled_dot_product_attention_checker,
-    scaled_dot_product_attention_aug_fw,
-)
-
-
-@register_backward((sdpa_ex, "torch.nn.functional.scaled_dot_product_attention"))
-def scaled_dot_product_attention_backward(
-    query: Proxy,
-    key: Proxy,
-    value: Proxy,
-    attn_mask: None | Proxy,
-    dropout_p: float,
-    is_causal: bool,
-    scale: None | float,
-    out: Proxy,
-    logsumexp: Proxy,
-    cum_seq_q: None | Proxy,
-    cum_seq_k: None | Proxy,
-    max_q: None | int,
-    max_k: None | int,
-    philox_seed: Proxy,
-    philox_offset: Proxy,
-    grad_out: Proxy,
-):
-    tensor_args = (query, key, value)
-    scalar_args = (dropout_p, is_causal)
-    flash_attention_args = (cum_seq_q, cum_seq_k, max_q, max_k)
-    philox_args = (philox_seed, philox_offset)
-    use_flash_attn = all(map(lambda a: a is not None, (cum_seq_q, cum_seq_k, max_q, max_k)))
-    if use_flash_attn:
-        (
-            grad_query,
-            grad_key,
-            grad_val,
-        ) = sdpfa_bwd(
-            grad_out,
-            *tensor_args,
-            out,
-            logsumexp,
-            *flash_attention_args,
-            *scalar_args,
-            *philox_args,
-            scale=scale,
-        )
-        # grad_attn_mask is None since it is not supported by flash_attention kernel
-        return grad_query, grad_key, grad_val
-    else:
-        (
-            grad_query,
-            grad_key,
-            grad_val,
-            grad_attn_mask,
-        ) = sdpea_bwd(
-            grad_out,
-            *tensor_args,
-            attn_mask,
-            out,
-            logsumexp,
-            *philox_args,
-            *scalar_args,
-            scale=scale,
-        )
-        return grad_query, grad_key, grad_val, grad_attn_mask

@@ -53,7 +53,7 @@ def test_triton_cross_entropy(device, dtype):
             logits, labels, weight=weight, reduction=reduction, ignore_index=ignore_index
         )
 
-    ctest = thunder.compile(test, executors_list=[triton_ex])
+    ctest = thunder.jit(test, executors=[triton_ex])
     actual = ctest(logits, labels, weight, reduction, ignore_index)
     torch.testing.assert_close(actual, expected)
     last_trace = thunder.last_traces(ctest)[-1]
@@ -90,10 +90,12 @@ def test_triton_cross_entropy_vs_torch_consistency(device, dtype):
     def foo(*args, **kwargs):
         return torch.nn.functional.cross_entropy(*args, **kwargs)
 
-    ce = thunder.compile(foo, executors_list=[triton_ex])
+    ce = thunder.jit(foo, executors=[triton_ex])
 
     # NOTE reference inputs take a long time to run in CI, so this uses sample inputs in CI
-    input_generator = opinfo.reference_inputs if not IN_CI else opinfo.sample_inputs
+    # opinfo.reference_inputs if not IN_CI else opinfo.sample_inputs
+    # reference inputs for cross_entropy contains cases not implemented in Thunder
+    input_generator = opinfo.reference_inputs
 
     for sample in input_generator(device=device, dtype=dtype, requires_grad=False):
         result = run_snippet(

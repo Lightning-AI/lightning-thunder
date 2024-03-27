@@ -1,5 +1,5 @@
 import torch
-import thunder.core.jit
+from thunder.core.interpreter import interpret
 
 import math
 import os
@@ -257,7 +257,7 @@ def run_txt2img(
     sampler, num_rows, num_cols = init_sampling()
     num_samples = num_rows * num_cols
 
-    # c_do_sample = thunder.core.jit.jit(do_sample)
+    # c_do_sample = interpret(do_sample)
     out = do_sample(
         model,
         sampler,
@@ -306,7 +306,7 @@ if __name__ == "__main__":
 
     finish_denoising = False
 
-    samples = thunder.core.jit.jit(run_txt2img)(
+    samples = interpret(run_txt2img)(
         prompt,
         model,
         version,

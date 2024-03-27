@@ -17,8 +17,11 @@ import torch
 import math
 from looseversion import LooseVersion
 
+from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
+from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
+from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
@@ -27,7 +30,6 @@ from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
-import thunder.core.devices as devices
 import thunder.core.utils as utils
 
 import thunder.torch as ltorch
@@ -86,7 +88,7 @@ def _convert_element_type_transform(
     /,
     dtype: dtypes.dtype,
 ) -> TensorLike:
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     return to(a, torch_dtype, copy=True)
 
 
@@ -106,8 +108,8 @@ def _to_transform(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
     )
 
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     if torch_device is not None and torch_dtype is not None:
         return to(a, torch_device, torch_dtype, copy=copy)
@@ -154,7 +156,7 @@ full = _register_torch_operation("full")
 full_like = _register_torch_operation("full_like")
 ones = _register_torch_operation("ones")
 ones_like = _register_torch_operation("ones_like")
-tensor = _register_torch_operation("tensor")
+tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
@@ -190,8 +192,8 @@ def _uniform(
 def _uniform_meta(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: torch.device, dtype: torch.dtype
 ) -> TensorProxy:
-    thunder_device = ltorch.to_thunder_device(device)
-    thunder_dtype = ltorch.to_thunder_dtype(dtype)
+    thunder_device = to_device(device)
+    thunder_dtype = to_dtype(dtype)
 
     return TensorProxy(shape=shape, device=thunder_device, dtype=thunder_dtype, requires_grad=False)
 
@@ -207,8 +209,8 @@ def _arange_transform(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
 ):
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     if end is None:
         end = start
@@ -232,8 +234,8 @@ def _arange_transform(
 def _full_transform(
     shape: Sequence[int], fill_value: Number, *, device: None | devices.Device, dtype: None | dtypes.dtype
 ) -> TensorProxy:
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     return full(shape, fill_value, device=torch_device, dtype=torch_dtype)
 
@@ -241,15 +243,15 @@ def _full_transform(
 def _full_like_transform(
     a: TensorLike, /, fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     return full_like(a, fill_value=fill_value, device=torch_device, dtype=torch_dtype)
 
 
 def _ones_transform(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     return ones(*shape, device=torch_device, dtype=torch_dtype)
 
@@ -257,21 +259,17 @@ def _ones_transform(*shape: int, device: None | DeviceLike = None, dtype: None |
 def _ones_like_transform(
     a: TensorLike, /, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     return ones_like(a, device=torch_device, dtype=torch_dtype)
-
-
-def _tensor_transform(n: Number) -> TensorLike:
-    return tensor(n)
 
 
 def _iota_transform(
     length: Number, *, start: Number, step: Number, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorLike:
-    torch_device: torch.device = ltorch.to_torch_device(device)
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     end: Number = start + length * step
 
     return arange(start=start, step=step, end=end, device=torch_device, dtype=torch_dtype)
@@ -285,8 +283,8 @@ def _uniform_transform(
     device: DeviceLike,
     dtype: dtypeLike,
 ) -> TensorLike:
-    torch_device: torch.device = ltorch.to_torch_device(device)
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
 
     return uniform(shape, minval, maxval, device=torch_device, dtype=torch_dtype)
 
@@ -302,11 +300,11 @@ def _uniform_philox_prim_transform(
     seed: int | TensorProxy,
     offset: int | TensorProxy,
 ) -> TensorLike:
-    torch_device = ltorch.to_torch_device(device)
-    torch_dtype = ltorch.to_torch_dtype(dtype)
+    torch_device = to_torch_device(device)
+    torch_dtype = to_torch_dtype(dtype)
 
-    seed_tensor: TensorLike = tensor(seed) if isinstance(seed, int) else seed
-    offset_tensor: TensorLike = tensor(offset) if isinstance(offset, int) else offset
+    seed_tensor: TensorLike = ltorch.tensor(seed) if isinstance(seed, int) else seed
+    offset_tensor: TensorLike = ltorch.tensor(offset) if isinstance(offset, int) else offset
 
     random_values, offset = uniform_philox(
         shape, stride=None, seed=seed_tensor, offset=offset_tensor, device=torch_device, dtype=torch_dtype
@@ -349,11 +347,11 @@ def _uniform_philox_transform(
     seed: int | TensorProxy,
     offset: int | TensorProxy,
 ) -> TensorLike:
-    torch_device = ltorch.to_torch_device(device)
-    torch_dtype = ltorch.to_torch_dtype(dtype)
+    torch_device = to_torch_device(device)
+    torch_dtype = to_torch_dtype(dtype)
 
-    seed_tensor: TensorLike = tensor(seed) if isinstance(seed, int) else seed
-    offset_tensor: TensorLike = tensor(offset) if isinstance(offset, int) else offset
+    seed_tensor: TensorLike = ltorch.tensor(seed) if isinstance(seed, int) else seed
+    offset_tensor: TensorLike = ltorch.tensor(offset) if isinstance(offset, int) else offset
 
     random_values, offset = uniform_philox(
         shape, stride=None, seed=seed_tensor, offset=offset_tensor, device=torch_device, dtype=torch_dtype
@@ -379,15 +377,15 @@ def _uniform_philox_checker(
     if isinstance(offset, TensorProxy) or offset % 4 != 0:
         return False
 
-    if ltorch.to_thunder_device(device).devicetype != devices.DeviceType.CUDA:
+    if to_device(device).devicetype != devices.DeviceType.CUDA:
         return False
 
     return True
 
 
 def _zeros_transform(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     return zeros(*shape, device=torch_device, dtype=torch_dtype)
 
@@ -395,8 +393,8 @@ def _zeros_transform(*shape: int, device: None | DeviceLike = None, dtype: None 
 def _zeros_like_transform(
     a: TensorLike, /, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    torch_device: None | torch.device = ltorch.to_torch_device(device)
-    torch_dtype: None | torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
     return zeros_like(a, device=torch_device, dtype=torch_dtype)
 
@@ -407,9 +405,17 @@ def _randn_prims_transform(
     device: devices.Device,
     dtype: dtypes.dtype,
 ) -> TensorLike:
-    torch_device: torch.device = ltorch.to_torch_device(device)
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     return randn(shape, device=torch_device, dtype=torch_dtype)
+
+
+def _tensor_from_sequence_prims_transform(
+    seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
 
 
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
@@ -419,14 +425,15 @@ _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
+_register_implementation(
+    prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
+)
 
 _register_implementation(ltorch.arange, checker=_always_executable, execution_transform=_arange_transform)
 _register_implementation(ltorch.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(ltorch.full_like, checker=_always_executable, execution_transform=_full_like_transform)
 _register_implementation(ltorch.ones, checker=_always_executable, execution_transform=_ones_transform)
 _register_implementation(ltorch.ones_like, checker=_always_executable, execution_transform=_ones_like_transform)
-_register_implementation(ltorch.tensor, checker=_always_executable, execution_transform=_tensor_transform)
-_register_implementation(ltorch.tensor, tensor, checker=_always_executable, execution_transform=None)
 _register_implementation(ltorch.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     ltorch.uniform_philox, checker=_uniform_philox_checker, execution_transform=_uniform_philox_transform
@@ -626,7 +633,7 @@ torch_round = _register_torch_operation("round")
 rsqrt = _register_torch_operation("rsqrt")
 # # NOTE That PyTorch's "sgn" corresponds with the "sign" primitive
 sgn = _register_torch_operation("sgn", like=ltorch.sign)
-# # NOTE torch.sign isn't bound here because lightning.compile always uses sgn
+# # NOTE torch.sign isn't bound here because thunder always uses sgn
 # sign =  _register_torch_operation("sign")
 signbit = _register_torch_operation("signbit")
 sin = _register_torch_operation("sin")
@@ -806,9 +813,7 @@ def _add_transform(
 
 # Maps exact inputs to truncation division
 def _div_prim_impl(a: Number | torch.Tensor, b: Number | torch.Tensor) -> torch.Tensor:
-    if dtypes.is_exact_dtype(ltorch.to_thunder_dtype(a.dtype)) and dtypes.is_exact_dtype(
-        ltorch.to_thunder_dtype(a.dtype)
-    ):
+    if dtypes.is_exact_dtype(to_dtype(a.dtype)) and dtypes.is_exact_dtype(to_dtype(a.dtype)):
         return torch.div(a, b, rounding_mode="trunc")
 
     return torch.true_divide(a, b)
@@ -1036,7 +1041,7 @@ def _cumsum_transform(a: TensorProxy, dim: int, *, dtype: None | dtypeLike = Non
     if dtype is None:
         return cumsum(a, dim)
 
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     return cumsum(a, dim, dtype=torch_dtype)
 
 
@@ -1090,8 +1095,11 @@ def _index_put_prim_transform(
     return index_put(a, indices, values, accumulate)
 
 
-# NOTE torch.compile currently fails to compile scatter add in bfloat16
-# TODO Find a mechanism to only cast values when working with torch.compile
+# NOTE torch.compile has a compilation issue with scatter add in bfloat16,
+#      hence the special case here.
+# NOTE The scatter add transforms must set the torch language context explicitly so the .to() method
+#   on tensors is resolved (alternatively they could explicitly call thunder.torch.to)
+@langctx(Languages.TORCH)
 def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     if a.dtype == dtypes.bfloat16:
         a = a.to(torch.float32)
@@ -1101,7 +1109,9 @@ def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: Te
     return scatter_add(a, dim, index, value)
 
 
-# NOTE torch.compile currently fails to compile scatter add in bfloat16
+# NOTE torch.compile has a compilation issue with scatter add in bfloat16,
+#      hence the special case here.
+@langctx(Languages.TORCH)
 def _scatter_add_transform(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     # NOTE scatter_add does not participate in type promotion, so if a has the bfloat16 dtype, then so does src
     if a.dtype == dtypes.bfloat16:
@@ -1234,7 +1244,7 @@ def _cross_entropy_backward_impl(
     )
 
     # TODO Add support nll_loss_nd, weight tensor, and label_smoothing options.
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/704
+    # See issue "Add support for remaining cross_entropy_loss arguments."
     utils.check(a.ndim <= 2 and target.ndim <= 1, lambda: f"multi-dimension cross-entropy is not supported.")
 
     utils.check(weight is None, lambda: f"weight tensor argument is not supported.")
@@ -1270,12 +1280,12 @@ def _log_softmax_transform(a: TensorLike, /, dim: int, *, dtype: None | dtypeLik
     if dtype is None:
         return log_softmax(a, dim)
 
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     return log_softmax(a, dim, dtype=torch_dtype)
 
 
 def _log_softmax_backward_transform(g: TensorProxy, /, output: TensorProxy, dim: int, dtype: dtypeLike) -> TensorLike:
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     return log_softmax_backward(g, output, dim, torch_dtype)
 
 
@@ -1283,7 +1293,7 @@ def _softmax_transform(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = 
     if dtype is None:
         return softmax(a, dim)
 
-    torch_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
     return softmax(a, dim, dtype=torch_dtype)
 
 
@@ -1446,7 +1456,7 @@ def _multinomial_transform(
     seed: int | None = None,
 ):
     if seed is not None:
-        input_torch_device = ltorch.to_torch_device(input.device)
+        input_torch_device = to_torch_device(input.device)
         generator = torch.Generator(input_torch_device).manual_seed(seed)
     else:
         generator = None
@@ -1573,7 +1583,7 @@ if torch.distributed.is_available():
         bucket_key: str,
     ) -> torch.Tensor:
         if bucket_key not in _key_to_bucket_and_views:
-            buffer = torch.cat([torch.flatten(t) for t in tensors])
+            buffer = torch._utils._flatten_dense_tensors(tensors)
             offset = 0
             views = []
             for t in tensors:
@@ -1590,15 +1600,9 @@ if torch.distributed.is_available():
         tensors: list[torch.Tensor],
         bucket_key: str,
     ) -> list[torch.Tensor]:
-        offset = 0
-        results = []
-        for t in tensors:
-            n = t.numel()
-            results.append(buffer[offset : offset + n].view_as(t))
-            offset += n
-        return results
+        return torch._utils._unflatten_dense_tensors(buffer, tensors)
 
-    # TODO(crcrpar): Make this compatible with the coming torch_compile executor as it's doing really well for cat and reshape.
+    # TODO(crcrpar): Make this compatible with the torch.compile executor as it's doing really well for cat and reshape.
     # NOTE(crcrpar): why no caching/resue of buffer?
     # This prim is only used by fsdp backward for now.
     # Bucketing of reduce-scatter, i.e., creating a buffer for
@@ -1618,7 +1622,6 @@ if torch.distributed.is_available():
     # To support individual copies from gradient to its bucket requires a mask or an arrayy of indices to achieve correct behavior.
     # In PyTorch, the op for this is [`Tensor.index_copy_`](https://pytorch.org/docs/stable/generated/torch.Tensor.index_copy_.html) where even the index tensor needs to be on the same device as ``self`` and ``tensor``.
     # So caching of the bucketing for fsdp backward would bloat up the memory consumption, which is the main reason this doesn't do any caching.
-    # See https://github.com/Lightning-AI/lightning-thunder/pull/1669/commits/a942b87e88738ce94f874c21d4adc38749ff10d7#diff-c2fd275781ba0c4aa7eec811bebb7bf0b6ca52a236b510ce7dfbb831d4d9bb40R197-R233 for the potential implementation's clumisiness.
     #
     # example of two unsharded gradients of [4, 2] and [4], world size of 4:
     # --------  ------
@@ -1657,7 +1660,7 @@ if torch.distributed.is_available():
                     list(chain.from_iterable(zip(*[torch.chunk(t.view(-1), world_size) for t in tensors])))
                 )
             case "gather":
-                return torch.cat([torch.flatten(t) for t in tensors])
+                return torch._utils._flatten_dense_tensors(tensors)
             case _:
                 utils.check(False, lambda: f"Invalid {mode=}. Supported are (gather, scatter)")
 
@@ -1770,3 +1773,7 @@ if has_einops:
 
         def is_float_type(self, input):
             return dtypes.is_float_dtype(input.dtype)
+
+    # We force the registration of the backend here to not use
+    # the torch backend when diverting isinstance
+    einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()

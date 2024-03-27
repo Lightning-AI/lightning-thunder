@@ -4,6 +4,8 @@ from typing import Any
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from collections import deque
+from importlib.metadata import version
+from looseversion import LooseVersion
 import warnings
 
 import torch
@@ -14,14 +16,12 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.trace import get_tracectx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
-import thunder.torch as ltorch
+import thunder.core.prims as prims
 from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import (
-    register_augmented_forward_with_checker,
-    register_backward,
-)
+from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
+from thunder.core.langctxs import langctx, Languages
 
 __all__ = [
     "transformer_engine_ex",
@@ -29,13 +29,16 @@ __all__ = [
 
 TE_AVAILABLE: bool = package_available("transformer_engine")
 
+# We rely on internal details of TransformerEngine like `_Linear` autograd.Function.
+# As these details are not public, they can change
+# Ex. addition of a positional argument for cpu_offloading (not as the last argument)
+# between version 1.2 and 1.3.
+# Hence, we have these guards based on version.
+TE_VERSION_1_3_PLUS: bool = False
+
 te: None | Any = None
 if TE_AVAILABLE:
     try:
-        import transformer_engine.pytorch as te
-        from transformer_engine.common import recipe
-        import transformer_engine_extensions as tex
-        from transformer_engine.pytorch.constants import TE_DType
         from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
@@ -44,6 +47,9 @@ if TE_AVAILABLE:
         warnings.warn(f"transformer_engine failed to import with exception {ex}")
         TE_AVAILABLE = False
 
+    TE_VERSION_1_3_PLUS = LooseVersion(version("transformer_engine")) >= LooseVersion("1.3")
+if not TE_AVAILABLE:
+    TransformerEngineBaseModule = object
 
 # [NOTE] IMPLEMENTATION DETAILS
 #
@@ -58,7 +64,7 @@ if TE_AVAILABLE:
 # Stateful Operator:
 # This means that every call to this `linear` requires a corresponding `TELinear` instance for
 # backing the required FP8 state. This is done by creating a new `BoundSymbol` with corresponding instance
-# when replacing calls to `ltorch.linear` (see `_create_fp8_linear_bound_symbol`).
+# when replacing calls to `prims.linear` (see `_create_fp8_linear_bound_symbol`).
 # Eg.
 # Original Program:
 #
@@ -107,7 +113,7 @@ class Context:
         self.saved_tensors = tensors
 
     def to_dict(self):
-        return {
+        ctx_dict = {
             "saved_tensors": self.saved_tensors,
             "activation_dtype": self.activation_dtype,
             "fp8": self.fp8,
@@ -126,6 +132,10 @@ class Context:
             "tp_size": self.tp_size,
             "requires_dgrad": self.requires_dgrad,
         }
+
+        if TE_VERSION_1_3_PLUS:
+            ctx_dict["cpu_offloading"] = self.cpu_offloading
+        return ctx_dict
 
     @staticmethod
     def from_dict(d):
@@ -147,6 +157,8 @@ class Context:
         ctx.ub_name = d["ub_name"]
         ctx.tp_size = d["tp_size"]
         ctx.requires_dgrad = d["requires_dgrad"]
+        if TE_VERSION_1_3_PLUS:
+            ctx.cpu_offloading = d["cpu_offloading"]
         return ctx
 
 
@@ -179,7 +191,7 @@ class TELinear(TransformerEngineBaseModule):
         self.primary_weights_in_fp8 = False
 
         if FP8GlobalStateManager.with_fp8_parameters():
-            raise RuntimeError("Primary weights in FP8 is not supported under `thunder.compile`.")
+            raise RuntimeError("Primary weights in FP8 is not supported under `thunder.jit`.")
 
         # Required by `get_fp8_weights_scratchpad`
         self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
@@ -200,6 +212,10 @@ class TELinear(TransformerEngineBaseModule):
 
             ctx = Context() if is_grad_enabled else None
 
+            CPUOffloadEnabled: None | bool = None
+            if TE_VERSION_1_3_PLUS:
+                from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
+
             # Currently we support only non-distributed case.
             # We hard-code the arguments related to distributed for now.
             args = (
@@ -214,6 +230,7 @@ class TELinear(TransformerEngineBaseModule):
                 self.fp8,
                 self.fp8_calibration,
                 self.fp8_meta,
+                *((CPUOffloadEnabled,) if TE_VERSION_1_3_PLUS else ()),
                 False,  # fuse_wgrad_accumulation
                 None,  # tp_group
                 1,  # tp_size
@@ -354,6 +371,10 @@ def _create_fp8_linear_bound_symbol(
 #
 # Registers transformer_engine_ex as an executor for torch.nn.functional.linear
 #
+
+
+# NOTE: We need langctx so that we can resolve `view` on TensorProxy.
+@langctx(Languages.TORCH)
 def _linear_checker(
     a: TensorProxy,
     w: TensorProxy,
@@ -383,24 +404,6 @@ def linear_forwad_rule(a, w, bias):
     return primal, saved_for_backward
 
 
-def linear_forward_rule_checker(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> bool:
-    from thunder.core.compile_data import get_compile_data
-
-    cd = get_compile_data()
-    if transformer_engine_ex in cd.executors_list:
-        return _linear_checker(a, w, bias)
-    return False
-
-
-register_augmented_forward_with_checker(
-    transformer_engine_ex,
-    ltorch.linear.id,
-    linear_forward_rule_checker,
-    linear_forwad_rule,
-)
-
-
-@register_backward((transformer_engine_ex, ltorch.linear.id))
 def linear_backward_rule(a_shape, w_shape, b_shape, ctx_idx, grad):
     return te_functional_linear_backward(grad, a_shape, w_shape, b_shape, ctx_idx)
 
@@ -410,9 +413,22 @@ def _linear_transform(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> torch.T
     return _create_fp8_linear_bound_symbol(a, w, b, is_grad_enabled=False)
 
 
+@disable_caching_split_forward_and_backward
+def _linear_grad(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> TensorProxy:
+    out, saved_for_backward = linear_forwad_rule(a, w, b)
+    g = prims.get_grad(out)
+    ga, gw, gb = linear_backward_rule(*saved_for_backward, g)
+    prims.put_grad(a, ga)
+    prims.put_grad(w, gw)
+    if b is not None:
+        prims.put_grad(b, gb)
+    return out
+
+
 # Registers the implementation for torch.nn.functional.linear
 transformer_engine_ex.register_implementation(
-    ltorch.linear,
+    prims.linear,
     checker=_linear_checker,
     execution_transform=_linear_transform,
+    grad_transform=_linear_grad,
 )

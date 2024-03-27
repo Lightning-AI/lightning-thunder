@@ -65,7 +65,6 @@ def apply_rotary_emb(
     xk_r, xk_i = xk.float().reshape(xk.shape[:-1] + (-1, 2)).unbind(-1)
 
     # reshape freqs_cos and freqs_sin for broadcasting
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1106
     a, b = freqs_cos.shape
     freqs_cos = freqs_cos.view(1, a, 1, b)
     freqs_sin = freqs_sin.view(1, a, 1, b)
@@ -244,7 +243,7 @@ class Transformer(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.output(h)
-            # https://github.com/Lightning-AI/lightning-thunder/issues/1108
+            # see issue "Unexpected KeyError when self attribute is set inside forward"
             #self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the output on the very last position
@@ -258,7 +257,7 @@ class Transformer(nn.Module):
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
         param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # create optim groups. Any parameter that is 2D will be weight decayed, otherwise no.
         # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]

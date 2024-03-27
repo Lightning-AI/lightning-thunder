@@ -8,7 +8,7 @@ import pytest
 import torch
 import thunder
 from thunder.core.transforms import grad, grad_v1, clear_grads, populate_grads, get_grad, put_grad, put_grads
-from thunder.core.jit import jit
+from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
     Benchmark,
@@ -39,7 +39,7 @@ from thunder.benchmarks import (
     thunder_sdpa_torch_compile_nvfuser_executor,
 )
 
-from thunder.tests.lit_gpt_model import Config as LitGPTConfig
+from thunder.tests.litgpt_model import Config as LitGPTConfig
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
@@ -88,7 +88,7 @@ def torch_fwd(b: Benchmark):
 def interpreter_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_executor(module)
-    fn_ = jit(fn_)
+    fn_ = interpret(fn_)
 
     if isinstance(module, torch.nn.Sequential):
 
@@ -289,7 +289,9 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
-# To compare with PyTorch and torchcompile
+# To compare with PyTorch and raw torch.compile (i.e. not through thunder). The
+# latter can help us isolate whether it's something we need to fix ourself or
+# report upstream.
 torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
 torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
 
@@ -362,14 +364,18 @@ thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
 )
 
 grad_executors = (
-    *((partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_executor),) if thunder_cudnn_executor is not None else ()),
+    *(
+        (partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_nvfuser_executor),)
+        if thunder_cudnn_nvfuser_executor is not None
+        else ()
+    ),
     torch_fwd_bwd,
     torchcompile_fwd_bwd,
     thunder_fwd_bwd,
     thunder_fwd_bwd_sdpa_torch_compile_nvfuser,
 )
 grad_executors_ids = (
-    *(("thunder+cudnn",) if thunder_cudnn_executor is not None else ()),
+    *(("thunder+cudnn",) if thunder_cudnn_nvfuser_executor is not None else ()),
     "torch",
     "torch.compile",
     "thunder",
@@ -428,7 +434,8 @@ def test_nanogpt_gelu_grad(benchmark, executor: Callable):
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
+#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
+#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     fwd_executors,
@@ -450,7 +457,8 @@ def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
+#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
+#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     (grad_executors + apex_grad_executors),
@@ -472,7 +480,8 @@ def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See https://github.com/Lightning-AI/lightning-thunder/issues/1319
+#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
+#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     (fwd_executors + cudnn_layernorm_fwd_executors),
@@ -864,8 +873,8 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
     ids=(
         "torch",
         "torch.compile",
-        "thunder-fwd-bwd",
-        "thunder+nvfuser+torch.compile-fwd-bwd",
+        "thunder",
+        "thunder+nvfuser+torch.compile",
         "torch+apex",
         "torch.compile+apex",
     ),
@@ -893,7 +902,7 @@ def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex:
 
 
 #
-# Jit benchmarks
+# interpreter benchmarks
 #
 
 

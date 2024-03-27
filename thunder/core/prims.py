@@ -7,11 +7,59 @@ import math
 from types import NoneType
 from typing import Union, Type, Any, List, Dict, Tuple, Optional
 from collections.abc import Callable
-from collections.abc import Hashable
-from collections.abc import Sequence
+from collections.abc import Callable, Hashable, Sequence
 
 import torch
-import numpy as np
+
+from thunder.core.langctxs import LanguageContext, register_langctx, Languages, langctx
+
+#
+# Creates and registers the torch language context
+#
+# NOTE That this is done separately from the definition of thunder.torch operations, because the
+#   language context must be available before those operations are defined
+
+_method_name_to_fn_map: dict[str, Callable] = {}
+
+
+# Creates and registers the primitive language context
+# TODO RC1 Register additinoal methods and record operations on numbers
+class PrimCtx(LanguageContext):
+    def __init__(self):
+        super().__init__("primitive")
+
+    def has_method(self, id: str) -> bool:
+        return id in _method_name_to_fn_map
+
+    def get_method(self, id: Any, *args, **kwargs) -> Callable:
+        # Note: concrete implmenetations should only raise AttributeError or
+        #       return None for "missing" methods as the proxies will
+        #       route __getattr__ to here and hasattr relies on __getattr__
+        #       throwing AttributeError (only) when the attribute does
+        #       not exist.
+
+        # Verifies that the method is not being called on any tensor proxies
+        inps, _ = tree_flatten((args, kwargs))
+        for x in inps:
+            if isinstance(x, TensorProxy):
+                raise ValueError(f"Attempting to call {id} from the primitive language context on a tensor proxy")
+
+        method: None | Callable = _method_name_to_fn_map.get(id, None)
+
+        if method is None:
+            raise ValueError(f"The {self.name} language context has no method {id}")
+
+        return method
+
+
+primctx = PrimCtx()
+register_langctx(Languages.PRIMS, primctx)
+
+
+# Registers a method with the torch language context
+def register_method(method_name: str, method: Callable, /) -> None:
+    _method_name_to_fn_map[method_name] = method
+
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
@@ -22,7 +70,11 @@ from thunder.core.proxies import (
     proxy,
     numberproxy,
     pytype,
+    pyval,
     Proxy,
+    StringProxy,
+    TupleProxy,
+    AnyProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -32,7 +84,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
-from thunder.core.langctx import langctx, lang
+from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
 
 #
 # Primitives and helpers for defining them
@@ -42,9 +94,20 @@ from thunder.core.langctx import langctx, lang
 class PrimIDs(Enum):
     # Unpacking and input validation prims
     ASSERT_TENSOR_METADATA = auto()
+    CHECK_TENSOR_SHAPE_AND_METADATA = auto()
+    CHECK_NONE = auto()
+    CHECK_EMPTY = auto()
+    CHECK_LITERAL_LIKE = auto()
+    CHECK_TYPE = auto()
+    CHECK_INSTANCE = auto()
+    CHECK_NUMBER_TYPE_AND_VALUE = auto()
+    CHECK_BOOL_CONVERSION = auto()
+    CHECK_STRING_VALUE = auto()
+    CHECK_LEN = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
     UNPACK_FUNCTION_OBJ = auto()
+    UNPACK_CACHE_INFO = auto()
     UNPACK_ATTR = auto()
     UNPACK_GETITEM = auto()
     UNPACK_EMPTY_DICT = auto()
@@ -53,6 +116,11 @@ class PrimIDs(Enum):
     UNPACK_KEY = auto()
     UNPACK_SEQUENCE = auto()
     UNPACK_TRIVIAL = auto()
+    UNPACK_TUPLE = auto()
+    UNPACK_LIST = auto()
+    UNPACK_DICT_KEY = auto()
+    CONSTRUCT_TUPLE = auto()
+    PACK_SETITEM = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -73,6 +141,7 @@ class PrimIDs(Enum):
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
     RANDN = auto()
+    TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     # Reshaping and permuting prims
@@ -136,6 +205,7 @@ class PrimIDs(Enum):
     BITWISE_XOR = auto()
     DIV = auto()
     EQ = auto()
+    PY_FLOORDIV = auto()
     FMOD = auto()
     GE = auto()
     GT = auto()
@@ -189,32 +259,11 @@ class OpTags(Enum):
     RANDOM_OP = auto()
     # Ops that might cause a device sync
     DEVICE_SYNC_OP = auto()
+    # Labels operations that should not be removed by the dead code elimination (DCE) pass
+    DONT_DCE = auto()
 
 
-# NOTE The primitive context is actually the lack of a context for interpreting operations
-# TODO Maybe we should represent it as an actual ctx?
-
-
-class _primctx:
-    pass
-
-
-primctx = _primctx
-
-
-def prim_ctx(fn):
-    @wraps(fn)
-    def fn_(*args, **kwargs):
-        trc = get_tracectx()
-        # TODO Remove the check for using_interpreter once development has progressed enough
-        ctx = None if (trc is None or not trc.using_interpreter) else primctx
-        with lang(ctx):
-            return fn(*args, **kwargs)
-
-    return fn_
-
-
-# TODO Document this function and describe the parts of a primitive
+# TODO RC1 Document this function and describe the parts of a primitive
 def make_prim(
     id,
     name,
@@ -222,13 +271,14 @@ def make_prim(
     meta,
     python_printer=default_python_printer,
     python_impl: None | Callable = None,
-    _bind_postprocess: None | Callable = None,
     tags: None | Sequence[OpTags] = None,
+    method_name: None | str = None,
+    _bind_postprocess: None | Callable = None,
     _print_as_impl: bool = False,
 ):
     sym = Symbol(
         name=name,
-        meta=prim_ctx(meta),
+        meta=langctx(Languages.PRIMS)(meta),
         id=id,
         is_prim=True,
         tags=tags,
@@ -237,46 +287,16 @@ def make_prim(
         _bind_postprocess=_bind_postprocess,
         _print_as_impl=_print_as_impl,
     )
+
+    if method_name is not None:
+        register_method(method_name, sym)
+
     return sym
 
 
 #
 # Unpacking and input validation prims
 #
-
-# TODO Refactor this so it's not redundantly implemented in torch/__init__.py
-_thunder_to_torch_dtype_map = {
-    bool: torch.bool,
-    int: torch.int32,
-    float: torch.float32,
-    complex: torch.complex64,
-    dtypes.bool8_: torch.bool,
-    dtypes.bool8: torch.bool,
-    dtypes.uint8_: torch.uint8,
-    dtypes.uint8: torch.uint8,
-    dtypes.int8_: torch.int8,
-    dtypes.int8: torch.int8,
-    dtypes.int16_: torch.int16,
-    dtypes.int16: torch.int16,
-    dtypes.int32_: torch.int32,
-    dtypes.int32: torch.int32,
-    dtypes.int64_: torch.int64,
-    dtypes.int64: torch.int64,
-    dtypes.bfloat16_: torch.bfloat16,
-    dtypes.bfloat16: torch.bfloat16,
-    dtypes.float16_: torch.float16,
-    dtypes.float16: torch.float16,
-    dtypes.float32_: torch.float32,
-    dtypes.float32: torch.float32,
-    dtypes.float64_: torch.float64,
-    dtypes.float64: torch.float64,
-    dtypes.complex32_: torch.complex32,
-    dtypes.complex32: torch.complex32,
-    dtypes.complex64_: torch.complex64,
-    dtypes.complex64: torch.complex64,
-    dtypes.complex128_: torch.complex128,
-    dtypes.complex128: torch.complex128,
-}
 
 
 # TODO Add a tag for these assertions
@@ -287,7 +307,7 @@ _thunder_to_torch_dtype_map = {
 def assert_tensor_metadata_impl(
     t: torch.Tensor, /, shape: tuple[int], device: devices.Device, dtype: dtypes.dtype, requires_grad: bool
 ) -> None:
-    dtype = _thunder_to_torch_dtype_map[dtype]
+    dtype = dtypes.to_torch_dtype(dtype)
 
     if (
         type(t) in (torch.Tensor, torch.nn.Parameter)
@@ -418,10 +438,168 @@ python_vars = make_prim(
 
 
 def _collectify(x: Any, *, name: str | None = None) -> Any:
+    if isinstance(x, Proxy):
+        return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
 
     return x
+
+
+# TODO RC1 Align with ASSERT_TENSOR_METADATA
+# NOTE The device is stored as a string for easier, more readable comparisons
+def _check_tensor_shape_and_metadata_meta(
+    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+) -> None:
+    # Validates types
+    baseutils.check_type(t, TensorProxy)
+    baseutils.check_valid_shape(shape)
+    baseutils.check_type(device, str)
+    baseutils.check_type(dtype, torch.dtype)
+    baseutils.check_type(requires_grad, bool)
+
+
+check_tensor_shape_and_metadata = make_prim(
+    PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
+    "check_tensor_metadata",
+    meta=_check_tensor_shape_and_metadata_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_none_meta(p: AnyProxy, /) -> None:
+    # Validates types
+    baseutils.check_type(p, AnyProxy)
+    baseutils.check(pytype(p) is NoneType, lambda: f"Expected {p} to be None")
+
+
+check_none = make_prim(
+    PrimIDs.CHECK_NONE,
+    "check_none",
+    meta=_check_none_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_empty_meta(seq: tuple | list | dict, /) -> None:
+    # Validates types
+    baseutils.check_type(seq, (tuple, list, dict))
+    baseutils.check(len(seq) == 0, lambda: f"Expected an empty sequence, but found {seq=}")
+
+
+check_empty = make_prim(
+    PrimIDs.CHECK_EMPTY,
+    "check_empty",
+    meta=_check_empty_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_len_meta(seq: tuple | list | dict, length: int, /) -> None:
+    # Validates types
+    # baseutils.check_type(seq, (tuple, list, dict))
+    baseutils.check_type(length, (int,))
+
+
+check_len = make_prim(
+    PrimIDs.CHECK_LEN,
+    "check_len",
+    meta=_check_len_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_literal_like_meta(p: AnyProxy, v: Any, /) -> None:
+    # Validates types
+    baseutils.check_type(p, AnyProxy)
+    baseutils.check(pyval(p) == v, lambda: f"Expected {p} to be equal to {v}")
+
+
+check_literal_like = make_prim(
+    PrimIDs.CHECK_LITERAL_LIKE,
+    "check_literal_like",
+    meta=_check_literal_like_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_type_meta(x: Any, typ: type, /) -> None:
+    # Validates types
+    baseutils.check(typ, type, lambda: f"Expected a type for check_type, but found {typ}")
+    baseutils.check(pytype(x) is typ, lambda: f"Different types for {pytype(x)} and {typ}")
+
+
+check_type = make_prim(
+    PrimIDs.CHECK_TYPE,
+    "check_type",
+    meta=_check_type_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_instance_meta(x: Any, types: tuple[type], /) -> None:
+    # Validates types
+    baseutils.check(types, tuple, lambda: f"Expected a tuple of types for check_instance, but found {types}")
+
+    for typ in types:
+        baseutils.check(
+            type(typ) is type,
+            lambda: f"Expected a tuple of types for check_instance, but found an object of type {type(typ)} in the tuple",
+        )
+
+    baseutils.check(any(map(lambda y: issubclass(pytype(x), y), types)), lambda: f"Type {pytype(x)} was not in {types}")
+
+
+check_instance = make_prim(
+    PrimIDs.CHECK_INSTANCE,
+    "check_instance",
+    meta=_check_instance_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_number_type_and_value_meta(n: NumberProxy, value: Number, /) -> None:
+    # Validates types
+    baseutils.check_type(n, NumberProxy)
+    baseutils.check_type(value, Number)
+    baseutils.check(pytype(n) == pytype(value), lambda: f"Different types for {n} and {value}")
+
+
+check_number_type_and_value = make_prim(
+    PrimIDs.CHECK_NUMBER_TYPE_AND_VALUE,
+    "check_number_type_and_value",
+    meta=_check_number_type_and_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_bool_conversion_meta(n: NumberProxy, b: bool, /) -> None:
+    # Validates types
+    baseutils.check_type(n, NumberProxy)
+    baseutils.check_type(b, bool)
+
+
+check_bool_conversion = make_prim(
+    PrimIDs.CHECK_BOOL_CONVERSION,
+    "check_bool_conversion",
+    method_name="check_bool_conversion",
+    meta=_check_bool_conversion_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_string_value_meta(s: StringProxy, value: str) -> None:
+    # Validates types
+    baseutils.check_type(s, StringProxy)
+    baseutils.check_type(value, str)
+
+
+check_string_value = make_prim(
+    PrimIDs.CHECK_STRING_VALUE,
+    "check_string_value",
+    meta=_check_string_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
 
 
 def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
@@ -430,33 +608,6 @@ def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
 
 def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
     return _collectify(x, name=name)
-
-
-def unpack_function_obj_impl(x: Any, /, *, name: str | None = None) -> Any:
-    return x
-
-
-def unpack_function_obj_meta(x: Any, /, *, name: str | None = None) -> Any:
-    return x
-
-
-def unpack_function_obj_printer(
-    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
-) -> str:
-    utils.check(
-        len(arg_printables) == 0,
-        lambda: f"Expected zero arguments for unpack_trivial but got {arg_printables}",
-        exception_type=AssertionError,
-    )
-    utils.check(
-        len(kwarg_printables) <= 1,
-        lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
-        exception_type=AssertionError,
-    )
-
-    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
-    s = f"{result_str} = globals()['__function_obj']"
-    return s
 
 
 def unpack_trivial_printer(
@@ -474,7 +625,7 @@ def unpack_trivial_printer(
     )
 
     result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
-    s = f"# {result_str} {'(unused)' if bsym.output is None else ''}"
+    s = f"# {result_str}{' (unused)' if bsym.output is None else ''}"
     return s
 
 
@@ -493,12 +644,76 @@ unpack_trivial = make_prim(
 )
 
 
+def unpack_function_obj_impl(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_function_obj_meta(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_function_obj_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 0,
+        lambda: f"Expected zero arguments for unpack_function_obj but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) <= 1,
+        lambda: f"Expected at most one kwarg for unpack_function_obj but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    s = f"{result_str} = globals()['__function_obj']"
+    return s
+
+
 unpack_function_obj = make_prim(
     PrimIDs.UNPACK_FUNCTION_OBJ,
     "unpack_function_obj",
     meta=unpack_function_obj_meta,
     python_printer=unpack_function_obj_printer,
     python_impl=unpack_function_obj_impl,
+    _bind_postprocess=_unpack_trivial_bind_postprocess,
+)
+
+
+def unpack_cache_info_impl(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_cache_info_meta(x: Any, /, *, name: str | None = None) -> Any:
+    return x
+
+
+def unpack_cache_info_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 0,
+        lambda: f"Expected zero arguments for unpack_cache_info but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) <= 1,
+        lambda: f"Expected at most one kwarg for unpack_cache_info but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    s = f"{result_str} = thunder._get_cache_info()"
+    return s
+
+
+unpack_cache_info = make_prim(
+    PrimIDs.UNPACK_CACHE_INFO,
+    "unpack_cache_info",
+    meta=unpack_cache_info_meta,
+    python_printer=unpack_cache_info_printer,
+    python_impl=unpack_cache_info_impl,
     _bind_postprocess=_unpack_trivial_bind_postprocess,
 )
 
@@ -515,7 +730,25 @@ def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
     return list(_collectify(y) for y in x)
 
 
-# TODO Review using multi-line unpacks more cleverly
+def _make_parts_into_line_or_lines(parts: list[str], out: list[str] | None = None) -> list[str]:
+    if out is None:
+        lines = []
+    else:
+        lines = out
+    line_parts = []
+    pos = 0
+    for p in parts:
+        if pos and pos + len(p) > 80:
+            lines.append("".join(line_parts) + "\\")
+            line_parts = []
+            pos = 0
+        line_parts.append(p)
+        pos += len(p)
+
+    lines.append("".join(line_parts))
+    return lines
+
+
 # TODO Possibly put the length in the code to show the requirement
 def unpack_sequence_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
@@ -539,12 +772,10 @@ def unpack_sequence_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty sequence)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
@@ -559,6 +790,116 @@ unpack_sequence = make_prim(
     python_printer=unpack_sequence_printer,
     python_impl=unpack_sequence_impl,
 )
+
+
+# NOTE This actually returns a new tuple of the elements, which allows the elements of tup
+#   to appear in the symbol's output. If the original tuple is a proxy and it were just
+#   returned directly then the output would just be the tuple
+def _unpack_tuple_meta(tup: tuple, /) -> tuple:
+    utils.check_type(tup, tuple)
+
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    return tuple(_proxy(x) for x in tup)
+
+
+def _unpack_tuple_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_tuple but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_tuple but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check_type(bsym.output, tuple)
+
+    (x,) = arg_printables
+    call_str = f"{codeutils.prettyprint(x)}"
+
+    # Short-circuits if there's nothing to unpack:
+    if len(bsym.output) == 0:
+        return f"# {call_str} (empty tuple)"
+
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
+
+    lines = _make_parts_into_line_or_lines(parts)
+    return lines
+
+
+unpack_tuple = make_prim(
+    PrimIDs.UNPACK_TUPLE,
+    "unpack_tuple",
+    meta=_unpack_tuple_meta,
+    python_printer=_unpack_tuple_printer,
+)
+
+
+# NOTE This actually returns a new tuple of the elements, which allows the elements of tup
+#   to appear in the symbol's output. If the original tuple is a proxy and it were just
+#   returned directly then the output would just be the tuple
+def _unpack_list_meta(lst: list, /) -> list:
+    utils.check_type(lst, list)
+
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    return list(_proxy(x) for x in lst)
+
+
+def _unpack_list_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_list but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_list but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check_type(bsym.output, list)
+
+    (x,) = arg_printables
+    call_str = f"{codeutils.prettyprint(x)}"
+
+    # Short-circuits if there's nothing to unpack:
+    if len(bsym.output) == 0:
+        return f"# {call_str} (empty list)"
+
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
+
+    lines = _make_parts_into_line_or_lines(parts)
+    return lines
+
+
+unpack_list = make_prim(
+    PrimIDs.UNPACK_LIST,
+    "unpack_list",
+    meta=_unpack_list_meta,
+    python_printer=_unpack_list_printer,
+)
+
+
+def _construct_tuple_meta(tup: tuple, /) -> tuple:
+    utils.check_type(tup, tuple)
+    return TupleProxy(tup)
+
+
+construct_tuple = make_prim(PrimIDs.CONSTRUCT_TUPLE, "construct_tuple", meta=_construct_tuple_meta)
 
 
 # NOTE UNPACK_ATTR is intended only to be bound to directly, and not called
@@ -599,6 +940,48 @@ unpack_attr = make_prim(
     meta=unpack_attr_meta,
     python_printer=unpack_attr_printer,
     python_impl=unpack_attr_impl,
+)
+
+
+# NOTE PACK_SETITEM is intended only to be bound to directly, and not called
+def pack_setitem_meta(o: Any, key: Any, value: Any) -> Any:
+    raise NotImplementedError
+
+
+def pack_setitem_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 3,
+        lambda: f"Expected three arguments for pack_setitem but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_setitem but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    obj, key, value = arg_printables
+    obj_str = codeutils.prettyprint(obj)
+    key_str = codeutils.prettyprint(key)
+    value_str = codeutils.prettyprint(value)
+    return f"{obj_str}[{key_str}] = {value_str}"
+
+
+def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
+    o[key] = value
+    return None
+
+
+pack_setitem = make_prim(
+    PrimIDs.PACK_SETITEM,
+    "unpack_setitem",
+    meta=pack_setitem_meta,
+    python_printer=pack_setitem_printer,
+    python_impl=pack_setitem_impl,
+    tags=(OpTags.DONT_DCE,),
 )
 
 
@@ -767,6 +1150,54 @@ unpack_key = make_prim(
 )
 
 
+def _unpack_dict_key_meta(d: dict, key: int | str, /) -> Proxy:
+    baseutils.check_type(d, dict)
+    baseutils.check_type(key, (int, str))
+
+    def _proxy(x: Any):
+        if isinstance(x, Proxy):
+            return x
+        return proxy(x)
+
+    return _proxy(d[key])
+
+
+def _unpack_dict_key_impl(d: dict, key: int | str, /) -> Any:
+    return d[key]
+
+
+def _unpack_dict_key_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_dict_key but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_dict_key but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    d, key = arg_printables
+    dstr = codeutils.prettyprint(d)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {dstr}[{keystr}]"
+
+
+unpack_dict_key = make_prim(
+    PrimIDs.UNPACK_DICT_KEY,
+    "unpack_dict_key",
+    meta=_unpack_dict_key_meta,
+    python_printer=_unpack_dict_key_printer,
+    python_impl=_unpack_dict_key_impl,
+)
+
+
 def unpack_empty_dict_meta(d: dict | CollectionProxy) -> tuple:
     baseutils.check_type(d, (dict, CollectionProxy))
     if isinstance(d, CollectionProxy):
@@ -880,6 +1311,7 @@ python_print = make_prim(
     meta=_print_meta,
     python_printer=python_print_printer,
     python_impl=print,
+    tags=(OpTags.DONT_DCE,),
 )
 
 
@@ -984,6 +1416,7 @@ python_return = make_prim(
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #
@@ -1159,15 +1592,22 @@ def _elementwise_unary_meta_factory(
                 utils.check(False, lambda: f"Unknown {output_dtype_kind=}")
 
             if val is None or number_fn is None:
+                utils.check(
+                    isinstance(a, NumberProxy),
+                    lambda: f"Trying to call an elementwise unary operation {name} on a number, but the operation is not eagerly defined",
+                )
                 return numberproxy(output_type, None)
 
             value = number_fn(val)
-            result = numberproxy(type(value), value)
             utils.check(
                 type(value) is output_type,
                 lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
             )
-            return result
+
+            # Only returns a proxy if the input is a proxy
+            if isinstance(a, Proxy):
+                return numberproxy(type(value), value)
+            return value
 
         # NOTE a is a TensorProxy
         utils.check(
@@ -1201,6 +1641,7 @@ def _make_elementwise_unary_prim(
     output_dtype_kind: ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND = ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     numbers_only: bool = False,
     number_type_map: dict[type, type] | None = None,
+    method_name: None | str = None,
 ):
     return make_prim(
         id,
@@ -1214,12 +1655,14 @@ def _make_elementwise_unary_prim(
             number_type_map=number_type_map,
         ),
         python_printer=python_printer,
+        method_name=method_name,
     )
 
 
 py_abs = _make_elementwise_unary_prim(
     PrimIDs.PY_ABS,
     "py_abs",
+    method_name="abs",
     number_fn=operator.abs,
     numbers_only=True,
     number_type_map={
@@ -1407,6 +1850,7 @@ neg = _make_elementwise_unary_prim(
     PrimIDs.NEG,
     "neg",
     number_fn=operator.neg,
+    method_name="neg",
 )
 
 reciprocal = _make_elementwise_unary_prim(
@@ -1529,6 +1973,7 @@ def _elementwise_binary_meta_factory(
     *,
     name,
     number_fn,
+    numbers_only: bool,
     output_dtype_kind,
     supported_input_dtypes,
 ):
@@ -1557,10 +2002,24 @@ def _elementwise_binary_meta_factory(
             # Handles the case where a number has an indeterminate value, or the operation has
             #   no number handler, by returning another indeterminate value
             if aval is None or bval is None or number_fn is None:
+                utils.check(
+                    isinstance(a, NumberProxy) or isinstance(b, NumberProxy),
+                    lambda: f"Trying to call an elementwise binary operation {name} on two numbers, but the operation is not eagerly defined",
+                )
                 return numberproxy(numbertype, None)
 
             value = number_fn(aval, bval)
-            return numberproxy(type(value), value)
+            # Only returns a NumberProxy if at least one input is a number proxy
+            if isinstance(a, NumberProxy) or isinstance(b, NumberProxy):
+                return numberproxy(type(value), value)
+            return value
+
+        else:
+            # NOTE a or b is a TensorProxy
+            utils.check(
+                not numbers_only,
+                lambda: f"Trying to call a primitive ({name}) that only supports numbers with a tensor input",
+            )
 
         # Checks same shape
         # NOTE: this doesn't verify a common shape if one or more inputs is a number
@@ -1600,6 +2059,9 @@ def _make_elementwise_binary_prim(
     python_printer=default_python_printer,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME,
     supported_input_dtypes=dtypes.all_dtypes_and_numbertypes,
+    method_name: None | str = None,
+    numbers_only: bool = False,
+    constraint_function: None | Callable = None,
 ):
     return make_prim(
         id,
@@ -1607,10 +2069,12 @@ def _make_elementwise_binary_prim(
         meta=_elementwise_binary_meta_factory(
             name=name,
             number_fn=number_fn,
+            numbers_only=numbers_only,
             output_dtype_kind=output_dtype_kind,
             supported_input_dtypes=supported_input_dtypes,
         ),
         python_printer=python_printer,
+        method_name=method_name,
     )
 
 
@@ -1619,6 +2083,7 @@ add = _make_elementwise_binary_prim(
     "add",
     number_fn=operator.add,
     supported_input_dtypes=math_dtypes,
+    method_name="add",
 )
 
 atan2 = _make_elementwise_binary_prim(
@@ -1672,9 +2137,20 @@ div = _make_elementwise_binary_prim(
     supported_input_dtypes=math_dtypes,
 )
 
+# We currently do not support floordiv on tensors.
+py_floordiv = _make_elementwise_binary_prim(
+    PrimIDs.PY_FLOORDIV,
+    "py_floordiv",
+    method_name="floor_divide",
+    number_fn=operator.floordiv,
+    numbers_only=True,
+    supported_input_dtypes={bool, int, float},
+)
+
 eq = _make_elementwise_binary_prim(
     PrimIDs.EQ,
     "eq",
+    method_name="eq",
     number_fn=operator.eq,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
@@ -1697,6 +2173,7 @@ fmod = _make_elementwise_binary_prim(
 ge = _make_elementwise_binary_prim(
     PrimIDs.GE,
     "ge",
+    method_name="ge",
     number_fn=operator.ge,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1705,6 +2182,7 @@ ge = _make_elementwise_binary_prim(
 gt = _make_elementwise_binary_prim(
     PrimIDs.GT,
     "gt",
+    method_name="gt",
     number_fn=operator.gt,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1713,6 +2191,7 @@ gt = _make_elementwise_binary_prim(
 le = _make_elementwise_binary_prim(
     PrimIDs.LE,
     "le",
+    method_name="le",
     number_fn=operator.le,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1721,6 +2200,7 @@ le = _make_elementwise_binary_prim(
 lt = _make_elementwise_binary_prim(
     PrimIDs.LT,
     "lt",
+    method_name="lt",
     number_fn=operator.lt,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
     supported_input_dtypes=comparison_dtypes,
@@ -1733,6 +2213,7 @@ minimum = _make_elementwise_binary_prim(PrimIDs.MINIMUM, "minimum", supported_in
 mul = _make_elementwise_binary_prim(
     PrimIDs.MUL,
     "mul",
+    method_name="mul",
     number_fn=operator.mul,
     supported_input_dtypes=math_dtypes,
 )
@@ -1740,6 +2221,7 @@ mul = _make_elementwise_binary_prim(
 ne = _make_elementwise_binary_prim(
     PrimIDs.NE,
     "ne",
+    method_name="ne",
     number_fn=operator.ne,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL,
 )
@@ -1779,6 +2261,7 @@ pow = _make_elementwise_binary_prim(
 remainder = _make_elementwise_binary_prim(
     PrimIDs.REMAINDER,
     "remainder",
+    method_name="mod",
     number_fn=operator.mod,
     supported_input_dtypes=math_dtypes,
 )
@@ -1786,6 +2269,7 @@ remainder = _make_elementwise_binary_prim(
 sub = _make_elementwise_binary_prim(
     PrimIDs.SUB,
     "sub",
+    method_name="sub",
     number_fn=operator.sub,
     supported_input_dtypes=math_dtypes,
 )
@@ -2020,6 +2504,82 @@ def _randn_meta(
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
 
 
+# Prim to construct a Tensor from sequence/nested sequence of Numbers.
+def _tensor_from_sequence_meta(
+    seq: Sequence[Number | Sequence], *, dtype: None | dtypes.dtype, device: devices.Device
+) -> TensorProxy:
+    utils.check_type(dtype, (dtypes.dtype, NoneType))
+    utils.check_type(device, devices.Device)
+    utils.check_type(seq, Sequence)
+
+    # str is treated as Sequence but we don't want to treat it as such.
+    def is_sequence_not_str(obj):
+        return isinstance(obj, Sequence) and not isinstance(obj, str)
+
+    # Compute shape and validate that we have homogenous sequence.
+    shape = []
+    sequences = seq
+    dim_len = len(sequences)
+    shape.append(dim_len)
+    while dim_len > 0 and is_sequence_not_str(first := sequences[0]):
+        dim_len = len(first)
+        next_sequences = []
+        for s in sequences:
+            # Check for homogenous sequence.
+            utils.check(len(s) == dim_len, lambda: f"Expected seq of len={dim_len} at dim {len(shape)}")
+            next_sequences.extend(s)
+
+        shape.append(dim_len)
+        sequences = next_sequences
+
+    # Infer the dtype
+    types = set()
+    for element in sequences:
+        utils.check(
+            isinstance(element, (bool, int, float, complex)),
+            lambda: f"Expected sequences of numbers, but found type {type(element)} when constructing a tensor from a sequence",
+            ValueError,
+        )
+        types.add(pytype(element))
+
+    # NOTE: inferred_dtype will stay None if sequence was empty.
+    inferred_dtype = None
+    if complex in types:
+        inferred_dtype = complex
+    elif float in types:
+        inferred_dtype = float
+    elif int in types:
+        inferred_dtype = int
+    elif bool in types:
+        inferred_dtype = bool
+
+    # user specified a dtype and we could infer the dtype
+    if dtype is not None and inferred_dtype is not None:
+        # verify that the inferred dtype can be safely cast to user requested dtype.
+        # NOTE: We can't use `utils.can_safe_cast_to` as it is more fine-grained and it differentiates between
+        #       unsigned and signed integers.
+        #       But for Python Number types we can only infer `bool`, `int`, `float`, `complex`.
+        utils.check(
+            utils.can_safe_cast_number_to(inferred_dtype(0), dtype),
+            lambda: f"Can't safely cast sequence with numbertype {inferred_dtype} to dtype {dtype}",
+        )
+    # user specified a dtype and we couldn't infer the dtype (empty sequence)
+    elif dtype is not None and inferred_dtype is None:
+        pass
+    else:  # user didn't specify the dtype.
+        # use inferred_dtype if available else default to float
+        # NOTE: In future, we should rely on something like [thunder/torch].get_default_dtype.
+        dtype = inferred_dtype if inferred_dtype is not None else float
+
+    # We set `requires_grad` to False as this tensor will show up only in trace and
+    # user won't have access to it. See also, the note on _full_meta.
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+# Prim to construct a Tensor from sequence/nested sequence of Numbers.
+tensor_from_sequence = make_prim(PrimIDs.TENSOR_FROM_SEQUENCE, "tensor_from_sequence", meta=_tensor_from_sequence_meta)
+
+
 def _multinomial_meta(
     input: TensorProxy,
     num_samples: int,
@@ -2162,7 +2722,7 @@ cat = make_prim(
 )
 
 
-def item_meta(a: TensorProxy) -> NumberProxy:
+def item_meta(a: TensorProxy, /) -> NumberProxy:
     utils.check_type(a, TensorProxy)
 
     utils.check(a.numel == 1, lambda: f"Expects input with numel=1 but got {a.numel=} instead", ValueError)
@@ -2293,7 +2853,7 @@ def slice_meta(
 
 
 # NOTE: slice is named "slice_prim" and not "slice" because it conflicts with Python's "slice" builtin
-slice_prim = make_prim(PrimIDs.SLICE, "slice", meta=slice_meta, tags=(OpTags.SHAPE_OP,))
+slice_prim = make_prim(PrimIDs.SLICE, "slice_prim", meta=slice_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def squeeze_meta(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
@@ -2944,17 +3504,3 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
-
-#
-# Populates the prim ctx
-#
-# NOTE These are the primitive operations that operations on numbers will be mapped to
-
-primctx.neg = neg
-primctx.add = add
-primctx.sub = sub
-primctx.mul = mul
-primctx.floor_divide = div  # (!) see above
-primctx.eq = eq
-primctx.ge = ge
-primctx.le = le

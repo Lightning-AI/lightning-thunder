@@ -191,7 +191,7 @@ class PretokDataset(torch.utils.data.IterableDataset):
         # get DDP rank info
         rank = dist.get_rank() if dist.is_initialized() else 0
         # combine the worker_id and worker_rank to create a unique seed for rng
-        seed = 42 + worker_id + 1337 * rank
+        seed = 42 + worker_id + 1942 * rank
         rng = random.Random(seed)
         print(f"Created a PretokDataset with rng seed {seed}")
         if self.vocab_source == "llama2":

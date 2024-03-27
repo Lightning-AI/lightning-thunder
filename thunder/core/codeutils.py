@@ -1,4 +1,4 @@
-from types import CodeType, FunctionType, MethodType
+from types import CodeType, FunctionType, MethodType, EllipsisType
 from typing import List, Dict, Tuple, Set, Deque, Any
 from numbers import Number
 from collections import deque
@@ -8,10 +8,12 @@ from inspect import Parameter
 import string
 import functools
 from functools import partial
-
 import dis
+
+import torch
+
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface
+from thunder.core.baseutils import ProxyInterface, check
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -29,7 +31,7 @@ class ContextObject:
         self.obj = obj
 
 
-Printable = Union[str, ContextObject, ProxyInterface]
+Printable = str | ContextObject | ProxyInterface
 
 _modules_to_shortnames_map = {
     "thunder.torch": "ltorch",
@@ -47,38 +49,32 @@ def indent_string(indent):
     return f"{tab * indent}"
 
 
-# TODO Consider adding a Printable interface or protocol
-# TODO Consider not printing devices, which are constructed each time, and instead giving them
-#   readable names
-# TODO Refine imports so that devices can print as Devices("cuda:0") instead of
-#   having to qualify as devices.Devices
-def is_printable(x: Any) -> tuple[bool, Optional[tuple[str, Any]]]:
-    if x is None:
+def is_simple_printable_collection(x: Any) -> bool:
+    simple_printable_collection_types = (
+        tuple,
+        list,
+        dict,
+    )
+
+    return type(x) in simple_printable_collection_types
+
+
+def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
+    if baseutils.is_base_printable(x):
         return True, None
+
     if isinstance(x, ContextObject):
         return True, None
-    if isinstance(x, ProxyInterface):
-        return True, None
     if is_collection(x):
+        # TODO RC1 Fix collection printing by testing if each item is printable and gathering the imports
+        #   required (if any)
         flat, _ = tree_flatten(x)
         return True, None
         # return all((is_printable(f) for f in flat)), None
-    if isinstance(x, str):
-        return True, None
     if isinstance(x, dtypes.dtype):
         return True, ("dtypes", dtypes)
     if isinstance(x, devices.Device):
         return True, ("devices", devices)
-    if x in (bool, int, float, complex):
-        return True, None
-    if isinstance(x, Number):
-        return True, None
-    if isinstance(x, torch.dtype):
-        return True, ("torch", torch)
-    if isinstance(x, slice):
-        return True, None
-    if x is Ellipsis:
-        return True, None
 
     return False, None
 
@@ -90,9 +86,6 @@ def is_literal(x: Any) -> bool:
     if is_collection(x):
         flat, _ = tree_flatten(x)
         for f in flat:
-            check(
-                not is_collection(f), lambda: f"Found a collection {f} after flattening", exception_type=AssertionError
-            )
             if is_literal(f):
                 return True
         return False
@@ -122,15 +115,16 @@ def to_printable(
     *,
     import_ctx: Optional[dict] = None,
     object_ctx: Optional[dict] = None,
-) -> Any:
+) -> Printable:
+    # Short-circuits if x is a Proxy
+    if isinstance(x, ProxyInterface):
+        return x
+
     if is_collection(x):
         flat, spec = tree_flatten(x)
 
         printables = []
         for f in flat:
-            check(
-                not is_collection(f), lambda: f"Found a collection {f} after flattening", exception_type=AssertionError
-            )
             printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
 
         printable = tree_unflatten(printables, spec)
@@ -153,7 +147,6 @@ def to_printable(
 
 
 # NOTE This quote marker allows for removal of quotation marks when printing collections
-# TODO Review this
 _quote_marker = "_@_"
 
 
@@ -162,92 +155,6 @@ def _qm(s: str, quote_markers: bool) -> str:
         return s
 
     return f"{_quote_marker}{s}{_quote_marker}"
-
-
-_torch_dtype_to_str_map = {
-    torch.bool: "torch.bool",
-    torch.uint8: "torch.uint8",
-    torch.int8: "torch.int8",
-    torch.int16: "torch.int16",
-    torch.int32: "torch.int32",
-    torch.int64: "torch.int64",
-    torch.bfloat16: "torch.bfloat16",
-    torch.float16: "torch.float16",
-    torch.float32: "torch.float32",
-    torch.float64: "torch.float64",
-    torch.complex32: "torch.complex32",
-    torch.complex64: "torch.complex64",
-    torch.complex128: "torch.complex128",
-}
-
-
-# Function objects have a lot of stuff in them, that may not be relevant when we
-# just want to preview bytecode. Here, we make a list of the things we don't need to see.
-fnprint_exclude_attrs = {
-    "__class__",
-    "__doc__",
-    "co_code",
-    "co_lnotab",
-    "co_name",
-    "co_firstlineno",
-    "co_filename",
-    "co_kwonlyargcount",
-    "co_stacksize",
-    "co_flags",
-    "co_nlocals",
-    "co_linetable",
-}
-
-
-# View the bytecode and code object of a function or code object and any nested functions.
-# This is meant to be useful for figuring out what's going on in a function.
-# Example:
-#     @fnprint
-#     def foo(a, b):
-#         return a + b
-def fnprint(fn: FunctionType | MethodType | CodeType, first=True) -> Callable:
-    if isinstance(fn, FunctionType):
-        x = fn.__code__
-    elif isinstance(fn, MethodType):
-        x = fn.__func__.__code__  # type: ignore
-    else:
-        x = fn
-
-    if first:
-        try:
-            source = inspect.getsource(x)
-        except:
-            source = "Source could not be found."
-    else:
-        source = f"SUBFUNCTION {x.co_name}:"
-
-    print(source)
-    for k in dir(x):
-        v = getattr(x, k)
-        if hasattr(v, "__call__"):
-            continue
-        if k in fnprint_exclude_attrs:
-            continue
-        print(f"{k}: {v}")
-
-    print("co_code:")
-    dis.dis(x, depth=0)
-    print()
-
-    # Recurse for nested functions
-    for f in x.co_consts:
-        if f.__class__ == x.__class__:
-            fnprint(f, False)
-            print()
-
-    if first:
-        print("=" * 50)
-        print()
-
-    def error_fn(*args, **kwargs):
-        raise ValueError("A code object was passed to fnprint(). Cannot return a callable of it.")
-
-    return fn if isinstance(fn, Callable) else error_fn
 
 
 # TODO Review prettyprinting other map types like dict -- these need to print strings in a particular way
@@ -271,16 +178,21 @@ def prettyprint(
     if literals_as_underscores and is_literal(x) and not is_collection(x):
         return m("_")
 
-    if x is None:
-        return m("None")
-    if isinstance(x, ContextObject):
-        return m(x.name)
+    if type(x) is str:
+        return m(repr(x))
+
+    # ProxyInterface is base-printable, but we treat it with special care
     if isinstance(x, ProxyInterface):
         # NOTE This doesn't need quote markers because it can't
         #   occur in a collection
         if with_type:
             return f'{x.name}: "{x.type_string()}"'
+        return m(x.name)
 
+    if baseutils.is_base_printable(x):
+        return m(baseutils.print_base_printable(x))
+
+    if isinstance(x, ContextObject):
         return m(x.name)
     if is_collection(x):
         flat, spec = tree_flatten(x)
@@ -296,38 +208,12 @@ def prettyprint(
         unflattened_str = unflattened_str.replace(f"{_quote_marker}'", "")
         unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
         return unflattened_str
-    if isinstance(x, str):
-        return m(f'"{x}"')
     if isinstance(x, dtypes.dtype):
         return m(f"dtypes.{str(x)}")
     if isinstance(x, devices.Device):
         return m(f'devices.Device("{str(x)}")')
-    if x is bool:
-        return m("bool")
-    if x is int:
-        return m("int")
-    if x is float:
-        return m("float")
-    if x is complex:
-        return m("complex")
-    # TODO Handle complex infinities and nans
-    if isinstance(x, Number):
-        s: str
-        if x == float("inf"):
-            s = m("float('inf')")
-        elif x == -float("inf"):
-            s = m("-float('inf')")
-        elif x != x:
-            s = m("float('NaN')")
-        else:
-            s = m(str(x))
-        return s
-    if isinstance(x, torch.dtype):
-        return m(_torch_dtype_to_str_map[x])
-    if isinstance(x, slice):
-        return m(str(x))
-    if x is Ellipsis:
-        return m("...")
+    if type(x) is type:
+        return m(f"{baseutils.print_type(x, with_quotes=False)}")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")
@@ -335,13 +221,14 @@ def prettyprint(
 
 # TODO Make this a frozen dataclass?
 class SigInfo:
-    def __init__(self, name):
+    def __init__(self, name, /):
         self.name = name
         self.args = []
         self.varargs = None
         self.kwargs = {}
         self.varkwargs = None
         self.defaultdict = {}
+        self.unwrapped_fn = None
 
     def __repr__(self):
         return f"[SigInfo args={self.args}, varargs={self.varargs}, kwargs={self.kwargs}, varkwargs={self.varkwargs}]"
@@ -405,8 +292,8 @@ class SigInfo:
 #   and the kwargs and varkwargs into kwarg_values
 
 
-# TODO GTC Review errors and improve message quality (ex. too many arguments error)
-# TODO GTC Have this always return a SigInfo or another type (maybe by wrapping in another function)
+# TODO RC1 Review errors and improve message quality (ex. too many arguments error)
+# TODO RC1 Have this always return a SigInfo or another type (maybe by wrapping in another function)
 def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False) -> SigInfo | Any:
     # Unwraps partials and records their arguments
     partials = []
@@ -416,6 +303,7 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     kwargs = kwargs if kwargs is not None else {}
 
     fn_ = fn
+    unwrapped: Callable = fn
     while True:
         if not isinstance(fn_, functools.partial):
             break
@@ -429,6 +317,7 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
         )
 
         fn_ = fn_.func
+        unwrapped = fn_
 
     # NOTE That the partials are iterated over in REVERSE order because the keywords from later partials override
     #   the keywords from earlier partials
@@ -474,13 +363,17 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     # Acquires the name of the function
     # NOTE Not all callables define __name__, including objects that define __call__ and
     #   objects created with functools.partial
-    # TODO Is there a better way to extract the name here?
 
     match fn_:
         case functools.partial():
             name = fn_.func.__name__
         case _:
-            name = fn_.__name__
+            if hasattr(fn_, "__name__"):
+                name = fn_.__name__
+            elif hasattr(fn_, "__call__"):
+                raise NotImplementedError(f"Can't yet create a signature for a callable object, like {type(fn_)}")
+            else:
+                raise ValueError(f"Don't know how to extract a signature from type {type(fn_)}")
 
     si = SigInfo(name)
 
@@ -503,5 +396,5 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     si.args = tuple((x[2], x[0]) for x in si.args)
 
     si.defaultdict = default_dict
-
+    si.unwrapped_fn = unwrapped
     return si

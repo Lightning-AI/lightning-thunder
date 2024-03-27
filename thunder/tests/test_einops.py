@@ -51,7 +51,7 @@ def test_rearrange(device: str, dtype: torch.dtype):
     def f(input, expr, **kwargs):
         return einops.rearrange(input, expr, **kwargs)
 
-    fc = thunder.compile(f)
+    fc = thunder.jit(f)
 
     for shape, expr, kwargs in cases:
         input = make_tensor(shape, dtype=dtype, device=device)
@@ -78,7 +78,7 @@ def test_repeat(device: str, dtype: torch.dtype):
     def f(input, expr, **kwargs):
         return einops.repeat(input, expr, **kwargs)
 
-    fc = thunder.compile(f)
+    fc = thunder.jit(f)
 
     for shape, expr, kwargs in cases:
         input = make_tensor(shape, dtype=dtype, device=device)
@@ -114,7 +114,7 @@ def test_reduce(device: str, dtype: torch.dtype):
         return einops.reduce(input, expr, **kwargs)
 
     # TODO(#1993): don't enforce `nv_enable_bookend` when #1993 is resolved.
-    fc = thunder.compile(f, nv_enable_bookend=True)
+    fc = thunder.jit(f, nv_enable_bookend=True)
 
     for shape, expr, kwargs in cases:
         input = make_tensor(shape, dtype=dtype, device=device)
@@ -137,8 +137,8 @@ def test_einsum(device: str, dtype: torch.dtype):
     def torch_f(expr, *operands):
         return torch.einsum(expr, *operands)
 
-    fc = thunder.compile(f)
-    torch_fc = thunder.compile(torch_f)
+    fc = thunder.jit(f)
+    torch_fc = thunder.jit(torch_f)
 
     for sample in op.sample_inputs(device, dtype, requires_grad=False):
         expr, *operands = sample.args

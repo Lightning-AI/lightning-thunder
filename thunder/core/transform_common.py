@@ -8,7 +8,7 @@ import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.proxies import Proxy, variableify, Variable
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
 from thunder.core.utils import ProxyDict, producers, check
 
@@ -47,18 +47,10 @@ def dce(trace: Trace) -> Trace:
     needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
-    # TODO Update this to use tags (like a HAS_SIDE_EFFECTS, or even DONT_DCE tag?)
-    # NOTE These primitives are marked to not be collected because they dictate the function's output
-    #   (RETURN) or have side effects (PRINT)
-    dont_collect = {
-        prims.PrimIDs.RETURN,
-        prims.PrimIDs.PRINT,
-    }
-
     bsym: BoundSymbol
     for bsym in reversed(trace.bound_symbols):
         # Preserves symbols that should never be collected
-        if bsym.sym.id in dont_collect:
+        if has_tags(bsym, {prims.OpTags.DONT_DCE}):
             needed = True
         else:
             needed = False
@@ -142,9 +134,9 @@ def replace_redundant_inputs(
     return new_bsyms
 
 
-# TODO(crcrpar): Implement a mechanism to keep track of supported ops that cannot be CSE'd.
-# For example, `uniform`, `dropout`, and `scaled_dot_product_attention`.
-# See: https://github.com/Lightning-AI/lightning-thunder/issues/671
+# These are ops that are not referentially transparent. We need to treat such
+# ops specially when optimizing; for example, CSE cannot coalesce two calls
+# into one for ops in this set.
 NON_FUNCTIONAL_OPS: set[prims.PrimIDs | str] = {
     prims.PrimIDs.UNIFORM,
     "torch.uniform",  # this doesn't exist as of the PR

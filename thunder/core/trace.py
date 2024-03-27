@@ -10,6 +10,7 @@ import inspect
 import functools
 from types import ModuleType
 
+import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
@@ -18,7 +19,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.codeutils import ContextObject
 
 
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/327
+# TODO see issue "Improve TraceProvenance"
 #   Make this more interesting / printer better -- maybe let
 #   practitioners acquire the pass callable so they can replicate the pass?
 # This class is intended to describe how the trace was constructed
@@ -35,7 +36,7 @@ class TraceProvenance:
 
 
 # TODO Should traces be BoundSymbols?
-# TODO https://github.com/Lightning-AI/lightning-thunder/issues/323
+# TODO issue "Create a mechanism for freezing TraceCtx objects"
 #   Add validation that a constant is never assigned to / reassigned
 #   Possibly separate the ideas of a trace -- a series of scopes containing bound symbols --
 #   and a TraceCtx, which can produce new traces
@@ -43,9 +44,11 @@ class TraceProvenance:
 #   ... but maybe we still need the naming context?
 # TODO Allow the function signature to be modified by transforms
 class TraceCtx:
-    def __init__(self, fn: None | Callable = None, *, using_interpreter: bool = False):
+    def __init__(self, fn: None | Callable = None, *, prologue=None, is_prologue: bool = False):
         self.fn: None | Callable = fn
-        self._using_interpreter: bool = using_interpreter  # Whether this trace is being produced by the interpreter
+
+        self._prologue = prologue
+        self._is_prologue: bool = is_prologue
 
         self.args = None
         self.kwargs = None
@@ -86,6 +89,14 @@ class TraceCtx:
 
         self._any_future_tensors = False
 
+    @property
+    def prologue(self):
+        return self._prologue
+
+    @property
+    def is_prologue(self):
+        return self._is_prologue
+
     #
     # Methods related to the trace's signature
     #
@@ -100,10 +111,6 @@ class TraceCtx:
     #
     # Methods for getting and setting trace metadata (like the provenance)
     #
-
-    @property
-    def using_interpreter(self) -> bool:
-        return self._using_interpreter
 
     def get_provenance(self) -> None | TraceProvenance:
         return self._provenance
@@ -296,7 +303,7 @@ class TraceCtx:
         return import_ctx
 
     # TODO Account for multi-line signatures
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/324
+    # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
     def python(self, *, print_depth: int = 1) -> str:
@@ -322,7 +329,6 @@ class TraceCtx:
                 program.append(provenance_str)
 
             # NOTE torch is explicitly imported because we always run in the no_grad() ctx (see below)
-            # TODO Only do this if calling torch operators?
             import torch
 
             import_ctx["torch"] = torch
@@ -389,7 +395,7 @@ class TraceCtx:
             reset_tracectx(token)
 
     # Returns a Python callable that executes the trace
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/323
+    # TODO issue "Create a mechanism for freezing TraceCtx objects"
     #   Create a mechanism for freezing traces and cache the compilation
     def python_callable(self, *, global_dicts: None | dict = None) -> Callable:
         python_str: str
@@ -412,6 +418,7 @@ class TraceCtx:
         if global_dicts is not None:
             ctx["__global_dicts"] = global_dicts
         ctx["__function_obj"] = self.fn
+        ctx["thunder"] = thunder
 
         callable = baseutils.compile_and_exec(
             self.siginfo().name, python_str=python_str, program_name=f"thunder.{self.siginfo().name}", ctx=ctx
@@ -424,9 +431,8 @@ class TraceCtx:
 
 # Constructs a new trace by shallow copying parts of an existing trace
 # NOTE Bound symbols and provenance are not copied
-# NOTE Unpacking state is not copied
 def from_trace(trace: TraceCtx) -> TraceCtx:
-    t = TraceCtx(trace.fn, using_interpreter=trace.using_interpreter)
+    t = TraceCtx(trace.fn, prologue=trace.prologue)
     t.args = trace.args
     t.kwargs = trace.kwargs
 
@@ -435,7 +441,6 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.names = trace.names
 
     t._siginfo = trace._siginfo
-
     return t
 
 
@@ -467,6 +472,10 @@ def reset_tracectx(token):
     """Resets the tracing context."""
 
     _tracectx.reset(token)
+
+
+def is_tracing() -> bool:
+    return get_tracectx() is not None
 
 
 def maybe_start_trace(fn) -> tuple[bool, Any | None, TraceCtx]:
@@ -514,6 +523,15 @@ def detached_trace():
     trace_token = set_tracectx(trace)
     yield
     reset_tracectx(trace_token)
+
+
+#
+# Helpers for querying properties of the trace
+#
+
+
+def get_prologue() -> None | TraceCtx:
+    return get_tracectx().prologue
 
 
 #

@@ -2,23 +2,27 @@ import math
 from functools import reduce
 from numbers import Number
 from typing import Union, List, Optional, Any
+from collections.abc import Callable
 from collections.abc import Sequence
 from collections import namedtuple
 import operator
 from types import EllipsisType, NoneType
 import copy
+import time
+import warnings
+
+from thunder.core.baseutils import run_once
+from thunder.core.compile_data import using_symbolic_values
+from thunder.clang.langctx import register_method
+from thunder.core.langctxs import langctx, Languages
 
 import thunder.core.dtypes as dtypes
-
-# TODO: remove prims import
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, pyval, pytype
-from thunder.core.langctx import langctx
+from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
-from thunder.core.script.noinline import noinline
 
-# This file defines the operations in lightning.compile's "core" language.
+# This file defines the operations in thunder.jit's "core" language.
 #
 # These operators are intended to be used when defining user-facing languages, like the torch or NumPy
 # languages.
@@ -28,21 +32,91 @@ __all__ = []
 TensorLike = TensorProxy
 DeviceLike = Union[str, devices.Device]
 
-
-def _module_extractor() -> None:
-    pass
-
-
 _clang_fn_set: set = set()
 
 
-def clang_ctx(fn):
-    module_name = clang_ctx.__module__
-    module = utils.get_module(module_name)
-    _fn = langctx(module)(fn)
-    _fn = noinline(_fn)
-    _clang_fn_set.add(_fn)
-    return _fn
+# Decorator that sets the core language context and registers the function
+class clangop:
+    def __init__(self, *, method_name: None | str = None):
+        self.method_name: None | str = method_name
+
+    def __call__(self, fn: Callable) -> Callable:
+        _fn = langctx(Languages.CLANG)(fn)
+        _clang_fn_set.add(_fn)
+
+        if self.method_name is not None:
+            register_method(self.method_name, _fn)
+
+        return _fn
+
+
+#
+# Unpacking operations
+#
+
+
+# Checks a tensor's shape and metadata (for use with "constant value" caching)
+@clangop()
+def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
+    return prims.check_tensor_shape_and_metadata(
+        t, tuple(t.shape), str(t.device), dtypes.to_torch_dtype(t.dtype), t.requires_grad
+    )
+
+
+@clangop()
+def check_none(p: AnyProxy, /) -> None:
+    return prims.check_none(p)
+
+
+@clangop()
+def check_literal_like(p: AnyProxy, v: Any, /) -> None:
+    return prims.check_literal_like(p, v)
+
+
+@clangop()
+def check_type(x: Any, typ: type, /) -> None:
+    return prims.check_type(x, typ)
+
+
+@clangop()
+def check_instance(x: Any, types: tuple[type], /) -> None:
+    return prims.check_instance(x, types)
+
+
+# Checks a number's value
+@clangop()
+def check_number_type_and_value(n: Number, value: Number, /) -> None:
+    return prims.check_number_type_and_value(n, value)
+
+
+@clangop()
+def check_string_value(s: str, value: str, /) -> None:
+    return prims.check_string_value(s, value)
+
+
+@clangop()
+def unpack_tuple(tup: tuple, /) -> tuple:
+    return prims.unpack_tuple(tup)
+
+
+@clangop()
+def unpack_list(lst: list, /) -> list:
+    return prims.unpack_list(lst)
+
+
+@clangop()
+def unpack_dict_key(d: dict, key: int | str, /) -> Proxy:
+    return prims.unpack_dict_key(d, key)
+
+
+@clangop()
+def check_empty(seq: tuple | list, /) -> None:
+    return prims.check_empty(seq)
+
+
+@clangop()
+def construct_tuple(tup: tuple, /) -> tuple:
+    return prims.construct_tuple(tup)
 
 
 #
@@ -51,7 +125,7 @@ def clang_ctx(fn):
 
 
 # TODO Review revising enforce_safe_casting to be more like NumPy's
-@clang_ctx
+@clangop()
 def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
     """If a has the same dtype as the given dtype, returns a unmodified.
 
@@ -87,7 +161,7 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
 
 
 # TODO Consider maybe_device_put analogous to maybe_convert_to_dtype above
-@clang_ctx
+@clangop()
 def device_put(a, device):
     if device is not None and a.device != device:
         return prims.device_put(a, device)
@@ -101,7 +175,7 @@ def device_put(a, device):
 
 
 # TODO Add type annotations
-@clang_ctx
+@clangop()
 def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dtype: dtypes.dtype | None = None):
     # Validates inputs
     # Checks that start, step, and stop are finite
@@ -157,7 +231,7 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
     return result
 
 
-@clang_ctx
+@clangop()
 def convolution(
     a: TensorLike,
     weight: TensorLike,
@@ -172,7 +246,7 @@ def convolution(
     return prims.convolution(a, weight, bias, stride, padding, dilation, bool(transposed), output_padding, groups)
 
 
-@clang_ctx
+@clangop()
 def full(
     shape: Sequence[int], fill_value: Number, *, device: DeviceLike, dtype: None | dtypes.dtype = None
 ) -> TensorLike:
@@ -184,7 +258,7 @@ def full(
     return prims.full(shape, fill_value, device=device, dtype=dtype)
 
 
-@clang_ctx
+@clangop()
 def full_like(
     a: TensorLike | Number,
     fill_value: Number,
@@ -206,7 +280,7 @@ def full_like(
     return full(a.shape, fill_value, device=device, dtype=dtype)
 
 
-@clang_ctx
+@clangop()
 def uniform(
     shape: Sequence[int],
     minval: Number = 0.0,
@@ -221,7 +295,7 @@ def uniform(
 
 
 # TODO Handle a being a number
-@clang_ctx
+@clangop()
 def uniform_like(
     a: TensorProxy,
     minval: Number = 0.0,
@@ -236,7 +310,7 @@ def uniform_like(
     return prims.uniform(a.shape, minval, maxval, device=device, dtype=dtype)
 
 
-@clang_ctx
+@clangop()
 def uniform_philox(
     shape: Sequence[int],
     minval: Number = 0.0,
@@ -260,12 +334,27 @@ def uniform_philox(
     )
 
 
+@clangop()
+def tensor_from_sequence(
+    sequence: Sequence[Number | Sequence], *, dtype: None | dtypes.dtype = None, device: None | DeviceLike = None
+) -> TensorLike:
+    # NOTE: default the device to `cpu`
+    if device is None:
+        device = "cpu"
+    device: DeviceLike = devices.to_device(device)
+
+    # NOTE: dtype is None means that the prim should infer the dtype.
+    dtype: None | dtypes.dtype = dtypes.to_dtype(dtype)
+
+    return prims.tensor_from_sequence(sequence, dtype=dtype, device=device)
+
+
 #
 # Shape operations
 #
 
 
-@clang_ctx
+@clangop()
 def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
     utils.check(
         a.ndim >= 2,
@@ -285,7 +374,7 @@ def diagonal(a: TensorLike, offset: int = 0, dim1: int = 0, dim2: int = 1) -> Te
 
 # Expands a to the specified shape, possibly adding new dimensions and expanding
 #   dimensions of length 1 to any length
-@clang_ctx
+@clangop()
 def expand(a: TensorLike, *shape: int) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
 
@@ -314,12 +403,11 @@ def expand(a: TensorLike, *shape: int) -> TensorLike:
     return prims.broadcast_in_dim(a, tuple(shape_), tuple(range(offset, len(a.shape) + offset)))
 
 
-# TODO Should flatten be a prim?
 # TODO Resolve the start & end vs. start & stop inconsistencies with our operators (this one is start & end)
 # This is modeled after PyTorch's flatten,
 #   see https://pytorch.org/docs/master/generated/torch.flatten.html
 # NOTE Flatten is inclusive of both its start and end dims.
-@clang_ctx
+@clangop()
 def flatten(a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
     start, end = utils.canonicalize_dims(a.ndim, (start_dim, end_dim))
 
@@ -344,7 +432,7 @@ def flatten(a: TensorLike, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
     return reshape(a, shape)
 
 
-@clang_ctx
+@clangop()
 def flip(a: TensorLike, dims: Sequence[int] | int | None = None) -> TensorLike:
     if dims is not None:
         if isinstance(dims, int):
@@ -466,7 +554,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
 # TODO: should this allow negative steps?
 # TODO: we should probably be consistent about start/stop/step vs. start/end/stride language
 # TODO Add type annotations
-@clang_ctx
+@clangop()
 def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     start_indices = []
     end_indices = []
@@ -587,7 +675,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 # TODO Add more advanced indexing support
 # TODO Review the modeling of advanced indexing in terms of flatten and take
 # NOTE Advanced indexing with boolean tensors has data-dependent metadata (it is akin to indexing with nonzero)
-@clang_ctx
+@clangop()
 def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # Advanced indexing currently supports the following cases:
     #   - a 0D or 1D integer tensor
@@ -718,7 +806,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
 # - advanced indexing:
 #       * 0D or 1D TensorLike indices.
 #       * basic indexing + a single index which is a 1-length Sequence.
-@clang_ctx
+@clangop(method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
     sig = _get_indexing_signature(key)
     utils.check(
@@ -763,7 +851,7 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
 
 
 # Based on NumPy's https://numpy.org/doc/stable/reference/generated/numpy.moveaxis.html
-@clang_ctx
+@clangop()
 def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Sequence[int]) -> TensorLike:
     src, dst = utils.sequencify(source), utils.sequencify(destination)
 
@@ -803,14 +891,14 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     return transpose(a, perm)
 
 
-@clang_ctx
+@clangop()
 def pad(input: TensorProxy, padding_value: TensorProxy, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:
     return prims.pad(input, padding_value, padding_config)
 
 
 # NOTE shape may have a single -1 value, which is a marker that the length of that dimension
 #   should be inferred
-@clang_ctx
+@clangop()
 def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
     # Short-circuit on a no-op reshape.
     # Useful to produce simpler traces for complex decompositions
@@ -847,7 +935,7 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
 # https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.slice_in_dim.html
 # NOTE: this implementation derived from
 #   https://jax.readthedocs.io/en/latest/_modules/jax/_src/lax/slicing.html#slice_in_dim
-@clang_ctx
+@clangop()
 def slice_in_dim(a, start_index, limit_index, stride=1, dim=0):
     len_dim = a.shape[dim]
     start_index = utils.canonicalize_dim_idx(len_dim, start_index)
@@ -876,7 +964,7 @@ def slice_in_dim(a, start_index, limit_index, stride=1, dim=0):
     return prims.slice_prim(a, start_indices, limit_indices, strides)
 
 
-@clang_ctx
+@clangop()
 def squeeze(a, dims):
     dims = utils.canonicalize_dims(a.ndim, dims)
     result = prims.squeeze(a, tuple(dims))
@@ -884,7 +972,7 @@ def squeeze(a, dims):
 
 
 # NOTE This function is named after NumPy's "transpose", which actually performs a permutation
-@clang_ctx
+@clangop()
 def transpose(a, permutation):
     permutation = utils.canonicalize_dims(a.ndim, permutation)
     # Short-circuit when transpose is a no-op.
@@ -896,7 +984,7 @@ def transpose(a, permutation):
 
 # TODO Consider moving this out of the core language and into something like NumPy's
 #   lib.stride_tricks
-@clang_ctx
+@clangop()
 def stride_order(a: TensorLike, order: None | Sequence[int] = None) -> TensorLike:
     """Creates a dense, non-overlapping and strided tensor with the same data and metadata as a.
 
@@ -916,7 +1004,7 @@ def stride_order(a: TensorLike, order: None | Sequence[int] = None) -> TensorLik
 
     .. note::
 
-        No other lightning.compile operations specify how their outputs are represented in memory, and lightning.compile
+        No other thunder.jit operations specify how their outputs are represented in memory, and thunder.jit
         does not model strides. This operation is an explicit directive to construct a dense, non-overlapping and
         strided tensor, but operations on that tensor do not have to preserve those properties.
     """
@@ -940,33 +1028,33 @@ def _maybe_expand_exclude_dim(a: TensorProxy, ref: TensorProxy, exclude_dim: int
     return a
 
 
-@clang_ctx
+@clangop()
 def index_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.index_add(a, indices, value, dim)
 
 
-@clang_ctx
+@clangop()
 def take(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.take(a, indices, dim)
 
 
-@clang_ctx
+@clangop()
 def take_along_axis(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     indices = _maybe_expand_exclude_dim(indices, a, dim)
     return prims.take_along_axis(a, indices, dim)
 
 
-@clang_ctx
+@clangop()
 def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.scatter_add(a, indices, value, dim)
 
 
 # NOTE revisit the decomposition when fuser supports index_put
-@clang_ctx
+@clangop()
 def index_put(
     a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
 ) -> TensorLike:
@@ -995,7 +1083,7 @@ def index_put(
 # Added dimensions are specified by their position in the final tensor
 # Based on https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.expand_dims.html
 # NOTE: the dimensions do not have to be specified in any order
-@clang_ctx
+@clangop()
 def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
     if isinstance(dims, Number):
         dims = (dims,)
@@ -1028,13 +1116,13 @@ def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
     return prims.broadcast_in_dim(a, shape, broadcast_dims)
 
 
-@clang_ctx
+@clangop()
 def cat(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
     return prims.cat(tensors, dim)
 
 
-@clang_ctx
+@clangop()
 def stack(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in a new (the given) dimension."""
     shapes = tuple(t.shape for t in tensors)
@@ -1047,7 +1135,7 @@ def stack(tensors: list[TensorProxy], dim: int):
     return prims.cat(tensors_, dim)
 
 
-@clang_ctx
+@clangop()
 def compute_broadcast_shape(*_shapes):
     """Computes the common shape with the fewest dimensions that all input shapes can be broadcast to."""
     shapes = tuple(x for x in filter(lambda x: x is not None, _shapes))
@@ -1074,7 +1162,15 @@ def compute_broadcast_shape(*_shapes):
     return tuple(common_shape)
 
 
-@clang_ctx
+@run_once
+def mT_scalar_warning():
+    warnings.warn(
+        "Tensor.mT is deprecated on 0-D tensors. This function is the identity in these cases.",
+        UserWarning,
+    )
+
+
+@clangop(method_name="mT")
 def matrix_transpose(a: TensorProxy) -> TensorProxy:
     """Transposes the last two dimensions of a tensor.
 
@@ -1095,6 +1191,13 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
                 [2, 5],
                 [3, 6]])
     """
+
+    if a.ndim == 0:
+        mT_scalar_warning()
+        return a
+    elif a.ndim == 1:
+        raise RuntimeError(f"tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor.")
+
     dim0, dim1 = -2, -1
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
     permutation = list(range(a.ndim))
@@ -1104,7 +1207,7 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 
 # TODO: add scalar support
 # TODO: review hasattr pattern
-@clang_ctx
+@clangop()
 def maybe_broadcast(*args):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
@@ -1144,7 +1247,7 @@ def _elementwise_unary_wrapper(
 
 
 # TODO Return self for bool and uint datatypes?
-@clang_ctx
+@clangop(method_name="abs")
 def abs(a: TensorProxy | Number):
     # Short-circuits for unsigned types like bool and int8
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
@@ -1157,49 +1260,49 @@ def abs(a: TensorProxy | Number):
     )
 
 
-@clang_ctx
+@clangop()
 def acos(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.acos, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def acosh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.acosh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def asin(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.asin, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def asinh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.asinh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def atan(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.atan, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def atanh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.atanh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop(method_name="bitwise_not")
 def bitwise_not(a: TensorLike | Number) -> TensorLike | Number:
     return _elementwise_unary_wrapper(
         a,
@@ -1208,7 +1311,7 @@ def bitwise_not(a: TensorLike | Number) -> TensorLike | Number:
     )
 
 
-@clang_ctx
+@clangop(method_name="ceil")
 def ceil(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
@@ -1221,77 +1324,77 @@ def ceil(a: TensorLike | Number) -> TensorLike | Number:
     )
 
 
-@clang_ctx
+@clangop()
 def cos(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.cos, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def cosh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.cosh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def digamma(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.digamma, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def erf(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.erf, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def erfc(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.erfc, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def erfcinv(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.erfcinv, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def erfinv(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.erfinv, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def exp(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.exp, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def exp2(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.exp2, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def expm1(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.expm1, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop(method_name="floor")
 def floor(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
@@ -1304,7 +1407,7 @@ def floor(a: TensorLike | Number) -> TensorLike | Number:
     )
 
 
-@clang_ctx
+@clangop()
 def isfinite(a):
     if utils.is_exact_dtype(utils.to_dtype(a)):
         return full_like(a, True, dtype=dtypes.bool8)
@@ -1316,42 +1419,42 @@ def isfinite(a):
     )
 
 
-@clang_ctx
+@clangop()
 def lgamma(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.lgamma, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def log(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.log, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def log10(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.log10, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def log1p(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.log1p, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def log2(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.log2, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def ndtri(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.ndtri, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
@@ -1359,7 +1462,7 @@ def ndtri(a):
 
 
 # TODO Should this have PRESERVE as its type promotion kind?
-@clang_ctx
+@clangop(method_name="neg")
 def neg(a):
     return _elementwise_unary_wrapper(
         a,
@@ -1368,14 +1471,14 @@ def neg(a):
     )
 
 
-@clang_ctx
+@clangop()
 def reciprocal(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.reciprocal, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop(method_name="round")
 def round(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on inputs with exact dtypes
     if utils.is_exact_dtype(utils.to_dtype(a)):
@@ -1388,14 +1491,14 @@ def round(a: TensorLike | Number) -> TensorLike | Number:
     )
 
 
-@clang_ctx
+@clangop()
 def rsqrt(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.rsqrt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def sigmoid(a):
     # We manually promote a, then determine type of the constant 1.0 value
     computation_dtype, result_dtype = utils.elementwise_type_promotion(
@@ -1425,33 +1528,33 @@ def signbit(a):
     )
 
 
-@clang_ctx
+@clangop()
 def silu(a):
     return a * sigmoid(a)
 
 
-@clang_ctx
+@clangop()
 def sin(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sin, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def sinh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sinh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def sqrt(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sqrt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def tan(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.tan, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
@@ -1476,7 +1579,7 @@ def trunc(a: TensorLike | Number) -> TensorLike | Number:
     )
 
 
-@clang_ctx
+@clangop(method_name="real")
 def real(a: TensorProxy | Number):
     # Short-circuits for non-complex types
     if not dtypes.is_complex_dtype(dtypes.to_dtype(a)):
@@ -1508,33 +1611,33 @@ def _elementwise_binary_wrapper(a, b, *, prim, type_promotion_kind=utils.ELEMENT
     return result
 
 
-@clang_ctx
+@clangop(method_name="add")
 def add(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.add)
 
 
-@clang_ctx
+@clangop()
 def atan2(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.atan2, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop(method_name="bitwise_and")
 def bitwise_and(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.bitwise_and, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )
 
 
-@clang_ctx
+@clangop(method_name="bitwise_or")
 def bitwise_or(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.bitwise_or, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )
 
 
-@clang_ctx
+@clangop(method_name="bitwise_xor")
 def bitwise_xor(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.bitwise_xor, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
@@ -1544,7 +1647,7 @@ def bitwise_xor(a, b):
 # NOTE Python's math.copysign has int to float type promotion, and PyTorch's copysign does, too
 # NOTE copysign is not defined for complex types, and this must be explicitly checked for since the
 #   following definition would be valid for complex numbers, too
-@clang_ctx
+@clangop()
 def copysign(a, b):
     utils.check(
         not dtypes.is_complex_dtype(dtypes.to_dtype(a)) and not dtypes.is_complex_dtype(dtypes.to_dtype(b)),
@@ -1561,7 +1664,7 @@ def copysign(a, b):
     return maybe_convert_to_dtype(result, result_dtype)
 
 
-@clang_ctx
+@clangop(method_name="eq")
 def eq(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.eq, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
@@ -1636,7 +1739,7 @@ def _floor_divide_float(a: TensorProxy | Number, b: TensorProxy | Number) -> Ten
 
 
 # Dispatches floor division to integer or floating point specializations
-@clang_ctx
+@clangop(method_name="floor_divide")
 def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
     computation_dtype, _ = utils.elementwise_type_promotion(
         a, b, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
@@ -1651,30 +1754,31 @@ def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProx
     return _floor_divide_integer(a, b, computation_dtype=computation_dtype)
 
 
-@clang_ctx
+@clangop()
 def fmod(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.fmod)
 
 
+@clangop(method_name="mod")
 def mod(a, b):
     return remainder(a, b)
 
 
-@clang_ctx
+@clangop(method_name="ge")
 def ge(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.ge, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
     )
 
 
-@clang_ctx
+@clangop(method_name="gt")
 def gt(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.gt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
     )
 
 
-@clang_ctx
+@clangop()
 def logical_and(a, b):
     if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
         a = a != 0
@@ -1684,74 +1788,74 @@ def logical_and(a, b):
     return a & b
 
 
-@clang_ctx
+@clangop(method_name="le")
 def le(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.le, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
     )
 
 
-@clang_ctx
+@clangop(method_name="lt")
 def lt(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.lt, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
     )
 
 
-@clang_ctx
+@clangop()
 def maximum(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.maximum)
 
 
-@clang_ctx
+@clangop()
 def minimum(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.minimum)
 
 
-@clang_ctx
+@clangop(method_name="mul")
 def mul(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.mul)
 
 
-@clang_ctx
+@clangop(method_name="ne")
 def ne(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.ne, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
     )
 
 
-@clang_ctx
+@clangop()
 def nextafter(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.nextafter, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
     )
 
 
-@clang_ctx
+@clangop(method_name="pow")
 def pow(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.pow, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG
     )
 
 
-@clang_ctx
+@clangop()
 def remainder(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.remainder)
 
 
-@clang_ctx
+@clangop(method_name="sub")
 def sub(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.sub)
 
 
-@clang_ctx
+@clangop(method_name="true_divide")
 def true_divide(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.div, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
     )
 
 
-@clang_ctx
+@clangop()
 def zeta(a, b):
     return _elementwise_binary_wrapper(
         a, b, prim=prims.zeta, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT
@@ -1763,7 +1867,7 @@ def zeta(a, b):
 #
 
 
-@clang_ctx
+@clangop()
 def where(pred, a, b):
     # Performs type promotion
     promotiontype, _ = utils.elementwise_type_promotion(
@@ -1802,11 +1906,11 @@ def _argmaxmin_helper(prim, a: TensorProxy, dim: int | None, keepdim: bool | Non
     return result
 
 
-@clang_ctx
+@clangop()
 def argmax(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = False):
     return _argmaxmin_helper(prims.argmax, a, dim, keepdim)
 
 
-@clang_ctx
+@clangop()
 def argmin(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = False):
     return _argmaxmin_helper(prims.argmin, a, dim, keepdim)

@@ -10,14 +10,13 @@ from types import ModuleType
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.langctx import get_langctx, get_prim_fwd_langctx
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -36,7 +35,7 @@ from thunder.core.trace import (
 #   A "traceable" function is one that doesn't require interpretation for thunder to translate
 #   to a thunder program. Put another way, these functions have no "sharp edges." Every Symbol
 #   must be a traceable function.
-# TODO GTC Consider if we need to provide a mechanism to register operations as traceable
+# TODO RC1 Consider if we need to provide a mechanism to register operations as traceable
 #   (like clang operations and methods on proxies)
 
 
@@ -46,16 +45,6 @@ def is_traceable(fn: Callable) -> bool:
 
 if TYPE_CHECKING:
     from thunder.core.prims import OpTags
-
-# NOTE Context variables for eager execution
-#   Expected to be set only once
-_eagerctx = ContextVar("eagerctx")
-
-
-def set_eagerctx(ctx):
-    """Sets the current eager execution context."""
-
-    return _eagertctx.set(ctx)
 
 
 _bsym_header = ContextVar("bsym_header", default="")
@@ -79,7 +68,7 @@ def bsym_header(header: str):
 # NOTE Assumes the outputs of symbols are proxies or collections of proxies
 def default_python_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
-):
+) -> str | Iterable[str]:
     arg_str = (
         ""
         if (arg_printables is None or len(arg_printables) == 0)
@@ -120,10 +109,10 @@ def default_python_printer(
 # A symbol represents a function and how it can be transformed
 
 # name is a string name for the operation
-# meta should use lightning.compile functions to evaluate the function;
-#   it will be called with lightning.compile proxies
+# meta should use thunder.jit functions to evaluate the function;
+#   it will be called with thunder.jit proxies
 # id is an optional value to use when translating the function to executors
-# is_prim should be True if the Symbol represents a lightning.compile primitive
+# is_prim should be True if the Symbol represents a thunder.jit primitive
 # python_printer is a function that will produce valid Python for calling the
 #   operation; this can usually be set to None, in which case the default python
 #   printer will be used for the Symbol. Symbols that control their own printing
@@ -207,14 +196,6 @@ class Symbol:
             result = inspect.getmodule(fn_)
         return result
 
-        # Properties used in transforms (defined later)
-        # TODO https://github.com/Lightning-AI/lightning-thunder/issues/326
-        #   Remove this from here (think how symbols could be extended with transforms)
-        # self.grad_defined = False
-        # self.grad_ignored = False
-        # self.grad_fwd = None
-        # self.grad_bwd = None
-
     def __repr__(self) -> str:
         return f"[Symbol name={self.name}]"
 
@@ -242,30 +223,14 @@ class Symbol:
             self._bind_postprocess(b)
         return b
 
-    # TODO Restore eager dispatch by tracing and executing a trace
     def __call__(self, *args, **kwargs):
         trace = get_tracectx()
 
-        # NOTE This signals an eager invocation
-        # TODO Consider restoring eager support
         baseutils.check(
             trace is not None,
-            lambda: f"Attempting to execute eagerly, which is not supported",
+            lambda: f"Attempting to execute outside of a tracing context, which is not supported",
             exception_type=NotImplementedError,
         )
-        # if trace is None:
-        #     compile_eager, prims_eager = _eagerctx.get()
-        #     if self.is_prim:
-        #         peager = prims_eager.get_eager_implementation_for(self.id)
-        #         baseutils.check(
-        #             peager is not None,
-        #             lambda: f"Couldn't find an eager implementation for {self.name}",
-        #             exception_type=NotImplementedError,
-        #         )
-        #         return peager(*args, **kwargs)
-
-        #     ceager = compile_eager(self.meta)
-        #     return ceager(*args, **kwargs)
 
         baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
         result: Any
@@ -285,7 +250,6 @@ class Symbol:
             result = self.meta(*args, **kwargs)
             trace.pop_scope()
 
-        # TODO Consider a way of expressing the name of the output here
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()
 
@@ -341,7 +305,6 @@ class BoundSymbol(BoundSymbolInterface):
 
     # Constructs a new BoundSymbol with default values taken from this BoundSymbol
     #   Override values can be specified as kwargs
-    # TODO https://github.com/Lightning-AI/lightning-thunder/issues/680
     # Issue -- Provide a pattern for updating subsymbols when swapping outputs
     #   Maybe this can also just swap one set of symbols for another?
     #   Consider adding verification that the new and old output have the same metadata
@@ -610,13 +573,14 @@ class BoundSymbol(BoundSymbolInterface):
         lines = []
 
         s = self.sym.python_printer(self, self._out_printables, self._arg_printables, self._kwarg_printables)
-        commented = "# " if commented else ""
+
+        comment = "# " if commented else ""
+
         if isinstance(s, str):
-            lines.append(f"{codeutils.indent_string(indent)}{commented}{s}")
+            lines.append(f"{codeutils.indent_string(indent)}{comment}{s}")
         else:
             for line in s:
-                lines.append(f"{codeutils.indent_string(indent)}{commented}{line}")
-
+                lines.append(f"{codeutils.indent_string(indent)}{comment}{line}")
         return lines
 
     def python(self, indent: int, commented: bool = False, print_depth: int = 1) -> list[str]:

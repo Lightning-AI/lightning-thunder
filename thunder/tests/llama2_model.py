@@ -64,7 +64,6 @@ def apply_rotary_emb(
     xk_r, xk_i = xk.float().reshape(xk.shape[:-1] + (-1, 2)).unbind(-1)
 
     # reshape freqs_cos and freqs_sin for broadcasting
-    # https://github.com/Lightning-AI/lightning-thunder/issues/1106
     a, b = freqs_cos.shape
     freqs_cos = freqs_cos.view(1, a, 1, b)
     freqs_sin = freqs_sin.view(1, a, 1, b)
@@ -247,7 +246,8 @@ class Transformer(nn.Module):
         if targets is not None:
             # if we are given some desired targets also calculate the loss
             logits = self.output(h)
-            # https://github.com/Lightning-AI/lightning-thunder/issues/1108
+            # Workaround for issue "Unexpected KeyError when self attribute is
+            # set inside forward"
             # self.last_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
             # inference-time mini-optimization: only forward the output on the very last position

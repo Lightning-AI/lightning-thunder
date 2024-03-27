@@ -8,7 +8,7 @@ ci:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -17,32 +17,29 @@ repos:
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
+        with:
+          maxkb: 250
+          enforce-all: true
       - id: check-docstring-first
       - id: detect-private-key
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.11.1
+    rev: v3.15.2
     hooks:
       - id: pyupgrade
         args: ["--py310-plus"]
         name: Upgrade code
-        exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_literpreter.py"
+        exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_jit_general.py"
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.2.5
+    rev: v2.2.6
     hooks:
       - id: codespell
         additional_dependencies: [tomli]
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
-  # - repo: https://github.com/PyCQA/isort
-  #   rev: 5.10.1
-  #   hooks:
-  #     - id: isort
-  #       args: ["--profile", "black", "--filter-files"]
-
   - repo: https://github.com/psf/black
-    rev: 23.9.1
+    rev: 24.3.0
     hooks:
       - id: black
         name: Black code
@@ -58,8 +55,13 @@ repos:
           - mdformat_frontmatter
         exclude: "examples"
 
+  - repo: https://github.com/sphinx-contrib/sphinx-lint
+    rev: v0.9.1
+    hooks:
+      - id: sphinx-lint
+
   - repo: https://github.com/asottile/yesqa
-    rev: v1.4.0
+    rev: v1.5.0
     hooks:
       - id: yesqa
 

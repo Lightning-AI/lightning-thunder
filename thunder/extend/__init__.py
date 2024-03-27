@@ -5,6 +5,8 @@ from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
 
+import torch.cuda
+
 from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
@@ -47,6 +49,7 @@ class Executor:
         self._version = version
 
         self._implmap: dict[Hashable, ImplInfo] = {}
+        self._lookasides: dict[Callable, Callable] = {}
 
     @property
     def name(self) -> Hashable:
@@ -206,6 +209,7 @@ class OperatorExecutor(Executor):
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
         bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
         assert (like is None) ^ (meta is None), "Expected one and only one of 'like' and 'meta' to be specified"
@@ -234,6 +238,9 @@ class OperatorExecutor(Executor):
             python_printer=python_printer,
         )
         self.opmap[name] = sym
+
+        if replaces is not None:
+            self._lookasides[replaces] = sym
 
         return sym
 
@@ -288,6 +295,20 @@ def register_executor(
 
 
 def get_all_executors() -> tuple[Executor]:
+    # manually import all native executors to let them register themselves
+    from thunder.executors import (
+        apex_entropyex,
+        cudnn_layernormex,
+        cudnnex,
+        nvfuserex,
+        pythonex,
+        sdpaex,
+        torch_compile,
+        torchex,
+        transformer_engineex,
+        triton_crossentropy,
+    )
+
     return tuple(_executor_map.values())
 
 
