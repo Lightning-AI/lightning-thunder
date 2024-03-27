@@ -625,6 +625,8 @@ class FSDPCommBucketing:
         return bwd_trace
 
     def _apply_bucketing_to_backward_all_gather(self, fsdp_bwd_trace: TraceCtx) -> TraceCtx:
+        if not self.apply_bucketing:
+            return fsdp_bwd_trace
         fwd_trace_flat_args = self._collect_sharded_parameters(self.fsdp_fwd_trace)
         arg_to_index_in_flat_args = utils.ProxyDict()
         for i, a in enumerate(fwd_trace_flat_args):
