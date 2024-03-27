@@ -913,12 +913,14 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             fn_name = f"{fn.__module__}.{fn.__name__}"
 
             # Probably merge with sharp edges
-            calling_opaque_torch_msg = f"Trying to call function {fn_name}, but it is not yet supported. " \
-                                           "Please file an issue requesting support. " \
-                                           "To find out which operations are not yet recongnized by `thunder.jit`, " \
-                                           "please run `examine` as per:\n\n" \
-                                           "from thunder.examine import examine\n" \
-                                           "examine(<your thunder.jit callable argument>, ...)\n"
+            calling_opaque_torch_msg = (
+                f"Trying to call function {fn_name}, but it is not yet supported. "
+                "Please file an issue requesting support. "
+                "To find out which operations are not yet recongnized by `thunder.jit`, "
+                "please run `examine` as per:\n\n"
+                "from thunder.examine import examine\n"
+                "examine(<your thunder.jit callable argument>, ...)\n"
+            )
 
             return do_raise(NotImplementedError(calling_opaque_torch_msg))
 
