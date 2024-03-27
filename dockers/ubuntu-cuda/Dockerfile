@@ -90,6 +90,7 @@ ARG TORCH_INSTALL
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
+        export USE_CUDNN=1 && \
         # building pytorch from source
         git clone --recursive https://github.com/pytorch/pytorch && \
         cd pytorch && \
