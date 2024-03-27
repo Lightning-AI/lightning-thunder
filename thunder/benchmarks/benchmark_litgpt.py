@@ -89,7 +89,7 @@ class Benchmark_litGPT:
 
             assert (
                 self.shard_mode in ["hybrid_zero2", "hybrid_zero3"]
-            ), "Sharding Size is only used with Hybrid FSDP/DP style parallelism. Please "
+            ), "Sharding Size is only used with Hybrid FSDP/DP style parallelism."
 
             assert (
                 world_size % self.sharding_size == 0
