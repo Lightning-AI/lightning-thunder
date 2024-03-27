@@ -12,6 +12,7 @@ import warnings
 
 from looseversion import LooseVersion
 
+from thunder.core.interpreter import InterpreterHistoryItem
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
     resolve_interpretation_option,
@@ -799,7 +800,7 @@ def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
     return cs.last_interpreted_instructions
 
 
-def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
+def last_interpreted_history(fn: Callable) -> list[InterpreterHistoryItem]:
     """Returns the list of instructions and other information the interpreter encountered while tracing through the
     user program (on the last cache miss).
     """
@@ -809,6 +810,31 @@ def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
     if cs.last_interpreted_history is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_interpreted_history
+
+
+def print_last_interpreted_history(
+    fn: Callable,
+    /,
+    print_fn: Callable = print,
+    use_colors: bool = True,
+    indent: bool = True,
+    max_depth: int | None = None,
+    color_internals: bool = False,
+    print_source_code: bool = True,
+) -> None:
+    """Print the history of the last interpreted function. This is useful for debugging the interpreter."""
+    if (history := last_interpreted_history(fn)) is None:
+        print("No history could be found.")
+        return
+    thunder.core.interpreter.print_history(
+        history,
+        print_fn=print_fn,
+        use_colors=use_colors,
+        indent=indent,
+        max_depth=max_depth,
+        color_internals=color_internals,
+        print_source_code=print_source_code,
+    )
 
 
 def last_compile_options(fn: Callable, /) -> None:

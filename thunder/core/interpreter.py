@@ -6779,25 +6779,3 @@ def print_history(
             c_indent -= 1
 
 
-def print_last_interpreted_history(
-    fn: Callable,
-    /,
-    print_fn: Callable = print,
-    use_colors: bool = True,
-    indent: bool = True,
-    max_depth: int | None = None,
-    color_internals: bool = False,
-    print_source_code: bool = True,
-) -> None:
-    if (history := last_interpreted_history(fn)) is None:
-        print("No history could be found.")
-        return
-    print_history(
-        history,
-        print_fn=print_fn,
-        use_colors=use_colors,
-        indent=indent,
-        max_depth=max_depth,
-        color_internals=color_internals,
-        print_source_code=print_source_code,
-    )

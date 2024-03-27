@@ -19,7 +19,8 @@ from thunder.core.interpreter import (
     make_opaque,
     interpret,
     InterpreterError,
-    print_last_interpreted_history,
+    print_history,
+    last_interpreted_history
 )
 
 #
@@ -2992,7 +2993,7 @@ def test_module_hooks(jit):
         # Redirect print_last_interpreted_history from stdout to a string, and assert that it's in there.
         buf = io.StringIO()
         with redirect_stdout(buf):
-            print_last_interpreted_history(jm, use_colors=False, indent=False)
+            print_history(last_interpreted_history(jm), use_colors=False, indent=False)
 
         match_against = "Opaque call to <method 'register_hook' of 'torch._C._FunctionBase' objects> with name _FunctionBase.register_hook"
         assert match_against in buf.getvalue()
