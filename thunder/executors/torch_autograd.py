@@ -43,8 +43,17 @@ class ThunderFunction(torch.autograd.Function):
         return split_forward_backward_compat
 
     @staticmethod
-    def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+    def forward(
+        ctx,
+        return_none_instead_of_grads,
+        compiled_backward,
+        saved_tensors,
+        saved_other,
+        flat_output,
+        *flat_args,
+    ):
         # Here we just propagate the tensors through the autograd graph
+        ctx.return_none_instead_of_grads = return_none_instead_of_grads
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
 
@@ -75,7 +84,12 @@ class ThunderFunction(torch.autograd.Function):
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
-        return (None, None, None, None, *grads)
+        # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
+        return (
+            (None, None, None, None, None, *grads)
+            if not ctx.return_none_instead_of_grads
+            else (None, None, None, None, None, *([None] * len(grads)))
+        )
 
 
 # TODO: RC1 Remove this
@@ -106,6 +120,8 @@ def thunder_backward(*, compile_data, compile_stats=None):
     >>> print(f"a.grad: {a.grad}")
     >>> print(f"b.grad: {b.grad}")
     """
+
+    is_fsdp = getattr(compile_data.fn, "use_fsdp", False)
 
     def decorator(thunder_func):
         from thunder import compile
@@ -146,8 +162,11 @@ def thunder_backward(*, compile_data, compile_stats=None):
             # Run the compiled forward function
             data_for_autograd, (saved_tensors, saved_other) = compiled_forward(*args, **kwargs)
 
+            from thunder.distributed import get_skip_data_parallel_grad_sync
+
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
+                get_skip_data_parallel_grad_sync() and is_fsdp,
                 compiled_backward,
                 saved_tensors,
                 saved_other,
@@ -240,7 +259,7 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
 
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
-        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
         fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
         _fsdp_comm_bucketing.update_name_set(bw_trace)
 

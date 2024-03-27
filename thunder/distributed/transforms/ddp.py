@@ -9,8 +9,11 @@ from thunder.core import prims
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import FutureTensorProxy
 from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import variableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.pytree import tree_unflatten
+from thunder.core.trace import from_trace
+from thunder.core.trace import TraceProvenance
 from thunder.core.transforms import visitor_transform
 from thunder.core.transforms import VISIT_TYPE
 from thunder.core import utils
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
+    from thunder.core.trace import VariableInterface
     from thunder.common import CompileData
 
 
@@ -48,6 +52,38 @@ def get_bsym_of_wait(tensor: TensorProxy, producers: utils.ProxyDict) -> BoundSy
     t = prod_bsym.flat_proxy_args[0]
     utils.check_type(t, (TensorProxy, FutureTensorProxy))
     return get_bsym_of_wait(t, producers)
+
+
+def remove_grad_sync(backward_trace_with_grad_sync: TraceCtx) -> TraceCtx:
+    flat_synced_grads, _ = tree_flatten(backward_trace_with_grad_sync.output)
+    producers = utils.producers(backward_trace_with_grad_sync)
+    synced_to_unsynced: dict[VariableInterface, TensorProxy] = {}
+    bsym_to_remove: list[BoundSymbol] = []
+    for synced_grad in flat_synced_grads:
+        if not isinstance(synced_grad, TensorProxy):
+            continue
+        bsym_of_allreduce = get_bsym_of_allreduce_of_grad(synced_grad, producers)
+        bsym_of_wait = get_bsym_of_wait(synced_grad, producers)
+        bsym_of_preaveraging: BoundSymbol = producers[bsym_of_allreduce.flat_proxy_args[0]]
+        utils.check(
+            bsym_of_preaveraging.sym.id in {PrimIDs.DIV, "torch.true_divide"},
+            lambda: f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {bsym_of_preaveraging.sym.id=} for {synced_grad=}",
+        )
+        bsym_to_remove.extend([bsym_of_allreduce, bsym_of_wait, bsym_of_preaveraging])
+        synced_to_unsynced[variableify(synced_grad)] = bsym_of_preaveraging.flat_proxy_args[0]
+    bsym_denylist = set(bsym_to_remove)
+
+    backward_trace = from_trace(backward_trace_with_grad_sync)
+    bsym: BoundSymbol
+    for bsym in backward_trace_with_grad_sync.bound_symbols:
+        if bsym in bsym_denylist:
+            continue
+        if bsym.sym.id == PrimIDs.RETURN:
+            backward_trace.add_bound_symbol(bsym.from_bsym_swap_proxies(swap_map=synced_to_unsynced))
+        else:
+            backward_trace.add_bound_symbol(bsym)
+    backward_trace.set_provenance(TraceProvenance("remove grad sync comms"))
+    return backward_trace
 
 
 @dataclass
@@ -161,7 +197,7 @@ def optimize_allreduce_in_ddp_backward(
     """
 
     if get_skip_data_parallel_grad_sync():
-        return backward_trace
+        return remove_grad_sync(backward_trace)
 
     # Map from preaveraged grad to index in trace.output
     producers = utils.producers(backward_trace)

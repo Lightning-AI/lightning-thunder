@@ -1,5 +1,7 @@
+from __future__ import annotations
 from enum import auto, Enum
 from numbers import Number
+from typing import TYPE_CHECKING
 
 import torch.distributed
 
@@ -8,6 +10,9 @@ from thunder.core.prims import make_prim
 
 from thunder.core.proxies import DDPType, FutureTensorProxy, pytype, TensorProxy
 from thunder.core.transforms import register_augmented_forward, register_backward
+
+if TYPE_CHECKING:
+    from thunder.common import CompileData
 
 
 class PrimIDs(Enum):
@@ -23,6 +28,7 @@ class PrimIDs(Enum):
     UNPACK_FOR_FSDP = auto()
     UPDATE_BUCKET_VIEW = auto()
     PACK_FOR_FSDP = auto()
+    STASH_GRAD_FOR_FSDP = auto()
 
 
 # This enum describes what all_reduce (below) will actually do
@@ -244,6 +250,22 @@ def update_bucket_view_meta(tensor: TensorProxy, index_of_dst_view: int, bucket_
     return TensorProxy(like=tensor)
 
 
+# [NOTE - shape of output]
+# `ThunderFunction.backward` replaces outputs of this function with None, so the shape wouldn't matter a lot.
+# TODO(crcrpar): Update this to return `None`
+def stash_grad_for_fsdp_meta(
+    grad: TensorProxy,
+    param_fqn: str,
+    compile_data: CompileData,
+) -> TensorProxy:
+    from thunder.common import CompileData
+
+    utils.check_type(grad, TensorProxy)
+    utils.check_type(param_fqn, str)
+    utils.check_type(compile_data, CompileData)
+    return TensorProxy(like=grad)
+
+
 all_gather = make_prim(PrimIDs.ALL_GATHER, "all_gather", meta=all_gather_meta)
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
 broadcast = make_prim(PrimIDs.BROADCAST, "broadcast", meta=broadcast_meta)
@@ -255,6 +277,11 @@ pack_for_fsdp = make_prim(PrimIDs.PACK_FOR_FSDP, "pack_for_fsdp", meta=pack_for_
 unpack = make_prim(PrimIDs.UNPACK, "unpack", meta=unpack_meta)
 unpack_for_fsdp = make_prim(PrimIDs.UNPACK_FOR_FSDP, "unpack_for_fsdp", meta=unpack_for_fsdp_meta)
 update_bucket_view = make_prim(PrimIDs.UPDATE_BUCKET_VIEW, "update_bucket_view", meta=update_bucket_view_meta)
+stash_grad_for_fsdp = make_prim(
+    PrimIDs.STASH_GRAD_FOR_FSDP,
+    "stash_grad_for_fsdp",
+    meta=stash_grad_for_fsdp_meta,
+)
 
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE)
