@@ -1600,7 +1600,9 @@ if torch.distributed.is_available():
         tensors: list[torch.Tensor],
         bucket_key: str,
     ) -> list[torch.Tensor]:
-        return torch._utils._unflatten_dense_tensors(buffer, tensors)
+        _, views = _key_to_bucket_and_views[bucket_key]
+        torch._foreach_copy_(tensors, views, non_blocking=True)
+        return tensors
 
     # TODO(crcrpar): Make this compatible with the torch.compile executor as it's doing really well for cat and reshape.
     # NOTE(crcrpar): why no caching/resue of buffer?
