@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import torch
 import numpy as np
@@ -49,6 +49,7 @@ from typing import Union, Dict
 from thunder.core.langctxs import langctx
 import thunder.core.dtypes as dtypes
 from thunder.torch import TensorLike
+from thunder.core.compile_data import get_compile_option
 from thunder.core.proxies import Proxy, TensorProxy
 
 
@@ -233,6 +234,11 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 # And when registering for sdpa, cudnn assumes NHWC layout. (See _transform_sdpa_inputs())
 def _sdpa_enforce_input_tensor_contiguity(a: torch.Tensor) -> torch.Tensor:
     if a.stride(-1) == 1:
+        # TODO(vedaanta-nvidia): there's an inconsistency between
+        # _transform_sdpa_inputs and this function, leading to a potential bug.
+        # _transform_sdpa_inputs always creates contiguous strides, but code
+        # here creates a partially contiguous stride when the last dimension is
+        # contiguous but other dimensions are not.
         return a
     else:
         return a.contiguous()
@@ -373,7 +379,9 @@ cudnn_sdpa_fwd = cudnn_ex.register_operator(
 )
 
 
-def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_causal):
+def _make_cudnn_sdpa_backward_graph(
+    query, key, value, attn_mask, dropout_p, is_causal, grad_query_stride, grad_key_stride, grad_value_stride
+):
     b, h, s_q, _ = query.size
     _, _, _, d_v = value.size
 
@@ -443,9 +451,13 @@ def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_
         dropout=dropout_tuple,
     )
 
-    dQ.set_output(True).set_dim(query.size).set_stride(query.stride).set_data_type(torch_to_cudnn_dtype(query.dtype))
-    dK.set_output(True).set_dim(key.size).set_stride(key.stride).set_data_type(torch_to_cudnn_dtype(key.dtype))
-    dV.set_output(True).set_dim(value.size).set_stride(value.stride).set_data_type(torch_to_cudnn_dtype(value.dtype))
+    dQ.set_output(True).set_dim(query.size).set_stride(grad_query_stride).set_data_type(
+        torch_to_cudnn_dtype(query.dtype)
+    )
+    dK.set_output(True).set_dim(key.size).set_stride(grad_key_stride).set_data_type(torch_to_cudnn_dtype(key.dtype))
+    dV.set_output(True).set_dim(value.size).set_stride(grad_value_stride).set_data_type(
+        torch_to_cudnn_dtype(value.dtype)
+    )
 
     # Validate the graph before querying the cache key
     # Validation makes sure all missing properties are inferred and filled, as they affect cache key.
@@ -479,7 +491,11 @@ def _make_cudnn_sdpa_backward_graph(query, key, value, attn_mask, dropout_p, is_
     return _cudnnex_cache[cache_key]
 
 
-def cudnn_sdpa_backward_meta(
+def _replace_dim_with(size: torch.Size, dim: int, dim_size: int) -> torch.Size:
+    return torch.Size(size[:dim] + (dim_size,) + size[dim + 1 :])
+
+
+def _cudnn_sdpa_bwd_meta(
     grad_out: TensorLike,
     query: TensorLike,
     key: TensorLike,
@@ -493,19 +509,53 @@ def cudnn_sdpa_backward_meta(
     philox_offset: TensorLike,
     *,
     scale: None | float = None,
-) -> (TensorProxy, TensorProxy, TensorProxy):
-    grad_query = TensorProxy(like=query)
-    grad_key = TensorProxy(like=key)
-    grad_value = TensorProxy(like=value)
+    cat_grad_qkv: bool,
+) -> tuple[TensorProxy, ...]:
+    if cat_grad_qkv:
+        grad_qkv = TensorProxy(
+            like=query, shape=_replace_dim_with(query.size(), 1, query.size(1) + key.size(1) + value.size(1))
+        )
+        grads = (grad_qkv,)
+    else:
+        grad_query = TensorProxy(like=query)
+        grad_key = TensorProxy(like=key)
+        grad_value = TensorProxy(like=value)
+        grads = (grad_query, grad_key, grad_value)
 
     if attn_mask is not None:
-        grad_attn_mask = TensorProxy(like=attn_mask, shape=attn_mask.shape)
-        return (grad_query, grad_key, grad_value, grad_attn_mask)
-    else:
-        return (grad_query, grad_key, grad_value)
+        grad_attn_mask = TensorProxy(like=attn_mask)
+        grads = grads + (grad_attn_mask,)
+
+    return grads
 
 
-def cudnn_sdpa_bwd_impl(
+def _same_size_except(*args, except_dim: int) -> bool:
+    shapes = [_replace_dim_with(shape, except_dim, 0) for shape in args]
+    return all(shape == shapes[0] for shape in shapes)
+
+
+# Allocates an empty tensor that will hold dQ, dK, and dV, concatenated.
+# `query`, `key` and `value` merely provide necessary metadata such as sizes
+# and dtypes. They don't have to be passed in as `torch.Tensor`s.
+def _allocate_catted_grad_qkv(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+) -> torch.Tensor:
+    assert _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+    assert query.dtype == key.dtype == value.dtype
+    assert query.device == key.device == value.device
+
+    b, s, d = query.size(0), query.size(2), query.size(3)
+    h_q, h_k, h_v = query.size(1), key.size(1), value.size(1)
+    h_qkv = h_q + h_k + h_v
+
+    # Create grad_qkv as a tensor of size [b,h_qkv,s,d] and allocation order
+    # [0,2,1,3] from major to minor.
+    return torch.empty(b, s, h_qkv, d, dtype=query.dtype, device=query.device).permute(0, 2, 1, 3)
+
+
+def _cudnn_sdpa_bwd_impl(
     grad_out: torch.Tensor,
     query: torch.Tensor,
     key: torch.Tensor,
@@ -519,8 +569,23 @@ def cudnn_sdpa_bwd_impl(
     philox_offset: torch.Tensor,
     *,
     scale: None | float = None,
-) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    cat_grad_qkv: bool,
+) -> tuple[torch.Tensor, ...]:
     query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
+    query = _sdpa_enforce_input_tensor_contiguity(query)
+    key = _sdpa_enforce_input_tensor_contiguity(key)
+    value = _sdpa_enforce_input_tensor_contiguity(value)
+
+    # When cat_grad_qkv is on, allocate dQKV and make dQ, dK, and dV
+    # slices of that. Otherwise, allocate them individually.
+    grad_qkv: None | torch.Tensor = None
+    if cat_grad_qkv:
+        grad_qkv = _allocate_catted_grad_qkv(query, key, value)
+        grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
+    else:
+        grad_query = torch.empty_like(query)
+        grad_key = torch.empty_like(key)
+        grad_value = torch.empty_like(value)
 
     (
         Q,
@@ -545,15 +610,10 @@ def cudnn_sdpa_bwd_impl(
         attn_mask_4d,
         dropout_p,
         is_causal,
+        grad_query.stride(),
+        grad_key.stride(),
+        grad_value.stride(),
     )
-
-    query = _sdpa_enforce_input_tensor_contiguity(query)
-    key = _sdpa_enforce_input_tensor_contiguity(key)
-    value = _sdpa_enforce_input_tensor_contiguity(value)
-
-    grad_query = torch.empty_like(query)
-    grad_key = torch.empty_like(key)
-    grad_value = torch.empty_like(value)
 
     # Default value of scale, if not provided, in all torch versions
     if scale is None:
@@ -592,21 +652,25 @@ def cudnn_sdpa_bwd_impl(
     with torch.cuda.device(query.device):
         graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(query.device))
 
-    if attn_mask is None:
-        return grad_query, grad_key, grad_value
+    if cat_grad_qkv:
+        grads = (grad_qkv,)
     else:
-        return grad_query, grad_key, grad_value, grad_attn_mask
+        grads = (grad_query, grad_key, grad_value)
+
+    if attn_mask is not None:
+        grads = grads + (grad_attn_mask,)
+    return grads
 
 
 cudnn_sdpa_bwd = cudnn_ex.register_operator(
     "cudnn_sdpa_bwd",
-    meta=cudnn_sdpa_backward_meta,
-    fn=cudnn_sdpa_bwd_impl,
+    meta=_cudnn_sdpa_bwd_meta,
+    fn=_cudnn_sdpa_bwd_impl,
 )
 
 
 @langctx("torch")
-def _cudnn_sdpa_transform(
+def _cudnn_sdpa_fwd_wrapper(
     query: TensorProxy,
     key: TensorProxy,
     value: TensorProxy,
@@ -622,7 +686,7 @@ def _cudnn_sdpa_transform(
 
 
 @langctx("torch")
-def _cudnn_sdpa_grad(
+def _cudnn_sdpa_bwd_wrapper(
     query: TensorProxy,
     key: TensorProxy,
     value: TensorProxy,
@@ -636,9 +700,20 @@ def _cudnn_sdpa_grad(
         query, key, value, attn_mask, dropout_p, is_causal, scale=scale
     )
 
-    g = get_grad(primal)
+    description = """\
+This flag is for enabling nvFuser's zipping optimization that seeks to avoid
+expensive concatenation. https://github.com/NVIDIA/Fuser/issues/1768 has more
+details. When this flag is true, cudnn_sdpa_bwd may cat dQ, dK and dV as one
+tensor and return them as slices of that tensor.
+"""
+    may_cat_grad_qkv: None | bool = get_compile_option("cudnn_sdpa_bwd_may_cat_grad_qkv", description)
+    if may_cat_grad_qkv is None:
+        may_cat_grad_qkv = False
+    assert isinstance(may_cat_grad_qkv, bool)
+    cat_grad_qkv = may_cat_grad_qkv and _same_size_except(query.size(), key.size(), value.size(), except_dim=1)
+
     grads = cudnn_sdpa_bwd(
-        g,
+        get_grad(primal),
         query,
         key,
         value,
@@ -650,15 +725,22 @@ def _cudnn_sdpa_grad(
         seed,
         offset,
         scale=scale,
+        cat_grad_qkv=cat_grad_qkv,
     )
-    if attn_mask is None:
-        grad_query, grad_key, grad_val = grads
-    else:
-        grad_query, grad_key, grad_val, grad_attn_mask = grads
 
-    put_grads((query, key, value), (grad_query, grad_key, grad_val))
     if attn_mask is not None:
+        grad_attn_mask = grads[-1]
+        grads = grads[:-1]
         put_grad(attn_mask, grad_attn_mask)
+
+    if cat_grad_qkv:
+        # The `split` is done outside `cudnn_sdpa_bwd` so it can be picked up
+        # by nvfuserex.
+        (grad_qkv,) = grads
+        grad_query, grad_key, grad_value = grad_qkv.split([query.size(1), key.size(1), value.size(1)], dim=1)
+    else:
+        grad_query, grad_key, grad_value = grads
+    put_grads((query, key, value), (grad_query, grad_key, grad_value))
 
     return primal
 
@@ -667,6 +749,6 @@ def _cudnn_sdpa_grad(
 cudnn_ex.register_implementation(
     ltorch.scaled_dot_product_attention,
     checker=_cudnn_sdpa_checker,
-    execution_transform=_cudnn_sdpa_transform,
-    grad_transform=_cudnn_sdpa_grad,
+    execution_transform=_cudnn_sdpa_fwd_wrapper,
+    grad_transform=_cudnn_sdpa_bwd_wrapper,
 )
