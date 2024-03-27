@@ -68,7 +68,7 @@ No, not at the moment. Meta functions operate on the exact shapes of the tensor 
 
 
 ================================================================
-6. Does Thunder support (or plan to support) inplace operations?
+6. Does Thunder support inplace operations?
 ================================================================
 
 Not at the moment. Implementing inplace operations would require tracking which tensors in a trace have been modified by operations in our optimization passes, which currently we represent as purely functional. All deep learning compiler frameworks have to deal with the problem of tensor aliasing in some way. The way we've chosen for now is to pretend that the problem doesn't exist.
