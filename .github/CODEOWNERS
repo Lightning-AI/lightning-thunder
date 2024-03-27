@@ -5,5 +5,8 @@
 * @mruberry @lantiga @robieta @t-vi @carmocca
 
 # CI/CD and configs
-/.github/       @mruberry @lantiga @t-vi @carmocca
-*.yml           @mruberry @lantiga @t-vi @carmocca
+/.azure/        @borda @lantiga @t-vi @carmocca
+/.github/       @borda @lantiga @t-vi @carmocca
+/dockers/       @borda @lantiga @t-vi @carmocca
+Makefile        @borda @lantiga @t-vi @carmocca
+*.yml           @borda @lantiga @t-vi @carmocca
