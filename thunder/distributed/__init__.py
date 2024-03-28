@@ -84,6 +84,8 @@ def _sync_grads(module: torch.nn.Module) -> None:
         )
 
     params_with_grad = [p for p in module.parameters() if p.grad is not None]
+    if not params_with_grad:
+        return
     grads = [p.grad for p in params_with_grad]
     torch._foreach_div_(grads, process_group.size())
     with tdist.distributed_c10d._coalescing_manager(group=process_group, async_ops=True) as cm:
