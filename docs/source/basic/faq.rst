@@ -64,7 +64,9 @@ There are potentially any number of other problems which could arise. Some of th
 5. Does Thunder support dynamic shapes?
 =======================================
 
-No, not at the moment. Meta functions operate on the exact shapes of the tensor proxies that pass through them. This is a limitation of the current implementation, and we plan to incorporate dynamic shapes in the future. We're looking for input on how to best incorporate dynamic shapes, so if you have any ideas, please let us know by creating an issue or reaching out.
+No, not at the moment. However, we're actively working on it.
+
+Meta functions operate on the exact shapes of the tensor proxies that pass through them. This is a limitation of the current implementation, and we plan to incorporate dynamic shapes in the future. If you have relevant experience experience with this problem in pytorch, please let us know by creating an issue or reaching out.
 
 
 ================================================================
@@ -73,8 +75,8 @@ No, not at the moment. Meta functions operate on the exact shapes of the tensor 
 
 Not at the moment. Implementing inplace operations would require tracking which tensors in a trace have been modified by operations in our optimization passes, which currently we represent as purely functional. All deep learning compiler frameworks have to deal with the problem of tensor aliasing in some way. The way we've chosen for now is to pretend that the problem doesn't exist.
 
-The common solution is to represent programs in `SSA form <https://en.wikipedia.org/wiki/Static_single-assignment_form>`_, or do some form of SSA-inspired variable renaming, but this is a much less understandable representation than a list of symbols in a trace. At the same time, it would complicate optimization passes and require rewriting many of them to handle these aliasing rules.
+The common solution is to represent programs in `SSA form <https://en.wikipedia.org/wiki/Static_single-assignment_form>`_, or do some form of SSA-inspired variable renaming, but SSA is a much less understandable representation than a list of symbols in a trace. Switching to SSA would also complicate optimization passes, and require rewriting many of them to handle these aliasing rules.
 
-There also exists the problem that some backends, like Triton and nvfuser, or a potential Jax backend, are not actually good at handling inplace operations either. They, like Thunder, expect functional programs, and if we simply decide to forward these operations to the executor, not every executor would be able to implement every operator. For a simple torch operator like ``x.add_(y)``, this is unsatisfactory to us. We would ideally like to be able to convert instances of ``add_()`` to ``add()`` for executors. But currently, every intermediate trace needs to be executable and `add_()` would not be a supported bound symbol before it gets replaced by `add()` later.
+There also exists the problem that some backends, like Triton and nvfuser, or a potential Jax backend, are not actually good at handling inplace operations either. They, like Thunder, expect functional programs, and if we simply decide to forward these operations to the executor, not every executor would be able to implement every operation. For a simple torch operator like ``x.add_(y)``, this is unsatisfactory to us. We would ideally like to be able to convert instances of ``add_()`` to ``add()`` for executors. But currently, every intermediate trace needs to be executable and `add_()` would not be a supported bound symbol before it gets replaced by `add()` later.
 
-We want to support inplace operations eventually, but we are attached to traces as our program representation of choice for optimization passes. Much like with dynamic shapes, if you have any ideas on how to best incorporate inplace operations, please let us know.
+We want to support inplace operations eventually, but we are attached to traces as our program representation of choice for optimization passes. Much like with dynamic shapes, if you have relevant experience on how to best incorporate inplace operations without complicating optimization passes, come talk to us about it.
