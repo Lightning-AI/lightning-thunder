@@ -467,6 +467,14 @@ def test_lookaside_bool():
     assert_close(expected, actual)
 
 
+# see https://github.com/Lightning-AI/lightning-thunder/issues/95
+def test_get_default_dtype():
+    def foo():
+        return torch.get_default_dtype()
+
+    assert foo() == thunder.jit(foo)()
+
+
 @pytest.mark.parametrize(
     "device",
     ("cpu", "cuda"),
