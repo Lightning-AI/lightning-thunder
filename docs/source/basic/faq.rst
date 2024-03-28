@@ -66,7 +66,7 @@ There are potentially any number of other problems which could arise. Some of th
 
 No, not at the moment. However, we're actively working on it.
 
-Meta functions operate on the exact shapes of the tensor proxies that pass through them. This is a limitation of the current implementation, and we plan to incorporate dynamic shapes in the future. If you have relevant experience experience with this problem in pytorch, please let us know by creating an issue or reaching out.
+Meta functions operate on the exact shapes of the tensor proxies that pass through them. This is a limitation of the current implementation, and we plan to incorporate dynamic shapes in the future. If you have relevant experience experience with this problem in pytorch, or you are interested in helping us implement it, please let us know by creating an issue or reaching out.
 
 
 ================================================================
