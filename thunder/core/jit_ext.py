@@ -907,11 +907,11 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
         has_tensor_arg = False
         for a in args:
-            if isinstance(a, TensorProxy):
+            if isinstance(a.value, TensorProxy):
                 has_tensor_arg = True
                 break
-            if isinstance(a, Sequence):
-                if any(isinstance(i, TensorProxy) for i in a):
+            if isinstance(a.value, Sequence):
+                if any(isinstance(i, TensorProxy) for i in a.value):
                     has_tensor_arg = True
                     break
 
