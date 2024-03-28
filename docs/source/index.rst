@@ -90,6 +90,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
    Functional jit <notebooks/functional_jit>
+   FAQ <basic/faq>
 
 .. toctree::
    :maxdepth: 1
