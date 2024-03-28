@@ -53,7 +53,7 @@ Yes, executors are device-agnostic. The python executor, for example, runs the o
 4. I ran ``thunder.jit(model)(*args)``, and my model didn't work!
 =================================================================
 
-Thunder is in alpha. There will be bugs, and many torch operations are not supported. Try to run ``thunder.examine(model)(*args)``. This will list the operations which are not supported, and if they are all supported, test the model for consistency against torch eager.
+Thunder is in alpha. There will be bugs, and many torch operations are not supported. Try to run ``from thunder.examine import examine; examine(model, *args)``. This will list the operations which are not supported, and if they are all supported, test the model for consistency against torch eager.
 
 If you need certain operations supported for your model, please let us know by creating an issue. We plan to get to all of them (with the exception of any :doc:`sharp edges <sharp_edges>`), but your issues help us prioritize which to do first.
 
