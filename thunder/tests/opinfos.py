@@ -4697,6 +4697,51 @@ argmin_opinfo = OpInfo(
 )
 reduction_ops.append(argmin_opinfo)
 
+
+def topk_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, k, dim
+    # NOTE: k = 0 is not consistent between the CPU and the CUDA PyTorch implementations,
+    # unless shape[dim] == 0
+    cases = (
+        ((), 1),
+        ((), 1, 0),
+        ((3, 0), 0),
+        ((4, 4), 2, 1),
+        ((4, 1, 6), 3, -1),
+        ((4, 1, 6), 3),
+        ((4, 7, 5, 1), 2, -3),
+        ((4, 2, 5, 1), 1),
+    )
+
+    for shape, *args in cases:
+        for largest, sorted in itertools.product((True, False), repeat=2):
+            yield SampleInput(make(shape), *args, largest=largest, sorted=sorted)
+
+
+def topk_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    err_msg = r"selected index .* is out of range"
+    yield (SampleInput(make(3, 2), 3), RuntimeError, err_msg)
+    yield (SampleInput(make(3, 0), 1), RuntimeError, err_msg)
+
+    err_msg = "Dimension out of range"
+    yield (SampleInput(make(3, 3), 1, 3), IndexError, err_msg)
+    yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
+
+
+topk_opinfo = OpInfo(
+    clang.topk,
+    sample_input_generator=topk_sample_generator,
+    error_input_generator=topk_error_generator,
+    torch_reference=torch.topk,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+)
+reduction_ops.append(topk_opinfo)
+
+
 opinfos.extend(reduction_ops)
 
 
