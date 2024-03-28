@@ -1208,6 +1208,12 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     return clamp(a, 0, 6)
 
 
+@torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
+def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    utils.check(not inplace, lambda: f"hardswish only supports inplace=False", exception_type=NotImplementedError)
+    return a * relu6(a + 3) / 6
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
