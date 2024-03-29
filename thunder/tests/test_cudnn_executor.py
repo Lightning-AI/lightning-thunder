@@ -18,7 +18,13 @@ from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
-from thunder.executors.cudnnex import cudnn_ex
+from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+
+# detect cuDNN version
+if cudnn_available():
+    cudnn_version = cudnn.backend_version()
+else:
+    cudnn_version = "0.0.0"
 
 
 # These reference inputs are currently used by cudnnex
@@ -161,6 +167,9 @@ def snippet_torch_consistency(op, torch_op, sample):
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_executors=(TorchExecutor,),
 )
+@pytest.mark.skipif(
+    LooseVersion(cudnn_version) < LooseVersion("8.9.5"), reason="cuDNN is required to be at least `8.9.5`"
+)
 def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     # expect layer_norm to fail for 8.9.3 and below
     if op.name == "layer_norm":
@@ -188,6 +197,9 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
+@pytest.mark.skipif(
+    LooseVersion(cudnn_version) < LooseVersion("8.9.5"), reason="cuDNN is required to be at least `8.9.5`"
+)
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
 def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):

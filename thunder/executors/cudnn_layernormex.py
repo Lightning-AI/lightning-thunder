@@ -5,18 +5,17 @@ import numpy as np
 
 from lightning_utilities.core.imports import package_available
 
-CUDNN_AVAILABLE = package_available("cudnn")
+
+def cudnn_available() -> bool:
+    return package_available("cudnn")
+
 
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
-if CUDNN_AVAILABLE:
+if cudnn_available():
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
-
-
-def cudnn_available() -> bool:
-    return CUDNN_AVAILABLE
 
 
 # WARNING: cudnn layernorm executor is experimental. Tests that use cudnn might fail.
