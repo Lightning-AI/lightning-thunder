@@ -5,14 +5,9 @@ import numpy as np
 
 from lightning_utilities.core.imports import package_available
 
-
-def cudnn_available() -> bool:
-    return package_available("cudnn")
-
-
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
-if cudnn_available():
+if package_available("cudnn"):
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
