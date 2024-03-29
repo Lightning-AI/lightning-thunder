@@ -665,13 +665,15 @@ class CompileDDPTest(DataParallelTestCase):
             f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
         ),
     )
-    @pytest.mark.xfail(reason="Investigation needed")  # todo/fixme
     def test_fsdp_grad_parity_with_without_bucketing(
         self,
         executor,
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
     ):
+        if bucketing_strategy == FSDPBucketingStrategy.BLOCK:
+            pytest.xfail(reason="Investigation needed")  # todo/fixme
+
         from thunder.distributed import fsdp
 
         device = torch.device("cuda", self.rank)
