@@ -161,8 +161,10 @@ def snippet_torch_consistency(op, torch_op, sample):
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_executors=(TorchExecutor,),
 )
-@pytest.mark.skipif(cudnn_version() < 8905, reason="cuDNN is required to be at least `8.9.5`")
 def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
+    if cudnn.backend_version() < 8905:  # todo: could be more specific, just for some cases?
+        pytest.xfail("s_kv not a multiple of 64 required cudnn version atleast 8.9.5")
+
     # expect layer_norm to fail for 8.9.3 and below
     if op.name == "layer_norm":
         if cudnn.backend_version() <= 8903:
