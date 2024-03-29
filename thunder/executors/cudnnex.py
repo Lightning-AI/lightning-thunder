@@ -11,6 +11,12 @@ def cudnn_available() -> bool:
     return package_available("cudnn")
 
 
+def cudnn_version() -> int:
+    if cudnn_available():
+        return cudnn.backend_version()
+    return 0
+
+
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
 if cudnn_available():
