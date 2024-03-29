@@ -912,11 +912,17 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             # Torch functions have __name__ defined
             fn_name = f"{fn.__module__}.{fn.__name__}"
 
-            # For now, only torch-like opaque functions are sharp edges
-            return _general_jit_sharp_edge(
-                f"Trying to call function {fn_name}, but it's unsupported. Please file an issue requesting support.",
-                None,
+            # Probably merge with sharp edges
+            calling_opaque_torch_msg = (
+                f"Trying to call function {fn_name}, but it is not yet supported. "
+                "Please file an issue requesting support. "
+                "To find out which operations are not yet recongnized by `thunder.jit`, "
+                "please run `examine` as per:\n\n"
+                "from thunder.examine import examine\n"
+                "examine(<your thunder.jit callable argument>, ...)\n"
             )
+
+            return do_raise(NotImplementedError(calling_opaque_torch_msg))
 
     return lookaside
 

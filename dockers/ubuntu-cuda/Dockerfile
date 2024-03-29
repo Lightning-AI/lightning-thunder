@@ -25,6 +25,7 @@ ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
 ARG TORCH_INSTALL="stable"
+ARG APEX_CHECKOUT="master"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -87,6 +88,7 @@ ENV \
     CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
 ARG TORCH_INSTALL
+ENV TORCH_USE_CUDA_DSA=1
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
@@ -139,6 +141,22 @@ RUN \
     git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
     CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
     rm -rf cudnn-frontend
+
+RUN \
+    # building Apex from source
+    pip install "pip>=23.1" packaging && \
+    git clone https://github.com/NVIDIA/apex && \
+    cd apex && \
+    git checkout ${APEX_CHECKOUT} && \
+    # https://github.com/NVIDIA/apex#linux
+    pip install -v \
+      --disable-pip-version-check \
+      --no-cache-dir \
+      --no-build-isolation \
+      --config-settings "--build-option=--xentropy" \
+      . && \
+    cd .. && \
+    rm -rf apex
 
 RUN \
     ls -lh requirements/ && \
