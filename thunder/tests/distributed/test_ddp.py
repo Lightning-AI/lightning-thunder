@@ -658,7 +658,11 @@ class CompileDDPTest(DataParallelTestCase):
         "executor,bucketing_strategy,fsdptype",
         product(
             tuple(executors_map.keys()),
-            (FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
+            (
+                FSDPBucketingStrategy.LAYER,
+                # todo/fixme: Investigate why BLOCK is failing with DDP
+                pytest.param(FSDPBucketingStrategy.BLOCK, marks=pytest.mark.xfail(reason="Investigation needed")),
+            ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
         ),
         name_fn=lambda executor, bucketing_strategy, fsdptype: (
@@ -671,9 +675,6 @@ class CompileDDPTest(DataParallelTestCase):
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
     ):
-        if bucketing_strategy == FSDPBucketingStrategy.BLOCK:
-            pytest.xfail(reason="Investigation needed")  # todo/fixme
-
         from thunder.distributed import fsdp
 
         device = torch.device("cuda", self.rank)
