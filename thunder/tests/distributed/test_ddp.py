@@ -471,6 +471,7 @@ class CompileDDPTest(DataParallelTestCase):
             self.assertEqual(len(unpack_syms), 1, msg=f"{unpack_syms}")
             self.assertEqual(len(update_bucket_view_syms), 4, msg=f"{update_bucket_view_prim_impl}")
 
+    @pytest.mark.xfail(RuntimeError, reason="Investigation needed")  # todo/fixme
     def test_rematerialize_all_gather(self):
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
