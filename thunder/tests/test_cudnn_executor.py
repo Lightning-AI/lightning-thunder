@@ -18,7 +18,7 @@ from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
-from thunder.executors.cudnnex import cudnn_ex
+from thunder.executors.cudnnex import cudnn_ex, cudnn_version
 
 
 # These reference inputs are currently used by cudnnex
@@ -162,6 +162,9 @@ def snippet_torch_consistency(op, torch_op, sample):
     supported_executors=(TorchExecutor,),
 )
 def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
+    if cudnn.backend_version() < 8905:  # todo: could be more specific, just for some cases?
+        pytest.xfail("s_kv not a multiple of 64 required cudnn version atleast 8.9.5")
+
     # expect layer_norm to fail for 8.9.3 and below
     if op.name == "layer_norm":
         if cudnn.backend_version() <= 8903:
@@ -188,6 +191,7 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
+@pytest.mark.skipif(cudnn_version() < 8905, reason="cuDNN is required to be at least `8.9.5`")
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
 def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
