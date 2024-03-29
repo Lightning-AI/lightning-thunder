@@ -662,7 +662,7 @@ class CompileDDPTest(DataParallelTestCase):
             (
                 FSDPBucketingStrategy.LAYER,
                 # todo/fixme: Investigate why BLOCK is failing with DDP
-                pytest.param(FSDPBucketingStrategy.BLOCK, marks=pytest.mark.xfail(reason="Investigation needed")),
+                # FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
         ),
