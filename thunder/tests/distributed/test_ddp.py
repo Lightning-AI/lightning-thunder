@@ -480,9 +480,9 @@ class CompileDDPTest(DataParallelTestCase):
         x = torch.ones((2, 12), device=device)
         cm(x).mean().backward()
 
-        (fwd_trc,) = (
+        fwd_trc = [
             t for t in thunder.last_traces(cm) if getattr(t.get_provenance(), "pss", "") == "Augmented forward pass"
-        )
+        ][0]
         bwd_trc = thunder.last_backward_traces(cm)[0]
         from thunder.core.rematerialization import rematerialize_all_gather
 
