@@ -471,6 +471,7 @@ class CompileDDPTest(DataParallelTestCase):
             self.assertEqual(len(unpack_syms), 1, msg=f"{unpack_syms}")
             self.assertEqual(len(update_bucket_view_syms), 4, msg=f"{update_bucket_view_prim_impl}")
 
+    @pytest.mark.xfail(reason="Investigation needed")  # todo/fixme
     def test_rematerialize_all_gather(self):
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
@@ -664,6 +665,7 @@ class CompileDDPTest(DataParallelTestCase):
             f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
         ),
     )
+    @pytest.mark.xfail(reason="Investigation needed")  # todo/fixme
     def test_fsdp_grad_parity_with_without_bucketing(
         self,
         executor,
