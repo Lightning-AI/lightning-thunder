@@ -15,11 +15,51 @@ defaults:
 
 jobs:
   docs-make:
-    uses: Lightning-AI/utilities/.github/workflows/check-docs.yml@v0.11.0
-    with:
-      python-version: "3.10"
-      requirements-file: "requirements/docs.txt"
-      install-tex: true
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ["html", "doctest", "linkcheck"]
+    env:
+      ARTIFACT_DAYS: 0
+      PYPI_LOCAL_DIR: "pypi_pkgs/"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Pull sphinx template
+        run: |
+          pip install -q "awscli >=1.30.0"
+          aws s3 sync --no-sign-request s3://sphinx-packages/ ${PYPI_LOCAL_DIR}
+          pip install lai-sphinx-theme -U -f ${PYPI_LOCAL_DIR}
+      - name: Install pandoc
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update --fix-missing
+          sudo apt-get install -y pandoc
+      - name: Install package & dependencies
+        timeout-minutes: 20
+        run: pip install . -U -r requirements/docs.txt
+
+      - name: Make ${{ matrix.target }}
+        working-directory: docs/
+        # allow failing link check and doctest if you run with dispatch
+        continue-on-error: ${{ matrix.target == 'doctest' || matrix.target == 'linkcheck' }}
+        run: make ${{ matrix.target }} --debug --jobs $(nproc) SPHINXOPTS="-W --keep-going"
+
+      - name: Keep artifact
+        if: github.event_name == 'pull_request'
+        run: echo "ARTIFACT_DAYS=7" >> $GITHUB_ENV
+      - name: Upload built docs
+        if: ${{ matrix.target == 'html' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-html-${{ github.sha }}
+          path: docs/build/html/
+          retention-days: ${{ env.ARTIFACT_DAYS }}
 
   deploy-docs:
     needs: docs-make
@@ -28,10 +68,10 @@ jobs:
     env:
       GCP_TARGET: "gs://lightning-docs-thunder"
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: docs-html-${{ github.sha }}
-          path: docs/build/
+          path: docs/build/html/
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
