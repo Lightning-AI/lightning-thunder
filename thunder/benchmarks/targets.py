@@ -39,7 +39,7 @@ from thunder.benchmarks import (
     thunder_sdpa_torch_compile_nvfuser_executor,
 )
 
-from thunder.tests.lit_gpt_model import Config as LitGPTConfig
+from thunder.tests.litgpt_model import Config as LitGPTConfig
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
@@ -873,8 +873,8 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
     ids=(
         "torch",
         "torch.compile",
-        "thunder-fwd-bwd",
-        "thunder+nvfuser+torch.compile-fwd-bwd",
+        "thunder",
+        "thunder+nvfuser+torch.compile",
         "torch+apex",
         "torch.compile+apex",
     ),

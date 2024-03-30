@@ -36,7 +36,7 @@ def test_te_linear_forward_backward(fp8_recipe):
     # TE inputs (3D input)
     x_te = torch.randn(3, 768, 4096, device=device, dtype=dtype, requires_grad=True)
     te_linear1 = te.Linear(4096, 4096, params_dtype=dtype)
-    te_linear2 = te.Linear(4096, 2048, params_dtype=dtype)
+    te_linear2 = te.Linear(4096, 4096, params_dtype=dtype)
 
     # thunder inputs
     x = x_te.detach().clone()

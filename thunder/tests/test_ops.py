@@ -33,7 +33,7 @@ def test_errors(op, device, _, executor, comp):
 # Snippets run a single test using a single sample
 # TODO: should snippets be able to access the original opinfo? -- No?
 # TODO: revisit atol/rtol, maybe be more selective about which ops need a more permissive check
-def snippet_torch_consistency(op, torch_op, sample, comp):
+def snippet_torch_consistency(op: OpInfo, torch_op, sample: SampleInput, comp: Callable):
     thunder_result = op(*sample.args, **sample.kwargs)
     torch_result = torch_op(*sample.args, **sample.kwargs)
 
