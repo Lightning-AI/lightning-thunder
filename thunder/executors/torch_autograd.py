@@ -202,7 +202,7 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     if not any(requires_grad_mask):
         raise RuntimeError("PyTorch's Autograd interface requires at least one tensor input with requires_grad=True")
 
-    primal_trace = make_trace(func)(*args, **kwargs)
+    primal_trace = make_trace(func)(*args, **kwargs) if not compile_data.using_jit else computation_trc
     primal_trace = sort_data_parallel_syncs(primal_trace)
 
     if compile_stats is not None:

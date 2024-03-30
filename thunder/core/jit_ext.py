@@ -377,7 +377,9 @@ class ThunderSharpEdgeError(RuntimeError):
 def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
+    s: str = (
+        f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
+    )
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(ThunderSharpEdgeError(s))
@@ -469,7 +471,9 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
+    s: str = (
+        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
+    )
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -908,11 +912,17 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             # Torch functions have __name__ defined
             fn_name = f"{fn.__module__}.{fn.__name__}"
 
-            # For now, only torch-like opaque functions are sharp edges
-            return _general_jit_sharp_edge(
-                f"Trying to call function {fn_name}, but it's unsupported. Please file an issue requesting support.",
-                None,
+            # Probably merge with sharp edges
+            calling_opaque_torch_msg = (
+                f"Trying to call function {fn_name}, but it is not yet supported. "
+                "Please file an issue requesting support. "
+                "To find out which operations are not yet recongnized by `thunder.jit`, "
+                "please run `examine` as per:\n\n"
+                "from thunder.examine import examine\n"
+                "examine(<your thunder.jit callable argument>, ...)\n"
             )
+
+            return do_raise(NotImplementedError(calling_opaque_torch_msg))
 
     return lookaside
 
