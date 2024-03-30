@@ -10,6 +10,7 @@ from thunder.core.langctxs import langctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import grad, get_grad, put_grads
 from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors
+from lightning_utilities.core.imports import package_available
 
 
 def test_extend_core():
@@ -127,7 +128,9 @@ def test_get_all_executors_includes_all_native_executors():
         "python",
         "transformer_engine",
     }
-    actual.discard("triton")  # remove when triton can always be imported
+    if package_available("triton"):
+        # `triton` maybe installed on a system without GPU.
+        expected.update({"triton"})
     if torch.cuda.is_available():
         expected.update({"nvfuser"})
     assert actual == expected
@@ -183,5 +186,12 @@ def test_register_implementation_custom_op():
     assert "myadd2" in s and "myadd1" not in s
 
     a.requires_grad_()
+
+    # without the executor, we just (should and do) jit through official_add
+    cfn = thunder.jit(fn)
+    res = cfn(a, b)
+
+    s = str(thunder.last_traces(cfn)[-1])
+    assert "myadd2" not in s and "myadd1" not in s
 
     deregister_executor(myex)

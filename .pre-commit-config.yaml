@@ -8,7 +8,7 @@ ci:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -17,11 +17,13 @@ repos:
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
+        args: ["--maxkb=300", "--enforce-all"]
+        exclude: notebooks
       - id: check-docstring-first
       - id: detect-private-key
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.11.1
+    rev: v3.15.2
     hooks:
       - id: pyupgrade
         args: ["--py310-plus"]
@@ -29,14 +31,14 @@ repos:
         exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_jit_general.py"
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.2.5
+    rev: v2.2.6
     hooks:
       - id: codespell
         additional_dependencies: [tomli]
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
   - repo: https://github.com/psf/black
-    rev: 23.9.1
+    rev: 24.3.0
     hooks:
       - id: black
         name: Black code
@@ -58,7 +60,7 @@ repos:
       - id: sphinx-lint
 
   - repo: https://github.com/asottile/yesqa
-    rev: v1.4.0
+    rev: v1.5.0
     hooks:
       - id: yesqa
 

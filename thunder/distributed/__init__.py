@@ -3,7 +3,8 @@ from itertools import chain
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import auto, Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from collections.abc import Generator
 from functools import partial
 
 
@@ -58,7 +59,7 @@ def get_skip_data_parallel_grad_sync() -> bool:
 
 
 @contextmanager
-def skip_data_parallel_grad_sync() -> None:
+def skip_data_parallel_grad_sync() -> Generator[Any, Any, Any]:
     """A context manager to skip data parallel grad sync."""
     token = set_skip_data_parallel_grad_sync(True)
     try:

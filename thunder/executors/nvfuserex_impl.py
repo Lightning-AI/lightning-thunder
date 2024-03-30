@@ -787,7 +787,7 @@ class nvFuserExecutor(FusionExecutor):
             region = Region(producers, consumers, bsyms)
 
             # Acquires the nv_enable_bookend compile option, which defaults to True
-            bookend_help = """
+            bookend_help = """\
 nvFuser's 'bookending' heuristic tries to gather metadata operations---such as
 transpose, reshape, or view---into the beginning and ends of blocks that utilize
 nvFuser. By pushing these ops to the edges, they will get dropped by the nvFuser
@@ -1087,18 +1087,12 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    # nvFuser cat fusion is currently disabled due to issue:
-    #   "nvFuser doesn't support cating with an empty tensor"
-    return False
+    if nv_version < LooseVersion("0.1.7"):
+        return False
 
     # Validates tensors and concatenated dimension lengths
     for t in tensors:
         if not is_supported_tensor(t):
-            return False
-
-        # See https://github.com/NVIDIA/Fuser/issues/21
-        #   nvFuser cannot concatenate dimensions of length 1
-        if t.shape[dim] == 1:
             return False
 
     return True

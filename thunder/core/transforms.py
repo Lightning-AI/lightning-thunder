@@ -1237,11 +1237,6 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 
 
 def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
-    # If executor specific `aug_fwd_rule` exists then we will use that,
-    # so we return `None` here.
-    if get_executor_specific_aug_fwd_rule(bsym):
-        return None
-
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -2484,15 +2479,6 @@ backward_impls = {
 }
 
 
-@dataclass(**default_dataclass_params)
-class RuleInfo:
-    checker: Callable
-    rule: Callable
-    fw_fallback: Callable
-    bw_fallback: Callable
-    executor: Executor
-
-
 def register_augmented_forward(op):
     """Decorator to register an augmented forward implementation for a symbol.
 
@@ -2508,40 +2494,6 @@ def register_augmented_forward(op):
         return func
 
     return decorator
-
-
-def register_augmented_forward_with_checker(executor, op, checker, rule):
-    """Decorator to register an augmented forward implementation for a symbol.
-
-    Args:
-        executor (Executor): Executor to which the rule applies.
-        op (Ops): Symbol for which to register the augmented forward implementation.
-        checker (Callable): Function that checks if the rule should be applied.
-        rule (Callable): Function that applies the rule.
-    """
-    fw_fallback = augmented_forward_impls.get(op, None)
-    bw_fallback = backward_impls.get(op, None)
-    augmented_forward_impls[executor, op] = RuleInfo(checker, rule, fw_fallback, bw_fallback, executor)
-
-
-def deregister_augmented_forward_and_backward(op):
-    """Deregisters an augmented forward implementation and a backward
-    implementation for a symbol.
-
-    Args:
-        op (Ops): Symbol for which to deregister the augmented forward
-        implementation and the backward implementation.
-
-    Returns:
-        None
-    """
-    # Restore the fallback implementation if it exists
-    if isinstance(augmented_forward_impls[op], RuleInfo):
-        backward_impls[op] = augmented_forward_impls[op].bw_fallback
-        augmented_forward_impls[op] = augmented_forward_impls[op].fw_fallback
-    else:
-        del augmented_forward_impls[op]
-        del backward_impls[op]
 
 
 def register_backward(op):
@@ -3357,31 +3309,6 @@ def uniform_backward(primal, minval, maxval, g):
 nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
 
 
-def get_executor_specific_aug_fwd_rule(symbol: BoundSymbol) -> RuleInfo | None:
-    """Get executor specific augmented forward rule.
-
-    Args:
-        symbol (BoundSymbol): BoundSymbol to get the rule for.
-
-    Returns:
-        RuleInfo: Rule info for the symbol.
-    """
-    cd = get_compile_data()
-    if cd is None:
-        return None
-
-    # Search for the executor specific rules. When there are multiple rules
-    # for the same symbol, we use the left-most executor in the list (i.e.
-    # the one with the highest priority) and we fallback to the next one if
-    # the checker returns False.
-    for executor in cd.executors_list:
-        candidate = augmented_forward_impls.get((executor, symbol.sym.id))
-        if isinstance(candidate, RuleInfo) and candidate.checker(*symbol.args, **symbol.kwargs):
-            return candidate
-
-    return None
-
-
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
     """Check if a symbol is constant for the VJP transform.
 
@@ -3424,18 +3351,9 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
 
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
-    vjp_impl = get_executor_specific_aug_fwd_rule(symbol) or vjp_impl
 
     if _get_gradfn(symbol) is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
-
-    if isinstance(vjp_impl, RuleInfo):
-        # We should use this rule only if checker returns True for the current
-        # symbol's arguments
-        if vjp_impl.checker(*symbol.args, **symbol.kwargs):
-            vjp_impl = vjp_impl.rule
-        else:
-            vjp_impl = vjp_impl.fw_fallback
 
     if vjp_impl is None:
         # We could not find a VJP for this symbol, so we try to decompose it
@@ -3604,13 +3522,9 @@ def backward_pass(forward_env, trace, init_cotangents):
 
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
-        aug_forward = get_executor_specific_aug_fwd_rule(symbol) or aug_forward
 
         if _get_gradfn(symbol) is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
-
-        if isinstance(aug_forward, RuleInfo):
-            backward = backward_impls[aug_forward.executor, symbol.sym.id]
 
         if backward is None:
             if len(symbol.subsymbols) > 0 and not isinstance(symbol.sym.id, prims.PrimIDs):
@@ -3925,7 +3839,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     # Copy the signature of the original function so that the arguments are
     # named correctly in the augmented forward pass instead of being named
     # "args" and "kwargs".
-    augmented_forward_fn.__signature__ = inspect.signature(trace.fn)
+    augmented_forward_fn.__signature__ = inspect.signature(trace.fn or trace.python_callable())
 
     def ones_like(x):
         if isinstance(x, TensorProxy):

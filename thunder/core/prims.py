@@ -231,6 +231,7 @@ class PrimIDs(Enum):
     VAR_MEAN = auto()
     ARGMAX = auto()
     ARGMIN = auto()
+    TOPK = auto()
     # Scatter and gather prims (Experimental!)
     INDEX_ADD = auto()
     INDEX_PUT = auto()
@@ -626,7 +627,7 @@ def unpack_trivial_printer(
     )
 
     result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
-    s = f"# {result_str} {'(unused)' if bsym.output is None else ''}"
+    s = f"# {result_str}{' (unused)' if bsym.output is None else ''}"
     return s
 
 
@@ -731,7 +732,25 @@ def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
     return list(_collectify(y) for y in x)
 
 
-# TODO Review using multi-line unpacks more cleverly
+def _make_parts_into_line_or_lines(parts: list[str], out: list[str] | None = None) -> list[str]:
+    if out is None:
+        lines = []
+    else:
+        lines = out
+    line_parts = []
+    pos = 0
+    for p in parts:
+        if pos and pos + len(p) > 80:
+            lines.append("".join(line_parts) + "\\")
+            line_parts = []
+            pos = 0
+        line_parts.append(p)
+        pos += len(p)
+
+    lines.append("".join(line_parts))
+    return lines
+
+
 # TODO Possibly put the length in the code to show the requirement
 def unpack_sequence_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
@@ -755,12 +774,10 @@ def unpack_sequence_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty sequence)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
@@ -813,12 +830,10 @@ def _unpack_tuple_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty tuple)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
@@ -866,12 +881,10 @@ def _unpack_list_printer(
     if len(bsym.output) == 0:
         return f"# {call_str} (empty list)"
 
-    lines = []
-    for out in out_printables:
-        line = f"{codeutils.prettyprint(out, literals_as_underscores=True)}, \\"
-        lines.append(line)
+    parts = [f"{codeutils.prettyprint(out, literals_as_underscores=True)}, " for out in out_printables]
+    parts.append(f"= {call_str}")
 
-    lines.append(f"= {call_str}")
+    lines = _make_parts_into_line_or_lines(parts)
     return lines
 
 
@@ -3014,6 +3027,33 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 
 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
+
+
+def topk_meta(
+    a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy
+) -> (TensorProxy, TensorProxy):
+    utils.check(
+        out is None,
+        lambda: "Only `out` which is None is currently supported",
+    )
+
+    utils.check_type(a, TensorProxy)
+    utils.check_type(k, int)
+    utils.check_type(dim, int)
+    utils.check(pytype(largest) is bool, lambda: f"Expected {largest=} to be a boolean value")
+    utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean value")
+
+    utils.check(k >= 0 and k <= (a.shape[dim] if a.ndim > 0 else 1), lambda: f"selected index {k=} is out of range")
+
+    new_shape = a.shape
+    if a.ndim > 0:
+        new_shape = list(new_shape)
+        new_shape[dim] = k
+
+    return TensorProxy(like=a, shape=new_shape), TensorProxy(like=a, shape=new_shape, dtype=dtypes.int64)
+
+
+topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
 
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
