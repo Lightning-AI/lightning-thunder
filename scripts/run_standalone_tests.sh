@@ -51,4 +51,5 @@ done
 #find . -name "*.xml" -exec cp -a -t . --parents {} +
 rm $TEST_FILE
 
+printf "Exiting with status: $status\n"
 exit $status
