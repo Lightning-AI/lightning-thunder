@@ -20,10 +20,12 @@ ARG IMAGE_TYPE="devel"
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="8.9.7.29-1"
-ARG CUDNN_FRONTEND_CHECKOUT="v1.1.0"
+ARG CUDNN_FRONTEND_CHECKOUT="v1.2.1"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
+ARG TORCH_INSTALL="stable"
+ARG APEX_CHECKOUT="master"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -96,7 +98,8 @@ ENV \
     TORCH_CUDA_ARCH_LIST="8.0" \
     CUDA_SELECT_NVCC_ARCH_FLAGS="8.0"
 
-ARG TORCH_INSTALL="wheel"
+ARG TORCH_INSTALL
+ENV TORCH_USE_CUDA_DSA=1
 
 RUN \
     if [ "${TORCH_INSTALL}" == "source" ]; then \
@@ -122,15 +125,42 @@ RUN \
           --index-url="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}"; \
     fi
 
+ARG TORCH_INSTALL
+
 RUN \
-    # building nvFuser from source
-    git clone https://github.com/NVIDIA/Fuser.git && \
-    cd Fuser && \
-    git submodule update --init --recursive && \
-    pip install -r requirements.txt && \
-    python setup.py install --no-test --no-benchmark && \
+    if [ "${TORCH_INSTALL}" == "source" ]; then \
+        # building nvFuser from source
+        git clone https://github.com/NVIDIA/Fuser.git && \
+        cd Fuser && \
+        git submodule update --init --recursive && \
+        pip install -r requirements.txt && \
+        python setup.py install --no-test --no-benchmark && \
+        cd .. && \
+        rm -rf Fuser ; \
+    elif [ "${TORCH_INSTALL}" == "test" ]; then \
+        echo "Not supported option" ; \
+    else \
+        # installing pytorch from wheels \
+        CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+        TORCH_VERSION_MM=${TORCH_VERSION%.*} && \
+        pip install -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
+    fi
+
+RUN \
+    # building Apex from source
+    pip install "pip>=23.1" packaging && \
+    git clone https://github.com/NVIDIA/apex && \
+    cd apex && \
+    git checkout ${APEX_CHECKOUT} && \
+    # https://github.com/NVIDIA/apex#linux
+    pip install -v \
+      --disable-pip-version-check \
+      --no-cache-dir \
+      --no-build-isolation \
+      --config-settings "--build-option=--xentropy" \
+      . && \
     cd .. && \
-    rm -rf Fuser
+    rm -rf apex
 
 RUN \
     ls -lh requirements/ && \

@@ -16,7 +16,7 @@ from lightning_utilities import compare_version
 import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
-from thunder.tests import lit_gpt_model
+from thunder.tests import litgpt_model
 import thunder.clang as clang
 from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
@@ -50,23 +50,23 @@ def skipif_not_pytorch_2_1(f):
     )(f)
 
 
-def test_jitting_through_opaque_torch_symbols_sharp_edge():
-    def no_sharp_edge(x):
+def test_jitting_through_opaque_torch_symbols_error():
+    def no_error(x):
         # randn_like is in ltorch
         return torch.randn_like(x)
 
-    def sharp_edge(x):
+    def should_error(x):
         # rand_like is not yet in ltroch
         return torch.rand_like(x)
 
     x = torch.rand(1)
 
-    jno_sharp_edge = thunder.jit(no_sharp_edge, sharp_edges="error")
-    jno_sharp_edge(x)
+    jno_error = thunder.jit(no_error)
+    jno_error(x)
 
-    jsharp_edge = thunder.jit(sharp_edge, sharp_edges="error")
-    with pytest.raises(JITSharpEdgeError):
-        jsharp_edge(x)
+    jshould_error = thunder.jit(should_error)
+    with pytest.raises(NotImplementedError):
+        jshould_error(x)
 
 
 def test_binary_add_tensors():
@@ -505,7 +505,7 @@ def test_proxy_no_multiple_renames(device):
 
 def test_litgpt():
     from thunder.benchmarks import LitGPTBenchmark
-    from thunder.tests.lit_gpt_model import Config
+    from thunder.tests.litgpt_model import Config
 
     cfg: Config = Config.from_name("gpt-neox-like")
     bench = LitGPTBenchmark(config=cfg, device="cpu", dtype=torch.bfloat16, requires_grad=True)
@@ -627,16 +627,16 @@ def test_litgpt_variants(name, device):
     device = torch.device(device)
 
     x = torch.randint(0, 200, (5, 5), device=device)
-    config = lit_gpt_model.Config.from_name(name)
+    config = litgpt_model.Config.from_name(name)
 
     with device:
-        reference = lit_gpt_model.GPT(config)
+        reference = litgpt_model.GPT(config)
     expected_logits = reference(x)
 
     expected_logits.sum().backward()
 
     with device:
-        model = lit_gpt_model.GPT(config)
+        model = litgpt_model.GPT(config)
     model.load_state_dict(reference.state_dict())
     tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
     actual_logits = tom(x)
@@ -677,10 +677,10 @@ def test_litgpt_variants_kvcache(name, device):
 
     device = torch.device(device)
     x = torch.randint(0, 200, (1, 2), device=device)
-    config = lit_gpt_model.Config.from_name(name)
+    config = litgpt_model.Config.from_name(name)
 
     with device:
-        model = lit_gpt_model.GPT(config)
+        model = litgpt_model.GPT(config)
         model.max_seq_length = 3
 
     for p in model.parameters():
