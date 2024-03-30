@@ -17,9 +17,8 @@ repos:
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
-        with:
-          maxkb: 250
-          enforce-all: true
+        args: ["--maxkb=300", "--enforce-all"]
+        exclude: notebooks
       - id: check-docstring-first
       - id: detect-private-key
 

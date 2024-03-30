@@ -938,14 +938,13 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
 def default_thunder_cudnn_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    CUDNN_AVAILABLE = package_available("cudnn")
-    assert CUDNN_AVAILABLE, "Trying to benchmark with the thunder+cudnn executor, but cudnn is not available"
+    assert package_available("cudnn"), "Trying to benchmark with the thunder+cudnn executor, but cudnn is not available"
 
     from thunder.executors.cudnnex import register_cudnnex
 
     register_cudnnex(add_to_default_executors=False)
 
-    executors_list = ("cudnn", executors.NVFUSER, executors.TORCH)
+    # executors_list = ("cudnn", executors.NVFUSER, executors.TORCH)
     return thunder.jit(fn, executors=executors, disable_torch_autograd=True)
 
 
