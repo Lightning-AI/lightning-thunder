@@ -6,20 +6,25 @@ import random
 
 from lightning_utilities.core.imports import package_available
 
-CUDNN_AVAILABLE = package_available("cudnn")
+
+def cudnn_available() -> bool:
+    return package_available("cudnn")
+
+
+def cudnn_version() -> int:
+    if cudnn_available():
+        return cudnn.backend_version()
+    return 0
+
 
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
-if CUDNN_AVAILABLE:
+if cudnn_available():
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
     # Mapping from device to cudnn handles
     device_to_cudnn_handle = {}
-
-
-def cudnn_available() -> bool:
-    return CUDNN_AVAILABLE
 
 
 # This function creates a new handle for the device that cudnn should
