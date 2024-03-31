@@ -77,7 +77,7 @@ ARG TORCH_INSTALL
 
 # This may be needed only for building from source, otherwise PyTorch wheels include it
 RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
-        pip install "nvidia-cudnn-cu${CUDA_VERSION%.*.*}==${CUDNN_VERSION}" --only-binary ; \
+        pip install "nvidia-cudnn-cu${CUDA_VERSION%.*.*}==${CUDNN_VERSION}" --only-binary=:all: ; \
     fi
 
 COPY requirements/ requirements/
