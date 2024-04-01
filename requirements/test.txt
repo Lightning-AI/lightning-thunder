@@ -4,7 +4,7 @@ pytest-timeout ==2.2.0
 pytest-cov ==4.1.0
 pytest-xdist ==3.5.0
 pytest-random-order ==1.1.1
-pytest-timestamper ==0.0.9
+pytest-timestamper ==0.0.10
 graphviz ==0.20.1
 fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
