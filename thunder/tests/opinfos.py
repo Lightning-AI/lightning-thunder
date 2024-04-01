@@ -1628,12 +1628,11 @@ hardswish_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # PyTorch does not support CPU integer types hardswish
+        # PyTorch does not support integer types for both the CPU and CUDA hardswish
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.int16, datatypes.int32, datatypes.int64, datatypes.int8, datatypes.uint8),
-            devicetypes=(devices.DeviceType.CPU,),
         ),
         # TODO: we might have a tolerance issue here with hardsiwsh, a function of relu6
         DecorateInfo(
