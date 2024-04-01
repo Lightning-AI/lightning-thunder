@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import glob
 import os
+import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from setuptools import find_packages, setup
 
 _PATH_ROOT = os.path.dirname(__file__)
 _PATH_REQUIRES = os.path.join(_PATH_ROOT, "requirements")
+# check if os env. variable is set to convert version to nightly
+_CONVERT_VERSION = int(os.environ.get("CONVERT_VERSION2NIGHTLY", 0))
 
 
 def _load_py_module(fname, pkg="thunder"):
@@ -17,6 +20,35 @@ def _load_py_module(fname, pkg="thunder"):
     py = module_from_spec(spec)
     spec.loader.exec_module(py)
     return py
+
+
+def convert_version2nightly(about_file: str = "thunder/__about__.py") -> None:
+    """Load the actual version and convert it to the nightly version."""
+    from datetime import datetime
+
+    # load the about file
+    with open(about_file) as fo:
+        lines = fo.readlines()
+    idx = None
+    # find the line with version
+    for i, ln in enumerate(lines):
+        if ln.startswith("__version__"):
+            idx = i
+            break
+    if idx is None:
+        raise ValueError("The version is not found in the `__about__.py` file.")
+    # parse the version from variable assignment
+    version = lines[idx].split("=")[1].strip().strip('"')
+    # parse X.Y.Z version and prune any suffix
+    vers = re.match(r"(\d+)\.(\d+)\.(\d+).*", version)
+    # create timestamp  YYYYMMDD
+    timestamp = datetime.now().strftime("%Y%m%d")
+    version = f"{'.'.join(vers.groups())}.dev{timestamp}"
+    # print the new version
+    lines[idx] = f'__version__ = "{version}"\n'
+    # dump updated lines
+    with open(about_file, "w") as fo:
+        fo.writelines(lines)
 
 
 def _load_requirements(path_dir: str, file_name: str = "requirements.txt") -> list:
@@ -55,6 +87,9 @@ def _load_readme_description(path_dir: str, homepage: str, version: str) -> str:
     text = text.replace("docs/source/_static/", f"{os.path.join(github_source_url, 'docs/source/_static/')}")
     return text
 
+
+if _CONVERT_VERSION:
+    convert_version2nightly()
 
 about = _load_py_module("__about__.py")
 
