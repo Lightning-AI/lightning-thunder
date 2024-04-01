@@ -46,7 +46,7 @@ Why, yes! You can register it as an operator for a custom executor. See :doc:`ex
 3. Do you support custom hardware, or accelerators that aren't Nvidia's?
 ========================================================================
 
-Yes, executors are device-agnostic. The python executor, for example, runs the operation with cpython on the cpu. We've been focusing on Nvidia, but we welcome contributions for executors for other accelerator backends.
+Yes, executors are device-agnostic. The python executor for example runs the operation with cpython on the cpu. We've been focusing on the Nvidia stack, but Thunder is designed to be extensible so you can write your own executors for any backend. Just make an executor and register the operators you need. We welcome contributions for executors for other accelerator backends.
 
 
 =================================================================
@@ -77,6 +77,6 @@ Not at the moment. Implementing inplace operations would require tracking which 
 
 The common solution is to represent programs in `SSA form <https://en.wikipedia.org/wiki/Static_single-assignment_form>`_, or do some form of SSA-inspired variable renaming, but SSA is a much less understandable representation than a list of symbols in a trace. Switching to SSA would also complicate optimization passes, and require rewriting many of them to handle these aliasing rules.
 
-There also exists the problem that some backends, like Triton and nvfuser, or a potential Jax backend, are not actually good at handling inplace operations either. They, like Thunder, expect functional programs, and if we simply decide to forward these operations to the executor, not every executor would be able to implement every operation. For a simple torch operator like ``x.add_(y)``, this is unsatisfactory to us. We would ideally like to be able to convert instances of ``add_()`` to ``add()`` for executors. But currently, every intermediate trace needs to be executable and `add_()` would not be a supported bound symbol before it gets replaced by `add()` later.
+There also exists the problem that some backend executors do not support in-place operations. We have some ideas on how to functionalize ops for these executors, but some api issues are unresolved. 
 
 We want to support inplace operations eventually, but we are attached to traces as our program representation of choice for optimization passes. Much like with dynamic shapes, if you have relevant experience on how to best incorporate inplace operations without complicating optimization passes, come talk to us about it.
