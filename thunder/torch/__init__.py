@@ -1211,6 +1211,9 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
 def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     utils.check(not inplace, lambda: f"hardswish only supports inplace=False", exception_type=NotImplementedError)
+    utils.check(a.dtype in (torch.float16, torch.float32, torch.float64),
+                lambda: f"hardswish only supports floating point dtypes, got {a.dtype}",
+                exception_type=TypeError)
     return a * relu6(a + 3) / 6
 
 

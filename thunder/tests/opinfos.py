@@ -1608,31 +1608,14 @@ hardswish_opinfo = OpInfo(
     sample_input_generator=elementwise_unary_generator,
     error_input_generator=hardswish_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
+    dtypes=(datatypes.floating,),
     test_directives=(
-        # PyTorch does not support bool for both CPU and CUDA hardswish
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bool8,),
-        ),
-        # PyTorch does not support complex types for both the CPU and CUDA hardswish
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.complexfloating,),
-        ),
         # PyTorch does not support CPU Half hardswish
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # PyTorch does not support integer types for both the CPU and CUDA hardswish
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.int16, datatypes.int32, datatypes.int64, datatypes.int8, datatypes.uint8),
         ),
         # TODO: we might have a tolerance issue here with hardsiwsh, a function of relu6
         DecorateInfo(
