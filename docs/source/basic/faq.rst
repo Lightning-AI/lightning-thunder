@@ -77,6 +77,6 @@ Not at the moment. Implementing inplace operations would require tracking which 
 
 The common solution is to represent programs in `SSA form <https://en.wikipedia.org/wiki/Static_single-assignment_form>`_, or do some form of SSA-inspired variable renaming, but SSA is a much less understandable representation than a list of symbols in a trace. Switching to SSA would also complicate optimization passes, and require rewriting many of them to handle these aliasing rules.
 
-There also exists the problem that some backend executors do not support in-place operations. We have some ideas on how to functionalize ops for these executors, but some api issues are unresolved. 
+There also exists the problem that some backend executors do not support in-place operations. We have some ideas on how to functionalize ops for these executors, but some api issues are unresolved.
 
 We want to support inplace operations eventually, but we are attached to traces as our program representation of choice for optimization passes. Much like with dynamic shapes, if you have relevant experience on how to best incorporate inplace operations without complicating optimization passes, come talk to us about it.
