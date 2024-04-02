@@ -2762,12 +2762,12 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+        yield SampleInput(*[make(s) for s in shapes], dim=dim)
 
     # Tests concatenating with a tensor broadcast along the concatenation dimension
     a = make((5,))
     b = make((1,)).expand((5,))
-    yield SampleInput((a, b))
+    yield SampleInput(a, b, dim=0)
 
 
 def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -2783,15 +2783,22 @@ def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
     ]
 
     for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+        yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
+
+
+# nvfuserex_impl.to_descriptors refuses to take a **nested** list of tensors,
+# reporting `ValueError: unrecognized type in arguments: <class 'list'>`.
+# `cat_wrapper` is created to work around that.
+def cat_wrapper(*args, dim):
+    return ltorch.cat(args, dim=dim)
 
 
 cat_opinfo = OpInfo(
-    ltorch.cat,
+    cat_wrapper,
     supports_grad=True,
     sample_input_generator=cat_sample_generator,
     error_input_generator=cat_error_generator,
-    torch_reference=torch.cat,
+    torch_reference=lambda *args, dim: torch.cat(args, dim=dim),
     test_torch_compile_executor=True,
     test_directives=(
         # There's a bug in torch.compile + torch.cat for empty tensors in 2.1.0
@@ -2806,6 +2813,11 @@ cat_opinfo = OpInfo(
             "test_vjp_correctness",
             active_if=(LooseVersion(torch.__version__) < "2.2.0"),
             executors=("torchcompile",),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail(strict=True),
+            active_if=(nvfuser_version < "0.1.7"),
+            executors=("nvFuser",),
         ),
     ),
 )
@@ -3699,7 +3711,7 @@ def stack_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     for shapes, dim in cases:
-        yield SampleInput([make(s) for s in shapes], dim)
+        yield SampleInput(*[make(s) for s in shapes], dim=dim)
 
 
 def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -3718,14 +3730,19 @@ def stack_error_generator(op, device, dtype=torch.float32, **kwargs):
     ]
 
     for shapes, dim, exc_type, err_msg_match in cases:
-        yield SampleInput([make(s) for s in shapes], dim), exc_type, err_msg_match
+        yield SampleInput(*[make(s) for s in shapes], dim=dim), exc_type, err_msg_match
+
+
+# `stack_wrapper` is created for the same reason as `cat_wrapper.
+def stack_wrapper(*args, dim):
+    return ltorch.stack(args, dim=dim)
 
 
 stack_opinfo = OpInfo(
-    ltorch.stack,
+    stack_wrapper,
     sample_input_generator=stack_sample_generator,
     error_input_generator=stack_error_generator,
-    torch_reference=torch.stack,
+    torch_reference=lambda *args, dim: torch.stack(args, dim=dim),
     test_directives=(
         # vjp and jvp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
@@ -3958,17 +3975,30 @@ def matrix_transpose_sample_generator(op, device, dtype, requires_grad, **kwargs
 
     # shape
     cases = (
-        (4, 7, 8),
-        (4, 7),
+        (),
+        (2, 3),
+        (2, 3, 4),
+        (2, 3, 4, 2),
     )
 
     for shape in cases:
         yield SampleInput(make(shape))
 
 
+def matrix_transpose_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # shape, error type, error message
+    cases = (((3), RuntimeError, "tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor."),)
+
+    for shape, err_type, err_msg in cases:
+        yield SampleInput(make(shape)), err_type, err_msg
+
+
 transpose_opinfo = OpInfo(
     clang.matrix_transpose,
     sample_input_generator=matrix_transpose_sample_generator,
+    error_input_generator=matrix_transpose_error_generator,
     torch_reference=lambda x: x.mT,
 )
 shape_ops.append(transpose_opinfo)
@@ -4666,6 +4696,51 @@ argmin_opinfo = OpInfo(
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
 )
 reduction_ops.append(argmin_opinfo)
+
+
+def topk_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, k, dim
+    # NOTE: k = 0 is not consistent between the CPU and the CUDA PyTorch implementations,
+    # unless shape[dim] == 0
+    cases = (
+        ((), 1),
+        ((), 1, 0),
+        ((3, 0), 0),
+        ((4, 4), 2, 1),
+        ((4, 1, 6), 3, -1),
+        ((4, 1, 6), 3),
+        ((4, 7, 5, 1), 2, -3),
+        ((4, 2, 5, 1), 1),
+    )
+
+    for shape, *args in cases:
+        for largest, sorted in itertools.product((True, False), repeat=2):
+            yield SampleInput(make(shape), *args, largest=largest, sorted=sorted)
+
+
+def topk_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    err_msg = r"selected index .* is out of range"
+    yield (SampleInput(make(3, 2), 3), RuntimeError, err_msg)
+    yield (SampleInput(make(3, 0), 1), RuntimeError, err_msg)
+
+    err_msg = "Dimension out of range"
+    yield (SampleInput(make(3, 3), 1, 3), IndexError, err_msg)
+    yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
+
+
+topk_opinfo = OpInfo(
+    clang.topk,
+    sample_input_generator=topk_sample_generator,
+    error_input_generator=topk_error_generator,
+    torch_reference=torch.topk,
+    dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+)
+reduction_ops.append(topk_opinfo)
+
 
 opinfos.extend(reduction_ops)
 
@@ -6807,9 +6882,11 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-            if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
             weight=make(C) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
@@ -6853,9 +6930,11 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-            if not probability_target
-            else make(shape[1], low=0.0, high=1.0, requires_grad=True),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
             weight=make(C) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,

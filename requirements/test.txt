@@ -1,17 +1,17 @@
-coverage ==7.4.3
-pytest ==8.0.2
+coverage ==7.4.4
+pytest ==8.1.1
 pytest-timeout ==2.2.0
 pytest-cov ==4.1.0
 pytest-xdist ==3.5.0
 pytest-random-order ==1.1.1
-pytest-timestamper ==0.0.9
+pytest-timestamper ==0.0.10
 graphviz ==0.20.1
 fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
-hypothesis ==6.99.10  # for test_ddp.py
+hypothesis ==6.100.0  # for test_ddp.py
 numpy  # for test_ops.py
 einops  # for test_einops.py
-lit_gpt @ git+https://github.com/Lightning-AI/lit-gpt@f241d94df59d82b2017bfdcd3800ac8779eb45f5
+litgpt @ git+https://github.com/Lightning-AI/lit-gpt@940ffc96f7214bca24aa77479bc7c33900aaef28
 absl-py # thunder/benchmarks/test_benchmark_litgpt.py
 pandas # thunder/benchmarks/test_benchmark_litgpt.py
 xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
