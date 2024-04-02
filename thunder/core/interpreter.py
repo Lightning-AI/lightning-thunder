@@ -6645,7 +6645,7 @@ def interpret(
 
                 interpretation_result: Any = _interpret_call(wrapped_fn_2, args, kwargs)
                 interpretation_result = unwrap(interpretation_result)
-            except Exception as e:
+            except BaseException as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
                 traceback_str = os.linesep.join(f.format_with_source() for f in runtimectx.frame_stack)
@@ -6653,12 +6653,9 @@ def interpret(
                     f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
                 )
                 raise InterpreterError(msg) from e
-            finally:
-                # NOTE: Wrapped functions are valid to assign new attributes to.
-                fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
-            # # NOTE: Wrapped functions are valid to assign new attributes to.
-            # fn_._last_interpreted_history = runtimectx.history  # type: ignore
+            # NOTE: Wrapped functions are valid to assign new attributes to.
+            fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
