@@ -21,9 +21,9 @@ def test_input_as_output_prim(executor, device, dtype):
         return y
 
     def foo(x, y):
-        z = torch.mul(x,y)
-        z = torch.mul(z,z)
-        thunder.core.prims.input_as_output(z,x)
+        z = torch.mul(x, y)
+        z = torch.mul(z, z)
+        thunder.core.prims.input_as_output(z, x)
         # TODO some errors in rematerialization.py
         # y = y*y
         return y
