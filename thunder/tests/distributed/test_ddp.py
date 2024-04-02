@@ -1431,6 +1431,25 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
             with fp8_autocast():
                 out = jit_model(x, y).sum()
             out.backward()
+
+        fwd_exec_trace = thunder.last_traces(jit_model)[-1]
+        bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
+
+        # Verify that the first te_linear in fwd_exec_trace is the
+        # last one in bwd_exec_tarce.
+        # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
+        # passed to backward.
+        # As CollectionProxy don't implement __eq__, we verify them by name.
+        first_ctx_name = None
+        for bsym in fwd_exec_trace.bound_symbols:
+            if bsym.sym.name.startswith("te_linear"):
+                first_ctx_name = bsym.output[1].name
+                break
+
+        for bsym in reversed(bwd_exec_trace.bound_symbols):
+            if bsym.sym.name.startswith("te_functional"):
+                assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
+                break
     except Exception as e:
         sanity_exceptions.append(e)
 
