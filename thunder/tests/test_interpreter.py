@@ -1584,10 +1584,6 @@ def test_enumerate_lookaside(jit):
             assert is_jitting_with_raise() == jitting
             return self.list.__iter__()
 
-        def __next__(self):
-            assert is_jitting_with_raise() == jitting
-            return self.list.__next__()
-
     def foo(a, start=0):
         return list(enumerate(a, start))
 
