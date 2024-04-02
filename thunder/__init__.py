@@ -21,6 +21,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
 )
 from thunder.core.trace import (
+    JitResults,
     TraceCtx,
     from_trace,
     set_tracectx,
@@ -172,7 +173,7 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> tuple[TraceCtx, TraceCtx]:
+def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> JitResults:
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
 
 
@@ -502,17 +503,15 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                prologue_trc, computation_trc, *maybe_epilogue = interpreter(
-                    fn, args, kwargs, sharp_edges=cd.sharp_edges
-                )
+                jit_results: JitResults = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
+                prologue_trc = jit_results.prologue_trace
+                computation_trc = jit_results.computation_trace
+                epilogue_trc = jit_results.epilogue_trace
+                last_interpreted_history = jit_results.history
 
-            if maybe_epilogue:
-                epilogue_traces = maybe_epilogue
-                if epilogue_traces[-1] is not None:
-                    epilogue = epilogue_traces[-1].python_callable()
-                else:
-                    epilogue_traces = None
-                    epilogue = None
+            if epilogue_trc is not None:
+                epilogue_traces = [epilogue_trc]
+                epilogue = epilogue_trc.python_callable()
             else:
                 epilogue_traces = None
                 epilogue = None
@@ -543,6 +542,8 @@ def jit(
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
+            cs.last_interpreted_history = last_interpreted_history
+            cs.last_interpreted_instructions = (i for i in last_interpreted_history if isinstance(i, dis.Instruction))
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -797,7 +798,7 @@ def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
     if cs.last_interpreted_instructions is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_interpreted_instructions
+    return list(cs.last_interpreted_instructions)
 
 
 def last_interpreted_history(fn: Callable) -> list[InterpreterHistoryItem]:
@@ -822,10 +823,9 @@ def print_last_interpreted_history(
     color_internals: bool = False,
     print_source_code: bool = True,
 ) -> None:
-    """Print the history of the last interpreted function. This is useful for debugging the interpreter."""
-    if (history := last_interpreted_history(fn)) is None:
-        print("No history could be found.")
-        return
+    history = last_interpreted_history(fn)
+    import thunder.core.interpreter
+
     thunder.core.interpreter.print_history(
         history,
         print_fn=print_fn,

@@ -1,4 +1,5 @@
-from typing import Any, Optional
+import dis
+from typing import Any, Generator, Optional
 from collections.abc import Callable
 from enum import Enum, auto
 from collections import deque, defaultdict
@@ -58,8 +59,8 @@ class CompileStats:
         self.last_traces = None
         self.last_prologue = None
         self.last_prologue_traces = None
-        self.last_interpreted_instructions = None
-        self.last_interpreted_history = None
+        self.last_interpreted_instructions: Generator[dis.Instruction, None, None] | None = None
+        self.last_interpreted_history: list[InterpreterHistoryItem] | None = None
 
         # torch.autograd.Function specific data
         self.last_backward_traces = None
@@ -474,7 +475,7 @@ def cache_get(
 # TODO Consider modeling additional calls to trace()
 # TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
-from thunder.core.interpreter import make_opaque
+from thunder.core.interpreter import InterpreterHistoryItem, make_opaque
 
 
 def trace(

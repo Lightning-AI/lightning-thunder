@@ -419,7 +419,10 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
             **cd.compile_options,
         )
 
-    cs = CompileStats()
+    cs = getattr(cfn, "_lc_cs", None)
+    if cs is None:
+        cs = CompileStats()
+
     transforms = cfn._lc_transforms + [transform]
     potransforms = cfn._lc_post_optimization_transforms
     using_grad_transform = cfn._using_grad_transform

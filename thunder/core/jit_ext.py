@@ -67,6 +67,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
+    InterpreterHistoryItem,
     interpret,
     _interpret_call,
     CapsuleType,
@@ -98,7 +99,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import TraceCtx, JitResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map
@@ -377,9 +378,7 @@ class ThunderSharpEdgeError(RuntimeError):
 def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
-    )
+    s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(ThunderSharpEdgeError(s))
@@ -471,9 +470,7 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
-    )
+    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -1384,9 +1381,7 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     return found_pg
 
 
-def thunder_general_jit(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
-) -> tuple[TraceCtx, TraceCtx]:
+def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> JitResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
@@ -1399,7 +1394,7 @@ def thunder_general_jit(
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
-    epilogue_trace: TraceCtx = TraceCtx()
+    epilogue_trace: TraceCtx | None = TraceCtx()
 
     si = SigInfo("prologue")
     si.varargs = ("args", None)
@@ -1430,6 +1425,8 @@ def thunder_general_jit(
             result = jfn(*args, **kwargs)
             prims.python_return(result)
             process_recorded_modifications(ctx, epilogue_trace)
+
+            last_interpreted_history = jfn._last_interpreted_history
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
@@ -1489,4 +1486,4 @@ def thunder_general_jit(
             epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
         )
 
-    return prologue_trace, computation_trace, epilogue_trace
+    return JitResults(prologue_trace, computation_trace, epilogue_trace, last_interpreted_history)

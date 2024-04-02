@@ -6655,11 +6655,9 @@ def interpret(
                 raise InterpreterError(msg) from e
             finally:
                 # NOTE: Wrapped functions are valid to assign new attributes to.
-                fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
                 fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
             # # NOTE: Wrapped functions are valid to assign new attributes to.
-            # fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
             # fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
@@ -6674,12 +6672,12 @@ def interpret(
     return fn_
 
 
-def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
-    return getattr(fn, "_last_interpreted_instructions", None)
+def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
+    return [i for i in getattr(fn, "_last_interpreted_history", ()) if isinstance(i, dis.Instruction)]
 
 
-def last_interpreted_history(fn: Callable) -> None | list[InterpreterHistoryItem]:
-    return getattr(fn, "_last_interpreted_history", None)
+def last_interpreted_history(fn: Callable) -> list[InterpreterHistoryItem]:
+    return getattr(fn, "_last_interpreted_history", [])
 
 
 def print_history(

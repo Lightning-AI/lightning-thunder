@@ -14,6 +14,7 @@ from thunder.core.options import (
 from thunder.core.trace import (
     TraceCtx,
     tracectx,
+    JitResults,
 )
 
 import thunder.core.prims as prims
@@ -300,7 +301,7 @@ def _eager_unpack(x: Any, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[Pr
 #       returns what the original function did
 def _eager_unpacking_interpreter(
     interpreter: Callable, fn: Callable, args, kwargs, /, *, interpreter_name: str
-) -> tuple[TraceCtx, TraceCtx]:
+) -> JitResults:
     # Unpacks the inputs
     si: SigInfo = get_siginfo(fn, args, kwargs)
 
@@ -385,7 +386,9 @@ def _eager_unpacking_interpreter(
             csi.args.append((p.name, None))
             computation_trc.add_name(p.name)
 
-        result = interpreter(si.unwrapped_fn)(*interpretation_args, **interpretation_kwargs)
+        jfn = interpreter(si.unwrapped_fn)
+        result = jfn(*interpretation_args, **interpretation_kwargs)
+        history = jfn._last_interpreted_history
 
         # Validates that the returned items are proxies or printable values
         def leaf_test(x: Any) -> bool:
@@ -412,13 +415,11 @@ def _eager_unpacking_interpreter(
     computation_trc._siginfo = csi
     computation_trc.args = computation_args
 
-    return prologue_trc, computation_trc
+    return JitResults(prologue_trc, computation_trc, None, history)
 
 
 # Translates the Python function a thunder program using the Python interpreter
-def _python_interpreter(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
-) -> tuple[TraceCtx, TraceCtx]:
+def _python_interpreter(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> JitResults:
     if sharp_edges is not SHARP_EDGES_OPTIONS.ALLOW:
         raise ValueError(
             f"Detecting sharp edges is not supported when using the Python interpreter. To detect sharp edges use another interpretation option."
@@ -431,9 +432,7 @@ def _python_interpreter(
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _translate_functions_interpreter(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
-) -> tuple[TraceCtx, TraceCtx]:
+def _translate_functions_interpreter(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> JitResults:
     from thunder.core.jit_ext import minimal_thunder_jit
 
     pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges)
