@@ -388,7 +388,7 @@ def _eager_unpacking_interpreter(
 
         jfn = interpreter(si.unwrapped_fn)
         result = jfn(*interpretation_args, **interpretation_kwargs)
-        history = jfn._last_interpreted_history
+        history = getattr(jfn, "_last_interpreted_history", [])
 
         # Validates that the returned items are proxies or printable values
         def leaf_test(x: Any) -> bool:
