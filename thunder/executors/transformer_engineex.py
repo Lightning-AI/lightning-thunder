@@ -340,6 +340,9 @@ LINEAR_CALLS_COUNTER = 0
 if TE_AVAILABLE:
     _DEFAULT_RECIPE = recipe.DelayedScaling()
 
+IMPORT_CTX_TE_KEY = "transformer_engine"
+FP8_RECIPE_KEY = "fp8_recipe"
+
 
 # Creates a new stateful operator for each invocation of `linear`.
 def _create_fp8_linear_bound_symbol(
@@ -350,15 +353,15 @@ def _create_fp8_linear_bound_symbol(
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
 
     desc = "transformer_engine_ex: Optional fp8_recipe for `fp8_autocast` context manager."
-    if (fp8_recipe := get_compile_option("fp8_recipe", desc)) is None:
+    if (fp8_recipe := get_compile_option(FP8_RECIPE_KEY, desc)) is None:
         fp8_recipe = _DEFAULT_RECIPE
 
     def bind_postprocess(bsym: BoundSymbol) -> None:
         # This dict is then used by trace.python_ctx() to resolve the
         # BoundSymbol to the actual function.
         bsym._call_ctx: dict[str, Callable] = {name: linear_fn}
-        bsym._import_ctx: dict[str, Any] = {"te": te}
-        bsym._object_ctx: dict[str, Any] = {"fp8_recipe": fp8_recipe}
+        bsym._import_ctx: dict[str, Any] = {IMPORT_CTX_TE_KEY: te}
+        bsym._object_ctx: dict[str, Any] = {FP8_RECIPE_KEY: fp8_recipe}
 
     meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled)
     sym = Symbol(
@@ -446,3 +449,17 @@ transformer_engine_ex.register_implementation(
     execution_transform=_linear_transform,
     grad_transform=_linear_grad,
 )
+
+
+def _is_te_linear_enabled(import_ctx, object_ctx):
+    # These keys are present in `import_ctx` and `object_ctx` only if
+    # we actually replaced a linear call with a new TE operator.
+    is_te_exec_enabled = IMPORT_CTX_TE_KEY in import_ctx and FP8_RECIPE_KEY in object_ctx
+    return is_te_exec_enabled
+
+
+TE_CTX_STR = f"@{IMPORT_CTX_TE_KEY}.fp8_autocast(fp8_recipe={FP8_RECIPE_KEY})"
+
+
+def _get_te_wrapper_string():
+    return TE_CTX_STR

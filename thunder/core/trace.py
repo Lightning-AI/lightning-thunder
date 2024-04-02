@@ -376,19 +376,10 @@ class TraceCtx:
             # forward function in fp8_autocast ctx manager.
             # In future, if other executor has similar requirements, we should
             # add a new extension point for executors
-            def is_transformer_engine_enabled():
-                # We only want the forward function to be called with ctx manager.
-                # TODO: Nicer way to detect forward or backward trace.
-                if not self._include_te_fp8_autocast:
-                    return False
+            from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
 
-                # This symbols are in import_ctx and object_ctx only if
-                # we actually replaced a linear call with a new TE operator.
-                is_te_exec_enabled = "te" in import_ctx and "fp8_recipe" in object_ctx
-                return is_te_exec_enabled
-
-            if is_transformer_engine_enabled():
-                program.append("@te.fp8_autocast(fp8_recipe=fp8_recipe)")
+            if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
+                program.append(_get_te_wrapper_string())
 
             program.append(signature_str)
 
