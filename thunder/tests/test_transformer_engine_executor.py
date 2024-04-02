@@ -53,7 +53,6 @@ def test_te_linear_forward_backward(fp8_recipe):
     cfn = thunder.jit(fn, executors=[transformer_engine_ex], fp8_recipe=fp8_recipe)
 
     # Enable autocasting for the forward pass
-    # with te.fp8_autocast(fp8_recipe=fp8_recipe):
     thunder_result = cfn(x, w1, w2)
 
     # Enable autocasting for the forward pass
@@ -108,16 +107,16 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
         # Run for `iterations`.
         for iter_n in range(iterations):
             x = torch.ones(*input_shape, device=device, dtype=dtype) + iter_n
-            # Enable autocasting for the forward pass
-            with te.fp8_autocast(fp8_recipe=fp8_recipe):
-                result = model(x)
-                loss = torch.nn.functional.mse_loss(result.sum(), target_value)
+            result = model(x)
+            loss = torch.nn.functional.mse_loss(result.sum(), target_value)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
     def te_model(x):
-        return te_linear2(te_linear1(x))
+        # Enable autocasting for the forward pass
+        with te.fp8_autocast(fp8_recipe=fp8_recipe):
+            return te_linear2(te_linear1(x))
 
     te_sgd_optimizer = torch.optim.SGD(list(te_linear1.parameters()) + list(te_linear2.parameters()))
 
@@ -178,9 +177,9 @@ def test_te_with_autocast():
     x = torch.randn(16, 16, device=device, requires_grad=True)
     w = torch.randn(16, 16, device=device, requires_grad=True)
 
-    cfunc = thunder.compile(
+    cfunc = thunder.jit(
         thunder.core.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
-        executors_list=[transformer_engine_ex],
+        executors=[transformer_engine_ex],
         disable_preprocessing=True,
     )
     cfunc(x, w)
