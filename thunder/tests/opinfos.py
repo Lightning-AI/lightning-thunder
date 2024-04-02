@@ -1598,6 +1598,35 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
+
+
+hardswish_opinfo = OpInfo(
+    ltorch.hardswish,
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=hardswish_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support CPU Half hardswish
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # TODO: we might have a tolerance issue here with hardsiwsh, a function of relu6
+        DecorateInfo(
+            pytest.mark.xfail(strict=False),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(hardswish_opinfo)
+
+
 def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
     a = make_tensor((), dtype=dtype, device=device)
     yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
