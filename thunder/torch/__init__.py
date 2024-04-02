@@ -3382,14 +3382,27 @@ def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_fr
     return result
 
 
+@torchsymbol(torch.nn.functional.one_hot, id="torch.nn.functional.one_hot", is_method=False)
+def one_hot(a: TensorProxy, /, num_classes: int) -> TensorProxy: # Should we use TensorProxy for a?
+    if num_classes == -1:
+        # TODO: implement when we're ready to support auto inference using `.item()`
+        utils.check(False, lambda: "num_classes=-1 not supported yet.", exception_type=NotImplementedError)
+
+    canvas = torch.zeros(*a.shape, num_classes, dtype=dtypes.int64)  # should we use int64_?
+    index = a.unsqueeze(-1)
+    src = torch.ones_like(index, dtype=dtypes.int64)
+
+    return scatter_add(canvas, dim=-1, index=index, src=src)
+
+
 @torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
 def group_norm(
-    a: TensorProxy,
+        a: TensorProxy,
     /,
-    num_groups: int,
-    weight: None | TensorProxy = None,
-    bias: None | TensorProxy = None,
-    eps: float = 1e-5,
+        num_groups: int,
+        weight: None | TensorProxy = None,
+        bias: None | TensorProxy = None,
+        eps: float = 1e-5,
 ) -> TensorProxy:
     utils.check(a.ndim >= 2, lambda: f"group_norm: {a.ndim=} should be at least 2")
 
