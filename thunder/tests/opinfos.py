@@ -4761,12 +4761,39 @@ def topk_error_generator(op, device, **kwargs):
     yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
 
 
+# Phantom grad tests do not handle tensor outputs
+# that do not require grad and/or do not have grad_fn.
+# Therefore we explicitly filter outputs.
+# See https://github.com/Lightning-AI/lightning-thunder/issues/119 {
+def topk_thunder_ref(*args, **kwargs):
+    return clang.topk(*args, **kwargs)[0]
+
+
+def topk_torch_ref(*args, **kwargs):
+    return torch.topk(*args, **kwargs)[0]
+# }
+
+
 topk_opinfo = OpInfo(
-    clang.topk,
+    topk_thunder_ref,
+    name="topk",
+    supports_grad=True,
+    # Without the fixed seed this generator does not guarantee
+    # to produce inputs at which topk is differentiable
+    # (i.e. when topk(x, ...).indices == topk(x + dx, ...).indices).
+    # TODO: (@nikitaved): potentially modify these inputs to
+    # fix the issue.
     sample_input_generator=topk_sample_generator,
     error_input_generator=topk_error_generator,
-    torch_reference=torch.topk,
+    torch_reference=topk_torch_ref,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+    test_directives=(
+        DecorateInfo(
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/120
+            pytest.mark.skip(reason="Cannot handle inputs/outputs which do not require grads"),
+            "test_vjp_correctness",
+        ),
+    ),
 )
 reduction_ops.append(topk_opinfo)
 

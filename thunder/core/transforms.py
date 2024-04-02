@@ -1108,6 +1108,25 @@ def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
 register_grad(pids.SUM, _sum_prim_grad)
 
 
+@torchctx
+def _topk_prim_grad(a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None):
+    fwd = prims.topk(a, k, dim, largest, sorted, out=out)
+    val, idx = fwd
+
+    val_grad = get_grad(val)
+
+    a_grad = ltorch.zeros_like(a)
+    # TODO: replace with scatter once we have it.
+    # scatter_add is a prim and it relies on atomic ops.
+    a_grad = ltorch.scatter_add(a_grad, dim, idx, val_grad)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TOPK, _topk_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
