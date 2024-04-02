@@ -21,7 +21,7 @@ from thunder.core.interpreter import (
     InterpreterError,
     print_history,
     last_interpreted_history,
-    last_interpreted_instructions
+    last_interpreted_instructions,
 )
 
 #

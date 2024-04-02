@@ -6775,5 +6775,3 @@ def print_history(
 
         if deindent:
             c_indent -= 1
-
-

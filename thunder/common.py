@@ -1,5 +1,6 @@
 import dis
-from typing import Any, Generator, Optional
+from typing import Any, Optional
+from collections.abc import Generator
 from collections.abc import Callable
 from enum import Enum, auto
 from collections import deque, defaultdict
