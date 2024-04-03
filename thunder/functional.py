@@ -432,7 +432,9 @@ def _python_interpreter(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _translate_functions_interpreter(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+def _translate_functions_interpreter(
+    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
+) -> TraceResults:
     from thunder.core.jit_ext import minimal_thunder_jit
 
     pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges)
