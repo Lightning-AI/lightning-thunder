@@ -4771,6 +4771,8 @@ def topk_thunder_ref(*args, **kwargs):
 
 def topk_torch_ref(*args, **kwargs):
     return torch.topk(*args, **kwargs)[0]
+
+
 # }
 
 

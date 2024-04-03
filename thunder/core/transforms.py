@@ -1109,7 +1109,9 @@ register_grad(pids.SUM, _sum_prim_grad)
 
 
 @torchctx
-def _topk_prim_grad(a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None):
+def _topk_prim_grad(
+    a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
+):
     fwd = prims.topk(a, k, dim, largest, sorted, out=out)
     val, idx = fwd
 
