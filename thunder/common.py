@@ -720,11 +720,7 @@ def _create_callable(
         cs.last_trace_cache_stop = time.time_ns()
 
         # Applies the autocast transform if PyTorch's autocast behavior is enabled
-        processed_function = (
-            cd.fn
-            if not is_autocast_enabled
-            else autocast(cd.fn, dtype=autocast_thunder_dtype)
-        )
+        processed_function = cd.fn if not is_autocast_enabled else autocast(cd.fn, dtype=autocast_thunder_dtype)
 
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
