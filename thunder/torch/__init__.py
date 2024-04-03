@@ -1208,6 +1208,17 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     return clamp(a, 0, 6)
 
 
+@torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
+def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    utils.check(not inplace, lambda: f"hardswish only supports inplace=False", exception_type=NotImplementedError)
+    utils.check(
+        dtypes.is_float_dtype(a.dtype),
+        lambda: f"hardswish only supports floating point dtypes, got {a.dtype}",
+        exception_type=ValueError,
+    )
+    return a * relu6(a + 3) / 6
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -2481,75 +2492,7 @@ def layer_norm(
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
 
 
-# we need variance for batch_norm
-def _normalize_mean_var(a: TensorProxy, /, norm_dims, eps: Number) -> tuple[TensorLike, TensorLike, TensorLike]:
-    """Computes mean and var of a tensor along norm_dims. Used as a helper function for normalization layers.
-
-    Args:
-        a (Tensor): input tensor
-        norm_dims (DimsType): dimensions to normalize over
-        eps (float): epsilon for numerical stability
-
-    Returns:
-        out (Tensor): normalized tensor.
-        mean (Tensor): mean of the tensor along norm_dims.
-        var (Tensor): var of the tensor along norm_dims.
-    """
-    norm_dims = utils.canonicalize_dims(a.ndim, norm_dims)
-    computation_dtype = utils.get_computation_dtype(a.dtype)
-    a_acc = to(a, computation_dtype)
-    biased_var, mean = var_mean(a_acc, dim=norm_dims, correction=0, keepdim=True)
-    rstd = rsqrt(biased_var + eps)
-    out = (a - mean) * rstd
-    return out, mean, biased_var
-
-
-# TODO: likely want to refactor these normalizations
-def _native_batch_norm(
-    a: TensorProxy,
-    /,
-    weight: TensorProxy,
-    bias: TensorProxy,
-    eps: Number,
-) -> tuple[TensorLike, TensorLike, TensorLike]:
-    # Validates inputs
-    input_shape = tuple(a.shape)
-    utils.check(len(input_shape) >= 2, lambda: f"Expected input_shape={input_shape} to have length >= 2!")
-
-    # NOTE Containers are canonicalized in the following checks since
-    #   (1, 2, 3) != [1, 2, 3]
-    utils.check(
-        weight is None or weight.shape == (input_shape[1],) or weight.shape == (),
-        lambda: f"Expected weight.shape={weight.shape} to be {(input_shape[1],)}!",
-    )
-    utils.check(
-        bias is None or bias.shape == (input_shape[1],) or bias.shape == (),
-        lambda: f"Expected bias.shape={bias.shape} to be {(input_shape[1],)}!",
-    )
-
-    params_shape = (1, -1) + (1,) * (a.ndim - 2)
-    reduction_dims = (0,) + tuple(range(2, a.ndim))
-    out, mean, var = _normalize_mean_var(a, reduction_dims, eps)
-
-    # Handles weight and bias
-    if weight is not None:
-        weight = reshape(weight, params_shape)
-        out = out * weight
-    if bias is not None:
-        bias = reshape(bias, params_shape)
-        out = out + bias
-
-    out = to(out, a.dtype)
-    # TODO Is the following conversion or conversions CPU only?
-    # if input.device.type == "cpu":
-    mean = to(mean, a.dtype)
-    var = to(var, a.dtype)
-
-    return out, mean, var
-
-
-# TODO Move this to nn.functional
-@torchsymbol(torch.nn.functional.batch_norm, is_prim=True)
+@torchsymbol(torch.nn.functional.batch_norm)
 def batch_norm(
     a: TensorLike,
     running_mean: None | TensorLike = None,
@@ -2557,17 +2500,181 @@ def batch_norm(
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
     training: bool = False,
-    momentum: None | Number = 0.1,
+    momentum: Number = 0.1,
     eps: Number = 1e-5,
 ) -> TensorLike:
-    from thunder.core.trace import detached_trace
+    # Validates inputs
+    input_shape = tuple(a.shape)
+    utils.check(len(input_shape) >= 2, lambda: f"Expected input_shape={input_shape} to have length >= 2!")
 
-    with detached_trace():
-        out, mean, var = _native_batch_norm(a, weight, bias, eps)
-        if training and momentum is not None and running_mean is not None and running_var is not None:
-            running_mean = (1 - momentum) * running_mean + momentum * mean
-            running_var = (1 - momentum) * running_var + momentum * var
-    return out
+    # NOTE Containers are canonicalized in the following checks since
+    #   (1, 2, 3) != [1, 2, 3]
+    utils.check(
+        weight is None or weight.shape == (input_shape[1],),
+        lambda: f"Expected weight.shape={weight.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        bias is None or bias.shape == (input_shape[1],),
+        lambda: f"Expected bias.shape={bias.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        running_mean is None or running_mean.shape == (input_shape[1],),
+        lambda: f"Expected running_mean.shape={running_mean.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        running_var is None or running_var.shape == (input_shape[1],),
+        lambda: f"Expected running_var.shape={running_var.shape} to be {(input_shape[1],)}!",
+    )
+    if training:
+        size_prods = input_shape[0]
+        for i in range(len(input_shape) - 2):
+            size_prods *= input_shape[i + 2]
+        utils.check(
+            size_prods != 1, lambda: f"Expected more than 1 value per channel when training, got input size {size}"
+        )
+    else:
+        utils.check(
+            running_mean is not None and running_var is not None,
+            lambda: f"running_mean and running_var must be defined in evaluation mode",
+        )
+    computation_dtype = utils.get_computation_dtype(a.dtype)
+    a_dtype = a.dtype
+    # Check mixed input types
+    params = [x for x in (weight, bias, running_mean, running_var) if x is not None]
+    if params:
+        if utils.is_low_precision_dtype(a.dtype):
+            utils.check(
+                utils.are_same_dtypes(params[0], a) or utils.are_same_dtypes(params[0], computation_dtype),
+                lambda: f"Expected to have type {computation_dtype} or {a.dtype} but got {params[0].dtype}",
+            )
+        else:
+            utils.check_same_dtype(params[0], a)
+        utils.check_same_dtype(*params)
+
+    # inplace operation is not supported, so running mean and running var can not be casted,
+    # they are passed to prim operator directly
+    (
+        a,
+        weight,
+        bias,
+    ) = (
+        to(x, computation_dtype) if x is not None else x
+        for x in (
+            a,
+            weight,
+            bias,
+        )
+    )
+    result = prims.batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
+    output = to(result[0], a_dtype)
+    return output
+
+
+@torchsymbol("batch_norm_backward", id="batch_norm_backward")
+def batch_norm_backward(
+    g: TensorLike,
+    a: TensorLike,
+    weight: None | TensorLike,
+    running_mean: None | TensorLike,
+    running_var: None | TensorLike,
+    save_mean: None | TensorLike,
+    save_invstd: None | TensorLike,
+    train: bool,
+    eps: Number,
+    output_mask: list[bool],
+) -> tuple[TensorLike, None | TensorLike, None | TensorLike]:
+    utils.check(a.ndim >= 2, lambda: f"Input tensor must have at least batch and channel dimensions!")
+    if train:
+        utils.check(
+            save_mean is not None and save_invstd is not None,
+            lambda: f"when train=True, save_mean and save_invstd are required",
+        )
+    else:
+        utils.check(
+            running_mean is not None and running_var is not None,
+            lambda: f"when train=False, running_mean and running_var are required",
+        )
+    a_dtype = a.dtype
+    if weight is not None:
+        weight_dtype = weight.dtype
+    else:
+        weight_dtype = a_dtype
+    computation_dtype = utils.get_computation_dtype(a.dtype)
+    (
+        grad_out_cast,
+        a_cast,
+        weight_cast,
+        running_mean_cast,
+        running_var_cast,
+        save_mean_cast,
+        save_invstd_cast,
+    ) = (
+        to(x, computation_dtype) if x is not None else x
+        for x in (
+            g,
+            a,
+            weight,
+            running_mean,
+            running_var,
+            save_mean,
+            save_invstd,
+        )
+    )
+    input_shape = a.shape
+    input_rank = a.dim()
+    axis = 1
+    input_size_prod = 1
+    for x in input_shape:
+        input_size_prod *= x
+
+    num_features = input_size_prod / input_shape[axis]
+    mean = save_mean_cast
+    invstd = save_invstd_cast
+    if not train:
+        mean = running_mean_cast
+        invstd = rsqrt(running_var_cast + eps)
+    broadcast_mask = [1] * input_rank
+    broadcast_mask[axis] = input_shape[axis]
+
+    reduction_axes = []
+    for i in range(input_rank):
+        if i != axis:
+            reduction_axes.append(i)
+
+    mean = reshape(mean, broadcast_mask)
+    norm = 1.0 / num_features
+    grad_output_sum = sum(grad_out_cast, reduction_axes)
+    dot_p = sum(grad_out_cast * (a_cast - mean), reduction_axes)
+
+    grad_mean = reshape(grad_output_sum * norm, broadcast_mask)
+    proj_scale = reshape(mul(dot_p * norm, invstd * invstd), broadcast_mask)
+
+    if weight_cast is None:
+        grad_scale = reshape(invstd, broadcast_mask) * 1.0
+    else:
+        grad_scale = reshape(invstd * weight_cast, broadcast_mask)
+
+    if train:
+        proj = (a_cast - mean) * proj_scale
+        grad_input = ((grad_out_cast - proj) - grad_mean) * grad_scale
+    else:
+        grad_input = grad_out_cast * grad_scale
+
+    if output_mask[1]:
+        grad_weight = dot_p * invstd
+    else:
+        grad_weight = None
+
+    if output_mask[2]:
+        grad_bias = grad_output_sum
+    else:
+        grad_bias = None
+
+    return (
+        grad_input.to(a_dtype),
+        None if grad_weight is None else clang.maybe_convert_to_dtype(grad_weight, weight_dtype),
+        None if grad_bias is None else clang.maybe_convert_to_dtype(grad_bias, weight_dtype),
+    )
 
 
 #

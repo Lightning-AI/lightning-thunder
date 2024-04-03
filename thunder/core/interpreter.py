@@ -1360,6 +1360,20 @@ def _bool_lookaside(x: Any) -> bool | INTERPRETER_SIGNALS:
     return _interpret_call(impl, x)
 
 
+# https://docs.python.org/3/library/functions.html#enumerate
+def _enumerate_lookaside(obj: Iterable, start: int = 0):
+    if not wrapped_isinstance(start, int):
+        return do_raise(TypeError(f"{type(start)} object cannot be interpreted as an integer"))
+
+    def impl(obj, start):
+        n = start
+        for elem in obj:
+            yield n, elem
+            n += 1
+
+    return _interpret_call(impl, obj, wrap_const(start))
+
+
 @interpreter_needs_wrap
 def eval_lookaside(
     source: str | bytes | bytearray | CodeType,  # A python expression
@@ -2651,6 +2665,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     # Python builtin lookasides
     any: _any_lookaside,
     bool: _bool_lookaside,
+    enumerate: _enumerate_lookaside,
     exec: exec_lookaside,
     eval: eval_lookaside,
     getattr: _getattr_lookaside,

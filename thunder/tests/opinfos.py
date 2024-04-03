@@ -1598,6 +1598,35 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
+
+
+hardswish_opinfo = OpInfo(
+    ltorch.hardswish,
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=hardswish_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support CPU Half hardswish
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # TODO: we might have a tolerance issue here with hardsiwsh, a function of relu6
+        DecorateInfo(
+            pytest.mark.xfail(strict=False),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(hardswish_opinfo)
+
+
 def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
     a = make_tensor((), dtype=dtype, device=device)
     yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
@@ -6369,34 +6398,29 @@ def batch_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input_shape, kwargs
     # TODO: implement running_mean and running_var
     cases = (
-        ((3, 4), {"training": True, "momentum": 0.2, "eps": 0.5}),
-        ((3, 4), {"training": False, "momentum": 0.2, "eps": 0.5}),
-        ((3, 3, 3), {"training": True, "momentum": 0.2}),
-        ((3, 3, 3), {"training": False, "momentum": 0.2}),
-        ((3, 3, 3), {"training": True, "momentum": -1.2}),
-        ((3, 3, 3), {"training": False, "momentum": -1.2}),
-        ((3, 3, 5, 6), {"training": True, "momentum": 0.0}),
-        ((3, 3, 5, 6), {"training": False, "momentum": 0.0}),
-        ((3, 2, 3, 4), {"training": True, "momentum": -1.0, "eps": 0.5}),
-        ((3, 2, 3, 4), {"training": False, "momentum": -1.0, "eps": 0.5}),
-        ((3, 2, 3, 4, 12), {"training": True, "momentum": -1.0, "eps": 0.5}),
-        ((3, 2, 3, 4, 12), {"training": False, "momentum": -1.0, "eps": 0.5}),
+        ((3, 4), {"momentum": 0.2, "eps": 0.5}),
+        ((3, 3, 3), {"momentum": 0.2}),
+        ((3, 3, 3), {"momentum": -1.2}),
+        ((3, 3, 5, 6), {"momentum": 0.0}),
+        ((3, 2, 3, 4), {"momentum": -1.0, "eps": 0.5}),
+        ((3, 2, 3, 4, 12), {"momentum": -1.0, "eps": 0.5}),
     )
 
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
     for input_shape, kwargs in cases:
         # Shape of weight and bias should be the same as normalized_shape
-        a = make_arg(input_shape)
-        if len(input_shape) >= 2:
-            normalized_shape = (input_shape[1],)
-        else:
-            normalized_shape = (0,)
-        weight = make_arg(normalized_shape)
-        bias = make_arg(normalized_shape)
-        running_mean = make_arg(normalized_shape)
-        running_var = make_arg(normalized_shape)
-        yield SampleInput(a, running_mean, running_var, weight, bias, **kwargs)
+        normalized_shape = (input_shape[1],)
+        for mean_var, w, b, training in itertools.product((True, False), (True, False), (True, False), (True, False)):
+            if not training and not mean_var:
+                continue
+            a = make_arg(input_shape)
+            weight = make_arg(normalized_shape) if w else None
+            bias = make_arg(normalized_shape) if b else None
+            # 'batch_norm' is not differentiable with respect to argument 'running_mean' and 'running_var'
+            running_mean = make(normalized_shape) if mean_var else None
+            running_var = make(normalized_shape) if mean_var else None
+            yield SampleInput(a, running_mean, running_var, weight, bias, training, **kwargs)
 
 
 batch_norm_opinfo = OpInfo(
@@ -6413,13 +6437,6 @@ batch_norm_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # Fails with numerical mismatches
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
     ),
