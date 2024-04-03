@@ -99,7 +99,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
-from thunder.core.trace import TraceCtx, JitResults
+from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map
@@ -1385,7 +1385,7 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     return found_pg
 
 
-def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> JitResults:
+def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
@@ -1490,4 +1490,4 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
             epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
         )
 
-    return JitResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)
+    return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

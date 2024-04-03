@@ -579,7 +579,7 @@ def _get_execution_file() -> None | str:
 #
 
 
-class JitResults:
+class TraceResults:
     def __init__(self, prologue: TraceCtx, computation: TraceCtx, epilogue: TraceCtx | None, interpreter_log: list):
         self.prologue_trace = prologue
         self.computation_trace: TraceCtx = computation

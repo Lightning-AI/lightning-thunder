@@ -21,7 +21,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
 )
 from thunder.core.trace import (
-    JitResults,
+    TraceResults,
     TraceCtx,
     from_trace,
     set_tracectx,
@@ -174,7 +174,7 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> JitResults:
+def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
 
 
@@ -504,7 +504,7 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                jit_results: JitResults = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
+                jit_results: TraceResults = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
                 prologue_trc = jit_results.prologue_trace
                 computation_trc = jit_results.computation_trace
                 epilogue_trc = jit_results.epilogue_trace
