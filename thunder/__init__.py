@@ -790,18 +790,6 @@ def list_transforms(fn) -> list:
     return fn._lc_transforms
 
 
-def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
-    """Returns the list of instructions the interpreter encountered while tracing through the
-    user program (on the last cache miss).
-    """
-    cs = compile_stats(fn)
-    if cs is None:
-        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.last_interpreted_instructions is None:
-        raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return list(cs.last_interpreted_instructions)
-
-
 def last_interpreter_log(fn: Callable) -> list[InterpreterLogItem]:
     """Returns the list of instructions and other information the interpreter encountered while tracing through the
     user program (on the last cache miss).
@@ -812,6 +800,18 @@ def last_interpreter_log(fn: Callable) -> list[InterpreterLogItem]:
     if cs.last_interpreter_log is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_interpreter_log
+
+
+def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
+    """Returns the list of instructions the interpreter encountered while tracing through the
+    user program (on the last cache miss).
+    """
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_interpreted_instructions is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
+    return list(cs.last_interpreted_instructions)
 
 
 def print_last_interpreter_log(
