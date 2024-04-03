@@ -28,14 +28,6 @@ from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
-# It is important to set this flag so that TE doesn't use
-# `torch.compile` to fuse a few operations. This is because
-# `torch.compile` creates a new process and that leads to
-# the error : daemonic processes are not allowed to have children
-# when running the tests.
-# With the setting below, we use `torch.jit` for this test suite
-# See: https://github.com/NVIDIA/TransformerEngine/blob/a38b291b0d1b04847e8ab1df8550df642a03a27d/transformer_engine/pytorch/jit.py#L11-L19
-os.environ["NVTE_TORCH_COMPILE"] = "0"
 from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
 
 is_fp8_supported: bool = False
@@ -1499,6 +1491,15 @@ def test_native_fsdp(executor, devices, dtype, bucket_size_in_mb):
     decorators=(
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
+        # NOTE: Setting `NVTE_TORCH_COMPILE`
+        # It is important to set this flag so that TE doesn't use
+        # `torch.compile` to fuse a few operations. This is because
+        # `torch.compile` creates a new process and that leads to
+        # the error : daemonic processes are not allowed to have children
+        # when running the tests.
+        # With the setting below, we use `torch.jit` for this test suite
+        # See: https://github.com/NVIDIA/TransformerEngine/blob/a38b291b0d1b04847e8ab1df8550df642a03a27d/transformer_engine/pytorch/jit.py#L11-L19
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}, clear=True),
     ),
 )
 @ddp_wrapper("test_ddp_transformer_engine", _test_ddp_transformer_engine)
@@ -1514,6 +1515,8 @@ def test_ddp_transformer_engine(executor, devices, dtype):
     decorators=(
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
+        # See NOTE: Setting `NVTE_TORCH_COMPILE`
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}, clear=True),
     ),
 )
 @ddp_wrapper("test_ddp_transformer_engine_llama_sanity", _test_ddp_transformer_engine_llama_sanity)
