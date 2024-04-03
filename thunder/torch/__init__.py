@@ -3408,12 +3408,12 @@ def one_hot(a: TensorProxy, /, num_classes: int) -> TensorProxy: # Should we use
 
 @torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
 def group_norm(
-        a: TensorProxy,
+    a: TensorProxy,
     /,
-        num_groups: int,
-        weight: None | TensorProxy = None,
-        bias: None | TensorProxy = None,
-        eps: float = 1e-5,
+    num_groups: int,
+    weight: None | TensorProxy = None,
+    bias: None | TensorProxy = None,
+    eps: float = 1e-5,
 ) -> TensorProxy:
     utils.check(a.ndim >= 2, lambda: f"group_norm: {a.ndim=} should be at least 2")
 
