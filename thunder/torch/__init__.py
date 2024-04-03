@@ -3397,9 +3397,9 @@ def one_hot(a: TensorProxy, /, num_classes: int) -> TensorProxy: # Should we use
         # TODO: implement when we're ready to support auto inference using `.item()`
         utils.check(False, lambda: "num_classes=-1 not supported yet.", exception_type=NotImplementedError)
 
-    canvas = torch.zeros(*a.shape, num_classes, dtype=dtypes.int64)  # should we use int64_?
+    canvas = zeros(*a.shape, num_classes, dtype=dtypes.int64)  # should we use int64_?
     index = a.unsqueeze(-1)
-    src = torch.ones_like(index, dtype=dtypes.int64)
+    src = ones_like(index, dtype=dtypes.int64)
 
     return scatter_add(canvas, dim=-1, index=index, src=src)
 
