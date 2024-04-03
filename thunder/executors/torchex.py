@@ -743,6 +743,7 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 
@@ -754,6 +755,7 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu)
 
@@ -1177,9 +1179,15 @@ _register_implementation(ltorch.outer, outer, checker=_always_executable)
 
 layer_norm = _register_torch_operation("layer_norm", module=torch.nn.functional)
 batch_norm = _register_torch_operation("batch_norm", module=torch.nn.functional)
+native_batch_norm = _register_torch_operation("torch.ops.aten.native_batch_norm", like=prims.batch_norm)
+native_batch_norm_backward = _register_torch_operation(
+    "torch.ops.aten.native_batch_norm_backward", like=ltorch.batch_norm_backward
+)
 
 _register_implementation(ltorch.layer_norm, layer_norm, checker=_always_executable)
 _register_implementation(ltorch.batch_norm, batch_norm, checker=_always_executable)
+_register_implementation(prims.batch_norm, native_batch_norm, checker=_always_executable)
+_register_implementation(ltorch.batch_norm_backward, native_batch_norm_backward, checker=_always_executable)
 
 #
 # NN operations

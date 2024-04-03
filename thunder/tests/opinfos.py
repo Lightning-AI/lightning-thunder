@@ -1598,6 +1598,35 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
+
+
+hardswish_opinfo = OpInfo(
+    ltorch.hardswish,
+    sample_input_generator=elementwise_unary_generator,
+    error_input_generator=hardswish_error_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # PyTorch does not support CPU Half hardswish
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # TODO: we might have a tolerance issue here with hardsiwsh, a function of relu6
+        DecorateInfo(
+            pytest.mark.xfail(strict=False),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(hardswish_opinfo)
+
+
 def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
     a = make_tensor((), dtype=dtype, device=device)
     yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
@@ -4732,12 +4761,41 @@ def topk_error_generator(op, device, **kwargs):
     yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
 
 
+# Phantom grad tests do not handle tensor outputs
+# that do not require grad and/or do not have grad_fn.
+# Therefore we explicitly filter outputs.
+# See https://github.com/Lightning-AI/lightning-thunder/issues/119 {
+def topk_thunder_ref(*args, **kwargs):
+    return clang.topk(*args, **kwargs)[0]
+
+
+def topk_torch_ref(*args, **kwargs):
+    return torch.topk(*args, **kwargs)[0]
+
+
+# }
+
+
 topk_opinfo = OpInfo(
-    clang.topk,
+    topk_thunder_ref,
+    name="topk",
+    supports_grad=True,
+    # Without the fixed seed this generator does not guarantee
+    # to produce inputs at which topk is differentiable
+    # (i.e. when topk(x, ...).indices == topk(x + dx, ...).indices).
+    # TODO: (@nikitaved): potentially modify these inputs to
+    # fix the issue.
     sample_input_generator=topk_sample_generator,
     error_input_generator=topk_error_generator,
-    torch_reference=torch.topk,
+    torch_reference=topk_torch_ref,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
+    test_directives=(
+        DecorateInfo(
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/120
+            pytest.mark.skip(reason="Cannot handle inputs/outputs which do not require grads"),
+            "test_vjp_correctness",
+        ),
+    ),
 )
 reduction_ops.append(topk_opinfo)
 
@@ -6369,34 +6427,29 @@ def batch_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input_shape, kwargs
     # TODO: implement running_mean and running_var
     cases = (
-        ((3, 4), {"training": True, "momentum": 0.2, "eps": 0.5}),
-        ((3, 4), {"training": False, "momentum": 0.2, "eps": 0.5}),
-        ((3, 3, 3), {"training": True, "momentum": 0.2}),
-        ((3, 3, 3), {"training": False, "momentum": 0.2}),
-        ((3, 3, 3), {"training": True, "momentum": -1.2}),
-        ((3, 3, 3), {"training": False, "momentum": -1.2}),
-        ((3, 3, 5, 6), {"training": True, "momentum": 0.0}),
-        ((3, 3, 5, 6), {"training": False, "momentum": 0.0}),
-        ((3, 2, 3, 4), {"training": True, "momentum": -1.0, "eps": 0.5}),
-        ((3, 2, 3, 4), {"training": False, "momentum": -1.0, "eps": 0.5}),
-        ((3, 2, 3, 4, 12), {"training": True, "momentum": -1.0, "eps": 0.5}),
-        ((3, 2, 3, 4, 12), {"training": False, "momentum": -1.0, "eps": 0.5}),
+        ((3, 4), {"momentum": 0.2, "eps": 0.5}),
+        ((3, 3, 3), {"momentum": 0.2}),
+        ((3, 3, 3), {"momentum": -1.2}),
+        ((3, 3, 5, 6), {"momentum": 0.0}),
+        ((3, 2, 3, 4), {"momentum": -1.0, "eps": 0.5}),
+        ((3, 2, 3, 4, 12), {"momentum": -1.0, "eps": 0.5}),
     )
 
     make_arg = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
     for input_shape, kwargs in cases:
         # Shape of weight and bias should be the same as normalized_shape
-        a = make_arg(input_shape)
-        if len(input_shape) >= 2:
-            normalized_shape = (input_shape[1],)
-        else:
-            normalized_shape = (0,)
-        weight = make_arg(normalized_shape)
-        bias = make_arg(normalized_shape)
-        running_mean = make_arg(normalized_shape)
-        running_var = make_arg(normalized_shape)
-        yield SampleInput(a, running_mean, running_var, weight, bias, **kwargs)
+        normalized_shape = (input_shape[1],)
+        for mean_var, w, b, training in itertools.product((True, False), (True, False), (True, False), (True, False)):
+            if not training and not mean_var:
+                continue
+            a = make_arg(input_shape)
+            weight = make_arg(normalized_shape) if w else None
+            bias = make_arg(normalized_shape) if b else None
+            # 'batch_norm' is not differentiable with respect to argument 'running_mean' and 'running_var'
+            running_mean = make(normalized_shape) if mean_var else None
+            running_var = make(normalized_shape) if mean_var else None
+            yield SampleInput(a, running_mean, running_var, weight, bias, training, **kwargs)
 
 
 batch_norm_opinfo = OpInfo(
@@ -6413,13 +6466,6 @@ batch_norm_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # Fails with numerical mismatches
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
     ),
