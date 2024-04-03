@@ -32,7 +32,7 @@ Querying information on compiled functions and modules
     cache_misses
     list_transforms
     last_interpreted_instructions
-    last_interpreted_history
+    last_interpreter_log
     last_compile_options
 ..
     compile

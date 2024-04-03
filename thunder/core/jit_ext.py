@@ -67,7 +67,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
-    InterpreterHistoryItem,
+    InterpreterLogItem,
     interpret,
     _interpret_call,
     CapsuleType,
@@ -1430,7 +1430,7 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
             prims.python_return(result)
             process_recorded_modifications(ctx, epilogue_trace)
 
-            last_interpreted_history = jfn._last_interpreted_history
+            last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
@@ -1490,4 +1490,4 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
             epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
         )
 
-    return JitResults(prologue_trace, computation_trace, epilogue_trace, last_interpreted_history)
+    return JitResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

@@ -12,7 +12,7 @@ import warnings
 
 from looseversion import LooseVersion
 
-from thunder.core.interpreter import InterpreterHistoryItem
+from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
     resolve_interpretation_option,
@@ -444,7 +444,7 @@ def jit(
                 cs.cache_hits += 1
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
-                cs.last_interpreted_history = None
+                cs.last_interpreter_log = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
                 cs.last_prologue_transformation_start = 0
@@ -483,7 +483,7 @@ def jit(
                 cs.cache_hits += 1
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
-                cs.last_interpreted_history = None
+                cs.last_interpreter_log = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
 
@@ -507,7 +507,7 @@ def jit(
                 prologue_trc = jit_results.prologue_trace
                 computation_trc = jit_results.computation_trace
                 epilogue_trc = jit_results.epilogue_trace
-                last_interpreted_history = jit_results.history
+                last_interpreter_log = jit_results.interpreter_log
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -542,8 +542,8 @@ def jit(
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
-            cs.last_interpreted_history = last_interpreted_history
-            cs.last_interpreted_instructions = (i for i in last_interpreted_history if isinstance(i, dis.Instruction))
+            cs.last_interpreter_log = last_interpreter_log
+            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -801,19 +801,19 @@ def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
     return list(cs.last_interpreted_instructions)
 
 
-def last_interpreted_history(fn: Callable) -> list[InterpreterHistoryItem]:
+def last_interpreter_log(fn: Callable) -> list[InterpreterLogItem]:
     """Returns the list of instructions and other information the interpreter encountered while tracing through the
     user program (on the last cache miss).
     """
     cs = compile_stats(fn)
     if cs is None:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.last_interpreted_history is None:
+    if cs.last_interpreter_log is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_interpreted_history
+    return cs.last_interpreter_log
 
 
-def print_last_interpreted_history(
+def print_last_interpreter_log(
     fn: Callable,
     /,
     print_fn: Callable = print,
@@ -823,11 +823,11 @@ def print_last_interpreted_history(
     color_internals: bool = False,
     print_source_code: bool = True,
 ) -> None:
-    history = last_interpreted_history(fn)
+    log = last_interpreter_log(fn)
     import thunder.core.interpreter
 
-    thunder.core.interpreter.print_history(
-        history,
+    thunder.core.interpreter.print_interpreter_log(
+        log,
         print_fn=print_fn,
         use_colors=use_colors,
         indent=indent,

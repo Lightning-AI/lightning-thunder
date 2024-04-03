@@ -580,8 +580,8 @@ def _get_execution_file() -> None | str:
 
 
 class JitResults:
-    def __init__(self, prologue: TraceCtx, computation: TraceCtx, epilogue: TraceCtx | None, history: list):
+    def __init__(self, prologue: TraceCtx, computation: TraceCtx, epilogue: TraceCtx | None, interpreter_log: list):
         self.prologue_trace = prologue
         self.computation_trace: TraceCtx = computation
         self.epilogue_trace = epilogue
-        self.history = history
+        self.interpreter_log = interpreter_log

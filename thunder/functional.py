@@ -388,7 +388,7 @@ def _eager_unpacking_interpreter(
 
         jfn = interpreter(si.unwrapped_fn)
         result = jfn(*interpretation_args, **interpretation_kwargs)
-        history = getattr(jfn, "_last_interpreted_history", [])
+        interpreter_log = getattr(jfn, "_last_interpreter_log", [])
 
         # Validates that the returned items are proxies or printable values
         def leaf_test(x: Any) -> bool:
@@ -415,7 +415,7 @@ def _eager_unpacking_interpreter(
     computation_trc._siginfo = csi
     computation_trc.args = computation_args
 
-    return JitResults(prologue_trc, computation_trc, None, history)
+    return JitResults(prologue_trc, computation_trc, None, interpreter_log)
 
 
 # Translates the Python function a thunder program using the Python interpreter
