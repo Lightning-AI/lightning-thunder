@@ -2914,7 +2914,7 @@ def test_print_log_types(jit):
         print_interpreter_log(log, use_colors=False, indent=False)
     bufstr = buf.getvalue()
 
-    assert "Returning from call to foo() with value of type int" in bufstr
+    assert "Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
 
 
 def test_is_jitting_with_raise(jit):
