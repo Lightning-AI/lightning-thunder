@@ -482,13 +482,7 @@ class ReturnLogItem(TypedDict):
 
 
 InterpreterLogItem = (
-    dis.Instruction
-    | str
-    | LineLogItem
-    | OpaqueLogItem
-    | LookasideLogItem
-    | CallLogItem
-    | ReturnLogItem
+    dis.Instruction | str | LineLogItem | OpaqueLogItem | LookasideLogItem | CallLogItem | ReturnLogItem
 )
 
 
