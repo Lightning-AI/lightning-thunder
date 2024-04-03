@@ -743,6 +743,7 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 
@@ -754,6 +755,7 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu)
 
