@@ -511,9 +511,6 @@ def create_fusion_definition_wrapper(
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
     fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
-    # Avoid hitting nvFuser error when there is no output
-    if not sorted_unique_outputs:
-        return lambda *args: tuple()
     return fdw
 
 

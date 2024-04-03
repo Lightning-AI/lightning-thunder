@@ -87,7 +87,7 @@ def find_external_consumer_inputs(
         Tuple[ProxyInterface, ...]: Consumer's inputs that must be included in
         the input of the consumer.
     """
-    all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols))
+    all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs if y is not None) for x in producer.subsymbols))
     external_consumer_inputs_names = tuple(
         sorted(
             {x.name for x in consumer.args}
@@ -125,7 +125,7 @@ def apply_rematerialization_for_producer(
     )
     all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols))
     # Choose the new producer's output from all the produced variables.
-    new_producer_output = tuple(x for x in all_produced_vars if x.name in new_producer_output_names)
+    new_producer_output = tuple(x for x in all_produced_vars if x is not None and x.name in new_producer_output_names)
     new_producer_output = tuple(sorted(new_producer_output, key=lambda x: x.name))
     new_producer = replace(producer, output=new_producer_output)
     return new_producer
@@ -153,7 +153,7 @@ def apply_rematerialization_for_consumer(
     external_inputs = find_external_consumer_inputs(producer, consumer)
     all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols))
     cut_names = tuple(map(lambda x: x.name, cut)) if isinstance(cut[0], ProxyInterface) else tuple(cut)
-    cut_inputs = tuple(filter(lambda x: x.name in cut_names, (*all_produced_vars, *producer.args)))
+    cut_inputs = tuple(filter(lambda x: x is not None and x.name in cut_names, (*all_produced_vars, *producer.args)))
     new_consumer_args = cut_inputs + external_inputs
 
     # We need to rematerialize the consumer's inputs that are not in the new consumer's inputs.
@@ -343,6 +343,8 @@ def find_cut(
             if user.sym.id in sym_skip_list:
                 continue
             for out in user.flat_outs:
+                if out is None:
+                    continue
                 user_name = out.name
                 add_edge(var_name + "_out", user_name + "_in", capacity=float("inf"))
 
@@ -352,11 +354,14 @@ def find_cut(
         add_edge("source", "source", capacity=float("inf"))
 
     for var in required_producer_vars:
-        add_edge("source", var.name + "_in", capacity=float("inf"))
-        add_edges(var)
+        if var is not None:
+            add_edge("source", var.name + "_in", capacity=float("inf"))
+            add_edges(var)
 
     for symbol in chain(producer.subsymbols, consumer.subsymbols):
         for var in symbol.flat_outs:
+            if var is None:
+                continue
             add_edges(var)
 
     g = Graph(
