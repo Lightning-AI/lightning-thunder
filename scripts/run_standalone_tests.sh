@@ -37,8 +37,10 @@ tests=$(grep -oP '\S+::test_\S+' "$TEST_FILE")
 printf "collected tests:\n----------------\n$tests\n================\n"
 
 status=0
+devices=$(echo $CUDA_VISIBLE_DEVICES | cut -d',' -f1)
+echo "$CUDA_VISIBLE_DEVICES, $devices"
 for test in $tests; do
-  python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test-results.xml" 2>&1 > "$test-output.txt"
+  CUDA_VISIBLE_DEVICES=$devices python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test-results.xml" 2>&1 > "$test-output.txt"
   pytest_status=$?
   printf "$test status >>> $pytest_status\n"
 
