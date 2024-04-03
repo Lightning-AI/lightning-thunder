@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+set -e
 # THIS FILE ASSUMES IT IS RUN INSIDE THE tests DIRECTORY
 
 # Get all the tests marked with standalone marker
@@ -44,12 +44,14 @@ status=0
 for test in $tests; do
   CUDA_VISIBLE_DEVICES=$devices python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test-results.xml" 2>&1 > "$test-output.txt"
   pytest_status=$?
-  result=$([ $pytest -eq 0 ] && echo "PASSED" || echo "returned status $pytest_status")
-  printf "$test result\n"
-
-  if [ $pytest_status -ne 0 ]; then
+  if [ $pytest_status -eq 0 ]; then
+    echo "$test PASSED"
+  else
     status=$pytest_status
-    cat "$test-output.txt"
+    echo "$test returned status $pytest_status"
+    echo "================TEST OUTPUT BEGIN================"
+    echo "$test-output.txt"
+    echo "================TEST OUTPUT END=================="
   fi
 done
 
