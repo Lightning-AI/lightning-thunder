@@ -60,6 +60,7 @@ from thunder.core.proxies import (
     DictProxy,
     AnyProxy,
 )
+from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
 from thunder.cudagraphs import CUDAGraphExecutor
@@ -823,10 +824,19 @@ def print_last_interpreter_log(
     color_internals: bool = False,
     print_source_code: bool = True,
 ) -> None:
-    log = last_interpreter_log(fn)
-    import thunder.core.interpreter
+    """Prints a log of the last run of the interpreter for the given function.
 
-    thunder.core.interpreter.print_interpreter_log(
+    Args:
+        fn: The function returned by `thunder.jit()` to print the last interpreter run log for. The function must have been called at least once first.
+        print_fn: The function to use for printing. Defaults to builtin `print`.
+        use_colors: Whether to use colors in the output. Defaults to `None`, which attempts to autodetect if the terminal supports ANSI color.
+        indent: Whether to indent the output with function scope. Defaults to `True`.
+        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to `None`, which means no limit.
+        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to `False`, so that only the instructions in the user's code are highlighted in color.
+        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to `True`.
+    """
+    log = last_interpreter_log(fn)
+    print_interpreter_log(
         log,
         print_fn=print_fn,
         use_colors=use_colors,

@@ -640,7 +640,7 @@ class InterpreterRuntimeCtx:
 
     def record_interpreter_return(self, fn: Callable, rval: Any | INTERPRETER_SIGNALS, /) -> InterpreterRuntimeCtx:
         is_signal: bool = isinstance(rval, INTERPRETER_SIGNALS)
-        rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(rval)
+        rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(unwrap(rval))
         self.record(ReturnLogItem(kind="InterpreterReturn", fn=fn, is_signal=is_signal, rval=rv))
         return self
 
@@ -6681,7 +6681,7 @@ def print_interpreter_log(
     interpreter_log: list[InterpreterLogItem],
     /,
     print_fn: Callable = print,
-    use_colors: bool = True,
+    use_colors: bool | None = None,
     indent: bool = True,
     max_depth: int | None = None,
     color_internals: bool = False,
@@ -6713,6 +6713,7 @@ def print_interpreter_log(
 
             case {"kind": "Line", "fn": _fn, "filename": filename, "position": position}:
                 # LineLogItem
+                _fn = unwrap(_fn)
                 inside_inner_interpreter = interpreter_path in filename
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["YELLOW"]
@@ -6735,6 +6736,7 @@ def print_interpreter_log(
 
             case {"kind": "InterpreterCall", "fn": fn, "prev_frame": prev_frame}:
                 # CallLogItem
+                fn = unwrap(fn)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1
@@ -6742,6 +6744,8 @@ def print_interpreter_log(
 
             case {"kind": "InterpreterReturn", "fn": fn, "is_signal": is_signal, "rval": rval}:
                 # ReturnLogItem
+                fn = unwrap(fn)
+                rval = unwrap(rval)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["RED"]
                 deindent = True
@@ -6751,12 +6755,14 @@ def print_interpreter_log(
 
             case {"kind": "Lookaside", "fn": fn}:
                 # LookasideLogItem
+                fn = unwrap(fn)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["BLUE"]
                 log_line = f"Lookaside to {extract_callable_name(fn)}()"
 
             case {"kind": "Opaque", "fn": fn}:
                 # OpaqueLogItem
+                fn = unwrap(fn)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["CYAN"]
                 log_line = f"Opaque call to {fn} with name {extract_callable_name(fn)}"
