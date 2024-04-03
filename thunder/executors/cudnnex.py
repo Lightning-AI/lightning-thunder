@@ -23,8 +23,29 @@ if cudnn_available():
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
-    cudnn_handle = cudnn.create_handle()
+    # Mapping from device to cudnn handles
+    device_to_cudnn_handle = {}
 
+
+# This function creates a new handle for the device that cudnn should
+# run its kernels on. As the suggested approach by cudnn is to make a few handles
+# as possible, this function caches these per-device handles.
+def _get_cudnn_handle(query_device):
+    handle = device_to_cudnn_handle.get(query_device, None)
+    if handle is None:
+        with torch.cuda.device(query_device):
+            handle = cudnn.create_handle()
+            device_to_cudnn_handle[query_device] = handle
+
+    # Make sure the user stream is set on the handle
+    # Fetch the current user stream and pass the data pointer to set_stream API
+    cudnn.set_stream(handle=handle, stream=torch.cuda.current_stream(device=query_device).cuda_stream)
+
+    return handle
+
+
+# WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
+# Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
 
 from dataclasses import dataclass
 from functools import lru_cache
@@ -54,6 +75,7 @@ class CudnnTensorAttributes:
     size: tuple
     stride: tuple
     dtype: torch.dtype
+    device_index: int
 
 
 from collections import OrderedDict
@@ -84,7 +106,9 @@ _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
 
 def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal):
     graph = cudnn.pygraph(
-        intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT, handle=cudnn_handle
+        intermediate_data_type=cudnn.data_type.FLOAT,
+        compute_data_type=cudnn.data_type.FLOAT,
+        handle=_get_cudnn_handle(query.device_index),
     )
 
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
@@ -191,11 +215,11 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
             stride *= shape[i]
         return tuple(strides)
 
-    query_4d = CudnnTensorAttributes(query.shape, compute_NHWC_strides(query.shape), query.dtype)
+    query_4d = CudnnTensorAttributes(query.shape, compute_NHWC_strides(query.shape), query.dtype, query.device.index)
 
-    key_4d = CudnnTensorAttributes(key.shape, compute_NHWC_strides(key.shape), key.dtype)
+    key_4d = CudnnTensorAttributes(key.shape, compute_NHWC_strides(key.shape), key.dtype, key.device.index)
 
-    value_4d = CudnnTensorAttributes(value.shape, compute_NHWC_strides(value.shape), value.dtype)
+    value_4d = CudnnTensorAttributes(value.shape, compute_NHWC_strides(value.shape), value.dtype, value.device.index)
 
     attn_mask_4d = None
     if attn_mask is not None:
@@ -204,7 +228,9 @@ def _transform_sdpa_inputs(query, key, value, attn_mask):
 
         # cudnn does not support boolean attn_mask, so make one with -inf
         attn_mask_dtype = query.dtype if attn_mask.dtype in [torch.bool, dtypes.bool8] else attn_mask.dtype
-        attn_mask_4d = CudnnTensorAttributes(attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask_dtype)
+        attn_mask_4d = CudnnTensorAttributes(
+            attn_mask_shape, compute_NHWC_strides(attn_mask_shape), attn_mask_dtype, attn_mask.device.index
+        )
 
     return query_4d, key_4d, value_4d, attn_mask_4d
 
@@ -313,7 +339,10 @@ def _cudnn_sdpa_fwd_impl(
     if attn_mask is not None:
         cudnn_to_torch_tensor[Bias] = attn_mask.detach()
 
-    graph.execute(cudnn_to_torch_tensor, workspace)
+    # Even though the handle is created on query.device, cudnn still requires to set current device to query.device.
+    # This is most probably a bug and is being actively looked into.
+    with torch.cuda.device(query.device):
+        graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(query.device))
 
     return O_actual, softmax_stats_actual, seed_tensor, offset_tensor
 
@@ -368,7 +397,7 @@ def _make_cudnn_sdpa_backward_graph(
         io_data_type=torch_to_cudnn_dtype(query.dtype),
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
-        handle=cudnn_handle,
+        handle=_get_cudnn_handle(query.device_index),
     )
 
     Q = graph.tensor(name="Q", dim=query.size, stride=query.stride, data_type=torch_to_cudnn_dtype(query.dtype))
@@ -623,7 +652,10 @@ def _cudnn_sdpa_bwd_impl(
 
     workspace = torch.empty(graph.get_workspace_size(), device=query.device, dtype=torch.uint8)
 
-    graph.execute(cudnn_to_torch_tensor, workspace)
+    # Even though the handle is created on query.device, cudnn still requires to set current device to query.device.
+    # This is most probably a bug and is being actively looked into.
+    with torch.cuda.device(query.device):
+        graph.execute(cudnn_to_torch_tensor, workspace, handle=_get_cudnn_handle(query.device))
 
     if cat_grad_qkv:
         grads = (grad_qkv,)
