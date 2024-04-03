@@ -6124,10 +6124,8 @@ nn_ops.append(max_pool3d_opinfo)
 
 
 def one_hot_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    # Function to generate tensors of non-negative integers suitable for one-hot encoding
     make = partial(make_tensor, device=device, dtype=torch.long, requires_grad=requires_grad)
 
-    # Define some shapes for tensors to be used in testing
     test_shapes = [
         (10,),
         (5, 10),
@@ -6135,16 +6133,10 @@ def one_hot_sample_generator(op, device, dtype, requires_grad, **kwargs):
     ]
 
     max_value = 9
-    # Iterate over each shape
     for shape in test_shapes:
-        # For each shape, vary num_classes to be at least as large as the maximum dimension of the shape
-        # Here, we assume num_classes should at least match the largest dimension to ensure coverage
-        for num_classes in range(1, max_value + 1):  # Add a small range to vary num_classes
-            # Ensure values are within [0, num_classes - 1] range.
-            # Adjust 'high' parameter to ensure it's within the range
-            a = make(shape, low=0, high=max_value)
+        for num_classes in range(1, max_value + 1):
+            a = make(shape, low=0, high=num_classes - 1)  # use non-negative integers
 
-            # Yield a SampleInput with 'a' and dynamically determined 'num_classes'
             yield SampleInput(a, num_classes=num_classes)
 
 
