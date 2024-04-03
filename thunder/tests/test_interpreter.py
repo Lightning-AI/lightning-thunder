@@ -2899,6 +2899,24 @@ def test_super(jit):
     assert res == jres
 
 
+def test_print_log_types(jit):
+    def foo():
+        return 5
+
+    jfoo = jit(foo)
+    jfoo()
+
+    log = last_interpreter_log(jfoo)
+
+    # print into string
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_interpreter_log(log, use_colors=False, indent=False)
+    bufstr = buf.getvalue()
+
+    assert "Returning from call to foo() with value of type int" in bufstr
+
+
 def test_is_jitting_with_raise(jit):
     def foo():
         return is_jitting_with_raise()
