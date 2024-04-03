@@ -3490,7 +3490,7 @@ def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_fr
 
 
 @torchsymbol(torch.nn.functional.one_hot, id="torch.nn.functional.one_hot", is_method=False)
-def one_hot(a: TensorProxy, /, num_classes: int) -> TensorProxy: # Should we use TensorProxy for a?
+def one_hot(a: TensorProxy, /, num_classes: int) -> TensorProxy:  # Should we use TensorProxy for a?
     if num_classes == -1:
         # TODO: implement when we're ready to support auto inference using `.item()`
         utils.check(False, lambda: "num_classes=-1 not supported yet.", exception_type=NotImplementedError)
