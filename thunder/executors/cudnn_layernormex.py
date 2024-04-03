@@ -5,18 +5,12 @@ import numpy as np
 
 from lightning_utilities.core.imports import package_available
 
-CUDNN_AVAILABLE = package_available("cudnn")
-
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
-if CUDNN_AVAILABLE:
+if package_available("cudnn"):
     import cudnn
 
     cudnn_backend_version = cudnn.backend_version()
-
-
-def cudnn_available() -> bool:
-    return CUDNN_AVAILABLE
 
 
 # WARNING: cudnn layernorm executor is experimental. Tests that use cudnn might fail.
@@ -33,7 +27,11 @@ from thunder.executors.cudnnex import CudnnTensorAttributes, torch_to_cudnn_dtyp
 def make_cacheable_cudnn_graph_inputs(func):
     def wrapper(*args, **kwargs):
         cudnn_input_args = [
-            CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype) if isinstance(arg, torch.Tensor) else arg
+            (
+                CudnnTensorAttributes(arg.size(), arg.stride(), arg.dtype, args.device_index)
+                if isinstance(arg, torch.Tensor)
+                else arg
+            )
             for arg in args
         ]
         return func(*cudnn_input_args, **kwargs)
@@ -90,9 +88,11 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
 
     # Assume strides to be NCHW contiguous
     assumed_stride = (elements_to_normalize, 1, 1, 1)
-    a_4d = CudnnTensorAttributes((batch_size, elements_to_normalize, 1, 1), assumed_stride, a.dtype)
-    weight_4d = CudnnTensorAttributes((1, elements_to_normalize, 1, 1), assumed_stride, weight.dtype)
-    bias_4d = CudnnTensorAttributes((1, elements_to_normalize, 1, 1), assumed_stride, bias.dtype)
+    a_4d = CudnnTensorAttributes((batch_size, elements_to_normalize, 1, 1), assumed_stride, a.dtype, a.device.index)
+    weight_4d = CudnnTensorAttributes(
+        (1, elements_to_normalize, 1, 1), assumed_stride, weight.dtype, weight.device.index
+    )
+    bias_4d = CudnnTensorAttributes((1, elements_to_normalize, 1, 1), assumed_stride, bias.dtype, bias.device.index)
 
     return a_4d, weight_4d, bias_4d
 

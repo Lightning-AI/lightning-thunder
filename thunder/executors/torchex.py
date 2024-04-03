@@ -743,6 +743,7 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 
@@ -754,6 +755,7 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu)
 
@@ -1009,6 +1011,7 @@ var = _register_torch_operation("var")
 var_mean = _register_torch_operation("var_mean")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
+topk = _register_torch_operation("topk")
 
 
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
@@ -1053,6 +1056,17 @@ def _argmin_transform(a: TensorProxy, /, dim: int):
     return argmin(a, dim)
 
 
+# NOTE This transform translates number proxies to boolean values
+# and handles dim = None
+def _topk_transform(
+    a: TensorProxy, /, k: int, dim: int | None = None, largest: Number = 1, sorted: Number = 1, *, out=None
+):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+
+    return topk(a, k, dim, bool(largest), bool(sorted), out=out)
+
+
 _register_implementation(prims.amax, checker=_always_executable, execution_transform=_amax_prim_transform)
 _register_implementation(prims.amin, checker=_always_executable, execution_transform=_amin_prim_transform)
 _register_implementation(prims.prod, checker=_always_executable, execution_transform=_prod_prim_transform)
@@ -1061,6 +1075,7 @@ _register_implementation(prims.var, checker=_always_executable, execution_transf
 _register_implementation(prims.var_mean, checker=_always_executable, execution_transform=_var_mean_prim_transform)
 _register_implementation(prims.argmax, checker=_always_executable, execution_transform=_argmax_transform)
 _register_implementation(prims.argmin, checker=_always_executable, execution_transform=_argmin_transform)
+_register_implementation(prims.topk, checker=_always_executable, execution_transform=_topk_transform)
 
 _register_implementation(ltorch.amax, amax, checker=_always_executable)
 _register_implementation(ltorch.amin, amin, checker=_always_executable)
@@ -1072,6 +1087,7 @@ _register_implementation(ltorch.var, var, checker=_always_executable)
 _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
+_register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
 
 #
 # Scatter and gather operations
@@ -1163,9 +1179,15 @@ _register_implementation(ltorch.outer, outer, checker=_always_executable)
 
 layer_norm = _register_torch_operation("layer_norm", module=torch.nn.functional)
 batch_norm = _register_torch_operation("batch_norm", module=torch.nn.functional)
+native_batch_norm = _register_torch_operation("torch.ops.aten.native_batch_norm", like=prims.batch_norm)
+native_batch_norm_backward = _register_torch_operation(
+    "torch.ops.aten.native_batch_norm_backward", like=ltorch.batch_norm_backward
+)
 
 _register_implementation(ltorch.layer_norm, layer_norm, checker=_always_executable)
 _register_implementation(ltorch.batch_norm, batch_norm, checker=_always_executable)
+_register_implementation(prims.batch_norm, native_batch_norm, checker=_always_executable)
+_register_implementation(ltorch.batch_norm_backward, native_batch_norm_backward, checker=_always_executable)
 
 #
 # NN operations
@@ -1600,7 +1622,9 @@ if torch.distributed.is_available():
         tensors: list[torch.Tensor],
         bucket_key: str,
     ) -> list[torch.Tensor]:
-        return torch._utils._unflatten_dense_tensors(buffer, tensors)
+        _, views = _key_to_bucket_and_views[bucket_key]
+        torch._foreach_copy_(tensors, views, non_blocking=True)
+        return tensors
 
     # TODO(crcrpar): Make this compatible with the torch.compile executor as it's doing really well for cat and reshape.
     # NOTE(crcrpar): why no caching/resue of buffer?

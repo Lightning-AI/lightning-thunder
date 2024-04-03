@@ -44,7 +44,7 @@ from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
-from thunder.core.baseutils import run_once
+from thunder.core.baseutils import run_once, check
 from thunder.core.proxies import (
     Proxy,
     TensorProxy,
@@ -563,25 +563,38 @@ def jit(
                     # thunder_backward may recursively call compile and wraps the result in a
                     # torch.autograd.Function to support embedding of Thunder-compiled
                     # functions in torch's Autograd
+
+                    # Currently split_forward_backward also includes
+                    # transform_for_execution and various sorting of symbols,
+                    # applying transform_for_execution after this would be
+                    # breaking the order of operations
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
+                    extraces = cs.last_traces
+                    check(
+                        not additional_transforms,
+                        lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
+                    )
 
-            cs.last_computation_transformation_start = time.time_ns()
+            if backward_trc is None:
+                cs.last_computation_transformation_start = time.time_ns()
 
-            ## EPILOGUE and TRANSFORMS should not mix...
-            # applies transforms
-            for transform in additional_transforms:
-                computation_trc = transform(computation_trc, executors_list=cd.executors_list)
-                computation_traces.append(computation_trc)
+                ## EPILOGUE and TRANSFORMS should not mix...
+                # applies transforms
+                for transform in additional_transforms:
+                    computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                    computation_traces.append(computation_trc)
 
-            with langctxs.langctx(cd.langctx):
-                extraces = transform_for_execution(
-                    computation_trc,
-                    executors_list=cd.executors_list,
-                )
-            extrace = extraces[-1]
-            comp = extrace.python_callable()
+                with langctxs.langctx(cd.langctx):
+                    extraces = transform_for_execution(
+                        computation_trc,
+                        executors_list=cd.executors_list,
+                    )
+                computation_trc = extraces[-1]
+                cs.last_computation_transformation_stop = time.time_ns()
+
+            comp = computation_trc.python_callable()
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
@@ -595,7 +608,6 @@ def jit(
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
 
-            cs.last_computation_transformation_stop = time.time_ns()
             cs.last_traces += extraces
             cs.last_prologue_traces = [prologue_trc] + protraces
             cs.last_prologue = pro
@@ -726,7 +738,7 @@ def last_traces(fn) -> list[TraceCtx]:
     return cs.last_traces
 
 
-def last_backward_traces(fn) -> TraceCtx:
+def last_backward_traces(fn) -> list[TraceCtx]:
     """Obtains the list of backward traces that have been produced for the last run of the function and the selected prologue."""
     cs = compile_stats(fn)
     if cs is None:
