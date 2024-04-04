@@ -1394,8 +1394,8 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
 
-    # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
-    config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
+    # NOTE Currently setting dropout to zero for reproducibility
+    config = NanoGPTConfig(dropout=0, n_layer=2, n_head=1, n_embd=64)
 
     bench = NanoGPTBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
     model = bench.fn()
