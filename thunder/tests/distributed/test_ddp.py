@@ -880,6 +880,10 @@ class CompileDDPTest(DataParallelTestCase):
         fwd_loss = thunder.jit(fwd_loss)
         fwd_loss(model, x)
 
+        # notice how we cannot do `model.no_sync()` because it's not a ThunderModule
+        with thunder.ThunderModule.no_sync(model):
+            fwd_loss(model, x)
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 

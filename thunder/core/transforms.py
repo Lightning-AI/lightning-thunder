@@ -1108,6 +1108,27 @@ def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
 register_grad(pids.SUM, _sum_prim_grad)
 
 
+@torchctx
+def _topk_prim_grad(
+    a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
+):
+    fwd = prims.topk(a, k, dim, largest, sorted, out=out)
+    val, idx = fwd
+
+    val_grad = get_grad(val)
+
+    a_grad = ltorch.zeros_like(a)
+    # TODO: replace with scatter once we have it.
+    # scatter_add is a prim and it relies on atomic ops.
+    a_grad = ltorch.scatter_add(a_grad, dim, idx, val_grad)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TOPK, _topk_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
@@ -3056,6 +3077,43 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     padding_idx = -1 if padding_idx is None else padding_idx
     gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return gweight
+
+
+@register_augmented_forward(prims.PrimIDs.BATCH_NORM)
+def batch_norm_aug_fwd(
+    a: TensorProxy,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> VJPDual:
+    primal = prims.batch_norm(
+        a,
+        weight,
+        bias,
+        running_mean,
+        running_var,
+        training,
+        momentum,
+        eps,
+    )
+    output_mask = [x is not None for x in (a, weight, bias)]
+    output, save_mean, save_invstd = primal
+    residuals = (a, weight, running_mean, running_var, save_mean, save_invstd, training, eps, output_mask)
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.BATCH_NORM)
+def batch_norm_backward(a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask, *grads):
+    from thunder.torch import batch_norm_backward
+
+    result = batch_norm_backward(
+        grads[0], a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask
+    )
+    return *result, None, None
 
 
 @register_augmented_forward("torch.cumsum")
