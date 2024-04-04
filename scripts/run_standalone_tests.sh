@@ -46,9 +46,9 @@ for test in $tests; do
   else
     status=$pytest_status
     echo "$test returned status $pytest_status"
-    echo "================TEST OUTPUT BEGIN================"
-    echo "$test-output.txt"
-    echo "================TEST OUTPUT END=================="
+    echo "============FAILED TEST OUTPUT BEGIN================"
+    cat "$test-output.txt"
+    echo "============FAILED TEST OUTPUT END=================="
   fi
 done
 
