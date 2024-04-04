@@ -2498,6 +2498,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
+    # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (None, None),
 }
 

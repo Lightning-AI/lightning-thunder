@@ -10,20 +10,21 @@ from thunder.tests.framework import instantiate
 
 
 @instantiate()
-def test_input_as_output_prim_fwd(executor, device, dtype):
+def test_prim_copy__fwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z + z
         z = x + z
         o = x.copy_(z)
-        return x
+        return o
 
     def foo(x, y):
         z = x * y
         z = z + z
         z = x + z
+        # NOTE: nvfuserex doesn't support `return z`, i.e. the copy_from argument
         o = thunder.core.prims.copy_(z, x)
-        return x
+        return o
 
     traced_nvfuser_foo = executor.make_callable(foo)
 
@@ -45,7 +46,7 @@ def test_input_as_output_prim_fwd(executor, device, dtype):
 
 
 @instantiate(dtypes=(datatypes.floating,))
-def test_input_as_output_prim_bwd(executor, device, dtype):
+def test_prim_copy__bwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z * x
@@ -63,7 +64,7 @@ def test_input_as_output_prim_bwd(executor, device, dtype):
     traced_nvfuser_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
+    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
     b = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
     a1 = a.detach().clone()
     b1 = b.detach().clone()
@@ -85,5 +86,4 @@ def test_input_as_output_prim_bwd(executor, device, dtype):
     g1 = torch.ones_like(torch_result)
     torch_result.backward(g1)
     assert_close(g, g1)
-    assert_close(a.grad, a1.grad)
     assert_close(b.grad, b1.grad)
