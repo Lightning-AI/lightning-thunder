@@ -1803,11 +1803,12 @@ if has_einops:
     einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
 
 
-def _input_as_output_impl(out, input_alias):
-    torch.Tensor.copy_(input_alias, out)
+def _copy__impl(copy_from, copy_to):
+    copy_to.copy_(copy_from)
+    return copy_to
 
 
-input_as_output = ex.register_operator(
-    "copy_", meta=prims.input_as_output, tags=(prims.OpTags.DONT_DCE,), fn=_input_as_output_impl
+copy_ = ex.register_operator(
+    "copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl
 )
-_register_implementation(prims.input_as_output, input_as_output, checker=_always_executable)
+_register_implementation(prims.copy_, copy_, checker=_always_executable)

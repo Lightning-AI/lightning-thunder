@@ -2467,7 +2467,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
-    prims.PrimIDs.INPUT_AS_OUTPUT: lambda x, y: (prims.input_as_output(x, y), tuple()),
+    prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
 }
 
 
@@ -2498,7 +2498,7 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
-    prims.PrimIDs.INPUT_AS_OUTPUT: lambda g: (None, None),
+    prims.PrimIDs.COPY_: lambda g: (None, None),
 }
 
 

@@ -15,15 +15,15 @@ def test_input_as_output_prim_fwd(executor, device, dtype):
         z = x * y
         z = z + z
         z = x + z
-        x.copy_(z)
-        return y
+        o = x.copy_(z)
+        return x
 
     def foo(x, y):
         z = x * y
         z = z + z
         z = x + z
-        thunder.core.prims.input_as_output(z, x)
-        return y
+        o = thunder.core.prims.copy_(z, x)
+        return x
 
     traced_nvfuser_foo = executor.make_callable(foo)
 
@@ -40,7 +40,7 @@ def test_input_as_output_prim_fwd(executor, device, dtype):
         if dtype in (datatypes.bfloat16, datatypes.float16)
         else assert_close
     )
-    assert_close(thunder_result, torch_result)
+    custom_comparator(thunder_result, torch_result)
     custom_comparator(a, a1)
 
 
@@ -49,22 +49,21 @@ def test_input_as_output_prim_bwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z * x
-        x.copy_(z)
+        o = x.copy_(z)
         p = y * y
         return p
 
     def foo(x, y):
         z = x * y
         z = z * x
-        thunder.core.prims.input_as_output(z, x)
+        o = thunder.core.prims.copy_(z, x)
         p = y * y
         return p
 
     traced_nvfuser_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    # inplace updated input can not require grad(RuntimeError: a leaf Variable that requires grad is being used in an in-place operation)
-    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
+    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
     b = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
     a1 = a.detach().clone()
     b1 = b.detach().clone()

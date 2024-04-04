@@ -2050,26 +2050,27 @@ def batch_norm(
 register_supported(PrimIDs.BATCH_NORM, batch_norm, _batch_norm_check)
 
 
-def _input_as_output_check(
-    out: TensorProxy,
-    input_alias: TensorProxy,
+def _copy__check(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
 ) -> bool:
-    return are_supported_tensors(out, input_alias)
+    return are_supported_tensors(copy_from, copy_to)
 
 
-def input_as_output(
-    out: TensorProxy,
-    input_alias: TensorProxy,
+def copy_(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    nvout = getnv(out, fd, lc_to_nv_map)
-    nvinput_alias = getnv(input_alias, fd, lc_to_nv_map)
-    fd.add_output(nvout, alias_input=nvinput_alias)
+    nvcopy_from = getnv(copy_from, fd, lc_to_nv_map)
+    nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
+    fd.add_output(nvcopy_from, alias_input=nvcopy_to)
+    return nvcopy_to
 
 
-register_supported(PrimIDs.INPUT_AS_OUTPUT, input_as_output, _input_as_output_check)
+register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
 
 # Removes excessive float casts, like those that occur when autocasting
