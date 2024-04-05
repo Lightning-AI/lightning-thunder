@@ -3091,8 +3091,7 @@ def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProx
 
     shape = list(a.shape)
     shape.append(size)
-    if dim < a.ndim:
-        shape[dim] = (shape[dim] - size) // step + 1
+    shape[dim] = (shape[dim] - size) // step + 1
 
     return TensorProxy(like=a, shape=shape)
 
