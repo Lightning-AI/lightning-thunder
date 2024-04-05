@@ -2498,7 +2498,7 @@ def layer_norm(
 
 
 def _native_batch_norm(
-    a: TensorProxy,
+    a: TensorLike,
     /,
     weight: None | TensorLike,
     bias: None | TensorLike,
@@ -2516,15 +2516,18 @@ def _native_batch_norm(
         biased_var, mean = var_mean(a_acc, dim=reduction_dims, correction=0, keepdim=True)
         rstd = rsqrt(biased_var + eps)
         out = (a - mean) * rstd
-        squeezed_mean = squeeze(mean, reduction_dims)
-        squeezed_var = squeeze(biased_var, reduction_dims)
+
         if running_mean is not None:
+            squeezed_mean = squeeze(mean, reduction_dims)
             new_running_mean = (1 - momentum) * running_mean + momentum * squeezed_mean
             if not utils.are_same_dtypes(new_running_mean, running_mean):
                 new_running_mean = to(new_running_mean, running_mean.dtype)
             prims.copy_(new_running_mean, running_mean)
         if running_var is not None:
-            new_running_var = (1 - momentum) * running_var + momentum * squeezed_var
+            squeezed_var = squeeze(biased_var, reduction_dims)
+            n = a.numel / a.shape[1]
+            unbiased_var = squeezed_var * (n / (n - 1))
+            new_running_var = (1 - momentum) * running_var + momentum * unbiased_var
             if not utils.are_same_dtypes(new_running_var, running_var):
                 new_running_var = to(new_running_var, running_var.dtype)
             prims.copy_(new_running_var, running_var)
