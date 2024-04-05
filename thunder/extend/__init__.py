@@ -37,8 +37,8 @@ class ImplInfo:
         execution_transform: None | Callable = None,
         grad_transform: None | Callable = None,
     ):
-        self.symbol: Symbol = symbol
-        self.checker: Callable = checker
+        self.symbol: None | Symbol = symbol
+        self.checker: None | Callable = checker
         self.execution_transform: None | Callable = execution_transform
         self.grad_transform: None | Callable = grad_transform
 
