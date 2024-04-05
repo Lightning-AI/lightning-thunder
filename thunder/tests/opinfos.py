@@ -2998,6 +2998,8 @@ def unfold_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     cases = (
+        ((), 0, 1, 3),
+        ((), -1, 0, 5),
         ((0,), 0, 0, 1),
         ((8,), 0, 2, 1),
         ((6, 2), 0, 2, 2),
@@ -3011,6 +3013,7 @@ def unfold_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
     cases = (
+        ((), 0, 2, 1, RuntimeError, "Maximum size for tensor at dimension 0 is 1 but size is 2"),
         ((0,), 0, 0, -1, RuntimeError, "Step is -1 but must be > 0"),
         ((8,), 1, 2, 1, IndexError, r"Dimension out of range \(expected to be in range of \[-1, 0\], but got 1\)"),
         ((8,), 0, -5, 1, RuntimeError, "Size is -5 but must be >= 0"),
