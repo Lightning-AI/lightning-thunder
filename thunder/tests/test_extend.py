@@ -125,6 +125,7 @@ def test_get_all_executors_includes_all_native_executors():
         "cudnn_layernorm",
         "sdpa",
         "torchcompile",
+        "torchcompile_complete",
         "python",
         "transformer_engine",
     }
