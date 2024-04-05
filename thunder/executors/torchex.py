@@ -463,6 +463,7 @@ squeeze = _register_torch_operation("squeeze")
 tensor_split = _register_torch_operation("tensor_split")
 transpose = _register_torch_operation("transpose")
 unbind = _register_torch_operation("unbind")
+unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
 
@@ -553,6 +554,7 @@ _register_implementation(ltorch.squeeze, checker=_always_executable, execution_t
 _register_implementation(ltorch.tensor_split, tensor_split, checker=_always_executable)
 _register_implementation(ltorch.transpose, transpose, checker=_always_executable)
 _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
+_register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
 

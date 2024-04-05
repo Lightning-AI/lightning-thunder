@@ -956,6 +956,11 @@ def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
 
 
+@torchsymbol(torch.Tensor.unfold, is_method=True)
+def unfold(a: TensorLike, /, dim: int, size: int, step: int) -> TensorLike:
+    return clang.unfold(a, dim, size, step)
+
+
 @torchsymbol(torch.unsqueeze, is_method=True)
 def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, dim)
