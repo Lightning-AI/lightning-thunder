@@ -19,7 +19,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing import assert_close, make_tensor
 
 import thunder
-from thunder import INTERPRETATION_OPTIONS
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
@@ -523,6 +522,7 @@ class CompileDDPTest(DataParallelTestCase):
         self.assertTrue(all(bsym.sym.id != PrimIDs.ALL_GATHER for bsym in bwd_trc.bound_symbols))
         self.assertTrue(any(bsym.sym.id == PrimIDs.ALL_GATHER for bsym in result_bwd_trc.bound_symbols))
 
+    @unittest.mock.patch.dict(os.environ, {"KINETO_LOG_LEVEL": "5"})  # silence torch.profiler logs
     @common_utils.parametrize(
         "executor,bucket_size_in_mb,dataset_size",
         product(tuple(executors_map.keys()), (0, 25), (1, 2)),
@@ -892,6 +892,10 @@ class CompileDDPTest(DataParallelTestCase):
         model = thunder.distributed.ddp(model)
         fwd_loss = thunder.jit(fwd_loss)
         fwd_loss(model, x)
+
+        # notice how we cannot do `model.no_sync()` because it's not a ThunderModule
+        with thunder.ThunderModule.no_sync(model):
+            fwd_loss(model, x)
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
