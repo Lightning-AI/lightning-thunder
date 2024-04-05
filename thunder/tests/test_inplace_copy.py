@@ -89,7 +89,7 @@ def test_prim_inplace_copy_bwd(executor, device, dtype):
     assert_close(b.grad, b1.grad)
 
 
-@instantiate(dtypes=(datatypes.floating,))
+@instantiate(dtypes=(thunder.float32, thunder.float64))
 def test_batch_norm_running_stats(executor, device, dtype):
     from torch import nn
 
@@ -104,18 +104,20 @@ def test_batch_norm_running_stats(executor, device, dtype):
             x = self.dense1_bn(x)
             return x
 
-    net = Net().train().cuda()
-    net1 = Net().train().cuda()
+    tdtype = ttorch.to_torch_dtype(dtype)
+    make = partial(make_tensor, dtype=tdtype, device=device, requires_grad=True)
+    net = Net().train().to(device=device, dtype=tdtype)
+    torch_net = Net().train().to(device=device, dtype=tdtype)
     thunder_net = executor.make_callable(net)
-    x = torch.randn((3, 2, 3, 4, 12), device="cuda", requires_grad=True)
+    x = make((3, 2, 3, 4, 12))
     x1 = x.detach().clone()
     x1.requires_grad_()
-    out = thunder_net(x)
-    out.sum().backward()
-    out1 = net1(x1)
-    out1.sum().backward()
+    thunder_out = thunder_net(x)
+    thunder_out.sum().backward()
+    torch_out = torch_net(x1)
+    torch_out.sum().backward()
 
-    assert_close(out, out1)
-    assert_close(net.state_dict()["dense1_bn.running_mean"], net1.state_dict()["dense1_bn.running_mean"])
-    assert_close(net.state_dict()["dense1_bn.running_var"], net1.state_dict()["dense1_bn.running_var"])
+    assert_close(thunder_out, torch_out)
+    assert_close(net.state_dict()["dense1_bn.running_mean"], torch_net.state_dict()["dense1_bn.running_mean"])
+    assert_close(net.state_dict()["dense1_bn.running_var"], torch_net.state_dict()["dense1_bn.running_var"])
     assert_close(x.grad, x1.grad)
