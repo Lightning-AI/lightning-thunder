@@ -505,12 +505,11 @@ class CompileDDPTest(DataParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t1, t3, t5 and t16 are all-gather'ed t_net1_bias, t_net2_bias, t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t1", "t3", "t5", "t16")
+        # t5 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t5", "t16")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
-        # NOTE(crcrpar): It seems something changed so that `all` is not working, `any` can
-        self.assertTrue(any(t in result_saved_for_bwd for t in unshard_param_names))
+        self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
 
         result_saved_for_bwd = [x.name for x in result_fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t in result_saved_for_bwd for t in sharded_param_names))
