@@ -95,10 +95,10 @@ def test_batch_norm_running_stats(executor, device, dtype):
 
     class Net(nn.Module):
         def __init__(self):
-            super(Net, self).__init__()
+            super().__init__()
             self.dense1_bn = nn.BatchNorm3d(2, track_running_stats=True)
             # To address the failure, use a workaround since `add_` is utilized in `nn.BatchNorm3d` when `num_batches_tracked` is not None.
-            self.dense1_bn.num_batches_tracked=None
+            self.dense1_bn.num_batches_tracked = None
 
         def forward(self, x):
             x = self.dense1_bn(x)
@@ -107,7 +107,7 @@ def test_batch_norm_running_stats(executor, device, dtype):
     net = Net().train().cuda()
     net1 = Net().train().cuda()
     thunder_net = executor.make_callable(net)
-    x = torch.randn((3, 2, 3, 4, 12), device='cuda', requires_grad=True)
+    x = torch.randn((3, 2, 3, 4, 12), device="cuda", requires_grad=True)
     x1 = x.detach().clone()
     x1.requires_grad_()
     out = thunder_net(x)
@@ -116,6 +116,6 @@ def test_batch_norm_running_stats(executor, device, dtype):
     out1.sum().backward()
 
     assert_close(out, out1)
-    assert_close(net.state_dict()['dense1_bn.running_mean'], net1.state_dict()['dense1_bn.running_mean'])
-    assert_close(net.state_dict()['dense1_bn.running_var'], net1.state_dict()['dense1_bn.running_var'])
+    assert_close(net.state_dict()["dense1_bn.running_mean"], net1.state_dict()["dense1_bn.running_mean"])
+    assert_close(net.state_dict()["dense1_bn.running_var"], net1.state_dict()["dense1_bn.running_var"])
     assert_close(x.grad, x1.grad)
