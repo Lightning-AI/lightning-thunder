@@ -221,4 +221,5 @@ for op in supported_ops:
 torch_compile_complete_executor = TorchCompileExecutor(name="torchcompile_complete")
 register_executor(torch_compile_complete_executor)
 from thunder.executors.torchex import ex as pytorch_executor
+
 torch_compile_complete_executor._implmap = dict(pytorch_executor.implmap)
