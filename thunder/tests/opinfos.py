@@ -3022,7 +3022,7 @@ def unfold_error_generator(op, device, dtype=torch.float32, **kwargs):
 
 
 unfold_opinfo = OpInfo(
-    ltorch.unfold,
+    clang.unfold,
     sample_input_generator=unfold_sample_generator,
     error_input_generator=unfold_error_generator,
     torch_reference=torch.Tensor.unfold,
