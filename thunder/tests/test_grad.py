@@ -458,9 +458,13 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         comp(actual_out, out)
 
 
-@ops((get_opinfo("batch_norm"),), supported_dtypes=(dtypes.float64,),)
+@ops(
+    (get_opinfo("batch_norm"),),
+    supported_dtypes=(dtypes.float64,),
+)
 def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
     from thunder.tests.framework import nvFuserTestExecutor
+
     if type(executor) is nvFuserTestExecutor and dtype is dtypes.float64:
         pytest.skip("nvFuser issue #1964")
 
