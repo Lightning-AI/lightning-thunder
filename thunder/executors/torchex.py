@@ -534,6 +534,7 @@ slice_prim_impl = ex.register_operator("torch_slice_prim_impl", meta=prims.slice
 _register_implementation(prims.slice_prim, slice_prim_impl, checker=_always_executable)
 _register_implementation(prims.squeeze, checker=_always_executable, execution_transform=_squeeze_transform)
 _register_implementation(prims.transpose, checker=_always_executable, execution_transform=_transpose_prim_transform)
+_register_implementation(prims.unfold, unfold, checker=_always_executable)
 _register_implementation(prims.view, view, checker=_always_executable)
 
 _register_implementation(ltorch.cat, cat, checker=_always_executable)
