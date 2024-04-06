@@ -6153,7 +6153,7 @@ nn_ops.append(max_pool3d_opinfo)
 
 
 def one_hot_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=torch.long, requires_grad=requires_grad)
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     test_shapes = [
         (10,),
@@ -6173,7 +6173,7 @@ one_hot_opinfo = OpInfo(
     ltorch.one_hot,
     sample_input_generator=one_hot_sample_generator,
     torch_reference=torch.nn.functional.one_hot,
-    dtypes=(datatypes.signedinteger,),
+    dtypes=(datatypes.int64,),  # akin to torch.long. F.one_hot expects input LongTensor
 )
 nn_ops.append(one_hot_opinfo)
 
