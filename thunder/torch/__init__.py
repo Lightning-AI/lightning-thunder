@@ -3495,7 +3495,7 @@ def one_hot(a: TensorLike, /, num_classes: int) -> TensorLike:
     utils.check(
         num_classes >= 1,
         lambda: f"Currently supports only positive input for num_classes, got num_classes={num_classes}",
-        exception_type=NotImplementedError
+        exception_type=NotImplementedError,
     )
     # TODO: would we want to implement this check in the future?
     #  utils.check(a.any() >= 0, lambda f"input tensor should have non-negative values", exception_type=ValueError)
