@@ -3497,7 +3497,7 @@ def one_hot(a: TensorLike, /, num_classes: int) -> TensorLike:
         lambda: f"Currently supports only positive input for num_classes, got num_classes={num_classes}",
         exception_type=NotImplementedError
     )
-    # TODO: should we implement this check? I suspect this might hinder performance, also we do not support .any)
+    # TODO: would we want to implement this check in the future?
     #  utils.check(a.any() >= 0, lambda f"input tensor should have non-negative values", exception_type=ValueError)
 
     canvas = zeros(*a.shape, num_classes, device=a.device, dtype=dtypes.int64)
