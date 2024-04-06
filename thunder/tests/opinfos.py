@@ -6156,6 +6156,7 @@ def one_hot_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     test_shapes = [
+        (0, 512),
         (10,),
         (5, 10),
         (3, 5, 10),
