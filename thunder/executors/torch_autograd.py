@@ -325,6 +325,13 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     if getattr(compile_data.fn, "use_ddp", False):
         bw_extrace = sort_waits(bw_extrace)
 
+    # Importing here to avoid cyclical dependencies in future.
+    from thunder.executors.transformer_engineex import transformer_engine_ex, _rearrange_transformer_engine_linear
+
+    if transformer_engine_ex in compile_data.executors_list:
+        # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
+        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)
 
