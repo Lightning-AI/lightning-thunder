@@ -3502,8 +3502,8 @@ def one_hot(a: TensorLike, /, num_classes: int) -> TensorLike:
 
     canvas = zeros(*a.shape, num_classes, device=a.device, dtype=dtypes.int64)
     index = a.unsqueeze(-1)
-    src = ones_like(index, dtype=dtypes.int64)
-
+    # src = ones_like(index, dtype=dtypes.int64)
+    src = tensor([1], device=a.device, dtype=dtypes.int64)
     return scatter_add(canvas, dim=-1, index=index, src=src)
 
 
