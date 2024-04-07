@@ -6152,6 +6152,33 @@ max_pool3d_opinfo = OpInfo(
 nn_ops.append(max_pool3d_opinfo)
 
 
+def one_hot_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    test_shapes = [
+        (0, 512),
+        (10,),
+        (5, 10),
+        (3, 5, 10),
+    ]
+
+    max_value = 9
+    for shape in test_shapes:
+        for num_classes in range(1, max_value + 1):
+            a = make(shape, low=0, high=num_classes - 1)  # use non-negative integers
+
+            yield SampleInput(a, num_classes=num_classes)
+
+
+one_hot_opinfo = OpInfo(
+    ltorch.one_hot,
+    sample_input_generator=one_hot_sample_generator,
+    torch_reference=torch.nn.functional.one_hot,
+    dtypes=(datatypes.int64,),  # akin to torch.long. F.one_hot expects input LongTensor
+)
+nn_ops.append(one_hot_opinfo)
+
+
 def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # NOTE: we set low/high to -+ 1 to avoid numerical issues with reduced float types.
     make = partial(make_tensor, low=-1, high=+1, device=device, dtype=dtype, requires_grad=requires_grad)
