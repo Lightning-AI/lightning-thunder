@@ -87,9 +87,7 @@ def find_external_consumer_inputs(
         Tuple[ProxyInterface, ...]: Consumer's inputs that must be included in
         the input of the consumer.
     """
-    all_produced_vars = tuple(
-        chain.from_iterable((y for y in x.flat_proxy_outs) for x in producer.subsymbols)
-    )
+    all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in producer.subsymbols))
     external_consumer_inputs_names = tuple(
         sorted(
             {x.name for x in consumer.args}
