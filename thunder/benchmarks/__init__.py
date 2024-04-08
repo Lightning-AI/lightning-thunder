@@ -2810,6 +2810,42 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return model
 
 
+class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        input_shape,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.shape: Sequence[int] = input_shape
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make_arg = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        normalized_shape = (self.shape[1],)
+        a = make_arg(self.shape)
+        weight = make_arg(normalized_shape)
+        bias = make_arg(normalized_shape)
+        # 'batch_norm' is not differentiable with respect to argument 'running_mean' and 'running_var'
+        running_mean = make(normalized_shape)
+        running_var = make(normalized_shape)
+        return (a, running_mean, running_var, weight, bias, True,), {}
+
+    def fn(self) -> Callable:
+        def foo(a, m, v, w, b, training):
+            return torch.nn.functional.batch_norm(a, m, v, w, b, training=training,).sum()
+
+        return foo
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
