@@ -1117,6 +1117,11 @@ def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
 
 
 @clangop()
+def unfold(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
+    return prims.unfold(a, dim, size, step)
+
+
+@clangop()
 def cat(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
     return prims.cat(tensors, dim)
