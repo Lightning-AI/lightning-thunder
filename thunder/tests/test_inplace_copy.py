@@ -10,7 +10,7 @@ from thunder.tests.framework import instantiate
 
 
 @instantiate()
-def test_prim_copy__fwd(executor, device, dtype):
+def test_prim_inplace_copy_fwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z + z
@@ -46,7 +46,7 @@ def test_prim_copy__fwd(executor, device, dtype):
 
 
 @instantiate(dtypes=(datatypes.floating,))
-def test_prim_copy__bwd(executor, device, dtype):
+def test_prim_inplace_copy_bwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z * x
