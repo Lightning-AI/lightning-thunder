@@ -88,7 +88,7 @@ def find_external_consumer_inputs(
         the input of the consumer.
     """
     all_produced_vars = tuple(
-        chain.from_iterable((y for y in x.flat_outs if y is not None) for x in producer.subsymbols)
+        chain.from_iterable((y for y in x.flat_proxy_outs) for x in producer.subsymbols)
     )
     external_consumer_inputs_names = tuple(
         sorted(
