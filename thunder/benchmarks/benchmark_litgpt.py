@@ -384,9 +384,8 @@ class Benchmark_litGPT:
             loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps, te_ctx)
 
             # Simple Gradient Accumulation Implementation
-            if (step_idx + 1) % self.gradient_accumulation_steps == 0:
-                self.optimizer.step()
-                self.optimizer.zero_grad(set_to_none=True)
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
 
             if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
                 print("=====Stop NSYS Profiling======")
