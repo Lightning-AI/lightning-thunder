@@ -8,7 +8,6 @@ import weakref
 from collections.abc import Sequence
 from functools import partial, wraps
 from itertools import product
-import inspect
 
 import pytest
 import torch
