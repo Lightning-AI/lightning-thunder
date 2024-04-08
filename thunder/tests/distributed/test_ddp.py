@@ -1464,131 +1464,132 @@ def _test_fsdp_transformer_engine(input_data):
     # model with thunder (using TE executor) and with PyTorch eager + TE
     # and verify that the weights have converged to same value and
     # fp8 meta state is same after `n_iter`.
-    init_method, world_size, rank, executor, device, dtype, kwargs = input_data
+    init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy = kwargs["thunder_fsdp_strategy"]
     devicetype = devices.device_from_string(device).devicetype
-    _unused_dtype = ltorch.to_torch_dtype(dtype)
-    os.environ["LOCAL_RANK"] = str(rank)
-    init_per_process_distributed(init_method, devicetype, world_size, rank)
-    torch.cuda.set_device(rank)
 
-    dim = 256
-    n_iter = 10
+    # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
+    with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}, clear=True):
+        init_per_process_distributed(init_method, devicetype, world_size, rank)
+        torch.cuda.set_device(rank)
 
-    class ThunderModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = torch.nn.Linear(dim, dim, bias=False)
-            self.fc2 = torch.nn.Linear(dim, dim, bias=False)
+        dim = 256
+        n_iter = 10
 
-        def forward(self, x):
-            return self.fc2(torch.nn.functional.relu(self.fc1(x)))
+        class ThunderModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(dim, dim, bias=False)
+                self.fc2 = torch.nn.Linear(dim, dim, bias=False)
 
-    # Weights
-    fc1_weight = torch.randn(dim, dim, requires_grad=True).cuda()
-    fc2_weight = torch.randn(dim, dim, requires_grad=True).cuda()
+            def forward(self, x):
+                return self.fc2(torch.nn.functional.relu(self.fc1(x)))
 
-    # Inputs (different input on different rank).
-    if rank == 0:
-        x = torch.arange(dim * dim, dtype=torch.float).view(dim, dim).cuda()
-    if rank == 1:
-        x = torch.randn(dim, dim).cuda() * 100
+        # Weights
+        fc1_weight = torch.randn(dim, dim, requires_grad=True).cuda()
+        fc2_weight = torch.randn(dim, dim, requires_grad=True).cuda()
 
-    thunder_model = ThunderModel().cuda()
-    thunder_model.fc1.weight.data = fc1_weight.clone()
-    thunder_model.fc2.weight.data = fc2_weight.clone()
+        # Inputs (different input on different rank).
+        if rank == 0:
+            x = torch.arange(dim * dim, dtype=torch.float).view(dim, dim).cuda()
+        if rank == 1:
+            x = torch.randn(dim, dim).cuda() * 100
 
-    jit_model = thunder.jit(
-        thunder.distributed.fsdp(thunder_model, sharding_strategy=thunder_fsdp_strategy),
-        executors=[
-            transformer_engine_ex,
-        ]
-        + executor.executors_list(),
-    )
+        thunder_model = ThunderModel().cuda()
+        thunder_model.fc1.weight.data = fc1_weight.clone()
+        thunder_model.fc2.weight.data = fc2_weight.clone()
 
-    optim = torch.optim.SGD(thunder_model.parameters())
+        jit_model = thunder.jit(
+            thunder.distributed.fsdp(thunder_model, sharding_strategy=thunder_fsdp_strategy),
+            executors=[
+                transformer_engine_ex,
+            ]
+            + executor.executors_list(),
+        )
 
-    for _ in range(n_iter):
-        with fp8_autocast():
-            o = jit_model(x).sum()
-        o.backward()
-        optim.step()
-        optim.zero_grad()
+        optim = torch.optim.SGD(thunder_model.parameters())
 
-    class TEModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = TELinear(dim, dim, bias=False)
-            self.fc2 = TELinear(dim, dim, bias=False)
+        for _ in range(n_iter):
+            with fp8_autocast():
+                o = jit_model(x).sum()
+            o.backward()
+            optim.step()
+            optim.zero_grad()
 
-        def forward(self, x):
-            return self.fc2(torch.nn.functional.relu(self.fc1(x)))
+        class TEModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = TELinear(dim, dim, bias=False)
+                self.fc2 = TELinear(dim, dim, bias=False)
 
-    te_model = TEModel().cuda()
-    te_model.fc1.weight.data = fc1_weight.clone()
-    te_model.fc2.weight.data = fc2_weight.clone()
+            def forward(self, x):
+                return self.fc2(torch.nn.functional.relu(self.fc1(x)))
 
-    ddp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
+        te_model = TEModel().cuda()
+        te_model.fc1.weight.data = fc1_weight.clone()
+        te_model.fc2.weight.data = fc2_weight.clone()
 
-    optim = torch.optim.SGD(te_model.parameters())
+        ddp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
 
-    for _ in range(n_iter):
-        with fp8_autocast():
-            o = ddp_model(x).sum()
+        optim = torch.optim.SGD(te_model.parameters())
 
-        o.backward()
-        optim.step()
-        optim.zero_grad()
+        for _ in range(n_iter):
+            with fp8_autocast():
+                o = ddp_model(x).sum()
 
-    thunder_to_te_layer_map = {"te_linear_0": te_model.fc1, "te_linear_1": te_model.fc2}
+            o.backward()
+            optim.step()
+            optim.zero_grad()
 
-    fwd_traces = thunder.last_traces(jit_model)
+        thunder_to_te_layer_map = {"te_linear_0": te_model.fc1, "te_linear_1": te_model.fc2}
 
-    def is_same_across_ranks(t):
-        t_clone = t.clone()
-        torch.distributed.all_reduce(t_clone, op=torch.distributed.ReduceOp.AVG)
-        assert_close(t, t_clone)
+        fwd_traces = thunder.last_traces(jit_model)
 
-    # Compare the state of the two models.
-    comparison_exceptions = []
-    for bound_symbol in fwd_traces[-1].bound_symbols:
-        if "te_linear" in bound_symbol.sym.name:
-            thunder_fp8_meta = bound_symbol._call_ctx[bound_symbol.sym.name].func.fp8_meta
-            te_fp8_meta = thunder_to_te_layer_map[bound_symbol.sym.name].fp8_meta
+        def is_same_across_ranks(t):
+            t_clone = t.clone()
+            torch.distributed.all_reduce(t_clone, op=torch.distributed.ReduceOp.AVG)
+            assert_close(t, t_clone)
+
+        # Compare the state of the two models.
+        comparison_exceptions = []
+        for bound_symbol in fwd_traces[-1].bound_symbols:
+            if "te_linear" in bound_symbol.sym.name:
+                thunder_fp8_meta = bound_symbol._call_ctx[bound_symbol.sym.name].func.fp8_meta
+                te_fp8_meta = thunder_to_te_layer_map[bound_symbol.sym.name].fp8_meta
+                try:
+                    # fwd tensor history
+                    assert_close(thunder_fp8_meta["scaling_fwd"].scale, te_fp8_meta["scaling_fwd"].scale)
+                    assert_close(thunder_fp8_meta["scaling_fwd"].scale_inv, te_fp8_meta["scaling_fwd"].scale_inv)
+                    assert_close(thunder_fp8_meta["scaling_fwd"].amax_history, te_fp8_meta["scaling_fwd"].amax_history)
+                    # bwd tensor history
+                    assert_close(thunder_fp8_meta["scaling_bwd"].scale, te_fp8_meta["scaling_bwd"].scale)
+                    assert_close(thunder_fp8_meta["scaling_bwd"].scale_inv, te_fp8_meta["scaling_bwd"].scale_inv)
+                    assert_close(thunder_fp8_meta["scaling_bwd"].amax_history, te_fp8_meta["scaling_bwd"].amax_history)
+
+                    # This has to be on all ranks so that the computation is not blocked
+                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
+                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale_inv)
+                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history)
+                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
+                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale_inv)
+                    is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
+                except Exception as e:
+                    # Return exceptions only for rank==0
+                    if rank == 0:
+                        comparison_exceptions.append(e)
+
+            # Compare weights after `n_iters`
+            shard_size = int(dim / world_size)
+            fsdp_te_params = tuple(te_model.parameters())
             try:
-                # fwd tensor history
-                assert_close(thunder_fp8_meta["scaling_fwd"].scale, te_fp8_meta["scaling_fwd"].scale)
-                assert_close(thunder_fp8_meta["scaling_fwd"].scale_inv, te_fp8_meta["scaling_fwd"].scale_inv)
-                assert_close(thunder_fp8_meta["scaling_fwd"].amax_history, te_fp8_meta["scaling_fwd"].amax_history)
-                # bwd tensor history
-                assert_close(thunder_fp8_meta["scaling_bwd"].scale, te_fp8_meta["scaling_bwd"].scale)
-                assert_close(thunder_fp8_meta["scaling_bwd"].scale_inv, te_fp8_meta["scaling_bwd"].scale_inv)
-                assert_close(thunder_fp8_meta["scaling_bwd"].amax_history, te_fp8_meta["scaling_bwd"].amax_history)
-
-                # This has to be on all ranks so that the computation is not blocked
-                is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
-                is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale_inv)
-                is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history)
-                is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
-                is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale_inv)
-                is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
+                assert_close(thunder_model.fc1.weight, fsdp_te_params[0].view(shard_size, dim))
+                assert_close(thunder_model.fc2.weight, fsdp_te_params[1].view(shard_size, dim))
             except Exception as e:
                 # Return exceptions only for rank==0
                 if rank == 0:
                     comparison_exceptions.append(e)
 
-        # Compare weights after `n_iters`
-        shard_size = int(dim / world_size)
-        fsdp_te_params = tuple(te_model.parameters())
-        try:
-            assert_close(thunder_model.fc1.weight, fsdp_te_params[0].view(shard_size, dim))
-            assert_close(thunder_model.fc2.weight, fsdp_te_params[1].view(shard_size, dim))
-        except Exception as e:
-            # Return exceptions only for rank==0
-            if rank == 0:
-                comparison_exceptions.append(e)
-
-        return comparison_exceptions
+            return comparison_exceptions
 
 
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
@@ -1682,13 +1683,6 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
         # NOTE: Setting `NVTE_TORCH_COMPILE`
-        # It is important to set this flag so that TE doesn't use
-        # `torch.compile` to fuse a few operations. This is because
-        # `torch.compile` creates a new process and that leads to
-        # the error : daemonic processes are not allowed to have children
-        # when running the tests.
-        # With the setting below, we use `torch.jit` for this test suite
-        # See: https://github.com/NVIDIA/TransformerEngine/blob/a38b291b0d1b04847e8ab1df8550df642a03a27d/transformer_engine/pytorch/jit.py#L11-L19
         unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}, clear=True),
     ),
 )
