@@ -216,9 +216,11 @@ class Benchmark_litGPT:
                 from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
-                bucketing_strategy = {"none": FSDPBucketingStrategy.NONE, "block": FSDPBucketingStrategy.BLOCK, "layer": FSDPBucketingStrategy.LAYER,}[
-                    self.bucketing_mode
-                ]
+                bucketing_strategy = {
+                    "none": FSDPBucketingStrategy.NONE,
+                    "block": FSDPBucketingStrategy.BLOCK,
+                    "layer": FSDPBucketingStrategy.LAYER,
+                }[self.bucketing_mode]
                 model = fsdp(
                     model,
                     broadcast_from=None,
