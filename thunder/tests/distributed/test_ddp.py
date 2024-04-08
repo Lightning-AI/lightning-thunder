@@ -667,6 +667,10 @@ class CompileDDPTest(DataParallelTestCase):
                         )
                         with torch.no_grad():
                             loss += cur_loss
+                        if use_no_sync and i == 0 and iter_count == 0:
+                            # make sure the backward trace under `no_sync` has actual math computations.
+                            no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
+                            self.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
                 cur_loss = run_fwd_bwd(
                     iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
                 )
