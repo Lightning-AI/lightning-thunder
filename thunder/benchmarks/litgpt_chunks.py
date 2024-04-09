@@ -28,6 +28,10 @@ BATCH_SIZE = 2
 CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
 # CONFIG_NAMES = ["Llama-2-7b-hf",]
 
+# Skip Mixtral MoE config because they are not supported by the current implementation
+# See https://github.com/Lightning-AI/lightning-thunder/issues/124
+CONFIG_NAMES = [name for name in CONFIG_NAMES if "mixtral" not in name.lower()]
+
 
 def make_torch_traces_for_config(name: str):
     config = Config.from_name(name)
