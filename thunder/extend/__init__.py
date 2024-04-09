@@ -4,6 +4,7 @@ from typing import Any
 from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
+import warnings
 
 import torch.cuda
 
@@ -11,6 +12,7 @@ from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import Proxy
+from thunder.core.baseutils import run_once
 
 __all__ = [
     "register_executor",
@@ -170,8 +172,8 @@ class FusionExecutor(Executor):
     ):
         impl = ImplInfo(checker=checker, execution_transform=execution_transform, grad_transform=grad_transform)
 
-        id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
-        self.implmap[id] = impl
+        _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
+        self.implmap[_id] = impl
 
     def register_temporary_operation(
         self, name: str, fn: Callable, *, inputs: list[Proxy], outputs: list[Proxy], bsyms: list[BoundSymbol]
@@ -185,6 +187,13 @@ class FusionExecutor(Executor):
 
         sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
         return sym.bind(*inputs, output=outputs)
+
+
+@run_once
+def warn_default_meta(opname: str, exname: Hashable):
+    warnings.warn(
+        f"Meta function has not been specified for operator {opname} in exexutor {exname}. Defaulting to running the operator with example tensors to determine its output metadata."
+    )
 
 
 class OperatorExecutor(Executor):
@@ -212,7 +221,9 @@ class OperatorExecutor(Executor):
         replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
-        assert (like is None) ^ (meta is None), "Expected one and only one of 'like' and 'meta' to be specified"
+        assert (like is not None) and (
+            meta is not None
+        ), "Expected one and only one of 'like' and 'meta' to be specified"
         assert (module is not None) + (
             fn is not None
         ) <= 2, "Expected one and only one of 'module' or 'fn' to be specified"
@@ -220,6 +231,18 @@ class OperatorExecutor(Executor):
         # NOTE Directly specifying a meta function makes the operation a prim
         is_prim = meta is not None
         meta = meta if meta is not None else like
+        if meta is None:
+            warn_default_meta(name, self.name)
+
+            def default_meta(*args, **kwargs):
+                # TODO: Unproxify and Reproxify
+                args = tuple(a for a in args)
+                kwargs = {k: v for k, v in kwargs.items()}
+                res = fn(*args, **kwargs)
+                res = res
+                return res
+
+            meta = default_meta
         call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
 
         def _bind_postprocess(bsym: BoundSymbol) -> None:
@@ -260,8 +283,34 @@ class OperatorExecutor(Executor):
             symbol=op, checker=checker, execution_transform=execution_transform, grad_transform=grad_transform
         )
 
-        id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
-        self.implmap[id] = impl
+        _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
+        self.implmap[_id] = impl
+
+
+class SingleOpExecutor(OperatorExecutor):
+    def __init__(
+        self,
+        exc_name: Hashable,
+        op_name: str,
+        *,
+        replaces: Callable | None = None,
+        like: None | Callable = None,
+        meta: None | Callable = None,
+        module: None | type | ModuleType = None,
+        fn: None | Callable = None,
+        version: None | Any = None,
+    ):
+        super().__init__(exc_name, version=version)
+        register_executor(self)
+
+        self.register_operator(
+            op_name,
+            replaces=replaces,
+            like=like,
+            meta=meta,
+            module=module,
+            fn=fn,
+        )
 
 
 # Creates common datastructures
@@ -360,25 +409,25 @@ def add_always_executor(ex: Executor) -> list[Executor]:
 def remove_default_executor(ex: Hashable | Executor) -> list[Executor]:
     global _default_executors
 
-    id = ex.name if isinstance(ex, Executor) else ex
-    _default_executors = list([x for x in _default_executors if x.name != id])
+    _id = ex.name if isinstance(ex, Executor) else ex
+    _default_executors = list([x for x in _default_executors if x.name != _id])
     return _default_executors
 
 
 def remove_always_executor(ex: Hashable | Executor) -> list[Executor]:
     global _always_executors
 
-    id = ex.name if isinstance(ex, Executor) else ex
-    _always_executors = list([x for x in _always_executors if x.name != id])
+    _id = ex.name if isinstance(ex, Executor) else ex
+    _always_executors = list([x for x in _always_executors if x.name != _id])
     return _always_executors
 
 
 # Deregisters an executor -- removing it from default and always lists
 def deregister_executor(ex: Hashable | Executor) -> None:
-    id: Hashable = ex.name if isinstance(ex, Executor) else ex
+    _id: Hashable = ex.name if isinstance(ex, Executor) else ex
 
-    if id in _executor_map:
-        del _executor_map[id]
+    if _id in _executor_map:
+        del _executor_map[_id]
 
-    remove_always_executor(id)
-    remove_default_executor(id)
+    remove_always_executor(_id)
+    remove_default_executor(_id)

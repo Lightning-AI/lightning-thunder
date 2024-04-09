@@ -301,7 +301,7 @@ def jit(
     /,
     *,
     langctx: None | str | Any | LanguageContext = None,
-    executors: None | Sequence[Executor] = None,
+    executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
@@ -316,7 +316,7 @@ def jit(
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
         executors: list of executors to use. Defaults to the executors returned by `thunder.get_default_executors()` and always amened by `thunder.get_always_executors()`.
-                   You can get a list of all available executors with `thunder.get_all_executors()`.
+                   You can get a list of all available executors with `thunder.get_all_executors()`. You can also pass the name of an executor that's been registered, and it will be resolved with extend.get_executor().
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
 
@@ -344,13 +344,23 @@ def jit(
     if additional_transforms is None:
         additional_transforms = []
 
+    # Resolve names of executors
+    exc_list = executors
+    executors = []
+    for e in exc_list:
+        if isinstance(e, str):
+            e = extend.get_executor(e)
+        if not isinstance(e, Executor):
+            raise TypeError(f"Expected an Executor or the name of one, instead got: {e}")
+        executors.append(e)
+
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
     # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
     #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     executor_lookasides = {}
-    for ex in executors or []:
+    for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
 
