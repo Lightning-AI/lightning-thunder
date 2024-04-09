@@ -1575,6 +1575,52 @@ def test_unhashable_lookaside(jit):
     jit(fn)()
 
 
+def test_enumerate_lookaside(jit):
+    jitting = False
+
+    class mycls:
+        def __init__(self, val):
+            self.list = [val] * 3
+
+        def __iter__(self):
+            assert is_jitting_with_raise() == jitting
+            return self.list.__iter__()
+
+    def foo(a, start=0):
+        return list(enumerate(a, start))
+
+    o = mycls(2)
+    jfoo = jit(foo)
+
+    jitting = False
+    res1 = foo(o)
+    res2 = foo([1, 2, 3], 8)
+    res3 = foo("mystr", True)
+    res4 = foo(o, -3)
+
+    jitting = True
+    jres1 = jfoo(o)
+    jres2 = jfoo([1, 2, 3], 8)
+    jres3 = jfoo("mystr", True)
+    jres4 = jfoo(o, -3)
+    assert res1 == jres1
+    assert res2 == jres2
+    assert res3 == jres3
+    assert res4 == jres4
+
+    with pytest.raises(TypeError, match="object is not iterable$"):
+        jfoo(12)
+
+    class myclsnotiterable:
+        def __init__(self):
+            pass
+
+    with pytest.raises(TypeError, match="object is not iterable$"):
+        jfoo(myclsnotiterable())
+    with pytest.raises(TypeError, match="object cannot be interpreted as an integer$"):
+        jfoo(o, -2.5)
+
+
 def test_len_lookaside(jit):
     jitting = False
 

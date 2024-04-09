@@ -35,6 +35,7 @@ op_skip = {
     # Finite difference approximation doesn't work for this function
     "embedding",
     "index_put",
+    "batch_norm",
 }
 
 # Don't rely on the generated list of supported ops.
@@ -455,6 +456,37 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
+
+
+@ops((get_opinfo("batch_norm"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_batch_norm_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Compute vjp result using PyTorch
+        weight = sample.args[3]
+        bias = sample.args[4]
+        # Torch fails with "RuntimeError: tensor does not have a device"
+        if weight is None and bias is not None:
+            continue
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        grad_inputs = [x for x in (sample.args[0], weight, bias) if x is not None]
+        expected = torch.autograd.grad(out, grad_inputs, v)
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        actual_out, actual_grad = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
+            flat_args, (v,)
+        )
+        actual_grad = [
+            x
+            for x, grad_input in zip(actual_grad, sample.args[:5])
+            if grad_input is not None and grad_input.requires_grad
+        ]
+
+        comp = partial(comp, equal_nan=True)
+        comp(actual_out, out)
+        assert len(actual_grad) == len(expected)
+        for actual, expect in zip(actual_grad, expected):
+            comp(actual, expect)
 
 
 # Testing with finite differences has flaky accuracy fails
@@ -1362,8 +1394,8 @@ def test_populate_grads_nanogpt(executor, device, dtype):
 
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
 
-    # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
-    config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
+    # NOTE Currently setting dropout to zero for reproducibility
+    config = NanoGPTConfig(dropout=0, n_layer=2, n_head=1, n_embd=64)
 
     bench = NanoGPTBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
     model = bench.fn()

@@ -1111,6 +1111,27 @@ def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
 register_grad(pids.SUM, _sum_prim_grad)
 
 
+@torchctx
+def _topk_prim_grad(
+    a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
+):
+    fwd = prims.topk(a, k, dim, largest, sorted, out=out)
+    val, idx = fwd
+
+    val_grad = get_grad(val)
+
+    a_grad = ltorch.zeros_like(a)
+    # TODO: replace with scatter once we have it.
+    # scatter_add is a prim and it relies on atomic ops.
+    a_grad = ltorch.scatter_add(a_grad, dim, idx, val_grad)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.TOPK, _topk_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
@@ -2449,6 +2470,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
+    prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
 }
 
 
@@ -2479,6 +2501,8 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
+    # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
+    prims.PrimIDs.COPY_: lambda g: (None, None),
 }
 
 
@@ -3061,6 +3085,43 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     return gweight
 
 
+@register_augmented_forward(prims.PrimIDs.BATCH_NORM)
+def batch_norm_aug_fwd(
+    a: TensorProxy,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> VJPDual:
+    primal = prims.batch_norm(
+        a,
+        weight,
+        bias,
+        running_mean,
+        running_var,
+        training,
+        momentum,
+        eps,
+    )
+    output_mask = [x is not None for x in (a, weight, bias)]
+    output, save_mean, save_invstd = primal
+    residuals = (a, weight, running_mean, running_var, save_mean, save_invstd, training, eps, output_mask)
+    return VJPDual(primal, residuals)
+
+
+@register_backward(prims.PrimIDs.BATCH_NORM)
+def batch_norm_backward(a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask, *grads):
+    from thunder.torch import batch_norm_backward
+
+    result = batch_norm_backward(
+        grads[0], a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask
+    )
+    return *result, None, None
+
+
 @register_augmented_forward("torch.cumsum")
 def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> VJPDual:
     from thunder.torch import cumsum
@@ -3108,6 +3169,8 @@ def iter_bound_symbols(bound_symbols):
     """
     for symbol in bound_symbols:
         if symbol.sym.id in transform_skip_list:
+            continue
+        elif symbol.output is None:
             continue
         else:
             yield symbol
@@ -3460,9 +3523,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         init_cotangents = init_cotangents[0]
     safe_map_flat(put_grad, trace.output, init_cotangents)
 
-    for symbol in reversed(trace.bound_symbols):
-        if symbol.sym.id in transform_skip_list:
-            continue
+    for symbol in reversed(list(iter_bound_symbols(trace.bound_symbols))):
         symbol_output = sequencify(symbol.output)
 
         cotangents = tree_map(get_grad, symbol_output)

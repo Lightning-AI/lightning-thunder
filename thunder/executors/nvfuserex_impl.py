@@ -511,9 +511,6 @@ def create_fusion_definition_wrapper(
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
     fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
-    # Avoid hitting nvFuser error when there is no output
-    if not sorted_unique_outputs:
-        return lambda *args: tuple()
     return fdw
 
 
@@ -787,7 +784,7 @@ class nvFuserExecutor(FusionExecutor):
             region = Region(producers, consumers, bsyms)
 
             # Acquires the nv_enable_bookend compile option, which defaults to True
-            bookend_help = """
+            bookend_help = """\
 nvFuser's 'bookending' heuristic tries to gather metadata operations---such as
 transpose, reshape, or view---into the beginning and ends of blocks that utilize
 nvFuser. By pushing these ops to the edges, they will get dropped by the nvFuser
@@ -834,6 +831,19 @@ instantiated) this heuristic actually leads to worse code.
                 else:
                     fused_bsyms.extend(fusion.bound_symbols)
             fused_bsyms.extend(epilogue)
+
+        # Force return operator to be the last one in the fused_bsyms
+        if fused_bsyms[-1].sym.id != PrimIDs.RETURN:
+            return_idx: int = -1
+            for i, fused_bsym in enumerate(fused_bsyms):
+                if fused_bsym.sym.id == PrimIDs.RETURN:
+                    return_idx = i
+                    break
+            utils.check(
+                return_idx != -1,
+                lambda: f"Return operator does not exist in bound symbols",
+            )
+            fused_bsyms.append(fused_bsyms.pop(return_idx))
 
         fusedtrace.bound_symbols = fused_bsyms
 
@@ -1998,6 +2008,69 @@ def var_mean(
 
 
 register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
+
+
+def _batch_norm_check(
+    a: TensorProxy,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> bool:
+    return are_supported_tensors(*(x for x in (a, weight, bias, running_mean, running_var) if x is not None))
+
+
+def batch_norm(
+    a: TensorProxy,
+    weight: None | TensorProxy,
+    bias: None | TensorProxy,
+    running_mean: None | TensorProxy,
+    running_var: None | TensorProxy,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvweight = None if weight is None else getnv(weight, fd, lc_to_nv_map)
+    nvbias = None if bias is None else getnv(bias, fd, lc_to_nv_map)
+    nvrunning_mean = None if running_mean is None else getnv(running_mean, fd, lc_to_nv_map)
+    nvrunning_var = None if running_var is None else getnv(running_var, fd, lc_to_nv_map)
+    nvmomentum = getnv(momentum, fd, lc_to_nv_map)
+    nveps = getnv(eps, fd, lc_to_nv_map)
+
+    return fd.ops.batch_norm(nva, nvweight, nvbias, nvrunning_mean, nvrunning_var, nvmomentum, nveps, training)
+
+
+register_supported(PrimIDs.BATCH_NORM, batch_norm, _batch_norm_check)
+
+
+def _copy__check(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
+) -> bool:
+    return are_supported_tensors(copy_from, copy_to)
+
+
+def copy_(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nvcopy_from = getnv(copy_from, fd, lc_to_nv_map)
+    nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
+    fd.add_output(nvcopy_from, alias_input=nvcopy_to)
+    return nvcopy_to
+
+
+register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
 
 # Removes excessive float casts, like those that occur when autocasting

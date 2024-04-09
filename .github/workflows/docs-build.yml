@@ -71,7 +71,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: docs-html-${{ github.sha }}
-          path: docs/build/
+          path: docs/build/html/
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2

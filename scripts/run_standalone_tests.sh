@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+set -e
 # THIS FILE ASSUMES IT IS RUN INSIDE THE tests DIRECTORY
 
 # Get all the tests marked with standalone marker
@@ -21,7 +21,8 @@ TEST_FILE="standalone_tests.txt"
 test_path=$1
 pytest_arg=$2  # use `-m standalone`
 printf "source path: $test_path\n"
-printf "pytest arg: ``$pytest_arg\n"
+printf "pytest arg: $pytest_arg\n"
+
 
 python -um pytest $test_path -q --collect-only $pytest_arg --pythonwarnings ignore 2>&1 > $TEST_FILE
 
@@ -40,15 +41,19 @@ status=0
 for test in $tests; do
   python -um pytest -sv "$test" --pythonwarnings ignore --junitxml="$test-results.xml" 2>&1 > "$test-output.txt"
   pytest_status=$?
-  printf "$test status >>> $pytest_status\n"
-
-  if [ $pytest_status -ne 0 ]; then
+  if [ $pytest_status -eq 0 ]; then
+    echo "$test PASSED"
+  else
     status=$pytest_status
+    echo "$test returned status $pytest_status"
+    echo "============FAILED TEST OUTPUT BEGIN================"
     cat "$test-output.txt"
+    echo "============FAILED TEST OUTPUT END=================="
   fi
 done
 
 #find . -name "*.xml" -exec cp -a -t . --parents {} +
 rm $TEST_FILE
 
+printf "Exiting with status: $status\n"
 exit $status

@@ -1,16 +1,21 @@
-name: PyPI Release
+name: Nightly packages
 
-# https://help.github.com/en/actions/reference/events-that-trigger-workflows
-on:  # Trigger the workflow on push or pull request, but only for the main branch
-  push:
-    branches: [main]
-  release:
-    types: [published]
+on:
+  pull_request: # this shall test only the part of workflow before publishing
+    branches: [main, "release/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - ".github/workflows/release-nightly.yml"
+  schedule:
+    - cron: "0 0 * * 0" # on Sundays
+  workflow_dispatch: {}
 
-# based on https://github.com/pypa/gh-action-pypi-publish
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  releasing-pypi:
+  releasing-nightly:
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
@@ -20,12 +25,14 @@ jobs:
 
     - name: Install dependencies
       run: python -m pip install --user --upgrade setuptools wheel
-    - name: Build
+    - name: Build package
+      env:
+        CONVERT_VERSION2NIGHTLY: "1"
       run: python setup.py sdist bdist_wheel
 
     # We do this, since failures on test.pypi aren't that bad
     - name: Publish to Test PyPI
-      if: startsWith(github.event.ref, 'refs/tags') || github.event_name == 'release'
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       uses: pypa/gh-action-pypi-publish@v1.8.14
       with:
         user: __token__
@@ -33,7 +40,7 @@ jobs:
         repository_url: https://test.pypi.org/legacy/
 
     - name: Publish distribution 📦 to PyPI
-      if: startsWith(github.event.ref, 'refs/tags') || github.event_name == 'release'
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       uses: pypa/gh-action-pypi-publish@v1.8.14
       with:
         user: __token__

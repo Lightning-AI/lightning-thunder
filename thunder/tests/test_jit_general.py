@@ -467,6 +467,14 @@ def test_lookaside_bool():
     assert_close(expected, actual)
 
 
+# see https://github.com/Lightning-AI/lightning-thunder/issues/95
+def test_get_default_dtype():
+    def foo():
+        return torch.get_default_dtype()
+
+    assert foo() == thunder.jit(foo)()
+
+
 @pytest.mark.parametrize(
     "device",
     ("cpu", "cuda"),
@@ -613,7 +621,7 @@ def test_nanogpt():
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=NotImplementedError, reason="topk", strict=True)),
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
     ),
 )
 @pytest.mark.parametrize(
@@ -662,7 +670,7 @@ def test_litgpt_variants(name, device):
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=NotImplementedError, reason="topk", strict=True)),
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
     ),
 )
 @pytest.mark.parametrize(
