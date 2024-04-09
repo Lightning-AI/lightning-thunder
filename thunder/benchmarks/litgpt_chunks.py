@@ -12,7 +12,7 @@ from litgpt.config import configs
 
 import thunder
 
-from thunder.benchmarks import thunder_executor, torch_compile_executor, torch_executor
+from thunder.benchmarks import thunder_executor, torch_compile_executor, torch_executor, inductor_cutlass_executor, inductor_triton_executor
 from thunder.common import CompileData, CompileStats
 from thunder.core.compile_data import set_compile_data_and_stats
 
@@ -160,10 +160,14 @@ def forward_and_backward(torch_trace: TraceCtx, jit_fn: Callable):
     return wrapper
 
 
-to_executor_name = {
+executor_names = {
     torch_executor: "eager",
-    torch_compile_executor: "inductor",
     thunder_executor: "thunder",
+    # Inductor with the default GEMM backend (Aten)
+    torch_compile_executor: "inductor",
+    # Inductor with autotuning between Aten and CUTLASS or Triton as the GEMM backend
+    inductor_cutlass_executor: "inductor+cutlass",
+    inductor_triton_executor: "inductor+triton",
 }
 
 
@@ -187,14 +191,14 @@ for j, name in enumerate(CONFIG_NAMES):
         litgpt_traces.append(TraceInfo(name, i, trace))
 
 # Now we have a list of torch_traces that are ready to be benchmarked
-trace_executor_pairs = list(product(litgpt_traces, (torch_executor, torch_compile_executor, thunder_executor)))
+trace_executor_pairs = list(product(litgpt_traces, (executor_names.keys())))
 
 
 @pytest.mark.parametrize(
     "info, executor",
     trace_executor_pairs,
     ids=[
-        f"{info.config_name}_region{info.region_idx}_{to_executor_name[executor]}"
+        f"{info.config_name}_region{info.region_idx}_{executor_names[executor]}"
         for info, executor in trace_executor_pairs
     ],
 )

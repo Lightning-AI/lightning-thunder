@@ -707,6 +707,32 @@ def torch_compile_executor(fn: Callable) -> Callable:
     return torch.compile(fn)
 
 
+def inductor_gemm_executor(fn: Callable, gemm_backend: str) -> Callable:
+    import torch._inductor.config
+
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch._dynamo.reset()
+
+    compiled = torch.compile(fn)
+
+    def wrapper(*args, **kwargs):
+        old = torch._inductor.config.max_autotune_gemm_backends
+        old1 = torch._inductor.config.max_autotune_gemm
+        try:
+            torch._inductor.config.max_autotune_gemm_backends = gemm_backend
+            torch._inductor.config.max_autotune_gemm = True
+            return compiled(*args, **kwargs)
+        finally:
+            torch._inductor.config.max_autotune_gemm_backends = old
+            torch._inductor.config.max_autotune_gemm = old1
+
+    return wrapper
+
+
+inductor_cutlass_executor = partial(inductor_gemm_executor, gemm_backend="ATEN,CUTLASS")
+inductor_triton_executor = partial(inductor_gemm_executor, gemm_backend="ATEN,TRITON")
+
+
 def thunder_torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.jit(fn, executors=[thunder.pytorch_executor])
