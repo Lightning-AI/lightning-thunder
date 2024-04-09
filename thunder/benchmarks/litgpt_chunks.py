@@ -22,6 +22,8 @@ from thunder.core.trace import TraceCtx
 from thunder.core.transforms import eval_trace
 from thunder.executors.torch_compile import to_torch_translator
 
+from thunder.tests.make_tensor import make_tensor
+
 BATCH_SIZE = 2
 CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
 # CONFIG_NAMES = ["Llama-2-7b-hf",]
@@ -167,8 +169,6 @@ trace_executor_pairs = list(product(litgpt_traces, (torch_executor, torch_compil
     ],
 )
 def test_litgpt(benchmark, info, executor):
-    from thunder.tests.make_tensor import make_tensor
-
     torch_trace = info.trace
 
     def setup():
