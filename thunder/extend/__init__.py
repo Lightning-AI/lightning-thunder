@@ -222,7 +222,9 @@ class OperatorExecutor(Executor):
         replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
-        assert not ((like is not None) and (meta is not None)), f"Expected one and only one of 'like' and 'meta' to be specified. Like: {like}, Meta: {meta}"
+        assert not (
+            (like is not None) and (meta is not None)
+        ), f"Expected one and only one of 'like' and 'meta' to be specified. Like: {like}, Meta: {meta}"
         assert (module is not None) + (
             fn is not None
         ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
