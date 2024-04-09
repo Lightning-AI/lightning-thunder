@@ -39,8 +39,8 @@ CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
 # - n_expert
 # Let's select only the configurations that differ in these parameters
 unique_config_names = {}
-for config in configs:
-    config = Config.from_name(config["name"])
+for config_name in CONFIG_NAMES:
+    config = Config.from_name(config_name)
     key = tuple(getattr(config, k) for k in ("n_embd", "padded_vocab_size", "n_head", "n_query_groups", "head_size", "bias", "intermediate_size", "n_expert"))
     unique_config_names[key] = config.name
 
