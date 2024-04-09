@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import wraps
 from itertools import groupby, product
 from typing import Callable, Sequence
@@ -142,23 +143,31 @@ config_names = [
     "Llama-2-7b-hf",
 ]
 
-torch_traces = [(name, trace) for name in config_names for trace in make_torch_traces_for_config(name)]
+
+@dataclass
+class TraceInfo:
+    config_name: str
+    trace: TraceCtx
+
+
+litgpt_traces = [TraceInfo(name, trace) for name in config_names for trace in make_torch_traces_for_config(name)]
 
 # Now we have a list of torch_traces that are ready to be benchmarked
 trace_executor_pairs = list(
-    product(enumerate(torch_traces), (torch_executor, torch_compile_executor, thunder_executor))
+    product(enumerate(litgpt_traces), (torch_executor, torch_compile_executor, thunder_executor))
 )
 
 
 @pytest.mark.parametrize(
-    "idx_torch_trace, executor",
+    "idx_info, executor",
     trace_executor_pairs,
-    ids=[f"{name}_region{i}_{to_executor_name[executor]}" for (i, (name, _)), executor in trace_executor_pairs],
+    ids=[f"{info.config_name}_region{i}_{to_executor_name[executor]}" for (i, info), executor in trace_executor_pairs],
 )
-def test_litgpt(benchmark, idx_torch_trace, executor):
+def test_litgpt(benchmark, idx_info, executor):
     from thunder.tests.make_tensor import make_tensor
 
-    _, (_, torch_trace) = idx_torch_trace
+    _, info = idx_info
+    torch_trace = info.trace
 
     def setup():
         args = []
