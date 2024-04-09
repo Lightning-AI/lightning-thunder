@@ -12,7 +12,13 @@ from litgpt.config import configs
 
 import thunder
 
-from thunder.benchmarks import thunder_executor, torch_compile_executor, torch_executor, inductor_cutlass_executor, inductor_triton_executor
+from thunder.benchmarks import (
+    inductor_cutlass_executor,
+    inductor_triton_executor,
+    thunder_executor,
+    torch_compile_executor,
+    torch_executor,
+)
 from thunder.common import CompileData, CompileStats
 from thunder.core.compile_data import set_compile_data_and_stats
 
@@ -41,7 +47,19 @@ CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
 unique_config_names = {}
 for config_name in CONFIG_NAMES:
     config = Config.from_name(config_name)
-    key = tuple(getattr(config, k) for k in ("n_embd", "padded_vocab_size", "n_head", "n_query_groups", "head_size", "bias", "intermediate_size", "n_expert"))
+    key = tuple(
+        getattr(config, k)
+        for k in (
+            "n_embd",
+            "padded_vocab_size",
+            "n_head",
+            "n_query_groups",
+            "head_size",
+            "bias",
+            "intermediate_size",
+            "n_expert",
+        )
+    )
     unique_config_names[key] = config.name
 
 CONFIG_NAMES = list(sorted(unique_config_names.values()))
