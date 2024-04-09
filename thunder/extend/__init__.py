@@ -215,6 +215,7 @@ class OperatorExecutor(Executor):
         *,
         like: None | Callable = None,
         meta: None | Callable = None,
+        tags: None | list[Any] = None,
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
         bind_postprocess: None | Callable = None,
@@ -230,6 +231,8 @@ class OperatorExecutor(Executor):
 
         # NOTE Directly specifying a meta function makes the operation a prim
         is_prim = meta is not None
+        # Set tags to be the same as 'like' if 'tags' is not specified
+        tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
         meta = meta if meta is not None else like
         if meta is None:
             warn_default_meta(name, self.name)
@@ -259,6 +262,7 @@ class OperatorExecutor(Executor):
             executor=self,
             _bind_postprocess=_bind_postprocess,
             python_printer=python_printer,
+            tags=tags,
         )
         self.opmap[name] = sym
 
