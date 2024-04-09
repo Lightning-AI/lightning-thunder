@@ -2838,13 +2838,28 @@ class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # 'batch_norm' is not differentiable with respect to argument 'running_mean' and 'running_var'
         running_mean = make(normalized_shape)
         running_var = make(normalized_shape)
-        return (a, running_mean, running_var, weight, bias, True,), {}
+        return (
+            a,
+            running_mean,
+            running_var,
+            weight,
+            bias,
+            True,
+        ), {}
 
     def fn(self) -> Callable:
         def foo(a, m, v, w, b, training):
-            return torch.nn.functional.batch_norm(a, m, v, w, b, training=training,).sum()
+            return torch.nn.functional.batch_norm(
+                a,
+                m,
+                v,
+                w,
+                b,
+                training=training,
+            ).sum()
 
         return foo
+
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
