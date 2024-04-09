@@ -21,7 +21,7 @@ from thunder.core.trace import TraceCtx
 from thunder.core.transforms import eval_trace
 from thunder.executors.torch_compile import to_torch_translator
 
-batch_size = 2
+BATCH_SIZE = 2
 
 
 def make_torch_traces_for_config(name: str):
@@ -33,7 +33,7 @@ def make_torch_traces_for_config(name: str):
     config.n_layer = 2
 
     model = GPT(config).to(dtype=torch.bfloat16, device="cuda")
-    input_shape = (batch_size, config.block_size)
+    input_shape = (BATCH_SIZE, config.block_size)
     x = torch.randint(0, config.vocab_size, input_shape, dtype=torch.int64, device="cuda")
 
     # Acquire the initial trace
