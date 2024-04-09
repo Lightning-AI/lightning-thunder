@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from functools import wraps
 from itertools import groupby, product
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -31,7 +31,7 @@ from thunder.executors.torch_compile import to_torch_translator
 from thunder.tests.make_tensor import make_tensor
 
 BATCH_SIZE = 2
-CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
+CONFIG_NAMES = list(sorted(c["name"] for c in configs))
 # CONFIG_NAMES = ["Llama-2-7b-hf",]
 
 # There are many configurations but only the following parameters affect the Linear layers in the model:
