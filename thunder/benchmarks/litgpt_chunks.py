@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from litgpt import Config, GPT
+from litgpt.config import configs
 
 import thunder
 
@@ -22,7 +23,7 @@ from thunder.core.transforms import eval_trace
 from thunder.executors.torch_compile import to_torch_translator
 
 BATCH_SIZE = 2
-
+CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
 
 def make_torch_traces_for_config(name: str):
     config = Config.from_name(name)
@@ -139,10 +140,6 @@ to_executor_name = {
     thunder_executor: "thunder",
 }
 
-config_names = [
-    "Llama-2-7b-hf",
-]
-
 
 @dataclass
 class TraceInfo:
@@ -150,7 +147,7 @@ class TraceInfo:
     trace: TraceCtx
 
 
-litgpt_traces = [TraceInfo(name, trace) for name in config_names for trace in make_torch_traces_for_config(name)]
+litgpt_traces = [TraceInfo(name, trace) for name in CONFIG_NAMES for trace in make_torch_traces_for_config(name)]
 
 # Now we have a list of torch_traces that are ready to be benchmarked
 trace_executor_pairs = list(
