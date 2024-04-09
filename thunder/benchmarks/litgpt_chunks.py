@@ -28,7 +28,25 @@ BATCH_SIZE = 2
 CONFIG_NAMES = list(sorted((c["name"] for c in configs)))
 # CONFIG_NAMES = ["Llama-2-7b-hf",]
 
-# Skip Mixtral MoE config because they are not supported by the current implementation
+# There are many configurations but only the following parameters affect the Linear layers in the model:
+# - n_embd
+# - padded_vocab_size
+# - n_head
+# - n_query_groups
+# - head_size
+# - bias
+# - intermediate_size
+# - n_expert
+# Let's select only the configurations that differ in these parameters
+unique_config_names = {}
+for config in configs:
+    config = Config.from_name(config["name"])
+    key = tuple(getattr(config, k) for k in ("n_embd", "padded_vocab_size", "n_head", "n_query_groups", "head_size", "bias", "intermediate_size", "n_expert"))
+    unique_config_names[key] = config.name
+
+CONFIG_NAMES = list(sorted(unique_config_names.values()))
+
+# We will skip the Mixtral MoE configs because they are not supported by the current implementation
 # See https://github.com/Lightning-AI/lightning-thunder/issues/124
 CONFIG_NAMES = [name for name in CONFIG_NAMES if "mixtral" not in name.lower()]
 
