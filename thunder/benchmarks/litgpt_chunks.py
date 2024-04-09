@@ -156,9 +156,17 @@ class TraceInfo:
     trace: TraceCtx
 
 
-litgpt_traces = [
-    TraceInfo(name, i, trace) for name in CONFIG_NAMES for i, trace in enumerate(make_torch_traces_for_config(name))
-]
+# litgpt_traces = [
+#     TraceInfo(name, i, trace) for name in CONFIG_NAMES for i, trace in enumerate(make_torch_traces_for_config(name))
+# ]
+
+# Rewrite list comprehension above to include printing progress bar
+litgpt_traces = []
+for j, name in enumerate(CONFIG_NAMES):
+    print(f"Constructing benchmark cases for config: {name} ({j + 1}/{len(CONFIG_NAMES)})")
+    traces = make_torch_traces_for_config(name)
+    for i, trace in enumerate(traces):
+        litgpt_traces.append(TraceInfo(name, i, trace))
 
 # Now we have a list of torch_traces that are ready to be benchmarked
 trace_executor_pairs = list(product(litgpt_traces, (torch_executor, torch_compile_executor, thunder_executor)))
