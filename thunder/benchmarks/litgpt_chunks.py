@@ -184,11 +184,11 @@ executor_names = {
     # Inductor with the default GEMM backend (Aten)
     torch_compile_executor: "inductor",
     # Inductor with autotuning between Aten and CUTLASS or Triton as the GEMM backend
-    inductor_triton_executor: "inductor+triton",
+    inductor_triton_executor: "inductor+triton_gemm",
     # At the moment, I was not able to get the CUTLASS backend to work with the Inductor executor
     # torch._dynamo.exc.BackendCompilerFailed: backend='inductor' raised:
     # LoweringException: ErrorFromChoice: Error in function: cuda_cutlass_gemm
-    # inductor_cutlass_executor: "inductor+cutlass",
+    # inductor_cutlass_executor: "inductor+cutlass_gemm",
 }
 
 
