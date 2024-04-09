@@ -21,84 +21,88 @@ from thunder.core.transforms import eval_trace
 from thunder.executors.torch_compile import to_torch_translator
 
 batch_size = 2
-config = Config.from_name("Llama-2-7b-hf")
 
-# Two layers is enough to expose the fusing opportunity of the following network boundaries:
-# - Embedding layer -> 0th Transformer layer
-# - Last Transformer layer -> Output layer
-# - End of the Transformer layer -> Beginning of the Transformer layer
-config.n_layer = 2
 
-model = GPT(config).to(dtype=torch.bfloat16, device="cuda")
-input_shape = (batch_size, config.block_size)
-x = torch.randint(0, config.vocab_size, input_shape, dtype=torch.int64, device="cuda")
+def make_torch_traces_for_config(name: str):
+    config = Config.from_name(name)
+    # Two layers is enough to expose the fusing opportunity of the following network boundaries:
+    # - Embedding layer -> 0th Transformer layer
+    # - Last Transformer layer -> Output layer
+    # - End of the Transformer layer -> Beginning of the Transformer layer
+    config.n_layer = 2
 
-# Acquire the initial trace
-# We could use thunder.jit here, but we want to not execute the compiled function
-# and instead only get the initial trace before any transformations
-# jit_model = thunder.jit(model)
-# out = jit_model(x)
-# trace = thunder.last_traces(jit_model)[0]
+    model = GPT(config).to(dtype=torch.bfloat16, device="cuda")
+    input_shape = (batch_size, config.block_size)
+    x = torch.randint(0, config.vocab_size, input_shape, dtype=torch.int64, device="cuda")
 
-# We need to set up contexts that are usually set up by the thunder.jit decorator
-cd = CompileData(fn=model, disable_preprocessing=True, executor_lookasides={})
-cs = CompileStats()
-set_langctx(thunder.torch.torchctx)
-set_compile_data_and_stats(cd, cs)
-thunder._cache_info_ctx.set({})
-prologue, trace, epilogue = thunder_general_jit(
-    model, (x,), {}, sharp_edges=thunder.core.options.SHARP_EDGES_OPTIONS.ALLOW
-)
+    # Acquire the initial trace
+    # We could use thunder.jit here, but we want to not execute the compiled function
+    # and instead only get the initial trace before any transformations
+    # jit_model = thunder.jit(model)
+    # out = jit_model(x)
+    # trace = thunder.last_traces(jit_model)[0]
 
-# Remove subsymbols for readability of the trace
-for bsym in trace.bound_symbols:
-    bsym.subsymbols = []
-
-producers, consumers = thunder.core.utils.producers_and_consumers(trace)
-
-# Remove unpacking prims so that they can be identified as inputs of the first chunk
-trace.bound_symbols = [bsym for bsym in trace.bound_symbols if bsym.sym.id != thunder.prims.unpack_trivial.id]
-
-# Remove return prim so that it can be identified as the output of the last chunk
-assert trace.bound_symbols.pop().sym.id == thunder.prims.python_return.id
-
-# We want to split the trace into chunks of network between the scaled dot-product attention calls
-assert (
-    len([bsym for bsym in trace.bound_symbols if bsym.sym.id == thunder.torch.scaled_dot_product_attention.id])
-    == config.n_layer
-)
-
-# This is going to be our delimiter for splitting the trace into chunks
-thunder_sdpa = thunder.torch.scaled_dot_product_attention
-chunks = list(list(g) for k, g in groupby(trace.bound_symbols, key=lambda x: x.sym.id == thunder_sdpa.id) if not k)
-
-# Now we need to convert the chunks into a list of functions
-regions = [thunder.executors.utils.Region(producers, consumers, chunk) for chunk in chunks]
-
-# After this point, we will have a list of regions that are represented as regular PyTorch functions
-# We can acquire the Python functions by calling .python_callable() on each "torch_trace" object
-torch_traces = []
-for r in regions:
-    # Here we construct a trace that will be used to compile the function
-    region_trace = TraceCtx(None)
-    region_trace.bound_symbols = list(r.bound_symbols)
-    sorted_proxy_inputs = [v.proxy for v in sorted(r.inputs, key=lambda x: x.proxy.name)]
-    sorted_proxy_outputs = [v.proxy for v in sorted(r.outputs, key=lambda x: x.proxy.name)]
-    region_trace.args = sorted_proxy_inputs
-    region_trace.kwargs = {}
-    region_trace.bound_symbols.append(thunder.prims.python_return.bind(sorted_proxy_outputs, output=()))
-    region_trace = thunder.executors.passes.dce(region_trace)
-
-    def torch_interpreted_func(*args):
-        return eval_trace(region_trace, *args, symbol_mapper=to_torch_translator)
-
-    torch_trace = thunder.trace(inline_trace=False)(torch_interpreted_func, *sorted_proxy_inputs)
+    # We need to set up contexts that are usually set up by the thunder.jit decorator
+    cd = CompileData(fn=model, disable_preprocessing=True, executor_lookasides={})
+    cs = CompileStats()
+    set_langctx(thunder.torch.torchctx)
+    set_compile_data_and_stats(cd, cs)
+    thunder._cache_info_ctx.set({})
+    prologue, trace, epilogue = thunder_general_jit(
+        model, (x,), {}, sharp_edges=thunder.core.options.SHARP_EDGES_OPTIONS.ALLOW
+    )
 
     # Remove subsymbols for readability of the trace
-    for bsym in torch_trace.bound_symbols:
+    for bsym in trace.bound_symbols:
         bsym.subsymbols = []
 
-    torch_traces.append(torch_trace)
+    producers, consumers = thunder.core.utils.producers_and_consumers(trace)
+
+    # Remove unpacking prims so that they can be identified as inputs of the first chunk
+    trace.bound_symbols = [bsym for bsym in trace.bound_symbols if bsym.sym.id != thunder.prims.unpack_trivial.id]
+
+    # Remove return prim so that it can be identified as the output of the last chunk
+    assert trace.bound_symbols.pop().sym.id == thunder.prims.python_return.id
+
+    # We want to split the trace into chunks of network between the scaled dot-product attention calls
+    assert (
+        len([bsym for bsym in trace.bound_symbols if bsym.sym.id == thunder.torch.scaled_dot_product_attention.id])
+        == config.n_layer
+    )
+
+    # This is going to be our delimiter for splitting the trace into chunks
+    thunder_sdpa = thunder.torch.scaled_dot_product_attention
+    chunks = list(list(g) for k, g in groupby(trace.bound_symbols, key=lambda x: x.sym.id == thunder_sdpa.id) if not k)
+
+    # Now we need to convert the chunks into a list of functions
+    regions = [thunder.executors.utils.Region(producers, consumers, chunk) for chunk in chunks]
+
+    # After this point, we will have a list of regions that are represented as regular PyTorch functions
+    # We can acquire the Python functions by calling .python_callable() on each "torch_trace" object
+    torch_traces = []
+    for r in regions:
+        # Here we construct a trace that will be used to compile the function
+        region_trace = TraceCtx(None)
+        region_trace.bound_symbols = list(r.bound_symbols)
+        sorted_proxy_inputs = [v.proxy for v in sorted(r.inputs, key=lambda x: x.proxy.name)]
+        sorted_proxy_outputs = [v.proxy for v in sorted(r.outputs, key=lambda x: x.proxy.name)]
+        region_trace.args = sorted_proxy_inputs
+        region_trace.kwargs = {}
+        region_trace.bound_symbols.append(thunder.prims.python_return.bind(sorted_proxy_outputs, output=()))
+        region_trace = thunder.executors.passes.dce(region_trace)
+
+        def torch_interpreted_func(*args):
+            return eval_trace(region_trace, *args, symbol_mapper=to_torch_translator)
+
+        torch_trace = thunder.trace(inline_trace=False)(torch_interpreted_func, *sorted_proxy_inputs)
+
+        # Remove subsymbols for readability of the trace
+        for bsym in torch_trace.bound_symbols:
+            bsym.subsymbols = []
+
+        torch_traces.append(torch_trace)
+
+    return torch_traces
 
 
 def wrap_for_benchmark(fn):
@@ -128,27 +132,33 @@ def forward_and_backward(torch_trace: TraceCtx, jit_fn: Callable):
     return wrapper
 
 
-# Now we have a list of torch_traces that are ready to be benchmarked
-trace_executor_pairs = list(
-    product(enumerate(torch_traces), (torch_executor, torch_compile_executor, thunder_executor))
-)
-
 to_executor_name = {
     torch_executor: "eager",
     torch_compile_executor: "inductor",
     thunder_executor: "thunder",
 }
 
+config_names = [
+    "Llama-2-7b-hf",
+]
+
+torch_traces = [(name, trace) for name in config_names for trace in make_torch_traces_for_config(name)]
+
+# Now we have a list of torch_traces that are ready to be benchmarked
+trace_executor_pairs = list(
+    product(enumerate(torch_traces), (torch_executor, torch_compile_executor, thunder_executor))
+)
+
 
 @pytest.mark.parametrize(
     "idx_torch_trace, executor",
     trace_executor_pairs,
-    ids=[f"region{i}_{to_executor_name[executor]}" for (i, _), executor in trace_executor_pairs],
+    ids=[f"{name}_region{i}_{to_executor_name[executor]}" for (i, (name, _)), executor in trace_executor_pairs],
 )
 def test_litgpt(benchmark, idx_torch_trace, executor):
     from thunder.tests.make_tensor import make_tensor
 
-    idx, torch_trace = idx_torch_trace
+    _, (_, torch_trace) = idx_torch_trace
 
     def setup():
         args = []
