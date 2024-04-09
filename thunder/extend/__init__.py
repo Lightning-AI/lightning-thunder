@@ -222,12 +222,10 @@ class OperatorExecutor(Executor):
         replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
-        assert (like is not None) and (
-            meta is not None
-        ), "Expected one and only one of 'like' and 'meta' to be specified"
+        assert not ((like is not None) and (meta is not None)), f"Expected one and only one of 'like' and 'meta' to be specified. Like: {like}, Meta: {meta}"
         assert (module is not None) + (
             fn is not None
-        ) <= 2, "Expected one and only one of 'module' or 'fn' to be specified"
+        ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
 
         # NOTE Directly specifying a meta function makes the operation a prim
         is_prim = meta is not None

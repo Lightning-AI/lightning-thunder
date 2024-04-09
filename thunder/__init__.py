@@ -345,7 +345,7 @@ def jit(
         additional_transforms = []
 
     # Resolve names of executors
-    exc_list = executors
+    exc_list = executors if executors is not None else ()
     executors = []
     for e in exc_list:
         if isinstance(e, str):
