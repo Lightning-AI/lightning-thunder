@@ -2186,9 +2186,9 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
 
     compiled = thunder.jit(func, executors=executor.executors_list())
     out = compiled(qkv)
-    history = thunder.last_traces(compiled)
+    traces = thunder.last_traces(compiled)
     torch.testing.assert_close(out, func(qkv))
-    assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in history[-1].bound_symbols)
+    assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in traces[-1].bound_symbols)
 
 
 @instantiate(dtypes=NOTHING)

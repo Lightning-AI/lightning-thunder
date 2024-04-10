@@ -956,6 +956,11 @@ def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
 
 
+@torchsymbol(torch.Tensor.unfold, is_method=True)
+def unfold(a: TensorLike, /, dim: int, size: int, step: int) -> TensorLike:
+    return clang.unfold(a, dim, size, step)
+
+
 @torchsymbol(torch.unsqueeze, is_method=True)
 def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, dim)
@@ -3487,6 +3492,24 @@ def embedding(
 def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
     result = prims.embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return result
+
+
+@torchsymbol(torch.nn.functional.one_hot, id="torch.nn.functional.one_hot", is_method=False)
+def one_hot(a: TensorLike, /, num_classes: int) -> TensorLike:
+    # TODO: refactor when we're ready to support auto-inference for `num_classes = -1` using `.item()`
+    utils.check(
+        num_classes >= 1,
+        lambda: f"Currently supports only positive input for num_classes, got num_classes={num_classes}",
+        exception_type=NotImplementedError,
+    )
+    # TODO: would we want to implement this check in the future?
+    #  utils.check(a.any() >= 0, lambda f"input tensor should have non-negative values", exception_type=ValueError)
+
+    canvas = zeros(*a.shape, num_classes, device=a.device, dtype=dtypes.int64)
+    index = a.unsqueeze(-1)
+    src = ones_like(index, device=a.device, dtype=dtypes.int64)
+
+    return scatter_add(canvas, dim=-1, index=index, src=src)
 
 
 @torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
