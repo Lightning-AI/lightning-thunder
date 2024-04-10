@@ -77,7 +77,7 @@ def make_compiled(
     # TODO: issue "Try using _transform_for_operator_executor_execution for
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
-    compiled_func = torch.compile(torch_trace.python_callable())
+    compiled_func = torch.compile(torch_trace.python_callable(), fullgraph=True)
 
     def compiled_func_wrapper(*args):
         # PyTorch 2.1 doesn't have this attribute
