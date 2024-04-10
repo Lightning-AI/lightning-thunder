@@ -19,7 +19,9 @@ from thunder.core.interpreter import (
     make_opaque,
     interpret,
     InterpreterError,
-    print_last_interpreted_history,
+    print_interpreter_log,
+    last_interpreter_log,
+    last_interpreted_instructions,
 )
 
 #
@@ -1455,10 +1457,10 @@ def test_match_statement(jit):
     jfoo = jit(foo)
     assert foo() == 3
     assert jfoo() == 3
-    assert any(i.opname == "MATCH_KEYS" for i in jfoo._last_interpreted_instructions)
-    assert any(i.opname == "MATCH_MAPPING" for i in jfoo._last_interpreted_instructions)
+    assert any(i.opname == "MATCH_KEYS" for i in last_interpreted_instructions(jfoo))
+    assert any(i.opname == "MATCH_MAPPING" for i in last_interpreted_instructions(jfoo))
     if "COPY_DICT_WITHOUT_KEYS" in dis.opmap.keys():
-        assert any(i.opname == "COPY_DICT_WITHOUT_KEYS" for i in jfoo._last_interpreted_instructions)
+        assert any(i.opname == "COPY_DICT_WITHOUT_KEYS" for i in last_interpreted_instructions(jfoo))
 
     # Test MATCH_SEQUENCE
     def bar():
@@ -1473,9 +1475,9 @@ def test_match_statement(jit):
     jbar = jit(bar)
     assert bar() == 3
     assert jbar() == 3
-    assert any(i.opname == "MATCH_SEQUENCE" for i in jbar._last_interpreted_instructions)
-    assert any(i.opname == "GET_LEN" for i in jbar._last_interpreted_instructions)
-    assert any(i.opname == "UNPACK_EX" for i in jbar._last_interpreted_instructions)
+    assert any(i.opname == "MATCH_SEQUENCE" for i in last_interpreted_instructions(jbar))
+    assert any(i.opname == "GET_LEN" for i in last_interpreted_instructions(jbar))
+    assert any(i.opname == "UNPACK_EX" for i in last_interpreted_instructions(jbar))
 
 
 def test_class_match_statement(jit):
@@ -1499,7 +1501,7 @@ def test_class_match_statement(jit):
     jfoo = jit(foo)
     assert foo() == 3
     assert jfoo() == 3
-    assert any(i.opname == "MATCH_CLASS" for i in jfoo._last_interpreted_instructions)
+    assert any(i.opname == "MATCH_CLASS" for i in last_interpreted_instructions(jfoo))
 
 
 def test_match_fallthrough(jit):
@@ -2719,7 +2721,7 @@ def test_displayhook(jit):
         def smt(s):
             interpreter.runsource(s)
 
-        smt("from thunder.core.interpreter import interpret")
+        smt("from thunder.core.interpreter import interpret, last_interpreted_instructions")
         smt(
             """
 def foo():
@@ -2734,7 +2736,7 @@ def foo():
         )
         smt("jfoo = interpret(foo)")
         smt("jfoo()")
-        smt("assert any(i.opname == 'PRINT_EXPR' for i in jfoo._last_interpreted_instructions)")
+        smt("assert any(i.opname == 'PRINT_EXPR' for i in last_interpreted_instructions(jfoo))")
 
     py_out: str = py_redirect.getvalue()
     assert py_out == "redirected 5\nredirected 6\nredirected 7\nReset.\n", py_out
@@ -2756,7 +2758,7 @@ def test_load_build_class(jit):
     assert cp().bar == jp().bar
 
     assert any(i.opname == "LOAD_BUILD_CLASS" for i in dis.get_instructions(foo))
-    assert any(i.opname == "LOAD_BUILD_CLASS" for i in jfoo._last_interpreted_instructions)
+    assert any(i.opname == "LOAD_BUILD_CLASS" for i in last_interpreted_instructions(jfoo))
 
 
 def test_with(jit):
@@ -2943,6 +2945,24 @@ def test_super(jit):
     assert res == jres
 
 
+def test_print_log_types(jit):
+    def foo():
+        return 5
+
+    jfoo = jit(foo)
+    jfoo()
+
+    log = last_interpreter_log(jfoo)
+
+    # print into string
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_interpreter_log(log, use_colors=False, indent=False)
+    bufstr = buf.getvalue()
+
+    assert "Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
+
+
 def test_is_jitting_with_raise(jit):
     def foo():
         return is_jitting_with_raise()
@@ -3023,9 +3043,9 @@ def test_module_hooks(jit):
         y = jm(x)
         y.sum().backward()
 
-        # Find the hook registration in the history the normal way
+        # Find the hook registration in the log the normal way
         found = False
-        for item in jm._last_interpreted_history:
+        for item in last_interpreter_log(jm):
             if (not isinstance(item, dict)) or (item["kind"] != "Opaque"):
                 continue
             _fn = item["fn"]
@@ -3035,10 +3055,10 @@ def test_module_hooks(jit):
 
         assert found
 
-        # Redirect print_last_interpreted_history from stdout to a string, and assert that it's in there.
+        # Redirect print_last_interpreter_log from stdout to a string, and assert that it's in there.
         buf = io.StringIO()
         with redirect_stdout(buf):
-            print_last_interpreted_history(jm, use_colors=False, indent=False)
+            print_interpreter_log(last_interpreter_log(jm), use_colors=False, indent=False)
 
         match_against = "Opaque call to <method 'register_hook' of 'torch._C._FunctionBase' objects> with name _FunctionBase.register_hook"
         assert match_against in buf.getvalue()
