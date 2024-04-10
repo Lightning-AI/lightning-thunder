@@ -1810,3 +1810,12 @@ if has_einops:
     # We force the registration of the backend here to not use
     # the torch backend when diverting isinstance
     einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
+
+
+def _copy__impl(copy_from, copy_to):
+    copy_to.copy_(copy_from)
+    return copy_to
+
+
+copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
+_register_implementation(prims.copy_, copy_, checker=_always_executable)
