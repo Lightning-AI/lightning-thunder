@@ -112,7 +112,7 @@ def _to_transform(
     torch_device: None | torch.device = to_torch_device(device)
     torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
-    kwargs = {"copy":copy}
+    kwargs = {"copy": copy}
     if torch_device is not None:
         kwargs["device"] = torch_device
     if torch_dtype is not None:
