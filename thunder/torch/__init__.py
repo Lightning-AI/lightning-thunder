@@ -277,6 +277,13 @@ def to(
     if dtype is not None:
         return clang.maybe_convert_to_dtype(a, dtype)
 
+    if memory_format is not None:
+        # NOTE not sure if we need to handle torch.preserve_format explicitly
+        if memory_format == torch.channels_last:
+            a = prims.stride_order(a, (3, 0, 2, 1))
+        elif memory_format == torch.channels_last_3d:
+            a = prims.stride_order(a, (4, 0, 3, 2, 1))
+
     return a
 
 

@@ -101,6 +101,7 @@ def _to_transform(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
     copy: bool = False,
+    memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
     device: None | devices.Device
     dtype: None | dtypes.dtype
@@ -111,11 +112,14 @@ def _to_transform(
     torch_device: None | torch.device = to_torch_device(device)
     torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
-    if torch_device is not None and torch_dtype is not None:
-        return to(a, torch_device, torch_dtype, copy=copy)
+    kwargs = {"copy":copy}
     if torch_device is not None:
-        return to(a, torch_device, copy=copy)
-    return to(a, torch_dtype, copy=copy)
+        kwargs["device"] = torch_device
+    if torch_dtype is not None:
+        kwargs["dtype"] = torch_dtype
+    if memory_format is not None:
+        kwargs["memory_format"] = memory_format
+    return to(a, **kwargs)
 
 
 def _device_put_transform(a: TensorProxy, device: devices.Device) -> TensorProxy:
