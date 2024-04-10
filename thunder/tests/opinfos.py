@@ -5915,12 +5915,13 @@ def generic_avg_pool_sample_generator(max_pool_sample_generator):
     return sample_generator
 
 def torch_convolution_channels_last(inp, w, *args, **kwargs):
-    if inp.ndim == 4:
-        inp = inp.to(memory_format=torch.channels_last)
-        w = w.to(memory_format=torch.channels_last)
-    if inp.ndim == 5:
-        inp = inp.to(memory_format=torch.channels_last_3d)
-        w = w.to(memory_format=torch.channels_last_3d)
+    if datatypes.is_low_precision_dtype(to_dtype(inp.dtype)):
+        if inp.ndim == 4:
+            inp = inp.to(memory_format=torch.channels_last)
+            w = w.to(memory_format=torch.channels_last)
+        if inp.ndim == 5:
+            inp = inp.to(memory_format=torch.channels_last_3d)
+            w = w.to(memory_format=torch.channels_last_3d)
     return torch.convolution(inp, w, *args, **kwargs)
 
 convolution_opinfo = OpInfo(
