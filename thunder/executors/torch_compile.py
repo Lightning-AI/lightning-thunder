@@ -180,8 +180,7 @@ class TorchCompileExecutor(FusionExecutor):
         return fusedtrace
 
 
-def _always_executable(*args, **kwargs) -> bool:
-    return True
+from thunder.executors.torchex import ex as pytorch_executor
 
 
 # NOTE: [torch_compile_executor vs torch_compile_complete_executor]
@@ -202,24 +201,22 @@ register_executor(torch_compile_executor)
 # TODO: Carefully enable more ops checking that they do improve performance
 supported_ops = {
     "torch.split",
-    prims.add,
-    prims.broadcast_in_dim,
-    prims.cat,
-    prims.convert_element_type,
-    prims.full,
-    prims.mul,
-    prims.neg,
-    prims.pad,
-    prims.reshape,
-    prims.slice_prim,
-    prims.transpose,
+    prims.add.id,
+    prims.broadcast_in_dim.id,
+    prims.cat.id,
+    prims.convert_element_type.id,
+    prims.full.id,
+    prims.mul.id,
+    prims.neg.id,
+    prims.pad.id,
+    prims.reshape.id,
+    prims.slice_prim.id,
+    prims.transpose.id,
 }
-for op in supported_ops:
-    torch_compile_executor.register_supported(op, checker=_always_executable)
+assert supported_ops - pytorch_executor.implmap.keys() == set()  # sanity check  # FIXME convert into a test
+torch_compile_executor._implmap = {op: info for op, info in pytorch_executor.implmap.items() if op in supported_ops}
 
 
 torch_compile_complete_executor = TorchCompileExecutor(name="torchcompile_complete")
 register_executor(torch_compile_complete_executor)
-from thunder.executors.torchex import ex as pytorch_executor
-
 torch_compile_complete_executor._implmap = dict(pytorch_executor.implmap)
