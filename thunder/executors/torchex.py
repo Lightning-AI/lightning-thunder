@@ -1235,6 +1235,10 @@ def _convolution_transform(
     output_padding: Sequence[int],
     groups: int,
 ) -> TensorProxy:
+    if dtypes.is_low_precision_dtype(a.dtype):
+        if a.ndim == 4 or a.ndim == 5:
+            a = prims.stride_order(a, (a.ndim-1, 0) + tuple(range(a.ndim-2, 0, -1)))
+            weight = prims.stride_order(weight, (a.ndim-1, 0) + tuple(range(a.ndim-2, 0, -1)))
     return convolution(a, weight, bias, stride, padding, dilation, bool(transposed), output_padding, groups)
 
 
