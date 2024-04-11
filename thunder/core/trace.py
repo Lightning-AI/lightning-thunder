@@ -573,3 +573,16 @@ def _set_execution_file(path: str) -> None:
 
 def _get_execution_file() -> None | str:
     return _execution_file.get()
+
+
+#
+# Container for the two/three types of traces, plus extra tracked data
+#
+
+
+class TraceResults:
+    def __init__(self, prologue: TraceCtx, computation: TraceCtx, epilogue: TraceCtx | None, interpreter_log: list):
+        self.prologue_trace = prologue
+        self.computation_trace: TraceCtx = computation
+        self.epilogue_trace = epilogue
+        self.interpreter_log = interpreter_log

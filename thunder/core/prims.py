@@ -250,6 +250,7 @@ class PrimIDs(Enum):
     BATCH_NORM = auto()
     # Memory access methods
     ITEM = auto()
+    COPY_ = auto()
 
 
 class OpTags(Enum):
@@ -3607,3 +3608,18 @@ def batch_norm_meta(
 
 
 batch_norm = make_prim(PrimIDs.BATCH_NORM, "batch_norm", meta=batch_norm_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def copy__meta(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
+):
+    utils.check_type(copy_from, TensorProxy)
+    utils.check_type(copy_to, TensorProxy)
+    utils.check_same_device(copy_from, copy_to)
+    utils.check_same_shape(copy_from, copy_to)
+    utils.check_same_dtype(copy_from, copy_to)
+    return TensorProxy(like=copy_to)
+
+
+copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
