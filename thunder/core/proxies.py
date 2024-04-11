@@ -1231,9 +1231,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
-        method: None | Callable = resolve_method(attr, self)
-        baseutils.check(method is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
-        return partial(method, self)
+        method_or_value: None | Callable | Any = resolve_method(attr, self)
+        baseutils.check(method_or_value is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
+
+        if callable(method_or_value):
+            return partial(method_or_value, self)
+        
+        return method_or_value
 
     #
     # Datatype conversion shorthands

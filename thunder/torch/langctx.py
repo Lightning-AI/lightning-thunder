@@ -12,6 +12,7 @@ from thunder.core.proxies import TensorProxy
 #   language context must be available before those operations are defined
 
 _method_name_to_fn_map: dict[str, Callable] = {}
+_property_name_to_fn_map: dict[str, Callable] = {}
 
 
 class TorchCtx(LanguageContext):
@@ -19,7 +20,7 @@ class TorchCtx(LanguageContext):
         super().__init__("torch")
 
     def has_method(self, id: str) -> bool:
-        return id in _method_name_to_fn_map
+        return id in _method_name_to_fn_map or id in _property_name_to_fn_map
 
     def get_method(self, id: str, *args, **kwargs) -> Callable:
         # Note: concrete implmenetations should only raise AttributeError or
@@ -36,9 +37,13 @@ class TorchCtx(LanguageContext):
                 break
         if has_tensor_input:
             method: None | Callable = _method_name_to_fn_map.get(id, None)
-            if method is None:
-                raise AttributeError(f"The {self.name} language context has no method {id}")
-            return method
+            property: None | Callable = _property_name_to_fn_map.get(id, None)
+            if method is None and property is None:
+                raise AttributeError(f"The {self.name} language context has no method or attribute {id}")
+            if method:
+                return method
+            else:
+                return property(inps[0])
 
         # has_tensor_input is False
         # Defers to the primitive language context when there are no tensor inputs=
@@ -60,3 +65,7 @@ register_langctx("torch", torchctx)
 # Registers a method with the torch language context
 def register_method(method_name: str, method: Callable, /) -> None:
     _method_name_to_fn_map[method_name] = method
+
+
+def register_property(property_name, property) -> None:
+    _property_name_to_fn_map[property_name] = property

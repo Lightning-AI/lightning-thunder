@@ -13,7 +13,7 @@ from collections.abc import Callable
 import opt_einsum
 
 # Initializes the language context
-from thunder.torch.langctx import register_method
+from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
@@ -76,6 +76,7 @@ class torchsymbol:
         *torchfns,
         is_method: bool = False,
         method_name: None | str = None,
+        is_property: bool = False,
         id: str | None = None,
         is_prim: bool = False,
         tags: None | list[Any] = None,
@@ -83,6 +84,7 @@ class torchsymbol:
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
         self.method_name: None | str = method_name
+        self.is_property = is_property
         self.id = id
         # When is_prim is True, the function is treated as a primitive, so that
         # executors must execute it directly without decomposition.
@@ -127,6 +129,12 @@ class torchsymbol:
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
                 _torch_to_thunder_function_map[torch_method] = sym
+        elif self.is_property:
+            method_name: str = self.method_name if self.method_name is not None else fn.__name__
+            register_property(method_name, sym)
+            torch_property  = getattr(torch.Tensor, method_name, None)
+            if torch_property is not None:
+                _torch_to_thunder_function_map[torch_property] = sym
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
@@ -170,6 +178,9 @@ def size(a):
 
     return fn_
 
+@torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
+def is_cuda(a: TensorLike, /) -> bool:
+    return a._device.devicetype is devices.DeviceType.CUDA
 
 register_method("size", size)
 
