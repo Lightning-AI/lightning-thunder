@@ -3108,33 +3108,6 @@ def max_pool2d_with_indices_backward(
     return [TensorProxy(like=a), None]
 
 
-@torchsymbol(torch.ops.aten.max_pool3d_backward, id="torch.ops.aten.max_pool3d_backward", is_method=False)
-def max_pool3d_backward(
-    grad: TensorProxy,
-    a: TensorProxy,
-    kernel_size: int,
-    stride: int | Sequence[int] | None,
-    padding: int | Sequence[int],
-    dilation: int | Sequence[int],
-    ceil_mode: bool,
-) -> TensorProxy:
-    return TensorProxy(like=a)
-
-
-@torchsymbol(torch.ops.aten.max_pool3d_with_indices_backward, id="torch.ops.aten.max_pool3d_with_indices_backward", is_method=False)
-def max_pool3d_with_indices_backward(
-    grad: TensorProxy,
-    a: TensorProxy,
-    kernel_size: int,
-    stride: int | Sequence[int] | None,
-    padding: int | Sequence[int],
-    dilation: int | Sequence[int],
-    ceil_mode: bool,
-    result1: TensorProxy,
-) -> list[TensorProxy | None]:
-    return [TensorProxy(like=a), None]
-
-
 @torchsymbol(torch.max_pool3d, torch.nn.functional.max_pool3d, id="torch.nn.functional.max_pool3d", is_method=False)
 def max_pool3d(
     a: TensorProxy,

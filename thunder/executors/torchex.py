@@ -1219,8 +1219,6 @@ max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
 max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
 max_pool2d_backward = _register_torch_operation("max_pool2d_backward", module=torch.ops.aten.max_pool2d_backward.op)
 max_pool2d_with_indices_backward = _register_torch_operation("max_pool2d_with_indices_backward", module=torch.ops.aten.max_pool2d_backward)
-max_pool3d_backward = _register_torch_operation("max_pool3d_backward", module=torch.ops.aten.max_pool3d_backward.op)
-max_pool3d_with_indices_backward = _register_torch_operation("max_pool3d_with_indices_backward", module=torch.ops.aten.max_pool3d_backward)
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
@@ -1488,30 +1486,8 @@ def max_pool2d_bwd_wrapper(
 
     return primals
 
-def max_pool3d_bwd_wrapper(
-    a: TensorProxy,
-    /,
-    kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    return_indices: bool = False,
-    ceil_mode: bool = False,
-):
-    primals = max_pool3d(a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
-
-    if return_indices:
-        grad = get_grad(primals[0])
-        grad_a = max_pool3d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
-    else:
-        grad = get_grad(primals)
-        grad_a = max_pool3d_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode)
-    put_grad(a, grad_a)
-
-    return primals
-
 ex._register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper)
-ex._register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper)
+_register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl
