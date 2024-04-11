@@ -80,9 +80,13 @@ def test_no_autocast(executor, device, dtype):
         return is_autocast_enabled(), is_autocast_cpu_enabled()
 
     trace = thunder.trace()(func)
-    no_autocast_cfunc = trace.python_callable()
-    cfunc = no_autocast_cfunc.__wrapped__.__wrapped__  # This function can be affected by the autocast context.
-    b1, b2 = no_autocast_cfunc()
+    python_callable = trace.python_callable()
+    # 3 unwraps for:
+    # @no_grad()
+    # @autocast(device_type="cuda", ...)
+    # @autocast(device_type="cpu", ...)
+    cfunc = python_callable.__wrapped__.__wrapped__.__wrapped__
+    b1, b2 = python_callable()
     assert b1 is False
     assert b2 is False
 
@@ -97,7 +101,7 @@ def test_no_autocast(executor, device, dtype):
     if torch_device.type == "cpu":
         test_dtype = torch.bfloat16
     with torch.autocast(device_type=devicetype, dtype=test_dtype):
-        b1, b2 = no_autocast_cfunc()
+        b1, b2 = python_callable()
         b3, b4 = cfunc()
     assert b1 is False
     assert b2 is False
