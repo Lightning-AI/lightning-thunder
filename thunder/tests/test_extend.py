@@ -218,9 +218,15 @@ def test_single_op_executor():
         return mlp(a, b, c)
 
     cfn = thunder.jit(foo, executors=[mlpex])
-    _ = cfn(a, b, c)
+    cres = cfn(a, b, c)
+    res = foo(a, b, c)
 
-    print(thunder.last_traces(cfn)[-1])
-    # assert "mlp" in str(thunder.last_traces(cfn)[-1])
+    # assert that the math works
+    assert_close(cres, res)
 
-    # print(thunder.last_traces(cfn)[-1].bound_symbols[3]._executor)
+    # Assert that it was preserved and didn't decompose into the torch ops.
+    # NOTE: The first three ops are arguments (a, b, c).
+    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.name is "mlp"
+    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.executor is mlpex # type: ignore
+
+    deregister_executor(mlpex)
