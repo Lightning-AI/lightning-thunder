@@ -3085,12 +3085,11 @@ def max_pool2d(
 def max_pool2d_backward(
     grad: TensorProxy,
     a: TensorProxy,
-    /,
-    kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    ceil_mode: bool = False,
+    kernel_size: int,
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
 ) -> TensorProxy:
     return TensorProxy(like=a)
 
@@ -3099,12 +3098,11 @@ def max_pool2d_backward(
 def max_pool2d_with_indices_backward(
     grad: TensorProxy,
     a: TensorProxy,
-    /,
-    kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    ceil_mode: bool = False,
+    kernel_size: int,
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
     result1: TensorProxy,
 ) -> list[TensorProxy | None]:
     return [TensorProxy(like=a), None]
@@ -3114,12 +3112,11 @@ def max_pool2d_with_indices_backward(
 def max_pool3d_backward(
     grad: TensorProxy,
     a: TensorProxy,
-    /,
-    kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    ceil_mode: bool = False,
+    kernel_size: int,
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
 ) -> TensorProxy:
     return TensorProxy(like=a)
 
@@ -3128,12 +3125,11 @@ def max_pool3d_backward(
 def max_pool3d_with_indices_backward(
     grad: TensorProxy,
     a: TensorProxy,
-    /,
-    kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    ceil_mode: bool = False,
+    kernel_size: int,
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
     result1: TensorProxy,
 ) -> list[TensorProxy | None]:
     return [TensorProxy(like=a), None]
