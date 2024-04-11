@@ -75,37 +75,15 @@ def make_compiled(
     # TODO: issue "Try using _transform_for_operator_executor_execution for
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
-    compiled_func = torch.compile(torch_trace.python_callable(), fullgraph=True)
 
-    def compiled_func_wrapper(*args):
-        # The default is 8. For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
-        # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
-        # frame all the dynamic copies of these context managers share the same code cache.
-        # Since Thunder generates many traces, all of them annotated with these context managers, we need to increase
-        # the limit here. Alternatively we could pull out the context managers outside of the `torch.compile` region
-        torch._dynamo.config.cache_size_limit = 64
+    # Avoid cache limits. For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
+    # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
+    # frame, all the dynamic copies of these context managers share the same code cache.
+    # Since Thunder generates many traces, all of them annotated with these context managers, we need to increase
+    # the limit here. Alternatively we could pull out the context managers outside of the `torch.compile` region
+    torch._dynamo.reset()
 
-        # PyTorch 2.1 doesn't have this attribute
-        if getattr(torch._dynamo.eval_frame, "guarded_backend_cache", None) is None:
-            return compiled_func(*args)
-
-        orig = getattr(torch._dynamo.eval_frame.guarded_backend_cache, "skip_backend_check_for_run_only_mode", None)
-        try:
-            # TODO: Remove this hack
-            # Dynamo doesn't recreate a guard for the compiled function called
-            # from the backward thread. This is a problem because the guard is
-            # created with the forward thread ID, and the guard is not valid
-            # for the backward thread.
-            # Issue filed: https://github.com/pytorch/pytorch/issues/114674
-            # We should be able to remove this hack once we're sure that the
-            # above fix has propagated to all supported PyTorch releases.
-            torch._dynamo.eval_frame.guarded_backend_cache.skip_backend_check_for_run_only_mode = True
-            return compiled_func(*args)
-        finally:
-            if orig is not None:
-                torch._dynamo.eval_frame.guarded_backend_cache.skip_backend_check_for_run_only_mode = orig
-
-    return compiled_func_wrapper
+    return torch.compile(torch_trace.python_callable(), fullgraph=True)
 
 
 class TorchCompileExecutor(FusionExecutor):
