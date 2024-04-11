@@ -1236,7 +1236,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
         if callable(method_or_value):
             return partial(method_or_value, self)
-        
+
         return method_or_value
 
     #

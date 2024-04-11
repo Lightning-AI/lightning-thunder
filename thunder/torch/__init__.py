@@ -132,7 +132,7 @@ class torchsymbol:
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
             register_property(method_name, sym)
-            torch_property  = getattr(torch.Tensor, method_name, None)
+            torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
                 _torch_to_thunder_function_map[torch_property] = sym
 
@@ -178,9 +178,11 @@ def size(a):
 
     return fn_
 
+
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a._device.devicetype is devices.DeviceType.CUDA
+
 
 register_method("size", size)
 
