@@ -87,6 +87,9 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
         if result is not None:
             return result
 
+        if any("torchcompile" in ex.name for ex in executor.executors_list()):
+            torch._dynamo.reset()
+
 
 def snippet_jax_consistency(op, jax_op, sample, comp):
     import jax.numpy as jnp

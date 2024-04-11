@@ -1258,6 +1258,9 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
         if result is not None:
             return result
 
+        if any("torchcompile" in ex.name for ex in executor.executors_list()):
+            torch._dynamo.reset()
+
 
 from torch.testing import assert_close
 from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
