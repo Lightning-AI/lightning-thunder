@@ -292,6 +292,9 @@ class FSDPBucketingStrategy(Enum):
 def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy):
     from thunder.core.proxies import TensorProxy
 
+    # TODO(crcrpar): Consider making `BLOCK`'s behavior more meticulous for models with simple structure
+    # as in https://github.com/Lightning-AI/lightning-thunder/blob/b24e5b23/thunder/tests/distributed/test_ddp.py#L53-L60
+    # For the linked model, `block` cannot put `t_net1_weight` and `t_net1_bias` into the same bucket.
     # TODO(crcrpar): Consider having bucket_name include dtype (and device) in it
     # as it's possible (especially `FSDPBucketingStrategy.BLOCK`) that parameters of a block
     # have different dtypes such as BF16 and FP8.
