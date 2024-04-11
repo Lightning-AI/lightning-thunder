@@ -1222,7 +1222,76 @@ log_softmax_backward = _register_torch_operation(
 max_pool1d = _register_torch_operation("max_pool1d", module=torch.nn.functional)
 max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
 max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
+
+def _max_pool_with_indices_helper(
+    ndim: int,
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
+) -> [TensorProxy, TensorProxy]:
+    def div_rtn(x, y):
+        q = x / y;
+        r = x % y;
+        if r != 0 and (r < 0) != (y < 0):
+            q -= 1
+        return q
+
+    def pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode_:bool):
+        out_size = div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride - 1 if ceil_mode else 0), stride) + 1
+        if ceil_mode and (out_size - 1) * stride >= in_ + pad_:
+            out_size -= 1
+        return out_size
+
+    def get_maybe_ith_entry(seq : Sequence[int], i : int, default : int = None):
+        if seq is None:
+            return default
+
+        if len(seq) == 1:
+            return seq[0]
+        else:
+            return seq[i]
+
+    out_sizes = []
+    for i in range(ndim):
+        in_ = a.shape[i - ndim] # i - ndim is the i-th spatial dimension
+        kernel_ = get_maybe_ith_entry(kernel_size, i)
+        stride_ = get_maybe_ith_entry(stride, i, kernel_)
+        pad_ = get_maybe_ith_entry(padding, i)
+        dilation_ = get_maybe_ith_entry(dilation, i)
+        out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
+
+    return TensorProxy(like=a, shape=out_sizes), TensorProxy(like=a, shape=out_sizes)
+
+def max_pool2d_with_indices_meta(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> [TensorProxy, TensorProxy]:
+    return _max_pool_with_indices_helper(2, a, kernel_size, stride, padding, dilation, ceil_mode)
+
+def _max_pool2d_with_indices(
+    a: TensorLike,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> [TensorLike, TensorLike]:
+    return torch.ops.aten.max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
+
+
+max_pool2d_with_indices = ex.register_operator("max_pool2d_with_indices", meta=max_pool2d_with_indices_meta, fn=_max_pool2d_with_indices)
 max_pool2d_with_indices_backward = _register_torch_operation("torch.ops.aten.max_pool2d_with_indices_backward", like=ltorch.max_pool2d_with_indices_backward)
+
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
@@ -1478,7 +1547,7 @@ def max_pool2d_bwd_wrapper(
     return_indices: bool = False,
     ceil_mode: bool = False,
 ):
-    primals = max_pool2d(a, kernel_size, stride, padding, dilation, True, ceil_mode)
+    primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
     grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
