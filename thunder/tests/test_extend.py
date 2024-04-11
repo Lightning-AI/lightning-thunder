@@ -9,7 +9,7 @@ import thunder.core.devices as devices
 from thunder.core.langctxs import langctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import grad, get_grad, put_grads
-from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors
+from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors, SingleOpExecutor
 from lightning_utilities.core.imports import package_available
 
 
@@ -195,3 +195,32 @@ def test_register_implementation_custom_op():
     assert "myadd2" not in s and "myadd1" not in s
 
     deregister_executor(myex)
+
+
+def test_single_op_executor():
+    def mlp_meta(a: TensorProxy, b: TensorProxy, c: TensorProxy):
+        assert a.shape[-1] == b.shape[-2]
+        assert c.shape[-2] == b.shape[-1]
+        assert c.shape[-1] == a.shape[-1]
+        return TensorProxy(like=c)
+
+    def mlp(a, b, c):
+        return torch.relu(a @ b + c)
+
+    mlpex = SingleOpExecutor("mlpex", "mlp", fn=mlp, meta=mlp_meta)
+    assert mlpex in get_all_executors()
+
+    a = torch.randn(4, 4)
+    b = torch.randn(4, 4)
+    c = torch.randn(4, 4)
+
+    def foo(a, b, c):
+        return mlp(a, b, c)
+
+    cfn = thunder.jit(foo, executors=[mlpex])
+    _ = cfn(a, b, c)
+
+    print(thunder.last_traces(cfn)[-1])
+    # assert "mlp" in str(thunder.last_traces(cfn)[-1])
+
+    # print(thunder.last_traces(cfn)[-1].bound_symbols[3]._executor)

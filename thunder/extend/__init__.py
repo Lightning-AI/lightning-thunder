@@ -5,6 +5,7 @@ from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
 import warnings
+from functools import cache
 
 import torch.cuda
 
@@ -34,15 +35,18 @@ class ImplInfo:
     def __init__(
         self,
         *,
-        symbol: None | Symbol = None,
-        checker: None | Callable = None,
-        execution_transform: None | Callable = None,
-        grad_transform: None | Callable = None,
+        symbol: Symbol | None = None,
+        checker: Callable | None = None,
+        execution_transform: Callable | None = None,
+        grad_transform: Callable | None = None,
     ):
-        self.symbol: Symbol = symbol
-        self.checker: Callable = checker
-        self.execution_transform: None | Callable = execution_transform
-        self.grad_transform: None | Callable = grad_transform
+        self.symbol: Symbol | None = symbol
+        # None implies that the symbol is always executable.
+        self.checker: Callable | None = checker
+        # None implies that the symbol is called as-is.
+        self.execution_transform: Callable | None = execution_transform
+        # None implies that the symbol has no grad, or that the grad is in _grad_fn_map.
+        self.grad_transform: Callable | None = grad_transform
 
 
 class Executor:
@@ -66,7 +70,7 @@ class Executor:
         return self._implmap
 
     def __repr__(self) -> str:
-        return self.name
+        return str(self.name)
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -139,7 +143,7 @@ class FusionExecutor(Executor):
     # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
     # compiler bugs.
     #
-    # A FusionExecutor keeps track of its own optimization fuel as the number
+    # A FusionExecutor keeps track of itsImplInfo own optimization fuel as the number
     # of remaining optimizations it can do. Each fusion pass can call
     # `get_fuel` to acquire a certain amount of optimization fuel, and, only if
     # it returns true, perform the actual optimization. `set_fuel` is used by
@@ -156,7 +160,7 @@ class FusionExecutor(Executor):
     def set_fuel(self, value: int | FUEL_LEVEL):
         raise NotImplementedError
 
-    def fusion_pass(trace: TraceCtx) -> TraceCtx:
+    def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         raise NotImplementedError
 
     def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:
@@ -183,7 +187,7 @@ class FusionExecutor(Executor):
 
         def _bind_postprocess(bsym: BoundSymbol) -> None:
             bsym.subsymbols = tuple(bsyms)
-            bsym._call_ctx: dict[str, Callable] = {name: fn}
+            bsym._call_ctx = {name: fn}
 
         sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
         return sym.bind(*inputs, output=outputs)
@@ -234,9 +238,10 @@ class OperatorExecutor(Executor):
         # Set tags to be the same as 'like' if 'tags' is not specified
         tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
         meta = meta if meta is not None else like
-        if meta is None:
+        if meta is None and fn is not None:
             warn_default_meta(name, self.name)
 
+            @cache
             def default_meta(*args, **kwargs):
                 # TODO: Unproxify and Reproxify
                 args = tuple(a for a in args)
@@ -297,23 +302,33 @@ class SingleOpExecutor(OperatorExecutor):
         exc_name: Hashable,
         op_name: str,
         *,
+        version: None | Any = None,
         replaces: Callable | None = None,
         like: None | Callable = None,
         meta: None | Callable = None,
         module: None | type | ModuleType = None,
         fn: None | Callable = None,
-        version: None | Any = None,
+        checker: None | Callable = None,
+        execution_transform: None | Callable = None,
+        grad_transform: None | Callable = None,
     ):
         super().__init__(exc_name, version=version)
         register_executor(self)
 
-        self.register_operator(
+        if replaces is None:
+            replaces = fn
+
+        sym = self.register_operator(
             op_name,
             replaces=replaces,
             like=like,
             meta=meta,
             module=module,
             fn=fn,
+        )
+
+        self.register_implementation(
+            sym, op=sym, checker=checker, execution_transform=execution_transform, grad_transform=grad_transform
         )
 
 
@@ -347,7 +362,7 @@ def register_executor(
     return ex_
 
 
-def get_all_executors() -> tuple[Executor]:
+def get_all_executors() -> tuple[Executor, ...]:
     # manually import all native executors to let them register themselves
     from thunder.executors import (
         apex_entropyex,
@@ -365,11 +380,11 @@ def get_all_executors() -> tuple[Executor]:
     return tuple(_executor_map.values())
 
 
-def get_default_executors() -> tuple[Executor]:
+def get_default_executors() -> tuple[Executor, ...]:
     return tuple(_default_executors)
 
 
-def get_always_executors() -> tuple[Executor]:
+def get_always_executors() -> tuple[Executor, ...]:
     return tuple(_always_executors)
 
 

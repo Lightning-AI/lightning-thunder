@@ -149,7 +149,9 @@ class Symbol:
     # If both IDs are none, then symbols with the same name and module are equal.
     def __hash__(self) -> int:
         if self._hash is None:
-            object.__setattr__(self, "_hash", hash((self.name, self._module, self.id)))
+            h = hash((self.name, self._module, self.id))
+            object.__setattr__(self, "_hash", h)
+            return h
         return self._hash
 
     # Symbols are equal if they have the same id (if present),
