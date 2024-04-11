@@ -3081,6 +3081,64 @@ def max_pool2d(
     return _max_pool_helper(2, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
 
 
+@torchsymbol(torch.ops.aten.max_pool2d_backward, id="torch.ops.aten.max_pool2d_backward", is_method=False)
+def max_pool2d_backward(
+    grad: TensorProxy,
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+@torchsymbol(torch.ops.aten.max_pool2d_with_indices_backward, id="torch.ops.aten.max_pool2d_with_indices_backward", is_method=False)
+def max_pool2d_with_indices_backward(
+    grad: TensorProxy,
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+    result1: TensorProxy,
+) -> list[TensorProxy | None]:
+    return [TensorProxy(like=a), None]
+
+
+@torchsymbol(torch.ops.aten.max_pool3d_backward, id="torch.ops.aten.max_pool3d_backward", is_method=False)
+def max_pool3d_backward(
+    grad: TensorProxy,
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+@torchsymbol(torch.ops.aten.max_pool3d_with_indices_backward, id="torch.ops.aten.max_pool3d_with_indices_backward", is_method=False)
+def max_pool3d_with_indices_backward(
+    grad: TensorProxy,
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+    result1: TensorProxy,
+) -> list[TensorProxy | None]:
+    return [TensorProxy(like=a), None]
+
+
 @torchsymbol(torch.max_pool3d, torch.nn.functional.max_pool3d, id="torch.nn.functional.max_pool3d", is_method=False)
 def max_pool3d(
     a: TensorProxy,
