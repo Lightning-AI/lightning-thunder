@@ -76,7 +76,8 @@ if not TE_AVAILABLE:
 # Traced Program:
 #
 # @torch.no_grad()
-# @torch.autocast(enabled=False, cache_enabled=False)
+# @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+# @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
 # def func(a, b, d):
 #   # a: "cuda:0 bf16[16, 32]"
 #   # b: "cuda:0 bf16[64, 32]"

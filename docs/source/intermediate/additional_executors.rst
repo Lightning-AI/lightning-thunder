@@ -43,7 +43,8 @@ This prints::
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(logits, labels, weight):
     # logits: "cuda:0 f32[2048, 50257]"
     # labels: "cuda:0 i64[2048]"
@@ -86,7 +87,8 @@ This prints::
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(logits, labels):
     # logits: "cuda:0 f32[2048, 50257]"
     # labels: "cuda:0 i64[2048]"

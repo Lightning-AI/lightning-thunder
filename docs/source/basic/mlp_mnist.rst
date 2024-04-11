@@ -112,7 +112,8 @@ After compilation the program is, again, just Python and PyTorch, until the very
 Let's take a look at the execution trace for the training module's forward::
 
   @torch.no_grad()
-  @torch.autocast(enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def augmented_forward_fn(t0, t4, t5, t21, t22, t38, t39, t55, t56, t72, t73):
     # t0
     # t4

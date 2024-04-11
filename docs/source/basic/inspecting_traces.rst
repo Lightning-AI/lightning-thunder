@@ -27,7 +27,8 @@ This prints::
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -72,7 +73,8 @@ The first trace constructed is, again, a record of the PyTorch operations observ
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -96,7 +98,8 @@ Now let's look at the second trace by printing ``traces[1]``::
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -116,7 +119,8 @@ This next trace in the series has a comment “Constructed by Dead Code Eliminat
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -191,7 +195,8 @@ Finally, ``traces[3]`` is the result of a lifetime analysis pass, which deletes 
   import torch
 
   @torch.no_grad()
-  @torch.autocast(enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)
+  @torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1

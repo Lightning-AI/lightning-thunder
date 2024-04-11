@@ -362,10 +362,13 @@ class TraceCtx:
             if len(import_ctx) > 0:
                 program.append("")
 
-            # Prints the signature and the no_grad context (for when calling torch operations)
+            # Disable gradients since Thunder takes care of this (for when calling torch operations)
             program.append("@torch.no_grad()")
-            # Prints the signature and the no_autocast context
-            program.append("@torch.autocast(enabled=False, cache_enabled=False)")
+            # Disable autocast since we already generated the trace with it in consideration (for when calling torch
+            # operations)
+            program.append('@torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)')
+            program.append('@torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)')
+            # Prints the signature
             program.append(signature_str)
 
             # TODO Print objects from context
