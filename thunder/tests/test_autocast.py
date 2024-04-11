@@ -86,7 +86,6 @@ def test_no_autocast(executor, device, dtype):
     assert b1 is False
     assert b2 is False
 
-    torch_dtype = ltorch.to_torch_dtype(dtype)
     torch_device = torch.device(device)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")

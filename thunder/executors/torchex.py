@@ -132,23 +132,6 @@ _register_implementation(
 _register_implementation(ltorch.to, checker=_always_executable, execution_transform=_to_transform)
 
 #
-# Disable torch.autocast operations
-#
-
-
-class no_autocast(ContextDecorator):
-    def __enter__(self, *args, **kwargs):
-        self.was_cuda_enabled = torch.is_autocast_enabled()
-        self.was_cpu_enabled = torch.is_autocast_cpu_enabled()
-        torch.set_autocast_enabled(False)
-        torch.set_autocast_cpu_enabled(False)
-
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        torch.set_autocast_enabled(self.was_cuda_enabled)
-        torch.set_autocast_cpu_enabled(self.was_cpu_enabled)
-
-
-#
 # Tensor creation operations
 #
 arange = _register_torch_operation("arange")

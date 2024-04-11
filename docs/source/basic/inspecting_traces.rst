@@ -25,10 +25,9 @@ This prints::
   import thunder
   import thunder.torch as ltorch
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -71,10 +70,9 @@ The first trace constructed is, again, a record of the PyTorch operations observ
   import thunder
   import thunder.torch as ltorch
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -96,10 +94,9 @@ Now let's look at the second trace by printing ``traces[1]``::
   import thunder
   import thunder.torch as ltorch
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -117,10 +114,9 @@ This next trace in the series has a comment “Constructed by Dead Code Eliminat
 
   # Constructed by Transform for execution (took 2 milliseconds)
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1
@@ -193,10 +189,9 @@ Finally, ``traces[3]`` is the result of a lifetime analysis pass, which deletes 
 
   # Constructed by Delete Last Used (took 0 milliseconds)
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(t0, t1):
     # t0
     # t1

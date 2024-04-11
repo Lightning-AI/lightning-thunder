@@ -41,10 +41,9 @@ This prints::
 
   # Constructed by Delete Last Used (took 0 milliseconds)
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(logits, labels, weight):
     # logits: "cuda:0 f32[2048, 50257]"
     # labels: "cuda:0 i64[2048]"
@@ -85,10 +84,9 @@ This prints::
 
   # Constructed by Delete Last Used (took 0 milliseconds)
   import torch
-  from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @torch.autocast(enabled=False, cache_enabled=False)
   def computation(logits, labels):
     # logits: "cuda:0 f32[2048, 50257]"
     # labels: "cuda:0 i64[2048]"
