@@ -78,6 +78,13 @@ def make_compiled(
     compiled_func = torch.compile(torch_trace.python_callable(), fullgraph=True)
 
     def compiled_func_wrapper(*args):
+        # The default is 8. For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
+        # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
+        # frame all the dynamic copies of these context managers share the same code cache.
+        # Since Thunder generates many traces, all of them annotated with these context managers, we need to increase
+        # the limit here. Alternatively we could pull out the context managers outside of the `torch.compile` region
+        torch._dynamo.config.cache_size_limit = 64
+
         # PyTorch 2.1 doesn't have this attribute
         if getattr(torch._dynamo.eval_frame, "guarded_backend_cache", None) is None:
             return compiled_func(*args)
