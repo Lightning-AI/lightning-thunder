@@ -37,6 +37,11 @@ from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
+from thunder.core.transforms import (
+    get_grad,
+    put_grad,
+)
+
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
 add_always_executor(ex)
@@ -1217,8 +1222,7 @@ log_softmax_backward = _register_torch_operation(
 max_pool1d = _register_torch_operation("max_pool1d", module=torch.nn.functional)
 max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
 max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
-max_pool2d_backward = _register_torch_operation("max_pool2d_backward", module=torch.ops.aten.max_pool2d_backward.op)
-max_pool2d_with_indices_backward = _register_torch_operation("max_pool2d_with_indices_backward", module=torch.ops.aten.max_pool2d_backward)
+max_pool2d_with_indices_backward = _register_torch_operation("torch.ops.aten.max_pool2d_with_indices_backward", like=ltorch.max_pool2d_with_indices_backward)
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
@@ -1474,19 +1478,18 @@ def max_pool2d_bwd_wrapper(
     return_indices: bool = False,
     ceil_mode: bool = False,
 ):
-    primals = max_pool2d(a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
+    primals = max_pool2d(a, kernel_size, stride, padding, dilation, True, ceil_mode)
 
-    if return_indices:
-        grad = get_grad(primals[0])
-        grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
-    else:
-        grad = get_grad(primals)
-        grad_a = max_pool2d_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode)
+    grad = get_grad(primals[0])
+    grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
     put_grad(a, grad_a)
 
-    return primals
+    if return_indices:
+        return primals
+    else:
+        return primals[0]
 
-ex._register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper)
+ex.register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper)
 _register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
