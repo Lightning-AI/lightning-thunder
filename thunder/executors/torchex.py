@@ -1510,8 +1510,8 @@ def max_pool3d_bwd_wrapper(
 
     return primals
 
-ex._register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=)
-ex._register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=)
+ex._register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper)
+ex._register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl
