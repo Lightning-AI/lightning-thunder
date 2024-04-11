@@ -226,7 +226,7 @@ def test_single_op_executor():
 
     # Assert that it was preserved and didn't decompose into the torch ops.
     # NOTE: The first three ops are arguments (a, b, c).
-    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.name is "mlp"
-    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.executor is mlpex # type: ignore
+    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.name == "mlp"
+    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.executor is mlpex  # type: ignore
 
     deregister_executor(mlpex)
