@@ -548,6 +548,7 @@ def _is_cuda_torch(x: torch.Tensor | Number):
         return x.is_cuda
     return torch.tensor(x).is_cuda
 
+
 is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
     sample_input_generator=elementwise_unary_generator,
@@ -563,6 +564,7 @@ is_cuda_opinfo = OpInfo(
 )
 
 elementwise_unary_ops.append(is_cuda_opinfo)
+
 
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
