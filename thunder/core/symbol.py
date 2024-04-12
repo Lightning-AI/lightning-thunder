@@ -522,7 +522,7 @@ class BoundSymbol(BoundSymbolInterface):
             # NOTE BoundSymbols of Symbols with a python_impl defined are run in Python, and are assumed
             #   to not need any imports to run properly, unless _import_prims is True
             if self.sym._print_as_impl:
-                assert self.sym.module is not None # TODO: Is this a valid assumption?
+                assert self.sym.module is not None  # TODO: Is this a valid assumption?
                 module_name = self.sym.module.__name__
                 import_ctx = {module_name: self.sym.module}
             else:
@@ -534,7 +534,7 @@ class BoundSymbol(BoundSymbolInterface):
             # BoundSymbols of Symbols without Python implementations (either because they
             #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
-            assert self.sym.module is not None # TODO: Is this a valid assumption?
+            assert self.sym.module is not None  # TODO: Is this a valid assumption?
             module_name = self.sym.module.__name__
             import_ctx = {module_name: self.sym.module}
 
