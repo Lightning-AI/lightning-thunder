@@ -552,7 +552,7 @@ def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None,
     idx: int = 0
     from thunder import ThunderModule, compile_data
 
-    if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
+    if isinstance(tom, ThunderModule) or compile_data(tom).using_jit:
         assert args is not None, "populate grad needs args (and possibly kwargs) to work with ThunderModules"
         if kwargs is None:
             kwargs = {}
