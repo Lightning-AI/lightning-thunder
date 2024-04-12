@@ -163,7 +163,7 @@ class FusionExecutor(Executor):
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         raise NotImplementedError
 
-    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:
+    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:  # type: ignore (circular import)
         raise NotImplementedError
 
     def register_supported(
@@ -228,7 +228,9 @@ class OperatorExecutor(Executor):
     ) -> Symbol:
         ln = like is None
         mn = meta is None
-        assert ln ^ mn, f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
+        assert (
+            ln ^ mn
+        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
         assert (module is not None) + (
             fn is not None
         ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
@@ -283,40 +285,44 @@ class OperatorExecutor(Executor):
         self.implmap[_id] = impl
 
 
-class SingleOpExecutor(OperatorExecutor):
-    def __init__(
-        self,
-        exc_name: Hashable,
-        op_name: str,
-        *,
-        version: None | Any = None,
-        replaces: Callable | None = None,
-        like: None | Callable = None,
-        meta: None | Callable = None,
-        module: None | type | ModuleType = None,
-        fn: None | Callable = None,
-        checker: None | Callable = None,
-        execution_transform: None | Callable = None,
-        grad_transform: None | Callable = None,
-    ):
-        super().__init__(exc_name, version=version)
-        register_executor(self)
+def single_op_executor(
+    exc_name: Hashable,
+    op_name: str,
+    *,
+    version: None | Any = None,
+    replaces: Callable | None = None,
+    like: None | Callable = None,
+    meta: None | Callable = None,
+    module: None | type | ModuleType = None,
+    fn: None | Callable = None,
+    checker: None | Callable = None,
+    execution_transform: None | Callable = None,
+    grad_transform: None | Callable = None,
+) -> OperatorExecutor:
+    """
+    Creates a new OperatorExecutor, registers it with thunder, and registers a new operator with it,
+    implemented with fn. Also registers the implementation of the operator with the executor.
+    """
+    exc = OperatorExecutor(exc_name, version=version)
+    register_executor(exc)
 
-        if replaces is None:
-            replaces = fn
+    if replaces is None:
+        replaces = fn
 
-        sym = self.register_operator(
-            op_name,
-            replaces=replaces,
-            like=like,
-            meta=meta,
-            module=module,
-            fn=fn,
-        )
+    sym = exc.register_operator(
+        op_name,
+        replaces=replaces,
+        like=like,
+        meta=meta,
+        module=module,
+        fn=fn,
+    )
 
-        self.register_implementation(
-            sym, op=sym, checker=checker, execution_transform=execution_transform, grad_transform=grad_transform
-        )
+    exc.register_implementation(
+        sym, op=sym, checker=checker, execution_transform=execution_transform, grad_transform=grad_transform
+    )
+
+    return exc
 
 
 # Creates common datastructures
@@ -327,26 +333,9 @@ _always_executors: list[Executor] = []
 
 # Registers a new executor with thunder
 # Either accepts one of the executor classes above, or the components necessary to create one
-def register_executor(
-    ex: Hashable | Executor, *, opmap: None | dict = None, fusion_pass: None | Callable = None
-) -> Executor:
-    ex_: Executor
-    if isinstance(ex, Executor):
-        assert opmap is None and fusion_pass is None
-        ex_ = ex
-    else:
-        # NOTE isinstance(ex, Executor) is False
-        # Assumes ex is an id describing an executor
-        assert opmap is not None or fusion_pass is not None
-
-        if fusion_pass is not None:
-            ex_ = FusionExecutor(ex, opmap=opmap, fusion_pass=fusion_pass)
-        else:
-            # NOTE opmap is not None
-            ex_ = OperatorExecutor(ex, opmap=opmap)
-
-    _executor_map[ex_.name] = ex_
-    return ex_
+def register_executor(ex: Executor) -> Executor:
+    _executor_map[ex.name] = ex
+    return ex
 
 
 def get_all_executors() -> tuple[Executor, ...]:
