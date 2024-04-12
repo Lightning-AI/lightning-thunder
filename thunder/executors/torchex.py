@@ -1294,8 +1294,8 @@ def max_pool2d_with_indices_backward_meta(
     dilation: int | Sequence[int],
     ceil_mode: bool,
     result1: TensorProxy,
-) -> list[TensorProxy | None]:
-    return [TensorProxy(like=a), None]
+) -> TensorProxy:
+    return TensorProxy(like=a)
 
 
 # def _max_pool2d_with_indices(
@@ -1313,7 +1313,7 @@ def max_pool2d_with_indices_backward_meta(
 max_pool2d_with_indices = ex.register_operator(
     "max_pool2d_with_indices", meta=max_pool2d_with_indices_meta, fn=torch.ops.aten.max_pool2d_with_indices
 )
-max_pool2d_with_indices_backward = ex.register_torch_operation(
+max_pool2d_with_indices_backward = ex.register_operator(
     "max_pool2d_with_indices_backward",
     meta=max_pool2d_with_indices_backward_meta,
     fn=torch.ops.aten.max_pool2d_with_indices_backward,
@@ -1577,7 +1577,7 @@ def max_pool2d_bwd_wrapper(
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
-    grad_a, _ = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
+    grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
     put_grad(a, grad_a)
 
     if return_indices:
