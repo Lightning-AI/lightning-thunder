@@ -82,17 +82,11 @@ def make_compiled(
     # decorators are not added because dynamo graph breaks on our custom `no_autocast` decorator.
     # so far it only supports their native `autocast` implementation
     trace_callable = torch_trace.python_callable(include_decorators=False)
-    trace_callable = torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)(trace_callable)
-    trace_callable = torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)(trace_callable)
-    trace_callable = torch.no_grad()(trace_callable)
     compiled_func = torch.compile(trace_callable, fullgraph=True)
+    compiled_func = torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)(compiled_func)
+    compiled_func = torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)(compiled_func)
+    compiled_func = torch.no_grad()(compiled_func)
 
-    # The default is 8. For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
-    # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
-    # frame, all the dynamic copies of these context managers share the same code cache.
-    # Since Thunder generates many traces, all of them annotated with these context managers, we need to increase
-    # the limit here. Alternatively we could pull out the context managers outside of the `torch.compile` region
-    @torch._dynamo.config.patch("cache_size_limit", 64)
     def compiled_func_wrapper(*args):
         if _TORCH_GREATER_EQUAL_2_3:
             return compiled_func(*args)
