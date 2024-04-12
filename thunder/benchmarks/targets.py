@@ -453,7 +453,11 @@ def test_batch_norm_fwd(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    (torch_fwd_bwd, torchcompile_fwd_bwd, thunder_fwd_bwd,),
+    (
+        torch_fwd_bwd,
+        torchcompile_fwd_bwd,
+        thunder_fwd_bwd,
+    ),
     ids=fwd_executor_ids,
 )
 def test_batch_norm_grad(benchmark, executor: Callable):
