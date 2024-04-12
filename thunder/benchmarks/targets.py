@@ -453,8 +453,8 @@ def test_batch_norm_fwd(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
+    (torch_fwd_bwd, torchcompile_fwd_bwd, thunder_fwd_bwd,),
+    ids=fwd_executor_ids,
 )
 def test_batch_norm_grad(benchmark, executor: Callable):
     bn_bench: Benchmark = BatchNormBenchmark(
@@ -464,7 +464,7 @@ def test_batch_norm_grad(benchmark, executor: Callable):
     setup = make_setup(bn_bench)
     fn = executor(bn_bench)
     fn = wrap_for_benchmark(fn)
-    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+    benchmark.pedantic(fn, setup=setup, rounds=200, warmup_rounds=20)
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor

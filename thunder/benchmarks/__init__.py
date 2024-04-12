@@ -2856,7 +2856,7 @@ class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
                 w,
                 b,
                 training=training,
-            ).sum()
+            )
 
         return foo
 
