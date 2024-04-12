@@ -552,7 +552,7 @@ is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_is_cuda_torch,
-    dtypes=(datatypes.all_dtypes)
+    dtypes=(datatypes.all_dtypes),
     # Does Pytorch is_cuda supports this for all dtypes?
 )
 
