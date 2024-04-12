@@ -143,7 +143,7 @@ class FusionExecutor(Executor):
     # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
     # compiler bugs.
     #
-    # A FusionExecutor keeps track of itsImplInfo own optimization fuel as the number
+    # A FusionExecutor keeps track of its own optimization fuel as the number
     # of remaining optimizations it can do. Each fusion pass can call
     # `get_fuel` to acquire a certain amount of optimization fuel, and, only if
     # it returns true, perform the actual optimization. `set_fuel` is used by
