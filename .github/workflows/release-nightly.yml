@@ -18,30 +18,30 @@ jobs:
   releasing-nightly:
     runs-on: ubuntu-22.04
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Install dependencies
-      run: python -m pip install --user --upgrade setuptools wheel
-    - name: Build package
-      env:
-        CONVERT_VERSION2NIGHTLY: "1"
-      run: python setup.py sdist bdist_wheel
+      - name: Install dependencies
+        run: python -m pip install --user --upgrade setuptools wheel
+      - name: Build package
+        env:
+          CONVERT_VERSION2NIGHTLY: "1"
+        run: python setup.py sdist bdist_wheel
 
-    # We do this, since failures on test.pypi aren't that bad
-    - name: Publish to Test PyPI
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      uses: pypa/gh-action-pypi-publish@v1.8.14
-      with:
-        user: __token__
-        password: ${{ secrets.test_pypi_password }}
-        repository_url: https://test.pypi.org/legacy/
+      # We do this, since failures on test.pypi aren't that bad
+      - name: Publish to Test PyPI
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@v1.8.14
+        with:
+          user: __token__
+          password: ${{ secrets.test_pypi_password }}
+          repository_url: https://test.pypi.org/legacy/
 
-    - name: Publish distribution 📦 to PyPI
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      uses: pypa/gh-action-pypi-publish@v1.8.14
-      with:
-        user: __token__
-        password: ${{ secrets.pypi_password }}
+      - name: Publish distribution 📦 to PyPI
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@v1.8.14
+        with:
+          user: __token__
+          password: ${{ secrets.pypi_password }}
