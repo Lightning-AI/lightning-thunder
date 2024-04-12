@@ -306,7 +306,7 @@ class TraceCtx:
     # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
-    def python(self, *, print_depth: int = 1, include_decorators: bool = True) -> str:
+    def python(self, *, print_depth: int = 1) -> str:
         token = set_tracectx(self)
 
         try:
@@ -358,19 +358,17 @@ class TraceCtx:
                         import_str = f"import {module.__name__} as {name}"
                 program.append(import_str)
 
-            if include_decorators:
-                program.append("from thunder.executors.torchex import no_autocast")
+            program.append("from thunder.executors.torchex import no_autocast")
 
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
                 program.append("")
 
-            if include_decorators:
-                # Disable gradients since Thunder takes care of this (for when calling torch operations)
-                program.append("@torch.no_grad()")
-                # Disable autocast since we already generated the trace with it in consideration (for when calling torch
-                # operations)
-                program.append("@no_autocast()")
+            # Disable gradients since Thunder takes care of this (for when calling torch operations)
+            program.append("@torch.no_grad()")
+            # Disable autocast since we already generated the trace with it in consideration (for when calling torch
+            # operations)
+            program.append("@no_autocast")
 
             # Prints the signature
             program.append(signature_str)

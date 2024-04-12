@@ -83,8 +83,9 @@ def test_no_autocast(executor, device, dtype):
     python_callable = trace.python_callable()
     # 2 unwraps for:
     # @no_grad()
-    # @no_autocast()
-    cfunc = python_callable.__wrapped__.__wrapped__
+    # @autocast(device_type="cpu", ...)
+    # @autocast(device_type="cuda", ...)
+    cfunc = python_callable.__wrapped__.__wrapped__.__wrapped__
     b1, b2 = python_callable()
     assert b1 is False
     assert b2 is False
