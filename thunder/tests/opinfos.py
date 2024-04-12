@@ -3019,6 +3019,46 @@ unbind_opinfo = OpInfo(
 shape_ops.append(unbind_opinfo)
 
 
+def unfold_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        ((), 0, 1, 3),
+        ((), -1, 0, 5),
+        ((0,), 0, 0, 1),
+        ((8,), 0, 2, 1),
+        ((6, 2), 0, 2, 2),
+    )
+
+    for shape, dim, size, step in cases:
+        yield SampleInput(make(shape), dim, size, step)
+
+
+def unfold_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    cases = (
+        ((), 0, 2, 1, RuntimeError, "Maximum size for tensor at dimension 0 is 1 but size is 2"),
+        ((0,), 0, 0, -1, RuntimeError, "Step is -1 but must be > 0"),
+        ((8,), 1, 2, 1, IndexError, r"Dimension out of range \(expected to be in range of \[-1, 0\], but got 1\)"),
+        ((8,), 0, -5, 1, RuntimeError, "Size is -5 but must be >= 0"),
+        ((8,), 0, 10, 1, RuntimeError, "Maximum size for tensor at dimension 0 is 8 but size is 10"),
+    )
+
+    for shape, dim, size, step, err_type, err_msg in cases:
+        yield SampleInput(make(shape), dim, size, step), err_type, err_msg
+
+
+unfold_opinfo = OpInfo(
+    clang.unfold,
+    sample_input_generator=unfold_sample_generator,
+    error_input_generator=unfold_error_generator,
+    torch_reference=torch.Tensor.unfold,
+)
+
+shape_ops.append(unfold_opinfo)
+
+
 def flip_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 

@@ -67,6 +67,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
+    InterpreterLogItem,
     interpret,
     _interpret_call,
     CapsuleType,
@@ -98,7 +99,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map
@@ -1394,9 +1395,7 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     return found_pg
 
 
-def thunder_general_jit(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
-) -> tuple[TraceCtx, TraceCtx]:
+def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
@@ -1409,7 +1408,7 @@ def thunder_general_jit(
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
-    epilogue_trace: TraceCtx = TraceCtx()
+    epilogue_trace: TraceCtx | None = TraceCtx()
 
     si = SigInfo("prologue")
     si.varargs = ("args", None)
@@ -1440,6 +1439,8 @@ def thunder_general_jit(
             result = jfn(*args, **kwargs)
             prims.python_return(result)
             process_recorded_modifications(ctx, epilogue_trace)
+
+            last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
@@ -1499,4 +1500,4 @@ def thunder_general_jit(
             epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
         )
 
-    return prologue_trace, computation_trace, epilogue_trace
+    return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

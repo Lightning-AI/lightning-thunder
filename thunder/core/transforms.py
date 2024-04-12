@@ -419,7 +419,10 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
             **cd.compile_options,
         )
 
-    cs = CompileStats()
+    cs = getattr(cfn, "_lc_cs", None)
+    if cs is None:
+        cs = CompileStats()
+
     transforms = cfn._lc_transforms + [transform]
     potransforms = cfn._lc_post_optimization_transforms
     using_grad_transform = cfn._using_grad_transform
@@ -549,7 +552,7 @@ def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None,
     idx: int = 0
     from thunder import ThunderModule, compile_data
 
-    if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
+    if isinstance(tom, ThunderModule) or compile_data(tom).using_jit:
         assert args is not None, "populate grad needs args (and possibly kwargs) to work with ThunderModules"
         if kwargs is None:
             kwargs = {}
@@ -2467,6 +2470,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
+    prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
 }
 
 
@@ -2497,6 +2501,8 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
+    # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
+    prims.PrimIDs.COPY_: lambda g: (None, None),
 }
 
 
@@ -3164,6 +3170,8 @@ def iter_bound_symbols(bound_symbols):
     for symbol in bound_symbols:
         if symbol.sym.id in transform_skip_list:
             continue
+        elif symbol.output is None:
+            continue
         else:
             yield symbol
 
@@ -3515,9 +3523,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         init_cotangents = init_cotangents[0]
     safe_map_flat(put_grad, trace.output, init_cotangents)
 
-    for symbol in reversed(trace.bound_symbols):
-        if symbol.sym.id in transform_skip_list:
-            continue
+    for symbol in reversed(list(iter_bound_symbols(trace.bound_symbols))):
         symbol_output = sequencify(symbol.output)
 
         cotangents = tree_map(get_grad, symbol_output)
