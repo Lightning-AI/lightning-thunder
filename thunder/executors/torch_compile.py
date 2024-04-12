@@ -79,8 +79,6 @@ def make_compiled(
     # TODO: issue "Try using _transform_for_operator_executor_execution for
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
-    # decorators are not added because dynamo graph breaks on our custom `no_autocast` decorator.
-    # so far it only supports their native `autocast` implementation
     compiled_func = torch.compile(torch_trace.python_callable(), fullgraph=True)
 
     # The default is 8. For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
