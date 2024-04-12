@@ -371,7 +371,7 @@ class TraceCtx:
                 # Disable autocast since we already generated the trace with it in consideration (for when calling torch
                 # operations)
                 program.append("@no_autocast()")
-            
+
             # Prints the signature
             program.append(signature_str)
 
