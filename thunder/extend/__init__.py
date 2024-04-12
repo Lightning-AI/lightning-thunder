@@ -5,7 +5,7 @@ from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
 import warnings
-from functools import cache
+from functools import cache, partial
 
 import torch.cuda
 
@@ -226,9 +226,9 @@ class OperatorExecutor(Executor):
         replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
-        assert not (
-            (like is not None) and (meta is not None)
-        ), f"Expected one and only one of 'like' and 'meta' to be specified. Like: {like}, Meta: {meta}"
+        ln = like is None
+        mn = meta is None
+        assert ln ^ mn, f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
         assert (module is not None) + (
             fn is not None
         ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
@@ -238,19 +238,6 @@ class OperatorExecutor(Executor):
         # Set tags to be the same as 'like' if 'tags' is not specified
         tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
         meta = meta if meta is not None else like
-        if meta is None and fn is not None:
-            warn_default_meta(name, self.name)
-
-            @cache
-            def default_meta(*args, **kwargs):
-                # TODO: Unproxify and Reproxify
-                args = tuple(a for a in args)
-                kwargs = {k: v for k, v in kwargs.items()}
-                res = fn(*args, **kwargs)
-                res = res
-                return res
-
-            meta = default_meta
         call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
 
         def _bind_postprocess(bsym: BoundSymbol) -> None:
