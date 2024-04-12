@@ -210,7 +210,7 @@ class OperatorExecutor(Executor):
         self,
         name: str,
         *,
-        like: None | Callable = None,
+        like: None | Symbol = None,
         meta: None | Callable = None,
         tags: None | list[Any] = None,
         module: None | type | ModuleType = None,
@@ -281,13 +281,12 @@ class OperatorExecutor(Executor):
 def single_op_executor(
     exc_name: Hashable,
     op_name: str,
+    fn: Callable,
+    meta: Callable,
     *,
     version: None | Any = None,
     replaces: Callable | None = None,
-    like: None | Callable = None,
-    meta: None | Callable = None,
-    module: None | type | ModuleType = None,
-    fn: None | Callable = None,
+    tags: None | list[Any] = None,
     checker: None | Callable = None,
     execution_transform: None | Callable = None,
     grad_transform: None | Callable = None,
@@ -295,6 +294,26 @@ def single_op_executor(
     """
     Creates a new OperatorExecutor, registers it with thunder, and registers a new operator with it,
     implemented with fn. Also registers the implementation of the operator with the executor.
+
+    If the operator needs a backward, you should provide a `grad_transform` function.
+
+    Args:
+        exc_name: The name of the executor.
+        op_name: The name of the operator created in the executor.
+        fn: The function that implements the operator.
+        meta: The meta function for the operator. Meta functions are the functions that the interpreter
+              uses to trace with. The meta function takes the same arguments as `fn`, with the exception
+              that the objects passed to it are proxied, and it should return proxy (`TensorProxy`) objects
+              with the appropriate metadata, identical to the way that `fn` would return them for those given inputs.
+
+        version: The version of the executor. Defaults to None.
+        replaces: The function that you call in your code, which `fn` replaces. For example, if you have a
+                  custom sdpa kernel, you could replace torch.nn.functional.scaled_dot_product_attention
+                  with it to run your benchmarks without code changes.
+        checker: The checker function for the operator. If you're using a cuda kernel for example, you have
+                 the option to assert that all input tensors are on the same cuda device.
+        execution_transform: The execution transform function of the operator.
+        grad_transform: The grad transform function of the operator.
     """
     exc = OperatorExecutor(exc_name, version=version)
     register_executor(exc)
@@ -304,11 +323,10 @@ def single_op_executor(
 
     sym = exc.register_operator(
         op_name,
-        replaces=replaces,
-        like=like,
-        meta=meta,
-        module=module,
         fn=fn,
+        replaces=replaces,
+        meta=meta,
+        tags=tags,
     )
 
     exc.register_implementation(
