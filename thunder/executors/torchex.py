@@ -1249,7 +1249,7 @@ def _max_pool_with_indices_helper(
             out_size -= 1
         return out_size
 
-    def get_maybe_ith_entry(seq: Sequence[int], i: int, default: int = None):
+    def get_maybe_ith_entry(arg_name: str, seq: int | Sequence[int], i: int, default: int | None = None):
         if seq is None:
             return default
 
@@ -1259,15 +1259,22 @@ def _max_pool_with_indices_helper(
         if len(seq) == 1:
             return seq[0]
         else:
+            utils.check(
+                i < len(seq),
+                lambda: f"invalid pooling argument: {arg_name} needs to be None / a scalar / size-{ndim} Sequence, but received {seq}",
+            )
             return seq[i]
 
     out_sizes = []
     for i in range(ndim):
         in_ = a.shape[i - ndim]  # i - ndim is the i-th spatial dimension
-        kernel_ = get_maybe_ith_entry(kernel_size, i)
-        stride_ = get_maybe_ith_entry(stride, i, kernel_)
-        pad_ = get_maybe_ith_entry(padding, i)
-        dilation_ = get_maybe_ith_entry(dilation, i)
+        kernel_ = get_maybe_ith_entry("kernel_size", kernel_size, i)
+        stride_ = get_maybe_ith_entry("stride", stride, i, kernel_)
+        pad_ = get_maybe_ith_entry("padding", padding, i)
+        dilation_ = get_maybe_ith_entry("dilation", dilation, i)
+        utils.check(
+            kernel_ is not None and stride_ is not None and pad_ is not None and dilation_ is not None,
+            lambda: f"max_pool argument extraction failed.")
         out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
 
     return TensorProxy(like=a, shape=out_sizes), TensorProxy(like=a, shape=out_sizes)
@@ -1563,7 +1570,7 @@ def max_pool2d_bwd_wrapper(
     dilation: int | Sequence[int] = 1,
     return_indices: bool = False,
     ceil_mode: bool = False,
-):
+): tuple[TensorProxy, TensorProxy] | TensorProxy:
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
@@ -1585,7 +1592,7 @@ def max_pool3d_bwd_wrapper(
     dilation: int | Sequence[int] = 1,
     return_indices: bool = False,
     ceil_mode: bool = False,
-):
+): tuple[TensorProxy, TensorProxy] | TensorProxy:
     primals = max_pool3d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
@@ -1598,6 +1605,7 @@ def max_pool3d_bwd_wrapper(
         return primals[0]
 
 
+# ltorch.max_pool2d/3d decomposition uses convolution, which has performance issue running through torchex. We added grad_transform that keep both forward and backward max_pool as a torch composite operator, which avoids the performance issue. For details: https://github.com/Lightning-AI/lightning-thunder/issues/164. Aten doesn't have explicit functions for max_pool1d fwd/bwd. So the specialization is only done for 2d/3d case.
 ex.register_implementation(
     ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper
 )
