@@ -9,7 +9,13 @@ import thunder.core.devices as devices
 from thunder.core.langctxs import langctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import grad, get_grad, put_grads
-from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors, single_op_executor
+from thunder.extend import (
+    OperatorExecutor,
+    register_executor,
+    deregister_executor,
+    get_all_executors,
+    single_op_executor,
+)
 from lightning_utilities.core.imports import package_available
 
 
@@ -197,18 +203,22 @@ def test_register_implementation_custom_op():
     deregister_executor(myex)
 
 
-def test_single_op_executor():
-    def mlp_meta(a: TensorProxy, b: TensorProxy, c: TensorProxy):
-        assert a.shape[-1] == b.shape[-2]
-        assert c.shape[-2] == b.shape[-1]
-        assert c.shape[-1] == a.shape[-1]
-        return TensorProxy(like=c)
+def mlp_meta(a: TensorProxy, b: TensorProxy, c: TensorProxy):
+    assert a.shape[-1] == b.shape[-2]
+    assert c.shape[-2] == b.shape[-1]
+    assert c.shape[-1] == a.shape[-1]
+    return TensorProxy(like=c)
 
-    def mlp(a, b, c):
-        return torch.relu(a @ b + c)
+
+def mlp(a, b, c):
+    return torch.relu(a @ b + c)
+
+
+def test_single_op_executor_and_name_lookup():
 
     mlpex = single_op_executor("mlpex", "mlp", fn=mlp, meta=mlp_meta)
     assert mlpex in get_all_executors()
+    deregister_executor(mlpex)
 
     a = torch.randn(4, 4)
     b = torch.randn(4, 4)
@@ -217,16 +227,23 @@ def test_single_op_executor():
     def foo(a, b, c):
         return mlp(a, b, c)
 
-    cfn = thunder.jit(foo, executors=[mlpex])
-    cres = cfn(a, b, c)
-    res = foo(a, b, c)
+    def run_test(lookup_name: bool):
+        register_executor(mlpex)
 
-    # assert that the math works
-    assert_close(cres, res)
+        exc_list = [mlpex] if lookup_name else ["mlpex"]
+        cfn = thunder.jit(foo, executors=exc_list)
 
-    # Assert that it was preserved and didn't decompose into the torch ops.
-    # NOTE: The first three ops are arguments (a, b, c). The fourth is the mlp op.
-    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.name == "mlp"
-    assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.executor is mlpex  # type: ignore
+        # assert that the math works
+        cres = cfn(a, b, c)
+        res = foo(a, b, c)
+        assert_close(cres, res)
 
-    deregister_executor(mlpex)
+        # Assert that it was preserved and didn't decompose into the torch ops.
+        # NOTE: The first three ops are arguments (a, b, c). The fourth is the mlp op.
+        assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.name == "mlp"
+        assert thunder.last_traces(cfn)[-1].bound_symbols[3].sym.executor is mlpex  # type: ignore
+
+        deregister_executor(mlpex)
+
+    run_test(lookup_name=False)
+    run_test(lookup_name=True)
