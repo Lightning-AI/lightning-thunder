@@ -1966,8 +1966,8 @@ def test_torch_tensor_to_memory_format(executor: TestExecutor, device: str, _):
     cfn = executor.make_callable(torch_to, disable_preprocessing=False)
 
     for m_format in [torch.contiguous_format, torch.channels_last, torch.preserve_format]:
-        thunder_result = cfn(a, torch.contiguous_format)
-        torch_result = torch_to(a, torch.contiguous_format)
+        thunder_result = cfn(inp, torch.contiguous_format)
+        torch_result = torch_to(inp, torch.contiguous_format)
         assert_close(torch_result, thunder_result, check_stride=True)
 
 
