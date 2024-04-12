@@ -541,11 +541,13 @@ def _elementwise_unary_torch(op):
 
     return _fn
 
+
 @wraps(torch.Tensor.is_cuda)
 def _is_cuda_torch(x: torch.Tensor | Number):
     if isinstance(x, torch.Tensor):
         return x.is_cuda
     return torch.tensor(x).is_cuda
+
 
 is_cuda_opinfo = ElementwiseUnaryOpInfo(
     ltorch.is_cuda,
@@ -561,6 +563,7 @@ is_cuda_opinfo = ElementwiseUnaryOpInfo(
         ),
     ),
 )
+
 
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
