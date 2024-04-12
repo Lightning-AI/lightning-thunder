@@ -541,6 +541,26 @@ def _elementwise_unary_torch(op):
 
     return _fn
 
+@wraps(torch.Tensor.is_cuda)
+def _is_cuda_torch(x: torch.Tensor | Number):
+    if isinstance(x, torch.Tensor):
+        return x.is_cuda
+    return torch.tensor(x).is_cuda
+
+is_cuda_opinfo = ElementwiseUnaryOpInfo(
+    ltorch.is_cuda,
+    supports_grad=True,
+    torch_reference=_is_cuda_torch,
+    singularity_fn=lambda x: torch.where(x == 0, 1.0, x),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+    ),
+)
 
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
