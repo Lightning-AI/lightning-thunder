@@ -228,7 +228,9 @@ class OperatorExecutor(Executor):
     ) -> Symbol:
         ln = like is None
         mn = meta is None
-        assert ln ^ mn, f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
+        assert (
+            ln ^ mn
+        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
         assert (module is not None) + (
             fn is not None
         ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
