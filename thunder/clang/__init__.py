@@ -566,7 +566,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if isinstance(key, (Number, slice, EllipsisType)):
+    if key is None or isinstance(key, (Number, slice, EllipsisType)):
         key = (key,)
 
     for idx, x in enumerate(key):
