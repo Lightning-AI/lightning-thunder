@@ -1229,10 +1229,10 @@ def _max_pool_with_indices_helper(
     a: TensorProxy,
     /,
     kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None,
-    padding: int | Sequence[int],
-    dilation: int | Sequence[int],
-    ceil_mode: bool,
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
 ) -> [TensorProxy, TensorProxy]:
     def div_rtn(x, y):
         q = x // y
@@ -1272,20 +1272,7 @@ def _max_pool_with_indices_helper(
 
     return TensorProxy(like=a, shape=out_sizes), TensorProxy(like=a, shape=out_sizes)
 
-
-def max_pool2d_with_indices_meta(
-    a: TensorProxy,
-    /,
-    kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    ceil_mode: bool = False,
-) -> [TensorProxy, TensorProxy]:
-    return _max_pool_with_indices_helper(2, a, kernel_size, stride, padding, dilation, ceil_mode)
-
-
-def max_pool2d_with_indices_backward_meta(
+def max_pool_with_indices_backward_meta(
     grad: TensorProxy,
     a: TensorProxy,
     kernel_size: int | Sequence[int],
@@ -1297,27 +1284,28 @@ def max_pool2d_with_indices_backward_meta(
 ) -> TensorProxy:
     return TensorProxy(like=a)
 
-
-# def _max_pool2d_with_indices(
-#    a: TensorLike,
-#    /,
-#    kernel_size: int | Sequence[int],
-#    stride: int | Sequence[int] | None = None,
-#    padding: int | Sequence[int] = 0,
-#    dilation: int | Sequence[int] = 1,
-#    ceil_mode: bool = False,
-# ) -> [TensorLike, TensorLike]:
-#    return torch.ops.aten.max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
-
+max_pool2d_with_indices_meta = partial(_max_pool_with_indices_helper, 2)
 
 max_pool2d_with_indices = ex.register_operator(
     "max_pool2d_with_indices", meta=max_pool2d_with_indices_meta, fn=torch.ops.aten.max_pool2d_with_indices
 )
 max_pool2d_with_indices_backward = ex.register_operator(
     "max_pool2d_with_indices_backward",
-    meta=max_pool2d_with_indices_backward_meta,
+    meta=max_pool_with_indices_backward_meta,
     fn=torch.ops.aten.max_pool2d_with_indices_backward,
 )
+
+max_pool3d_with_indices_meta = partial(_max_pool_with_indices_helper, 3)
+
+max_pool3d_with_indices = ex.register_operator(
+    "max_pool3d_with_indices", meta=max_pool3d_with_indices_meta, fn=torch.ops.aten.max_pool3d_with_indices
+)
+max_pool3d_with_indices_backward = ex.register_operator(
+    "max_pool3d_with_indices_backward",
+    meta=max_pool_with_indices_backward_meta,
+    fn=torch.ops.aten.max_pool3d_with_indices_backward,
+)
+
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
@@ -1564,7 +1552,9 @@ _register_implementation(
 _register_implementation(ltorch.max_pool1d, max_pool1d, checker=_always_executable)
 
 
-def max_pool2d_bwd_wrapper(
+def max_pool_bwd_wrapper(
+    fwd_fn,
+    bwd_fn,
     a: TensorProxy,
     /,
     kernel_size: int | Sequence[int],
@@ -1574,10 +1564,10 @@ def max_pool2d_bwd_wrapper(
     return_indices: bool = False,
     ceil_mode: bool = False,
 ):
-    primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
+    primals = fwd_fn(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
-    grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
+    grad_a = bwd_fn(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
     put_grad(a, grad_a)
 
     if return_indices:
@@ -1585,11 +1575,14 @@ def max_pool2d_bwd_wrapper(
     else:
         return primals[0]
 
-
+max_pool2d_bwd_wrapper = partial(max_pool_bwd_wrapper, max_pool2d_with_indices, max_pool2d_with_indices_backward)
 ex.register_implementation(
-    ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper
+    ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool_bwd_wrapper
 )
-_register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable)
+max_pool3d_bwd_wrapper = partial(max_pool_bwd_wrapper, max_pool3d_with_indices, max_pool3d_with_indices_backward)
+ex.register_implementation(
+    ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool_bwd_wrapper
+)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl
