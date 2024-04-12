@@ -377,6 +377,9 @@ class ops:
                     # Adds the instantiated test to the requested scope
                     self.scope[test.__name__] = test
 
+                    # `torch.compile` caches are per code object, not frame. All the dynamic copies of these context
+                    # managers share the same code cache in the process. This is a problem in a single pytest process
+                    # that runs many traces
                     if any("torchcompile" in ex.name for ex in executor.executors_list()):
                         torch._dynamo.reset()
 
