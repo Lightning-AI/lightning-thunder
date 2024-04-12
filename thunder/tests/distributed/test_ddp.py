@@ -504,16 +504,15 @@ class CompileDDPTest(DataParallelTestCase):
         # TODO: this is not stable w.r.t. details of the processing, the sharded correspond to ("t_net1_weight", "t_net2_weight")
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
-        sharded_param_names = ("t3", "t4")
-        unshard_param_names = ("t10", "t21")
+        sharded_param_names = ("t_net1_weight", "t_net2_weight")
+        # t5 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t5", "t16")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
-        # todo/fixme: Investigate why the following assertion is failing
-        # self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
+        self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
 
         result_saved_for_bwd = [x.name for x in result_fwd_trc.bound_symbols[-1].args[1][0]]
-        # todo/fixme: Investigate why the following assertion is failing
-        # self.assertTrue(all(t in result_saved_for_bwd for t in sharded_param_names))
+        self.assertTrue(all(t in result_saved_for_bwd for t in sharded_param_names))
         self.assertTrue(all(t not in unshard_param_names for t in result_saved_for_bwd))
 
         # check allgather is inserted in backward trace
@@ -674,8 +673,7 @@ class CompileDDPTest(DataParallelTestCase):
             tuple(executors_map.keys()),
             (
                 FSDPBucketingStrategy.LAYER,
-                # todo/fixme: Investigate why BLOCK is failing with DDP
-                # FSDPBucketingStrategy.BLOCK,
+                FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
         ),
@@ -728,7 +726,10 @@ class CompileDDPTest(DataParallelTestCase):
                         first_arg = bsym.args[0]
                         self.assertIsInstance(first_arg, list)
                         has_pack_multiple_tensors |= len(first_arg) > 1
-                    self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
+                    # note(crcrpar): The way creating a bucket name from an FQN could be better for models with simple structure
+                    # see https://github.com/Lightning-AI/lightning-thunder/blob/b24e5b23/thunder/distributed/__init__.py#L278-L301
+                    if bucketing_strategy == FSDPBucketingStrategy.LAYER:
+                        self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
