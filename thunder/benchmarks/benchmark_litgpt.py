@@ -288,7 +288,7 @@ class Benchmark_litGPT:
             model = thunder.jit(model, executors=executors)
 
         elif self.compile != "eager":
-            raise ValueError(self.compile)
+            raise ValueError(f"Invalid compile option: {self.compile}")
 
         return model
 
