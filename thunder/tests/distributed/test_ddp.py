@@ -673,8 +673,7 @@ class CompileDDPTest(DataParallelTestCase):
             tuple(executors_map.keys()),
             (
                 FSDPBucketingStrategy.LAYER,
-                # todo/fixme: Investigate why BLOCK is failing with DDP
-                # FSDPBucketingStrategy.BLOCK,
+                FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
         ),
@@ -727,7 +726,10 @@ class CompileDDPTest(DataParallelTestCase):
                         first_arg = bsym.args[0]
                         self.assertIsInstance(first_arg, list)
                         has_pack_multiple_tensors |= len(first_arg) > 1
-                    self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
+                    # note(crcrpar): The way creating a bucket name from an FQN could be better for models with simple structure
+                    # see https://github.com/Lightning-AI/lightning-thunder/blob/b24e5b23/thunder/distributed/__init__.py#L278-L301
+                    if bucketing_strategy == FSDPBucketingStrategy.LAYER:
+                        self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
