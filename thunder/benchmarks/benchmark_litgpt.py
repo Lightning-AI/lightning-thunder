@@ -259,7 +259,6 @@ class Benchmark_litGPT:
 
     def setup_compile(self, model):
         if self.compile == "inductor":
-            # model = torch.compile(model, fullgraph=True, mode="reduce-overhead")
             print("Resetting cache size for torch.compile")
             import torch._dynamo.config as dynamo_config
 
