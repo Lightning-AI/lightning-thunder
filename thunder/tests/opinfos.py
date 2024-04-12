@@ -543,25 +543,17 @@ def _elementwise_unary_torch(op):
 
 
 @wraps(torch.Tensor.is_cuda)
-def _is_cuda_torch(x: torch.Tensor | Number):
-    if isinstance(x, torch.Tensor):
-        return x.is_cuda
-    return torch.tensor(x).is_cuda
+def _is_cuda_torch(x: torch.Tensor):
+    # Should Number be accepted?
+    return x.is_cuda
 
 
 is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_is_cuda_torch,
-    dtypes=(datatypes.all_dtypes),
-    # test_directives=(
-    #     DecorateInfo(
-    #         pytest.mark.skip,
-    #         "test_core_vs_torch_consistency",
-    #         dtypes=(datatypes.complex32, datatypes.float16),
-    #         devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
-    #     ),
-    # ),
+    dtypes=(datatypes.all_dtypes)
+    # Does Pytorch is_cuda supports this for all dtypes?
 )
 
 elementwise_unary_ops.append(is_cuda_opinfo)
