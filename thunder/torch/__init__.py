@@ -236,7 +236,7 @@ def _parse_to_device_and_dtype(
     return device, dtype
 
 
-# TODO Model non_blocking, copy, and memory_format (as kwargs)
+# TODO Model non_blocking (as kwargs)
 @torchsymbol(torch.Tensor.to, is_method=True)
 def to(
     a: TensorLike,
