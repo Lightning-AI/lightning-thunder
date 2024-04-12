@@ -1272,6 +1272,7 @@ def _max_pool_with_indices_helper(
 
     return TensorProxy(like=a, shape=out_sizes), TensorProxy(like=a, shape=out_sizes)
 
+
 def max_pool_with_indices_backward_meta(
     grad: TensorProxy,
     a: TensorProxy,
@@ -1283,6 +1284,7 @@ def max_pool_with_indices_backward_meta(
     result1: TensorProxy,
 ) -> TensorProxy:
     return TensorProxy(like=a)
+
 
 max_pool2d_with_indices_meta = partial(_max_pool_with_indices_helper, 2)
 
@@ -1574,6 +1576,7 @@ def max_pool_bwd_wrapper(
         return primals
     else:
         return primals[0]
+
 
 max_pool2d_bwd_wrapper = partial(max_pool_bwd_wrapper, max_pool2d_with_indices, max_pool2d_with_indices_backward)
 ex.register_implementation(
