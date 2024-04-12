@@ -1570,7 +1570,7 @@ def max_pool2d_bwd_wrapper(
     dilation: int | Sequence[int] = 1,
     return_indices: bool = False,
     ceil_mode: bool = False,
-): tuple[TensorProxy, TensorProxy] | TensorProxy:
+) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
@@ -1592,7 +1592,7 @@ def max_pool3d_bwd_wrapper(
     dilation: int | Sequence[int] = 1,
     return_indices: bool = False,
     ceil_mode: bool = False,
-): tuple[TensorProxy, TensorProxy] | TensorProxy:
+) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
     primals = max_pool3d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
