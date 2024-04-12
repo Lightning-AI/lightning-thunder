@@ -9,7 +9,13 @@ import thunder.core.devices as devices
 from thunder.core.langctxs import langctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import grad, get_grad, put_grads
-from thunder.extend import OperatorExecutor, register_executor, deregister_executor, get_all_executors, single_op_executor
+from thunder.extend import (
+    OperatorExecutor,
+    register_executor,
+    deregister_executor,
+    get_all_executors,
+    single_op_executor,
+)
 from lightning_utilities.core.imports import package_available
 
 
