@@ -193,13 +193,6 @@ class FusionExecutor(Executor):
         return sym.bind(*inputs, output=outputs)
 
 
-@run_once
-def warn_default_meta(opname: str, exname: Hashable):
-    warnings.warn(
-        f"Meta function has not been specified for operator {opname} in exexutor {exname}. Defaulting to running the operator with example tensors to determine its output metadata."
-    )
-
-
 class OperatorExecutor(Executor):
     def __init__(self, name: Hashable, *, version: None | Any = None):
         super().__init__(name, version=version)
