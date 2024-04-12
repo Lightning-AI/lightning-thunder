@@ -1,6 +1,8 @@
 import enum
 import sys
-from typing import Any
+import os
+import itertools
+from typing import Any, Sequence
 from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
@@ -8,6 +10,7 @@ import warnings
 from functools import cache, partial
 
 import torch.cuda
+
 
 from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
@@ -437,3 +440,49 @@ def deregister_executor(ex: Hashable | Executor) -> None:
 
     remove_always_executor(_id)
     remove_default_executor(_id)
+
+
+def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Executor, ...]:
+    """
+    Look up registered executors by name. If executors is None, return the default executors.
+    """
+    if executors is None:
+        return get_default_executors()
+
+    failed_executors: list[str] = []
+    resolved_executors: list[Executor] = []
+    for e in executors:
+        if isinstance(e, str):
+            ex = get_executor(e)
+            if not ex:
+                failed_executors.append(e)
+                continue
+            else:
+                resolved_executors.append(ex)
+        else:
+            resolved_executors.append(e)
+
+    if failed_executors:
+        raise ValueError(
+            f"Expected an Executor or the name of a registered Executor, instead got: {failed_executors[0] if len(failed_executors) == 1 else failed_executors}"
+            + os.linesep
+            + f"Registered executors: {get_all_executors()}"
+        )
+
+    if duplicates := set(x for x in resolved_executors if resolved_executors.count(x) > 1):
+        raise ValueError(f"Duplicate executors in the list of executors. Duplicates: {duplicates}")
+
+    return tuple(resolved_executors)
+
+
+def add_executor_lists(
+    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
+) -> Sequence[Executor]:
+    new_exc_list = []
+    exc_list = resolve_executors(exc_list)
+    other_exc_list = resolve_executors(other_exc_list)
+    for exc in itertools.chain(exc_list, other_exc_list):
+        if not exc in new_exc_list:
+            new_exc_list.append(exc)
+
+    return new_exc_list
