@@ -2,7 +2,8 @@ import enum
 import sys
 import os
 import itertools
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
@@ -469,7 +470,7 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
             + f"Registered executors: {get_all_executors()}"
         )
 
-    if duplicates := set(x for x in resolved_executors if resolved_executors.count(x) > 1):
+    if duplicates := {x for x in resolved_executors if resolved_executors.count(x) > 1}:
         raise ValueError(f"Duplicate executors in the list of executors. Duplicates: {duplicates}")
 
     return tuple(resolved_executors)
