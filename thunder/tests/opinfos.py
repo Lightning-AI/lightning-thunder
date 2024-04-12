@@ -548,12 +548,10 @@ def _is_cuda_torch(x: torch.Tensor | Number):
         return x.is_cuda
     return torch.tensor(x).is_cuda
 
-
-is_cuda_opinfo = ElementwiseUnaryOpInfo(
+is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
-    supports_grad=True,
+    sample_input_generator=elementwise_unary_generator,
     torch_reference=_is_cuda_torch,
-    singularity_fn=lambda x: torch.where(x == 0, 1.0, x),
     test_directives=(
         DecorateInfo(
             pytest.mark.skip,
@@ -564,6 +562,7 @@ is_cuda_opinfo = ElementwiseUnaryOpInfo(
     ),
 )
 
+elementwise_unary_ops.append(is_cuda_opinfo)
 
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
