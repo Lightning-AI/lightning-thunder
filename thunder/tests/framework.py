@@ -377,6 +377,9 @@ class ops:
                     # Adds the instantiated test to the requested scope
                     self.scope[test.__name__] = test
 
+                    if any("torchcompile" in ex.name for ex in executor.executors_list()):
+                        torch._dynamo.reset()
+
 
 # TODO Allow executing the test suite on different devices (not just always cuda:0)
 # TODO Example uses, note this must be the LAST decorator applied
