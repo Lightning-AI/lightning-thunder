@@ -553,14 +553,15 @@ is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
     sample_input_generator=elementwise_unary_generator,
     torch_reference=_is_cuda_torch,
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.complex32, datatypes.float16),
-            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
-        ),
-    ),
+    dtypes=(datatypes.all_dtypes)
+    # test_directives=(
+    #     DecorateInfo(
+    #         pytest.mark.skip,
+    #         "test_core_vs_torch_consistency",
+    #         dtypes=(datatypes.complex32, datatypes.float16),
+    #         devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+    #     ),
+    # ),
 )
 
 elementwise_unary_ops.append(is_cuda_opinfo)
