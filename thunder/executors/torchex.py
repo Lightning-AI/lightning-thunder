@@ -1281,24 +1281,43 @@ def max_pool2d_with_indices_meta(
 ) -> [TensorProxy, TensorProxy]:
     return _max_pool_with_indices_helper(2, a, kernel_size, stride, padding, dilation, ceil_mode)
 
+<<<<<<< Updated upstream
 
 def _max_pool2d_with_indices(
     a: TensorLike,
     /,
+=======
+def max_pool2d_with_indices_backward_meta(
+    grad: TensorProxy,
+    a: TensorProxy,
+>>>>>>> Stashed changes
     kernel_size: int | Sequence[int],
-    stride: int | Sequence[int] | None = None,
-    padding: int | Sequence[int] = 0,
-    dilation: int | Sequence[int] = 1,
-    ceil_mode: bool = False,
-) -> [TensorLike, TensorLike]:
-    return torch.ops.aten.max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
+    result1: TensorProxy,
+) -> list[TensorProxy | None]:
+    return [TensorProxy(like=a), None]
+
+#def _max_pool2d_with_indices(
+#    a: TensorLike,
+#    /,
+#    kernel_size: int | Sequence[int],
+#    stride: int | Sequence[int] | None = None,
+#    padding: int | Sequence[int] = 0,
+#    dilation: int | Sequence[int] = 1,
+#    ceil_mode: bool = False,
+#) -> [TensorLike, TensorLike]:
+#    return torch.ops.aten.max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
+
 
 
 max_pool2d_with_indices = ex.register_operator(
-    "max_pool2d_with_indices", meta=max_pool2d_with_indices_meta, fn=_max_pool2d_with_indices
+    "max_pool2d_with_indices", meta=max_pool2d_with_indices_meta, fn=torch.ops.aten.max_pool2d_with_indices
 )
-max_pool2d_with_indices_backward = _register_torch_operation(
-    "torch.ops.aten.max_pool2d_with_indices_backward", like=ltorch.max_pool2d_with_indices_backward
+max_pool2d_with_indices_backward = ex.register_torch_operation(
+    "max_pool2d_with_indices_backward", meta=max_pool2d_with_indices_backward_meta, fn=torch.ops.aten.max_pool2d_with_indices_backward
 )
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)

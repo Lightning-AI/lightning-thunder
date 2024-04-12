@@ -3081,7 +3081,7 @@ def max_pool2d(
     return _max_pool_helper(2, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
 
 
-@torchsymbol(torch.ops.aten.max_pool2d_with_indices_backward, id="max_pool2d_with_indices_backward", is_method=False)
+@torchsymbol(torch.max_pool2d_with_indices_backward, id="max_pool2d_with_indices_backward", is_method=False)
 def max_pool2d_with_indices_backward(
     grad: TensorProxy,
     a: TensorProxy,
