@@ -1235,7 +1235,7 @@ def _max_pool_with_indices_helper(
     ceil_mode: bool,
 ) -> [TensorProxy, TensorProxy]:
     def div_rtn(x, y):
-        q = x / y
+        q = x // y
         r = x % y
         if r != 0 and (r < 0) != (y < 0):
             q -= 1
@@ -1252,6 +1252,9 @@ def _max_pool_with_indices_helper(
     def get_maybe_ith_entry(seq: Sequence[int], i: int, default: int = None):
         if seq is None:
             return default
+
+        if not isinstance(seq, Sequence):
+            return seq
 
         if len(seq) == 1:
             return seq[0]
@@ -1574,7 +1577,7 @@ def max_pool2d_bwd_wrapper(
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
-    grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
+    grad_a, _ = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
     put_grad(a, grad_a)
 
     if return_indices:
