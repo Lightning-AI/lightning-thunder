@@ -278,7 +278,7 @@ added to `thunder/tests/opinfos.py <https://github.com/Lightning-AI/lightning-th
 
 .. code-block:: python
    :lineno-start: 2997
-   
+
    def unfold_sample_generator(op, device, dtype, requires_grad, **kwargs):
        make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -451,5 +451,3 @@ We also recommend checking out
 :doc:`Defining new Thunder operations <../notebooks/adding_custom_operator>` and
 :doc:`Defining custom forward and backward for existing operators <../notebooks/adding_custom_operator_backward>`
 that cover very similar topics related to extending *Thunder* out of the tree.
-
-
