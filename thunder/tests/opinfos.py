@@ -550,10 +550,10 @@ def _is_cuda_torch(x: torch.Tensor):
 
 is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
-    sample_input_generator=elementwise_unary_generator,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
     torch_reference=_is_cuda_torch,
-    dtypes=(datatypes.all_dtypes),
-    # Does Pytorch is_cuda supports this for all dtypes?
+    dtypes=(datatypes.all_dtypes)
+    # Does Pytorch is_cuda support this for all dtypes?
 )
 
 elementwise_unary_ops.append(is_cuda_opinfo)
