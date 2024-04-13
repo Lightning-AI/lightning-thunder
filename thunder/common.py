@@ -36,7 +36,7 @@ from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, Te
 import thunder.core.prims as prims
 import thunder.distributed as dist
 import thunder.torch as ltorch
-from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor
+from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
 from thunder.executors.torch_autograd import thunder_backward
 from thunder.core.transforms import autocast
@@ -183,15 +183,10 @@ class CompileData:
         if executors_list is None:
             self.executors_list = get_default_executors() + always_executors
         else:
-            # Validates executors list
-            for ex in executors_list:
-                if not isinstance(ex, Executor):
-                    raise ValueError(f"{ex} was not an executor")
-
             self.executors_list = tuple(executors_list)
             # Adds always executors (if not present)
             if self.executors_list[-len(always_executors) :] != always_executors:
-                self.executors_list = self.executors_list + always_executors
+                self.executors_list = add_executor_lists(self.executors_list, always_executors)
 
         # Validates executors list
         for ex in self.executors_list:

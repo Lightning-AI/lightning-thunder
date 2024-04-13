@@ -392,7 +392,7 @@ class StringProxy(Proxy, str):
     def type_string(self) -> str:
         return "str"
 
-    def __hash__(self) -> str:
+    def __hash__(self) -> int:
         return hash(self.value)
 
     def __eq__(self, other):
@@ -896,7 +896,7 @@ def pyval(x: Number | str | AnyProxy) -> Number | str | any:
     return x
 
 
-def pytype(x: Proxy) -> type:
+def pytype(x: Proxy) -> type | None:
     if isinstance(x, AnyProxy):
         return type(x._o)
 
