@@ -897,8 +897,6 @@ def test_no_duplicate_backward_registered():
     dtypes=NOTHING,
 )
 def test_torch_autograd_function(executor, device, _):
-    from thunder.executors.torch_autograd import thunder_backward
-    from thunder.common import CompileData
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
 
@@ -907,8 +905,7 @@ def test_torch_autograd_function(executor, device, _):
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
-    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
-    func = thunder_backward(compile_data=compile_data)(func)
+    func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -922,14 +919,11 @@ def test_torch_autograd_function(executor, device, _):
 )
 def test_torch_autograd_function_single_input(executor, device, _):
     from thunder.clang import sin
-    from thunder.executors.torch_autograd import thunder_backward
-    from thunder.common import CompileData
 
     def func(a):
         return sin(a)
 
-    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
-    func = thunder_backward(compile_data=compile_data)(func)
+    func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     assert torch.autograd.gradcheck(func, (a,))
@@ -939,8 +933,6 @@ def test_torch_autograd_function_single_input(executor, device, _):
     dtypes=(dtypes.float32,),
 )
 def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
-    from thunder.executors.torch_autograd import thunder_backward
-
     # Borrowed from `test_crazy_collections_in_and_out`.
     def foo(a, b, c, *, ka, kb, kc):
         d = {
@@ -1057,14 +1049,10 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _):
-    from thunder.executors.torch_autograd import thunder_backward
-    from thunder.common import CompileData
-
     def func(a, b):
         return a - b
 
-    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
-    func = thunder_backward(compile_data=compile_data)(func)
+    func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -1116,8 +1104,6 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
     from thunder.core.prims import convert_element_type
-    from thunder.executors.torch_autograd import thunder_backward
-    from thunder.common import CompileData
     import thunder.torch as ltorch
 
     def func(a, b, c):
@@ -1125,8 +1111,7 @@ def test_torch_autograd_redundant_casts(executor, device, _):
         e = d * a + d * b + d * c
         return ltorch.sin(e) + ltorch.cos(e)
 
-    compile_data = CompileData(fn=func, disable_preprocessing=True, executors_list=executor.executors_list())
-    func = thunder_backward(compile_data=compile_data)(func)
+    func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
     a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
