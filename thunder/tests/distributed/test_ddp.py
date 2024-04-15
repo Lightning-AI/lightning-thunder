@@ -1366,7 +1366,18 @@ def _test_ddp_transformer_engine(input_data):
                 # This has to be on all ranks so that the computation is not blocked
                 is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
                 is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale_inv)
-                is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history)
+                # NOTE: TE forward tensor meta-data sync
+                # Syncing of FP8 meta-data happens in two step in the forward pass.
+                # 1. When we enter the fp8_autocast(), all the forward fp8 meta-data
+                # in global buffer is synced.
+                # See: https://github.com/NVIDIA/TransformerEngine/blob/6a9edc38bf9b941b7d369af5103fa8fe0b121d61/transformer_engine/pytorch/fp8.py#L409-L412
+                # 2. Post this, in the forward pass of the module in `prepare_forward`,
+                # we read from the global-buffer the synced meta-data.
+                # See: https://github.com/NVIDIA/TransformerEngine/blob/6a9edc38bf9b941b7d369af5103fa8fe0b121d61/transformer_engine/pytorch/module/base.py#L539-L545
+                # However, at the end of this forward pass, we have seen new inputs and outputs. Their amax are recorded on
+                # 0th row of `amax_history` (which will be synced only in the next forward pass).
+                # So, here we check that every row except for `0` is same.
+                is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history[1:])
                 is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
                 is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale_inv)
                 is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
@@ -1375,16 +1386,16 @@ def _test_ddp_transformer_engine(input_data):
                 if rank == 0:
                     comparison_exceptions.append(e)
 
-        # Compare weights after `n_iters`
-        try:
-            assert_close(thunder_model.fc1.weight, te_model.fc1.weight)
-            assert_close(thunder_model.fc2.weight, te_model.fc2.weight)
-        except Exception as e:
-            # Return exceptions only for rank==0
-            if rank == 0:
-                comparison_exceptions.append(e)
+    # Compare weights after `n_iters`
+    try:
+        assert_close(thunder_model.fc1.weight, te_model.fc1.weight)
+        assert_close(thunder_model.fc2.weight, te_model.fc2.weight)
+    except Exception as e:
+        # Return exceptions only for rank==0
+        if rank == 0:
+            comparison_exceptions.append(e)
 
-        return comparison_exceptions
+    return comparison_exceptions
 
 
 def _test_ddp_transformer_engine_llama_sanity(input_data):
@@ -1528,13 +1539,13 @@ def _test_fsdp_transformer_engine(input_data):
         te_model.fc1.weight.data = fc1_weight.clone()
         te_model.fc2.weight.data = fc2_weight.clone()
 
-        ddp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
+        fsdp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
 
         optim = torch.optim.SGD(te_model.parameters())
 
         for _ in range(n_iter):
             with fp8_autocast():
-                o = ddp_model(x).sum()
+                o = fsdp_model(x).sum()
 
             o.backward()
             optim.step()
@@ -1568,7 +1579,8 @@ def _test_fsdp_transformer_engine(input_data):
                     # This has to be on all ranks so that the computation is not blocked
                     is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale)
                     is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].scale_inv)
-                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history)
+                    # See NOTE: TE forward tensor meta-data sync
+                    is_same_across_ranks(thunder_fp8_meta["scaling_fwd"].amax_history[1:])
                     is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale)
                     is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].scale_inv)
                     is_same_across_ranks(thunder_fp8_meta["scaling_bwd"].amax_history)
@@ -1577,18 +1589,18 @@ def _test_fsdp_transformer_engine(input_data):
                     if rank == 0:
                         comparison_exceptions.append(e)
 
-            # Compare weights after `n_iters`
-            shard_size = int(dim / world_size)
-            fsdp_te_params = tuple(te_model.parameters())
-            try:
-                assert_close(thunder_model.fc1.weight, fsdp_te_params[0].view(shard_size, dim))
-                assert_close(thunder_model.fc2.weight, fsdp_te_params[1].view(shard_size, dim))
-            except Exception as e:
-                # Return exceptions only for rank==0
-                if rank == 0:
-                    comparison_exceptions.append(e)
+        # Compare weights after `n_iters`
+        shard_size = int(dim / world_size)
+        fsdp_te_params = tuple(te_model.parameters())
+        try:
+            assert_close(thunder_model.fc1.weight, fsdp_te_params[0].view(shard_size, dim))
+            assert_close(thunder_model.fc2.weight, fsdp_te_params[1].view(shard_size, dim))
+        except Exception as e:
+            # Return exceptions only for rank==0
+            if rank == 0:
+                comparison_exceptions.append(e)
 
-            return comparison_exceptions
+        return comparison_exceptions
 
 
 # NOTE This is just a stub, see the NOTE for ddp_wrapper
