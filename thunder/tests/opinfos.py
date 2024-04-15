@@ -541,10 +541,12 @@ def _elementwise_unary_torch(op):
 
     return _fn
 
+
 #
 # Tensor Property OpInfos
 #
 tensor_properties: list[OpInfo] = []
+
 
 @wraps(torch.Tensor.is_cuda)
 def _is_cuda_torch(x: torch.Tensor) -> bool:
@@ -555,7 +557,7 @@ is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
     torch_reference=_is_cuda_torch,
-    dtypes=(datatypes.all_dtypes)
+    dtypes=(datatypes.all_dtypes),
 )
 
 tensor_properties.append(is_cuda_opinfo)
