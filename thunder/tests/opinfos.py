@@ -2697,6 +2697,12 @@ cuda_opinfo = OpInfo(
     sample_input_generator=cuda_sample_generator,
     error_input_generator=cuda_error_generator,
     torch_reference=torch.Tensor.cuda,
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            active_if=not torch.cuda.is_available(),
+        ),
+    ),
 )
 data_movement_ops.append(cuda_opinfo)
 
