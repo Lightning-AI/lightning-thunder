@@ -1151,8 +1151,9 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     # Computes var bwd
     normalization_scalar = n_elem_reduced - correction
     restored_gv = restore_reduced_dims(gv, dims, a.shape)
-    # Inserting a conversion to the same dtype to disable nvFuser's bookend
-    # optimization, which can cause the backward pass to generate two kernels
+    # Inserting a conversion to the same dtype to disable nvFuser executors's
+    # bookend optimization (nv_enable_bookend), which can cause the backward
+    # pass to generate two kernels
     mean_mdtype = prims.convert_element_type(m, m.dtype)
     restored_mean = restore_reduced_dims(mean_mdtype, dims, a.shape)
     var_grad = (2 * restored_gv * (a - restored_mean)) / normalization_scalar
