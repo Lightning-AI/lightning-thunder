@@ -541,10 +541,13 @@ def _elementwise_unary_torch(op):
 
     return _fn
 
+#
+# Tensor Property OpInfos
+#
+tensor_properties: list[OpInfo] = []
 
 @wraps(torch.Tensor.is_cuda)
-def _is_cuda_torch(x: torch.Tensor):
-    # Should Number be accepted?
+def _is_cuda_torch(x: torch.Tensor) -> bool:
     return x.is_cuda
 
 
@@ -552,11 +555,12 @@ is_cuda_opinfo = OpInfo(
     ltorch.is_cuda,
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
     torch_reference=_is_cuda_torch,
-    dtypes=(datatypes.all_dtypes),
-    # Does Pytorch is_cuda support this for all dtypes?
+    dtypes=(datatypes.all_dtypes)
 )
 
-elementwise_unary_ops.append(is_cuda_opinfo)
+tensor_properties.append(is_cuda_opinfo)
+
+opinfos.extend(tensor_properties)
 
 
 # NOTE: slightly different from generic _elementwise_unary_torch helper
