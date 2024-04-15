@@ -181,7 +181,7 @@ def size(a):
 
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
-    return a._device.devicetype is devices.DeviceType.CUDA
+    return a.device.devicetype is devices.DeviceType.CUDA
 
 
 register_method("size", size)

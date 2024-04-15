@@ -37,13 +37,13 @@ class TorchCtx(LanguageContext):
                 break
         if has_tensor_input:
             method: None | Callable = _method_name_to_fn_map.get(id, None)
-            property: None | Callable = _property_name_to_fn_map.get(id, None)
-            if method is None and property is None:
+            prop: None | Callable = _property_name_to_fn_map.get(id, None)
+            if method is None and prop is None:
                 raise AttributeError(f"The {self.name} language context has no method or attribute {id}")
             if method:
                 return method
             else:
-                return property(inps[0])
+                return prop(inps[0])
 
         # has_tensor_input is False
         # Defers to the primitive language context when there are no tensor inputs=
