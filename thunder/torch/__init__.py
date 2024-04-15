@@ -287,6 +287,30 @@ def to(
     return a
 
 
+@torchsymbol(torch.Tensor.cuda, is_method=True)
+def cuda(a: TensorProxy, /, device=None, non_blocking: bool = False, memory_format: None | torch.memory_format = None):
+    # Modeled similar to PyTorch:
+    # https://github.com/pytorch/pytorch/blob/e3ac61587aa368c613ef01df1f328a396b64cd5d/tools/autograd/templates/python_variable_methods.cpp#L496-L501
+    # If `device` is None, this function defaults `device` to current CUDA device
+    # and delegates actual data-movement and layout ordering to `Tensor.to`.
+
+    # NOTE: `Tensor.to` doesn't model `non_blocking` currently.
+    utils.check(not non_blocking, lambda: "cuda(): `non_blocking==True` is currently not supported.")
+
+    if device is None:
+        # Move tensor to `current` GPU device.
+        cuda_idx = torch.cuda.current_device()
+        device = devices.Device(devices.DeviceType.CUDA, cuda_idx)
+    else:
+        device = to_device(device)
+        utils.check(
+            device.devicetype == devices.DeviceType.CUDA,
+            lambda: f"cuda(): Invalid device {device}, must be cuda device",
+        )
+
+    return to(a, device=device, memory_format=memory_format)
+
+
 @torchsymbol(torch.Tensor.type_as, is_method=True)
 def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     # NOTE This type check is intentional since we're accessing the true_dtype
