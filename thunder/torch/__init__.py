@@ -2540,9 +2540,13 @@ def _native_batch_norm(
 
     # Handles weight and bias
     if weight is not None:
+        # Converting weight and bias in the computation_dtype so that nvFuser
+        # can't push out the reshape outside of the fusion region
+        weight = to(weight, computation_dtype)
         weight = reshape(weight, params_shape)
         out = out * weight
     if bias is not None:
+        bias = to(bias, computation_dtype)
         bias = reshape(bias, params_shape)
         out = out + bias
 
