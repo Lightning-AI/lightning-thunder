@@ -800,7 +800,7 @@ instantiated) this heuristic actually leads to worse code.
             enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
             # Set default value.
             if enable_bookend is None:
-                enable_bookend = True
+                enable_bookend = False
             assert isinstance(enable_bookend, bool)
 
             if enable_bookend:
