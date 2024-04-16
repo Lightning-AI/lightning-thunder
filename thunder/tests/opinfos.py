@@ -2482,11 +2482,20 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for pred_shape, a_shape, b_shape in cases:
         pred, a, b = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape), make(b_shape)
         yield SampleInput(pred, a, b)
-    
+
+
 def where_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
     err_msg = r"torch.where\(\) does not support only specifying a condition"
-    yield (SampleInput(make(5,)), NotImplementedError, err_msg)
+    yield (
+        SampleInput(
+            make(
+                5,
+            )
+        ),
+        NotImplementedError,
+        err_msg,
+    )
     yield (SampleInput(make(2, 1, 2)), NotImplementedError, err_msg)
 
 

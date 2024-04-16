@@ -1526,7 +1526,7 @@ def where(pred: TensorLike, a: Number | TensorLike = None, b: Number | TensorLik
         isinstance(a, (Number, TensorLike)) and isinstance(b, (Number, TensorLike)),
         lambda: "torch.where() does not support only specifying a condition",
         exception_type=NotImplementedError,
-    )    
+    )
     return clang.where(pred, a, b)
 
 
