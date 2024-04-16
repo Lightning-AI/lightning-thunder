@@ -263,7 +263,7 @@ def apply_bucketing_to_grad_allreduce(
     grad_before_after_allreduce = utils.ProxyDict()
     bsym: BoundSymbol
     for key in output_tensor_to_index_and_prod_bsym._dict:
-        _, bsym = output_tensor_to_index_and_prod_bsym[key]
+        _, bsym = output_tensor_to_index_and_prod_bsym.get_by_name(key)
         if bsym.sym.id == dist_prims.PrimIDs.WAIT:
             bsym_of_allreduce: BoundSymbol = producers[bsym.flat_proxy_args[0]]
             utils.check(
