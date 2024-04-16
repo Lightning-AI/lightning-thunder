@@ -908,7 +908,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     def foo(a, b):
         return a + b, a - b
 
-    cfoo = executor.make_callable_legacy(foo)
+    cfoo = executor.make_callable(foo)
     _, _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
@@ -946,7 +946,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 
     a = make((4, 3, 2, 3))
 
-    cbar = executor.make_callable_legacy(bar)
+    cbar = executor.make_callable(bar)
     expected = cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
@@ -955,8 +955,8 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
     bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
-    top_down_reshape_bsym = top_down_bsyms[5]
-    bottom_up_reshape_bsym = bottom_up_bsyms[4]
+    top_down_reshape_bsym = top_down_bsyms[3]
+    bottom_up_reshape_bsym = bottom_up_bsyms[2]
 
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
@@ -2221,14 +2221,14 @@ def test_no_passthrough_symbol(executor, device, _):
         return x.type_as(x)
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable_legacy(func)
+    compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace = thunder.last_traces(compiled)[0]
-    print(initial_trace)
-    assert len(initial_trace.bound_symbols) == 2
-    assert initial_trace.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
+    initial_trace_with_dce = thunder.last_traces(compiled)[1]
+    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
+    assert len(initial_trace_with_dce.bound_symbols) == 2
+    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
+    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
 @instantiate(dtypes=NOTHING)
