@@ -1521,7 +1521,12 @@ def tril(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = Non
 
 
 @torchsymbol(torch.where, is_method=True)
-def where(pred: TensorLike, a: Number | TensorLike, b: Number | TensorLike, /) -> TensorLike:
+def where(pred: TensorLike, a: Number | TensorLike = None, b: Number | TensorLike = None, /) -> TensorLike:
+    utils.check(
+        isinstance(a, (Number, TensorLike)) and isinstance(b, (Number, TensorLike)),
+        lambda: "torch.where() does not support only specifying a condition",
+        exception_type=NotImplementedError,
+    )    
     return clang.where(pred, a, b)
 
 
