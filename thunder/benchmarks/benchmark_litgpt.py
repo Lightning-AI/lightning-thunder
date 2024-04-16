@@ -153,8 +153,7 @@ class Benchmark_litGPT:
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
         # Setup the distributed algorithm choices
-        if self.distributed_mode != "none":
-            self.model = self.setup_distributed()
+        self.model = self.setup_distributed(self.model)
 
         # Initialize the optimizer after the model is sharded if using FSDP
         self.optimizer = configure_optimizers(
@@ -162,8 +161,7 @@ class Benchmark_litGPT:
         )
 
         # Compile the model
-        if self.compile not in ["eager", None]:
-            self.model = self.setup_compile()
+        self.model = self.setup_compile(self.model)
 
         # Setup the Dummy dataloader for training
         self.train_dataloader = self.setup_dummy_dataloader()
@@ -185,7 +183,10 @@ class Benchmark_litGPT:
         model.to(dtype=torch.bfloat16)
         return model
 
-    def setup_distributed(self):
+    def setup_distributed(self, model):
+        if self.distributed_mode == "none":
+            return model
+
         # Distributed Setup
         # TODO: Change compiler call names
         if "thunder" in self.compile:
@@ -193,7 +194,7 @@ class Benchmark_litGPT:
                 from thunder.distributed import ddp
 
                 model = ddp(
-                    self.model,
+                    model,
                     broadcast_from=0,
                     bucket_size_in_mb=self.ddp_bucket_size,
                 )
@@ -205,7 +206,7 @@ class Benchmark_litGPT:
                     self.bucketing_mode
                 ]
                 model = fsdp(
-                    self.model,
+                    model,
                     broadcast_from=None,
                     sharding_strategy=sharding_strategy,
                     bucketing_strategy=bucketing_strategy,
@@ -213,7 +214,7 @@ class Benchmark_litGPT:
         else:
             if self.distributed_mode == "ddp":
                 model = torch.nn.parallel.DistributedDataParallel(
-                    self.model,
+                    model,
                     device_ids=[local_rank],
                     bucket_cap_mb=self.ddp_bucket_size,
                 )
@@ -247,7 +248,7 @@ class Benchmark_litGPT:
                 # AssertionError: Dynamo only supports FSDP with use_orig_params=True
                 torch.cuda.set_device(local_rank)
                 model = FSDP(
-                    self.model,
+                    model,
                     sharding_strategy=sharding_strategy,
                     auto_wrap_policy=custom_wrap_policy,
                     device_id=local_rank,
@@ -256,38 +257,37 @@ class Benchmark_litGPT:
                 )
         return model
 
-    def setup_compile(self):
+    def setup_compile(self, model):
         if self.compile == "inductor":
-            # model = torch.compile(self.model, fullgraph=True, mode="reduce-overhead")
             print("Resetting cache size for torch.compile")
             import torch._dynamo.config as dynamo_config
 
             dynamo_config.cache_size_limit = 64
-            model = torch.compile(self.model)
+            model = torch.compile(model)
         elif "thunder" in self.compile:
-            executors_list = [thunder.nvfuser_executor, thunder.pytorch_executor]
+            executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
             if "inductor" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
 
-                executors_list.insert(0, torch_compile_ex)
+                executors.insert(0, torch_compile_ex)
             if "cudnn" in self.compile:
                 from thunder.executors.cudnnex import cudnn_ex
 
-                executors_list.insert(0, cudnn_ex)
+                executors.insert(0, cudnn_ex)
             else:
                 from thunder.executors.sdpaex import sdpa_ex
 
-                executors_list.insert(0, sdpa_ex)
+                executors.insert(0, sdpa_ex)
 
             if "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
 
-                executors_list.insert(0, transformer_engine_ex)
+                executors.insert(0, transformer_engine_ex)
 
-            model = thunder.jit(self.model, executors=executors_list)
+            model = thunder.jit(model, executors=executors)
 
         elif self.compile != "eager":
-            raise ValueError(compile)
+            raise ValueError(f"Invalid compile option: {self.compile}")
 
         return model
 

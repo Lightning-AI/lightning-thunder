@@ -71,9 +71,23 @@ def skip_data_parallel_grad_sync() -> Generator[Any, Any, Any]:
 def _sync_grads(module: torch.nn.Module) -> None:
     import thunder
 
+    if hasattr(module, "process_group_for_ddp"):
+        # This branch is required when a function that takes the model as an input is jitted instead
+        # of the model itself. In that case, the user won't have a reference to a `ThunderModule` so this needs to use
+        # the reference set by ddp and fsdp on the module directly
+        process_group = module.process_group_for_ddp
+    elif (cd := thunder.compile_data(module)) is not None:
+        # The ordinary jitted module branch
+        process_group = cd.process_group_for_ddp
+    else:
+        raise RuntimeError(
+            f"Expected `{type(module).__name__}` to have been jitted or to contain a `process_group_for_ddp` attribute"
+        )
+
     params_with_grad = [p for p in module.parameters() if p.grad is not None]
+    if not params_with_grad:
+        return
     grads = [p.grad for p in params_with_grad]
-    process_group = thunder.compile_data(module).process_group_for_ddp
     torch._foreach_div_(grads, process_group.size())
     with tdist.distributed_c10d._coalescing_manager(group=process_group, async_ops=True) as cm:
         for g in grads:
@@ -278,6 +292,9 @@ class FSDPBucketingStrategy(Enum):
 def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy):
     from thunder.core.proxies import TensorProxy
 
+    # TODO(crcrpar): Consider making `BLOCK`'s behavior more meticulous for models with simple structure
+    # as in https://github.com/Lightning-AI/lightning-thunder/blob/b24e5b23/thunder/tests/distributed/test_ddp.py#L53-L60
+    # For the linked model, `block` cannot put `t_net1_weight` and `t_net1_bias` into the same bucket.
     # TODO(crcrpar): Consider having bucket_name include dtype (and device) in it
     # as it's possible (especially `FSDPBucketingStrategy.BLOCK`) that parameters of a block
     # have different dtypes such as BF16 and FP8.

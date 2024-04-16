@@ -90,6 +90,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
    Functional jit <notebooks/functional_jit>
+   FAQ <basic/faq>
 
 .. toctree::
    :maxdepth: 1
@@ -108,8 +109,10 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
 
    Inside thunder <advanced/inside_thunder>
    Extending thunder <advanced/extending>
+   notebooks/extend_thunder_with_cuda_python
    notebooks/adding_custom_operator
    notebooks/adding_custom_operator_backward
+   Contributing to Thunder <advanced/contrib_thunder>
 
 .. toctree::
    :maxdepth: 1

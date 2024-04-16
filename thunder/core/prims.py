@@ -152,6 +152,7 @@ class PrimIDs(Enum):
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
+    UNFOLD = auto()
     VIEW = auto()
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
@@ -246,8 +247,10 @@ class PrimIDs(Enum):
     EMBEDDING_BACKWARD = auto()
     LINEAR = auto()
     PAD = auto()
+    BATCH_NORM = auto()
     # Memory access methods
     ITEM = auto()
+    COPY_ = auto()
 
 
 class OpTags(Enum):
@@ -265,6 +268,7 @@ class OpTags(Enum):
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
+# NOTE: See extend.single_op_executor
 def make_prim(
     id,
     name,
@@ -282,7 +286,7 @@ def make_prim(
         meta=langctx(Languages.PRIMS)(meta),
         id=id,
         is_prim=True,
-        tags=tags,
+        tags=None if tags is None else list(tags),
         python_printer=python_printer,
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
@@ -526,7 +530,7 @@ check_literal_like = make_prim(
 
 def _check_type_meta(x: Any, typ: type, /) -> None:
     # Validates types
-    baseutils.check(typ, type, lambda: f"Expected a type for check_type, but found {typ}")
+    baseutils.check(isinstance(typ, type), lambda: f"Expected a type for check_type, but found {typ}")
     baseutils.check(pytype(x) is typ, lambda: f"Different types for {pytype(x)} and {typ}")
 
 
@@ -3076,6 +3080,26 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
+
+def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    max_size = 1 if a.ndim == 0 else a.shape[dim]
+
+    utils.check(
+        size <= max_size, lambda: f"Maximum size for tensor at dimension {dim} is {max_size} but size is {size}"
+    )
+    utils.check(size >= 0, lambda: f"Size is {size} but must be >= 0")
+    utils.check(step > 0, lambda: f"Step is {step} but must be > 0")
+
+    shape = list(a.shape)
+    shape.append(size)
+    shape[dim] = (shape[dim] - size) // step + 1
+
+    return TensorProxy(like=a, shape=shape)
+
+
+unfold = make_prim(PrimIDs.UNFOLD, "unfold", meta=unfold_meta, tags=(OpTags.SHAPE_OP,))
+
 #
 # Memory format prims (Experimental)
 #
@@ -3532,3 +3556,18 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
+
+
+def copy__meta(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
+):
+    utils.check_type(copy_from, TensorProxy)
+    utils.check_type(copy_to, TensorProxy)
+    utils.check_same_device(copy_from, copy_to)
+    utils.check_same_shape(copy_from, copy_to)
+    utils.check_same_dtype(copy_from, copy_to)
+    return TensorProxy(like=copy_to)
+
+
+copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))

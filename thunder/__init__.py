@@ -12,6 +12,7 @@ import warnings
 
 from looseversion import LooseVersion
 
+from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
     resolve_interpretation_option,
@@ -20,6 +21,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
 )
 from thunder.core.trace import (
+    TraceResults,
     TraceCtx,
     from_trace,
     set_tracectx,
@@ -58,6 +60,7 @@ from thunder.core.proxies import (
     DictProxy,
     AnyProxy,
 )
+from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
 from thunder.cudagraphs import CUDAGraphExecutor
@@ -73,6 +76,7 @@ import thunder.executors.torchex
 import thunder.executors.nvfuserex
 
 pythonex = extend.get_executor("python")
+assert pythonex is not None
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -144,6 +148,9 @@ from thunder.clang import *
 #
 
 # TODO Add more of these functions
+resolve_executors = extend.resolve_executors
+add_executor_lists = extend.add_executor_lists
+get_executor = extend.get_executor
 get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
@@ -171,7 +178,7 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> tuple[TraceCtx, TraceCtx]:
+def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
 
 
@@ -271,6 +278,19 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
+def add_executor_lists(
+    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
+) -> Sequence[Executor]:
+    new_exc_list = []
+    exc_list = resolve_executors(exc_list)
+    other_exc_list = resolve_executors(other_exc_list)
+    for exc in itertools.chain(exc_list, other_exc_list):
+        if not exc in new_exc_list:
+            new_exc_list.append(exc)
+
+    return new_exc_list
+
+
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -301,7 +321,7 @@ def jit(
     /,
     *,
     langctx: None | str | Any | LanguageContext = None,
-    executors: None | Sequence[Executor] = None,
+    executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
@@ -316,7 +336,7 @@ def jit(
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
         executors: list of executors to use. Defaults to the executors returned by `thunder.get_default_executors()` and always amened by `thunder.get_always_executors()`.
-                   You can get a list of all available executors with `thunder.get_all_executors()`.
+                   You can get a list of all available executors with `thunder.get_all_executors()`. You can also pass the name of an executor that's been registered, and it will be resolved with get_executor().
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
 
@@ -344,13 +364,16 @@ def jit(
     if additional_transforms is None:
         additional_transforms = []
 
+    # Resolve names of executors
+    executors = resolve_executors(executors)
+
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
     # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
     #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     executor_lookasides = {}
-    for ex in executors or []:
+    for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
 
@@ -442,7 +465,7 @@ def jit(
                 cs.cache_hits += 1
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
-                cs.last_interpreted_history = None
+                cs.last_interpreter_log = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
                 cs.last_prologue_transformation_start = 0
@@ -481,7 +504,7 @@ def jit(
                 cs.cache_hits += 1
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
-                cs.last_interpreted_history = None
+                cs.last_interpreter_log = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
 
@@ -501,17 +524,15 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                prologue_trc, computation_trc, *maybe_epilogue = interpreter(
-                    fn, args, kwargs, sharp_edges=cd.sharp_edges
-                )
+                jit_results: TraceResults = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
+                prologue_trc = jit_results.prologue_trace
+                computation_trc = jit_results.computation_trace
+                epilogue_trc = jit_results.epilogue_trace
+                last_interpreter_log = jit_results.interpreter_log
 
-            if maybe_epilogue:
-                epilogue_traces = maybe_epilogue
-                if epilogue_traces[-1] is not None:
-                    epilogue = epilogue_traces[-1].python_callable()
-                else:
-                    epilogue_traces = None
-                    epilogue = None
+            if epilogue_trc is not None:
+                epilogue_traces = [epilogue_trc]
+                epilogue = epilogue_trc.python_callable()
             else:
                 epilogue_traces = None
                 epilogue = None
@@ -542,6 +563,8 @@ def jit(
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
+            cs.last_interpreter_log = last_interpreter_log
+            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -787,6 +810,18 @@ def list_transforms(fn) -> list:
     return fn._lc_transforms
 
 
+def last_interpreter_log(fn: Callable) -> list[InterpreterLogItem]:
+    """Returns the list of instructions and other information the interpreter encountered while tracing through the
+    user program (on the last cache miss).
+    """
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_interpreter_log is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
+    return cs.last_interpreter_log
+
+
 def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
     """Returns the list of instructions the interpreter encountered while tracing through the
     user program (on the last cache miss).
@@ -796,19 +831,40 @@ def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
     if cs.last_interpreted_instructions is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_interpreted_instructions
+    return list(cs.last_interpreted_instructions)
 
 
-def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
-    """Returns the list of instructions and other information the interpreter encountered while tracing through the
-    user program (on the last cache miss).
+def print_last_interpreter_log(
+    fn: Callable,
+    /,
+    print_fn: Callable = print,
+    use_colors: bool = True,
+    indent: bool = True,
+    max_depth: int | None = None,
+    color_internals: bool = False,
+    print_source_code: bool = True,
+) -> None:
+    """Prints a log of the last run of the interpreter for the given function.
+
+    Args:
+        fn: The function returned by `thunder.jit()` to print the last interpreter run log for. The function must have been called at least once first.
+        print_fn: The function to use for printing. Defaults to builtin `print`.
+        use_colors: Whether to use colors in the output. Defaults to `None`, which attempts to autodetect if the terminal supports ANSI color.
+        indent: Whether to indent the output with function scope. Defaults to `True`.
+        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to `None`, which means no limit.
+        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to `False`, so that only the instructions in the user's code are highlighted in color.
+        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to `True`.
     """
-    cs = compile_stats(fn)
-    if cs is None:
-        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.last_interpreted_history is None:
-        raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_interpreted_history
+    log = last_interpreter_log(fn)
+    print_interpreter_log(
+        log,
+        print_fn=print_fn,
+        use_colors=use_colors,
+        indent=indent,
+        max_depth=max_depth,
+        color_internals=color_internals,
+        print_source_code=print_source_code,
+    )
 
 
 def last_compile_options(fn: Callable, /) -> None:

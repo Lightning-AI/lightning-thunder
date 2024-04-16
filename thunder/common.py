@@ -1,4 +1,6 @@
+import dis
 from typing import Any, Optional
+from collections.abc import Generator
 from collections.abc import Callable
 from enum import Enum, auto
 from collections import deque, defaultdict
@@ -34,7 +36,7 @@ from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, Te
 import thunder.core.prims as prims
 import thunder.distributed as dist
 import thunder.torch as ltorch
-from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor
+from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
 from thunder.executors.torch_autograd import thunder_backward
 from thunder.core.transforms import autocast
@@ -58,8 +60,8 @@ class CompileStats:
         self.last_traces = None
         self.last_prologue = None
         self.last_prologue_traces = None
-        self.last_interpreted_instructions = None
-        self.last_interpreted_history = None
+        self.last_interpreted_instructions: Generator[dis.Instruction, None, None] | None = None
+        self.last_interpreter_log: list[InterpreterLogItem] | None = None
 
         # torch.autograd.Function specific data
         self.last_backward_traces = None
@@ -181,15 +183,10 @@ class CompileData:
         if executors_list is None:
             self.executors_list = get_default_executors() + always_executors
         else:
-            # Validates executors list
-            for ex in executors_list:
-                if not isinstance(ex, Executor):
-                    raise ValueError(f"{ex} was not an executor")
-
             self.executors_list = tuple(executors_list)
             # Adds always executors (if not present)
             if self.executors_list[-len(always_executors) :] != always_executors:
-                self.executors_list = self.executors_list + always_executors
+                self.executors_list = add_executor_lists(self.executors_list, always_executors)
 
         # Validates executors list
         for ex in self.executors_list:
@@ -233,15 +230,7 @@ class CompileData:
         self.additional_return_names = None
         self.num_constant_args = 0
 
-        self._processed_function: Callable
-
-        assert disable_preprocessing, "please use thunder.jit if you need preprocessing"
-        self._processed_function = fn
-
-    # Disallows overwriting processed_function
-    @property
-    def processed_function(self):
-        return self._processed_function
+        assert disable_preprocessing, "please use thunder.compile if you need preprocessing"
 
 
 # Common UX functions
@@ -474,7 +463,7 @@ def cache_get(
 # TODO Consider modeling additional calls to trace()
 # TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
-from thunder.core.interpreter import make_opaque
+from thunder.core.interpreter import InterpreterLogItem, make_opaque
 
 
 def trace(
@@ -665,7 +654,7 @@ def _create_callable(
     post_optimization_transforms: list[Callable] = [],
     _using_grad_transform: bool = False,
 ) -> Callable:
-    @wraps(cd.processed_function)
+    @wraps(cd.fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()
         cs.calls += 1
@@ -728,11 +717,7 @@ def _create_callable(
         cs.last_trace_cache_stop = time.time_ns()
 
         # Applies the autocast transform if PyTorch's autocast behavior is enabled
-        processed_function = (
-            cd.processed_function
-            if not is_autocast_enabled
-            else autocast(cd.processed_function, dtype=autocast_thunder_dtype)
-        )
+        processed_function = cd.fn if not is_autocast_enabled else autocast(cd.fn, dtype=autocast_thunder_dtype)
 
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
@@ -839,7 +824,6 @@ def _create_callable(
             return result
 
     # NOTE is_module is False
-    _fn._pfn = cd.processed_function
     _fn._lc_cd = cd
     _fn._lc_cs = cs
     _fn._lc_transforms = transforms

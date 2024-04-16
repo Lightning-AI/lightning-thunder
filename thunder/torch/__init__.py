@@ -236,7 +236,7 @@ def _parse_to_device_and_dtype(
     return device, dtype
 
 
-# TODO Model non_blocking, copy, and memory_format (as kwargs)
+# TODO Model non_blocking (as kwargs)
 @torchsymbol(torch.Tensor.to, is_method=True)
 def to(
     a: TensorLike,
@@ -247,6 +247,7 @@ def to(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
     copy: bool = False,
+    memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
@@ -259,6 +260,12 @@ def to(
         if dtype is not None:
             dtype = to_dtype(dtype)
             a = prims.convert_element_type(a, dtype)
+        if memory_format is not None:
+            # NOTE not sure if we need to handle torch.preserve_format explicitly
+            if memory_format == torch.channels_last:
+                a = prims.stride_order(a, (3, 0, 2, 1))
+            elif memory_format == torch.channels_last_3d:
+                a = prims.stride_order(a, (4, 0, 3, 2, 1))
         return a
 
     # NOTE copy == False
@@ -269,6 +276,13 @@ def to(
 
     if dtype is not None:
         return clang.maybe_convert_to_dtype(a, dtype)
+
+    if memory_format is not None:
+        # NOTE not sure if we need to handle torch.preserve_format explicitly
+        if memory_format == torch.channels_last:
+            a = prims.stride_order(a, (3, 0, 2, 1))
+        elif memory_format == torch.channels_last_3d:
+            a = prims.stride_order(a, (4, 0, 3, 2, 1))
 
     return a
 
@@ -956,6 +970,11 @@ def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
 
 
+@torchsymbol(torch.Tensor.unfold, is_method=True)
+def unfold(a: TensorLike, /, dim: int, size: int, step: int) -> TensorLike:
+    return clang.unfold(a, dim, size, step)
+
+
 @torchsymbol(torch.unsqueeze, is_method=True)
 def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, dim)
@@ -1206,6 +1225,17 @@ def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     utils.check(not inplace, lambda: f"relu6 only supports inplace=False", exception_type=NotImplementedError)
     return clamp(a, 0, 6)
+
+
+@torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
+def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
+    utils.check(not inplace, lambda: f"hardswish only supports inplace=False", exception_type=NotImplementedError)
+    utils.check(
+        dtypes.is_float_dtype(a.dtype),
+        lambda: f"hardswish only supports floating point dtypes, got {a.dtype}",
+        exception_type=ValueError,
+    )
+    return a * relu6(a + 3) / 6
 
 
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
@@ -2481,55 +2511,46 @@ def layer_norm(
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
 
 
-# we need variance for batch_norm
-def _normalize_mean_var(a: TensorProxy, /, norm_dims, eps: Number) -> tuple[TensorLike, TensorLike, TensorLike]:
-    """Computes mean and var of a tensor along norm_dims. Used as a helper function for normalization layers.
-
-    Args:
-        a (Tensor): input tensor
-        norm_dims (DimsType): dimensions to normalize over
-        eps (float): epsilon for numerical stability
-
-    Returns:
-        out (Tensor): normalized tensor.
-        mean (Tensor): mean of the tensor along norm_dims.
-        var (Tensor): var of the tensor along norm_dims.
-    """
-    norm_dims = utils.canonicalize_dims(a.ndim, norm_dims)
+def _native_batch_norm(
+    a: TensorLike,
+    /,
+    weight: None | TensorLike,
+    bias: None | TensorLike,
+    running_mean: None | TensorLike,
+    running_var: None | TensorLike,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> TensorLike:
+    params_shape = (1, -1) + (1,) * (a.ndim - 2)
     computation_dtype = utils.get_computation_dtype(a.dtype)
     a_acc = to(a, computation_dtype)
-    biased_var, mean = var_mean(a_acc, dim=norm_dims, correction=0, keepdim=True)
-    rstd = rsqrt(biased_var + eps)
-    out = (a - mean) * rstd
-    return out, mean, biased_var
+    if training:
+        reduction_dims = (0,) + tuple(range(2, a.ndim))
+        biased_var, mean = var_mean(a_acc, dim=reduction_dims, correction=0, keepdim=True)
+        rstd = rsqrt(biased_var + eps)
+        out = (a - mean) * rstd
 
-
-# TODO: likely want to refactor these normalizations
-def _native_batch_norm(
-    a: TensorProxy,
-    /,
-    weight: TensorProxy,
-    bias: TensorProxy,
-    eps: Number,
-) -> tuple[TensorLike, TensorLike, TensorLike]:
-    # Validates inputs
-    input_shape = tuple(a.shape)
-    utils.check(len(input_shape) >= 2, lambda: f"Expected input_shape={input_shape} to have length >= 2!")
-
-    # NOTE Containers are canonicalized in the following checks since
-    #   (1, 2, 3) != [1, 2, 3]
-    utils.check(
-        weight is None or weight.shape == (input_shape[1],) or weight.shape == (),
-        lambda: f"Expected weight.shape={weight.shape} to be {(input_shape[1],)}!",
-    )
-    utils.check(
-        bias is None or bias.shape == (input_shape[1],) or bias.shape == (),
-        lambda: f"Expected bias.shape={bias.shape} to be {(input_shape[1],)}!",
-    )
-
-    params_shape = (1, -1) + (1,) * (a.ndim - 2)
-    reduction_dims = (0,) + tuple(range(2, a.ndim))
-    out, mean, var = _normalize_mean_var(a, reduction_dims, eps)
+        if running_mean is not None:
+            squeezed_mean = squeeze(mean, reduction_dims)
+            new_running_mean = (1 - momentum) * running_mean + momentum * squeezed_mean
+            if not utils.are_same_dtypes(new_running_mean, running_mean):
+                new_running_mean = to(new_running_mean, running_mean.dtype)
+            prims.copy_(new_running_mean, running_mean)
+        if running_var is not None:
+            squeezed_var = squeeze(biased_var, reduction_dims)
+            n = a.numel / a.shape[1]
+            unbiased_var = squeezed_var * (n / (n - 1))
+            new_running_var = (1 - momentum) * running_var + momentum * unbiased_var
+            if not utils.are_same_dtypes(new_running_var, running_var):
+                new_running_var = to(new_running_var, running_var.dtype)
+            prims.copy_(new_running_var, running_var)
+    else:
+        running_var_acc = to(running_var, computation_dtype)
+        rstd = rsqrt(running_var_acc + eps)
+        mean = reshape(running_mean, params_shape)
+        rstd = reshape(rstd, params_shape)
+        out = (a_acc - mean) * rstd
 
     # Handles weight and bias
     if weight is not None:
@@ -2540,16 +2561,10 @@ def _native_batch_norm(
         out = out + bias
 
     out = to(out, a.dtype)
-    # TODO Is the following conversion or conversions CPU only?
-    # if input.device.type == "cpu":
-    mean = to(mean, a.dtype)
-    var = to(var, a.dtype)
-
-    return out, mean, var
+    return out
 
 
-# TODO Move this to nn.functional
-@torchsymbol(torch.nn.functional.batch_norm, is_prim=True)
+@torchsymbol(torch.nn.functional.batch_norm)
 def batch_norm(
     a: TensorLike,
     running_mean: None | TensorLike = None,
@@ -2557,17 +2572,58 @@ def batch_norm(
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
     training: bool = False,
-    momentum: None | Number = 0.1,
+    momentum: Number = 0.1,
     eps: Number = 1e-5,
 ) -> TensorLike:
-    from thunder.core.trace import detached_trace
+    # Validates inputs
+    input_shape = tuple(a.shape)
+    utils.check(len(input_shape) >= 2, lambda: f"Expected input_shape={input_shape} to have length >= 2!")
 
-    with detached_trace():
-        out, mean, var = _native_batch_norm(a, weight, bias, eps)
-        if training and momentum is not None and running_mean is not None and running_var is not None:
-            running_mean = (1 - momentum) * running_mean + momentum * mean
-            running_var = (1 - momentum) * running_var + momentum * var
-    return out
+    # NOTE Containers are canonicalized in the following checks since
+    #   (1, 2, 3) != [1, 2, 3]
+    utils.check(
+        weight is None or weight.shape == (input_shape[1],),
+        lambda: f"Expected weight.shape={weight.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        bias is None or bias.shape == (input_shape[1],),
+        lambda: f"Expected bias.shape={bias.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        running_mean is None or running_mean.shape == (input_shape[1],),
+        lambda: f"Expected running_mean.shape={running_mean.shape} to be {(input_shape[1],)}!",
+    )
+    utils.check(
+        running_var is None or running_var.shape == (input_shape[1],),
+        lambda: f"Expected running_var.shape={running_var.shape} to be {(input_shape[1],)}!",
+    )
+    if training:
+        size_prods = input_shape[0]
+        for i in range(len(input_shape) - 2):
+            size_prods *= input_shape[i + 2]
+        utils.check(
+            size_prods != 1, lambda: f"Expected more than 1 value per channel when training, got input size {size}"
+        )
+    else:
+        utils.check(
+            running_mean is not None and running_var is not None,
+            lambda: f"running_mean and running_var must be defined in evaluation mode",
+        )
+    computation_dtype = utils.get_computation_dtype(a.dtype)
+    # Check mixed input types
+    params = [x for x in (weight, bias, running_mean, running_var) if x is not None]
+    if params:
+        if utils.is_low_precision_dtype(a.dtype):
+            utils.check(
+                utils.are_same_dtypes(params[0], a) or utils.are_same_dtypes(params[0], computation_dtype),
+                lambda: f"Expected to have type {computation_dtype} or {a.dtype} but got {params[0].dtype}",
+            )
+        else:
+            utils.check_same_dtype(params[0], a)
+        utils.check_same_dtype(*params)
+
+    result = _native_batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
+    return result
 
 
 #
@@ -3380,6 +3436,24 @@ def embedding(
 def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
     result = prims.embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return result
+
+
+@torchsymbol(torch.nn.functional.one_hot, id="torch.nn.functional.one_hot", is_method=False)
+def one_hot(a: TensorLike, /, num_classes: int) -> TensorLike:
+    # TODO: refactor when we're ready to support auto-inference for `num_classes = -1` using `.item()`
+    utils.check(
+        num_classes >= 1,
+        lambda: f"Currently supports only positive input for num_classes, got num_classes={num_classes}",
+        exception_type=NotImplementedError,
+    )
+    # TODO: would we want to implement this check in the future?
+    #  utils.check(a.any() >= 0, lambda f"input tensor should have non-negative values", exception_type=ValueError)
+
+    canvas = zeros(*a.shape, num_classes, device=a.device, dtype=dtypes.int64)
+    index = a.unsqueeze(-1)
+    src = ones_like(index, device=a.device, dtype=dtypes.int64)
+
+    return scatter_add(canvas, dim=-1, index=index, src=src)
 
 
 @torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)

@@ -37,6 +37,11 @@ from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
+from thunder.core.transforms import (
+    get_grad,
+    put_grad,
+)
+
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
 add_always_executor(ex)
@@ -101,6 +106,7 @@ def _to_transform(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
     copy: bool = False,
+    memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
     device: None | devices.Device
     dtype: None | dtypes.dtype
@@ -111,11 +117,14 @@ def _to_transform(
     torch_device: None | torch.device = to_torch_device(device)
     torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
 
-    if torch_device is not None and torch_dtype is not None:
-        return to(a, torch_device, torch_dtype, copy=copy)
+    kwargs = {"copy": copy}
     if torch_device is not None:
-        return to(a, torch_device, copy=copy)
-    return to(a, torch_dtype, copy=copy)
+        kwargs["device"] = torch_device
+    if torch_dtype is not None:
+        kwargs["dtype"] = torch_dtype
+    if memory_format is not None:
+        kwargs["memory_format"] = memory_format
+    return to(a, **kwargs)
 
 
 def _device_put_transform(a: TensorProxy, device: devices.Device) -> TensorProxy:
@@ -463,6 +472,7 @@ squeeze = _register_torch_operation("squeeze")
 tensor_split = _register_torch_operation("tensor_split")
 transpose = _register_torch_operation("transpose")
 unbind = _register_torch_operation("unbind")
+unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
 
@@ -533,6 +543,7 @@ slice_prim_impl = ex.register_operator("torch_slice_prim_impl", meta=prims.slice
 _register_implementation(prims.slice_prim, slice_prim_impl, checker=_always_executable)
 _register_implementation(prims.squeeze, checker=_always_executable, execution_transform=_squeeze_transform)
 _register_implementation(prims.transpose, checker=_always_executable, execution_transform=_transpose_prim_transform)
+_register_implementation(prims.unfold, unfold, checker=_always_executable)
 _register_implementation(prims.view, view, checker=_always_executable)
 
 _register_implementation(ltorch.cat, cat, checker=_always_executable)
@@ -553,6 +564,7 @@ _register_implementation(ltorch.squeeze, checker=_always_executable, execution_t
 _register_implementation(ltorch.tensor_split, tensor_split, checker=_always_executable)
 _register_implementation(ltorch.transpose, transpose, checker=_always_executable)
 _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
+_register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
 
@@ -743,6 +755,7 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
+hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 
@@ -754,6 +767,7 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu)
 
@@ -1194,6 +1208,7 @@ cross_entropy = _register_torch_operation("cross_entropy", module=torch.nn.funct
 dropout = _register_torch_operation("dropout", module=torch.nn.functional)
 embedding = _register_torch_operation("embedding", module=torch.nn.functional)
 embedding_backward = _register_torch_operation("torch.ops.aten.embedding_backward", like=ltorch.embedding_backward)
+one_hot = _register_torch_operation("one_hot", module=torch.nn.functional)
 group_norm = _register_torch_operation("group_norm", module=torch.nn.functional)
 interpolate = _register_torch_operation("interpolate", module=torch.nn.functional)
 linear = _register_torch_operation("linear", module=torch.nn.functional)
@@ -1205,6 +1220,100 @@ log_softmax_backward = _register_torch_operation(
 max_pool1d = _register_torch_operation("max_pool1d", module=torch.nn.functional)
 max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
 max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
+
+
+def _max_pool_with_indices_helper(
+    ndim: int,
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> [TensorProxy, TensorProxy]:
+    def div_rtn(x, y):
+        q = x // y
+        r = x % y
+        if r != 0 and (r < 0) != (y < 0):
+            q -= 1
+        return q
+
+    def pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode_: bool):
+        out_size = (
+            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride - 1 if ceil_mode else 0), stride) + 1
+        )
+        if ceil_mode and (out_size - 1) * stride >= in_ + pad_:
+            out_size -= 1
+        return out_size
+
+    def get_maybe_ith_entry(arg_name: str, seq: int | Sequence[int], i: int, default: int | None = None):
+        if seq is None:
+            return default
+
+        if not isinstance(seq, Sequence):
+            return seq
+
+        if len(seq) == 1:
+            return seq[0]
+        else:
+            utils.check(
+                i < len(seq),
+                lambda: f"invalid pooling argument: {arg_name} needs to be None / a scalar / size-{ndim} Sequence, but received {seq}",
+            )
+            return seq[i]
+
+    out_sizes = []
+    for i in range(ndim):
+        in_ = a.shape[i - ndim]  # i - ndim is the i-th spatial dimension
+        kernel_ = get_maybe_ith_entry("kernel_size", kernel_size, i)
+        stride_ = get_maybe_ith_entry("stride", stride, i, kernel_)
+        pad_ = get_maybe_ith_entry("padding", padding, i)
+        dilation_ = get_maybe_ith_entry("dilation", dilation, i)
+        utils.check(
+            kernel_ is not None and stride_ is not None and pad_ is not None and dilation_ is not None,
+            lambda: f"max_pool argument extraction failed.",
+        )
+        out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
+
+    return TensorProxy(like=a, shape=out_sizes), TensorProxy(like=a, shape=out_sizes)
+
+
+def max_pool_with_indices_backward_meta(
+    grad: TensorProxy,
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None,
+    padding: int | Sequence[int],
+    dilation: int | Sequence[int],
+    ceil_mode: bool,
+    result1: TensorProxy,
+) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+max_pool2d_with_indices_meta = partial(_max_pool_with_indices_helper, 2)
+
+max_pool2d_with_indices = ex.register_operator(
+    "max_pool2d_with_indices", meta=max_pool2d_with_indices_meta, fn=torch.ops.aten.max_pool2d_with_indices
+)
+max_pool2d_with_indices_backward = ex.register_operator(
+    "max_pool2d_with_indices_backward",
+    meta=max_pool_with_indices_backward_meta,
+    fn=torch.ops.aten.max_pool2d_with_indices_backward,
+)
+
+max_pool3d_with_indices_meta = partial(_max_pool_with_indices_helper, 3)
+
+max_pool3d_with_indices = ex.register_operator(
+    "max_pool3d_with_indices", meta=max_pool3d_with_indices_meta, fn=torch.ops.aten.max_pool3d_with_indices
+)
+max_pool3d_with_indices_backward = ex.register_operator(
+    "max_pool3d_with_indices_backward",
+    meta=max_pool_with_indices_backward_meta,
+    fn=torch.ops.aten.max_pool3d_with_indices_backward,
+)
+
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
@@ -1439,6 +1548,7 @@ _register_implementation(ltorch.cross_entropy_backward, cross_entropy_backward, 
 _register_implementation(ltorch.dropout, dropout, checker=_always_executable)
 _register_implementation(ltorch.embedding, embedding, checker=_always_executable)
 _register_implementation(ltorch.embedding_backward, embedding_backward, checker=_always_executable)
+_register_implementation(ltorch.one_hot, one_hot, checker=_always_executable)
 _register_implementation(ltorch.group_norm, group_norm, checker=_always_executable)
 _register_implementation(ltorch.interpolate, interpolate, checker=_interpolate_checker)
 _register_implementation(ltorch.linear, linear, checker=_always_executable)
@@ -1448,8 +1558,59 @@ _register_implementation(
     ltorch.log_softmax_backward, checker=_always_executable, execution_transform=_log_softmax_backward_transform
 )
 _register_implementation(ltorch.max_pool1d, max_pool1d, checker=_always_executable)
-_register_implementation(ltorch.max_pool2d, max_pool2d, checker=_always_executable)
-_register_implementation(ltorch.max_pool3d, max_pool3d, checker=_always_executable)
+
+
+def max_pool2d_bwd_wrapper(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    return_indices: bool = False,
+    ceil_mode: bool = False,
+) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
+    primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
+
+    grad = get_grad(primals[0])
+    grad_a = max_pool2d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
+    put_grad(a, grad_a)
+
+    if return_indices:
+        return primals
+    else:
+        return primals[0]
+
+
+def max_pool3d_bwd_wrapper(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    return_indices: bool = False,
+    ceil_mode: bool = False,
+) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
+    primals = max_pool3d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
+
+    grad = get_grad(primals[0])
+    grad_a = max_pool3d_with_indices_backward(grad, a, kernel_size, stride, padding, dilation, ceil_mode, primals[1])
+    put_grad(a, grad_a)
+
+    if return_indices:
+        return primals
+    else:
+        return primals[0]
+
+
+# ltorch.max_pool2d/3d decomposition uses convolution, which has performance issue running through torchex. We added grad_transform that keep both forward and backward max_pool as a torch composite operator, which avoids the performance issue. For details: https://github.com/Lightning-AI/lightning-thunder/issues/164. Aten doesn't have explicit functions for max_pool1d fwd/bwd. So the specialization is only done for 2d/3d case.
+ex.register_implementation(
+    ltorch.max_pool2d, max_pool2d, checker=_always_executable, grad_transform=max_pool2d_bwd_wrapper
+)
+ex.register_implementation(
+    ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
+)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl
@@ -1793,3 +1954,12 @@ if has_einops:
     # We force the registration of the backend here to not use
     # the torch backend when diverting isinstance
     einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
+
+
+def _copy__impl(copy_from, copy_to):
+    copy_to.copy_(copy_from)
+    return copy_to
+
+
+copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
+_register_implementation(prims.copy_, copy_, checker=_always_executable)
