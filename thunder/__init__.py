@@ -583,10 +583,6 @@ def jit(
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
 
                 if requires_grad:
-                    # thunder_backward may recursively call compile and wraps the result in a
-                    # torch.autograd.Function to support embedding of Thunder-compiled
-                    # functions in torch's Autograd
-
                     # Currently split_forward_backward also includes
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
