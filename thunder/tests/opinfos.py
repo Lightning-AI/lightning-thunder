@@ -2684,6 +2684,45 @@ to_opinfo = OpInfo(
 data_movement_ops.append(to_opinfo)
 
 
+def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # None
+    # cpu -> cuda
+    # default cuda -> default cuda (no-op)
+    yield SampleInput(make(4, 4))
+
+    # Explictly pass device
+    # default cuda -> default cuda
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4), device)
+
+
+def cuda_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device="cpu", dtype=torch.float, requires_grad=False)
+
+    err_msg = "`non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+    err_msg = "Invalid device cpu, must be cuda device"
+    yield SampleInput(make(3, 3), device="cpu"), RuntimeError, err_msg
+
+
+cuda_opinfo = OpInfo(
+    ltorch.cuda,
+    sample_input_generator=cuda_sample_generator,
+    error_input_generator=cuda_error_generator,
+    torch_reference=torch.Tensor.cuda,
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            active_if=not torch.cuda.is_available(),
+        ),
+    ),
+)
+data_movement_ops.append(cuda_opinfo)
+
+
 def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, low=-1, high=1, device=device, dtype=dtype, requires_grad=requires_grad)
 
