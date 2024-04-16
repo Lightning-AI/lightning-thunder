@@ -249,7 +249,7 @@ def _parse_to_device_and_dtype(
     return device, dtype
 
 
-# TODO Model non_blocking, copy, and memory_format (as kwargs)
+# TODO Model non_blocking (as kwargs)
 @torchsymbol(torch.Tensor.to, is_method=True)
 def to(
     a: TensorLike,
@@ -260,6 +260,7 @@ def to(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
     copy: bool = False,
+    memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
@@ -272,6 +273,12 @@ def to(
         if dtype is not None:
             dtype = to_dtype(dtype)
             a = prims.convert_element_type(a, dtype)
+        if memory_format is not None:
+            # NOTE not sure if we need to handle torch.preserve_format explicitly
+            if memory_format == torch.channels_last:
+                a = prims.stride_order(a, (3, 0, 2, 1))
+            elif memory_format == torch.channels_last_3d:
+                a = prims.stride_order(a, (4, 0, 3, 2, 1))
         return a
 
     # NOTE copy == False
@@ -283,7 +290,44 @@ def to(
     if dtype is not None:
         return clang.maybe_convert_to_dtype(a, dtype)
 
+    if memory_format is not None:
+        # NOTE not sure if we need to handle torch.preserve_format explicitly
+        if memory_format == torch.channels_last:
+            a = prims.stride_order(a, (3, 0, 2, 1))
+        elif memory_format == torch.channels_last_3d:
+            a = prims.stride_order(a, (4, 0, 3, 2, 1))
+
     return a
+
+
+@torchsymbol(torch.Tensor.cuda, is_method=True)
+def cuda(
+    a: TensorLike,
+    /,
+    device: None | DeviceLike = None,
+    non_blocking: bool = False,
+    memory_format: None | torch.memory_format = None,
+) -> TensorLike:
+    # Modeled similar to PyTorch:
+    # https://github.com/pytorch/pytorch/blob/e3ac61587aa368c613ef01df1f328a396b64cd5d/tools/autograd/templates/python_variable_methods.cpp#L496-L501
+    # If `device` is None, this function defaults `device` to current CUDA device
+    # and delegates actual data-movement and layout ordering to `Tensor.to`.
+
+    # NOTE: `Tensor.to` doesn't model `non_blocking` currently.
+    utils.check(not non_blocking, lambda: "cuda(): `non_blocking==True` is currently not supported.")
+
+    if device is None:
+        # Move tensor to `current` GPU device.
+        cuda_idx = torch.cuda.current_device()
+        device = devices.Device(devices.DeviceType.CUDA, cuda_idx)
+    else:
+        device = to_device(device)
+        utils.check(
+            device.devicetype == devices.DeviceType.CUDA,
+            lambda: f"cuda(): Invalid device {device}, must be cuda device",
+        )
+
+    return to(a, device=device, memory_format=memory_format)
 
 
 @torchsymbol(torch.Tensor.type_as, is_method=True)
@@ -2510,6 +2554,66 @@ def layer_norm(
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
 
 
+def _native_batch_norm(
+    a: TensorLike,
+    /,
+    weight: None | TensorLike,
+    bias: None | TensorLike,
+    running_mean: None | TensorLike,
+    running_var: None | TensorLike,
+    training: bool,
+    momentum: Number,
+    eps: Number,
+) -> TensorLike:
+    params_shape = (1, -1) + (1,) * (a.ndim - 2)
+    computation_dtype = utils.get_computation_dtype(a.dtype)
+    a_acc = to(a, computation_dtype)
+    if training:
+        reduction_dims = (0,) + tuple(range(2, a.ndim))
+        # this should be keepdim=False  because of https://github.com/NVIDIA/Fuser/issues/1964
+        biased_var, mean = var_mean(a_acc, dim=reduction_dims, correction=0, keepdim=False)
+        rstd = rsqrt(biased_var + eps)
+        bcast_rstd = reshape(rstd, params_shape)
+        bcast_mean = reshape(mean, params_shape)
+        out = (a - bcast_mean) * bcast_rstd
+
+        if running_mean is not None:
+            new_running_mean = (1 - momentum) * running_mean + momentum * mean
+            if not utils.are_same_dtypes(new_running_mean, running_mean):
+                new_running_mean = to(new_running_mean, running_mean.dtype)
+            prims.copy_(new_running_mean, running_mean)
+        if running_var is not None:
+            n = a.numel / a.shape[1]
+            unbiased_var = biased_var * (n / (n - 1))
+            new_running_var = (1 - momentum) * running_var + momentum * unbiased_var
+            if not utils.are_same_dtypes(new_running_var, running_var):
+                new_running_var = to(new_running_var, running_var.dtype)
+            prims.copy_(new_running_var, running_var)
+    else:
+        running_var_acc = to(running_var, computation_dtype)
+        rstd = rsqrt(running_var_acc + eps)
+        mean = reshape(running_mean, params_shape)
+        rstd = reshape(rstd, params_shape)
+        out = (a_acc - mean) * rstd
+
+    # Handles weight and bias
+    if weight is not None:
+        # Inserting a conversion to the computation_dtype for weight and bias to
+        # disable nvFuser executors's bookend optimization (nv_enable_bookend),
+        # preventing the executor to push out the shape operations out of the
+        # fusion region.
+        weight = to(weight, computation_dtype)
+        weight = reshape(weight, params_shape)
+        out = out * weight
+    if bias is not None:
+        bias = to(bias, computation_dtype)
+        bias = reshape(bias, params_shape)
+        out = out + bias
+
+    out = to(out, a.dtype)
+    return out
+
+
 @torchsymbol(torch.nn.functional.batch_norm)
 def batch_norm(
     a: TensorLike,
@@ -2556,7 +2660,6 @@ def batch_norm(
             lambda: f"running_mean and running_var must be defined in evaluation mode",
         )
     computation_dtype = utils.get_computation_dtype(a.dtype)
-    a_dtype = a.dtype
     # Check mixed input types
     params = [x for x in (weight, bias, running_mean, running_var) if x is not None]
     if params:
@@ -2569,130 +2672,8 @@ def batch_norm(
             utils.check_same_dtype(params[0], a)
         utils.check_same_dtype(*params)
 
-    # inplace operation is not supported, so running mean and running var can not be casted,
-    # they are passed to prim operator directly
-    (
-        a,
-        weight,
-        bias,
-    ) = (
-        to(x, computation_dtype) if x is not None else x
-        for x in (
-            a,
-            weight,
-            bias,
-        )
-    )
-    result = prims.batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
-    output = to(result[0], a_dtype)
-    return output
-
-
-@torchsymbol("batch_norm_backward", id="batch_norm_backward")
-def batch_norm_backward(
-    g: TensorLike,
-    a: TensorLike,
-    weight: None | TensorLike,
-    running_mean: None | TensorLike,
-    running_var: None | TensorLike,
-    save_mean: None | TensorLike,
-    save_invstd: None | TensorLike,
-    train: bool,
-    eps: Number,
-    output_mask: list[bool],
-) -> tuple[TensorLike, None | TensorLike, None | TensorLike]:
-    utils.check(a.ndim >= 2, lambda: f"Input tensor must have at least batch and channel dimensions!")
-    if train:
-        utils.check(
-            save_mean is not None and save_invstd is not None,
-            lambda: f"when train=True, save_mean and save_invstd are required",
-        )
-    else:
-        utils.check(
-            running_mean is not None and running_var is not None,
-            lambda: f"when train=False, running_mean and running_var are required",
-        )
-    a_dtype = a.dtype
-    if weight is not None:
-        weight_dtype = weight.dtype
-    else:
-        weight_dtype = a_dtype
-    computation_dtype = utils.get_computation_dtype(a.dtype)
-    (
-        grad_out_cast,
-        a_cast,
-        weight_cast,
-        running_mean_cast,
-        running_var_cast,
-        save_mean_cast,
-        save_invstd_cast,
-    ) = (
-        to(x, computation_dtype) if x is not None else x
-        for x in (
-            g,
-            a,
-            weight,
-            running_mean,
-            running_var,
-            save_mean,
-            save_invstd,
-        )
-    )
-    input_shape = a.shape
-    input_rank = a.dim()
-    axis = 1
-    input_size_prod = 1
-    for x in input_shape:
-        input_size_prod *= x
-
-    num_features = input_size_prod / input_shape[axis]
-    mean = save_mean_cast
-    invstd = save_invstd_cast
-    if not train:
-        mean = running_mean_cast
-        invstd = rsqrt(running_var_cast + eps)
-    broadcast_mask = [1] * input_rank
-    broadcast_mask[axis] = input_shape[axis]
-
-    reduction_axes = []
-    for i in range(input_rank):
-        if i != axis:
-            reduction_axes.append(i)
-
-    mean = reshape(mean, broadcast_mask)
-    norm = 1.0 / num_features
-    grad_output_sum = sum(grad_out_cast, reduction_axes)
-    dot_p = sum(grad_out_cast * (a_cast - mean), reduction_axes)
-
-    grad_mean = reshape(grad_output_sum * norm, broadcast_mask)
-    proj_scale = reshape(mul(dot_p * norm, invstd * invstd), broadcast_mask)
-
-    if weight_cast is None:
-        grad_scale = reshape(invstd, broadcast_mask) * 1.0
-    else:
-        grad_scale = reshape(invstd * weight_cast, broadcast_mask)
-
-    if train:
-        proj = (a_cast - mean) * proj_scale
-        grad_input = ((grad_out_cast - proj) - grad_mean) * grad_scale
-    else:
-        grad_input = grad_out_cast * grad_scale
-
-    if output_mask[1]:
-        grad_weight = dot_p * invstd
-    else:
-        grad_weight = None
-
-    if output_mask[2]:
-        grad_bias = grad_output_sum
-    else:
-        grad_bias = None
-
-    return (
-        grad_input.to(a_dtype),
-        None if grad_weight is None else clang.maybe_convert_to_dtype(grad_weight, weight_dtype),
-        None if grad_bias is None else clang.maybe_convert_to_dtype(grad_bias, weight_dtype),
-    )
+    result = _native_batch_norm(a, weight, bias, running_mean, running_var, training, momentum, eps)
+    return result
 
 
 #
