@@ -3128,6 +3128,7 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # NOTE: nvfuser cannot handle more than 8 dims.
         ((1, 5, 3), (None, 0, None, 2, ..., None, None)),
         ((1, 5, 3), (None, None, 0, None, 2, ..., None, None)),
+        ((1, 5, 3), None),
         # Addtl. cases
         # NOTE: nvfuser cannot handle more than 8 dims.
         ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),

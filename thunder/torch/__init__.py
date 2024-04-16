@@ -236,7 +236,7 @@ def _parse_to_device_and_dtype(
     return device, dtype
 
 
-# TODO Model non_blocking, copy, and memory_format (as kwargs)
+# TODO Model non_blocking (as kwargs)
 @torchsymbol(torch.Tensor.to, is_method=True)
 def to(
     a: TensorLike,
@@ -247,6 +247,7 @@ def to(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
     copy: bool = False,
+    memory_format: None | torch.memory_format = None,
 ) -> TensorLike:
     device, dtype = _parse_to_device_and_dtype(
         tensor_dtype_or_device, optional_positional_dtype, device=device, dtype=dtype
@@ -259,6 +260,12 @@ def to(
         if dtype is not None:
             dtype = to_dtype(dtype)
             a = prims.convert_element_type(a, dtype)
+        if memory_format is not None:
+            # NOTE not sure if we need to handle torch.preserve_format explicitly
+            if memory_format == torch.channels_last:
+                a = prims.stride_order(a, (3, 0, 2, 1))
+            elif memory_format == torch.channels_last_3d:
+                a = prims.stride_order(a, (4, 0, 3, 2, 1))
         return a
 
     # NOTE copy == False
@@ -269,6 +276,13 @@ def to(
 
     if dtype is not None:
         return clang.maybe_convert_to_dtype(a, dtype)
+
+    if memory_format is not None:
+        # NOTE not sure if we need to handle torch.preserve_format explicitly
+        if memory_format == torch.channels_last:
+            a = prims.stride_order(a, (3, 0, 2, 1))
+        elif memory_format == torch.channels_last_3d:
+            a = prims.stride_order(a, (4, 0, 3, 2, 1))
 
     return a
 
