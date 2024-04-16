@@ -288,7 +288,13 @@ def to(
 
 
 @torchsymbol(torch.Tensor.cuda, is_method=True)
-def cuda(a: TensorProxy, /, device=None, non_blocking: bool = False, memory_format: None | torch.memory_format = None):
+def cuda(
+    a: TensorLike,
+    /,
+    device: None | DeviceLike = None,
+    non_blocking: bool = False,
+    memory_format: None | torch.memory_format = None,
+) -> TensorLike:
     # Modeled similar to PyTorch:
     # https://github.com/pytorch/pytorch/blob/e3ac61587aa368c613ef01df1f328a396b64cd5d/tools/autograd/templates/python_variable_methods.cpp#L496-L501
     # If `device` is None, this function defaults `device` to current CUDA device
