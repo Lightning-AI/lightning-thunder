@@ -110,6 +110,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Inside thunder <advanced/inside_thunder>
    Extending thunder <advanced/extending>
    notebooks/extend_thunder_with_cuda_python
+   notebooks/llmc_with_thunder
    notebooks/adding_custom_operator
    notebooks/adding_custom_operator_backward
    Contributing to Thunder <advanced/contrib_thunder>
