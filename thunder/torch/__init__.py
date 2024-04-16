@@ -2527,6 +2527,7 @@ def _native_batch_norm(
     a_acc = to(a, computation_dtype)
     if training:
         reduction_dims = (0,) + tuple(range(2, a.ndim))
+        # this should be keepdim=False  because of https://github.com/NVIDIA/Fuser/issues/1964
         biased_var, mean = var_mean(a_acc, dim=reduction_dims, correction=0, keepdim=False)
         rstd = rsqrt(biased_var + eps)
         bcast_rstd = reshape(rstd, params_shape)
