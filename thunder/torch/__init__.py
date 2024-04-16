@@ -973,6 +973,11 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
 
+@torchsymbol(torch.broadcast_tensors, is_method=True)
+def broadcast_tensors(*inputs):
+    pass
+
+
 
 #
 # Elementwise unary operaitons
@@ -3904,6 +3909,53 @@ def nll_loss_backward(
     total_weight: TensorLike,
 ) -> TensorLike:
     return TensorProxy(like=g, shape=a.shape)
+
+
+@torchsymbol(torch.nn.functional.mse_loss)
+def mse_loss(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    size_average: None | Any = None,
+    reduce: None | Any = None,
+    reduction: str = "mean"
+) -> TensorLike:
+    utils.check(
+        size_average is None and reduce is None,
+        lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
+    )
+    utils.check(
+        reduction in ("none", "sum", "mean"),
+        lambda: f'Expected reduction string to be "none", "sum", or "mean", but it is {reduction}.',
+        exception_type=ValueError,
+    )    
+
+    # no need to check input and target dimension 
+    # as torch.nn.functional.mse_loss supports any number of dimensions
+
+    # compare shape of input and target
+    if a.shape != target.shape:
+        # not sure if we need this
+        warnings.warn(
+            f"Using a target size {target.size()} that is different to the input size {a.size()}"
+            "This will likely lead to incorrect results due to broadcasting."
+            "Please ensure they have the same size."
+        )
+        a, target = broadcast_tensors(a, target)
+    out = pow(a - target, 2)
+
+    # maybe add _apply_loss_reduction 
+    # (like https://github.com/pytorch/pytorch/blob/df5829d0babaefc6e271897d6fffd40073d8b723/torch/_refs/nn/functional/__init__.py#L490)
+    # not sure if this would be useful
+    if reduction == "none":
+        return out
+    elif reduction == "sum":
+        return sum(out)
+    elif reduction == "mean":
+        return mean(out)
+    else:
+        raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
+
 
 
 # TODO Add annotations
