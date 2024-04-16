@@ -36,6 +36,8 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
+    # Requires CUDA runtime to be available (fails on CPU only runtimes).
+    "cuda",
 }
 
 # Don't rely on the generated list of supported ops.
