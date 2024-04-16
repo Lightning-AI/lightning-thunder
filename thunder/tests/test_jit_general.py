@@ -621,7 +621,7 @@ def test_nanogpt():
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=(NotImplementedError, TypeError), reason="topk and where", strict=True)),
     ),
 )
 @pytest.mark.parametrize(
@@ -670,7 +670,7 @@ def test_litgpt_variants(name, device):
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=TypeError, reason="topk", strict=True)),
+        pytest.param("mixtral-like", marks=pytest.mark.xfail(raises=(NotImplementedError, TypeError), reason="topk and where", strict=True)),
     ),
 )
 @pytest.mark.parametrize(
