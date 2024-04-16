@@ -268,6 +268,7 @@ class OpTags(Enum):
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
+# NOTE: See extend.single_op_executor
 def make_prim(
     id,
     name,
@@ -285,7 +286,7 @@ def make_prim(
         meta=langctx(Languages.PRIMS)(meta),
         id=id,
         is_prim=True,
-        tags=tags,
+        tags=None if tags is None else list(tags),
         python_printer=python_printer,
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
@@ -529,7 +530,7 @@ check_literal_like = make_prim(
 
 def _check_type_meta(x: Any, typ: type, /) -> None:
     # Validates types
-    baseutils.check(typ, type, lambda: f"Expected a type for check_type, but found {typ}")
+    baseutils.check(isinstance(typ, type), lambda: f"Expected a type for check_type, but found {typ}")
     baseutils.check(pytype(x) is typ, lambda: f"Different types for {pytype(x)} and {typ}")
 
 

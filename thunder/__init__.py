@@ -76,6 +76,7 @@ import thunder.executors.torchex
 import thunder.executors.nvfuserex
 
 pythonex = extend.get_executor("python")
+assert pythonex is not None
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -147,6 +148,9 @@ from thunder.clang import *
 #
 
 # TODO Add more of these functions
+resolve_executors = extend.resolve_executors
+add_executor_lists = extend.add_executor_lists
+get_executor = extend.get_executor
 get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
@@ -274,6 +278,19 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
+def add_executor_lists(
+    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
+) -> Sequence[Executor]:
+    new_exc_list = []
+    exc_list = resolve_executors(exc_list)
+    other_exc_list = resolve_executors(other_exc_list)
+    for exc in itertools.chain(exc_list, other_exc_list):
+        if not exc in new_exc_list:
+            new_exc_list.append(exc)
+
+    return new_exc_list
+
+
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -304,7 +321,7 @@ def jit(
     /,
     *,
     langctx: None | str | Any | LanguageContext = None,
-    executors: None | Sequence[Executor] = None,
+    executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
@@ -319,7 +336,7 @@ def jit(
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
         executors: list of executors to use. Defaults to the executors returned by `thunder.get_default_executors()` and always amened by `thunder.get_always_executors()`.
-                   You can get a list of all available executors with `thunder.get_all_executors()`.
+                   You can get a list of all available executors with `thunder.get_all_executors()`. You can also pass the name of an executor that's been registered, and it will be resolved with get_executor().
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
 
@@ -347,13 +364,16 @@ def jit(
     if additional_transforms is None:
         additional_transforms = []
 
+    # Resolve names of executors
+    executors = resolve_executors(executors)
+
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
     # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
     #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     executor_lookasides = {}
-    for ex in executors or []:
+    for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
 
