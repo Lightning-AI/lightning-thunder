@@ -2527,20 +2527,21 @@ def _native_batch_norm(
     a_acc = to(a, computation_dtype)
     if training:
         reduction_dims = (0,) + tuple(range(2, a.ndim))
-        biased_var, mean = var_mean(a_acc, dim=reduction_dims, correction=0, keepdim=True)
+        # this should be keepdim=False  because of https://github.com/NVIDIA/Fuser/issues/1964
+        biased_var, mean = var_mean(a_acc, dim=reduction_dims, correction=0, keepdim=False)
         rstd = rsqrt(biased_var + eps)
-        out = (a - mean) * rstd
+        bcast_rstd = reshape(rstd, params_shape)
+        bcast_mean = reshape(mean, params_shape)
+        out = (a - bcast_mean) * bcast_rstd
 
         if running_mean is not None:
-            squeezed_mean = squeeze(mean, reduction_dims)
-            new_running_mean = (1 - momentum) * running_mean + momentum * squeezed_mean
+            new_running_mean = (1 - momentum) * running_mean + momentum * mean
             if not utils.are_same_dtypes(new_running_mean, running_mean):
                 new_running_mean = to(new_running_mean, running_mean.dtype)
             prims.copy_(new_running_mean, running_mean)
         if running_var is not None:
-            squeezed_var = squeeze(biased_var, reduction_dims)
             n = a.numel / a.shape[1]
-            unbiased_var = squeezed_var * (n / (n - 1))
+            unbiased_var = biased_var * (n / (n - 1))
             new_running_var = (1 - momentum) * running_var + momentum * unbiased_var
             if not utils.are_same_dtypes(new_running_var, running_var):
                 new_running_var = to(new_running_var, running_var.dtype)
@@ -2554,9 +2555,15 @@ def _native_batch_norm(
 
     # Handles weight and bias
     if weight is not None:
+        # Inserting a conversion to the computation_dtype for weight and bias to
+        # disable nvFuser executors's bookend optimization (nv_enable_bookend),
+        # preventing the executor to push out the shape operations out of the
+        # fusion region.
+        weight = to(weight, computation_dtype)
         weight = reshape(weight, params_shape)
         out = out * weight
     if bias is not None:
+        bias = to(bias, computation_dtype)
         bias = reshape(bias, params_shape)
         out = out + bias
 
