@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "apply_bucketing_to_grad_allreduce",
     "optimize_allreduce_in_ddp_backward",
 ]
 
@@ -238,3 +239,40 @@ def optimize_allreduce_in_ddp_backward(
     )
     utils.check(visit_callable.has_replaced_return, lambda: "")
     return updated_bwd_trace
+
+
+def apply_bucketing_to_grad_allreduce(
+    trace: TraceCtx,
+    compile_data: CompileData | None = None,
+) -> tuple[TraceCtx, bool]:
+    if get_skip_data_parallel_grad_sync():
+        return trace, False
+
+    if compile_data is None:
+        import thunder
+
+        compile_data = thunder.compile_data(trace)
+
+    producers, consumers = utils.producers_and_consumers(trace)
+    flat_trace_output, flat_trace_output_spec = tree_flatten(trace.output)
+    output_tensor_to_index_and_prod_bsym = utils.ProxyDict()  # dict[Proxy, tuple[int, BoundSymbol]]
+    for index, output in enumerate(flat_trace_output):
+        if isinstance(output, TensorProxy):
+            output_tensor_to_index_and_prod_bsym[output] = (index, producers[output])
+
+    grad_before_after_allreduce = utils.ProxyDict()
+    bsym: BoundSymbol
+    for key in output_tensor_to_index_and_prod_bsym._dict:
+        _, bsym = output_tensor_to_index_and_prod_bsym[key]
+        if bsym.sym.id == dist_prims.PrimIDs.WAIT:
+            bsym_of_allreduce: BoundSymbol = producers[bsym.flat_proxy_args[0]]
+            utils.check(
+                bsym_of_allreduce.sym.id,
+                dist_prims.PrimIDs.ALL_REDUCE,
+                lambda: f"{bsym.sym.id=}, {bsym_of_allreduce.sym.id=}",
+            )
+            grad_before_after_allreduce[bsym.flat_proxy_outs[0]] = bsym_of_allreduce.flat_proxy_args[0]
+    if len(grad_before_after_allreduce._dict) == 0:
+        return trace, False
+
+    return optimize_allreduce_in_ddp_backward(trace, compile_data=compile_data), True

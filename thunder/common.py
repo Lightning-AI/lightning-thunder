@@ -617,6 +617,15 @@ def transform_for_execution(
 ) -> list[TraceCtx]:
     traces: list[TraceCtx] = []
 
+    if torch.distributed.is_available():
+        # Apply AllReduce bucketing if possible & needed
+        from thunder.distributed.prims import PrimIDs as DistPrimIDs
+        from thunder.distributed.transforms.ddp import apply_bucketing_to_grad_allreduce
+
+        trace, is_modified = apply_bucketing_to_grad_allreduce(trace, compile_data=None)
+        if is_modified:
+            traces.append(trace)
+
     # TODO If only_execute_prims, then flatten to prims here
 
     # Runs passes that are generally useful
