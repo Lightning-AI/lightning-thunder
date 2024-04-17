@@ -20,6 +20,7 @@ cudnn = pytest.importorskip("cudnn")
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_version
 
+
 def _maybe_xfail() -> None:
     dev: torch.device = thunder.core.devices.to_torch_device("cuda:0")
     cuda_major: int
@@ -27,6 +28,7 @@ def _maybe_xfail() -> None:
     cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
     if cuda_major < 8:
         pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
+
 
 # These reference inputs are currently used by cudnnex
 def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
