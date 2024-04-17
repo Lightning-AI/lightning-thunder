@@ -63,7 +63,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     from thunder.executors.passes import del_last_used, transform_for_execution
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
-    computation_trc.kwargs = {}
     # NOTE: This function is rather slow, so it's intended to be used
     # behind a cache.
     tensor_cls = (torch.Tensor, TensorProxy)
