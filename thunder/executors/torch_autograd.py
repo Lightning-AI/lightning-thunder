@@ -1,20 +1,21 @@
 from dataclasses import dataclass, replace
-from functools import wraps, partial
+from functools import partial, wraps
 from inspect import signature
 from typing import Any, TYPE_CHECKING
 
 import torch
 
-from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
-from thunder.core.prims import PrimIDs
+import thunder
 import thunder.core.utils as utils
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.transform_common import replace_redundant_inputs
-from thunder.core.trace import TraceCtx
-from thunder.core.symbol import Symbol, BoundSymbol, BoundSymbolRHS
 import thunder.distributed.prims as dist_prims
 import thunder.torch as ltorch
-import thunder
+from thunder.core.prims import PrimIDs
+
+from thunder.core.proxies import FutureTensorProxy, TensorProxy, variableify
+from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol
+from thunder.core.trace import TraceCtx
+from thunder.core.transform_common import replace_redundant_inputs
 
 
 class ThunderFunction(torch.autograd.Function):
@@ -55,12 +56,11 @@ class ThunderFunction(torch.autograd.Function):
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
-    from thunder.executors.passes import transform_for_execution
-    from thunder.executors.passes import del_last_used
-    from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
+    from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
     from thunder.core.transforms import forward_and_backward_from_trace
-    from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
     from thunder.distributed.transforms import FSDPCommBucketing
+    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_waits_for_zero3
+    from thunder.executors.passes import del_last_used, transform_for_execution
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
     computation_trc.kwargs = {}
@@ -174,8 +174,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     if getattr(compile_data.fn, "use_fsdp", False):
         assert hasattr(compile_data.fn, "sharding_strategy")
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
-            from thunder.distributed.utils import limit_in_flight_allgathers
             from thunder.distributed import FSDPBucketingStrategy
+            from thunder.distributed.utils import limit_in_flight_allgathers
 
             fw_extrace = sort_waits_for_zero3(fw_extrace)
             fw_extrace = limit_in_flight_allgathers(
@@ -196,7 +196,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         bw_extrace = sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
-    from thunder.executors.transformer_engineex import transformer_engine_ex, _rearrange_transformer_engine_linear
+    from thunder.executors.transformer_engineex import _rearrange_transformer_engine_linear, transformer_engine_ex
 
     if transformer_engine_ex in compile_data.executors_list:
         # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
