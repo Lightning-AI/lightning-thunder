@@ -1,19 +1,11 @@
-from dataclasses import dataclass, replace
-from functools import partial, wraps
-from inspect import signature
-from typing import Any, TYPE_CHECKING
+from dataclasses import replace
 
 import torch
 
-import thunder
 import thunder.core.utils as utils
-import thunder.distributed.prims as dist_prims
-import thunder.torch as ltorch
 from thunder.core.prims import PrimIDs
 
-from thunder.core.proxies import FutureTensorProxy, TensorProxy, variableify
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol
+from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.trace import TraceCtx
 from thunder.core.transform_common import replace_redundant_inputs
 
