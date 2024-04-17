@@ -26,6 +26,7 @@ ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
 ARG TORCH_INSTALL="stable"
 ARG APEX_CHECKOUT="master"
+ARG TRANSFORMER_ENGINE_CHECKOUT="stable"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -154,20 +155,35 @@ RUN \
     fi
 
 RUN \
-    # building Apex from source
-    pip install "pip>=23.1" packaging && \
-    git clone https://github.com/NVIDIA/apex && \
-    cd apex && \
-    git checkout ${APEX_CHECKOUT} && \
-    # https://github.com/NVIDIA/apex#linux
-    pip install -v \
-      --disable-pip-version-check \
-      --no-cache-dir \
-      --no-build-isolation \
-      --config-settings "--build-option=--xentropy" \
-      . && \
-    cd .. && \
-    rm -rf apex
+    # building Apex from source \
+    if [ -n "$TRANSFORMER_ENGINE_CHECKOUT" ]; then \
+        git clone --branch ${TRANSFORMER_ENGINE_CHECKOUT} \
+          --recursive https://github.com/NVIDIA/TransformerEngine.git && \
+        cd TransformerEngine && \
+        git submodule update --init --recursive && \
+        export NVTE_FRAMEWORK=pytorch && \
+        pip install . && \
+        cd .. && \
+        rm -rf TransformerEngine \
+    fi \
+
+RUN \
+    # building Apex from source \
+    if [ -n "$APEX_CHECKOUT" ]; then \
+        pip install "pip>=23.1" packaging && \
+        git clone https://github.com/NVIDIA/apex && \
+        cd apex && \
+        git checkout ${APEX_CHECKOUT} && \
+        # https://github.com/NVIDIA/apex#linux
+        pip install -v \
+          --disable-pip-version-check \
+          --no-cache-dir \
+          --no-build-isolation \
+          --config-settings "--build-option=--xentropy" \
+          . && \
+        cd .. && \
+        rm -rf apex \
+    fi
 
 RUN \
     ls -lh requirements/ && \
