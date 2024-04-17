@@ -14,7 +14,7 @@
 
 ARG BASE_IMAGE_TAG
 
-FROM nvidia/cuda:${BASE_IMAGE_TAG}
+FROM pytorchlightning/lightning-thunder:${BASE_IMAGE_TAG}
 
 ARG APEX_CHECKOUT="master"
 
