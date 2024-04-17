@@ -14,6 +14,7 @@ from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
+import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
@@ -554,8 +555,9 @@ def test_type_promotion_tensors(executor, device, _):
     assert result.dtype is torch.float32
 
     # float16 x bfloat16 type promotion -- float32 result dtype
-    result = traced_foo(f16, bf16)
-    assert result.dtype is torch.float32
+    if thunder.tests.bf16.device_supports_bf16(device):
+        result = traced_foo(f16, bf16)
+        assert result.dtype is torch.float32
 
     # int64 x float16 type promotion -- float16 result dtype
     result = traced_foo(f16, i64)
