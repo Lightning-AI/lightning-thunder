@@ -20,7 +20,9 @@ from thunder.core.transform_common import replace_redundant_inputs
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+    def forward(
+        ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args
+    ):
         # Here we just propagate the tensors through the autograd graph
         ctx.return_none_instead_of_grads = return_none_instead_of_grads
         ctx.saved_other = saved_other
