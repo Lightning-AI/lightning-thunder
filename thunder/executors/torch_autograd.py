@@ -1,6 +1,7 @@
 from dataclasses import replace
 from enum import auto, Enum
-from typing import Callable, Sequence, Any
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import torch
 

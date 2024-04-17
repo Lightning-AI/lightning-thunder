@@ -1987,8 +1987,6 @@ def _torch_autograd_function_impl(
 
 
 connect_to_autograd_impl = ex.register_operator(
-    "connect_to_autograd_impl",
-    meta=torch_autograd_function_meta,
-    fn=_torch_autograd_function_impl
+    "connect_to_autograd_impl", meta=torch_autograd_function_meta, fn=_torch_autograd_function_impl
 )
 _register_implementation(connect_to_torch_autograd, connect_to_autograd_impl, checker=_always_executable)

@@ -3714,7 +3714,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
             kwargs={
                 **forward_trace.bound_symbols[-2].kwargs,
                 "saved_tensors": saved_tensors,
-                "saved_other": saved_other
+                "saved_other": saved_other,
             },
         )
         return

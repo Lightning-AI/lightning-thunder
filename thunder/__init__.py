@@ -614,9 +614,7 @@ def jit(
             comp = computation_trc.python_callable()
 
             # TODO RC1 Update the cache
-            cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_traces
-            )
+            cache_entry = CacheEntry(pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_traces)
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
 
