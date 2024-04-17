@@ -1,13 +1,35 @@
 from dataclasses import replace
+from enum import auto, Enum
 
 import torch
 
 import thunder.core.utils as utils
-from thunder.core.prims import PrimIDs
+from thunder.core.prims import make_prim, PrimIDs
 
 from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.trace import TraceCtx
 from thunder.core.transform_common import replace_redundant_inputs
+
+
+class IDs(Enum):
+    TORCH_AUTOGRAD_FUNCTION = auto()
+
+
+def torch_autograd_function_meta(
+    backward_trace: TraceCtx,
+    saved_tensors: tuple,
+    saved_other: tuple,
+    flat_output: tuple,
+    *flat_args: TensorProxy,
+):
+    return tuple(TensorProxy(like=out) for out in flat_output)
+
+
+connect_to_torch_autograd = make_prim(
+    IDs.TORCH_AUTOGRAD_FUNCTION,
+    "connect_to_torch_autograd",
+    meta=torch_autograd_function_meta,
+)
 
 
 class ThunderFunction(torch.autograd.Function):
