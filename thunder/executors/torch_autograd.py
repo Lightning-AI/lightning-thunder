@@ -54,48 +54,25 @@ class ThunderFunction(torch.autograd.Function):
         return (None, None, None, None, *grads)
 
 
-def split_forward_backward(computation_trc, compile_data, compile_stats, /, *args, **kwargs):
-    from thunder import trace
+def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.executors.passes import transform_for_execution
     from thunder.executors.passes import del_last_used
     from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
     from thunder.core.transforms import forward_and_backward_from_trace
-    from thunder.cudagraphs import CUDAGraphExecutor
     from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
     from thunder.distributed.transforms import FSDPCommBucketing
-    from thunder.core.transforms import eval_trace
-
-    # TODO: the trace->func->trace could likely be simplified (and look nicer)
-    #       we cannot use python_callable() here, see the old repos 2458
-    if not isinstance(computation_trc, TraceCtx):
-        # for the legacy codepath
-        func = computation_trc
-    else:
-
-        def func(*args):
-            return eval_trace(computation_trc, *args)
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
-
-    def make_trace(func):
-        return partial(
-            trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
-        )
-
     computation_trc.kwargs = {}
     # NOTE: This function is rather slow, so it's intended to be used
     # behind a cache.
-    ba = signature(func).bind(*args, **kwargs)
-    ba.apply_defaults()
-    args, kwargs = ba.args, ba.kwargs
-    flat_args, _ = tree_flatten((args, kwargs))
     tensor_cls = (torch.Tensor, TensorProxy)
     requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
     # If none of the inputs require gradients, raise an error
     if not any(requires_grad_mask):
         raise RuntimeError("PyTorch's Autograd interface requires at least one tensor input with requires_grad=True")
 
-    primal_trace = make_trace(func)(*args, **kwargs) if not compile_data.using_jit else computation_trc
+    primal_trace = computation_trc
     primal_trace = sort_data_parallel_syncs(primal_trace)
 
     if compile_stats is not None:
