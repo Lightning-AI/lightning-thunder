@@ -169,7 +169,7 @@ RUN \
           --config-settings "--build-option=--xentropy" \
           . && \
         cd .. && \
-        rm -rf apex \
+        rm -rf apex ; \
     fi
 
 RUN \
@@ -182,7 +182,7 @@ RUN \
         export NVTE_FRAMEWORK=pytorch && \
         pip install . && \
         cd .. && \
-        rm -rf TransformerEngine \
+        rm -rf TransformerEngine ; \
     fi \
 
 RUN \
