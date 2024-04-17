@@ -307,7 +307,6 @@ CacheEntry = namedtuple(
         "computation_traces",
         "epilogue_fn",
         "epilogue_traces",
-        "backward_fn",
         "backward_traces",
     ],
 )
@@ -444,7 +443,6 @@ def jit(
                     comp_traces,
                     epilogue,
                     epilogue_traces,
-                    backward_fn,
                     backward_traces,
                 ) = cache_entry
                 try:
@@ -485,7 +483,6 @@ def jit(
                     comp_traces,
                     epilogue,
                     epilogue_traces,
-                    backward_fn,
                     backward_traces,
                 ) = cache_entry
 
@@ -577,7 +574,7 @@ def jit(
                 )
                 computation_traces.append(computation_trc)
 
-            backward_trc = None
+            used_torch_autograd = False
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
@@ -595,8 +592,9 @@ def jit(
                         not additional_transforms,
                         lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
                     )
+                    used_torch_autograd = True
 
-            if backward_trc is None:
+            if not used_torch_autograd:
                 cs.last_computation_transformation_start = time.time_ns()
 
                 ## EPILOGUE and TRANSFORMS should not mix...
@@ -615,14 +613,9 @@ def jit(
 
             comp = computation_trc.python_callable()
 
-            if backward_trc is not None:
-                backward_fn = backward_trc.python_callable()
-            else:
-                backward_fn = None
-
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_traces
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
@@ -649,9 +642,6 @@ def jit(
         cs.last_trace_host_execution_start = time.time_ns()
 
         result = cache_entry.computation_fn(*inps)
-
-        if cache_entry.backward_fn:
-            pass
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
