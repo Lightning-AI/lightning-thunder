@@ -7078,16 +7078,13 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
                 if not probability_target
                 else make(shape[1], low=0.0, high=1.0, requires_grad=True)
             ),
-            weight=make(C) if weight_flag else None,
+            weight=make(C, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
             label_smoothing=label_smoothing,
         )
 
 
-# TODO Enable cross entropy bwd weight support
-# TODO Enable test cases after adding support nll_loss_nd, weight tensor, and label_smoothing options.
-# TODO see issue "Add support for remaining cross_entropy_loss arguments"
 def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -7095,15 +7092,15 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     shapes = (
         ((2, 16), (2,)),
         ((7, 18), (7,)),
-        # ((7, 18), (7, 18)),
-        # ((3, 4, 2, 3), (3, 4, 2, 3)),
-        # ((3, 4, 2, 3), (3, 2, 3)),
+        ((7, 18), (7, 18)),
+        ((3, 4, 2, 3), (3, 4, 2, 3)),
+        ((3, 4, 2, 3), (3, 2, 3)),
         ((5,), ()),
-        # ((3, 4, 0), (3, 0)),
-        # ((3, 4, 0), (3, 4, 0)),
+        ((3, 4, 0), (3, 0)),
+        ((3, 4, 0), (3, 4, 0)),
     )
 
-    weight_options = (False,)
+    weight_options = (False, True)
     reduction_options = ("none", "mean", "sum")
     label_smoothing_options = (0.0, 0.5)
     ignore_index_options = (-1, 3)
@@ -7111,6 +7108,12 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape, weight_flag, reduction_str, label_smoothing, ignore_index in itertools.product(
         shapes, weight_options, reduction_options, label_smoothing_options, ignore_index_options
     ):
+        # NOTE According to pytorch/pytorch#64572, nll_loss should return NaN when reduction = "mean"
+        # and the whole target is equal to ignore_index. However, if the inputs are cuda tensors, PyTorch returns 0.
+        # Skip this case because we are consistent across devices.
+        if torch.device(device).type == "cuda" and reduction_str == "mean" and ignore_index > 0:
+            continue
+
         input_shape, target_shape = shape
         probability_target = input_shape == target_shape
         # ignore_index can't be supplied with probablity target
@@ -7126,21 +7129,117 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
                 if not probability_target
                 else make(shape[1], low=0.0, high=1.0, requires_grad=True)
             ),
-            weight=make(C) if weight_flag else None,
+            weight=make(C, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
             label_smoothing=label_smoothing,
         )
 
 
+def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    input_shape = (7, 18)
+    target_shape = (7,)
+    C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+    valid_input = make(input_shape)
+    valid_target = make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
+
+    # unexpected reduction string argument
+    yield (
+        SampleInput(valid_input, valid_target, reduction="foo"),
+        ValueError,
+        'Expected reduction string to be "none", "sum", or "mean", but it is (.*?).',
+    )
+
+    # input tensor has 0 dimensions
+    scalar_input = make(scalar_shape := ())
+    yield (
+        SampleInput(scalar_input, valid_target),
+        RuntimeError,
+        f"Expected the input tensor to have more than 1 dimension, but it has {scalar_input.ndim} dimensions.",
+    )
+
+    # weight tensor has more than 1 dimension
+    multiple_dim_weight = make((C, 10), requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_target, weight=multiple_dim_weight),
+        RuntimeError,
+        f"Expected a 1D tensor with {C} elements for weight argument, \
+            but found a tensor with {multiple_dim_weight.ndim} dimensions and {multiple_dim_weight.shape[0]} elements.",
+    )
+
+    # weight tensor numel != C
+    incorrect_numel_weight = make((C + 10,), requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_target, weight=incorrect_numel_weight),
+        RuntimeError,
+        f"Expected a 1D tensor with {C} elements for weight argument, \
+            but found a tensor with {incorrect_numel_weight.ndim} dimensions and {incorrect_numel_weight.shape[0]} elements.",
+    )
+
+    # label_smoothing out-of-bounds
+    out_of_bounds_label_smoothing = 1.5
+    yield (
+        SampleInput(valid_input, valid_target, label_smoothing=out_of_bounds_label_smoothing),
+        RuntimeError,
+        r"Expected label_smoothing to in \[0, 1\] range but got 1.5.",
+    )
+
+    # target tensor is not integer dtype
+    float_target = make(target_shape, low=0, high=C, dtype=torch.float, requires_grad=False)
+    yield (
+        SampleInput(valid_input, float_target),
+        RuntimeError,
+        "Expected target to be a tensor with an integer dtype, but it has dtype (.*?).",
+    )
+
+    # input ndims != (target ndims + 1)
+    extra_dim_input = make(input_shape + (10,))
+    yield (
+        SampleInput(extra_dim_input, valid_target),
+        RuntimeError,
+        "Expected the input tensor to have (.*?) dimensions, but it has (.*?) dimensions.",
+    )
+
+    # target shape is input shape except channels dimension
+    incorrect_batch_target = make((10,), low=0, high=C, dtype=torch.long, requires_grad=False)
+    yield (
+        SampleInput(valid_input, incorrect_batch_target),
+        RuntimeError,
+        "Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+            (.*?), but it has shape (.*?).",
+    )
+
+    integer_prob_target = make(input_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
+    yield (
+        SampleInput(valid_input, integer_prob_target),
+        RuntimeError,
+        "Expected the target to have float dtype when target contains class probabilities \
+                but it is (.*?).",
+    )
+
+    valid_prob_target = make(input_shape, low=0.0, high=1.0, dtype=torch.float, requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_prob_target, ignore_index=5),
+        RuntimeError,
+        "ignore_index argument is not supported when target contains class probabilities.",
+    )
+
+
 cross_entropy_opinfo = OpInfo(
     ltorch.cross_entropy,
-    supports_grad=True,
     sample_input_generator=cross_entropy_sample_generator,
     reference_input_generator=cross_entropy_reference_generator,
+    error_input_generator=cross_entropy_error_generator,
     torch_reference=torch.nn.functional.cross_entropy,
     dtypes=(datatypes.floating,),
     test_directives=(
+        # take_along_axis is disabled with nvfuser, which this operator relies on.
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvfuser",),
+        ),
         # TODO Investigate why CPU torch executor tests fail in CI (but not locally)
         DecorateInfo(
             pytest.mark.skip,
@@ -7154,6 +7253,11 @@ cross_entropy_opinfo = OpInfo(
                 datatypes.float16,
                 datatypes.bfloat16,
             ),
+        ),
+        # TODO FIXME -- These tests are hitting an odd issue where real torch tensors are being passed to nll_loss
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
         ),
     ),
 )

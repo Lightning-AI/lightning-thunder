@@ -1027,7 +1027,10 @@ register_grad(pids.DIV, _div_prim_grad)
 
 # Comparison operators -- these create no grad associations
 register_grad(pids.EQ, prims.eq)
+register_grad(pids.NE, prims.ne)
 register_grad(pids.GE, prims.ge)
+register_grad(pids.GT, prims.gt)
+register_grad(pids.LE, prims.le)
 register_grad(pids.LT, prims.lt)
 
 
