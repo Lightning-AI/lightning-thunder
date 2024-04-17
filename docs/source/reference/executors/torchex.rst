@@ -8,5 +8,3 @@ PyTorch Executor
 
 .. autosummary::
     :toctree: generated/
-
-    thunder_backward

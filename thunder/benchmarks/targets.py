@@ -37,6 +37,7 @@ from thunder.benchmarks import (
     thunder_cudnn_layer_norm_nvfuser_executor,
     thunder_sdpa_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
+    BatchNormBenchmark,
 )
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
@@ -431,6 +432,43 @@ def test_nanogpt_gelu_grad(benchmark, executor: Callable):
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    fwd_executors,
+    ids=fwd_executor_ids,
+)
+def test_batch_norm_fwd(benchmark, executor: Callable):
+    bn_bench: Benchmark = BatchNormBenchmark(
+        (16, 128, 768), device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+    )
+
+    setup = make_setup(bn_bench)
+    fn = executor(bn_bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    (
+        torch_fwd_bwd,
+        torchcompile_fwd_bwd,
+        thunder_fwd_bwd,
+    ),
+    ids=fwd_executor_ids,
+)
+def test_batch_norm_grad(benchmark, executor: Callable):
+    bn_bench: Benchmark = BatchNormBenchmark(
+        (16, 128, 768), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+    )
+
+    setup = make_setup(bn_bench)
+    fn = executor(bn_bench)
+    fn = wrap_for_benchmark(fn)
+    benchmark.pedantic(fn, setup=setup, rounds=200, warmup_rounds=20)
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
