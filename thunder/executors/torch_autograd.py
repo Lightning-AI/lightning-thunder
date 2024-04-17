@@ -72,7 +72,7 @@ class ThunderFunction(torch.autograd.Function):
         return (None, None, None, None, *grads)
 
 
-def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
+def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
     from thunder.core.transforms import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
@@ -254,4 +254,4 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         compile_stats.last_traces += fw_traces
         compile_stats.last_backward_traces += bw_traces
 
-    return fw_extrace, bw_extrace
+    return fw_extrace
