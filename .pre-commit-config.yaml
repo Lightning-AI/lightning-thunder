@@ -35,7 +35,6 @@ repos:
     hooks:
       - id: codespell
         additional_dependencies: [tomli]
-        exclude: "notebooks/extend_thunder_with_cuda_python.ipynb"
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
   - repo: https://github.com/psf/black

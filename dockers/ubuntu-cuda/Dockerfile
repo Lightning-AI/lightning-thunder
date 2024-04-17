@@ -156,19 +156,6 @@ RUN \
 
 RUN \
     # building Apex from source \
-    if [ -n "$TRANSFORMER_ENGINE_CHECKOUT" ]; then \
-        git clone --branch ${TRANSFORMER_ENGINE_CHECKOUT} \
-          --recursive https://github.com/NVIDIA/TransformerEngine.git && \
-        cd TransformerEngine && \
-        git submodule update --init --recursive && \
-        export NVTE_FRAMEWORK=pytorch && \
-        pip install . && \
-        cd .. && \
-        rm -rf TransformerEngine \
-    fi \
-
-RUN \
-    # building Apex from source \
     if [ -n "$APEX_CHECKOUT" ]; then \
         pip install "pip>=23.1" packaging && \
         git clone https://github.com/NVIDIA/apex && \
@@ -184,6 +171,19 @@ RUN \
         cd .. && \
         rm -rf apex \
     fi
+
+RUN \
+    # building Apex from source \
+    if [ -n "$TRANSFORMER_ENGINE_CHECKOUT" ]; then \
+        git clone --branch ${TRANSFORMER_ENGINE_CHECKOUT} \
+          --recursive https://github.com/NVIDIA/TransformerEngine.git && \
+        cd TransformerEngine && \
+        git submodule update --init --recursive && \
+        export NVTE_FRAMEWORK=pytorch && \
+        pip install . && \
+        cd .. && \
+        rm -rf TransformerEngine \
+    fi \
 
 RUN \
     ls -lh requirements/ && \
