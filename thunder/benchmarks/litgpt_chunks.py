@@ -94,9 +94,12 @@ def make_torch_traces_for_config(name: str):
     set_langctx(thunder.torch.torchctx)
     set_compile_data_and_stats(cd, cs)
     thunder._cache_info_ctx.set({})
-    prologue, trace, epilogue = thunder_general_jit(
+    jit_results = thunder_general_jit(
         model, (x,), {}, sharp_edges=thunder.core.options.SHARP_EDGES_OPTIONS.ALLOW
     )
+    prologue = jit_results.prologue_trace
+    trace = jit_results.computation_trace
+    epilogue = jit_results.epilogue_trace
 
     # Remove subsymbols for readability of the trace
     for bsym in trace.bound_symbols:
