@@ -71,29 +71,30 @@ RUN \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /root/.cache && \
-    rm -rf /var/lib/apt/lists/* \
+    rm -rf /var/lib/apt/lists/*;
 
 # cuda TK is only needed for building from source, otherwise PyTorch wheels include it
 RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
-        echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
+        echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION" && \
         CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
         CUDA_VERSION_M=${CUDA_VERSION%%.*} && \
         apt update -qq --fix-missing && \
-        apt upgrade -y --allow-downgrades --allow-change-held-packages \
         if [ "${CUDNN_BASE_VER}" == "9" ]; then \
             CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
-            libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
-            libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+            apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+                           libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME}; \
         else \
             CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-            # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2.
+            # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2. \
             CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
             CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1+cuda${CUDA_VERSION_MM}" && \
-            libcudnn8=${CUDNN_PACKAGE_NAME} \
-            libcudnn8-dev=${CUDNN_PACKAGE_NAME} \
+            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+            apt install -y libcudnn8=${CUDNN_PACKAGE_NAME} \
+                           libcudnn8-dev=${CUDNN_PACKAGE_NAME}; \
         fi && \
         rm -rf /root/.cache && \
-        rm -rf /var/lib/apt/lists/* && \
+        rm -rf /var/lib/apt/lists/*; \
     fi
 
 RUN \
