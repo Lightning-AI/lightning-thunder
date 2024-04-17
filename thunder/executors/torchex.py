@@ -1966,6 +1966,7 @@ copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 
+@torch.enable_grad()
 def _torch_autograd_function_impl(
     *,
     backward: TraceCtx | Callable,
