@@ -81,7 +81,7 @@ if not TE_AVAILABLE:
 #
 # @torch.no_grad()
 # @no_autocast()
-# @te.fp8_autocast(fp8_recipe=fp8_recipe)
+# @transformer_engine.fp8_autocast(fp8_recipe=te_fp8_recipe)
 # def func(a, b, d):
 #   # a: "cuda:0 bf16[16, 32]"
 #   # b: "cuda:0 bf16[64, 32]"
@@ -341,7 +341,7 @@ if TE_AVAILABLE:
     _DEFAULT_RECIPE = recipe.DelayedScaling()
 
 IMPORT_CTX_TE_KEY = "transformer_engine"
-FP8_RECIPE_KEY = "fp8_recipe"
+FP8_RECIPE_KEY = "te_fp8_recipe"
 
 
 # Creates a new stateful operator for each invocation of `linear`.
