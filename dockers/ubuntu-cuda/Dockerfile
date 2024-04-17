@@ -66,6 +66,7 @@ RUN \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
     curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
+    pip install "numpy >=1.23.0,<2" && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \
