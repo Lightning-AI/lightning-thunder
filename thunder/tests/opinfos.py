@@ -2484,10 +2484,26 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(pred, a, b)
 
 
+def where_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"torch.where\(\) does not support only specifying a condition"
+    yield (
+        SampleInput(
+            make(
+                5,
+            )
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+    yield (SampleInput(make(2, 1, 2)), NotImplementedError, err_msg)
+
+
 where_opinfo = OpInfo(
-    clang.where,
+    ltorch.where,
     supports_grad=True,
     sample_input_generator=where_sample_generator,
+    error_input_generator=where_error_generator,
     torch_reference=torch.where,
 )
 conditional_and_mask_ops.append(where_opinfo)
