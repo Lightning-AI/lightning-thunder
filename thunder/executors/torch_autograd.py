@@ -1,13 +1,14 @@
 from dataclasses import replace
 from enum import auto, Enum
+from typing import Callable, Sequence, Any
 
 import torch
 
 import thunder.core.utils as utils
-from thunder.core.prims import make_prim, PrimIDs
+from thunder.core.prims import make_prim, PrimIDs, python_return
 
 from thunder.core.proxies import TensorProxy, variableify
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import TraceCtx, tracectx
 from thunder.core.transform_common import replace_redundant_inputs
 
 
@@ -16,11 +17,12 @@ class IDs(Enum):
 
 
 def torch_autograd_function_meta(
-    backward_trace: TraceCtx,
-    saved_tensors: tuple,
-    saved_other: tuple,
-    flat_output: tuple,
-    *flat_args: TensorProxy,
+    *,
+    backward: TraceCtx | Callable,
+    saved_tensors: Sequence[TensorProxy],
+    saved_other: Sequence[Any],
+    flat_args: Sequence[TensorProxy],
+    flat_output: Sequence[TensorProxy],
 ):
     return tuple(TensorProxy(like=out) for out in flat_output)
 
@@ -38,6 +40,7 @@ class ThunderFunction(torch.autograd.Function):
         # Here we just propagate the tensors through the autograd graph
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
+        assert isinstance(ctx.compiled_backward, Callable), "compiled_backward must be a callable"
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
@@ -98,6 +101,21 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
 
+    data_for_autograd, (saved_tensors, saved_other) = fw_trace.output
+
+    with tracectx(fw_trace):
+        fw_trace.scopes = [fw_trace.bound_symbols]
+        return_bsym = fw_trace.bound_symbols.pop()
+        assert return_bsym.sym.id == PrimIDs.RETURN
+        out = connect_to_torch_autograd(
+            backward=bw_trace,
+            saved_tensors=saved_tensors,
+            saved_other=saved_other,
+            flat_args=data_for_autograd["flat_args"],
+            flat_output=data_for_autograd["flat_output"],
+        )
+        python_return(out)
+
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
 
@@ -139,7 +157,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # any change in the forward trace must be reflected in the backward
     # trace.
     original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
-    new_fw_saved_tensors_for_backward = fw_extrace.output[1][0]
+    assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
+    new_fw_saved_tensors_for_backward = fw_extrace.bound_symbols[-2].kwargs["saved_tensors"]
     swap_map = {
         variableify(x): y
         for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
@@ -215,11 +234,21 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
         _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
 
-    fw_extrace = del_last_used(fw_extrace)
-    fw_traces.append(fw_extrace)
-
     bw_extrace = del_last_used(bw_extrace, clear_collections=True)
     bw_traces.append(bw_extrace)
+
+    # Update the forward trace with the correct backward function
+    assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
+    fw_extrace.bound_symbols[-2] = replace(
+        fw_extrace.bound_symbols[-2],
+        kwargs={
+            **fw_extrace.bound_symbols[-2].kwargs,
+            "backward": bw_extrace.python_callable(),
+        },
+    )
+
+    fw_extrace = del_last_used(fw_extrace)
+    fw_traces.append(fw_extrace)
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
