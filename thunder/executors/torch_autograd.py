@@ -19,30 +19,6 @@ import thunder
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def get_forward_backward_splitter(func, compile_data, compile_stats):
-        from thunder import trace
-        from thunder.executors.passes import transform_for_execution
-        from thunder.executors.passes import del_last_used
-        from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
-        from thunder.core.transforms import forward_and_backward_from_trace
-        from thunder.cudagraphs import CUDAGraphExecutor
-        from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
-        from thunder.distributed.transforms import FSDPCommBucketing
-
-        utils.check(compile_data is not None, lambda: "`compile_data` is required")
-
-        def make_trace(func):
-            return partial(
-                trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
-            )
-
-        def split_forward_backward_compat(*args, **kwargs):
-            fw_extrace, bw_extrace = split_forward_backward(func, compile_data, compile_stats, *args, **kwargs)
-            return fw_extrace.python_callable(), bw_extrace.python_callable()
-
-        return split_forward_backward_compat
-
-    @staticmethod
     def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
         # Here we just propagate the tensors through the autograd graph
         ctx.saved_other = saved_other
@@ -76,89 +52,6 @@ class ThunderFunction(torch.autograd.Function):
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         return (None, None, None, None, *grads)
-
-
-# TODO: RC1 Remove this
-def thunder_backward(*, compile_data, compile_stats=None):
-    """Decorator to wrap a Thunder function for use with PyTorch autograd.
-
-    Args:
-        thunder_func: A Thunder function.
-
-    Returns:
-        A wrapped function that can be used with PyTorch autograd.
-
-    Example:
-    >>> import torch
-    >>> import thunder.clang as clang
-    >>> from thunder.executors.torchex import thunder_backward
-    >>> @thunder_backward()
-    ... def func(a, b):
-    ...     c = a + b
-    ...     d = c * b
-    ...     e = clang.sin(d) + clang.cos(c)
-    ...     return e
-    >>> a = torch.randn(3, device="cuda", requires_grad=True)
-    >>> b = torch.randn(3, device="cuda", requires_grad=True)
-    >>> c = func(a, b)
-    >>> print(c)
-    >>> sum(c).sum().backward()
-    >>> print(f"a.grad: {a.grad}")
-    >>> print(f"b.grad: {b.grad}")
-    """
-
-    def decorator(thunder_func):
-        from thunder import compile
-
-        # Compile's caching only works for many calls to the same compiled function
-        # It does not work if the same function is compiled many times, so we must
-        # decorate the augmented forward pass once with compile once and reuse it
-        split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_data, compile_stats)
-        compile_config = {
-            "langctx": compile_data.langctx,
-            "executors_list": compile_data.executors_list,
-            "only_execute_prims": compile_data.only_execute_prims,
-            "cache_option": compile_data.cache_option,
-            "use_rematerialization": compile_data.use_rematerialization,
-            "use_cudagraphs": compile_data.use_cudagraphs,
-            **compile_data.compile_options,
-            "disable_preprocessing": True,
-            "disable_torch_autograd_support": True,
-        }
-
-        compiled_split_fw_bw = compile(
-            split_fw_bw,
-            **compile_config,
-        )
-        sig = signature(thunder_func)
-
-        @wraps(thunder_func)
-        def wrapper(*args, **kwargs):
-            # Fetch the compiled forward and backward functions using the
-            # compiled function cache
-            compiled_forward, compiled_backward = compiled_split_fw_bw(*args, **kwargs)
-
-            # Compiled forward function currently doesn't support positional
-            # arguments passed as kwargs, so we must bind them here
-            ba = sig.bind(*args, **kwargs)
-            args, kwargs = ba.args, ba.kwargs
-
-            # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = compiled_forward(*args, **kwargs)
-
-            # Connect produced tensors with PyTorch's autograd graph
-            ThunderFunction.apply(
-                compiled_backward,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
-            )
-            return data_for_autograd["output"]
-
-        return wrapper
-
-    return decorator
 
 
 def split_forward_backward(computation_trc, compile_data, compile_stats, /, *args, **kwargs):

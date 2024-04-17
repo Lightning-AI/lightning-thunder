@@ -16,7 +16,7 @@ ______________________________________________________________________
   <a href="#hello-world">Examples</a> •
   <a href="#inside-thunder-a-brief-look-at-the-core-features">Inside Thunder</a> •
   <a href="#get-involved">Get involved!</a> •
-  <a href="#documentation">Documentation</a>
+  <a href="https://lightning-thunder.readthedocs.io/en/latest/">Documentation</a>
 </p>
 
 [![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/Lightning-AI/lightning-thunder/blob/main/LICENSE)
@@ -219,7 +219,7 @@ Modules and functions compiled with Thunder fully interoperate with vanilla PyTo
 
 ## Documentation
 
-Docs are currently not hosted publicly. However you can build them locally really quickly:
+[Online documentation](https://lightning-thunder.readthedocs.io/en/latest/) is available. To build documentation locally you can use
 
 ```bash
 make docs

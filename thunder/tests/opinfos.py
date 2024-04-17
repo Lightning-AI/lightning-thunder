@@ -2484,10 +2484,26 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(pred, a, b)
 
 
+def where_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"torch.where\(\) does not support only specifying a condition"
+    yield (
+        SampleInput(
+            make(
+                5,
+            )
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+    yield (SampleInput(make(2, 1, 2)), NotImplementedError, err_msg)
+
+
 where_opinfo = OpInfo(
-    clang.where,
+    ltorch.where,
     supports_grad=True,
     sample_input_generator=where_sample_generator,
+    error_input_generator=where_error_generator,
     torch_reference=torch.where,
 )
 conditional_and_mask_ops.append(where_opinfo)
@@ -2666,6 +2682,45 @@ to_opinfo = OpInfo(
     torch_reference=torch.Tensor.to,
 )
 data_movement_ops.append(to_opinfo)
+
+
+def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # None
+    # cpu -> cuda
+    # default cuda -> default cuda (no-op)
+    yield SampleInput(make(4, 4))
+
+    # Explictly pass device
+    # default cuda -> default cuda
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4), device)
+
+
+def cuda_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device="cpu", dtype=torch.float, requires_grad=False)
+
+    err_msg = "`non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+    err_msg = "Invalid device cpu, must be cuda device"
+    yield SampleInput(make(3, 3), device="cpu"), RuntimeError, err_msg
+
+
+cuda_opinfo = OpInfo(
+    ltorch.cuda,
+    sample_input_generator=cuda_sample_generator,
+    error_input_generator=cuda_error_generator,
+    torch_reference=torch.Tensor.cuda,
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            active_if=not torch.cuda.is_available(),
+        ),
+    ),
+)
+data_movement_ops.append(cuda_opinfo)
 
 
 def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
