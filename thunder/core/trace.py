@@ -306,7 +306,7 @@ class TraceCtx:
     # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
-    def python(self, *, print_depth: int = 1, include_no_grad=True) -> str:
+    def python(self, *, print_depth: int = 1) -> str:
         token = set_tracectx(self)
 
         try:
@@ -364,8 +364,7 @@ class TraceCtx:
                 program.append("")
 
             # Prints the signature and the no_grad context (for when calling torch operations)
-            if include_no_grad:
-                program.append("@torch.no_grad()")
+            program.append("@torch.no_grad()")
             # Prints the signature and the no_autocast context
             program.append("@no_autocast()")
             program.append(signature_str)
@@ -398,14 +397,14 @@ class TraceCtx:
     # Returns a Python callable that executes the trace
     # TODO issue "Create a mechanism for freezing TraceCtx objects"
     #   Create a mechanism for freezing traces and cache the compilation
-    def python_callable(self, *, global_dicts: None | dict = None, include_no_grad=True) -> Callable:
+    def python_callable(self, *, global_dicts: None | dict = None) -> Callable:
         python_str: str
 
         # Writes the program to allow it to be edited before execution
         path: None | str = _get_execution_file()
         if path is not None:
             f = open(path, "w")
-            f.write(self.python(include_no_grad=include_no_grad))
+            f.write(self.python())
             f.close()
 
             input(f"Trace written to {os.path.realpath(path)}  Press Any key to execute it")
@@ -413,7 +412,7 @@ class TraceCtx:
             with open(path) as file:
                 python_str = file.read()
         else:
-            python_str = self.python(include_no_grad=include_no_grad)
+            python_str = self.python()
 
         ctx = self.python_ctx()
         if global_dicts is not None:
