@@ -97,12 +97,6 @@ RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
-RUN \
-    # building cudnn-frontend from source
-    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
-    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
-    rm -rf cudnn-frontend
-
 COPY requirements/ requirements/
 
 ENV \
@@ -180,6 +174,12 @@ RUN \
       . && \
     cd .. && \
     rm -rf apex
+
+RUN \
+    # building cudnn-frontend from source
+    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
+    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
+    rm -rf cudnn-frontend
 
 RUN \
     ls -lh requirements/ && \
