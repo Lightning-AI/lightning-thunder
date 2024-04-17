@@ -651,18 +651,7 @@ def jit(
         result = cache_entry.computation_fn(*inps)
 
         if cache_entry.backward_fn:
-            # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = result
-
-            # Connect produced tensors with PyTorch's autograd graph
-            ThunderFunction.apply(
-                cache_entry.backward_fn,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
-            )
-            result = data_for_autograd["output"]
+            pass
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
