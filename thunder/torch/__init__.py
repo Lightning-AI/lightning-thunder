@@ -975,7 +975,9 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
 
 @torchsymbol(torch.broadcast_tensors, is_method=True)
 def broadcast_tensors(*inputs):
-    pass
+    if len(inputs) == 1 and not isinstance(inputs[0], TensorProxy):
+        inputs = inputs[0]
+    return list(clang.maybe_broadcast(*inputs, preserve_cpu_scalar_tensors=False))
 
 
 
@@ -3930,12 +3932,8 @@ def mse_loss(
         exception_type=ValueError,
     )    
 
-    # no need to check input and target dimension 
-    # as torch.nn.functional.mse_loss supports any number of dimensions
-
-    # compare shape of input and target
-    if a.shape != target.shape:
-        # not sure if we need this
+    # warn broadcasting 
+    if a.size() != target.size():
         warnings.warn(
             f"Using a target size {target.size()} that is different to the input size {a.size()}"
             "This will likely lead to incorrect results due to broadcasting."
@@ -3956,7 +3954,27 @@ def mse_loss(
     else:
         raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
+@torchsymbol("mse_loss_backward", id="mse_loss_backward", is_prim=True)
+def mse_loss_backward(g, a, /, target, reduction):
+    return TensorProxy(like=g, shape=a.shape)
 
+def _mse_loss_grad(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    size_average: None | Any = None,
+    reduce: None | Any = None,
+    reduction: str = "mean"
+) -> TensorLike:
+    fwd: TensorLike = mse_loss(a, target, size_average, reduce, reduction)
+
+    g: TensorLike = get_grad(fwd)
+    a_grad: TensorLike = mse_loss_backward(g, a, target, reduction)
+    put_grad(a, a_grad)
+    
+    return fwd
+
+register_grad(mse_loss, _mse_loss_grad)
 
 # TODO Add annotations
 # NOTE The scale parameter is kwarg-only in PyTorch
