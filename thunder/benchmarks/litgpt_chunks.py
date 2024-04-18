@@ -1,7 +1,7 @@
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import wraps
 from itertools import groupby, product
-from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -163,20 +163,20 @@ def wrap_for_benchmark(fn):
     return fn_
 
 
-def forward_and_backward(torch_trace: TraceCtx, jit_fn: Callable):
+def backward_only(torch_trace: TraceCtx, jit_fn: Callable, fw_setup_fn: Callable):
     fn = torch_trace.python_callable(include_no_grad=False)
     jfn = jit_fn(fn)
+    args, kwargs = fw_setup_fn()
+    result = jfn(*args, **kwargs)
+    result = thunder.core.utils.sequencify(result)
 
-    @wraps(jfn)
-    def wrapper(*args, **kwargs):
-        result = jfn(*args, **kwargs)
-        if isinstance(result, Sequence):
-            torch.autograd.backward(result, [torch.ones_like(x) for x in result])
-        else:
-            result.backward(torch.ones_like(result))
-        return result
+    def backward_fn(*args, **kwargs):
+        for a in args:
+            a.grad = None
 
-    return wrapper
+        torch.autograd.backward(result, args, retain_graph=True)
+
+    return backward_fn
 
 
 executor_names = {
@@ -198,6 +198,9 @@ class TraceInfo:
     config_name: str
     region_idx: int
     trace: TraceCtx
+
+    def __repr__(self):
+        return f"TraceInfo(config_name={self.config_name}, region_idx={self.region_idx})"
 
 
 # litgpt_traces = [
@@ -224,7 +227,8 @@ trace_executor_pairs = list(product(litgpt_traces, (executor_names.keys())))
         for info, executor in trace_executor_pairs
     ],
 )
-def test_litgpt(benchmark, info, executor):
+@pytest.mark.benchmark(group="forward")
+def test_litgpt_forward(benchmark, info, executor):
     torch_trace = info.trace
 
     def setup():
@@ -237,7 +241,46 @@ def test_litgpt(benchmark, info, executor):
             args.append(make_tensor(a.shape, dtype=torch_dtype, device=torch_device, requires_grad=is_float, low=low))
         return args, {}
 
-    fn = forward_and_backward(torch_trace, executor)
+    fn = torch_trace.python_callable(include_no_grad=False)
+    fn = executor(fn)
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "info, executor",
+    trace_executor_pairs,
+    ids=[
+        f"{info.config_name}_region{info.region_idx}_{executor_names[executor]}"
+        for info, executor in trace_executor_pairs
+    ],
+)
+@pytest.mark.benchmark(group="backward")
+def test_litgpt_backward(benchmark, info, executor):
+    torch_trace = info.trace
+
+    def fw_setup():
+        args = []
+        for a in torch_trace.args:
+            torch_dtype = thunder.torch.to_torch_dtype(a.dtype)
+            torch_device = thunder.core.devices.to_torch_device(a.device)
+            is_float = isinstance(a.dtype, thunder.core.dtypes.floating)
+            low = 0 if not is_float else None
+            args.append(make_tensor(a.shape, dtype=torch_dtype, device=torch_device, requires_grad=is_float, low=low))
+        return args, {}
+
+    def bw_setup():
+        args = []
+        for a in torch_trace.output:
+            torch_dtype = thunder.torch.to_torch_dtype(a.dtype)
+            torch_device = thunder.core.devices.to_torch_device(a.device)
+            is_float = isinstance(a.dtype, thunder.core.dtypes.floating)
+            low = 0 if not is_float else None
+            args.append(make_tensor(a.shape, dtype=torch_dtype, device=torch_device, requires_grad=False, low=low))
+        return args, {}
+
+    fn = backward_only(torch_trace, executor, fw_setup)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=bw_setup, rounds=20, warmup_rounds=1)
