@@ -3940,7 +3940,7 @@ def mse_loss(
             "Please ensure they have the same size."
         )
         a, target = broadcast_tensors(a, target)
-    out = pow(a - target, 2)
+    out = pow(sub(a,target), 2)
 
     # maybe add _apply_loss_reduction
     # (like https://github.com/pytorch/pytorch/blob/df5829d0babaefc6e271897d6fffd40073d8b723/torch/_refs/nn/functional/__init__.py#L490)

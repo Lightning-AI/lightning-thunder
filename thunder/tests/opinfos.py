@@ -7245,22 +7245,18 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
     shapes = (
         ((2, 16), (2, 16)),
         ((7, 18), (7, 18)),
+        ((3, 4, 2, 3), (3, 4, 2, 3)),
     )
 
     reduction_options = ("none", "mean", "sum")
 
     for shape, reduction_str in itertools.product(shapes, reduction_options):
         input_shape, target_shape = shape
-        probability_target = input_shape == target_shape
 
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
-            make(shape[0]),
-            (
-                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
-                if not probability_target
-                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
-            ),
+            make(shape[0], low=0.0, high=1.0, requires_grad=True),
+            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False),
             reduction=reduction_str,
         )
 
@@ -7272,17 +7268,12 @@ mse_loss_opinfo = OpInfo(
     torch_reference=torch.nn.functional.mse_loss,
     dtypes=(datatypes.floating,),
     test_directives=(
+        # NOTE Torch does not support bf16 mse_loss 
         DecorateInfo(
-            pytest.mark.xfail,
+            pytest.mark.skip,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bfloat16,),
             devicetypes=(devices.DeviceType.CPU,),
-        ),
-        DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
-            "test_phantom_grad_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
     ),
 )
