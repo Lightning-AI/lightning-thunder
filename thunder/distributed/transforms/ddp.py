@@ -3,6 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from thunder.common import CompileData
 from thunder.core import dtypes
 from thunder.core import devices
 from thunder.core import prims
@@ -28,12 +29,10 @@ if TYPE_CHECKING:
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import VariableInterface
-    from thunder.common import CompileData
 
 
 __all__ = [
     "apply_bucketing_to_grad_allreduce",
-    "optimize_allreduce_in_ddp_backward",
 ]
 
 
@@ -241,20 +240,46 @@ def optimize_allreduce_in_ddp_backward(
     return updated_bwd_trace
 
 
-def apply_bucketing_to_grad_allreduce(
-    trace: TraceCtx,
-    compile_data: CompileData | None = None,
-) -> tuple[TraceCtx, bool]:
-    if get_skip_data_parallel_grad_sync():
-        return trace, False
+def apply_bucketing_to_grad_allreduce(trace: TraceCtx) -> TraceCtx:
+    """Apply Bucketing to Gradient AllReduce.
 
+    This method takes a trace which could be one representing forward or backward of an
+    :class:`~torch.nn.Module` and also one representing a method, not a PyTorch Module.
+    Then this applies bucketing to the input when it is a trace defining a DDP backward computation
+    where :func:`~thunder.distributed.all_reduce` is applied to gradients.
+    Otherwise, this method returns the input trace as is.
+
+    Args:
+        trace: A :class:`thunder.core.trace.TraceCtx`.
+
+    Returns:
+        :class:`thunder.core.trace.TraceCtx`
+    """
+
+    from torch.distributed import ProcessGroup
+    from thunder.core.compile_data import get_compile_data
+
+    if get_skip_data_parallel_grad_sync():
+        return trace
+
+    compile_data = get_compile_data()
     if compile_data is None:
         import thunder
 
         compile_data = thunder.compile_data(trace)
+    utils.check_type(compile_data, CompileData)
 
-    producers, consumers = utils.producers_and_consumers(trace)
-    flat_trace_output, flat_trace_output_spec = tree_flatten(trace.output)
+    if not compile_data.is_module:
+        return trace
+
+    # NOTE(crcrpar): Will need to allow `use_fsdp` once hybrid shard is implemented.
+    if getattr(compile_data.fn, "use_ddp", False):
+        utils.check_type(compile_data.process_group_for_ddp, ProcessGroup)
+    else:
+        return trace
+
+    producers = utils.producers(trace)
+    flat_trace_output, _ = tree_flatten(trace.output)
     output_tensor_to_index_and_prod_bsym = utils.ProxyDict()  # dict[Proxy, tuple[int, BoundSymbol]]
     for index, output in enumerate(flat_trace_output):
         if isinstance(output, TensorProxy):
@@ -273,6 +298,6 @@ def apply_bucketing_to_grad_allreduce(
             )
             grad_before_after_allreduce[bsym.flat_proxy_outs[0]] = bsym_of_allreduce.flat_proxy_args[0]
     if len(grad_before_after_allreduce._dict) == 0:
-        return trace, False
+        return trace
 
-    return optimize_allreduce_in_ddp_backward(trace, compile_data=compile_data), True
+    return optimize_allreduce_in_ddp_backward(trace, compile_data=compile_data)

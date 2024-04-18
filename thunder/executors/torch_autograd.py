@@ -196,10 +196,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         skip_subsymbols=False,
     )
     bw_trace.bound_symbols = new_bsyms
-    # if getattr(compile_data.fn, "use_ddp", False):
-    #     from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
 
-    #     bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
