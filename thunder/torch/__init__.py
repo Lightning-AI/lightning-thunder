@@ -973,12 +973,12 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
 
+
 @torchsymbol(torch.broadcast_tensors, is_method=True)
 def broadcast_tensors(*inputs):
     if len(inputs) == 1 and not isinstance(inputs[0], TensorProxy):
         inputs = inputs[0]
     return list(clang.maybe_broadcast(*inputs, preserve_cpu_scalar_tensors=False))
-
 
 
 #
@@ -3920,7 +3920,7 @@ def mse_loss(
     target: TensorLike,
     size_average: None | Any = None,
     reduce: None | Any = None,
-    reduction: str = "mean"
+    reduction: str = "mean",
 ) -> TensorLike:
     utils.check(
         size_average is None and reduce is None,
@@ -3930,9 +3930,9 @@ def mse_loss(
         reduction in ("none", "sum", "mean"),
         lambda: f'Expected reduction string to be "none", "sum", or "mean", but it is {reduction}.',
         exception_type=ValueError,
-    )    
+    )
 
-    # warn broadcasting 
+    # warn broadcasting
     if a.size() != target.size():
         warnings.warn(
             f"Using a target size {target.size()} that is different to the input size {a.size()}"
@@ -3942,7 +3942,7 @@ def mse_loss(
         a, target = broadcast_tensors(a, target)
     out = pow(a - target, 2)
 
-    # maybe add _apply_loss_reduction 
+    # maybe add _apply_loss_reduction
     # (like https://github.com/pytorch/pytorch/blob/df5829d0babaefc6e271897d6fffd40073d8b723/torch/_refs/nn/functional/__init__.py#L490)
     # not sure if this would be useful
     if reduction == "none":
@@ -3954,9 +3954,11 @@ def mse_loss(
     else:
         raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
+
 @torchsymbol("mse_loss_backward", id="mse_loss_backward", is_prim=True)
 def mse_loss_backward(g, a, /, target, reduction):
     return TensorProxy(like=g, shape=a.shape)
+
 
 def _mse_loss_grad(
     a: TensorLike,
@@ -3964,17 +3966,19 @@ def _mse_loss_grad(
     target: TensorLike,
     size_average: None | Any = None,
     reduce: None | Any = None,
-    reduction: str = "mean"
+    reduction: str = "mean",
 ) -> TensorLike:
     fwd: TensorLike = mse_loss(a, target, size_average, reduce, reduction)
 
     g: TensorLike = get_grad(fwd)
     a_grad: TensorLike = mse_loss_backward(g, a, target, reduction)
     put_grad(a, a_grad)
-    
+
     return fwd
 
+
 register_grad(mse_loss, _mse_loss_grad)
+
 
 # TODO Add annotations
 # NOTE The scale parameter is kwarg-only in PyTorch
