@@ -3257,8 +3257,7 @@ def _cross_entropy_loss_label_smoothing(
     smooth_loss = sum(out, dim=channels_dim)
 
     # Make target broadcastable with output, which has same shape as input tensor.
-    bcast_target = unsqueeze(target, channels_dim)
-    selected_target_mask = bcast_target != ignore_index
+    selected_target_mask = target != ignore_index
     smooth_loss = where(selected_target_mask, smooth_loss, 0)
 
     if reduction == "none":
@@ -3271,9 +3270,11 @@ def _cross_entropy_loss_label_smoothing(
             # Gather the weights for each target class.
             # Mask the ignored target classes.
             # Sum together all target weights.
+            # Make target broadcastable with output, which has same shape as input tensor.
             expanded_weight = expand(bcast_weight, a.shape)
-            target_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
-            selected_weight = where(selected_target_mask, target_weight, 0)
+            bcast_target = unsqueeze(target, channels_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
+            selected_weight = where(selected_target_mask, squeeze(selected_weight), 0)
             ret = reduced_sum / sum(selected_weight)
         else:
             # The weight tensor is none, so the total weight is the number of valid target elements not equal to
