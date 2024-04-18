@@ -37,7 +37,7 @@ TE_AVAILABLE: bool = package_available("transformer_engine")
 # between version 1.2 and 1.3.
 # Hence, we have these guards based on version.
 TE_VERSION_1_3_PLUS: bool = False
-TE_VERSION_1_4_PLUS: bool = False
+TE_VERSION_1_5_PLUS: bool = False
 
 te: None | Any = None
 if TE_AVAILABLE:
@@ -53,7 +53,7 @@ if TE_AVAILABLE:
         TE_AVAILABLE = False
 
     TE_VERSION_1_3_PLUS = LooseVersion(version("transformer_engine")) >= LooseVersion("1.3")
-    TE_VERSION_1_4_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.4")
+    TE_VERSION_1_5_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.5")
 if not TE_AVAILABLE:
     TransformerEngineBaseModule = object
 
@@ -140,7 +140,7 @@ class Context:
 
         if TE_VERSION_1_3_PLUS:
             ctx_dict["cpu_offloading"] = self.cpu_offloading
-        if TE_VERSION_1_4_PLUS:
+        if TE_VERSION_1_5_PLUS:
             ctx_dict["primary_weights_in_fp8"] = self.primary_weights_in_fp8
         else:
             ctx_dict.update(
@@ -171,7 +171,7 @@ class Context:
         ctx.requires_dgrad = d["requires_dgrad"]
         if TE_VERSION_1_3_PLUS:
             ctx.cpu_offloading = d["cpu_offloading"]
-        if TE_VERSION_1_4_PLUS:
+        if TE_VERSION_1_5_PLUS:
             ctx.primary_weights_in_fp8 = d["primary_weights_in_fp8"]
         else:
             ctx.ub_split_ag = d["ub_split_ag"]
@@ -265,7 +265,7 @@ class TELinear(TransformerEngineBaseModule):
             }
             if TE_VERSION_1_3_PLUS:
                 kwargs["cpu_offloading"] = CPUOffloadEnabled
-            if TE_VERSION_1_4_PLUS:
+            if TE_VERSION_1_5_PLUS:
                 kwargs.update(
                     {
                         # ref: https://github.com/NVIDIA/TransformerEngine/blame/7c1828f80edc1405d4ef1a7780c9e0046beab5c7/transformer_engine/pytorch/module/linear.py#L70
