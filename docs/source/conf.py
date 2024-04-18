@@ -50,6 +50,7 @@ github_repo = project
 linkcheck_ignore = [
     rf"https://github.com/Lightning-AI/lightning-thunder(/.*|\.git)",
     rf"https://github.com/Lightning-AI/.*/blob/.*#.*",  # github anchors are tricky
+    rf"https://github.com/pytorch/.*/blob/.*#.*",  # github anchors are tricky
 ]
 
 # -- Project documents -------------------------------------------------------

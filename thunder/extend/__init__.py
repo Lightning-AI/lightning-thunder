@@ -1,16 +1,23 @@
 import enum
 import sys
+import os
+import itertools
 from typing import Any
+from collections.abc import Sequence
 from collections.abc import Callable
 from collections.abc import Hashable
 from types import ModuleType
+import warnings
+from functools import cache, partial
 
 import torch.cuda
+
 
 from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
 from thunder.core.proxies import Proxy
+from thunder.core.baseutils import run_once
 
 __all__ = [
     "register_executor",
@@ -32,15 +39,18 @@ class ImplInfo:
     def __init__(
         self,
         *,
-        symbol: None | Symbol = None,
-        checker: None | Callable = None,
-        execution_transform: None | Callable = None,
-        grad_transform: None | Callable = None,
+        symbol: Symbol | None = None,
+        checker: Callable | None = None,
+        execution_transform: Callable | None = None,
+        grad_transform: Callable | None = None,
     ):
-        self.symbol: Symbol = symbol
-        self.checker: Callable = checker
-        self.execution_transform: None | Callable = execution_transform
-        self.grad_transform: None | Callable = grad_transform
+        self.symbol: Symbol | None = symbol
+        # None implies that the symbol is always executable.
+        self.checker: Callable | None = checker
+        # None implies that the symbol is called as-is.
+        self.execution_transform: Callable | None = execution_transform
+        # None implies that the symbol has no grad, or that the grad is in _grad_fn_map.
+        self.grad_transform: Callable | None = grad_transform
 
 
 class Executor:
@@ -64,7 +74,7 @@ class Executor:
         return self._implmap
 
     def __repr__(self) -> str:
-        return self.name
+        return str(self.name)
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -154,10 +164,10 @@ class FusionExecutor(Executor):
     def set_fuel(self, value: int | FUEL_LEVEL):
         raise NotImplementedError
 
-    def fusion_pass(trace: TraceCtx) -> TraceCtx:
+    def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         raise NotImplementedError
 
-    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:
+    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:  # type: ignore (circular import)
         raise NotImplementedError
 
     def register_supported(
@@ -170,8 +180,8 @@ class FusionExecutor(Executor):
     ):
         impl = ImplInfo(checker=checker, execution_transform=execution_transform, grad_transform=grad_transform)
 
-        id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
-        self.implmap[id] = impl
+        _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
+        self.implmap[_id] = impl
 
     def register_temporary_operation(
         self, name: str, fn: Callable, *, inputs: list[Proxy], outputs: list[Proxy], bsyms: list[BoundSymbol]
@@ -181,7 +191,7 @@ class FusionExecutor(Executor):
 
         def _bind_postprocess(bsym: BoundSymbol) -> None:
             bsym.subsymbols = tuple(bsyms)
-            bsym._call_ctx: dict[str, Callable] = {name: fn}
+            bsym._call_ctx = {name: fn}
 
         sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
         return sym.bind(*inputs, output=outputs)
@@ -204,7 +214,7 @@ class OperatorExecutor(Executor):
         self,
         name: str,
         *,
-        like: None | Callable = None,
+        like: None | Symbol = None,
         meta: None | Callable = None,
         tags: None | list[Any] = None,
         module: None | type | ModuleType = None,
@@ -213,10 +223,14 @@ class OperatorExecutor(Executor):
         replaces: None | Callable = None,
         python_printer: Callable = default_python_printer,
     ) -> Symbol:
-        assert (like is None) ^ (meta is None), "Expected one and only one of 'like' and 'meta' to be specified"
+        ln = like is None
+        mn = meta is None
+        assert (
+            ln ^ mn
+        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
         assert (module is not None) + (
             fn is not None
-        ) <= 2, "Expected one and only one of 'module' or 'fn' to be specified"
+        ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
 
         # NOTE Directly specifying a meta function makes the operation a prim
         is_prim = meta is not None
@@ -264,8 +278,66 @@ class OperatorExecutor(Executor):
             symbol=op, checker=checker, execution_transform=execution_transform, grad_transform=grad_transform
         )
 
-        id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
-        self.implmap[id] = impl
+        _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
+        self.implmap[_id] = impl
+
+
+def single_op_executor(
+    exc_name: Hashable,
+    op_name: str,
+    fn: Callable,
+    meta: Callable,
+    *,
+    version: None | Any = None,
+    replaces: Callable | None = None,
+    tags: None | list[Any] = None,
+    checker: None | Callable = None,
+    execution_transform: None | Callable = None,
+    grad_transform: None | Callable = None,
+) -> OperatorExecutor:
+    """
+    Creates a new OperatorExecutor, registers it with thunder, and registers a new operator with it,
+    implemented with fn. Also registers the implementation of the operator with the executor.
+
+    If the operator needs a backward, you should provide a `grad_transform` function.
+
+    Args:
+        exc_name: The name of the executor.
+        op_name: The name of the operator created in the executor.
+        fn: The function that implements the operator.
+        meta: The meta function for the operator. Meta functions are the functions that the interpreter
+              uses to trace with. The meta function takes the same arguments as `fn`, with the exception
+              that the objects passed to it are proxied, and it should return proxy (`TensorProxy`) objects
+              with the appropriate metadata, identical to the way that `fn` would return them for those given inputs.
+
+        version: The version of the executor. Defaults to None.
+        replaces: The function that you call in your code, which `fn` replaces. For example, if you have a
+                  custom sdpa kernel, you could replace torch.nn.functional.scaled_dot_product_attention
+                  with it to run your benchmarks without code changes.
+        checker: The checker function for the operator. If you're using a cuda kernel for example, you have
+                 the option to assert that all input tensors are on the same cuda device.
+        execution_transform: The execution transform function of the operator.
+        grad_transform: The grad transform function of the operator.
+    """
+    exc = OperatorExecutor(exc_name, version=version)
+    register_executor(exc)
+
+    if replaces is None:
+        replaces = fn
+
+    sym = exc.register_operator(
+        op_name,
+        fn=fn,
+        replaces=replaces,
+        meta=meta,
+        tags=tags,
+    )
+
+    exc.register_implementation(
+        sym, op=sym, checker=checker, execution_transform=execution_transform, grad_transform=grad_transform
+    )
+
+    return exc
 
 
 # Creates common datastructures
@@ -276,29 +348,12 @@ _always_executors: list[Executor] = []
 
 # Registers a new executor with thunder
 # Either accepts one of the executor classes above, or the components necessary to create one
-def register_executor(
-    ex: Hashable | Executor, *, opmap: None | dict = None, fusion_pass: None | Callable = None
-) -> Executor:
-    ex_: Executor
-    if isinstance(ex, Executor):
-        assert opmap is None and fusion_pass is None
-        ex_ = ex
-    else:
-        # NOTE isinstance(ex, Executor) is False
-        # Assumes ex is an id describing an executor
-        assert opmap is not None or fusion_pass is not None
-
-        if fusion_pass is not None:
-            ex_ = FusionExecutor(ex, opmap=opmap, fusion_pass=fusion_pass)
-        else:
-            # NOTE opmap is not None
-            ex_ = OperatorExecutor(ex, opmap=opmap)
-
-    _executor_map[ex_.name] = ex_
-    return ex_
+def register_executor(ex: Executor) -> Executor:
+    _executor_map[ex.name] = ex
+    return ex
 
 
-def get_all_executors() -> tuple[Executor]:
+def get_all_executors() -> tuple[Executor, ...]:
     # manually import all native executors to let them register themselves
     from thunder.executors import (
         apex_entropyex,
@@ -316,11 +371,11 @@ def get_all_executors() -> tuple[Executor]:
     return tuple(_executor_map.values())
 
 
-def get_default_executors() -> tuple[Executor]:
+def get_default_executors() -> tuple[Executor, ...]:
     return tuple(_default_executors)
 
 
-def get_always_executors() -> tuple[Executor]:
+def get_always_executors() -> tuple[Executor, ...]:
     return tuple(_always_executors)
 
 
@@ -364,25 +419,71 @@ def add_always_executor(ex: Executor) -> list[Executor]:
 def remove_default_executor(ex: Hashable | Executor) -> list[Executor]:
     global _default_executors
 
-    id = ex.name if isinstance(ex, Executor) else ex
-    _default_executors = list([x for x in _default_executors if x.name != id])
+    _id = ex.name if isinstance(ex, Executor) else ex
+    _default_executors = list([x for x in _default_executors if x.name != _id])
     return _default_executors
 
 
 def remove_always_executor(ex: Hashable | Executor) -> list[Executor]:
     global _always_executors
 
-    id = ex.name if isinstance(ex, Executor) else ex
-    _always_executors = list([x for x in _always_executors if x.name != id])
+    _id = ex.name if isinstance(ex, Executor) else ex
+    _always_executors = list([x for x in _always_executors if x.name != _id])
     return _always_executors
 
 
 # Deregisters an executor -- removing it from default and always lists
 def deregister_executor(ex: Hashable | Executor) -> None:
-    id: Hashable = ex.name if isinstance(ex, Executor) else ex
+    _id: Hashable = ex.name if isinstance(ex, Executor) else ex
 
-    if id in _executor_map:
-        del _executor_map[id]
+    if _id in _executor_map:
+        del _executor_map[_id]
 
-    remove_always_executor(id)
-    remove_default_executor(id)
+    remove_always_executor(_id)
+    remove_default_executor(_id)
+
+
+def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Executor, ...]:
+    """
+    Look up registered executors by name. If executors is None, return the default executors.
+    """
+    if executors is None:
+        return get_default_executors()
+
+    failed_executors: list[str] = []
+    resolved_executors: list[Executor] = []
+    for e in executors:
+        if isinstance(e, str):
+            ex = get_executor(e)
+            if not ex:
+                failed_executors.append(e)
+                continue
+            else:
+                resolved_executors.append(ex)
+        else:
+            resolved_executors.append(e)
+
+    if failed_executors:
+        raise ValueError(
+            f"Expected an Executor or the name of a registered Executor, instead got: {failed_executors[0] if len(failed_executors) == 1 else failed_executors}"
+            + os.linesep
+            + f"Registered executors: {get_all_executors()}"
+        )
+
+    if duplicates := {x for x in resolved_executors if resolved_executors.count(x) > 1}:
+        raise ValueError(f"Duplicate executors in the list of executors. Duplicates: {duplicates}")
+
+    return tuple(resolved_executors)
+
+
+def add_executor_lists(
+    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
+) -> Sequence[Executor]:
+    new_exc_list = []
+    exc_list = resolve_executors(exc_list)
+    other_exc_list = resolve_executors(other_exc_list)
+    for exc in itertools.chain(exc_list, other_exc_list):
+        if not exc in new_exc_list:
+            new_exc_list.append(exc)
+
+    return new_exc_list

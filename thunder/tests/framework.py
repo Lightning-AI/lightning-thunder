@@ -134,7 +134,14 @@ class TestExecutor:
     @singledispatchmethod
     def make_callable_legacy(self, fn, **kwargs):
         assert kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(fn, executors_list=self.executors_list(), disable_preprocessing=True, **kwargs)
+        assert kwargs.pop("disable_torch_autograd_support", True)
+        return thunder.compile(
+            fn,
+            executors_list=self.executors_list(),
+            disable_preprocessing=True,
+            disable_torch_autograd_support=True,
+            **kwargs,
+        )
 
     @singledispatchmethod
     def make_callable(self, fn, **kwargs):

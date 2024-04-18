@@ -465,7 +465,7 @@ def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict
 #
 
 
-def run_once(f: Callable[[], Any]) -> Callable[[], Any]:
+def run_once(f: Callable) -> Callable:
     """
     Wraps a function with no arguments so that it caches the output and only runs once.
     This is similar to functools.cache, but unlike the standard wrapper does not cache the arguments,
