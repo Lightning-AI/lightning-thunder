@@ -7237,6 +7237,57 @@ nll_loss_opinfo = OpInfo(
 )
 nn_ops.append(nll_loss_opinfo)
 
+def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input_shape, target_shape
+    shapes = (
+        ((2, 16), (2, 16)),
+        ((7, 18), (7, 18)),
+    )
+
+    reduction_options = ("none", "mean", "sum")
+
+    for shape, reduction_str in itertools.product(
+        shapes, reduction_options 
+    ):
+        input_shape, target_shape = shape
+        probability_target = input_shape == target_shape
+        
+        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+        yield SampleInput(
+            make(shape[0]),
+            (
+                make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False)
+                if not probability_target
+                else make(shape[1], low=0.0, high=1.0, requires_grad=True)
+            ),
+            reduction=reduction_str,
+        )
+
+mse_loss_opinfo = OpInfo(
+    ltorch.mse_loss,
+    supports_grad=True,
+    sample_input_generator=mse_loss_sample_generator,
+    torch_reference=torch.nn.functional.mse_loss,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+    )
+)
+
+nn_ops.append(mse_loss_opinfo)
 
 def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
