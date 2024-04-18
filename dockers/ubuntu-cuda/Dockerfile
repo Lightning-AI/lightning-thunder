@@ -34,7 +34,8 @@ ENV \
     PATH="$PATH:/root/.local/bin" \
     CUDA_TOOLKIT_ROOT_DIR="/usr/local/cuda" \
     MKL_THREADING_LAYER="GNU" \
-    MAKEFLAGS="-j$(nproc)"
+    # compilation si too memory demanding so use only half of the cores
+    MAKEFLAGS="-j$(( $(nproc) / 2 ))"
 
 RUN \
     apt-get update -qq --fix-missing && \

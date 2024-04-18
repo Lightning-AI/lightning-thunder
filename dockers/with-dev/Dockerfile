@@ -16,8 +16,6 @@ ARG BASE_IMAGE_TAG
 
 FROM pytorchlightning/lightning-thunder:${BASE_IMAGE_TAG}
 
-ARG TRANSFORMER_ENGINE_CHECKOUT="stable"
-
 SHELL ["/bin/bash", "-c"]
 
 COPY requirements/ requirements/
