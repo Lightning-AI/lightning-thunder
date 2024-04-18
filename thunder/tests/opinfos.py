@@ -7150,6 +7150,14 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
         'Expected reduction string to be "none", "sum", or "mean", but it is (.*?).',
     )
 
+    # target tensor is not integer dtype
+    float_target = make(target_shape, low=0, high=C, dtype=torch.float, requires_grad=False)
+    yield (
+        SampleInput(valid_input, float_target),
+        RuntimeError,
+        "Expected target to be a tensor with an integer dtype, but it has dtype (.*?).",
+    )
+
     # input tensor has 0 dimensions
     scalar_input = make(scalar_shape := ())
     yield (

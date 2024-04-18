@@ -3175,6 +3175,11 @@ def _cross_entropy_input_checks(
 
     if a.shape != target.shape:
         utils.check(
+            utils.is_integer_dtype(target.dtype),
+            lambda: f"Expected target to be a tensor with an integer dtype, but it has dtype {target.dtype}.",
+        )
+
+        utils.check(
             a.ndim == target.ndim + 1,
             lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
         )
