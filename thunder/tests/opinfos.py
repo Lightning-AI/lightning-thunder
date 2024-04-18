@@ -7183,7 +7183,7 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
     yield (
         SampleInput(valid_input, valid_target, label_smoothing=out_of_bounds_label_smoothing),
         RuntimeError,
-        r"Expected label_smoothing to in \[0, 1\] range but got 1.5.",
+        r"Expected label_smoothing to be in \[0, 1\] range but got 1.5.",
     )
 
     # target tensor is not integer dtype

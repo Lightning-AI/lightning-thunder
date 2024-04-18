@@ -3159,7 +3159,7 @@ def _cross_entropy_input_checks(
 
     utils.check(
         label_smoothing >= 0.0 and label_smoothing <= 1.0,
-        lambda: f"Expected label_smoothing to in [0, 1] range but got {label_smoothing}.",
+        lambda: f"Expected label_smoothing to be in [0, 1] range but got {label_smoothing}.",
     )
 
     # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
