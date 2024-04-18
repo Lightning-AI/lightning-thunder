@@ -1216,6 +1216,8 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 def maybe_broadcast(*args, preserve_cpu_scalar_tensors=False):
     # torch sets preserve_cpu_scalar_tensors=True as default
     # but this throws error in several areas so I have set this to False
+    # once this implementation has been confirmed, I can set this back to True and
+    # modify else where error occurs
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
