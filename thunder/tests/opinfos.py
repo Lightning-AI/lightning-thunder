@@ -7255,8 +7255,8 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
 
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
-            make(shape[0], low=0.0, high=1.0, requires_grad=True),
-            make(shape[1], low=0, high=C, dtype=torch.long, requires_grad=False),
+            make(input_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
+            make(target_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
             reduction=reduction_str,
         )
 
