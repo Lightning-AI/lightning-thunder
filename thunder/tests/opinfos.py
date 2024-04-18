@@ -7237,6 +7237,7 @@ nll_loss_opinfo = OpInfo(
 )
 nn_ops.append(nll_loss_opinfo)
 
+
 def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -7248,12 +7249,10 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
 
     reduction_options = ("none", "mean", "sum")
 
-    for shape, reduction_str in itertools.product(
-        shapes, reduction_options 
-    ):
+    for shape, reduction_str in itertools.product(shapes, reduction_options):
         input_shape, target_shape = shape
         probability_target = input_shape == target_shape
-        
+
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(shape[0]),
@@ -7264,6 +7263,7 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
             ),
             reduction=reduction_str,
         )
+
 
 mse_loss_opinfo = OpInfo(
     ltorch.mse_loss,
@@ -7284,10 +7284,11 @@ mse_loss_opinfo = OpInfo(
             dtypes=(datatypes.bfloat16, datatypes.float16),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
-    )
+    ),
 )
 
 nn_ops.append(mse_loss_opinfo)
+
 
 def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
