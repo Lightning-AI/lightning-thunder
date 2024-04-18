@@ -37,7 +37,7 @@ TE_AVAILABLE: bool = package_available("transformer_engine")
 # between version 1.2 and 1.3.
 # Hence, we have these guards based on version.
 TE_VERSION_1_3_PLUS: bool = False
-TE_VERSION_1_5_PLUS: bool = False
+TE_VERSION_1_6_PLUS: bool = False
 
 te: None | Any = None
 if TE_AVAILABLE:
@@ -53,7 +53,7 @@ if TE_AVAILABLE:
         TE_AVAILABLE = False
 
     TE_VERSION_1_3_PLUS = LooseVersion(version("transformer_engine")) >= LooseVersion("1.3")
-    TE_VERSION_1_5_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.5")
+    TE_VERSION_1_6_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.6")
 if not TE_AVAILABLE:
     TransformerEngineBaseModule = object
 
@@ -140,8 +140,11 @@ class Context:
 
         if TE_VERSION_1_3_PLUS:
             ctx_dict["cpu_offloading"] = self.cpu_offloading
-        if TE_VERSION_1_5_PLUS:
+        if TE_VERSION_1_6_PLUS:
             ctx_dict["primary_weights_in_fp8"] = self.primary_weights_in_fp8
+            ctx_dict["is_input_fp8"] = self.is_input_fp8
+            ctx_dict["reduce_and_update_bwd_fp8_tensors"] = self.reduce_and_update_bwd_fp8_tensors
+            ctx_dict["ub_overlap_ag"] = self.ub_overlap_ag
         else:
             ctx_dict.update(
                 {
@@ -171,8 +174,11 @@ class Context:
         ctx.requires_dgrad = d["requires_dgrad"]
         if TE_VERSION_1_3_PLUS:
             ctx.cpu_offloading = d["cpu_offloading"]
-        if TE_VERSION_1_5_PLUS:
+        if TE_VERSION_1_6_PLUS:
             ctx.primary_weights_in_fp8 = d["primary_weights_in_fp8"]
+            ctx.is_input_fp8 = d["is_input_fp8"]
+            ctx.reduce_and_update_bwd_fp8_tensors = d["reduce_and_update_bwd_fp8_tensors"]
+            ctx.ub_overlap_ag = d["ub_overlap_ag"]
         else:
             ctx.ub_split_ag = d["ub_split_ag"]
             ctx.ub_atomic_gemm_ag = d["ub_atomic_gemm_ag"]
@@ -265,7 +271,7 @@ class TELinear(TransformerEngineBaseModule):
             }
             if TE_VERSION_1_3_PLUS:
                 kwargs["cpu_offloading"] = CPUOffloadEnabled
-            if TE_VERSION_1_5_PLUS:
+            if TE_VERSION_1_6_PLUS:
                 kwargs.update(
                     {
                         # ref: https://github.com/NVIDIA/TransformerEngine/blame/7c1828f80edc1405d4ef1a7780c9e0046beab5c7/transformer_engine/pytorch/module/linear.py#L70
