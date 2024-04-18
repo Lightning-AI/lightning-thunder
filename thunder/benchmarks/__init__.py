@@ -729,8 +729,8 @@ def inductor_gemm_executor(fn: Callable, gemm_backend: str) -> Callable:
     return wrapper
 
 
-inductor_cutlass_executor = partial(inductor_gemm_executor, gemm_backend="ATEN,CUTLASS")
-inductor_triton_executor = partial(inductor_gemm_executor, gemm_backend="ATEN,TRITON")
+inductor_cutlass_executor = partial(inductor_gemm_executor, gemm_backend="CUTLASS")
+inductor_triton_executor = partial(inductor_gemm_executor, gemm_backend="TRITON")
 
 
 def thunder_torch_executor(fn: Callable) -> Callable:
