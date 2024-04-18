@@ -24,8 +24,7 @@ from thunder.executors.cudnnex import cudnn_ex, cudnn_version
 def _maybe_xfail() -> None:
     dev: torch.device = thunder.core.devices.to_torch_device("cuda:0")
     cuda_major: int
-    cuda_minor: int
-    cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
+    cuda_major, _ = torch.cuda.get_device_capability(dev)
     if cuda_major < 8:
         pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
 
