@@ -19,7 +19,7 @@ ARG IMAGE_TYPE="devel"
 
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
-ARG CUDNN_VERSION="8.9.7.29-1"
+ARG CUDNN_VERSION="9.1.0.70"
 ARG CUDNN_FRONTEND_CHECKOUT="v1.3.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
@@ -72,25 +72,31 @@ RUN \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /root/.cache && \
-    rm -rf /var/lib/apt/lists/* \
+    rm -rf /var/lib/apt/lists/*;
 
-RUN \
-    echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION " && \
-    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2.
-    CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
-    CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
-    CUDNN_PACKAGE_VER="${CUDNN_VERSION}+cuda${CUDA_VERSION_MM}" && \
-    apt update -qq --fix-missing && \
-    apt upgrade -y --allow-change-held-packages \
-      libcudnn${CUDNN_BASE_VER}=${CUDNN_PACKAGE_VER} \
-      libcudnn${CUDNN_BASE_VER}-dev=${CUDNN_PACKAGE_VER} \
-    && \
-    rm -rf /root/.cache && \
-    rm -rf /var/lib/apt/lists/* && \
-    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
-    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
-    rm -rf cudnn-frontend
+# cuda TK is only needed for building from source, otherwise PyTorch wheels include it
+RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
+        echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION" && \
+        CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
+        CUDA_VERSION_M=${CUDA_VERSION%%.*} && \
+        apt update -qq --fix-missing && \
+        if [ "${CUDNN_BASE_VER}" == "9" ]; then \
+            CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
+            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+            apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+                           libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME}; \
+        else \
+            CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+            # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2. \
+            CUDA_VERSION_MM="${CUDA_VERSION_MM/12.1/12.2}" && \
+            CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1+cuda${CUDA_VERSION_MM}" && \
+            apt upgrade -y --allow-downgrades --allow-change-held-packages && \
+            apt install -y libcudnn8=${CUDNN_PACKAGE_NAME} \
+                           libcudnn8-dev=${CUDNN_PACKAGE_NAME}; \
+        fi && \
+        rm -rf /root/.cache && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 ENV \
     PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages" \
@@ -151,6 +157,12 @@ RUN \
         TORCH_VERSION_MM=${TORCH_VERSION%.*} && \
         pip install -U "nvfuser-cu${CUDA_VERSION_MM/./}-torch${TORCH_VERSION_MM/./}" ; \
     fi
+
+RUN \
+    # building cudnn-frontend from source
+    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
+    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
+    rm -rf cudnn-frontend
 
 RUN \
     # Show what we have
