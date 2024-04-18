@@ -7268,7 +7268,7 @@ mse_loss_opinfo = OpInfo(
     torch_reference=torch.nn.functional.mse_loss,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # NOTE Torch does not support bf16 mse_loss 
+        # NOTE Torch does not support bf16 mse_loss
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
