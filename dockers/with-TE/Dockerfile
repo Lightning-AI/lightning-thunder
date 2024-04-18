@@ -21,7 +21,7 @@ ARG TRANSFORMER_ENGINE_CHECKOUT="stable"
 SHELL ["/bin/bash", "-c"]
 
 # compilation si too memory demanding so use only half of the cores
-ENV MAKEFLAGS="-j$(( $(nproc) / 3 ))"
+ENV MAKEFLAGS="-j$(( $(nproc) / 4 ))"
 
 RUN \
     # building TE from source
