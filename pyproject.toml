@@ -33,6 +33,7 @@ addopts = [
 ]
 markers = [
     "standalone: mark a test as standalone",
+    'large_mem: needs a lot of gpu memory (select/deselect with -m large_mem / -m "not large_mem")',
 ]
 filterwarnings = [
     "error::FutureWarning",
