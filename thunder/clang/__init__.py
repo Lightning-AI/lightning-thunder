@@ -1213,7 +1213,7 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 # TODO: add scalar support
 # TODO: review hasattr pattern
 @clangop()
-def maybe_broadcast(*args):
+def maybe_broadcast(*args, preserve_cpu_scalar_tensors=True):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
@@ -1221,6 +1221,9 @@ def maybe_broadcast(*args):
 
     def _maybe_broadcast(x, shape):
         if hasattr(x, "shape"):
+            if preserve_cpu_scalar_tensors and utils.is_cpu_scalar_tensor(x):
+                return x
+
             if not utils.same_shape(x.shape, common_shape):
                 return expand(x, common_shape)
 
