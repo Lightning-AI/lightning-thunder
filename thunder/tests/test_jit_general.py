@@ -631,6 +631,7 @@ def test_nanogpt():
     "device",
     ("cpu", "cuda"),
 )
+@pytest.mark.large_mem
 def test_litgpt_variants(name, device):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
@@ -683,6 +684,7 @@ def test_litgpt_variants(name, device):
     "device",
     ("cpu", "cuda"),
 )
+@pytest.mark.large_mem
 def test_litgpt_variants_kvcache(name, device):
     import torch._dynamo  # this monkeypatches torch.manual_seed
 
