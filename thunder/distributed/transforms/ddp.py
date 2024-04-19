@@ -267,6 +267,9 @@ def apply_bucketing_to_grad_allreduce(trace: TraceCtx) -> TraceCtx:
         import thunder
 
         compile_data = thunder.compile_data(trace)
+    # There's no ways to move forward if `compile_data` is None, so early exit.
+    if compile_data is None:
+        return trace
     utils.check_type(compile_data, CompileData)
 
     if not compile_data.is_module:
