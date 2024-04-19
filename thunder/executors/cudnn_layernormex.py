@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any
 
 from looseversion import LooseVersion
 import torch
