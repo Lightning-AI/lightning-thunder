@@ -6405,7 +6405,6 @@ def layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
 
         yield SampleInput(a, normalized_shape, weight, bias, 1e-03)
 
-    
     # Test with/without weight/bias
     batch, seq_len, embedding = cases[0]
     a = make_arg(batch, seq_len, embedding)
@@ -6416,7 +6415,6 @@ def layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
     yield SampleInput(a, normalized_shape, None, bias, 1e-03)
     yield SampleInput(a, normalized_shape, weight, None, 1e-03)
     yield SampleInput(a, normalized_shape, None, None, 1e-03)
-
 
 
 def layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):

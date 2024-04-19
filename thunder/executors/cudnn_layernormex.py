@@ -33,17 +33,22 @@ register_executor(cudnn_layernorm_ex)
 
 _cudnn_layernormex_cache = CudnnexLRUCache(maxlen=1024)
 
+
 def _make_cudnn_layer_norm_graph(a, weight, bias):
-    graph = cudnn.pygraph(intermediate_data_type=cudnn.data_type.FLOAT, compute_data_type=cudnn.data_type.FLOAT, handle=_get_cudnn_handle(a.device_index))
+    graph = cudnn.pygraph(
+        intermediate_data_type=cudnn.data_type.FLOAT,
+        compute_data_type=cudnn.data_type.FLOAT,
+        handle=_get_cudnn_handle(a.device_index),
+    )
 
     input = graph.tensor(name="input", dim=a.size, stride=a.stride, data_type=torch_to_cudnn_dtype(a.dtype))
-    
+
     scale = None
     if weight is not None:
         scale = graph.tensor(
             name="scale", dim=weight.size, stride=weight.stride, data_type=torch_to_cudnn_dtype(weight.dtype)
         )
-    
+
     bias_cudnn = None
     if bias is not None:
         bias_cudnn = graph.tensor(
@@ -52,7 +57,11 @@ def _make_cudnn_layer_norm_graph(a, weight, bias):
 
     scalar_dim_stride = tuple([1] * len(a.size))
     epsilon = graph.tensor(
-        name="epsilon", dim=scalar_dim_stride, stride=scalar_dim_stride, data_type=cudnn.data_type.FLOAT, is_pass_by_value=True
+        name="epsilon",
+        dim=scalar_dim_stride,
+        stride=scalar_dim_stride,
+        data_type=cudnn.data_type.FLOAT,
+        is_pass_by_value=True,
     )
 
     Y, _, _ = graph.layernorm(
@@ -65,7 +74,6 @@ def _make_cudnn_layer_norm_graph(a, weight, bias):
     )
 
     Y.set_output(True).set_data_type(torch_to_cudnn_dtype(a.dtype)).set_stride(a.stride)
-
 
     # Validate the graph before querying the cache key
     # Validation makes sure all missing properties are inferred and filled, as they affect cache key.
@@ -82,8 +90,10 @@ def _make_cudnn_layer_norm_graph(a, weight, bias):
         _cudnn_layernormex_cache[cache_key] = (input, scale, bias_cudnn, epsilon, Y, graph)
     return _cudnn_layernormex_cache[cache_key]
 
+
 def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
     if LooseVersion(cudnn.backend_version_string()) >= "9.1":
+
         def compute_contiguous_strides(shape):
             strides = [1] * len(shape)
             stride = 1
@@ -107,7 +117,7 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
             bias_new = CudnnTensorAttributes(
                 bias_shape, compute_contiguous_strides(bias_shape), bias.dtype, bias.device.index
             )
-        
+
         return a_new, weight_new, bias_new
     else:
         # cudnn only supports following:
@@ -130,10 +140,11 @@ def _transform_layer_norm_inputs(a, normalized_shape, weight, bias):
 
 def _cudnn_layer_norm_fwd_impl(
     a: torch.Tensor,
-    normalized_shape: List[int],
+    normalized_shape: list[int],
     weight: torch.Tensor | None = None,
     bias: torch.Tensor | None = None,
-    eps: float = 1e-5):
+    eps: float = 1e-5,
+):
     a_4d, weight_4d, bias_4d = _transform_layer_norm_inputs(a, normalized_shape, weight, bias)
     input, scale, B, epsilon, Y, graph = _make_cudnn_layer_norm_graph(a_4d, weight_4d, bias_4d)
 
@@ -153,10 +164,11 @@ def _cudnn_layer_norm_fwd_impl(
 
 def _cudnn_layer_norm_checker(
     a: TensorLike,
-    normalized_shape: List[int],
+    normalized_shape: list[int],
     weight: TensorLike | None = None,
     bias: TensorLike | None = None,
-    eps: float = 1e-5):
+    eps: float = 1e-5,
+):
     if cudnn is None:
         return False
 
@@ -167,13 +179,14 @@ def _cudnn_layer_norm_checker(
     except cudnn.cudnnGraphNotSupportedError as ex:
         return False
     except Exception as e:
-        raise 
-    
+        raise
+
     return True
 
 
 import thunder.torch as ltorch
 
-cudnn_layer_norm_fwd = cudnn_layernorm_ex.register_operator("cudnn_layernorm_fwd", like=ltorch.layer_norm, fn=_cudnn_layer_norm_fwd_impl)
+cudnn_layer_norm_fwd = cudnn_layernorm_ex.register_operator(
+    "cudnn_layernorm_fwd", like=ltorch.layer_norm, fn=_cudnn_layer_norm_fwd_impl
+)
 cudnn_layernorm_ex.register_implementation(ltorch.layer_norm, cudnn_layer_norm_fwd, checker=_cudnn_layer_norm_checker)
-
