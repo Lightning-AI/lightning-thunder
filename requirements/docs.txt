@@ -14,3 +14,5 @@ sphinx-copybutton ==0.5.2
 
 # installed from S3 location and fetched in advance
 lai-sphinx-theme
+# alternative /back-up (old) theme
+pt-lightning-sphinx-theme @ https://github.com/PyTorchLightning/lightning_sphinx_theme/archive/master.zip
