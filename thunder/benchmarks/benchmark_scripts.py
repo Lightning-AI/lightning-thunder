@@ -80,6 +80,7 @@ class Benchmarks(parameterized.TestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._summary_metrics = {}
+        self._benchmakr_dir = os.path.dirname(__file__)
 
     @classmethod
     def setUpClass(cls):
@@ -93,7 +94,7 @@ class Benchmarks(parameterized.TestCase):
         super().tearDownClass()
 
     def run_standalone_script(self, filename: str, kwargs: dict[str, Any]) -> None:
-        cmd_string = ["python", f"{filename}"]
+        cmd_string = ["python", "".join([self._benchmakr_dir, "/", filename])]
         for key, val in kwargs.items():
             cmd_string.append("--" + str(key) + "=" + str(val))
 
