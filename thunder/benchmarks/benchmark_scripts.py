@@ -85,8 +85,8 @@ class Benchmarks(parameterized.TestCase):
     def setUpClass(cls):
         super().setUpClass()
 
-        if flags.FLAGS.benchmark_output_dir and not os.path.exists(flags.FLAGS.benchmark_output_dir):
-            os.makedirs(flags.FLAGS.benchmark_output_dir)
+        if flags.FLAGS.benchmark_output_dir:
+            os.makedirs(flags.FLAGS.benchmark_output_dir, exist_ok=True)
 
     @classmethod
     def tearDownClass(cls) -> None:
