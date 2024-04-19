@@ -10,7 +10,7 @@ from absl import flags
 from absl import logging
 from absl.testing import absltest, parameterized
 
-flags.DEFINE_string("benchmark_output_dir", default="./benchmark_results", help="Output directory for benchmark JSONs")
+flags.DEFINE_string("output_dir", default="./benchmark_results", help="Output directory for benchmark JSONs")
 
 
 class Target(absltest.TestCase):
@@ -37,7 +37,7 @@ class Target(absltest.TestCase):
         return subprocess.check_output(cmd).decode("ascii").strip()
 
     def _report_benchmark_results(self):
-        out_dir = flags.FLAGS.benchmark_output_dir
+        out_dir = flags.FLAGS.output_dir
         filename = os.path.join(out_dir, f"{self._name}_{self._start_time}.json")
         git_revision = self._get_git_revision()
 
@@ -85,8 +85,8 @@ class Benchmarks(parameterized.TestCase):
     def setUpClass(cls):
         super().setUpClass()
 
-        if flags.FLAGS.benchmark_output_dir:
-            os.makedirs(flags.FLAGS.benchmark_output_dir, exist_ok=True)
+        if flags.FLAGS.output_dir:
+            os.makedirs(flags.FLAGS.output_dir, exist_ok=True)
 
     @classmethod
     def tearDownClass(cls) -> None:
