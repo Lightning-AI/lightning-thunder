@@ -178,7 +178,15 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args: tuple[Any, ...], kwargs: dict[str, Any], /, *, record_history: bool, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+def _general_frontend(
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    /,
+    *,
+    record_history: bool,
+    sharp_edges: SHARP_EDGES_OPTIONS,
+) -> TraceResults:
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges, record_history=record_history)
 
 
@@ -377,7 +385,7 @@ def jit(
     for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
-    
+
     assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
@@ -527,7 +535,9 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                jit_results: TraceResults = interpreter(fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges)
+                jit_results: TraceResults = interpreter(
+                    fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
+                )
                 prologue_trc = jit_results.prologue_trace
                 computation_trc = jit_results.computation_trace
                 epilogue_trc = jit_results.epilogue_trace

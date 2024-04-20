@@ -1454,7 +1454,7 @@ def test_match_statement(jit):
             case _:
                 assert False
 
-    jfoo = jit(foo, record_history=True) 
+    jfoo = jit(foo, record_history=True)
     assert foo() == 3
     assert jfoo() == 3
     assert any(i.opname == "MATCH_KEYS" for i in last_interpreted_instructions(jfoo))

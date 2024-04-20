@@ -419,7 +419,9 @@ def _eager_unpacking_interpreter(
 
 
 # Translates the Python function a thunder program using the Python interpreter
-def _python_interpreter(fn: Callable, args, kwargs, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+def _python_interpreter(
+    fn: Callable, args, kwargs, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS
+) -> TraceResults:
     if sharp_edges is not SHARP_EDGES_OPTIONS.ALLOW:
         raise ValueError(
             f"Detecting sharp edges is not supported when using the Python interpreter. To detect sharp edges use another interpretation option."
