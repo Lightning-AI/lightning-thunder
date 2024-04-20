@@ -300,7 +300,7 @@ def _eager_unpack(x: Any, /, name: None | str, *, co: CACHE_OPTIONS) -> tuple[Pr
 #   2) Creates a computation function that accepts the output of the prologue function and
 #       returns what the original function did
 def _eager_unpacking_interpreter(
-    interpreter: Callable, fn: Callable, args, kwargs, /, *, record_history: bool = False, interpreter_name: str
+    interpreter: Callable, fn: Callable, args, kwargs, /, *, interpreter_name: str
 ) -> TraceResults:
     # Unpacks the inputs
     si: SigInfo = get_siginfo(fn, args, kwargs)
@@ -386,7 +386,7 @@ def _eager_unpacking_interpreter(
             csi.args.append((p.name, None))
             computation_trc.add_name(p.name)
 
-        jfn = interpreter(si.unwrapped_fn, record_history=record_history)
+        jfn = interpreter(si.unwrapped_fn)
         result = jfn(*interpretation_args, **interpretation_kwargs)
         interpreter_log = getattr(jfn, "_last_interpreter_log", [])
 
@@ -426,9 +426,10 @@ def _python_interpreter(fn: Callable, args, kwargs, /, *, record_history: bool =
         )
 
     def _interpreter(fn_):
-        return fn_
+        # No sharp edges for python interpreter. I think.
+        return partial(fn_, sharp_edges=sharp_edges, record_history=record_history)
 
-    return _eager_unpacking_interpreter(_interpreter, fn, args, kwargs, record_history=record_history, interpreter_name="Python")
+    return _eager_unpacking_interpreter(_interpreter, fn, args, kwargs, interpreter_name="Python")
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
@@ -437,8 +438,8 @@ def _translate_functions_interpreter(
 ) -> TraceResults:
     from thunder.core.jit_ext import minimal_thunder_jit
 
-    pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges)
-    return _eager_unpacking_interpreter(pjit, fn, args, kwargs, record_history=record_history, interpreter_name="translate functions")
+    pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges, record_history=record_history)
+    return _eager_unpacking_interpreter(pjit, fn, args, kwargs, interpreter_name="translate functions")
 
 
 # note: keep this roughly in sync with thunder.jit
