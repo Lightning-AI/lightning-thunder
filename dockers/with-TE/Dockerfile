@@ -20,13 +20,17 @@ ARG TRANSFORMER_ENGINE_CHECKOUT="stable"
 
 SHELL ["/bin/bash", "-c"]
 
+ENV \
+    NVTE_FRAMEWORK="pytorch" \
+    CUDNN_INCLUDE_DIR=""
+
 RUN \
     # building TE from source
     git clone --branch ${TRANSFORMER_ENGINE_CHECKOUT} \
       --recursive https://github.com/NVIDIA/TransformerEngine.git && \
     cd TransformerEngine && \
     git submodule update --init --recursive && \
-    export NVTE_FRAMEWORK=pytorch && \
+    find / -type d -name "include" -path "*/cudnn-*/include" && \
     pip install . && \
     cd .. && \
     rm -rf TransformerEngine
