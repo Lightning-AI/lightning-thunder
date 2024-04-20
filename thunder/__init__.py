@@ -178,8 +178,8 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
-    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
+def _general_frontend(fn: Callable, args: tuple[Any, ...], kwargs: dict[str, Any], /, *, record_history: bool, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges, record_history=record_history)
 
 
 class ThunderModule(pytorch.nn.Module):
@@ -327,6 +327,7 @@ def jit(
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     additional_transforms: list | None = None,
+    record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -376,6 +377,8 @@ def jit(
     for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
+    
+    assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
@@ -524,7 +527,7 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                jit_results: TraceResults = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
+                jit_results: TraceResults = interpreter(fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges)
                 prologue_trc = jit_results.prologue_trace
                 computation_trc = jit_results.computation_trace
                 epilogue_trc = jit_results.epilogue_trace
