@@ -47,15 +47,14 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     """
     import thunder
     from thunder.common import _make_cache_key
-    from thunder.core.transforms import _get_gradfn, eval_trace
+    from thunder.core.transforms import _get_gradfn_and_executor, eval_trace
 
-    joint_forward_backward = _get_gradfn(bsym)
+    joint_forward_backward, executor = _get_gradfn_and_executor(bsym)
     utils.check(
         joint_forward_backward is not None,
         lambda: f"Cannot generate forward and backward functions for {bsym.sym.name}",
     )
-
-    key = (bsym.sym, subkey := _make_cache_key(bsym.args, bsym.kwargs))
+    key = (bsym.sym, subkey := _make_cache_key(bsym.args, bsym.kwargs), executor)
     cached_result = _cache.get(key, None) if subkey is not None else None
     if cached_result is not None and not getattr(joint_forward_backward, "_disable_caching", False):
         return cached_result
