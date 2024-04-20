@@ -575,7 +575,7 @@ class InterpreterRuntimeCtx:
     def record(self, val: InterpreterLogItem, /) -> None:
         if not self._record_history:
             return
-        
+
         self._interpreter_log.append(val)
 
         if self.debug_log is not None:
@@ -611,7 +611,7 @@ class InterpreterRuntimeCtx:
     def record_interpreted_instruction(self, inst: dis.Instruction, /) -> InterpreterRuntimeCtx:
         if not self._record_history:
             return self
-        
+
         self._interpreted_instructions.append(inst)
         self.record(inst)
         return self
@@ -626,7 +626,9 @@ class InterpreterRuntimeCtx:
         # In that case we should also print out what line we're starting on, since
         # no line number changes have happened yet.
         if frame is not None:
-            self.record({"kind": "InterpreterCall", "fn": extract_callable_name(unwrap(fn)), "prev_frame": frame.qualname})
+            self.record(
+                {"kind": "InterpreterCall", "fn": extract_callable_name(unwrap(fn)), "prev_frame": frame.qualname}
+            )
         else:
             if hasattr(self._original_callsite, "positions"):
                 pos = self._original_callsite.positions
@@ -648,20 +650,22 @@ class InterpreterRuntimeCtx:
 
         is_signal: bool = isinstance(rval, INTERPRETER_SIGNALS)
         rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(unwrap(rval))
-        self.record(ReturnLogItem(kind="InterpreterReturn", fn=extract_callable_name(unwrap(fn)), is_signal=is_signal, rval=rv))
+        self.record(
+            ReturnLogItem(kind="InterpreterReturn", fn=extract_callable_name(unwrap(fn)), is_signal=is_signal, rval=rv)
+        )
         return self
 
-    def record_opaque_call(self, fn: Callable) -> InterpreterRuntimeCtx:   
+    def record_opaque_call(self, fn: Callable) -> InterpreterRuntimeCtx:
         if not self._record_history:
             return self
-        
+
         self.record(OpaqueLogItem(kind="Opaque", fn=extract_callable_name(unwrap(fn))))
         return self
 
     def record_lookaside(self, fn: Callable) -> InterpreterRuntimeCtx:
         if not self._record_history:
             return self
-        
+
         self.record(LookasideLogItem(kind="Lookaside", fn=extract_callable_name(unwrap(fn))))
         return self
 
@@ -670,7 +674,7 @@ class InterpreterRuntimeCtx:
     ) -> InterpreterRuntimeCtx:
         if not self._record_history:
             return self
-        
+
         # Only record a change in the Python line
         if filename == self._prev_filename and _positions_equal(position, self._prev_position):
             return self
@@ -6770,7 +6774,9 @@ def print_interpreter_log(
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1
-                log_line = f"Interpreting call to {fn}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                log_line = (
+                    f"Interpreting call to {fn}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                )
 
             case {"kind": "InterpreterReturn", "fn": fn, "rval": rval}:
                 # ReturnLogItem

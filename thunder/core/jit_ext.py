@@ -1395,7 +1395,15 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     return found_pg
 
 
-def thunder_general_jit(fn: Callable, args: tuple[Any, ...], kwargs: dict[str, Any], /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+def thunder_general_jit(
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    /,
+    *,
+    record_history: bool = False,
+    sharp_edges: SHARP_EDGES_OPTIONS,
+) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
