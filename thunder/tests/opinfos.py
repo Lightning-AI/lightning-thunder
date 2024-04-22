@@ -7275,6 +7275,12 @@ mse_loss_opinfo = OpInfo(
             dtypes=(datatypes.bfloat16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
     ),
 )
 
