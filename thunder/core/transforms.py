@@ -3703,7 +3703,9 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
             update the forward trace.
     """
     forward_trace_producers = utils.producers(forward_trace)
-    saved_for_backward = tree_map(lambda x: x.value if isinstance(x, NumberProxy) and x not in forward_trace_producers else x, saved_for_backward)
+    saved_for_backward = tree_map(
+        lambda x: x.value if isinstance(x, NumberProxy) and x not in forward_trace_producers else x, saved_for_backward
+    )
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
