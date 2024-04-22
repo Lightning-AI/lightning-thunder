@@ -1031,14 +1031,9 @@ def _infer_tensor_properties(
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
     _ddp_type = ddp_type if ddp_type is not None else _ddp_type
 
-    # Extracts actual values for shape
-    # TODO RC1 Enable this
-    #if using_symbolic_values():
-    #    raise NotImplementedError(
-    #        f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
-    #    )
-
-    _shape = tuple(pyval(x) for x in _shape)
+    if not using_symbolic_values():
+        # Extracts actual values for shape
+        _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
     _numel = reduce(operator.mul, _shape, 1)
