@@ -373,7 +373,9 @@ def fsdp(
     ReduceScatter to shard gradients, for one Transformer block. The former users one per layer such as
     :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
 
-     Args:
+    See :doc:`/notebooks/dev_tutorials/fsdp_tutorial` to see how parameters are sharded across devices and how communications calls are inserted.
+
+    Args:
         model: The model to convert.
 
     Keyword Args:
