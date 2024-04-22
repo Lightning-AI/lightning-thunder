@@ -614,11 +614,11 @@ class GeneralJitCtx(MinimalCtx):
                     self.add_constraint((clang.check_string_value, p, uvalue))
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
-            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
-                raise NotImplementedError(f"Unsupported cache option {co}")
-            if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 if p is not uvalue:
                     value.register_proxy(p)
+            elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
+                raise NotImplementedError(f"Unsupported cache option {co}")
             return p
         elif isinstance(uvalue, dict):
             value.track_items()
