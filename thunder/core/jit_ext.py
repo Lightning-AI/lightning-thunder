@@ -595,7 +595,7 @@ class GeneralJitCtx(MinimalCtx):
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
-            if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
