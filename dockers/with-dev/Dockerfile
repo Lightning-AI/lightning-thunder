@@ -23,6 +23,7 @@ COPY requirements/ requirements/
 RUN \
     ls -lh requirements/ && \
     CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
+    MAKEFLAGS="-j$(( $(nproc) / 4 ))" && \
     pip install -U -r requirements/test.txt && \
     rm -rf requirements/
 
