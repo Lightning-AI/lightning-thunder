@@ -2496,19 +2496,25 @@ conditional_and_mask_ops.append(where_opinfo)
 def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    a = make((4, 4), dtype=dtype, requires_grad=requires_grad)
+    if dtype == torch.FloatType or torch.IntType:
+        a = torch.tensor((0, float("nan"), float("inf"), -float("inf")))
+    elif dtype == torch.ComplexType:
+        a = torch.tensor((complex(0, 0), complex(float("nan"), float("nan")), complex(float("inf"), -float("inf"))))
+    # input tensor, nan, posinf, neginf
     cases = (
-        ((2, 1, 2), None, None, None),
-        ((4, 4), None, 1.0, None),
-        ((4, 4), None, None, 1.0),
-        ((5,), None, 1.0, 0.0),
-        ((8, 1, 6), 1, None, None),
-        ((8, 7, 5, 1), 1, 1.0, None),
-        ((8, 7, 5, 1), 1, None, 0.0),
-        ((8, 7, 5, 1), 1, 1.0, 0.0),
+        (a, None, None, None),
+        (a, None, 1.0, None),
+        (a, None, None, 1.0),
+        (a, None, 1.0, 0.0),
+        (a, 1, None, None),
+        (a, 1, 1.0, None),
+        (a, 1, None, 0.0),
+        (a, 1, 1.0, 0.0),
     )
 
-    for a_shape, nan, posinf, neginf in cases:
-        yield SampleInput(make(a_shape, dtype=dtype, requires_grad=requires_grad), nan, posinf, neginf)
+    for a, nan, posinf, neginf in cases:
+        yield SampleInput(a, nan, posinf, neginf)
 
 
 def nan_to_num_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -2533,7 +2539,6 @@ def nan_to_num_error_generator(op, device, dtype=torch.float32, **kwargs):
 
 nan_to_num_opinfo = OpInfo(
     ltorch.nan_to_num,
-    supports_grad=True,
     sample_input_generator=nan_to_num_sample_generator,
     error_input_generator=nan_to_num_error_generator,
     torch_reference=torch.nan_to_num,
